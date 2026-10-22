@@ -21,7 +21,9 @@ const TRUSTED: &[&str] = &[
     // viewers
     "firestormviewer.org",
     "phoenixviewer.com",
-    "auroraviewer.com",
+    // the project's official domain; the former auroraviewer.com is no
+    // longer trusted (once released, anyone could own it)
+    "aurora-viewer.org",
     // OpenSimulator
     "opensimulator.org",
     "osgrid.org",
@@ -127,13 +129,113 @@ fn host_of(url: &str) -> Option<(String, bool)> {
     Some((host.trim_end_matches('.').to_lowercase(), user_info))
 }
 
-fn in_list(host: &str, list: &[&str]) -> bool {
-    list.iter()
-        .any(|d| host == *d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
+fn in_list<'a>(host: &str, list: impl IntoIterator<Item = &'a str>) -> bool {
+    list.into_iter()
+        .any(|d| host == d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
 }
 
-/// Judge a web link (see the module documentation).
+/// Preferences › Protections › Trusted sites: domains the user trusts too, and
+/// built-in ones they no longer trust (Aurora choice; the Legacy Viewer's
+/// list is fixed).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct TrustedSites {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+}
+
+impl TrustedSites {
+    /// The built-in list minus the removed domains, then the added ones.
+    fn domains(&self) -> impl Iterator<Item = &str> {
+        TRUSTED
+            .iter()
+            .copied()
+            .filter(|d| !self.removed.iter().any(|r| r == d))
+            .chain(self.added.iter().map(String::as_str))
+    }
+
+    /// Trusts a normalized domain: a built-in one the user had removed is
+    /// trusted again, one already trusted is not added twice. False when
+    /// nothing changes.
+    pub fn add(&mut self, domain: &str) -> bool {
+        if let Some(i) = self.removed.iter().position(|r| r == domain) {
+            self.removed.remove(i);
+            return true;
+        }
+        if TRUSTED.contains(&domain) || self.added.iter().any(|a| a == domain) {
+            return false;
+        }
+        self.added.push(domain.to_owned());
+        true
+    }
+
+    /// Stops or resumes trusting a built-in domain.
+    pub fn set_built_in(&mut self, domain: &str, trusted: bool) {
+        self.removed.retain(|r| r != domain);
+        if !trusted {
+            self.removed.push(domain.to_owned());
+        }
+    }
+}
+
+/// The built-in trusted domains, for Preferences.
+pub fn built_in() -> &'static [&'static str] {
+    TRUSTED
+}
+
+/// What the user typed, as a domain the list can hold: no scheme, path,
+/// port or leading "www." / "*.", lowercase. None for anything that is not
+/// a plain domain name (an IP address, spaces, a single label...).
+pub fn normalize(input: &str) -> Option<String> {
+    let mut domain = input.trim().to_ascii_lowercase();
+    for scheme in ["https://", "http://"] {
+        if let Some(rest) = domain.strip_prefix(scheme) {
+            domain = rest.to_owned();
+        }
+    }
+    let domain = domain.split(['/', '?', '#', ':']).next().unwrap_or("");
+    let domain = domain.trim_end_matches('.');
+    let domain = domain.strip_prefix("*.").unwrap_or(domain);
+    let domain = domain.strip_prefix("www.").unwrap_or(domain);
+    let labels: Vec<&str> = domain.split('.').collect();
+    let valid = domain.len() <= 253
+        && labels.len() >= 2
+        && labels.iter().all(|l| {
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
+                && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+        && !labels.last().is_some_and(|tld| tld.chars().all(|c| c.is_ascii_digit()));
+    valid.then(|| domain.to_owned())
+}
+
+/// The Preferences list in use; read by every judge, from any thread.
+static USER: std::sync::RwLock<Option<TrustedSites>> = std::sync::RwLock::new(None);
+
+/// At start and after each change of Preferences.
+pub fn configure(sites: &TrustedSites) {
+    if let Ok(mut user) = USER.write() {
+        *user = Some(sites.clone());
+    }
+}
+
+static BUILT_IN_ONLY: TrustedSites = TrustedSites {
+    added: Vec::new(),
+    removed: Vec::new(),
+};
+
+/// Judge a web link (see the module documentation). Called for every link
+/// drawn: the list is read in place, never copied.
 pub fn classify(url: &str) -> Trust {
+    match USER.read() {
+        Ok(user) => classify_with(url, user.as_ref().unwrap_or(&BUILT_IN_ONLY)),
+        Err(_) => classify_with(url, &BUILT_IN_ONLY),
+    }
+}
+
+fn classify_with(url: &str, sites: &TrustedSites) -> Trust {
     let Some((host, user_info)) = host_of(url) else {
         return Trust::Unknown;
     };
@@ -143,7 +245,7 @@ pub fn classify(url: &str) -> Trust {
     if host.is_empty() {
         return Trust::Unknown;
     }
-    if in_list(&host, TRUSTED) {
+    if in_list(&host, sites.domains()) {
         return Trust::Trusted;
     }
     if !host.is_ascii() || host.split('.').any(|label| label.starts_with("xn--")) {
@@ -154,15 +256,15 @@ pub fn classify(url: &str) -> Trust {
     if host.contains(':') || host.split('.').all(|label| label.chars().all(|c| c.is_ascii_digit())) {
         return Trust::Dangerous(aurora_i18n::tr!("link-trust-the-link-leads-to-an-ip-address-instead-of"));
     }
-    if in_list(&host, HIDDEN_DESTINATION) {
+    if in_list(&host, HIDDEN_DESTINATION.iter().copied()) {
         return Trust::Dangerous(aurora_i18n::tr!("link-trust-shortened-link-the-real-destination-is-hidden"));
     }
-    if in_list(&host, THROWAWAY_HOSTING) {
+    if in_list(&host, THROWAWAY_HOSTING.iter().copied()) {
         return Trust::Dangerous(aurora_i18n::tr!("link-trust-disposable-hosting-often-used-for-fake-login-pages"));
     }
     // "youtube.com.evil.example": a trusted name used as a mere subdomain
-    if TRUSTED
-        .iter()
+    if sites
+        .domains()
         .any(|d| host.starts_with(&format!("{d}.")) || host.contains(&format!(".{d}.")))
     {
         return Trust::Dangerous(aurora_i18n::tr!("link-trust-the-name-starts-like-a-trusted-site-but-leads"));
@@ -185,7 +287,8 @@ mod tests {
             "http://community.secondlife.com/forums",
             "https://marketplace.secondlife.com:443/p/x",
             "https://WWW.LindenLab.com",
-            "https://auroraviewer.com",
+            "https://aurora-viewer.org",
+            "https://www.aurora-viewer.org/downloads",
             "https://github.com/Aurora-Viewer/Aurora-Viewer/pulls",
             "https://gist.github.com/x",
             "https://secondlife.com./x",
@@ -224,6 +327,9 @@ mod tests {
             "https://evilsecondlife.com",
             "https://second-life-login.example",
             "https://firestorm-viewer.download",
+            "https://auroraviewer.com",
+            "https://aurora-viewer.org.evil.example",
+            "https://aurora-viewer-login.example",
             "https://youtube.com.evil.example/watch",
             "https://bit.ly/abc",
             "https://linktr.ee/x",
@@ -237,5 +343,55 @@ mod tests {
         }
         // "https://evil.example\@secondlife.com": the browser goes to evil.example
         assert_eq!(classify("https://evil.example\\@secondlife.com"), Trust::Unknown);
+    }
+
+    #[test]
+    fn the_users_list_adds_and_removes_trusted_sites_without_lifting_the_traps() {
+        let sites = TrustedSites {
+            added: vec!["my-club.example".into()],
+            removed: vec!["x.com".into()],
+        };
+        assert_eq!(classify_with("https://my-club.example/events", &sites), Trust::Trusted);
+        assert_eq!(classify_with("https://shop.my-club.example", &sites), Trust::Trusted);
+        assert_eq!(classify_with("https://x.com/someone", &sites), Trust::Unknown);
+        assert_eq!(classify_with("https://secondlife.com", &sites), Trust::Trusted);
+        // An added site cannot be borrowed as a subdomain or behind an "@".
+        for url in ["https://my-club.example.evil.test/login", "https://my-club.example@evil.test"] {
+            assert!(matches!(classify_with(url, &sites), Trust::Dangerous(_)), "{url}");
+        }
+        assert_eq!(classify_with("https://my-club.example", &TrustedSites::default()), Trust::Unknown);
+    }
+
+    #[test]
+    fn adding_a_site_never_duplicates_and_brings_back_a_removed_built_in_one() {
+        let mut sites = TrustedSites::default();
+        assert!(sites.add("my-club.example"));
+        assert!(!sites.add("my-club.example"));
+        assert!(!sites.add("secondlife.com"));
+        sites.set_built_in("x.com", false);
+        sites.set_built_in("x.com", false);
+        assert_eq!(sites.removed, ["x.com"]);
+        assert!(sites.add("x.com"));
+        assert!(sites.removed.is_empty());
+        assert_eq!(sites.added, ["my-club.example"]);
+    }
+
+    #[test]
+    fn typed_sites_become_plain_domains() {
+        for (typed, expected) in [
+            ("My-Club.example", Some("my-club.example")),
+            ("  https://www.my-club.example/events?x=1 ", Some("my-club.example")),
+            ("http://shop.example:8080/", Some("shop.example")),
+            ("*.example.org", Some("example.org")),
+            ("example.org.", Some("example.org")),
+            ("example", None),
+            ("192.168.1.10", None),
+            ("exa mple.org", None),
+            ("-bad.example", None),
+            ("ex@mple.org", None),
+            ("", None),
+        ] {
+            assert_eq!(normalize(typed).as_deref(), expected, "{typed:?}");
+        }
     }
 }

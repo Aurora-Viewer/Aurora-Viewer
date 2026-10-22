@@ -53,7 +53,7 @@ impl Fixture {
         let mut actions = Vec::new();
         let mut output = self.ctx.run_ui(input, |ui| {
             if let Some(quick) = &mut self.quick {
-                egui::Area::new(egui::Id::new("test_ao_toolbar"))
+                egui::Area::new(egui::Id::unique("test_ao_toolbar"))
                     .fixed_pos(egui::pos2(1200.0, 850.0))
                     .show(ui.ctx(), |ui| {
                         let response = ui.button("AO");
@@ -168,6 +168,31 @@ fn firestorm_migration_is_explicit_cancellable_and_keeps_native_selection_until_
 }
 
 #[test]
+fn alchemy_choice_lists_its_sets_and_migrates_one_without_inventory_writes() {
+    let mut f = Fixture::new();
+    f.inv = Inventory::default();
+    f.account.selected = crate::ao::demo::seed_alchemy_migration(&mut f.inv, Uuid::from_u128(1));
+    f.catalog = Default::default();
+    f.catalog.refresh(&mut f.inv);
+    let generation = f.inv.generation;
+    assert!(f.click(aurora_i18n::tr!("ao-migrate")).is_empty());
+    f.state.migration.as_mut().expect("picker").refresh(&mut f.inv, true);
+    f.settle();
+    assert!(f.click(aurora_i18n::tr!("ao-migrate-alchemy")).is_empty());
+    let migration = f.state.migration.as_mut().expect("picker");
+    assert!(migration.alchemy);
+    migration.refresh(&mut f.inv, true);
+    f.settle();
+    assert!(matches!(
+        f.click(aurora_i18n::tr!("ao-migrate-confirm")).as_slice(),
+        [Action::Migrate]
+    ));
+    let migration = f.state.migration.as_ref().expect("picker");
+    assert_eq!(migration.name, "Alchemy Dance Set");
+    assert_eq!(f.inv.generation, generation);
+}
+
+#[test]
 fn rename_updates_existing_folder_and_new_set_creates_a_distinct_set() {
     let mut f = Fixture::new();
     f.state.name = "Renamed".into();
@@ -201,6 +226,42 @@ fn animation_picker_links_into_selected_state_and_import_blocks_edits() {
     f.settle();
     assert!(f.click(aurora_i18n::tr!("ao-add")).is_empty());
     assert!(f.state.picker.is_none(), "busy controls must not dispatch concurrent changes");
+}
+
+#[test]
+fn open_animation_and_notecard_pickers_reorder_when_inventory_sort_changes() {
+    use crate::ui::inventory::view::{Sort, set_picker_sort};
+    let mut f = Fixture::new();
+    for (notecard, asset_type) in [(false, 20), (true, 7)] {
+        f.inv.add_items(
+            [("Sort 10", 200), ("sort 2", 100)]
+                .into_iter()
+                .enumerate()
+                .map(|(i, (name, date))| aurora_net::inventory::InvItem {
+                    id: Uuid::from_u128(78000 + i as u128),
+                    parent: f.inv.root,
+                    name: name.into(),
+                    created_at: date,
+                    asset_type,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        f.state.picker = Some(notecard);
+        f.state.filter = "sort".into();
+        for by_date in [false, true, false] {
+            set_picker_sort(
+                &f.ctx,
+                Sort {
+                    by_date,
+                    ..Default::default()
+                },
+            );
+            f.settle();
+            let names: Vec<_> = f.state.rows.iter().map(|row| row.1.as_str()).collect();
+            assert_eq!(names, if by_date { ["Sort 10", "sort 2"] } else { ["sort 2", "Sort 10"] });
+        }
+    }
 }
 
 #[test]

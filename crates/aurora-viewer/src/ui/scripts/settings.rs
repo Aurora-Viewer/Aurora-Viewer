@@ -97,6 +97,8 @@ pub struct ScriptSettings {
     pub colors: BTreeMap<ColorRole, [u8; 4]>,
     pub font_size: f32,
     pub word_wrap: bool,
+    pub search_prefer_left: bool,
+    pub search_inline: bool,
     pub convert_tabs: bool,
     pub preprocessor: bool,
     pub optimize: bool,
@@ -116,6 +118,8 @@ impl Default for ScriptSettings {
             colors: BTreeMap::new(),
             font_size: 13.0,
             word_wrap: true,
+            search_prefer_left: false,
+            search_inline: false,
             convert_tabs: true,
             preprocessor: false,
             optimize: true,
@@ -148,12 +152,15 @@ mod tests {
         let mut settings: ScriptSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(settings, ScriptSettings::default());
         assert!(settings.word_wrap);
+        assert!(!settings.search_prefer_left && !settings.search_inline);
         assert!(settings.convert_tabs && settings.optimize && settings.switches && settings.lazy_lists);
         assert!(!settings.preprocessor && !settings.disk_includes && !settings.owner_say_debug && !settings.recompile);
         let p = crate::theme::Theme::default().palette();
         settings.colors.insert(ColorRole::Function, p.teal.to_srgba_unmultiplied());
         settings.preprocessor = true;
         settings.word_wrap = false;
+        settings.search_prefer_left = true;
+        settings.search_inline = true;
         let restored: ScriptSettings = serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
         assert_eq!(restored, settings);
         assert_eq!(restored.color(ColorRole::Function, &p), p.teal);

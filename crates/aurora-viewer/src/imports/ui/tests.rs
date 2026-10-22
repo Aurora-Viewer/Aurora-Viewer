@@ -29,7 +29,7 @@ fn mesh_inspector_geometry_settles_without_resizing_in_a_short_work_area() {
             entries: vec![entry],
             ..Default::default()
         };
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(("mesh_section", id)), 1usize));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("mesh_section", id)), 1usize));
         let mut baseline = None;
         for frame in 0..240 {
             let mut output = ctx.run_ui(
@@ -55,7 +55,7 @@ fn mesh_inspector_geometry_settles_without_resizing_in_a_short_work_area() {
             );
             output.textures_delta.clear();
             let size = ctx
-                .data_mut(|d| d.get_persisted::<Vec2>(egui::Id::new(Choice::Mesh.window_id()).with("expanded_size")))
+                .data_mut(|d| d.get_persisted::<Vec2>(egui::Id::unique(Choice::Mesh.window_id()).with("expanded_size")))
                 .expect("mesh window size");
             let positions: Vec<_> = output
                 .shapes
@@ -77,7 +77,7 @@ fn mesh_inspector_geometry_settles_without_resizing_in_a_short_work_area() {
                 .collect();
             if frame >= 120 {
                 let viewport = ctx
-                    .data(|d| d.get_temp::<(egui::Rect, Vec2)>(egui::Id::new(("mesh_viewport", id))))
+                    .data(|d| d.get_temp::<(egui::Rect, Vec2)>(egui::Id::unique(("mesh_viewport", id))))
                     .expect("mesh viewport");
                 assert!(
                     viewport.1.x <= viewport.0.width().ceil(),
@@ -151,7 +151,7 @@ fn settings_only_show_permissions_and_payment_and_sharing_clicks_are_per_type() 
     }
     for (kind, column) in [(Kind::Sound, 3usize), (Kind::Mesh, 4usize)] {
         let pos = ctx
-            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("import_permission", kind, column))))
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("import_permission", kind, column))))
             .expect("permission cell")
             .center();
         for pressed in [true, false] {
@@ -230,7 +230,7 @@ fn mesh_palette_uses_the_shared_picker_and_applies_every_color_without_rebuildin
         drop(frame(&mut imports, &mut prefs, Vec::new()));
     }
     let pos = ctx
-        .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("import_preview_palette", id))))
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("import_preview_palette", id))))
         .expect("palette button")
         .center();
     for pressed in [true, false] {
@@ -248,7 +248,7 @@ fn mesh_palette_uses_the_shared_picker_and_applies_every_color_without_rebuildin
             drop(frame(&mut imports, &mut prefs, Vec::new()));
         }
         let (swatch, rect) = ctx
-            .data(|data| data.get_temp::<(egui::Id, egui::Rect)>(egui::Id::new(("import_preview_swatch", label))))
+            .data(|data| data.get_temp::<(egui::Id, egui::Rect)>(egui::Id::unique(("import_preview_swatch", label))))
             .expect("shared swatch");
         for pressed in [true, false] {
             drop(frame(&mut imports, &mut prefs, events(rect.center(), pressed)));
@@ -264,7 +264,7 @@ fn mesh_palette_uses_the_shared_picker_and_applies_every_color_without_rebuildin
             drop(frame(&mut imports, &mut prefs, events(sample, pressed)));
         }
         // Close the current picker before clicking a swatch it may cover.
-        let title = egui::AreaState::load(&ctx, egui::Id::new("import_preview_colors"))
+        let title = egui::AreaState::load(&ctx, egui::Id::unique("import_preview_colors"))
             .expect("palette window")
             .left_top_pos()
             + Vec2::new(80.0, 16.0);
@@ -509,7 +509,7 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     }
     drop(frame(Vec::new(), &mut imports));
     let reset = ctx
-        .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_reset", imports.entries[0].id))))
+        .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("material_reset", imports.entries[0].id))))
         .expect("reset button")
         .center();
     for pressed in [true, false] {
@@ -523,7 +523,7 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     );
     let output = frame(Vec::new(), &mut imports);
     let original_canvas = ctx
-        .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_canvas", imports.entries[0].id))))
+        .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("material_canvas", imports.entries[0].id))))
         .expect("material canvas");
     let sphere = position(&output, aurora_i18n::tr!("import-preview-sphere"));
     for pressed in [true, false] {
@@ -539,12 +539,12 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
     assert!(imports.entries[0].model.is_none());
     drop(frame(Vec::new(), &mut imports));
     let pending_canvas = ctx
-        .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_canvas", imports.entries[0].id))))
+        .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("material_canvas", imports.entries[0].id))))
         .expect("pending canvas");
     assert_eq!(pending_canvas, original_canvas, "loading a new shape retains the exact canvas");
     assert_eq!(pending_canvas.size(), Vec2::splat(176.0));
     let cards = [0, 2, 3, 1].map(|slot| {
-        ctx.data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("material_card", imports.entries[0].id, slot))))
+        ctx.data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("material_card", imports.entries[0].id, slot))))
             .expect("map card")
     });
     for pair in cards.windows(2) {
@@ -558,6 +558,7 @@ fn material_shape_selection_thumbnails_and_reset_work_with_real_clicks() {
                 unit: egui::MouseWheelUnit::Point,
                 delta: Vec2::new(0.0, -200.0),
                 phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
                 modifiers: egui::Modifiers::NONE,
             },
         ],
@@ -938,7 +939,7 @@ fn compact_importers_keep_their_size_and_filtered_files_without_permissions() {
         for _ in 0..60 {
             drop(frame(&mut imports, Vec::new()));
         }
-        let window_id = egui::Id::new(choice.window_id());
+        let window_id = egui::Id::unique(choice.window_id());
         assert_eq!(
             egui::AreaState::load(&ctx, window_id).expect("dedicated window").left_top_pos(),
             egui::pos2(48.0, 80.0),
@@ -974,7 +975,7 @@ fn compact_importers_keep_their_size_and_filtered_files_without_permissions() {
         assert!(positions[0].y < positions[1].y && positions[1].y < positions[2].y);
         if matches!(choice, Choice::Mesh | Choice::Bulk) {
             for section in [2, 1, 0] {
-                ctx.data_mut(|data| data.insert_temp(egui::Id::new(("mesh_section", active)), section));
+                ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("mesh_section", active)), section));
                 for _ in 0..20 {
                     drop(frame(&mut imports, Vec::new()));
                 }
@@ -1215,10 +1216,10 @@ fn clicking_an_animation_selects_and_restarts_its_preview() {
             let pause = location(aurora_i18n::tr!("import-pause"));
             let active = imports.active.expect("active animation");
             let canvas = ctx
-                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("animation_canvas", active))))
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_canvas", active))))
                 .expect("canvas");
             let reset = ctx
-                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("animation_reset", active))))
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("animation_reset", active))))
                 .expect("reset");
             assert!(reset.top() >= canvas.bottom() && reset.height() >= 26.0);
             assert!(

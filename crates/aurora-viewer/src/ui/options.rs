@@ -4,6 +4,7 @@
 //! Every setting is a row of `cx::Cx`: one declaration draws it, finds it,
 //! marks it when it differs from its default and resets it.
 
+pub mod backup;
 pub(crate) mod cx;
 mod pages;
 mod scale;
@@ -145,7 +146,7 @@ impl Page {
             Page::Sound => aurora_i18n::tr!("ui-options-about-sound"),
             Page::Media => aurora_i18n::tr!("ui-options-about-media"),
             Page::Privacy => aurora_i18n::tr!("ui-options-about-privacy"),
-            Page::Protections => aurora_i18n::tr!("anti-spam-enable-hint"),
+            Page::Protections => aurora_i18n::tr!("ui-options-about-protections"),
             Page::Layout => aurora_i18n::tr!("ui-options-about-layout"),
             Page::Appearance => aurora_i18n::tr!("ui-options-about-appearance"),
             Page::Accessibility => aurora_i18n::tr!("ui-options-about-accessibility"),
@@ -298,6 +299,10 @@ const UNDO_SECONDS: f64 = 8.0;
 
 #[derive(Default)]
 pub struct OptionsUi {
+    pub rlva_tools: super::rlva::Tools,
+    pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
+    pub rlva_camera_preset_locked: bool,
+    pub rlva_camera_fov_locked: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
     pub anti_spam_version: u64,
     /// The page shown and its tab.
@@ -331,6 +336,7 @@ pub struct OptionsUi {
     /// Open every cog once counted (`AURORA_DEMO_OPTIONS=…:cogs`, captures).
     pub demo_open_cogs: bool,
     interface_scale: scale::ScaleSlider,
+    text_scale: scale::ScaleSlider,
     /// The account's content ceiling and the rating it wants, while logged
     /// in (set by the app).
     pub maturity: Option<aurora_net::search::AgentAccess>,
@@ -364,6 +370,8 @@ pub struct OptionsUi {
     pub media_filter: Option<Vec<crate::media::filter::Rule>>,
     pub media_filter_edits: Vec<crate::media::filter::Edit>,
     media_filter_typed: String,
+    /// The site being typed in Preferences › Protections › Trusted sites.
+    trusted_site_typed: String,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,
@@ -383,11 +391,17 @@ pub struct OptionsUi {
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
     pub restart_voice: bool,
+    /// A settings backup read, waiting for the confirmation of its restore
+    /// (set by the app), and what the last backup and restore did.
+    pub restore: Option<backup::Pending>,
+    pub backup_status: String,
+    pub restore_status: String,
 }
 
 impl OptionsUi {
     pub fn prepare_scale_input(&mut self, input: &egui::RawInput, pixels_per_point: f32, numeric_captured: bool) {
         self.interface_scale.prepare_input(input, pixels_per_point, numeric_captured);
+        self.text_scale.prepare_input(input, pixels_per_point, numeric_captured);
     }
 
     /// A HUD modifier on its own is captured on release, leaving time to
@@ -456,6 +470,7 @@ impl OptionsUi {
         self.capture = None;
         self.keyword_sound_text = None;
         self.ui_sound_text.clear();
+        self.trusted_site_typed.clear();
     }
 
     /// Announces a reset whose undo went away.
@@ -503,6 +518,12 @@ pub struct OptionsResult {
     pub account: Option<crate::world::user_info::Change>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
     pub open_dev_toolbox: bool,
+    /// Back up the settings to a file the user chooses.
+    pub back_up: bool,
+    /// Choose a backup to restore (then `restore_modal` confirms it).
+    pub pick_backup: bool,
+    /// A restore confirmed: the app puts back what is not the settings.
+    pub restored: Option<backup::Restored>,
 }
 
 /// A folder the user can choose (Preferences › Network and cache, Chat).
@@ -588,7 +609,20 @@ fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool 
             .show_value(false),
     );
     let label = labels.get((*v).min(max) as usize).copied().unwrap_or("");
-    ui.label(RichText::new(label).size(12.0).color(p.violet_pale));
+    let font = egui::FontId::proportional(12.0);
+    let width = labels
+        .iter()
+        .map(|label| {
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), font.clone(), p.violet_pale)
+                .size()
+                .x
+        })
+        .fold(0.0, f32::max);
+    ui.add_sized(
+        vec2(width, ui.spacing().interact_size.y),
+        egui::Label::new(RichText::new(label).size(12.0).color(p.violet_pale)).wrap_mode(egui::TextWrapMode::Extend),
+    );
     r.changed()
 }
 
@@ -607,7 +641,7 @@ fn toggle(ui: &mut egui::Ui, p: &Palette, v: &mut bool) -> bool {
 fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, choices: &[(T, &str)]) -> bool {
     let shown = choices.iter().find(|(v, _)| v == value).map_or("", |(_, l)| *l);
     let mut changed = false;
-    egui::ComboBox::from_id_salt(ui.id().with("combo"))
+    egui::ComboBox::from_id_salt(ui.scope_id().with("combo"))
         .width(COMBO_W)
         .selected_text(shown)
         .truncate()
@@ -929,6 +963,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    backup::restore_modal(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);
     r
 }
@@ -937,7 +972,7 @@ fn erase_logs_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
     if !(st.confirm_erase_logs && open) {
         return;
     }
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new("options_erase_chat_logs")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_erase_chat_logs")).show(ctx, |ui| {
         ui.set_width(360.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-options-chat-logs-erase-title"))
@@ -1320,9 +1355,9 @@ fn page_area(
         Mode::Show
     };
     let scroll_id = match mode {
-        Mode::Search => egui::Id::new("preferences-search"),
-        Mode::Modified => egui::Id::new("preferences-modified"),
-        _ => egui::Id::new(("preferences-page", page, st.tab)),
+        Mode::Search => egui::Id::unique("preferences-search"),
+        Mode::Modified => egui::Id::unique("preferences-modified"),
+        _ => egui::Id::unique(("preferences-page", page, st.tab)),
     };
     let query = st.query.clone();
     let tab = st.tab;

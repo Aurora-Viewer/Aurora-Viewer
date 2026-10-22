@@ -126,7 +126,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 ] {
                     let get = f.get_mut;
                     cx.row(label, only, &f, |ui, s| {
-                        ui.add_enabled_ui(classic, |ui| swatch(ui, &p, ui.id().with("swatch"), get(s)))
+                        ui.add_enabled_ui(classic, |ui| swatch(ui, &p, ui.scope_id().with("swatch"), get(s)))
                             .inner
                     });
                 }
@@ -290,6 +290,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     );
                 });
                 cx.toggle(tr!("voice-lip-sync"), "", &field!(audio.lip_sync));
+            });
+            // ANIM_AGENT_CUSTOMIZE, always played by the Legacy Viewer
+            cx.group(tr!("ui-options-appearance-editing"), |cx| {
+                cx.toggle(
+                    tr!("ui-options-customize-animation"),
+                    tr!("ui-options-customize-animation-hint"),
+                    &field!(customize_animation),
+                );
             });
         }
     }

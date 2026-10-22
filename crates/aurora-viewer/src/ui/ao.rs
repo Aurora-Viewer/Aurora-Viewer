@@ -65,7 +65,7 @@ pub struct AoUi {
     folder: Uuid,
     filter: String,
     rows: Vec<(Uuid, String)>,
-    rows_key: Option<(u64, String, bool)>,
+    rows_key: Option<(u64, String, bool, super::inventory::view::Sort)>,
     cycle_edit: Option<(Uuid, Cycle)>,
     selected_set: Uuid,
     state_focus: Option<State>,
@@ -465,6 +465,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
         }
     }
     if let Some(notecard) = state.picker {
+        let order = super::inventory::view::picker_order(ctx, inv);
         let mut open = true;
         let mut picked = None;
         Floater::new(
@@ -476,7 +477,12 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
         .show(ctx, p, &mut open, |ui| {
             ui.label(aurora_i18n::tr!("ao-picker-help"));
             ui.text_edit_singleline(&mut state.filter);
-            let key = (inv.generation, state.filter.clone(), notecard);
+            let key = (
+                inv.generation,
+                state.filter.clone(),
+                notecard,
+                super::inventory::view::picker_sort(ctx),
+            );
             if state.rows_key.as_ref() != Some(&key) {
                 state.rows = inv
                     .items
@@ -488,7 +494,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
                     })
                     .map(|it| (it.id, it.name.clone()))
                     .collect();
-                state.rows.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+                state.rows.sort_by_key(|row| order.rank(row.0));
                 state.rows_key = Some(key);
             }
             egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
@@ -512,7 +518,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, inv: &mut Inventory, catalog: &inve
                     ui.label(&folder.info.name);
                 });
                 egui::ScrollArea::vertical().id_salt("ao_folders").max_height(160.0).show(ui, |ui| {
-                    for id in folder.children {
+                    for &id in order.children(state.folder) {
                         if let Some(f) = inv.folders.get(&id)
                             && !f.library
                         {

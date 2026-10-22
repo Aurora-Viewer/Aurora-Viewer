@@ -480,7 +480,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                     .items
                     .get(&id)
                     .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
-                if !matches!(it.asset_type, 5 | 6 | 13)
+                if !matches!(it.asset_type, 5 | 6 | 13 | 21)
                     || super::inventory::actions::library(inv, id)
                     || super::inventory::actions::in_type(inv, id, 14)
                 {

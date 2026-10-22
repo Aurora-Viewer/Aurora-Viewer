@@ -45,7 +45,7 @@ pub fn reconnect_place(region: &str, position: glam::Vec3) -> Option<StartLocati
 /// The pill under the top bar while the region is silent.
 pub fn show(ctx: &egui::Context, p: &Palette, seconds: u32) {
     let text = aurora_i18n::tr!("ui-link-stalled", seconds = seconds as i64);
-    egui::Area::new(Id::new("link_health_pill"))
+    egui::Area::new(Id::unique("link_health_pill"))
         .order(egui::Order::Foreground)
         .anchor(Align2::CENTER_TOP, Vec2::new(0.0, 64.0))
         .interactable(false)

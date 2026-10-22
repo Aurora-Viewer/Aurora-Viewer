@@ -36,11 +36,11 @@ const HINT_FADE: f64 = 0.12;
 const HINT_GAP: f32 = 6.0;
 
 fn hint_id() -> Id {
-    Id::new("window_snap_hint")
+    Id::unique("window_snap_hint")
 }
 
 pub(crate) fn paint(ctx: &egui::Context, p: &Palette, overlay: &Overlay) {
-    let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("window_snap_guide")));
+    let painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::unique("window_snap_guide")));
     let radius = ctx.global_style().visuals.window_corner_radius;
     let accent = p.violet_light;
     for rect in &overlay.guide.landing {

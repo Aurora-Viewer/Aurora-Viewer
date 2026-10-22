@@ -42,7 +42,7 @@ pub(super) fn clipboard(ctx: &egui::Context, id: egui::Id, source: &mut Notecard
     if !ctx.memory(|m| m.has_focus(id)) {
         return;
     }
-    let key = egui::Id::new("notecard_attachment_clipboard");
+    let key = egui::Id::unique("notecard_attachment_clipboard");
     let copying = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy | egui::Event::Cut)));
     let pasting = editable && ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))));
     if !copying && !pasting {
@@ -378,12 +378,12 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                clipboard(ctx, egui::Id::new("note"), source, text, editable);
+                clipboard(ctx, egui::Id::unique("note"), source, text, editable);
                 result = editor(
                     ui,
                     &crate::theme::Theme::default().palette(),
                     &Icons::default(),
-                    egui::Id::new("note"),
+                    egui::Id::unique("note"),
                     text,
                     Some(source),
                     editable,
@@ -430,7 +430,7 @@ mod tests {
                         ui,
                         &p,
                         &Icons::default(),
-                        egui::Id::new("code_background"),
+                        egui::Id::unique("code_background"),
                         &mut text,
                         None,
                         false,
@@ -528,7 +528,7 @@ mod tests {
                     frame(&ctx, &mut source, &mut text, editable, vec![]);
                 }
                 let attachment = ctx
-                    .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new("note").with(("demo_attachment", marker))))
+                    .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::unique("note").with(("demo_attachment", marker))))
                     .expect("attachment");
                 let pressed = frame(
                     &ctx,
@@ -565,7 +565,7 @@ mod tests {
                 for _ in 0..5 {
                     frame(&ctx, &mut source, &mut text, editable, vec![]);
                 }
-                let id = egui::Id::new("note");
+                let id = egui::Id::unique("note");
                 let marker = '\u{100000}';
                 let attachment = ctx
                     .data_mut(|data| data.get_temp::<egui::Rect>(id.with(("demo_attachment", marker))))
@@ -621,7 +621,7 @@ mod tests {
         for _ in 0..5 {
             frame(&ctx, &mut source, &mut text, true, vec![]);
         }
-        let id = egui::Id::new("note");
+        let id = egui::Id::unique("note");
         // Drag-and-drop remains available in blank space below the text.
         let rect = ctx
             .data_mut(|data| data.get_temp::<egui::Rect>(id.with("demo_rect")))
@@ -671,7 +671,7 @@ mod tests {
             let start = galley.pos_from_cursor(cursor);
             let end = galley.pos_from_cursor(cursor + 1);
             let rect = ctx
-                .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new("note").with(("demo_attachment", '\u{100000}'))))
+                .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::unique("note").with(("demo_attachment", '\u{100000}'))))
                 .expect("attachment");
             assert!(start.min.x >= 0.0, "attachment must not be trimmed at row start");
             assert!(
@@ -691,7 +691,7 @@ mod tests {
         for _ in 0..5 {
             frame(&ctx, &mut source, &mut text, true, vec![]);
         }
-        let id = egui::Id::new("note");
+        let id = egui::Id::unique("note");
         let index = text.chars().position(|c| c == '\u{100000}').expect("marker");
         let mut state = egui::TextEdit::load_state(&ctx, id).expect("editor");
         state
@@ -725,7 +725,7 @@ mod tests {
         for _ in 0..5 {
             frame(&ctx, &mut source, &mut text, false, vec![]);
         }
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("note")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("note")));
         frame(&ctx, &mut source, &mut text, false, vec![egui::Event::Text("changed".into())]);
         assert_eq!(text, original);
         egui::DragAndDrop::set_payload(&ctx, InvDrag(Uuid::from_u128(8104)));
@@ -756,7 +756,7 @@ mod tests {
         for _ in 0..5 {
             frame(&ctx, &mut source, &mut text, false, vec![]);
         }
-        let id = egui::Id::new("note");
+        let id = egui::Id::unique("note");
         let index = text.chars().position(|c| c == '\u{100000}').expect("image");
         let mut state = egui::TextEdit::load_state(&ctx, id).expect("editor");
         state

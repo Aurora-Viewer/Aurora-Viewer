@@ -42,12 +42,12 @@ pub fn events(ctx: &egui::Context, picker: &ColorPicker, frame: u64) -> Vec<Even
             } else {
                 Control::Title
             };
-            let drag_id = egui::Id::new(("demo_color_picker_dock", stage));
+            let drag_id = egui::Id::unique(("demo_color_picker_dock", stage));
             if frame == begin
                 && let (Some(title), Some(parent), Some(window)) = (
                     picker.controls.get(&control),
                     picker.parent_rect,
-                    ctx.memory(|m| m.area_rect(egui::Id::new(super::WINDOW_ID))),
+                    ctx.memory(|m| m.area_rect(egui::Id::unique(super::WINDOW_ID))),
                 )
             {
                 let start = title.min + egui::vec2(70.0, 20.0);
@@ -83,7 +83,7 @@ pub fn events(ctx: &egui::Context, picker: &ColorPicker, frame: u64) -> Vec<Even
         };
     }
     if matches!(mode, "follow" | "link") {
-        let start_id = egui::Id::new(("demo_color_picker_drag_start", mode));
+        let start_id = egui::Id::unique(("demo_color_picker_drag_start", mode));
         if frame == 700 {
             let control = if mode == "follow" { Control::ParentTitle } else { Control::Title };
             if let Some(rect) = picker.controls.get(&control) {

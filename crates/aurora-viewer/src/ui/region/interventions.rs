@@ -456,7 +456,7 @@ fn show_dialog(
     let here = people_here(world, v, present.len());
     let mut answer: Option<bool> = None;
     let mut repick = false;
-    let id = egui::Id::new("region_estate_intervention");
+    let id = egui::Id::unique("region_estate_intervention");
     let modal = widgets::Modal::new(id).show(ctx, |ui| {
         ui.set_width(if matches!(dialog, Dialog::Schedule { .. }) { 480.0 } else { 420.0 });
         match &mut dialog {

@@ -107,7 +107,7 @@ fn tab(
             ui.painter().galley(pos, g, count_ink);
         }
     }
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, label));
     if enabled {
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
@@ -277,9 +277,10 @@ pub fn icon_field(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String,
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 7.0;
                 super::glyph(ui, icon, p.muted, 13.0);
+                let centre = super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
                 ui.add(
                     egui::TextEdit::singleline(text)
-                        .frame(egui::Frame::NONE)
+                        .frame(egui::Frame::NONE.inner_margin(centre))
                         .hint_text(hint)
                         .desired_width(f32::INFINITY),
                 )

@@ -3,9 +3,11 @@
 
 pub mod abuse_report;
 mod agent_update;
+mod attachment_detach;
 pub mod bridge;
 pub mod build;
 pub mod caps;
+mod chat_reply;
 pub mod circuit;
 pub mod currency;
 pub mod estate;
@@ -15,6 +17,7 @@ pub mod freeze;
 pub mod group_money;
 pub mod groups;
 pub mod home;
+mod im_reply;
 pub mod inventory;
 pub mod land;
 pub mod land_tool;

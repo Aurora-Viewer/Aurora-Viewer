@@ -30,6 +30,7 @@ pub mod preview;
 pub mod probes;
 mod render_thread;
 mod renderer;
+mod rlva;
 mod selection;
 pub mod shadow_cull;
 mod shadow_merge;
@@ -107,6 +108,12 @@ pub(crate) fn common_shader_source() -> std::borrow::Cow<'static, str> {
 
 #[cfg(test)]
 mod shader_tests {
+    #[test]
+    fn rlva_sphere_shader_is_valid() {
+        validate(include_str!("shaders/rlva.wgsl"));
+        validate(include_str!("shaders/rlva_overlay.wgsl"));
+        validate(include_str!("shaders/rlva_resolution.wgsl"));
+    }
     fn validate(src: &str) {
         let module = match naga::front::wgsl::parse_str(src) {
             Ok(m) => m,

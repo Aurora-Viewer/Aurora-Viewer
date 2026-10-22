@@ -23,7 +23,7 @@ struct State {
 }
 
 fn state_id() -> Id {
-    Id::new("close_key_state")
+    Id::unique("close_key_state")
 }
 
 /// The window `id` is drawn this frame: Ctrl+W can close it on the next.
@@ -113,7 +113,7 @@ mod tests {
         let mut text = String::from("two words");
         let mut closed = Vec::new();
         let mut left_to_fields = false;
-        let field = Id::new("left_field");
+        let field = Id::unique("left_field");
         let mut frame = |frames: &mut Frames, events: Vec<egui::Event>, closed: &mut Vec<&'static str>, left: &mut bool| {
             frames.run(events, |ui| {
                 let ctx = ui.ctx().clone();
@@ -123,7 +123,7 @@ mod tests {
                     ui.add(egui::TextEdit::singleline(&mut text).id(field));
                 }
                 for (name, x) in [("left", 0.0), ("right", 400.0)].into_iter().filter(|_| windows) {
-                    let id = Id::new(name);
+                    let id = Id::unique(name);
                     egui::Window::new(name).id(id).fixed_pos(egui::pos2(x, 0.0)).show(&ctx, |ui| {
                         if name == "left" {
                             ui.add(egui::TextEdit::singleline(&mut text).id(field));
@@ -141,7 +141,7 @@ mod tests {
         frame(&mut frames, Vec::new(), &mut closed, &mut ignored);
         frames
             .ctx
-            .move_to_top(LayerId::new(Order::Middle, Id::new(if raise_left { "left" } else { "right" })));
+            .move_to_top(LayerId::new(Order::Middle, Id::unique(if raise_left { "left" } else { "right" })));
         frame(&mut frames, Vec::new(), &mut closed, &mut ignored);
         frame(&mut frames, events, &mut closed, &mut left_to_fields);
         frame(&mut frames, Vec::new(), &mut closed, &mut left_to_fields);

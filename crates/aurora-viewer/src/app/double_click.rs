@@ -19,7 +19,7 @@ impl App {
     /// Half the height of our avatar: how high above the ground its centre
     /// stands (LLVOAvatar::getPelvisToFoot, read from the size the
     /// simulator gives the avatar object).
-    fn pelvis_to_foot(&self) -> f32 {
+    pub(super) fn pelvis_to_foot(&self) -> f32 {
         self.world
             .objects
             .index_of_uuid(&self.world.agent_id)
@@ -92,12 +92,15 @@ impl App {
                 position.z
             )
         };
-        self.begin_teleport(label, !here);
-        self.send(NetCommand::TeleportTo {
-            handle,
-            position,
-            look_at: self.camera.forward(),
-        });
+        self.request_user_teleport(
+            NetCommand::TeleportTo {
+                handle,
+                position,
+                look_at: self.camera.forward(),
+            },
+            label,
+            !here,
+        );
     }
 
     /// Running while walking there, besides "Always run" and a double-tap

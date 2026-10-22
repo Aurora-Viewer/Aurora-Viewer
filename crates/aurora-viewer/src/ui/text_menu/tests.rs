@@ -67,7 +67,7 @@ impl Bench {
         };
         // laid out once, then focused like a click would
         bench.frame(Vec::new());
-        bench.ctx.memory_mut(|m| m.request_focus(Id::new(FIELD)));
+        bench.ctx.memory_mut(|m| m.request_focus(Id::unique(FIELD)));
         bench.frame(Vec::new());
         bench
     }
@@ -83,7 +83,7 @@ impl Bench {
         menu.before(ctx, &mut raw, || clipboard.clone(), None);
         let p = crate::theme::Theme::default().palette();
         let mut output = ctx.run_ui(raw, |ui| {
-            let id = Id::new(FIELD);
+            let id = Id::unique(FIELD);
             match kind {
                 Kind::Editable => {
                     ui.add(egui::TextEdit::singleline(text).id(id));
@@ -112,7 +112,7 @@ impl Bench {
     }
 
     fn center(&self) -> Pos2 {
-        self.ctx.read_response(Id::new(FIELD)).expect("field laid out").rect.center()
+        self.ctx.read_response(Id::unique(FIELD)).expect("field laid out").rect.center()
     }
 
     fn click(&mut self, pos: Pos2, button: PointerButton) {
@@ -131,7 +131,7 @@ impl Bench {
     }
 
     fn selection(&self) -> std::ops::Range<usize> {
-        let range = TextEditState::load(&self.ctx, Id::new(FIELD))
+        let range = TextEditState::load(&self.ctx, Id::unique(FIELD))
             .and_then(|s| s.cursor.char_range())
             .expect("cursor")
             .as_sorted_char_range();
@@ -161,7 +161,7 @@ fn a_right_click_on_a_field_opens_the_menu_and_keeps_the_selection() {
     // the popup is an egui area: drawn from its second frame
     b.frame(Vec::new());
     let open = b.menu.open.as_ref().expect("still open");
-    let layer = egui::LayerId::new(egui::Order::Foreground, Id::new("text_field_menu").with(open.serial));
+    let layer = egui::LayerId::new(egui::Order::Foreground, Id::unique("text_field_menu").with(open.serial));
     assert!(b.ctx.memory(|m| m.areas().is_visible(&layer)));
     // a click outside closes it
     b.click(Pos2::new(480.0, 380.0), PointerButton::Primary);
@@ -178,7 +178,7 @@ fn chosen_entries_run_in_the_field() {
     let open = b.menu.open.as_ref().expect("open");
     let rect = b
         .ctx
-        .memory(|m| m.area_rect(Id::new("text_field_menu").with(open.serial)))
+        .memory(|m| m.area_rect(Id::unique("text_field_menu").with(open.serial)))
         .expect("menu laid out");
     let first = Pos2::new(rect.center().x, rect.top() + rect.height() / 10.0);
     b.click(first, PointerButton::Primary);
@@ -187,14 +187,14 @@ fn chosen_entries_run_in_the_field() {
     assert_eq!(b.copied, ["hello world"]);
     // Paste plays the clipboard's text at the cursor
     b.clipboard = Some("pasted".into());
-    b.menu.pending = Some((Id::new(FIELD), Entry::Paste));
+    b.menu.pending = Some((Id::unique(FIELD), Entry::Paste));
     b.frame(Vec::new());
     assert_eq!(b.text, "pasted");
     // Select All then Delete
-    b.menu.pending = Some((Id::new(FIELD), Entry::SelectAll));
+    b.menu.pending = Some((Id::unique(FIELD), Entry::SelectAll));
     b.frame(Vec::new());
     assert_eq!(b.selection(), 0..6);
-    b.menu.pending = Some((Id::new(FIELD), Entry::Delete));
+    b.menu.pending = Some((Id::unique(FIELD), Entry::Delete));
     b.frame(Vec::new());
     assert_eq!(b.text, "");
 }
@@ -213,7 +213,7 @@ fn passwords_and_read_only_fields_are_recognised() {
         })
     );
     // even run, Copy leaves a password out of the clipboard
-    b.menu.pending = Some((Id::new(FIELD), Entry::Copy));
+    b.menu.pending = Some((Id::unique(FIELD), Entry::Copy));
     b.frame(Vec::new());
     assert!(b.copied.is_empty());
 

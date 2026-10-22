@@ -34,11 +34,11 @@ use uuid::Uuid;
 /// Ask to open a profile from anywhere in the interface (names and agent
 /// links in text); the app reads it once per frame (LLAgentHandler).
 pub fn request_open(ctx: &egui::Context, id: Uuid) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("aurora_open_profile"), id));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aurora_open_profile"), id));
 }
 
 pub fn take_open_request(ctx: &egui::Context) -> Option<Uuid> {
-    ctx.data_mut(|d| d.remove_temp::<Uuid>(egui::Id::new("aurora_open_profile")))
+    ctx.data_mut(|d| d.remove_temp::<Uuid>(egui::Id::unique("aurora_open_profile")))
 }
 
 pub enum ProfileAction {
@@ -325,7 +325,7 @@ impl ProfileUi {
                 scene.textures.note_usage_fixed(&asset, 16384.0);
                 16384.0
             } else {
-                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("profile_photo_preview", window.id))))
+                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("profile_photo_preview", window.id))))
                     .map_or(520.0, |rect| rect.size().max_elem())
                     * ctx.pixels_per_point()
             };
@@ -345,7 +345,7 @@ impl ProfileUi {
     /// LLAvatarActions::showProfile: one window per avatar, raised if open;
     /// each opening reloads the data (LLPanelProfile::updateData).
     pub fn open(&mut self, world: &mut World, id: Uuid) {
-        if id.is_nil() {
+        if id.is_nil() || !world.rlva_can_name(id) {
             return;
         }
         world.profiles.refresh(id);
@@ -419,6 +419,9 @@ impl ProfileUi {
         let screen = ctx.content_rect();
         let mut pick_picture: Option<(PictureSlot, Uuid)> = None;
         for (i, w) in self.windows.iter_mut().enumerate() {
+            if !world.rlva_can_name(w.id) {
+                continue;
+            }
             if !classic {
                 let profile = world.profiles.get(&w.id);
                 if let Some(pr) = profile {
@@ -632,7 +635,7 @@ fn photo_window(
                 .flatten()
         });
         if let Some(rect) = texture_view::show_image(ui, p, image, photo.view.dimensions, &mut photo.view.display, None) {
-            ctx.data_mut(|data| data.insert_temp(egui::Id::new(("profile_photo_preview", window.id)), rect));
+            ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("profile_photo_preview", window.id)), rect));
         }
     });
     if !open {
@@ -1168,7 +1171,7 @@ fn second_life_tab(
                 own && !w.about_preview,
                 Vec2::new(field_w, info_h),
                 65_000,
-                egui::Id::new(("sl_about", id)),
+                egui::Id::unique(("sl_about", id)),
             );
         } else {
             inset(ui, p, field_w, info_h, |ui| loading(ui, p));
@@ -1608,7 +1611,7 @@ fn picks_tab(
         });
         ui.horizontal(|ui| {
             let creating = w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil());
-            let can_add = pr.picks.len() < picks_limit(world) && !creating;
+            let can_add = pr.picks.len() < picks_limit(world) && !creating && !world.rlva.has("showloc");
             if ui
                 .add_enabled(can_add, egui::Button::new(aurora_i18n::tr!("ui-profile-new")))
                 .clicked()
@@ -1682,6 +1685,9 @@ fn picks_tab(
 
 /// A new pick at our position (LLPanelProfilePick::setAvatarId, null pick).
 fn new_pick(world: &World) -> PickEdit {
+    if world.rlva.has("showloc") {
+        return PickEdit::default();
+    }
     let region = world.region_name();
     let (parcel_name, desc, snapshot) = match &world.parcel {
         Some(pa) => (pa.name.clone(), pa.desc.clone(), pa.snapshot_id),
@@ -1819,7 +1825,7 @@ fn pick_detail(
         _ => String::new(),
     };
     inset(ui, p, width, 22.0, |ui| {
-        ui.add(egui::Label::new(RichText::new(location).size(12.0).color(p.muted)).truncate());
+        ui.add(egui::Label::new(RichText::new(world.rlva_filter_text(&location)).size(12.0).color(p.muted)).truncate());
     });
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
@@ -1836,7 +1842,14 @@ fn pick_detail(
         {
             actions.push(ProfileAction::Teleport(pos));
         }
-        if own && ui.button(aurora_i18n::tr!("ui-profile-set-location")).clicked() {
+        if own
+            && ui
+                .add_enabled(
+                    !world.rlva.has("showloc"),
+                    egui::Button::new(aurora_i18n::tr!("ui-profile-set-location")),
+                )
+                .clicked()
+        {
             // onClickSetLocation: our position, parcel and region now
             let here = new_pick(world);
             if let Some((e, _)) = w.pick_edit.as_mut() {
@@ -1993,7 +2006,7 @@ fn classified_detail(
     row(
         ui,
         aurora_i18n::tr!("ui-profile-location"),
-        &location_text(&[&info.parcel_name, &info.sim_name], info.pos_global),
+        &world.rlva_filter_text(&location_text(&[&info.parcel_name, &info.sim_name], info.pos_global)),
     );
     row(
         ui,
@@ -2118,7 +2131,7 @@ fn first_life_tab(
         c.own && !w.fl_preview,
         Vec2::new(width, h),
         65_000,
-        egui::Id::new(("fl_about", w.id)),
+        egui::Id::unique(("fl_about", w.id)),
     );
     if c.own {
         ui.add_space(4.0);

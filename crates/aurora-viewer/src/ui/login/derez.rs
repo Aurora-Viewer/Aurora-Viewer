@@ -204,7 +204,7 @@ impl Transition {
         let elapsed = (now - self.started).max(0.0) as f32;
         // Register the animation layer before the status area, so its snapshot
         // cannot cover the live progress (and normal modals remain above both).
-        let painter = egui::Area::new(egui::Id::new("login_derez"))
+        let painter = egui::Area::new(egui::Id::unique("login_derez"))
             .order(Order::Foreground)
             .interactable(false)
             .fade_in(false)
@@ -279,7 +279,7 @@ impl Transition {
         let action = transform.mul_rect(self.selected.action);
         if action.is_positive() {
             painter.rect_filled(action, style.visuals.widgets.inactive.corner_radius, p.field);
-            egui::Area::new(egui::Id::new("account_connection_progress"))
+            egui::Area::new(egui::Id::unique("account_connection_progress"))
                 .order(Order::Foreground)
                 .fade_in(false)
                 .fixed_pos(action.min + Vec2::new(6.0, 3.0))
@@ -329,10 +329,7 @@ mod tests {
         let card = Snapshot {
             rect,
             action: Rect::NOTHING,
-            shapes: vec![ClippedShape {
-                clip_rect: rect,
-                shape: Shape::rect_filled(rect, 0.0, p.panel),
-            }],
+            shapes: vec![ClippedShape::new(rect, Shape::rect_filled(rect, 0.0, p.panel))],
         };
         // tessellation needs the fonts of a first frame
         let _ = super::super::test_output(ctx.run_ui(egui::RawInput::default(), |_| {}));
@@ -363,10 +360,7 @@ mod tests {
             selected: Snapshot {
                 rect,
                 action,
-                shapes: vec![ClippedShape {
-                    clip_rect: screen,
-                    shape: Shape::rect_filled(rect, 2.0, p.panel),
-                }],
+                shapes: vec![ClippedShape::new(screen, Shape::rect_filled(rect, 2.0, p.panel))],
             },
             others: Vec::new(),
             fragments: Arc::new(OnceLock::new()),

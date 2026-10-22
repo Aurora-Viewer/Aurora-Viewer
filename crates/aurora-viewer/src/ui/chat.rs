@@ -614,6 +614,16 @@ fn line_job(
     times: bool,
     look: JobLook<'_>,
 ) -> BubbleJob {
+    let filtered;
+    let line = if world.rlva.has("shownames") || world.rlva.has("showloc") {
+        let mut copy = line.clone();
+        copy.text = world.rlva_filter_text(&copy.text).into_owned();
+        copy.from = sender_name(world, &world.own_name(), &copy);
+        filtered = copy;
+        &filtered
+    } else {
+        line
+    };
     let pill = match look {
         JobLook::Pill(family) => Some(family),
         _ => None,
@@ -709,6 +719,13 @@ fn line_job(
     };
     let mut lead = name_gap;
     for (piece, link) in pieces(body, name_of) {
+        let piece = if let Some(Link::Agent(id)) = &link
+            && !world.rlva_can_name(*id)
+        {
+            world.social.name_of(id)
+        } else {
+            world.rlva_filter_text(&piece).into_owned()
+        };
         let badge = match &link {
             Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
             Some(Link::Place(_, place)) => world.map.ratings.get(&place.location.region).map(LinkBadge::Rating),
@@ -831,7 +848,7 @@ fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>,
 /// The id of a button of the window of tabs (Bubbles and Lines styles) by
 /// its icon ("send" for the send button).
 pub(crate) fn classic_id(icon: &str) -> egui::Id {
-    egui::Id::new(("conv_classic", icon))
+    egui::Id::unique(("conv_classic", icon))
 }
 
 /// Tabler icon button of the conversation toolbar.
@@ -1226,6 +1243,8 @@ pub(crate) fn chat_text_marked(
     italics: bool,
     mark: Option<Mark>,
 ) {
+    let filtered = world.rlva_filter_text(text);
+    let text = filtered.as_ref();
     let segs = segments(text);
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(text, m.needle).is_empty());
@@ -1299,6 +1318,12 @@ fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32) {
 /// An avatar link of a text (its name, or the text it was written with):
 /// opens the profile, the name menu on a right click.
 fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, text: &str, size: f32) {
+    let projected = if world.rlva_can_name(id) {
+        world.rlva_filter_text(text).into_owned()
+    } else {
+        world.social.name_of(&id)
+    };
+    let text = projected.as_str();
     let k = super::colors::get();
     let r = action_marker::link(ui, action_marker::Action::Profile, text, size, super::colors::c(k.chat_slurl), None);
     name_menu(&r, p, world, id);
@@ -1399,6 +1424,9 @@ fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&st
 /// name looked up, mine, else the name the line came with; history lines are
 /// looked up for nothing.
 pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
+    if !line.source.is_nil() && !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !world.rlva_can_name(line.source) {
+        return crate::world::rlva::privacy::anonymous(line.source).display_name.clone();
+    }
     let logged = line.origin != Origin::Live;
     let own = line.kind == ChatKind::Own;
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
@@ -1411,7 +1439,7 @@ pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::Ch
     match cached {
         Some(n) => n.display(&names.options),
         None if own && !logged => own_name.to_owned(),
-        None => line.from.clone(),
+        None => world.rlva_filter_text(&line.from).into_owned(),
     }
 }
 
@@ -1438,7 +1466,7 @@ fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> Strin
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) => line.text.clone(),
         _ => line_body(line, name).0,
     };
-    segments(&body)
+    let text: String = segments(&body)
         .into_iter()
         .map(|s| match s {
             Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => t.to_owned(),
@@ -1448,7 +1476,8 @@ fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> Strin
             Seg::Agent(id) => world.social.name_of(&id),
             Seg::App(u, link) => app_links::label(world, &mut HashSet::new(), u, &link),
         })
-        .collect()
+        .collect();
+    world.rlva_filter_text(&text).into_owned()
 }
 
 /// What a copied line starts with when it is taken from its start, as
@@ -1719,8 +1748,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     };
     let wash = find::wash(p);
     let current = search.find.as_ref().and_then(|f| f.current_line(view));
-    let out = egui::ScrollArea::vertical()
-        .id_salt(("conv", st.selected))
+    let out = super::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("conv", st.selected))
         .stick_to_bottom(true)
         .auto_shrink([false, false])
         .max_height(height)
@@ -1795,9 +1823,9 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             shift
         });
-    let mut state = out.state;
+    let mut offset = out.state.unclamped_offset();
     // rows above changed height: what is in sight stays
-    state.offset.y += out.inner;
+    offset.y += out.inner;
     let mut store = out.inner != 0.0;
     // what came in since the reader left the end: others' messages, not
     // ours nor the notices
@@ -1808,14 +1836,14 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                 .is_some_and(|l| l.kind != crate::world::ChatKind::Own && !l.kind.is_notice())
         })
     });
-    let latest_id = ui.id().with(("latest", st.selected));
+    let latest_id = ui.scope_id().with(("latest", st.selected));
     if !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived) {
         // past the end: the scroll area stops there and sticks to it again
-        state.offset.y = out.content_size.y;
+        offset.y = out.content_size.y;
         store = true;
     }
     if store {
-        state.store(ui.ctx(), out.id);
+        super::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
     }
     line_menu::show(ui, menu, p, |ui, target| {
         if let Some(avatar) = target.sender {
@@ -2122,7 +2150,7 @@ fn list_entry(
     match close {
         Some(tip) if sel || over => {
             let button = ui.interact(slot, resp.id.with("close"), egui::Sense::click());
-            button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+            button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
             if button.hovered() {
                 ui.painter()
                     .rect_filled(slot, ui.visuals().widgets.inactive.corner_radius, p.raised);
@@ -2386,7 +2414,7 @@ pub fn show(
                 // handleDragAndDrop, DAD_PERSON / DAD_CALLINGCARD)
                 if let Some(conversation) = st.selected {
                     let pane = ui.available_rect_before_wrap();
-                    let zone = ui.interact(pane, ui.id().with("person_drop"), egui::Sense::hover());
+                    let zone = ui.interact(pane, ui.scope_id().with("person_drop"), egui::Sense::hover());
                     if zone.dnd_hover_payload::<super::call_invite::PersonDrag>().is_some() {
                         ui.painter().rect_stroke(
                             pane,
@@ -2461,7 +2489,7 @@ pub fn show(
                 // the head's row), when the keyboard is in this window, or
                 // nowhere with the pointer over it
                 // each conversation's own field (cursor, undo), like its draft
-                let conv_input = egui::Id::new(("conv_input", st.selected));
+                let conv_input = egui::Id::unique(("conv_input", st.selected));
                 let search = st.searches.entry(st.selected).or_default();
                 if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
                     search.open_find();
@@ -2526,7 +2554,7 @@ pub fn show(
                                 .hint_text(hint)
                                 .desired_width(field_w)
                                 .min_size(egui::vec2(field_w, INPUT_H))
-                                .vertical_align(egui::Align::Center)
+                                .align(egui::Align2::LEFT_CENTER)
                         });
                         if recalled {
                             output.response.mark_changed();
@@ -2554,7 +2582,7 @@ pub fn show(
                 if st.emoji_open {
                     let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
                     let mut close = false;
-                    egui::Area::new(egui::Id::new("emoji_picker"))
+                    egui::Area::new(egui::Id::unique("emoji_picker"))
                         .fade_in(false)
                         .order(egui::Order::Foreground)
                         .pivot(egui::Align2::LEFT_BOTTOM)
@@ -2670,7 +2698,7 @@ pub fn conversations_waiting(world: &World) -> bool {
 /// on the Contacts or an IM tab the bubbles come back.
 pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
     let minimized = ctx
-        .data_mut(|d| d.get_persisted::<bool>(egui::Id::new(("conversations", "minimized"))))
+        .data_mut(|d| d.get_persisted::<bool>(egui::Id::unique(("conversations", "minimized"))))
         .unwrap_or(false);
     !st.contacts && st.selected.is_none() && !minimized
 }
@@ -2753,7 +2781,7 @@ pub fn toasts(
     }
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &crate::world::ChatLine)> = Vec::new();
-    egui::Area::new(egui::Id::new("chat_toasts"))
+    egui::Area::new(egui::Id::unique("chat_toasts"))
         .anchor(
             egui::Align2::LEFT_BOTTOM,
             egui::vec2(8.0, -(ctx.content_rect().bottom() - bottom) - 6.0),
@@ -2916,7 +2944,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     if !super::bars::demo::get().click_name || !(700..=701).contains(&frame) {
         return Vec::new();
     }
-    let Some(r) = ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new("chat_toast_demo_name"))) else {
+    let Some(r) = ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("chat_toast_demo_name"))) else {
         return Vec::new();
     };
     let pos = r.center();
@@ -2957,9 +2985,9 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
     let Some(target) = sender_link(world, line) else { return };
     // AURORA_DEMO_BARS=chatname: the newest resident's name is clicked
     if matches!(target, SenderLink::Resident(_)) && super::bars::demo::get().click_name {
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new("chat_toast_demo_name"), rect));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique("chat_toast_demo_name"), rect));
     }
-    egui::Area::new(egui::Id::new(("chat_toast_sender", k)))
+    egui::Area::new(egui::Id::unique(("chat_toast_sender", k)))
         .fixed_pos(rect.min)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
@@ -3030,7 +3058,7 @@ pub(crate) fn range_rects(galley: &egui::Galley, origin: egui::Pos2, range: std:
 /// (LLFloaterIMNearbyChatToastPanel::handleMouseUp): same actions and
 /// right-click menus as in the conversation window.
 fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: egui::Rect, link: &Link, col: Color32) {
-    egui::Area::new(egui::Id::new(("chat_toast_link", k)))
+    egui::Area::new(egui::Id::unique(("chat_toast_link", k)))
         .fixed_pos(rect.min)
         .order(egui::Order::Background)
         .show(ctx, |ui| {
@@ -3095,7 +3123,7 @@ fn identified(build: impl FnOnce(egui::TextEdit<'_>) -> egui::TextEdit<'_>) -> i
 
 /// The id of the local chat's field (`bar_input`).
 pub(crate) fn bar_input_id() -> egui::Id {
-    egui::Id::new("nearby_chat_input")
+    egui::Id::unique("nearby_chat_input")
 }
 
 /// The text cursor of a field after the last character: the keyboard given
@@ -3507,10 +3535,13 @@ mod tests {
         frame(Vec::new());
         frame(Vec::new());
         let name = ctx
-            .memory(|m| m.area_rect(egui::Id::new(("chat_toast_sender", 0usize))))
+            .memory(|m| m.area_rect(egui::Id::unique(("chat_toast_sender", 0usize))))
             .expect("the resident's name is clickable");
         // one name only: the notice has none
-        assert!(ctx.memory(|m| m.area_rect(egui::Id::new(("chat_toast_sender", 1usize)))).is_none());
+        assert!(
+            ctx.memory(|m| m.area_rect(egui::Id::unique(("chat_toast_sender", 1usize))))
+                .is_none()
+        );
         let click = |at: egui::Pos2, pressed: bool| egui::Event::PointerButton {
             pos: at,
             button: egui::PointerButton::Primary,
@@ -3594,7 +3625,7 @@ mod tests {
                 );
             });
         };
-        let field = |c: Option<uuid::Uuid>| egui::Id::new(("conv_input", c));
+        let field = |c: Option<uuid::Uuid>| egui::Id::unique(("conv_input", c));
         for (tab, text) in [(Some(a), "to A"), (Some(b), "to B"), (None, "nearby")] {
             st.select_tab(tab);
             frame(&mut st, Vec::new());
@@ -3670,7 +3701,7 @@ mod tests {
                 );
             });
         };
-        let field = |c: uuid::Uuid| egui::Id::new(("conv_input", Some(c)));
+        let field = |c: uuid::Uuid| egui::Id::unique(("conv_input", Some(c)));
         // opened by a call: shown, the keyboard stays nowhere
         world.social.focus_im = Some(a);
         frame(&mut st, &mut world, &mut open);
@@ -3816,7 +3847,7 @@ mod tests {
         frame(&mut st, Vec::new());
         frame(&mut st, Vec::new());
         assert_eq!(st.draft_mut(None), "ok");
-        assert!(ctx.memory(|m| m.has_focus(egui::Id::new(("conv_input", None::<uuid::Uuid>)))));
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", None::<uuid::Uuid>)))));
         // a click without a drag clears the selection
         let at = egui::pos2(second.center().x, second.center().y);
         frame(&mut st, vec![egui::Event::PointerMoved(at), button(at, true)]);
@@ -3851,7 +3882,7 @@ mod tests {
         frame(&mut st, vec![button(from, false)]);
         assert!(st.selection.1.is_empty());
         let field = ctx
-            .read_response(egui::Id::new(("conv_input", None::<uuid::Uuid>)))
+            .read_response(egui::Id::unique(("conv_input", None::<uuid::Uuid>)))
             .expect("the conversation's field")
             .rect;
         // (in the workspace: the line of who is typing, above the box)
@@ -4035,6 +4066,7 @@ mod tests {
             unit: egui::MouseWheelUnit::Point,
             delta: egui::vec2(0.0, 2000.0),
             phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
             modifiers: egui::Modifiers::NONE,
         };
         draw(None, vec![wheel]);

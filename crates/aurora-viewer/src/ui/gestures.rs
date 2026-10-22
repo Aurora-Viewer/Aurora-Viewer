@@ -196,8 +196,7 @@ pub fn show(
                             let active = manager.active.contains(&id);
                             let selected = state.selected.contains(&id);
                             let response = ui.add_sized([ui.available_width(), 24.0], egui::Button::selectable(selected, ""));
-                            response
-                                .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, ui.is_enabled(), selected, &it.name));
+                            response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, &it.name));
                             ui.scope_builder(
                                 egui::UiBuilder::new()
                                     .max_rect(response.rect)

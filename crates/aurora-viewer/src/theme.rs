@@ -251,6 +251,28 @@ impl Theme {
         crate::ui::fonts::set_scale(ctx, self.font_scale.clamp(0.6, 2.0) * extra_font_scale.clamp(0.5, 2.0));
         ctx.set_theme(egui::ThemePreference::Dark);
         ctx.all_styles_mut(|s| *s = style.clone());
+        ctx.replace_widget_theme::<egui::widget_style::TextEditStyle>(FieldSize);
+        // every interface context goes through here
+        crate::ui::click_away_focus::install(ctx);
+    }
+}
+
+/// The size of the text fields: egui 0.37 makes them as high as a button
+/// (`interact_size`, 26 points here) with a button's padding; they keep egui
+/// 0.36's, 4 × 2 points around their text (stroke included) and no minimum
+/// height, so no window grows. Their capitals sit in the middle
+/// (`widgets::field_text_margin`). The rest is egui's look.
+struct FieldSize;
+
+impl egui::theme::StyleProvider<egui::widget_style::TextEditStyle> for FieldSize {
+    fn style(&mut self, args: &egui::widget_style::StyleArgs<'_>) -> egui::widget_style::TextEditStyle {
+        let mut field: egui::widget_style::TextEditStyle = egui::theme::StyleProvider::style(&mut egui::theme::DefaultStyle, args);
+        let frame = &mut field.atom_layout.frame;
+        let centre = crate::ui::widgets::field_text_margin(args.ctx, &field.atom_layout.text_style.font_id);
+        frame.inner_margin =
+            frame.inner_margin - egui::Margin::from(args.style.spacing.button_padding) + egui::Margin::symmetric(4, 2) + centre;
+        field.atom_layout.min_size = egui::Vec2::ZERO;
+        field
     }
 }
 
@@ -262,5 +284,27 @@ mod tests {
     fn hex_parsing() {
         assert_eq!(hex("#8B5CF6"), Color32::from_rgb(0x8b, 0x5c, 0xf6));
         assert_eq!(hex("070B1F"), Color32::from_rgb(7, 11, 31));
+    }
+
+    /// A text field is as high as its text and 2 points above and below
+    /// (egui 0.36), not a button's 26 points (egui 0.37): no window grows.
+    #[test]
+    fn text_fields_keep_their_size() {
+        let ctx = egui::Context::default();
+        Theme::default().apply(&ctx, 1.0);
+        let mut heights = (0.0, 0.0, 0.0);
+        for _ in 0..2 {
+            let (mut a, mut b) = (String::new(), String::new());
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                let row = ui.fonts_mut(|f| f.row_height(&egui::TextStyle::Body.resolve(ui.style())));
+                let framed = ui.add(egui::TextEdit::singleline(&mut a)).rect.height();
+                let bare = ui.add(egui::TextEdit::singleline(&mut b).frame(egui::Frame::NONE)).rect.height();
+                heights = (row, framed, bare);
+            });
+            out.textures_delta.clear();
+        }
+        let (row, framed, bare) = heights;
+        assert!((framed - (row + 4.0)).abs() < 0.5, "framed field {framed} for a {row} row");
+        assert!((bare - row).abs() < 0.5, "bare field {bare} for a {row} row");
     }
 }

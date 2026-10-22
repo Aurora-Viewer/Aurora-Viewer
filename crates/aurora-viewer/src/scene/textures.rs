@@ -979,6 +979,18 @@ impl PreviewSource {
     pub fn revision(&self) -> PreviewRevision {
         (self.bytes.len(), self.decoded, self.size, self.procedural)
     }
+    /// What `image` depends on: the level it decodes, never finer than
+    /// preview_discard, instead of the exact bytes and level held. The
+    /// texture budget lowers and raises the levels held all the time on a
+    /// busy region; small previews built again at each move (the shape
+    /// editor's hints) cost a hitch every few hundred milliseconds.
+    pub fn image_revision(&self) -> PreviewRevision {
+        let Some((width, height)) = self.size.filter(|_| self.decoded.is_some()) else {
+            return self.revision();
+        };
+        let level = texture_cache::preview_discard(width, height).max(self.decoded.unwrap_or(0));
+        (0, Some(level), self.size, self.procedural)
+    }
     pub fn image(self, id: Uuid) -> Option<Arc<aurora_render::preview::Image>> {
         let image = |width, height, rgba: Vec<u8>| {
             Arc::new(aurora_render::preview::Image {
@@ -3007,6 +3019,25 @@ fn decode_job(job: DecodeJob, data: &[u8], pool: Option<&StagingPool>, meter: &D
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_images_ignore_the_budget_moving_finer_levels() {
+        let source = |bytes: usize, decoded: Option<u8>| PreviewSource {
+            bytes: Arc::new(vec![0; bytes]),
+            jpeg: PathBuf::new(),
+            blocks: PathBuf::new(),
+            decoded,
+            size: Some((1024, 1024)),
+            procedural: false,
+        };
+        // 1024 px: the previews decode level 2 (256 px)
+        let held = source(90_000, Some(0)).image_revision();
+        assert_eq!(held, source(40_000, Some(1)).image_revision());
+        assert_eq!(held, source(20_000, Some(2)).image_revision());
+        assert_ne!(held, source(5_000, Some(3)).image_revision(), "a coarser level shows");
+        assert_ne!(source(5_000, None).image_revision(), source(9_000, None).image_revision());
+        assert_ne!(source(90_000, Some(0)).revision(), source(40_000, Some(1)).revision());
+    }
 
     #[test]
     fn pick_mask_threshold_repeated_uvs_and_invalid_pixels() {

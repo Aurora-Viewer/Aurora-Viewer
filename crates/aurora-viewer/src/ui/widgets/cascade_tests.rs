@@ -54,13 +54,13 @@ impl Fixture {
 
     fn rect(&self, n: usize) -> Rect {
         self.ctx
-            .memory(|m| m.area_rect(Id::new(&self.windows[n].id)).expect("visible floater"))
+            .memory(|m| m.area_rect(Id::unique(&self.windows[n].id)).expect("visible floater"))
     }
 
     fn move_to(&mut self, n: usize, pos: Pos2) {
         move_floater(&self.ctx, &self.windows[n].id, pos);
         self.ctx
-            .move_to_top(egui::LayerId::new(egui::Order::Middle, Id::new(&self.windows[n].id)));
+            .move_to_top(egui::LayerId::new(egui::Order::Middle, Id::unique(&self.windows[n].id)));
         self.settle();
     }
 }

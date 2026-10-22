@@ -69,6 +69,8 @@ mod tests {
             theme: Default::default(),
             log_path: dir.join("DO_NOT_PUBLISH.log"),
             demo: true,
+            os: String::new(),
+            crash_reports: Default::default(),
         };
         std::fs::write(dir.join("exit-code.txt"), "0xC0000005").unwrap();
         std::fs::write(dir.join("stopped-unix.txt"), "1042").unwrap();

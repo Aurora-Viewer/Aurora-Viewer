@@ -939,7 +939,7 @@ mod tests {
             |ui| {
                 menu::popup_at(
                     ui.ctx(),
-                    egui::Id::new("inventory_menu_test"),
+                    egui::Id::unique("inventory_menu_test"),
                     egui::pos2(500.0, 80.0),
                     &mut true,
                     &p,
@@ -1130,18 +1130,25 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        menu::popup_at(ui.ctx(), egui::Id::new("worn_menu"), egui::pos2(500.0, 80.0), &mut open, &p, |ui| {
-                            show(
-                                ui,
-                                &p,
-                                &inv,
-                                item,
-                                &mut state,
-                                &mut InventoryPreferences::default(),
-                                &facts,
-                                &mut actions,
-                            );
-                        });
+                        menu::popup_at(
+                            ui.ctx(),
+                            egui::Id::unique("worn_menu"),
+                            egui::pos2(500.0, 80.0),
+                            &mut open,
+                            &p,
+                            |ui| {
+                                show(
+                                    ui,
+                                    &p,
+                                    &inv,
+                                    item,
+                                    &mut state,
+                                    &mut InventoryPreferences::default(),
+                                    &facts,
+                                    &mut actions,
+                                );
+                            },
+                        );
                     },
                 ))
             };
@@ -1219,7 +1226,7 @@ mod tests {
                     |ui| {
                         menu::popup_at(
                             ui.ctx(),
-                            egui::Id::new("batch_menu"),
+                            egui::Id::unique("batch_menu"),
                             egui::pos2(500.0, 80.0),
                             &mut open,
                             &p,
@@ -1313,7 +1320,7 @@ mod tests {
                     |ui| {
                         menu::popup_at(
                             ui.ctx(),
-                            egui::Id::new("favorite_batch_menu"),
+                            egui::Id::unique("favorite_batch_menu"),
                             egui::pos2(500.0, 80.0),
                             &mut open,
                             &p,

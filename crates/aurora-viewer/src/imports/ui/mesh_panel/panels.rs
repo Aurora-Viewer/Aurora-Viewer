@@ -70,7 +70,7 @@ pub(super) fn avatar_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &
     }
     let height = ui
         .ctx()
-        .data(|d| d.get_temp::<f32>(egui::Id::new(("mesh_content_height", id))))
+        .data(|d| d.get_temp::<f32>(egui::Id::unique(("mesh_content_height", id))))
         .unwrap_or(280.0);
     let list_height = (height - (ui.cursor().top() - top) - 64.0).max(60.0);
     let mut selected = draft.inspector.selected_joint.clone();
@@ -159,10 +159,10 @@ pub(super) fn avatar_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &
 pub(super) fn journal_controls(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Draft) {
     checkbox(ui, p, &mut draft.inspector.verbose, aurora_i18n::tr!("import-journal-verbose"));
     ui.ctx()
-        .data_mut(|data| data.insert_temp(egui::Id::new("import_mesh_detailed_logging"), draft.inspector.verbose));
+        .data_mut(|data| data.insert_temp(egui::Id::unique("import_mesh_detailed_logging"), draft.inspector.verbose));
     let height = ui
         .ctx()
-        .data(|d| d.get_temp::<f32>(egui::Id::new(("mesh_content_height", id))))
+        .data(|d| d.get_temp::<f32>(egui::Id::unique(("mesh_content_height", id))))
         .unwrap_or(280.0);
     egui::ScrollArea::vertical()
         .id_salt(("import_journal", id))

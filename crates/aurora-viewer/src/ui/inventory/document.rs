@@ -31,13 +31,13 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
             // Saved auxiliary panels can overlap the scenario's document.
             ctx.move_to_top(egui::LayerId::new(
                 egui::Order::Middle,
-                egui::Id::new(preview_window_id(st.ui_id, item, 7)),
+                egui::Id::unique(preview_window_id(st.ui_id, item, 7)),
             ));
         }
         if mode == "note-format"
             && let Some(item) = st.preview
         {
-            let id = egui::Id::new(("inventory_document_text", st.ui_id, item));
+            let id = egui::Id::unique(("inventory_document_text", st.ui_id, item));
             if frame == 650
                 && let Some(Ok(text)) = &st.preview_text
                 && let Some(start) = text.find("- ").map(|at| at + 2)
@@ -88,7 +88,7 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
         return Vec::new();
     }
     let Some(item) = st.preview else { return Vec::new() };
-    let editor = egui::Id::new(("inventory_document_text", st.ui_id, item));
+    let editor = egui::Id::unique(("inventory_document_text", st.ui_id, item));
     if mode == "note-drop" {
         let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(editor.with("demo_rect"))) else {
             return Vec::new();
@@ -115,7 +115,7 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
     if matches!(mode.as_str(), "note-image" | "note-landmark" | "note-copy" | "note-menu-right") {
         if mode == "note-copy"
             && matches!(frame, 670 | 671)
-            && let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("notecard_copy_confirm", st.ui_id))))
+            && let Some(rect) = ctx.data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("notecard_copy_confirm", st.ui_id))))
         {
             return vec![
                 egui::Event::PointerMoved(rect.center()),
@@ -167,7 +167,7 @@ pub fn document_demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryU
         },
     };
     if frame == 650 && mode != "note-drop" {
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new(("inventory_document_text", st.ui_id, item))));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique(("inventory_document_text", st.ui_id, item))));
         return vec![
             key(egui::Key::End),
             egui::Event::Text(aurora_i18n::tr!("notecard-demo-edit").into()),
@@ -202,7 +202,7 @@ impl InventoryUi {
         if let Some((editor, loading)) = existing {
             let id = preview_window_id(editor, item, kind);
             super::super::widgets::open_floater(ctx, &id, &mut true);
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(id)));
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
             return loading;
         }
         let state = Self::document(item);
@@ -406,7 +406,7 @@ mod tests {
             .collect();
         let rects: Vec<_> = ids
             .iter()
-            .map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(id)).expect("note window")))
+            .map(|id| ctx.memory(|m| m.area_rect(egui::Id::unique(id)).expect("note window")))
             .collect();
         assert!(((rects[1].min - rects[0].min) - egui::Vec2::splat(32.0)).length() < 1.0);
         crate::ui::widgets::minimize_floater(&ctx, &ids[0]);
@@ -415,7 +415,7 @@ mod tests {
         assert!(state.windows.iter().all(|w| w.root.is_nil() && !w.open && w.state.preview_dirty));
         assert_eq!(state.windows[0].state.preview_text, Some(Ok("Draft 0".into())));
         assert_eq!(state.windows[1].state.preview_text, Some(Ok("Draft 1".into())));
-        assert_eq!(ctx.memory(|m| m.area_rect(egui::Id::new(&ids[0]))), Some(rects[0]));
+        assert_eq!(ctx.memory(|m| m.area_rect(egui::Id::unique(&ids[0]))), Some(rects[0]));
     }
 
     fn draft(text: &str) -> InventoryUi {

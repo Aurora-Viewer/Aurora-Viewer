@@ -227,6 +227,11 @@ struct Uniform {
     surface: [f32; 4],
     uv: [[[f32; 4]; 2]; 4],
 }
+/// The palette a part's skin shares with its other parts (0: no skin).
+fn skin_key(skin: Option<&Arc<Skin>>) -> usize {
+    skin.map_or(0, |skin| Arc::as_ptr(skin) as usize)
+}
+
 struct GpuPart {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
@@ -426,6 +431,7 @@ impl Target {
         let texture = egui.register_native_texture(device, &color, wgpu::FilterMode::Linear);
         let assets = &mut pipeline.assets;
         let mut parts = Vec::new();
+        let mut bones = HashMap::new();
         for (source, part) in model.parts.iter().enumerate() {
             if part.vertices.is_empty() || part.indices.is_empty() {
                 continue;
@@ -470,16 +476,23 @@ impl Target {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let matrices = part
-                .skin
-                .as_ref()
-                .map(|skin| skin.rest.iter().map(Mat4::to_cols_array_2d).collect::<Vec<_>>())
-                .unwrap_or_else(|| vec![Mat4::IDENTITY.to_cols_array_2d()]);
-            let bones = buffer(
-                "Preview bones",
-                bytemuck::cast_slice(&matrices),
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            );
+            // The faces of a mesh, the parts of a body, share their skin: one
+            // palette each, not one per part (an avatar's hint has hundreds).
+            let bones = bones
+                .entry(skin_key(part.skin.as_ref()))
+                .or_insert_with(|| {
+                    let matrices = part
+                        .skin
+                        .as_ref()
+                        .map(|skin| skin.rest.iter().map(Mat4::to_cols_array_2d).collect::<Vec<_>>())
+                        .unwrap_or_else(|| vec![Mat4::IDENTITY.to_cols_array_2d()]);
+                    buffer(
+                        "Preview bones",
+                        bytemuck::cast_slice(&matrices),
+                        wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                    )
+                })
+                .clone();
             let views: Vec<_> = part
                 .textures
                 .iter()
@@ -599,9 +612,12 @@ impl Target {
         let projection =
             glam::camera::rh::proj::directx::perspective(0.75, self.size[0] as f32 / self.size[1] as f32, radius * 0.01, radius * 100.0)
                 * glam::camera::rh::view::look_at_mat4(eye, center, Vec3::Z);
+        let mut posed = HashSet::new();
         for part in &self.parts {
             let source = &self.model.parts[part.source];
-            if let Some(skin) = &source.skin {
+            if let Some(skin) = &source.skin
+                && posed.insert(skin_key(Some(skin)))
+            {
                 let matrices = skin
                     .joints
                     .iter()
@@ -914,7 +930,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        rect = paint(ui, egui::Id::new("gesture"), model.clone(), view, egui::vec2(200.0, 200.0)).rect;
+                        rect = paint(ui, egui::Id::unique("gesture"), model.clone(), view, egui::vec2(200.0, 200.0)).rect;
                     },
                 );
                 output.textures_delta.clear();

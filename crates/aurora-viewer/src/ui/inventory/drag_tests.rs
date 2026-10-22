@@ -148,7 +148,7 @@ impl Fixture {
     fn row_in(&self, n: u128, editor: Uuid) -> egui::Pos2 {
         let rect = self
             .ctx
-            .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_drag_row", editor, id(n)))))
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", editor, id(n)))))
             .expect("visible row");
         rect.min + Vec2::new(25.0, rect.height() * 0.5)
     }
@@ -409,7 +409,7 @@ fn inventory_drag_shift_selection_moves_the_complete_range() {
 #[test]
 fn inventory_drag_hover_opens_the_destination_and_escape_cancels_without_moving() {
     let mut f = Fixture::new();
-    let nested = egui::Id::new(("inventory_drag_row", f.state.ui_id, id(21)));
+    let nested = egui::Id::unique(("inventory_drag_row", f.state.ui_id, id(21)));
     assert!(f.ctx.data(|d| d.get_temp::<egui::Rect>(nested)).is_none());
     f.click(100, false);
     f.click(101, true);

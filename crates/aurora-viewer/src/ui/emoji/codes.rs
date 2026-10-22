@@ -265,7 +265,7 @@ fn set_cursor(ui: &egui::Ui, output: &mut egui::text_edit::TextEditOutput, at: u
 /// clicked, if any.
 fn draw(ui: &egui::Ui, p: &Palette, mut emoji: Option<&mut Emoji>, rect: egui::Rect, list: &List) -> Option<&'static str> {
     let mut picked = None;
-    egui::Area::new(egui::Id::new("emoji_codes_list"))
+    egui::Area::new(egui::Id::unique("emoji_codes_list"))
         .fade_in(false)
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::LEFT_BOTTOM)
@@ -356,7 +356,7 @@ mod tests {
                 frames: crate::ui::widgets::elide_tests::Frames::new(),
                 text: String::new(),
             };
-            f.frames.ctx.memory_mut(|m| m.request_focus(egui::Id::new(Self::ID)));
+            f.frames.ctx.memory_mut(|m| m.request_focus(egui::Id::unique(Self::ID)));
             f.frame(vec![]);
             f.frame(vec![]);
             f
@@ -368,7 +368,7 @@ mod tests {
             let mut enter_after = false;
             let text = &mut self.text;
             self.frames.run(events, |ui| {
-                let id = egui::Id::new(Self::ID);
+                let id = egui::Id::unique(Self::ID);
                 let nav = keys(ui, id);
                 let mut output = egui::TextEdit::singleline(text).id(id).show(ui);
                 after(ui, &p, None, &mut output, text, nav);
@@ -396,7 +396,7 @@ mod tests {
         fn list(&self) -> List {
             self.frames
                 .ctx
-                .data(|d| d.get_temp(list_id(egui::Id::new(Self::ID))))
+                .data(|d| d.get_temp(list_id(egui::Id::unique(Self::ID))))
                 .unwrap_or_default()
         }
     }

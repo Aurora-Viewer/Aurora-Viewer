@@ -122,7 +122,7 @@ pub fn button(ui: &mut egui::Ui, p: &Palette, rights: &mut Rights, height: f32) 
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     let tip = aurora_i18n::tr!("inventory-rights-tip");
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         menu::section(ui, p, aurora_i18n::tr!("inventory-rights-menu"));
         for (choice, icon, label) in [

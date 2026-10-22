@@ -107,7 +107,7 @@ pub(crate) fn bars(
             }
         }
     }
-    ui.ctx().data_mut(|d| d.insert_temp(Id::new("toolbar_side_edges"), edges));
+    ui.ctx().data_mut(|d| d.insert_temp(Id::unique("toolbar_side_edges"), edges));
     (room, action)
 }
 
@@ -115,7 +115,7 @@ pub(crate) fn bars(
 /// edges without them), for the hidden interface's edges.
 pub fn edges(ctx: &egui::Context) -> [f32; 2] {
     let screen = ctx.content_rect();
-    ctx.data(|d| d.get_temp::<[f32; 2]>(Id::new("toolbar_side_edges")))
+    ctx.data(|d| d.get_temp::<[f32; 2]>(Id::unique("toolbar_side_edges")))
         .unwrap_or([screen.left(), screen.right()])
 }
 
@@ -155,7 +155,7 @@ fn column(
     let (island, button, width) = geometry(screen, room, row.bar, style, natural);
     let name = if row.bar == Bar::Left { "toolbar_left" } else { "toolbar_right" };
     area(&ctx, p, name, island, |ui| {
-        let target = ui.interact(island, Id::new(("toolbar_background", name)), Sense::click());
+        let target = ui.interact(island, Id::unique(("toolbar_background", name)), Sense::click());
         toolbar.context(&target, p, row.bar, style, None, row.locked);
         let inner = island.shrink2(Vec2::new(PAD, V_PAD));
         let mut child = ui.new_child(
@@ -177,7 +177,7 @@ fn column(
         // a button dropped a little past either end still lands in the bar
         let drop = ui.interact(
             inner.expand2(Vec2::new(PAD, button)),
-            Id::new(("toolbar_drop", name)),
+            Id::unique(("toolbar_drop", name)),
             Sense::hover(),
         );
         toolbar.drop_bar(&drop, row.bar, &rects, p, row.locked);
@@ -220,7 +220,7 @@ fn classic(
         .show(ui, |ui| {
             glass = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
             let zone = ui.available_rect_before_wrap();
-            let target = ui.interact(zone, Id::new(("toolbar_background", id)), Sense::click());
+            let target = ui.interact(zone, Id::unique(("toolbar_background", id)), Sense::click());
             toolbar.context(&target, p, row.bar, style, None, row.locked);
             let n = buttons.len().max(1) as f32;
             let height = n * CLASSIC_H + (n - 1.0) * GAP;

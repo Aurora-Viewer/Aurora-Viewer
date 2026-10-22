@@ -261,11 +261,11 @@ impl InspectUi {
 
     fn header(&mut self, ui: &mut egui::Ui, p: &Palette, columns: u32) {
         // the columns over those of the rows, left of the list's scroll bar
-        let width = widgets::header_width(ui, ui.id().with("inspect_rows"));
+        let width = widgets::header_width(ui, ui.scope_id().with("inspect_rows"));
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
         for (column, cell) in cells(columns, rect.with_max_x(rect.left() + width)) {
-            let resp = ui.interact(cell, ui.id().with(("inspect_header", column.bit())), Sense::click());
+            let resp = ui.interact(cell, ui.scope_id().with(("inspect_header", column.bit())), Sense::click());
             let sorted = self.sort.filter(|(c, _)| *c == column);
             let color = if sorted.is_some() || resp.hovered() { p.ink } else { p.muted };
             let font = egui::FontId::proportional(12.0);
@@ -346,7 +346,7 @@ impl InspectUi {
                 }
             }
         });
-        widgets::remember_scroll_bar(ui, ui.id().with("inspect_rows"), &out);
+        widgets::remember_scroll_bar(ui, ui.scope_id().with("inspect_rows"), &out);
     }
 
     /// Draw the window. Returns the avatar whose profile a button asked for.

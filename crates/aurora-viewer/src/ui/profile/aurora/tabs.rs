@@ -295,6 +295,9 @@ fn pick_view(env: &mut Env, w: &mut Window, id: Uuid) -> Option<PickView> {
 
 /// Start a new pick at our position (LLPanelProfilePicks::onClickNewBtn).
 fn start_new_pick(w: &mut Window, world: &World) {
+    if world.rlva.has("showloc") {
+        return;
+    }
     w.editing = true;
     w.pick_edit = Some((new_pick(world), PickEdit::default()));
     w.pick_sel = Some(Uuid::nil());
@@ -346,7 +349,7 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
                 None,
             )
         };
-        if clicked {
+        if clicked && !world.rlva.has("showloc") {
             start_new_pick(w, world);
         }
         return;
@@ -396,7 +399,7 @@ pub(in super::super) fn picks(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, 
             None => {}
         }
     }
-    let add = editing && pr.picks.len() < limit && !items.iter().any(|(id, _)| id.is_nil());
+    let add = editing && !world.rlva.has("showloc") && pr.picks.len() < limit && !items.iter().any(|(id, _)| id.is_nil());
     thumbs(ui, env, w, &items, add.then_some((pr.picks.len(), limit)), compact);
 }
 
@@ -478,7 +481,7 @@ fn pick_read(ui: &mut egui::Ui, env: &mut Env, v: &PickView, compact: bool) {
     let top = ui.cursor().top();
     ui.spacing_mut().item_spacing.y = 6.0;
     ui.label(RichText::new(&v.name).font(semibold(ui, 16.0)).color(p.ink));
-    place_row(ui, p, &v.place);
+    place_row(ui, p, &world.rlva_filter_text(&v.place));
     if !v.desc.trim().is_empty() {
         rich(ui, p, env.emoji, world, env.want_names, &v.desc);
     }
@@ -584,17 +587,18 @@ fn pick_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, v: &PickView) {
             false,
         );
     });
-    place_row(ui, p, &v.place);
+    place_row(ui, p, &world.rlva_filter_text(&v.place));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         let size = Vec2::new(0.0, 28.0);
-        if widgets::action_button(
+        if widgets::action_button_if(
             ui,
             p,
             "current-location-filled",
             aurora_i18n::tr!("ui-profile-aurora-here"),
             ActionKind::Flat,
             size,
+            !world.rlva.has("showloc"),
         )
         .clicked()
         {
@@ -754,6 +758,9 @@ fn edit_of(c: &ClassifiedInfo) -> ClassifiedEdit {
 }
 
 fn new_classified(world: &World) -> ClassifiedEdit {
+    if world.rlva.has("showloc") {
+        return ClassifiedEdit::default();
+    }
     let here = new_pick(world);
     let (parcel_name, snapshot) = world
         .parcel
@@ -816,7 +823,7 @@ pub(in super::super) fn classifieds(ui: &mut egui::Ui, env: &mut Env, w: &mut Wi
                 None,
             )
         };
-        if clicked {
+        if clicked && !world.rlva.has("showloc") {
             w.classified_edit = Some((new_classified(world), ClassifiedEdit::default()));
             w.classified_sel = Some(Uuid::nil());
         }
@@ -887,7 +894,7 @@ pub(in super::super) fn classifieds(ui: &mut egui::Ui, env: &mut Env, w: &mut Wi
         }
     }
     let creating = w.classified_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil());
-    if own && !creating {
+    if own && !creating && !world.rlva.has("showloc") {
         ui.horizontal(|ui| {
             ui.add_space(0.0);
             if widgets::action_button(
@@ -1062,7 +1069,7 @@ fn classified_head(ui: &mut egui::Ui, env: &mut Env, c: &ClassifiedInfo, compact
                 let (r, _) = ui.allocate_exact_size(Vec2::new(12.0, 16.0), Sense::hover());
                 paint_icon(ui, "map-pin-filled", r.center(), 11.0, p.muted);
                 ui.label(
-                    RichText::new(place_line(&c.parcel_name, &c.sim_name, c.pos_global))
+                    RichText::new(world.rlva_filter_text(&place_line(&c.parcel_name, &c.sim_name, c.pos_global)))
                         .size(11.5)
                         .color(p.muted),
                 );
@@ -1392,6 +1399,7 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
     e.category = category;
     e.mature = mature;
     let place = e.location.clone().unwrap_or_else(|| place_line(&e.parcel_name, &e.sim_name, e.pos));
+    let place = world.rlva_filter_text(&place);
     let mut here = false;
     let mut renew = e.auto_renew;
     row(
@@ -1399,15 +1407,16 @@ fn classified_form(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bo
         &mut |ui| {
             field(ui, p, aurora_i18n::tr!("ui-profile-aurora-place"), |ui| {
                 ui.horizontal(|ui| {
-                    ui.add(egui::Label::new(RichText::new(&place).size(12.0).color(p.muted)).truncate());
+                    ui.add(egui::Label::new(RichText::new(place.as_ref()).size(12.0).color(p.muted)).truncate());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        here = widgets::action_button(
+                        here = widgets::action_button_if(
                             ui,
                             p,
                             "current-location-filled",
                             aurora_i18n::tr!("ui-profile-aurora-here"),
                             ActionKind::Flat,
                             Vec2::new(0.0, 24.0),
+                            !world.rlva.has("showloc"),
                         )
                         .clicked();
                     });
@@ -1650,7 +1659,7 @@ fn photo_menu(ui: &mut egui::Ui, env: &mut Env, rect: Rect, image: Uuid) {
     let p = env.p;
     let c = rect.right_bottom() - Vec2::splat(22.0);
     let r = Rect::from_center_size(c, Vec2::splat(30.0));
-    let resp = ui.interact(r, ui.id().with("first-life-camera"), Sense::click());
+    let resp = ui.interact(r, ui.scope_id().with("first-life-camera"), Sense::click());
     ui.painter()
         .circle_filled(c, 15.0, if resp.hovered() { p.violet_light } else { p.violet });
     paint_icon(ui, "camera-filled", c, 15.0, p.on_accent);

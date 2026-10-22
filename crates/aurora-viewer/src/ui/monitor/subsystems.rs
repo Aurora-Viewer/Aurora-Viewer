@@ -311,7 +311,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot
         for (i, c) in Column::ALL.iter().enumerate() {
             let ranges = draw::col_ranges(&cols, head.left(), head.width());
             let r = Rect::from_min_max(pos2(ranges[i + 1].0, head.top()), pos2(ranges[i + 1].1, head.bottom()));
-            ui.interact(r, ui.id().with(("monitor-col-hint", i)), Sense::hover())
+            ui.interact(r, ui.scope_id().with(("monitor-col-hint", i)), Sense::hover())
                 .on_hover_text(column_hint(*c));
         }
         egui::ScrollArea::vertical()
@@ -423,7 +423,7 @@ fn table_row(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, cols: &[Col], line
     let mut x = l + 6.0 + if line.depth > 0 { 24.0 } else { 0.0 };
     if let Some(open) = line.fold {
         let caret = Rect::from_center_size(pos2(x + 9.0, cy), vec2(18.0, 18.0));
-        let c = ui.interact(caret, ui.id().with(("monitor-fold", &line.name)), Sense::click());
+        let c = ui.interact(caret, ui.scope_id().with(("monitor-fold", &line.name)), Sense::click());
         if c.hovered() {
             ui.painter().rect_filled(caret, widgets::inner_radius(ui.visuals()), p.raised);
         }

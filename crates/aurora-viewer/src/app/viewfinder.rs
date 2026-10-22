@@ -27,7 +27,7 @@ impl App {
     /// viewfinder the photo's own, so that the screen shows what the photo
     /// will hold.
     pub(super) fn huds_shown(&self) -> bool {
-        self.settings.show_huds && (!self.viewfinder_on() || self.settings.snapshot.huds)
+        (self.settings.show_huds || self.world.rlva_has_locked_hud()) && (!self.viewfinder_on() || self.settings.snapshot.huds)
     }
 
     fn vf_now(&self) -> f64 {
@@ -131,8 +131,12 @@ impl App {
                 self.snapshots.vf.subject = Some(id);
                 target = dof::distance_along(eye, at, head);
             }
-            log::info!("viewfinder: focus asked at {target:.2} m");
-            self.snapshots.vf.af.hunt(target, now);
+            if std::mem::take(&mut self.snapshots.vf.recheck) && self.snapshots.vf.af.holds(target) {
+                self.vf_lock_kept(renderer);
+            } else {
+                log::info!("viewfinder: focus asked at {target:.2} m");
+                self.snapshots.vf.af.hunt(target, now);
+            }
         }
         // locked on an avatar: the lens stays on its head as it (or the
         // camera) moves, like a camera's subject tracking
@@ -274,7 +278,23 @@ impl App {
             renderer.forget_pick(old);
         }
         self.snapshots.vf.pick = Some(renderer.request_pick(x, y));
+        self.snapshots.vf.recheck = false;
         self.snapshots.vf.hinted = true;
+    }
+
+    /// A new press found the lens still on its subject: no hunt (it would
+    /// blur the frame for nothing), the beep again, and the photo if it
+    /// was waiting for the focus.
+    fn vf_lock_kept(&mut self, renderer: &Renderer) {
+        let now = self.vf_now();
+        log::info!("viewfinder: lock kept at {:.2} m", self.snapshots.vf.af.distance());
+        self.snapshots.vf.af.confirm(now);
+        if self.settings.snapshot.viewfinder.beep {
+            self.vf_beep();
+        }
+        if std::mem::take(&mut self.snapshots.vf.pending_shot) {
+            self.vf_shoot(renderer);
+        }
     }
 
     /// The photo: at once, or when the self-timer has counted down.
@@ -303,9 +323,10 @@ impl App {
         self.photo_action(Action::Take, renderer);
     }
 
-    /// The shutter pressed half way: in AF-S the lens focuses again at
-    /// each press, locked before or not (a camera's half press), and the
-    /// beep says when it is sharp.
+    /// The shutter pressed half way: in AF-S the lens focuses, and the beep
+    /// says when it is sharp. Already locked, the lock holds while its
+    /// subject is in the frame: the avatar followed, else the same depth
+    /// under the AF point; something else there, it focuses again.
     fn vf_half_press(&mut self, renderer: &mut Renderer) {
         let v = &self.snapshots.vf;
         if v.countdown.is_some() {
@@ -318,9 +339,19 @@ impl App {
             return;
         }
         self.snapshots.vf.pressed = true;
-        if self.settings.snapshot.dof.focus == PhotoFocus::Click {
-            self.vf_focus(renderer);
+        if self.settings.snapshot.dof.focus != PhotoFocus::Click {
+            return;
         }
+        let v = &self.snapshots.vf;
+        let locked = v.af.phase == Phase::Lock;
+        // the avatar followed is dropped as it leaves the frame
+        // (`viewfinder_ui`)
+        if locked && v.subject.is_some() {
+            self.vf_lock_kept(renderer);
+            return;
+        }
+        self.vf_focus(renderer);
+        self.snapshots.vf.recheck = locked;
     }
 
     /// The shutter released: the photo, at once or once the lens has
@@ -545,18 +576,20 @@ impl App {
             }
             return None;
         }
+        // pushed right, the camera goes round to the left, as the Controls
+        // window's orbit stick (LLJoystickCameraRotate::onHeldDown)
         let pos = |v: f32| v.max(0.0);
         Some([
-            pos(pad.orbit.x),
-            pos(-pad.orbit.x),
-            pos(-pad.orbit.y),
-            pos(pad.orbit.y),
+            pos(-pad.orbit.x) * PAD_TURN,
+            pos(pad.orbit.x) * PAD_TURN,
+            pos(-pad.orbit.y) * PAD_TURN,
+            pos(pad.orbit.y) * PAD_TURN,
             pos(-pad.rocker),
             pos(pad.rocker),
-            pos(-pad.pan.x),
-            pos(pad.pan.x),
-            pos(-pad.pan.y),
-            pos(pad.pan.y),
+            pos(-pad.pan.x) * PAD_PAN,
+            pos(pad.pan.x) * PAD_PAN,
+            pos(-pad.pan.y) * PAD_PAN,
+            pos(pad.pan.y) * PAD_PAN,
         ])
     }
 
@@ -714,13 +747,21 @@ impl App {
         let face_of = |app: &App, id: &uuid::Uuid| -> Option<Rect> {
             let head = app.scene.head_world(&app.world, id, wall)?;
             // mHead sits at the base of the skull: the face is above it
-            let (c, _) = projector.project(head + glam::Vec3::Z * 0.09)?;
             let (top, _) = projector.project(head + glam::Vec3::Z * 0.25)?;
             let (bottom, _) = projector.project(head - glam::Vec3::Z * 0.06)?;
-            let h = (bottom.y - top.y).abs().clamp(18.0, 400.0);
+            // the head's height along its own axis on screen, which the
+            // camera's tilt turns: the box holds the face turned with it
+            let axis = top - bottom;
+            let h = axis.length().clamp(18.0, 400.0);
+            let up = if axis.length() > 0.5 {
+                axis / axis.length()
+            } else {
+                Vec2::new(0.0, -1.0)
+            };
+            let (w, h) = (h * 0.82, h);
             Some(Rect::from_center_size(
-                Pos2::new(c.x, (top.y + bottom.y) * 0.5),
-                Vec2::new(h * 0.82, h),
+                top + (bottom - top) * 0.5,
+                Vec2::new(w * up.y.abs() + h * up.x.abs(), w * up.x.abs() + h * up.y.abs()),
             ))
         };
         let area_avatar = self.settings.snapshot.viewfinder.area == AfArea::Avatar;
@@ -848,6 +889,11 @@ impl App {
         }
     }
 }
+
+/// The pad's Turn and Slide sticks at full tilt, as a share of the orbit
+/// and pan keys' rates: framing wants smaller moves than the keys give.
+const PAD_TURN: f32 = 0.6;
+const PAD_PAN: f32 = 0.4;
 
 /// About half a head's depth (m): from its middle to the face.
 const HEAD_RADIUS: f32 = 0.09;

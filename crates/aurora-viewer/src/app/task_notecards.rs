@@ -78,6 +78,9 @@ impl App {
     }
 
     pub(super) fn open_task_notecard(&mut self, object: Uuid, item: Uuid) {
+        if self.world.rlva.has("viewnote") {
+            return;
+        }
         if self.task_notecards.get(&(object, item)).is_some_and(|d| d.state.preview.is_some()) {
             return;
         }
@@ -161,6 +164,9 @@ impl App {
     }
 
     pub(super) fn show_task_notecards(&mut self, ctx: &egui::Context, p: &Palette) {
+        if self.world.rlva.has("viewnote") {
+            return;
+        }
         if let Some((object, item)) = self.build.ui.open_notecard.take() {
             self.open_task_notecard(object, item);
         }

@@ -17,6 +17,8 @@ use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, Stroke
 
 mod controls;
 pub use controls::{CamMode, Pad, roll_text};
+#[cfg(test)]
+mod message_tests;
 
 /// The value the mouse wheel drives (the underlined one of the bottom bar).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -52,6 +54,9 @@ pub struct Viewfinder {
     pub subject: Option<uuid::Uuid>,
     /// The depth under the AF point asked of the renderer.
     pub pick: Option<u64>,
+    /// That depth was asked by the shutter with the lens locked: the same
+    /// subject under the point keeps the lock.
+    pub recheck: bool,
     /// The first hint was put away (a focus or a photo).
     pub hinted: bool,
     /// When the shutter's blackout started.
@@ -76,6 +81,9 @@ pub struct Viewfinder {
     ring_mark: Option<i32>,
     /// The pointer was last near the controls (OnScreen::Hover).
     hover_seen: f64,
+    /// The display level drawn last frame (the interface just hidden says
+    /// how to show it again).
+    shown_display: Option<Display>,
 }
 
 /// What the app gives the viewfinder each frame.
@@ -455,8 +463,8 @@ impl Viewfinder {
         let display = s.viewfinder.display;
         let full = display == Display::Full;
         let shows = display != Display::Hidden;
-        let back = ctx.layer_painter(egui::LayerId::new(Order::Background, Id::new("vf_back")));
-        let front = ctx.layer_painter(egui::LayerId::new(Order::Middle, Id::new("vf_front")));
+        let back = ctx.layer_painter(egui::LayerId::new(Order::Background, Id::unique("vf_back")));
+        let front = ctx.layer_painter(egui::LayerId::new(Order::Middle, Id::unique("vf_front")));
 
         // the photo's proportions: the rest darkened, a fine frame, the guide
         let ratio = f.photo.0 as f32 / f.photo.1.max(1) as f32;
@@ -500,6 +508,12 @@ impl Viewfinder {
         } else if ghost_disp(ctx, p, screen) {
             s.viewfinder.display = display.next();
         }
+        // just hidden: say how it comes back, a little longer than a
+        // setting's message
+        if !shows && self.shown_display != Some(display) {
+            self.message = Some((aurora_i18n::tr!("photo-vf-hidden-how").to_owned(), false, f.now + 4.5));
+        }
+        self.shown_display = Some(display);
         if pad {
             self.camera_pad(ctx, p, screen, f, &mut out);
         } else {
@@ -523,7 +537,7 @@ impl Viewfinder {
             let k = ((f.now - t) as f32 / 0.18).clamp(0.0, 1.0);
             let alpha = if f.now - t < 0.09 { 1.0 } else { 1.0 - k };
             if alpha > 0.0 {
-                let top = ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::new("vf_flash")));
+                let top = ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::unique("vf_flash")));
                 top.rect_filled(screen, 0.0, p.navy.gamma_multiply(alpha));
                 ctx.request_repaint();
             } else {
@@ -568,7 +582,7 @@ impl Viewfinder {
             Color32::TRANSPARENT,
         );
         // (the AF mode and area are the bottom bar's, once)
-        egui::Area::new(Id::new("vf_top_left"))
+        egui::Area::new(Id::unique("vf_top_left"))
             .order(Order::Foreground)
             .fade_in(false)
             .fixed_pos(screen.left_top() + Vec2::new(GAP, 12.0))
@@ -604,7 +618,7 @@ impl Viewfinder {
             });
 
         // what the photo will be: each a switch, a click for the next value
-        egui::Area::new(Id::new("vf_top_right"))
+        egui::Area::new(Id::unique("vf_top_right"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::RIGHT_TOP)
@@ -712,7 +726,7 @@ impl Viewfinder {
             *y += 24.0;
         };
         // (the time of day is a switch too)
-        egui::Area::new(Id::new("vf_time"))
+        egui::Area::new(Id::unique("vf_time"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::LEFT_CENTER)
@@ -1146,7 +1160,7 @@ impl Viewfinder {
             );
         } else {
             // the depth of field off: a click turns it on
-            egui::Area::new(Id::new("vf_all_sharp"))
+            egui::Area::new(Id::unique("vf_all_sharp"))
                 .order(Order::Foreground)
                 .fade_in(false)
                 .pivot(Align2::RIGHT_TOP)
@@ -1160,7 +1174,7 @@ impl Viewfinder {
         }
 
         // the dials
-        egui::Area::new(Id::new("vf_dials"))
+        egui::Area::new(Id::unique("vf_dials"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::CENTER_BOTTOM)
@@ -1273,7 +1287,7 @@ impl Viewfinder {
                     // frame's middle on the line
                     let (cell, _) = ui.allocate_exact_size(Vec2::new(44.0, MIDDLE + 13.0), Sense::hover());
                     let rect = Rect::from_min_size(Pos2::new(cell.left(), cell.top() + MIDDLE - 13.0), Vec2::new(44.0, 26.0));
-                    let resp = ui.interact(rect, Id::new("vf_ael"), Sense::click());
+                    let resp = ui.interact(rect, Id::unique("vf_ael"), Sense::click());
                     let color = if self.ae_lock {
                         p.teal
                     } else if resp.hovered() {
@@ -1344,7 +1358,7 @@ impl Viewfinder {
 
     /// The dock on the right: everything the mouse needs.
     fn dock(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &mut Settings, f: &Frame, out: &mut Vec<Out>) {
-        egui::Area::new(Id::new("vf_dock"))
+        egui::Area::new(Id::unique("vf_dock"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::RIGHT_CENTER)
@@ -1442,7 +1456,7 @@ impl Viewfinder {
     ) {
         let cols = 9.0;
         let width = (screen.width() - 2.0 * GAP - 120.0).min(1300.0);
-        egui::Area::new(Id::new("vf_menu"))
+        egui::Area::new(Id::unique("vf_menu"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::CENTER_BOTTOM)
@@ -1488,7 +1502,7 @@ impl Viewfinder {
 
     /// The keys and the mouse, in a panel in the middle.
     fn help_panel(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame) {
-        egui::Area::new(Id::new("vf_help"))
+        egui::Area::new(Id::unique("vf_help"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::CENTER_CENTER)
@@ -1629,7 +1643,7 @@ impl Viewfinder {
         view: &View,
         out: &mut Vec<Out>,
     ) {
-        egui::Area::new(Id::new("vf_drawer"))
+        egui::Area::new(Id::unique("vf_drawer"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::RIGHT_TOP)
@@ -1683,7 +1697,7 @@ fn brackets(painter: &egui::Painter, c: Pos2, scale: f32, stroke: Stroke, shadow
 
 /// The first hint: how to focus and take the photo.
 fn hint(ctx: &egui::Context, p: &Palette, screen: Rect, bottom: f32, pad_hint: bool) {
-    egui::Area::new(Id::new("vf_hint"))
+    egui::Area::new(Id::unique("vf_hint"))
         .order(Order::Foreground)
         .fade_in(false)
         .interactable(false)
@@ -1710,9 +1724,11 @@ fn hint(ctx: &egui::Context, p: &Palette, screen: Rect, bottom: f32, pad_hint: b
         });
 }
 
-/// A line at the top (an error in its colour).
+/// A line at the top (an error in its colour). One line, never wrapped: the
+/// area keeps the size of the last message, and a longer one wrapped into
+/// it would stand as a column of syllables.
 fn message(ctx: &egui::Context, p: &Palette, screen: Rect, text: &str, error: bool) {
-    egui::Area::new(Id::new("vf_message"))
+    egui::Area::new(Id::unique("vf_message"))
         .order(Order::Foreground)
         .fade_in(false)
         .interactable(false)
@@ -1720,22 +1736,32 @@ fn message(ctx: &egui::Context, p: &Palette, screen: Rect, text: &str, error: bo
         .fixed_pos(Pos2::new(screen.center().x, screen.top() + 64.0))
         .show(ctx, |ui| {
             widgets::overlay(ui, p, egui::Margin::symmetric(16, 8), |ui| {
-                ui.label(egui::RichText::new(text).size(13.0).color(if error { p.danger } else { p.ink }));
+                let color = if error { p.danger } else { p.ink };
+                ui.add(egui::Label::new(egui::RichText::new(text).size(13.0).color(color)).extend());
             });
         });
 }
 
 /// With the overlay hidden: a small DISP button to bring it back.
 fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
+    let id = Id::unique("vf_ghost");
+    // discreet over the photo, plain under the pointer
+    let hovered = ctx
+        .memory(|m| m.area_rect(id))
+        .zip(ctx.pointer_hover_pos())
+        .is_some_and(|(r, pos)| r.contains(pos));
     let mut clicked = false;
-    egui::Area::new(Id::new("vf_ghost"))
+    egui::Area::new(id)
         .order(Order::Foreground)
         .fade_in(false)
         .pivot(Align2::RIGHT_BOTTOM)
         .fixed_pos(screen.right_bottom() - Vec2::new(20.0, 18.0))
         .show(ctx, |ui| {
-            ui.multiply_opacity(0.5);
-            clicked = text_button(ui, p, "DISP · I", regular(12.0), p.ink, aurora_i18n::tr!("photo-vf-disp-tip")).clicked();
+            ui.multiply_opacity(if hovered { 1.0 } else { 0.7 });
+            widgets::overlay(ui, p, egui::Margin::symmetric(10, 6), |ui| {
+                let text = aurora_i18n::tr!("photo-vf-show-ui");
+                clicked = icon_text_button(ui, p, "eye-filled", text, p.ink, aurora_i18n::tr!("photo-vf-disp-tip")).clicked();
+            });
         });
     clicked
 }
@@ -1745,7 +1771,7 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut V
     let Some((texture, label, kind)) = &f.review else {
         return;
     };
-    egui::Area::new(Id::new("vf_review"))
+    egui::Area::new(Id::unique("vf_review"))
         .order(Order::Foreground)
         .fade_in(false)
         .pivot(Align2::LEFT_BOTTOM)
@@ -1774,8 +1800,9 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut V
                             Review::Profile => aurora_i18n::tr!("photo-profile-posted"),
                             Review::Email => aurora_i18n::tr!("photo-email-sent"),
                         };
-                        ui.label(egui::RichText::new(title).font(bold(ctx, 13.0)).color(p.ink));
-                        ui.label(egui::RichText::new(label).size(12.0).color(p.muted));
+                        // one line each, like the message at the top
+                        ui.add(egui::Label::new(egui::RichText::new(title).font(bold(ctx, 13.0)).color(p.ink)).extend());
+                        ui.add(egui::Label::new(egui::RichText::new(label).size(12.0).color(p.muted)).extend());
                         ui.horizontal(|ui| match kind {
                             Review::Disk(path) => {
                                 if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-open")).clicked() {

@@ -3,12 +3,12 @@ use super::*;
 
 pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, actions: &mut Vec<Action>) {
     if imports.demo_started
-        && let Some(target) = ctx.data_mut(|data| data.get_temp::<(Uuid, Option<usize>)>(egui::Id::new("import_demo_zoom")))
+        && let Some(target) = ctx.data_mut(|data| data.get_temp::<(Uuid, Option<usize>)>(egui::Id::unique("import_demo_zoom")))
         && imports.entries.iter().any(|entry| entry.id == target.0)
     {
-        ctx.data_mut(|data| data.remove_temp::<(Uuid, Option<usize>)>(egui::Id::new("import_demo_zoom")));
+        ctx.data_mut(|data| data.remove_temp::<(Uuid, Option<usize>)>(egui::Id::unique("import_demo_zoom")));
         imports.preview_zoom = Some(target);
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("import_large_preview")));
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("import_large_preview")));
     }
     if !imports.open {
         imports.preview_zoom = None;
@@ -77,7 +77,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
             if let Some(model) = &entry.model {
                 aurora_render::preview::paint(
                     &mut area,
-                    egui::Id::new(("large_import_preview", id)),
+                    egui::Id::unique(("large_import_preview", id)),
                     model.clone(),
                     &mut entry.view,
                     size,

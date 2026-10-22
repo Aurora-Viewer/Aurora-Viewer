@@ -42,7 +42,7 @@ fn identity(world: &World, st: &ChatUi) -> Identity {
     match st.selected {
         None => Identity {
             title: aurora_i18n::tr!("common-nearby-chat").to_owned(),
-            subtitle: Some(world.region_name()).filter(|r| !r.is_empty()),
+            subtitle: Some(world.rlva_region_label()).filter(|r| !r.is_empty()),
             avatar: None,
             icon: Some("message-filled"),
         },
@@ -112,7 +112,7 @@ pub(super) fn show(
                         && find::field(ui, p, rect, p.field, f, view, true)
                     {
                         search.find = None;
-                        ui.ctx().memory_mut(|m| m.request_focus(egui::Id::new(("conv_input", selected))));
+                        ui.ctx().memory_mut(|m| m.request_focus(egui::Id::unique(("conv_input", selected))));
                     }
                 } else {
                     picture_and_names(ui, p, icons, pics, world, st, actions, &who, status, names_w);

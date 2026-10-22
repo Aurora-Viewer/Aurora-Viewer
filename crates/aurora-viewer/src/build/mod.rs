@@ -137,6 +137,9 @@ mod worn_tests;
 /// whole no-modify object is allowed; linked edits and stretching need Modify.
 /// LLViewerObject::permMove / permModify inherit the root's effective flags.
 pub fn can_transform(world: &World, idx: usize, linked: bool, mode: EditMode) -> bool {
+    if !world.rlva_can_edit(idx) {
+        return false;
+    }
     use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_MOVE};
     let Some(root) = world.objects.get(root_of(world, idx)) else {
         return false;
@@ -590,6 +593,9 @@ pub fn select_type(world: &World, mut idx: usize) -> SelectType {
 /// World objects and what our avatar wears, HUDs included; the attachments
 /// of other avatars cannot be edited.
 pub fn selectable(world: &World, idx: usize) -> bool {
+    if !world.rlva_can_edit(idx) {
+        return false;
+    }
     let mut i = idx;
     for _ in 0..64 {
         let Some(o) = world.objects.get(i) else {
@@ -1837,7 +1843,7 @@ impl BuildTool {
         if !self.open && !self.menu_selection && world.land.highlight.is_empty() {
             return;
         }
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("build_overlay")));
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("build_overlay")));
         let cam = self.cam;
         let mut p = draw::Painter3d::new(painter, &cam, *pal);
         let now = Instant::now();

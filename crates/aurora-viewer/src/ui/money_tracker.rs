@@ -171,8 +171,9 @@ impl Tracker {
             }
             self.recent.push_back(*id);
         }
-        // a pure balance update
-        if !success || (source.is_nil() && dest.is_nil()) {
+        // a pure balance update, or no L$ moved (giving an object to someone
+        // sends a 0 L$ transaction, issue #672)
+        if !success || (source.is_nil() && dest.is_nil()) || *amount <= 0 {
             return None;
         }
         let received = *source != agent;
@@ -532,6 +533,8 @@ mod tests {
             t.record(&tx(2, true, trans::GIFT, Uuid::nil(), Uuid::nil(), 0, ""), ME, at(0)),
             None
         );
+        // an object given to someone: no L$ moved
+        assert_eq!(t.record(&tx(4, true, trans::GIFT, ME, NOVA, 0, ""), ME, at(0)), None);
         assert!(t.record(&tx(3, true, trans::GIFT, NOVA, ME, 20, ""), ME, at(0)).is_some());
         assert_eq!(t.record(&tx(3, true, trans::GIFT, NOVA, ME, 20, ""), ME, at(1)), None);
         assert_eq!(t.payments().len(), 1);
@@ -616,7 +619,7 @@ mod tests {
                             let mut open = true;
                             ui.show(egui_ui.ctx(), &p, &world, &pics, &mut open, false, legacy);
                         });
-                        rects.push(frames.ctx.memory(|m| m.area_rect(egui::Id::new(id))).expect("window"));
+                        rects.push(frames.ctx.memory(|m| m.area_rect(egui::Id::unique(id))).expect("window"));
                     }
                     let first = rects[2];
                     assert!(

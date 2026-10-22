@@ -326,7 +326,7 @@ impl GroupCreateUi {
         }
         if self.open {
             if std::mem::take(&mut self.raise) {
-                ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(WINDOW)));
+                ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(WINDOW)));
             }
             let screen = ctx.content_rect();
             let mut open = self.open;
@@ -482,7 +482,7 @@ impl GroupCreateUi {
             );
         }
         let pick = ui
-            .interact(insignia_rect, egui::Id::new("group_create_insignia"), Sense::click())
+            .interact(insignia_rect, egui::Id::unique("group_create_insignia"), Sense::click())
             .on_hover_text(aurora_i18n::tr!("ui-group-create-insignia-tip"))
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         if pick.clicked() && !self.sending {
@@ -827,7 +827,7 @@ impl GroupCreateUi {
             }],
         };
         let mut clicked = None;
-        let modal = widgets::Modal::new(egui::Id::new("group_create_dialog")).show(ctx, |ui| {
+        let modal = widgets::Modal::new(egui::Id::unique("group_create_dialog")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.label(egui::RichText::new(title).size(15.0).strong().color(p.ink));
             ui.add_space(6.0);

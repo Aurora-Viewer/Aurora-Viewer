@@ -296,6 +296,9 @@ impl World {
         let Some(g) = self.groups.group(&group).cloned() else {
             return;
         };
+        if !self.rlva_start_ims(&[group]) {
+            return;
+        }
         if self.mutes.group_chat_muted(&group) {
             // opening it means receiving it again (exoGroupMuteList::remove)
             self.set_group_chat_blocked(group, false);
@@ -315,11 +318,12 @@ impl World {
 
     /// Send text to a group / conference session (IM_SESSION_SEND).
     pub fn send_session_im(&mut self, session: Uuid, text: &str) {
+        let text = self.rlva_outgoing_im_text(session, true, text).into_owned();
         let me = self.own_name();
-        for part in split_im(text) {
+        for part in split_im(&text) {
             self.groups.im(session, dialog::SESSION_SEND, session, part.to_owned());
         }
-        let l = line(me, text.to_owned(), ChatKind::Own, Uuid::nil(), SystemTime::now());
+        let l = line(me, text, ChatKind::Own, Uuid::nil(), SystemTime::now());
         self.session_push(session, l, false);
         if let Some(s) = self.groups.sessions.get(&session)
             && s.closed
@@ -552,12 +556,18 @@ impl World {
 
     /// ChatterBoxInvitation with a message (LLViewerChatterBoxInvitation::post
     /// and LLIMMgr::addMessage for a new session).
-    fn on_session_invite(&mut self, inv: aurora_net::SessionInvite) {
+    fn on_session_invite(&mut self, mut inv: aurora_net::SessionInvite) {
         let session = inv.session;
         if inv.from == self.agent_id || session.is_nil() {
             return;
         }
         let in_group = self.groups.is_member(&session);
+        if in_group && !self.rlva_allows_im("recvim", session) {
+            return;
+        }
+        if !in_group && !self.rlva_allows_im("recvim", inv.from) {
+            inv.message = aurora_i18n::tr!("rlva-im-blocked-receive").into();
+        }
         // VoiceCallsFriendsOnly: a conference started by a non-friend
         // (LLIMMgr::addMessage, IM_SESSION_INVITE outside our groups)
         if !in_group && self.friends_only_drops(&inv.from, &inv.from_name) {
@@ -599,7 +609,7 @@ impl World {
         }
         if !self.mutes.text_muted(&inv.from, &inv.from_name) {
             let new = !self.groups.sessions.contains_key(&session);
-            self.info_mut(session, &inv.session_name);
+            self.info_mut(session, &inv.session_name).participants.insert(inv.from);
             self.session_sound(session, new);
             if !inv.from_name.is_empty() {
                 self.social.names.entry(inv.from).or_insert_with(|| inv.from_name.clone());

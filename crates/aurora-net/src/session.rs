@@ -9,6 +9,7 @@ mod asset_imports;
 mod build_cmds;
 mod currency;
 mod estate;
+mod experience_events;
 mod gestures;
 mod inventory_copies;
 mod inventory_moves;
@@ -212,7 +213,7 @@ struct Session<'a> {
     /// Agent parcel in the main region: (local id, environment version).
     agent_parcel: Option<(i32, i32)>,
     /// Teleport by region name waiting for its MapBlockReply (lowercase name, position).
-    pending_named_tp: Option<(String, Vec3)>,
+    pending_named_tp: Option<(String, Uuid)>,
     /// Object cache of each region, its files read and written off this
     /// loop (session/object_cache.rs).
     object_cache: object_cache::ObjectCaches,
@@ -1337,6 +1338,11 @@ impl Session<'_> {
                     self.request_objects(addr, &local_ids);
                 }
             }
+            NetCommand::ChatReply { message, channel } => {
+                if let Some(packet) = crate::chat_reply::packet(self.agent_id(), self.session_id(), channel, &message) {
+                    self.send_main(&packet, true);
+                }
+            }
             NetCommand::TeleportHome => {
                 let mut m = TeleportLandmarkRequest::default();
                 m.info.agent_id = self.agent_id();
@@ -1380,9 +1386,9 @@ impl Session<'_> {
                     &self.sh.stats,
                 );
             }
-            NetCommand::TeleportToRegion { name, position } => {
+            NetCommand::TeleportToRegion { request, name, .. } => {
                 // LLWorldMapMessage::sendNamedRegionRequest: the reply gives the grid position
-                self.pending_named_tp = Some((name.trim().to_lowercase(), position));
+                self.pending_named_tp = Some((name.trim().to_lowercase(), request));
                 let mut m = MapNameRequest::default();
                 m.agent_data.agent_id = self.agent_id();
                 m.agent_data.session_id = self.session_id();
@@ -1829,6 +1835,17 @@ impl Session<'_> {
             }
             NetCommand::RequestDisplayNames(ids) => self.request_display_names(ids),
             NetCommand::SetDisplayName { old, new } => self.set_display_name(old, new),
+            NetCommand::ImReply {
+                to,
+                message,
+                busy,
+                offline,
+            } => {
+                let name = format!("{} {}", self.login.first_name, self.login.last_name);
+                if let Some(packet) = crate::im_reply::packet(self.agent_id(), self.session_id(), &name, to, &message, busy, offline) {
+                    self.send_main(&packet, true);
+                }
+            }
             NetCommand::SendIm { to, message } => self.send_im(to, &message, 0),
             NetCommand::OfferTeleport { to, message } => {
                 let mut m = StartLure::default();
@@ -2357,6 +2374,15 @@ impl Session<'_> {
                         description: str_field(&a.desc),
                     }];
                     self.send_main(&m, true);
+                }
+            }
+            NetCommand::DetachObject { handle, local_id } => {
+                if let Some(addr) = self.sim_for_handle(handle) {
+                    self.send(
+                        addr,
+                        &crate::attachment_detach::packet(self.agent_id(), self.session_id(), local_id),
+                        true,
+                    );
                 }
             }
             NetCommand::DetachAttachments(items) => {
@@ -3120,7 +3146,7 @@ impl Session<'_> {
             transition::step_once("first event", || format!("first event queue event of the region ({})", e.message));
         }
         let b = &e.body;
-        if self.on_inventory_eq(&e) {
+        if self.on_inventory_eq(&e) || self.on_experience_eq(&e) {
             return;
         }
         if self.on_social_eq(&e.message, b)
@@ -3621,6 +3647,11 @@ impl Session<'_> {
                     buttons: m.buttons.iter().map(|b| field_str(&b.button_label)).collect(),
                 },
             );
+        } else if id == SaveAssetIntoInventory::ID {
+            let message: SaveAssetIntoInventory = pkt.decode()?;
+            if message.agent_data.agent_id == self.agent_id() {
+                emit(self.sh, NetEvent::AttachmentAssetSaved(message.inventory_data.item_id));
+            }
         } else if id == ScriptQuestion::ID {
             let m: ScriptQuestion = pkt.decode()?;
             let d = &m.data;
@@ -4102,23 +4133,18 @@ impl Session<'_> {
             );
         } else if id == MapBlockReply::ID {
             let m: MapBlockReply = pkt.decode()?;
-            if let Some((want, pos)) = self.pending_named_tp.clone() {
+            if let Some((want, request)) = self.pending_named_tp.clone() {
                 let found = m.data.iter().find(|d| field_str(&d.name).to_lowercase() == want);
                 match found {
                     Some(d) => {
                         self.pending_named_tp = None;
                         let handle = ((d.x as u64 * 256) << 32) | (d.y as u64 * 256);
-                        let mut t = TeleportLocationRequest::default();
-                        t.agent_data.agent_id = self.agent_id();
-                        t.agent_data.session_id = self.session_id();
-                        t.info.region_handle = handle;
-                        t.info.position = pos;
-                        t.info.look_at = Vec3::X;
-                        self.send_main(&t, true);
-                        transition::begin(
-                            transition::Kind::Teleport,
-                            || format!("TeleportLocationRequest sent (region {}, found by name)", transition::grid(handle)),
-                            &self.sh.stats,
+                        emit(
+                            self.sh,
+                            NetEvent::TeleportRegionResolved {
+                                request,
+                                result: Ok(handle),
+                            },
                         );
                     }
                     // a name search answers with prefix matches and an empty
@@ -4131,8 +4157,9 @@ impl Session<'_> {
                         self.pending_named_tp = None;
                         emit(
                             self.sh,
-                            NetEvent::TeleportFailed {
-                                reason: aurora_i18n::tr!("session-region-not-found", want = want.to_string()),
+                            NetEvent::TeleportRegionResolved {
+                                request,
+                                result: Err(aurora_i18n::tr!("session-region-not-found", want = want.to_string())),
                             },
                         );
                     }
@@ -4232,11 +4259,31 @@ impl Session<'_> {
             );
         } else if id == GenericMessage::ID {
             let m: GenericMessage = pkt.decode()?;
+            self.on_experience_generic(
+                m.agent_data.agent_id,
+                &m.method_data.method,
+                m.method_data.invoice,
+                &m.param_list
+                    .iter()
+                    .take(3)
+                    .map(|parameter| parameter.parameter.as_slice())
+                    .collect::<Vec<_>>(),
+            );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
         } else if id == LargeGenericMessage::ID {
             let m: LargeGenericMessage = pkt.decode()?;
+            self.on_experience_generic(
+                m.agent_data.agent_id,
+                &m.method_data.method,
+                m.method_data.invoice,
+                &m.param_list
+                    .iter()
+                    .take(3)
+                    .map(|parameter| parameter.parameter.as_slice())
+                    .collect::<Vec<_>>(),
+            );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
@@ -4331,7 +4378,7 @@ impl Session<'_> {
                         item
                     })
                     .collect();
-                let folders = m
+                let folders: Vec<_> = m
                     .folder_data
                     .iter()
                     .filter(|f| !f.folder_id.is_nil())
@@ -4344,7 +4391,17 @@ impl Session<'_> {
                         ..Default::default()
                     })
                     .collect();
+                let delivered = folders.iter().map(|folder: &crate::inventory::InvFolder| folder.id).collect();
                 emit(self.sh, NetEvent::InventoryUpdated { folders, items });
+                if !m.agent_data.transaction_id.is_nil() {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryDelivery {
+                            transaction: m.agent_data.transaction_id,
+                            folders: delivered,
+                        },
+                    );
+                }
                 for item in created {
                     emit(self.sh, NetEvent::InventoryCreated(item));
                 }
@@ -5066,6 +5123,39 @@ mod event_queue_tests {
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
         }
+    }
+
+    #[tokio::test]
+    async fn rlva_named_region_resolution_emits_a_ticket_without_sending_a_teleport() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("offline simulator");
+        let addr = main.local_addr().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock.clone(), addr, "127.0.0.1:13002".parse().unwrap());
+        let request = Uuid::from_u128(33);
+        session.pending_named_tp = Some(("region".into(), request));
+        let mut reply = MapBlockReply::default();
+        reply.data.push(msgs::map_block_reply::Data {
+            x: 1000,
+            y: 2000,
+            name: str_field("Region"),
+            ..Default::default()
+        });
+        let mut bytes = Vec::new();
+        aurora_msg::build_packet(&reply, 1, true, false, &[], &mut bytes);
+        sock.writable().await.unwrap();
+        session.dispatch(addr, &parse_packet(&bytes).unwrap()).unwrap();
+        assert!(received.try_iter().any(|(_, event)| matches!(event, NetEvent::TeleportRegionResolved { request: id, result: Ok(handle) } if id == request && handle == crate::origin_to_handle(256_000, 512_000))));
+        assert!(session.pending_named_tp.is_none());
+        // Dispatch must not enqueue a TeleportLocationRequest before the
+        // viewer can recheck newly received locks or a cancelled destination.
+        let mut buf = [0; 4096];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), main.recv_from(&mut buf))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

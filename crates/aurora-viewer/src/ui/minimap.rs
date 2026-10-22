@@ -392,7 +392,7 @@ impl MiniMap {
         if !*open {
             return actions;
         }
-        super::sound_cues::floater_shown(ctx, egui::Id::new("minimap"));
+        super::sound_cues::floater_shown(ctx, egui::Id::unique("minimap"));
         // floater_map.xml: no header nor border, DkGray background at
         // FSMiniMapOpacity (0.66); dragged anywhere, resized by its corner
         let default = default_rect(super::layout::work_area(ctx));
@@ -715,6 +715,11 @@ impl MiniMap {
                 .map(|r| r.name.clone())
                 .or_else(|| world.map.sim_at_global(g.0, g.1).map(|(_, s)| s.name.clone()));
             if let Some(n) = name.filter(|n| !n.is_empty()) {
+                let n = if world.rlva.has("showloc") {
+                    aurora_i18n::tr!("rlva-hidden-region").to_owned()
+                } else {
+                    n
+                };
                 lines.push(aurora_i18n::tr!("ui-minimap-region", n = n.to_string()));
             }
             match opts.mini_double_click {

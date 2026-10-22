@@ -580,7 +580,7 @@ fn xp_row(ui: &mut egui::Ui, p: &Palette, name: &str, fixed: bool, removable: bo
         return false;
     }
     let x = egui::Rect::from_center_size(egui::pos2(rect.right() - 16.0, rect.center().y), Vec2::splat(20.0));
-    let xr = ui.interact(x, ui.id().with(("region_xp_remove", name, rect.top() as i32)), Sense::click());
+    let xr = ui.interact(x, ui.scope_id().with(("region_xp_remove", name, rect.top() as i32)), Sense::click());
     sheet::icon_at(ui, "x", x.center(), 14.0, if xr.hovered() { p.danger } else { p.muted });
     xr.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-remove"))
@@ -719,7 +719,7 @@ pub(super) fn dialogs(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &Vi
 
 fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World, mut dialog: Dialog) -> Option<Dialog> {
     let mut answer: Option<bool> = None;
-    let modal = widgets::Modal::new(egui::Id::new("region_estate_wide")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("region_estate_wide")).show(ctx, |ui| {
         ui.set_width(420.0);
         match &mut dialog {
             Dialog::Environment { track, filter, selected } => {
@@ -733,7 +733,8 @@ fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wor
                     answer = Some(false);
                 }
                 let loading = crate::world::env_select::scan_step(&mut world.inventory) > 0;
-                let catalog = SettingsCatalog::build(&world.inventory);
+                let order = crate::ui::inventory::view::picker_order(ui.ctx(), &world.inventory);
+                let catalog = SettingsCatalog::build(&world.inventory, |id| order.rank(id));
                 ui.horizontal(|ui| widgets::search_box(ui, p, filter, aurora_i18n::tr!("common-search"), ui.available_width()));
                 ui.add_space(4.0);
                 let needle = filter.trim().to_lowercase();
@@ -745,25 +746,23 @@ fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wor
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let mut any = false;
-                        for kind in settings_kinds(*track) {
+                        for (kind, c) in catalog.choices(settings_kinds(*track), |id| order.rank(id)) {
                             let icon = match kind {
                                 SettingsKind::Day => "sunrise-filled",
                                 SettingsKind::Sky => "sun-filled",
                                 SettingsKind::Water => "droplet-filled",
                             };
-                            for c in catalog.list(*kind) {
-                                if !needle.is_empty() && !c.name.to_lowercase().contains(&needle) {
-                                    continue;
-                                }
-                                any = true;
-                                let r = crate::ui::land::pick_row(ui, p, icon, &c.name, *selected == Some(c.asset));
-                                if r.clicked() {
-                                    *selected = Some(c.asset);
-                                }
-                                if r.double_clicked() {
-                                    *selected = Some(c.asset);
-                                    double = true;
-                                }
+                            if !needle.is_empty() && !c.name.to_lowercase().contains(&needle) {
+                                continue;
+                            }
+                            any = true;
+                            let r = crate::ui::land::pick_row(ui, p, icon, &c.name, *selected == Some(c.asset));
+                            if r.clicked() {
+                                *selected = Some(c.asset);
+                            }
+                            if r.double_clicked() {
+                                *selected = Some(c.asset);
+                                double = true;
                             }
                         }
                         if !any {
@@ -946,7 +945,8 @@ fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wor
                     .filter(|i| i.asset_type == 7 && (needle.is_empty() || i.name.to_lowercase().contains(&needle)))
                     .map(|i| (i.id, i.name.clone()))
                     .collect();
-                cards.sort_by_key(|(_, n)| n.to_lowercase());
+                let order = crate::ui::inventory::view::picker_order(ctx, &world.inventory);
+                cards.sort_by_key(|(id, _)| order.rank(*id));
                 let mut double = false;
                 egui::ScrollArea::vertical()
                     .id_salt("region_cov_picker")

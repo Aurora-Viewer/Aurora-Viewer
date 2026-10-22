@@ -27,6 +27,7 @@ $ErrorActionPreference = 'Stop'
 $pages = @(
     @{ Section = $null; Page = 'Home'; Title = 'Home'; Source = 'README.md' }
     @{ Section = 'For testers'; Page = 'Reporting-bugs'; Title = 'Reporting bugs'; Source = 'docs/BUG_REPORTING.md' }
+    @{ Section = 'For testers'; Page = 'Installing-on-Linux'; Title = 'Installing on Linux'; Source = 'docs/LINUX.md' }
     @{ Section = 'For testers'; Page = 'Updates'; Title = 'Updates'; Source = 'docs/UPDATES.md' }
     @{ Section = 'For testers'; Page = 'Asset-imports'; Title = 'Asset imports'; Source = 'docs/IMPORTS.md' }
     @{ Section = 'For testers'; Page = 'Dev-Toolbox'; Title = 'Dev Toolbox'; Source = 'docs/DEV_TOOLBOX.md' }
@@ -35,6 +36,7 @@ $pages = @(
     @{ Section = 'Contributing'; Page = 'Translating'; Title = 'Translating the viewer'; Source = 'docs/TRANSLATING.md' }
     @{ Section = 'Contributing'; Page = 'Branding'; Title = 'Branding and interface'; Source = 'docs/BRANDING.md' }
     @{ Section = 'Technical'; Page = 'Architecture'; Title = 'Architecture'; Source = 'ARCHITECTURE.md' }
+    @{ Section = 'Technical'; Page = 'RLVa'; Title = 'RLVa implementation status'; Source = 'docs/RLVA.md' }
     @{ Section = 'Technical'; Page = 'Licences'; Title = 'Licences and notices'; Source = 'NOTICE.md' }
 )
 # kept in the repository only: linked from the sidebar

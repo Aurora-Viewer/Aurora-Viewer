@@ -39,6 +39,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
     match tab {
         0 => {
             cx.group(tr!("common-viewpoint"), |cx| {
+                cx.greyed(cx.st.rlva_camera_preset_locked);
                 let names: Vec<&str> = CameraPreset::ALL.iter().map(|v| v.label()).collect();
                 cx.keywords(&names.join(" ")).row(
                     tr!("ui-options-camera-preset"),
@@ -48,7 +49,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         let c = &mut s.camera;
                         let mut ch = false;
                         let mut preset = c.preset;
-                        egui::ComboBox::from_id_salt(ui.id().with("camera_preset"))
+                        egui::ComboBox::from_id_salt(ui.scope_id().with("camera_preset"))
                             .width(COMBO_W)
                             .selected_text(preset.label())
                             .show_ui(ui, |ui| {

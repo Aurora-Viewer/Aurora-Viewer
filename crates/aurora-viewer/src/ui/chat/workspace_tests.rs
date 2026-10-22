@@ -185,7 +185,7 @@ fn the_column_shows_and_closes_conversations() {
     h.click(bob.center());
     h.settle();
     assert_eq!(h.st.selected, Some(BOB));
-    let field = egui::Id::new(("conv_input", Some(BOB)));
+    let field = egui::Id::unique(("conv_input", Some(BOB)));
     assert!(h.frames.ctx.memory(|m| m.has_focus(field)));
     // back to the nearby chat, then Jane's entry closed from its ×
     let local = h.rect(entry_id(Pinned::Local));
@@ -225,7 +225,7 @@ fn a_line_is_quoted_from_its_menu() {
     h.click(last(&texts, aurora_i18n::tr!("ui-chat-quote-message")).center());
     h.settle();
     assert_eq!(h.st.draft_mut(Some(JANE)), "> hello from Jane ");
-    assert!(h.frames.ctx.memory(|m| m.has_focus(egui::Id::new(("conv_input", Some(JANE))))));
+    assert!(h.frames.ctx.memory(|m| m.has_focus(egui::Id::unique(("conv_input", Some(JANE))))));
 }
 
 /// A drag on the head (not the title bar) leaves the window in place.
@@ -299,7 +299,7 @@ fn the_keyboard_goes_round_the_conversations_and_closes_them() {
         };
         assert_eq!(order.len(), 3, "{style:?}: the nearby chat, Jane and Bob");
         let (first, last) = (order[1], order[2]);
-        let field = |tab| egui::Id::new(("conv_input", tab));
+        let field = |tab| egui::Id::unique(("conv_input", tab));
         h.frame(key(egui::Key::ArrowDown, egui::Modifiers::ALT));
         h.settle();
         assert_eq!(h.st.selected, first, "{style:?}");
@@ -650,7 +650,7 @@ fn the_head_offers_a_teleport_and_closes_the_conversation() {
         let window = h
             .frames
             .ctx
-            .memory(|m| m.area_rect(egui::Id::new("conversations")))
+            .memory(|m| m.area_rect(egui::Id::unique("conversations")))
             .expect("window");
         assert!(close.right() > window.right() - 60.0, "{style:?}: the × at the right edge");
         h.click(close.center());
@@ -687,7 +687,7 @@ fn the_window_keeps_its_size_through_tabs_and_long_messages() {
         let win = |h: &Harness| {
             h.frames
                 .ctx
-                .memory(|m| m.area_rect(egui::Id::new("conversations")))
+                .memory(|m| m.area_rect(egui::Id::unique("conversations")))
                 .expect("window")
         };
         let r0 = win(&h);
@@ -872,7 +872,7 @@ fn the_find_field_opens_in_the_head_row() {
     h.st.selected = Some(JANE);
     crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 560.0));
     h.settle();
-    let input = egui::Id::new(("conv_input", Some(JANE)));
+    let input = egui::Id::unique(("conv_input", Some(JANE)));
     let box_before = h.rect(input);
     h.st.searches.entry(Some(JANE)).or_default().open_find();
     h.settle();
@@ -1207,7 +1207,7 @@ fn a_dragged_edge_is_followed_at_once() {
     let window = |h: &Harness| {
         h.frames
             .ctx
-            .memory(|m| m.area_rect(egui::Id::new("conversations")))
+            .memory(|m| m.area_rect(egui::Id::unique("conversations")))
             .expect("the window")
     };
     let start = window(&h);
@@ -1293,7 +1293,7 @@ fn the_fixed_edges_stay_while_one_is_dragged_fast() {
             let window = |h: &Harness| {
                 h.frames
                     .ctx
-                    .memory(|m| m.area_rect(egui::Id::new("conversations")))
+                    .memory(|m| m.area_rect(egui::Id::unique("conversations")))
                     .expect("the window")
             };
             let start = window(&h);
@@ -1353,7 +1353,7 @@ fn the_messages_stay_put_while_the_height_is_dragged() {
             let window = |h: &Harness| {
                 h.frames
                     .ctx
-                    .memory(|m| m.area_rect(egui::Id::new("conversations")))
+                    .memory(|m| m.area_rect(egui::Id::unique("conversations")))
                     .expect("the window")
             };
             for (edge, steps) in [

@@ -38,6 +38,9 @@ impl BuildTool {
     pub fn gltf_update(&mut self, world: &mut World, updates: Vec<GltfUpdate>) {
         let mut by_region: HashMap<RegionHandle, Vec<Llsd>> = HashMap::new();
         for u in updates {
+            if !world.rlva_can_edit(u.object) {
+                continue;
+            }
             let Some(o) = world.objects.get_mut(u.object) else { continue };
             let json = u.over.as_ref().map(|o| o.to_gltf_json()).unwrap_or_default();
             let mut e = llsd_map! {
@@ -106,6 +109,9 @@ impl BuildTool {
     pub fn legacy_put(&mut self, world: &World, faces: Vec<(usize, u8, Option<LegacyMaterial>)>) {
         let mut by_region: HashMap<RegionHandle, Vec<(u8, u32, Option<LegacyMaterial>)>> = HashMap::new();
         for (idx, face, m) in faces {
+            if !world.rlva_can_edit(idx) {
+                continue;
+            }
             let Some(o) = world.objects.get(idx) else { continue };
             by_region.entry(o.key.region).or_default().push((face, o.key.local_id, m));
         }
@@ -133,6 +139,9 @@ impl BuildTool {
 
     /// ObjectMedia UPDATE with every face's entry (LLVOVolume::sendMediaDataUpdate).
     pub fn media_update(&mut self, world: &World, idx: usize, faces: &[Option<MediaEntry>]) {
+        if !world.rlva_can_edit(idx) {
+            return;
+        }
         let Some(o) = world.objects.get(idx) else { return };
         let data: Vec<Llsd> = faces
             .iter()

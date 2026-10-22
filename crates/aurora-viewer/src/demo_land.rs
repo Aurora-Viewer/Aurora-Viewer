@@ -10,7 +10,8 @@
 //! `AURORA_DEMO_LAND_PRIMS=<used>[,<step>]` sets the objects on the owner's
 //! land and makes them grow at each answer (the floater's refresh).
 //! `AURORA_DEMO_BUY_LAND` puts the parcel up for sale, and a ParcelBuy
-//! hands it to the avatar.
+//! hands it to the avatar. `AURORA_DEMO_BUY_PASS` gives it to Loup, with or
+//! without passes, or to the avatar.
 
 use super::{DEMO_AGENT, DEMO_GROUP1, DEMO_LOUP, DEMO_NOVA, DEMO_TESS, TEX_GRADIENT};
 use crate::world::land::powers;
@@ -228,10 +229,33 @@ fn for_sale(mut p: ParcelInfo, mode: &str) -> ParcelInfo {
     p
 }
 
+/// AURORA_DEMO_BUY_PASS=<mode>: the plaza parcel as the ground menu's
+/// "Buy access" finds it (sell, none, own; see docs/TESTING.md).
+pub fn pass_scenario() -> Option<String> {
+    std::env::var("AURORA_DEMO_BUY_PASS").ok().map(|v| v.trim().to_lowercase())
+}
+
+/// Loup's parcel selling passes of an hour for L$ 88 to whoever is not on
+/// its access list (`sell`), Loup's without passes (`none`), or the
+/// avatar's own (`own`).
+fn pass_parcel(mut p: ParcelInfo, mode: &str) -> ParcelInfo {
+    p.owner_id = if mode == "own" { DEMO_AGENT } else { DEMO_LOUP };
+    p.group_id = VISITOR_GROUP;
+    p.is_group_owned = false;
+    if mode == "sell" {
+        p.flags |= pf::USE_ACCESS_LIST | pf::USE_PASS_LIST;
+    }
+    p
+}
+
 pub(super) fn parcel() -> ParcelInfo {
     let mut g = PARCEL.lock();
     g.get_or_insert_with(|| {
         let p = initial(role());
+        let p = match pass_scenario() {
+            Some(mode) => pass_parcel(p, &mode),
+            None => p,
+        };
         match buy_scenario() {
             Some(mode) => for_sale(p, &mode),
             None => p,
@@ -497,6 +521,10 @@ pub fn reply(c: &LandCommand) -> Vec<NetEvent> {
             p.claim_date = now();
             *PARCEL.lock() = Some(p);
             vec![selected()]
+        }
+        LandCommand::BuyPass { local_id, .. } => {
+            log::info!("demo action: ParcelBuyPass on parcel {local_id} (simulé)");
+            Vec::new()
         }
         LandCommand::DwellRequest { .. } => vec![ev(LandEvent::Dwell { local_id: 1, dwell: 145.0 })],
         LandCommand::ObjectOwnersRequest { .. } => {

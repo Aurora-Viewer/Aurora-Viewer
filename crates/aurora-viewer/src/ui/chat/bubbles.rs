@@ -221,6 +221,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
 
     // the text: an emote is the name in italics, a shout or a whisper says so
     let (text, italics) = super::line_body(line, &name);
+    let text = world.rlva_filter_text(&text).into_owned();
     let text_color = match (own, tone) {
         (true, None) => p.on_accent,
         (true, Some(_)) => p.on_accent.gamma_multiply(0.75),
@@ -284,7 +285,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             let pic = egui::Rect::from_min_size(egui::pos2(rect.left() - PIC_GAP - PIC, rect.bottom() - PIC), egui::Vec2::splat(PIC));
             sender_picture(ui, env, line, pic, &name, avatar, object, logged);
             if !avatar.is_nil() {
-                let resp = ui.interact(pic, ui.id().with("sender"), egui::Sense::click());
+                let resp = ui.interact(pic, ui.scope_id().with("sender"), egui::Sense::click());
                 line_name_menu(&resp, p, world, avatar, line, env.menu);
                 if resp
                     .on_hover_cursor(egui::CursorIcon::PointingHand)

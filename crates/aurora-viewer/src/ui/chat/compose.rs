@@ -83,7 +83,7 @@ pub(super) fn show(
     actions: &mut Vec<ConvAction>,
     quote: Option<String>,
 ) {
-    let conv_input = egui::Id::new(("conv_input", st.selected));
+    let conv_input = egui::Id::unique(("conv_input", st.selected));
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     let width = ui.available_width();
     ui.horizontal(|ui| {
@@ -156,7 +156,7 @@ pub(super) fn show(
                                 .frame(egui::Frame::NONE)
                                 .desired_width(field_w)
                                 .min_size(egui::vec2(field_w, BUTTON))
-                                .vertical_align(egui::Align::Center)
+                                .align(egui::Align2::LEFT_CENTER)
                         });
                         if recalled {
                             output.response.mark_changed();
@@ -178,7 +178,7 @@ pub(super) fn show(
             if st.emoji_open {
                 let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
                 let mut close = false;
-                egui::Area::new(egui::Id::new("emoji_picker"))
+                egui::Area::new(egui::Id::unique("emoji_picker"))
                     .fade_in(false)
                     .order(egui::Order::Foreground)
                     .pivot(egui::Align2::LEFT_BOTTOM)

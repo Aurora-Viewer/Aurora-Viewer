@@ -21,9 +21,10 @@ aurora-voice = { version = "0.1.0", path = "../aurora-voice" }
 aurora-version = { version = "0.1.0", path = "../aurora-version" }
 crossbeam-channel = "0.5.17"
 directories = "6.0.0"
-egui = { version = "0.36.2", features = ["persistence"] }
-egui-wgpu = "0.36.2"
-egui-winit = "0.36.2"
+# experimental: only makes egui::theme public (the text fields' size, theme.rs)
+egui = { version = "0.37.0", features = ["experimental", "monochrome_emoji_fonts", "persistence"] }
+egui-wgpu = "0.37.0"
+egui-winit = "0.37.0"
 emojis = "0.9.0"
 env_logger = "0.11.11"
 glam = "0.34.1"
@@ -61,9 +62,10 @@ serde_path_to_error = "0.1.20"
 # Rust, no dependency, byte-identical to the reference C code; MIT /
 # Apache-2.0 with the reference's zlib notice
 bevy_mikktspace = "1.0.0"
+fancy-regex = "0.19.2"
 
-# remembered login password (Windows Credential Manager, macOS Keychain,
-# Secret Service on Linux)
+# remembered login password and the GitHub authorization of crash reports
+# (Windows Credential Manager, macOS Keychain, Secret Service on Linux)
 [dependencies.keyring]
 version = "4"
 

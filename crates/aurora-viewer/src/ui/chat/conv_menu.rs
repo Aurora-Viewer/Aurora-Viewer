@@ -146,7 +146,7 @@ pub(super) fn demo_mark(ctx: &egui::Context, world: &World, st: &ChatUi, convers
 }
 
 fn demo_id() -> egui::Id {
-    egui::Id::new("conv_menu_demo")
+    egui::Id::unique("conv_menu_demo")
 }
 
 /// The right click of `AURORA_DEMO_CONV_MENU` on its entry, at frames 700

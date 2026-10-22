@@ -51,7 +51,7 @@ pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, 
         st.anchor = Some(id);
     }
     st.selected = Some(id);
-    ui.memory_mut(|m| m.request_focus(super::clipboard::focus_id(st)));
+    super::clipboard::request_focus(ui, st);
     let ids = st.selected_ids(id);
     if ids.len() > 1 {
         r.dnd_set_drag_payload(SelectionDrag(ids));
@@ -83,7 +83,7 @@ fn plan(
     facts: &Facts,
 ) -> Arc<Result<Mutation, String>> {
     ctx.data_mut(|data| {
-        let cache = &mut data.get_temp_mut_or_default::<Cache>(egui::Id::new("inventory_drag_plan")).0;
+        let cache = &mut data.get_temp_mut_or_default::<Cache>(egui::Id::unique("inventory_drag_plan")).0;
         if let Some(c) = cache
             && c.ids == ids
             && c.folder == to
@@ -113,7 +113,7 @@ struct Feedback {
     cursor: egui::CursorIcon,
 }
 fn feedback_id() -> egui::Id {
-    egui::Id::new("inventory_move_drag_feedback")
+    egui::Id::unique("inventory_move_drag_feedback")
 }
 
 /// How many entries a drag of inventory carries while one is in progress (a
@@ -234,7 +234,7 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
     let Some(pointer) = ctx.input(|i| i.pointer.interact_pos().filter(|_| i.pointer.primary_down())) else {
         return;
     };
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("inventory_drag_count")));
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::unique("inventory_drag_count")));
     let text = painter.layout_no_wrap(
         aurora_i18n::tr!("inventory-move-selection-count", count = cargo.0.len()),
         tree::font(),
@@ -256,7 +256,7 @@ pub(crate) fn badge(ctx: &egui::Context, p: &Palette) {
 
 pub(super) fn record_row(ctx: &egui::Context, editor: Uuid, id: Uuid, rect: egui::Rect) {
     if cfg!(test) || demo::enabled() {
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(("inventory_drag_row", editor, id)), rect));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("inventory_drag_row", editor, id)), rect));
     }
 }
 

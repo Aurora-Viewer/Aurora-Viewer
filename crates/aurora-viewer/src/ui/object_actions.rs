@@ -285,7 +285,7 @@ pub fn show_contents(
     world: &World,
 ) -> Vec<ContentsOpen> {
     let Some(c) = state.contents.as_ref() else { return Vec::new() };
-    let selection_id = egui::Id::new("object_contents_selected");
+    let selection_id = egui::Id::unique("object_contents_selected");
     let mut selected = ctx
         .data(|d| d.get_temp::<(uuid::Uuid, uuid::Uuid)>(selection_id))
         .filter(|(object, _)| *object == c.target.object)

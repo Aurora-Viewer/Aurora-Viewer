@@ -31,7 +31,7 @@ pub(crate) fn inventory_item_label_tagged(
     tag: Option<(&Palette, &str, usize)>,
 ) -> egui::Response {
     inventory_spacing(ui);
-    let text_id = ui.make_persistent_id("label");
+    let text_id = egui::IdSalt::new("label");
     let tag = tag.map(|(p, text, at)| {
         let galley = ui.fonts_mut(|fonts| fonts.layout_job(label.clone()));
         let x = galley.pos_from_cursor(egui::text::CCursor::new(at)).min.x;
@@ -147,7 +147,7 @@ pub fn navigation(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, selec
         rect.center().y,
         if selected { p.ink } else { p.muted },
     );
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     response.on_hover_text(label)
 }
 
@@ -197,7 +197,7 @@ pub fn navigation_wrapped(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &st
         let pos = super::row_text_origin(ui.painter(), &g, rect.right() - 9.0 - g.size().x, rect.center().y);
         ui.painter().galley(pos, g, p.muted_dim);
     }
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     response
 }
 
@@ -298,7 +298,7 @@ fn section<R>(
         state.toggle(ui);
         header.mark_changed();
     }
-    header.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::CollapsingHeader, ui.is_enabled(), galley.text()));
+    header.widget_info(|| egui::WidgetInfo::labeled(egui::Role::DisclosureTriangle, ui.is_enabled(), galley.text()));
     if ui.is_rect_visible(rect) {
         let hot = header.hovered() || header.has_focus();
         if hot {
@@ -623,7 +623,7 @@ mod tests {
                         ..Default::default()
                     },
                     |_ui| {
-                        Modal::new(egui::Id::new("synthetic_login_glass"))
+                        Modal::new(egui::Id::unique("synthetic_login_glass"))
                             .login_surface(&p)
                             .show(&ctx, |ui| {
                                 ui.set_width(340.0);

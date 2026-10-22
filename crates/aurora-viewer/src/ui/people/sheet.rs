@@ -169,7 +169,7 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
     }
     // the cross at the right, the names between
     let cross = Rect::from_center_size(Pos2::new(rect.right() - 10.0, rect.center().y), Vec2::splat(20.0));
-    let resp = ui.interact(cross, ui.id().with(("people-sheet-close", id)), Sense::click());
+    let resp = ui.interact(cross, ui.scope_id().with(("people-sheet-close", id)), Sense::click());
     if resp.hovered() {
         ui.painter()
             .rect_filled(cross, ui.visuals().widgets.inactive.corner_radius, p.raised);
@@ -396,7 +396,10 @@ fn nickname_and_sets(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Peo
                 ui.set_width(field_w - 16.0);
                 ui.add(
                     egui::TextEdit::singleline(text)
-                        .frame(egui::Frame::NONE)
+                        .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
+                            ui.ctx(),
+                            &egui::TextStyle::Body.resolve(ui.style()),
+                        )))
                         .hint_text(aurora_i18n::tr!("people-sheet-nickname-hint"))
                         .desired_width(f32::INFINITY),
                 )

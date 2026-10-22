@@ -66,7 +66,7 @@ const FOLDER_TRASH: i32 = 14;
 const FOLDER_FAVORITES: i32 = 23;
 
 fn search_id() -> egui::Id {
-    egui::Id::new("worldmap-search")
+    egui::Id::unique("worldmap-search")
 }
 
 /// A landmark placed on the map.
@@ -564,7 +564,7 @@ impl PillFace<'_> {
         if hot {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, self.enabled, self.on, self.label));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, self.enabled, self.on, self.label));
         resp
     }
 }
@@ -650,7 +650,7 @@ impl WorldMapUi {
         self.follow_landmark(world, cam);
         // the panels of the last frame keep the map's clicks and drags
         for (key, r) in std::mem::take(&mut self.ov.rects) {
-            ui.interact(r, egui::Id::new(("worldmap-panel-blocker", key)), Sense::click_and_drag());
+            ui.interact(r, egui::Id::unique(("worldmap-panel-blocker", key)), Sense::click_and_drag());
         }
         let fade = if dragging { 0.55 } else { 1.0 };
         let card = self.place_card(ui, p, world, tiles, cam, pictures, map, fade, actions);
@@ -833,7 +833,10 @@ impl WorldMapUi {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.ov.query)
                         .id(id)
-                        .frame(egui::Frame::NONE)
+                        .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
+                            ui.ctx(),
+                            &egui::TextStyle::Body.resolve(ui.style()),
+                        )))
                         .hint_text(aurora_i18n::tr!("ui-worldmap-search-anything"))
                         .desired_width(w),
                 );
@@ -1029,7 +1032,7 @@ impl WorldMapUi {
             };
             let w = face.width(ui);
             let r = Rect::from_min_size(pos2(x, row.top()), Vec2::new(w, PILL_H));
-            let id = ui.id().with(("drawer-tab", t as u8));
+            let id = ui.scope_id().with(("drawer-tab", t as u8));
             if face.show(ui, p, r, id).clicked() {
                 new_tab = Some(t);
             }
@@ -1175,7 +1178,7 @@ impl WorldMapUi {
         match row {
             Row::Folder { index, open } => {
                 let f = &self.ov.landmarks.folders[*index];
-                let id = ui.id().with(("folder", f.id));
+                let id = ui.scope_id().with(("folder", f.id));
                 let resp = ui.interact(rect, id, Sense::click());
                 let ink = if resp.hovered() { p.muted } else { p.muted_dim };
                 let caret = if *open { "caret-down-filled" } else { "caret-right-filled" };
@@ -1205,7 +1208,7 @@ impl WorldMapUi {
             Row::Landmark(i) => {
                 let l = &self.ov.landmarks.items[*i];
                 let (asset, item, thumb_id, name) = (l.asset, l.item, l.thumbnail, l.name.clone());
-                let id = ui.id().with(("landmark", item));
+                let id = ui.scope_id().with(("landmark", item));
                 let resp = ui.interact(rect, id, Sense::click());
                 let go = Rect::from_center_size(pos2(rect.right() - 18.0, rect.center().y), Vec2::splat(24.0));
                 let go_resp = ui.interact(go, id.with("go"), Sense::click());
@@ -1266,7 +1269,7 @@ impl WorldMapUi {
             Row::History(i) => {
                 let h: &HistoryItem = world.tp_storage.items.get(*i)?;
                 let title = h.title.clone();
-                let id = ui.id().with(("history", *i));
+                let id = ui.scope_id().with(("history", *i));
                 let resp = ui.interact(rect, id, Sense::click());
                 let go = Rect::from_center_size(pos2(rect.right() - 18.0, rect.center().y), Vec2::splat(24.0));
                 let go_resp = ui.interact(go, id.with("go"), Sense::click());
@@ -1303,7 +1306,7 @@ impl WorldMapUi {
             }
             Row::Friend { id, name, mappable } => {
                 let sense = if *mappable { Sense::click() } else { Sense::hover() };
-                let row_id = ui.id().with(("friend", *id));
+                let row_id = ui.scope_id().with(("friend", *id));
                 let resp = ui.interact(rect, row_id, sense);
                 let followed = world.map.avatar.as_ref().is_some_and(|a| a.id == *id);
                 if followed {
@@ -1483,7 +1486,7 @@ impl WorldMapUi {
             let y = area.top() + r as f32 * (PILL_H + 5.0);
             for i in range.clone() {
                 let rect = Rect::from_min_size(pos2(x, y), Vec2::new(widths[i], PILL_H));
-                let id = ui.id().with(("layer", i));
+                let id = ui.scope_id().with(("layer", i));
                 let mut resp = faces[i].show(ui, p, rect, id);
                 resp = if faces[i].enabled {
                     resp.on_hover_text(tips[i])
@@ -1610,10 +1613,16 @@ impl WorldMapUi {
             .and_then(|t| world.map.sim_at_global(t.x, t.y))
             .map(|(k, s)| (k, s.clone()));
         let landmark = self.landmark.clone();
-        let title = if let Some((_, _, n)) = &landmark {
+        let title = if world.rlva.has("showloc") && landmark.is_none() && avatar.is_none() {
+            aurora_i18n::tr!("rlva-hidden-region").to_owned()
+        } else if let Some((_, _, n)) = &landmark {
             n.clone()
         } else if let Some(a) = &avatar {
-            a.name.clone()
+            if world.rlva_can_name(a.id) {
+                a.name.clone()
+            } else {
+                world.social.name_of(&a.id)
+            }
         } else if let Some((_, s)) = &region {
             s.name.clone()
         } else if track.as_ref().is_some_and(|t| t.pending) {
@@ -1652,18 +1661,22 @@ impl WorldMapUi {
         }
         let detail = parts.join(" · ");
         // the parcel there, as Firestorm's map asks it for a spot
-        if landmark.is_none() && avatar.is_none() {
+        if landmark.is_none() && avatar.is_none() && !world.rlva.has("showloc") {
             world.map.want_track_parcel();
         }
         let parcel = world
             .map
             .track_parcel_id()
-            .filter(|_| landmark.is_none() && avatar.is_none())
+            .filter(|_| landmark.is_none() && avatar.is_none() && !world.rlva.has("showloc"))
             .and_then(|id| world.profiles.parcels.get(&id))
             .map(|p| p.name.trim().to_owned())
             .filter(|n| !n.is_empty())
             .map(|name| aurora_i18n::tr!("ui-worldmap-parcel", name = name).to_string());
-        let tooltip = track.as_ref().map(|t| t.tooltip.clone()).filter(|t| !t.is_empty());
+        let tooltip = track
+            .as_ref()
+            .map(|t| t.tooltip.clone())
+            .filter(|t| !t.is_empty() && !world.rlva.has("showloc"));
+        let detail = if world.rlva.has("showloc") { String::new() } else { detail };
         // its picture
         let thumb_id = landmark
             .as_ref()
@@ -1736,7 +1749,9 @@ impl WorldMapUi {
         });
         // the position in the region, and how far it is
         let mut edited: Option<(f64, f64, f32, bool)> = None;
-        if let (Some(t), Some((k, _))) = (&track, &region) {
+        if let (Some(t), Some((k, _))) = (&track, &region)
+            && !world.rlva.has("showloc")
+        {
             ui.add_space(8.0);
             let l = local(t, *k);
             let (mut lx, mut ly, mut lz) = (l.x, l.y, l.z);
@@ -1787,7 +1802,7 @@ impl WorldMapUi {
                 aurora_i18n::tr!("common-copy-slurl"),
                 ActionKind::Flat,
                 h,
-                slurl.is_some(),
+                slurl.is_some() && !world.rlva.has("showloc"),
             )
             .clicked();
             info = widgets::action_button_if(
@@ -1797,7 +1812,7 @@ impl WorldMapUi {
                 aurora_i18n::tr!("ui-worldmap-info"),
                 ActionKind::Flat,
                 h,
-                source.is_some(),
+                source.is_some() && !world.rlva.has("showloc"),
             )
             .on_hover_text(aurora_i18n::tr!("ui-worldmap-info-help"))
             .clicked();
@@ -1845,10 +1860,16 @@ impl WorldMapUi {
                 _ => {}
             }
         }
-        if copy && let Some(u) = slurl {
+        if copy
+            && !world.rlva.has("showloc")
+            && let Some(u) = slurl
+        {
             ctx.copy_text(u);
         }
-        if info && let Some(s) = source {
+        if info
+            && !world.rlva.has("showloc")
+            && let Some(s) = source
+        {
             actions.push(WorldMapAction::OpenPlace(s));
         }
         if show && let Some(t) = &track {

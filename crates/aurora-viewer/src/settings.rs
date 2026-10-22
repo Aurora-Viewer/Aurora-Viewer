@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub mod backup;
 mod hover_height;
 
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
@@ -189,6 +190,20 @@ impl PlateClick {
     ];
 }
 
+/// What the crash window does with a crash report (Preferences › Privacy).
+/// It becomes a public GitHub issue in the tester's name, hence Ask by
+/// default where the Legacy Viewer always sends to its own server
+/// (llcrashlogger.cpp, CrashSubmitBehavior).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CrashReports {
+    #[default]
+    Ask,
+    /// Published as soon as the window opens, once GitHub is authorized.
+    Always,
+    /// No sending from the window; the report stays on the PC.
+    Never,
+}
+
 /// The look of the world's hover tips (Preferences › Interface): a bubble
 /// next to the pointer, a card with the details and the actions (the
 /// default), or a fixed readout in a corner.
@@ -330,6 +345,7 @@ const FORMER_LOOK_AT_UNLIMITED: f32 = 64.0;
 pub struct Settings {
     pub update_mode: crate::updater::Mode,
     pub ignored_update: String,
+    pub crash_reports: CrashReports,
     /// Firestorm Language: default follows the OS.
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
@@ -382,6 +398,11 @@ pub struct Settings {
     pub dof: crate::dof::Settings,
     pub shape_show_hints: bool,
     pub shape_height_feet: bool,
+    /// The shape editor stands our avatar up and plays the customise
+    /// animation, which turns it to face the camera (on, as the Legacy
+    /// Viewer always does; Preferences › Avatars › Animations). Off, our
+    /// avatar keeps its pose and the camera frames it from the front.
+    pub customize_animation: bool,
     pub script_editor: crate::ui::scripts::settings::ScriptSettings,
     pub username: String,
     pub remember_username: bool,
@@ -595,6 +616,9 @@ pub struct Settings {
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
     pub warn_external_links: bool,
+    /// Sites added to, or removed from, the built-in trusted domains
+    /// (Preferences › Protections; link_trust.rs).
+    pub trusted_sites: crate::link_trust::TrustedSites,
     /// FSMuteAllGroups: refuse every group chat.
     pub mute_all_groups: bool,
     /// FSMuteGroupWhenNoticesDisabled: refuse group chat of groups whose
@@ -615,6 +639,9 @@ pub struct Settings {
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
     pub anti_spam: crate::world::anti_spam::Settings,
+    /// Global RLVa opt-in. Session restrictions are never persisted.
+    pub rlva_enabled: bool,
+    pub rlva: crate::world::rlva::preferences::Preferences,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
@@ -1262,6 +1289,7 @@ impl Default for Settings {
         Settings {
             update_mode: crate::updater::Mode::Ask,
             ignored_update: String::new(),
+            crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
             show_bug_report: true,
@@ -1284,6 +1312,7 @@ impl Default for Settings {
             gestures: Default::default(),
             shape_show_hints: true,
             shape_height_feet: false,
+            customize_animation: true,
             imports: Default::default(),
             script_editor: Default::default(),
             username: String::new(),
@@ -1390,6 +1419,7 @@ impl Default for Settings {
             log_show_history: true,
             log_dated_names: false,
             warn_external_links: true,
+            trusted_sites: Default::default(),
             mute_all_groups: false,
             mute_groups_without_notices: false,
             report_blocks: false,
@@ -1399,6 +1429,8 @@ impl Default for Settings {
             sim_version_alert: true,
             object_im_filter: Default::default(),
             anti_spam: Default::default(),
+            rlva_enabled: false,
+            rlva: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             keywords: Default::default(),

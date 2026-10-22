@@ -325,6 +325,9 @@ impl PeopleUi {
 /// Nearby avatars, nearest first: the loaded ones at their exact place, the
 /// others from the coarse locations (the radar's sightings).
 pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
+    if world.rlva.has("shownearby") {
+        return Vec::new();
+    }
     let me = world.agent.position;
     let mut out: Vec<(Uuid, String, Vec3, f32)> = crate::world::radar::sightings(world)
         .into_iter()
@@ -367,6 +370,10 @@ pub fn people_window(
     aurora: bool,
 ) -> Vec<PeopleAction> {
     let mut actions = Vec::new();
+    if world.rlva.has("shownearby") && panels.people_tab == TAB_NEARBY {
+        nearby::close_sheet(st);
+        st.pending_sheet = None;
+    }
     let mut open = panels.people;
     let help = aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list");
     let pos = default_pos(super::layout::work_area(ctx));
@@ -877,7 +884,7 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
     });
     ui.add_space(4.0);
     let entries = world.mutes.entries();
-    let list = ui.id().with("blocked_list");
+    let list = ui.scope_id().with("blocked_list");
     let w = widgets::header_width(ui, list);
     let title = aurora_i18n::tr!("ui-people-name", value0 = format!("{}", entries.len()));
     widgets::header_row(ui, p, &[(&title, w - 160.0), (aurora_i18n::tr!("common-type"), 70.0), ("", 90.0)]);

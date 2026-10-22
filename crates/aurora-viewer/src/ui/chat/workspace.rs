@@ -121,7 +121,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     st.layout_rail = Some(rail_wanted);
     let column = ease(
         ui.ctx(),
-        ui.id().with("column_width"),
+        ui.scope_id().with("column_width"),
         if rail_wanted { sidebar::RAIL } else { sidebar::WIDTH },
         st.layout_dragged,
     );
@@ -131,7 +131,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
     // background (the column, the head, the strips) leaves it in place, as
     // one on the lines (#427)
     let all = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(size.x, h));
-    ui.interact(all, ui.id().with("workspace_still"), egui::Sense::drag());
+    ui.interact(all, ui.scope_id().with("workspace_still"), egui::Sense::drag());
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let contacts_sub = if friends.is_some() {
@@ -248,7 +248,7 @@ fn pane(
     // with the window's size; the head's button shows or hides it at once
     let room_w = ease(
         ui.ctx(),
-        ui.id().with("members_width"),
+        ui.scope_id().with("members_width"),
         if members_room { members::WIDTH } else { 0.0 },
         st.layout_dragged,
     );
@@ -271,7 +271,7 @@ fn pane(
             );
         });
     }
-    let conv_input = egui::Id::new(("conv_input", st.selected));
+    let conv_input = egui::Id::unique(("conv_input", st.selected));
     if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
         search.open_find();
     }
@@ -371,7 +371,7 @@ fn drops(ui: &mut egui::Ui, p: &Palette, pane: egui::Rect, st: &ChatUi, kind: Op
             egui::StrokeKind::Inside,
         );
     };
-    let zone = ui.interact(pane, ui.id().with("person_drop"), egui::Sense::hover());
+    let zone = ui.interact(pane, ui.scope_id().with("person_drop"), egui::Sense::hover());
     if zone.dnd_hover_payload::<crate::ui::call_invite::PersonDrag>().is_some() {
         outline(ui);
     }
@@ -400,7 +400,7 @@ const DROP_FADE: f32 = 0.12;
 const DROP_ICON: f32 = 28.0;
 
 fn drop_count_id(ui: &egui::Ui) -> egui::Id {
-    ui.id().with("drop_hint_count")
+    ui.scope_id().with("drop_hint_count")
 }
 
 /// How far an IM's messages have faded behind the drop hint (0 to 1). It
@@ -414,7 +414,7 @@ fn drop_fade(ui: &egui::Ui, im: bool) -> f32 {
         ui.ctx().data_mut(|d| d.insert_temp(drop_count_id(ui), n));
     }
     ui.ctx()
-        .animate_bool_with_time(ui.id().with("drop_hint"), carried.is_some(), DROP_FADE)
+        .animate_bool_with_time(ui.scope_id().with("drop_hint"), carried.is_some(), DROP_FADE)
 }
 
 /// The hint over the faded messages: to whom a drop gives, and how many
@@ -475,7 +475,7 @@ fn give_demo() -> Option<&'static str> {
 }
 
 fn give_demo_id() -> egui::Id {
-    egui::Id::new("conversation_give_demo")
+    egui::Id::unique("conversation_give_demo")
 }
 
 /// The entries `drop` gives: seven of `AURORA_DEMO_INVENTORY`'s, its no-copy

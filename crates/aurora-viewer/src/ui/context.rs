@@ -229,6 +229,8 @@ pub enum CtxAction {
     AboutLand(Vec3),
     /// Buy Land on the parcel at the clicked point (Land.Buy).
     BuyLand(Vec3),
+    /// A pass for the parcel at the clicked point (Land.BuyPass).
+    BuyPass(Vec3),
     StandUp,
     SitGround,
     ToggleFly,
@@ -459,7 +461,7 @@ pub fn contact_set_submenu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &
 
 /// egui temp data: actions chosen in menus this frame.
 fn requests_id() -> egui::Id {
-    egui::Id::new("aurora_context_requests")
+    egui::Id::unique("aurora_context_requests")
 }
 
 /// Hand a menu choice to the app (run after the interface pass).
@@ -492,7 +494,7 @@ const HOVERED: &str = "world_context_menu_hovered";
 pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f: &Facts, use_pie: bool) {
     if menu::dismiss_on_window_change(ctx) {
         *menu = None;
-        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::new(HOVERED)));
+        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
         return;
     }
     let Some(m) = menu.clone() else {
@@ -514,7 +516,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
             m.pie_path.clear();
             m.pie_input_frame = None;
         }
-        menu::popup_at(ctx, egui::Id::new("world_context_menu"), m.pos, &mut open, p, |ui| {
+        menu::popup_at(ctx, egui::Id::unique("world_context_menu"), m.pos, &mut open, p, |ui| {
             if let Target::Avatar { id, own: false, .. } = m.target {
                 voice_row(ui, p, id, f.voice_volume);
             }
@@ -523,16 +525,16 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
     };
     // UISndPieMenuSliceHighlight0..7 when an enabled row gets hovered (the
     // eight slices of Firestorm's default pie menu, PieMenu::draw)
-    let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::new(HOVERED)).flatten());
+    let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::unique(HOVERED)).flatten());
     if hovered != before {
         if let Some(i) = hovered.filter(|i| *i < 8) {
             super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i as u8));
         }
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(HOVERED), hovered));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(HOVERED), hovered));
     }
     if !open {
         *menu = None;
-        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::new(HOVERED)));
+        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
     }
 }
 
@@ -637,6 +639,34 @@ fn avatar_menu_reporting(
     let here = avatar_position(world, &id).is_some();
     let online = friend.as_ref().is_none_or(|f| f.online);
     let name = world.social.name_of(&id);
+    if !world.rlva_can_name(id) {
+        // RLVa's restricted nearby/name menu exposes no profile, identity
+        // clipboard or conversation-history routes (RlvActions::canShowName).
+        if menu::item_if(
+            ui,
+            p,
+            "send-filled",
+            aurora_i18n::tr!("common-offer-teleport"),
+            online && world.rlva_can_offer_teleport(id),
+        ) {
+            act(CtxAction::OfferTeleport(id));
+        }
+        if menu::item_if(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport"), online) {
+            act(CtxAction::RequestTeleport(id));
+        }
+        if menu::item_if(ui, p, "zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), here) {
+            act(CtxAction::ZoomAvatar(id));
+        }
+        let text = if blocked {
+            aurora_i18n::tr!("common-unblock")
+        } else {
+            aurora_i18n::tr!("common-block")
+        };
+        if menu::item(ui, p, "ban", text) {
+            act(CtxAction::ToggleBlock(id));
+        }
+        return;
+    }
     let profile = |ui: &mut egui::Ui| {
         if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
             act(CtxAction::Profile(id));
@@ -648,7 +678,13 @@ fn avatar_menu_reporting(
         }
     };
     let offer_tp = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), online) {
+        if menu::item_if(
+            ui,
+            p,
+            "send-filled",
+            aurora_i18n::tr!("common-offer-teleport"),
+            online && world.rlva_can_offer_teleport(id),
+        ) {
             act(CtxAction::OfferTeleport(id));
         }
     };
@@ -915,7 +951,7 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
     use crate::ui::widgets::{ActionKind, action_button};
     use egui::RichText;
     let mut answer = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new("object_delete_confirm")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("object_delete_confirm")).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-context-delete-object"))
@@ -958,7 +994,7 @@ pub struct Question<'a> {
 pub fn ask(ctx: &egui::Context, p: &Palette, q: &Question, dont_ask: &mut bool) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new(q.id)).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique(q.id)).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(RichText::new(q.title).size(15.0).strong().color(p.ink));
         ui.add_space(6.0);
@@ -1003,7 +1039,7 @@ pub fn place_teleport_question(region: &str) -> String {
 pub fn teleport_confirm(ctx: &egui::Context, p: &Palette, id: &str, text: &str, dont_ask: &mut bool) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new(id)).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique(id)).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("common-teleport-2"))
@@ -1046,7 +1082,7 @@ pub fn teleport_confirm(ctx: &egui::Context, p: &Palette, id: &str, text: &str, 
 pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_warn: &mut bool, danger: Option<&str>) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new("external_link_confirm")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("external_link_confirm")).show(ctx, |ui| {
         ui.set_width(380.0);
         let (icon, col, title) = match danger {
             Some(_) => ("circle-x-filled", p.danger, aurora_i18n::tr!("ui-context-dangerous-link")),
@@ -1120,6 +1156,75 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rlva_hidden_identity_menu_keeps_zoom_and_block_without_profile_or_clipboard_routes() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Menu fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let ctx = egui::Context::default();
+        theme.apply(&ctx, 1.0);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 800.0))),
+                ..Default::default()
+            },
+            |ui| {
+                avatar_list_menu(ui, &p, &world, id, AvatarList::Name);
+            },
+        );
+        // This headless fixture inspects shapes without a texture consumer.
+        output.textures_delta.clear();
+        fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => texts.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => {
+                    for s in shapes {
+                        collect(s, texts);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        for shape in output.shapes {
+            collect(&shape.shape, &mut texts);
+        }
+        assert!(texts.iter().any(|t| t.contains(aurora_i18n::tr!("common-zoom-2"))));
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains(aurora_i18n::tr!("common-block")) || t.contains(aurora_i18n::tr!("common-unblock")))
+        );
+        for label in [
+            aurora_i18n::tr!("common-view-profile"),
+            aurora_i18n::tr!("common-copy-name"),
+            aurora_i18n::tr!("common-copy-url"),
+            aurora_i18n::tr!("common-copy-mention-uri"),
+            aurora_i18n::tr!("common-view-conversation-history"),
+        ] {
+            assert!(!texts.iter().any(|t| t.contains(label)), "unexpected identity route: {label}");
+        }
+    }
 
     #[test]
     fn modifier_click_opens_the_editing_of_an_attachment_the_tools_can_select() {

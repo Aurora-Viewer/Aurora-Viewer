@@ -359,6 +359,7 @@ pub struct ObjGpu {
     pub bom_mask: u64,
     /// Drawn as a too-complex silhouette (system body in flat grey).
     pub jelly: bool,
+    pub rlva_silhouette: bool,
     /// Avatars: the morphed geometries of its body parts it holds
     /// (`GeomKey::AvatarMorph`), and whether one of them is still being
     /// built (the part is drawn unmorphed meanwhile).
@@ -723,6 +724,7 @@ pub struct Scene {
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
     pub too_complex: std::collections::HashSet<usize>,
+    rlva_silhouettes: std::collections::HashSet<usize>,
     /// Objects the sync visits: moving, changed, pending (sync_sets.rs).
     sets: SyncSets,
     /// Transforms placed this frame (parents of the next levels).
@@ -858,6 +860,7 @@ pub struct Scene {
     env_tex: [(Uuid, u32); 6],
     /// Index of the agent avatar (always drawn).
     pub agent_idx: Option<usize>,
+    rlva_render_state: (Option<Uuid>, bool, bool),
     pub lists: DrawLists,
     pub stats: SceneStats,
     /// AURORA_STILL_CHECK: what changes while the picture should stand still.
@@ -1280,6 +1283,7 @@ impl Scene {
             ground_feet_own_moving: false,
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
+            rlva_silhouettes: Default::default(),
             sets: SyncSets::default(),
             xf_cache: XfCache::default(),
             anchors: Default::default(),
@@ -1341,6 +1345,7 @@ impl Scene {
             fov_y: 1.0,
             env_tex: [(Uuid::nil(), 0); 6],
             agent_idx: None,
+            rlva_render_state: (None, false, false),
             lists: DrawLists::default(),
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
@@ -2190,6 +2195,26 @@ impl Scene {
     /// full `sync_object`. What an avatar wears is placed by the GPU from
     /// the anchors written here (anchors.rs) and is not visited.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
+        let rlva_state = (
+            world.rlva.camera_texture(),
+            world.rlva.has("showself"),
+            world.rlva.has("showselfhead"),
+        );
+        if self.rlva_render_state != rlva_state {
+            self.rlva_render_state = rlva_state;
+            for (idx, object) in world.objects.slots.iter_mut().enumerate() {
+                if let Some(object) = object {
+                    object.render.needs_records = true;
+                    object.material_dirty = true;
+                    self.sets.dirty.insert(idx);
+                    if object.is_avatar()
+                        && let Some(gpu) = self.gpu.get_mut(idx)
+                    {
+                        gpu.tex_generation = u64::MAX;
+                    }
+                }
+            }
+        }
         use crate::frame_profile::Part;
         let t0 = Instant::now();
         let mut slow = self.sync_slow.map(|limit| sync_slow::SlowSync::new(limit, t0));
@@ -3176,7 +3201,11 @@ impl Scene {
         // a Linden plant: its species texture, alpha-tested at 0.5, whatever
         // its texture entry says
         let plant = plants::plant_face(o);
+        let visible = world.rlva_object_visible(idx);
         for (fi, face) in geom.faces.iter().enumerate() {
+            if !visible {
+                continue;
+            }
             let Some(alloc) = face else {
                 continue;
             };
@@ -3330,6 +3359,13 @@ impl Scene {
                 base_tex = media_tex;
                 source = TexSource::Asset;
             }
+            if wearer.is_none()
+                && plant.is_none()
+                && let Some(texture) = world.rlva.camera_texture()
+            {
+                base_tex = texture;
+                source = TexSource::Asset;
+            }
             if !base_tex.is_nil() {
                 g.tex_ids.push(base_tex);
             }
@@ -3458,14 +3494,21 @@ impl Scene {
         // (Pipeline::generateImpostor: avatar geometry only, alpha masking
         // off, filled with the muted color LLColor4::grey4)
         let jelly = self.too_complex.contains(&idx);
+        let rlva_silhouette = self.rlva_silhouettes.contains(&idx);
         let g = &self.gpu[idx];
         // (a morphed part that was being built is there, or never will be)
         let morphs_arrived = g.morph_pending && g.morph_geoms.iter().all(|k| self.geom_ready(k).is_some() || self.geom_failed(k));
         let needs_full = !g.is_avatar
-            || g.faces.len() != lib.parts.len()
+            || g.faces.len()
+                != lib
+                    .parts
+                    .iter()
+                    .filter(|p| world.rlva_body_part_visible(o.full_id == world.agent_id, p.name))
+                    .count()
             || g.tex_generation != appearance_gen
             || g.bom_mask != bom_mask
             || g.jelly != jelly
+            || g.rlva_silhouette != rlva_silhouette
             || morphs_arrived;
         if needs_full {
             let mut g = std::mem::take(&mut self.gpu[idx]);
@@ -3476,6 +3519,9 @@ impl Scene {
             let held = std::mem::take(&mut g.morph_geoms);
             g.morph_pending = false;
             for (pi, part) in lib.parts.iter().enumerate() {
+                if !world.rlva_body_part_visible(o.full_id == world.agent_id, part.name) {
+                    continue;
+                }
                 let tex = self.shown_bake(renderer, world, idx, part.bake_te);
                 // Skirt only when a skirt bake exists; invisible bakes hide parts.
                 let hidden = match tex {
@@ -3535,7 +3581,11 @@ impl Scene {
                 }
                 let mut slot = aurora_render::textures::WHITE;
                 if jelly {
-                    rec.base_color = [0.3, 0.3, 0.3, 1.0];
+                    rec.base_color = if rlva_silhouette {
+                        [0.05, 0.05, 0.05, 1.0]
+                    } else {
+                        [0.3, 0.3, 0.3, 1.0]
+                    };
                     rec.flags[0] |= flags::FULLBRIGHT;
                 } else if let Some(t) = tex.filter(|t| *t != avatar::IMG_DEFAULT_AVATAR && !t.is_nil()) {
                     let src = avatar::bake_name(part.bake_te)
@@ -3585,6 +3635,7 @@ impl Scene {
             g.tex_generation = appearance_gen;
             g.bom_mask = bom_mask;
             g.jelly = jelly;
+            g.rlva_silhouette = rlva_silhouette;
             self.finish_faces(renderer, idx, &mut g);
             self.gpu[idx] = g;
         } else {

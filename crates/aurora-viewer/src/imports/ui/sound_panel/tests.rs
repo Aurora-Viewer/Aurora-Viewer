@@ -32,7 +32,7 @@ fn waveform_crop_and_reset_dispatch_the_audio_controls_without_changing_pcm() {
         drop(frame(&mut editor, Vec::new()));
     }
     let wave = ctx
-        .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("sound_waveform", id))))
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("sound_waveform", id))))
         .expect("waveform");
     let crop = wave.left_center() + Vec2::new(wave.width() * 0.25, 0.0);
     let click = |pos, pressed| {

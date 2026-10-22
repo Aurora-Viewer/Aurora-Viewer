@@ -133,7 +133,7 @@ impl InviteUi {
             return;
         };
         if std::mem::take(&mut choice.raise) {
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(CHOICE)));
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(CHOICE)));
         }
         let groups = invite_groups(&world.groups.groups);
         if choice.selected.is_some_and(|s| !groups.iter().any(|g| g.id == s)) {
@@ -299,7 +299,7 @@ impl InviteUi {
         }
         let p = c.p;
         if std::mem::take(&mut self.raise) {
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(WINDOW)));
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(WINDOW)));
         }
         let size = Vec2::new(380.0, 460.0);
         let screen = ctx.content_rect();
@@ -448,7 +448,7 @@ impl InviteUi {
 
     /// "confirm_invite_owner_str", Yes / Cancel.
     fn owner_dialog(&mut self, ctx: &egui::Context, p: &Palette, send: &mut bool) {
-        let modal = widgets::Modal::new(egui::Id::new("group_invite_owner")).show(ctx, |ui| {
+        let modal = widgets::Modal::new(egui::Id::unique("group_invite_owner")).show(ctx, |ui| {
             ui.set_width(360.0);
             ui.label(
                 egui::RichText::new(aurora_i18n::tr!("ui-group-invite-owner"))
@@ -481,7 +481,7 @@ impl InviteUi {
             Notice::TooMany => aurora_i18n::tr!("ui-group-invite-too-many"),
         };
         let mut done = false;
-        let modal = widgets::Modal::new(egui::Id::new("group_invite_notice")).show(ctx, |ui| {
+        let modal = widgets::Modal::new(egui::Id::unique("group_invite_notice")).show(ctx, |ui| {
             ui.set_width(360.0);
             ui.label(egui::RichText::new(text).size(12.5).color(p.ink));
             ui.add_space(10.0);

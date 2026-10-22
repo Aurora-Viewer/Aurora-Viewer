@@ -14,6 +14,8 @@ mod check_tests;
 #[cfg(test)]
 mod collapse_tests;
 #[cfg(test)]
+mod field_centering_tests;
+#[cfg(test)]
 mod movement_tests;
 pub(crate) use cascade::Group as CascadeGroup;
 pub mod color;
@@ -23,6 +25,7 @@ pub(crate) mod elide_tests;
 pub(crate) mod keycap;
 pub(crate) mod pills;
 mod resize;
+pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
 mod unread;
@@ -176,14 +179,14 @@ fn title_in_reach(
     asked: Option<egui::Pos2>,
     sized: Option<Vec2>,
 ) -> Option<egui::Pos2> {
-    use super::layout::{TITLE_BAR_H, TITLE_GRIP, clear_of_islands, islands, keep_title_in, window_edges};
+    use super::layout::{TITLE_BAR_H, TITLE_GRIP, clear_of_islands, edges_for, islands, keep_title_in};
     let state = egui::AreaState::load(ctx, id).filter(|s| s.size.is_some());
     // `sized`: the size it takes this frame (an edge dragged)
     let size = sized
         .or_else(|| state.as_ref().and_then(|s| s.size))
         .unwrap_or(egui::vec2(TITLE_GRIP, TITLE_BAR_H));
     let pos = asked.or_else(|| state.as_ref().map(|s| s.left_top_pos()))?;
-    let edges = window_edges(ctx);
+    let edges = edges_for(ctx, id);
     let mut kept = keep_title_in(area, pos, size, edges);
     if !ctx.input(|i| i.pointer.any_down()) {
         kept = clear_of_islands(area, kept, size, edges, &islands(ctx));
@@ -213,7 +216,7 @@ pub(crate) fn step_buttons(ui: &mut egui::Ui, height: f32) -> i8 {
                     visuals.fg_stroke.color,
                 );
             }
-            response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
             if response.on_hover_text(label).clicked() {
                 step = direction;
             }
@@ -269,6 +272,7 @@ pub struct Floater<'a> {
     /// exact rect and cut at its edges (see `steady_size`).
     pub steady_size: bool,
     cascade: Option<CascadeGroup>,
+    partial_outside: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -296,11 +300,19 @@ impl<'a> Floater<'a> {
             flush_body: false,
             steady_size: false,
             cascade: None,
+            partial_outside: false,
         }
     }
 
     pub fn fixed(mut self) -> Self {
         self.resizable = false;
+        self
+    }
+
+    /// Let this window cross the side/bottom stops while its title stays
+    /// reachable, as LLFloaterView::adjustToFitScreen(allow_partial_outside).
+    pub(crate) fn allow_partial_outside(mut self) -> Self {
+        self.partial_outside = true;
         self
     }
 
@@ -393,29 +405,30 @@ impl<'a> Floater<'a> {
 
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
-        if window_hidden(ctx, egui::Id::new(self.id), *open) {
+        super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
+        if window_hidden(ctx, egui::Id::unique(self.id), *open) {
             if self.cascade.is_some() {
-                cascade::hidden(ctx, egui::Id::new(self.id));
+                cascade::hidden(ctx, egui::Id::unique(self.id));
             }
             // still open: no close sound, nor an open one when it comes back
             if !self.silent {
-                super::sound_cues::floater_shown(ctx, egui::Id::new(self.id));
+                super::sound_cues::floater_shown(ctx, egui::Id::unique(self.id));
             }
             return None;
         }
         if !*open {
             if self.cascade.is_some() {
-                cascade::hidden(ctx, egui::Id::new(self.id));
+                cascade::hidden(ctx, egui::Id::unique(self.id));
             }
             return None;
         }
-        let min_id = egui::Id::new((self.id, "minimized"));
+        let min_id = egui::Id::unique((self.id, "minimized"));
         // persisted with the UI layout (ui_layout.ron)
         let minimized = ctx.data_mut(|d| d.get_persisted::<bool>(min_id)).unwrap_or(false);
         // minimized with its compact body: sized by that body
         let compact = minimized && self.compact_minimized.is_some();
         if !self.silent {
-            super::sound_cues::floater_shown(ctx, egui::Id::new(self.id));
+            super::sound_cues::floater_shown(ctx, egui::Id::unique(self.id));
         }
         let frame = egui::Frame::new()
             .fill(Color32::from_rgba_unmultiplied(
@@ -445,13 +458,13 @@ impl<'a> Floater<'a> {
                 }
             });
         // Ctrl+W closes it as its cross does, when it is the frontmost
-        let mut close = super::close_key::take(ctx, egui::Id::new(self.id));
-        super::close_key::shown(ctx, egui::Id::new(self.id));
+        let mut close = super::close_key::take(ctx, egui::Id::unique(self.id));
+        super::close_key::shown(ctx, egui::Id::unique(self.id));
         // the toolbar button, a menu entry or a shortcut asked to expand it
-        let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new(self.id).with(EXPAND)));
+        let expand_asked = ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique(self.id).with(EXPAND)));
         let mut toggle_min = minimized && expand_asked.unwrap_or(false);
         let mut out = None;
-        let window_id = egui::Id::new(self.id);
+        let window_id = egui::Id::unique(self.id);
         let expanded_id = window_id.with("expanded_size");
         let restore_id = window_id.with("restore_size");
         let expanded = ctx.data_mut(|d| d.get_persisted::<Vec2>(expanded_id)).unwrap_or(self.default_size);
@@ -546,7 +559,7 @@ impl<'a> Floater<'a> {
         let size = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
             .unwrap_or(self.default_size);
-        let edges = super::layout::window_edges(ctx);
+        let edges = super::layout::edges_for(ctx, window_id);
         // While an edge is dragged the drag keeps the window in its bounds
         // and its title in reach (`title_in_reach` below): egui would
         // constrain the asked position with the last frame's size, and a
@@ -840,7 +853,7 @@ pub(crate) fn bare_window(
     min_size: Vec2,
     body: impl FnOnce(&mut egui::Ui),
 ) {
-    let window_id = egui::Id::new(id);
+    let window_id = egui::Id::unique(id);
     if window_hidden(ctx, window_id, true) {
         return;
     }
@@ -916,7 +929,7 @@ struct HiddenWindows {
 }
 
 fn hidden_windows_id() -> egui::Id {
-    egui::Id::new("aurora_hidden_windows")
+    egui::Id::unique("aurora_hidden_windows")
 }
 
 /// The interface is hidden (`hide_windows`).
@@ -971,7 +984,7 @@ pub(crate) fn toolstrip<R>(
     pos: egui::Pos2,
     body: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    let window_id = egui::Id::new(id);
+    let window_id = egui::Id::unique(id);
     super::sound_cues::floater_shown(ctx, window_id);
     let slot = super::layout::slot(ctx, window_id).default_anchor(ctx, point, pos);
     let mut area = egui::Area::new(window_id)
@@ -993,18 +1006,18 @@ pub(crate) fn toolstrip<R>(
 
 /// Move a dependent floater without changing its size or minimized state.
 pub fn move_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2) {
-    super::layout::reanchor(ctx, egui::Id::new(id));
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(id).with(PLACE_POS), pos));
+    super::layout::reanchor(ctx, egui::Id::unique(id));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(PLACE_POS), pos));
 }
 
 /// Give the floater `id` this position and size on its next frame, expanded,
 /// as if the user had moved and resized it: a demo scenario then shows the
 /// same thing whatever layout the previous run left in ui_layout.ron.
 pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2) {
-    let window_id = egui::Id::new(id);
+    let window_id = egui::Id::unique(id);
     super::layout::reanchor(ctx, window_id);
     ctx.data_mut(|d| {
-        d.insert_persisted(egui::Id::new((id, "minimized")), false);
+        d.insert_persisted(egui::Id::unique((id, "minimized")), false);
         d.insert_persisted(window_id.with("expanded_size"), size);
         d.insert_temp(window_id.with("restore_size"), true);
         d.insert_temp(window_id.with(PLACE_POS), pos);
@@ -1023,7 +1036,7 @@ pub fn place_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2, size: Vec2)
 /// whatever the list and the footer measure.
 pub fn above_footer(ui: &mut egui::Ui) -> (egui::Ui, Footer) {
     let rest = ui.available_rect_before_wrap();
-    let id = ui.id().with("above_footer");
+    let id = ui.scope_id().with("above_footer");
     let height = ui.ctx().data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
     let top = rest.bottom() - height;
     let gap = if height > 0.0 { ui.spacing().item_spacing.y } else { 0.0 };
@@ -1072,7 +1085,7 @@ impl Footer {
 
 /// Set an expanded window's size once, preserving its independent position.
 pub fn size_floater(ctx: &egui::Context, id: &str, size: Vec2) {
-    let window_id = egui::Id::new(id);
+    let window_id = egui::Id::unique(id);
     ctx.data_mut(|d| {
         d.insert_persisted(window_id.with("expanded_size"), size);
         d.insert_temp(window_id.with("restore_size"), true);
@@ -1082,19 +1095,19 @@ pub fn size_floater(ctx: &egui::Context, id: &str, size: Vec2) {
 /// Consume the actual size after a manual edge/corner resize is released.
 /// Layout placement, minimization and automatic screen fitting do not emit it.
 pub fn take_floater_resize(ctx: &egui::Context, id: &str) -> Option<Vec2> {
-    ctx.data_mut(|d| d.remove_temp::<Vec2>(egui::Id::new(id).with("floater_resized")))
+    ctx.data_mut(|d| d.remove_temp::<Vec2>(egui::Id::unique(id).with("floater_resized")))
 }
 
 /// Minimize the floater `id` (LLFloater::setMinimized), as its title button
 /// does.
 pub fn minimize_floater(ctx: &egui::Context, id: &str) {
-    ctx.data_mut(|d| d.insert_persisted(egui::Id::new((id, "minimized")), true));
-    cascade::minimized(ctx, egui::Id::new(id), true);
+    ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((id, "minimized")), true));
+    cascade::minimized(ctx, egui::Id::unique(id), true);
 }
 
 /// Is the floater `id` reduced to its title bar?
 pub fn floater_minimized(ctx: &egui::Context, id: &str) -> bool {
-    ctx.data_mut(|d| d.get_persisted::<bool>(egui::Id::new((id, "minimized"))))
+    ctx.data_mut(|d| d.get_persisted::<bool>(egui::Id::unique((id, "minimized"))))
         .unwrap_or(false)
 }
 
@@ -1102,8 +1115,8 @@ pub fn floater_minimized(ctx: &egui::Context, id: &str) -> bool {
 /// front, as its title button does (LLFloater::openFloater on a minimized
 /// floater: setMinimized(false), setVisibleAndFrontmost).
 pub fn expand_floater(ctx: &egui::Context, id: &str) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(id).with(EXPAND), true));
-    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(id)));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(id).with(EXPAND), true));
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
 }
 
 /// The toolbar button, menu entry or shortcut of the floater `id`
@@ -1128,7 +1141,7 @@ pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
             expand_floater(ctx, id);
         }
     } else {
-        cascade::forget(ctx, egui::Id::new(id));
+        cascade::forget(ctx, egui::Id::unique(id));
         *open = true;
         unminimize_quietly(ctx, id);
     }
@@ -1138,9 +1151,9 @@ pub fn open_floater(ctx: &egui::Context, id: &str, open: &mut bool) {
 /// its expanded size, without the sound of the title button.
 fn unminimize_quietly(ctx: &egui::Context, id: &str) {
     if floater_minimized(ctx, id) {
-        let window_id = egui::Id::new(id);
+        let window_id = egui::Id::unique(id);
         ctx.data_mut(|d| {
-            d.insert_persisted(egui::Id::new((id, "minimized")), false);
+            d.insert_persisted(egui::Id::unique((id, "minimized")), false);
             d.insert_temp(window_id.with("restore_size"), true);
         });
     }
@@ -1158,7 +1171,7 @@ fn title_button(ui: &mut egui::Ui, p: &Palette, icon: &str) -> egui::Response {
 pub(crate) fn close_button(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
     let label = aurora_i18n::tr!("common-close");
     let response = title_button_sized(ui, p, "x", Vec2::new(24.0, 36.0));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
     response.on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -1204,11 +1217,18 @@ fn title_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, size: Vec2) ->
 /// floating bar is drawn over the content when hovered, over the buttons and
 /// values at the right edge. The strip is taken only when the content
 /// overflows. 6 points of bar, 4 between it and the content, faintly shown
-/// at rest. `ui/theme_guard.rs` keeps windows from setting another style.
+/// at rest. The content stops where the drag that scrolls it leaves it, at
+/// the edge of the list (egui 0.37 lets it coast on and spring back past the
+/// edge). `ui/theme_guard.rs` keeps windows from setting another style.
 pub fn reserved_scroll_style() -> egui::style::ScrollStyle {
     egui::style::ScrollStyle {
         dormant_background_opacity: 0.2,
         dormant_handle_opacity: 0.6,
+        kinetic: egui::style::KineticScrollStyle {
+            decay_time: 0.0,
+            rubber_band: false,
+            ..Default::default()
+        },
         ..egui::style::ScrollStyle::solid()
     }
 }
@@ -1386,7 +1406,7 @@ fn check_row(ui: &mut egui::Ui, p: &Palette, on: &mut bool, label: egui::WidgetT
     let checked = *on;
     resp.widget_info(|| {
         let text = galley.as_ref().map_or("", |galley| galley.text());
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), checked, text)
+        egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), checked, text)
     });
     if ui.is_rect_visible(rect) {
         let hot = resp.hovered() || resp.has_focus();
@@ -1435,7 +1455,7 @@ pub fn radio(ui: &mut egui::Ui, p: &Palette, selected: bool, label: impl Into<eg
     let (rect, resp, galley) = mark_row(ui, label.into());
     resp.widget_info(|| {
         let text = galley.as_ref().map_or("", |galley| galley.text());
-        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, ui.is_enabled(), selected, text)
+        egui::WidgetInfo::selected(egui::Role::RadioButton, ui.is_enabled(), selected, text)
     });
     if ui.is_rect_visible(rect) {
         let hot = resp.hovered() || resp.has_focus();
@@ -1597,7 +1617,7 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
             Vec2::new(widths[i], track.height() - SEGMENT_PAD * 2.0),
         );
         x += widths[i];
-        let resp = ui.interact(rect, ui.id().with(("segmented", i, *label)), Sense::click());
+        let resp = ui.interact(rect, ui.scope_id().with(("segmented", i, *label)), Sense::click());
         let sel = *selected == i;
         let (face, text) = match (sel, *accent) {
             (true, true) => (Some(p.violet), p.on_accent),
@@ -1610,7 +1630,7 @@ pub fn segmented(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: 
         }
         let at = letters_in_middle(ui.painter(), &galley, rect);
         ui.painter().galley(at, galley, text);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, sel, *label));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, sel, *label));
         if resp.clicked() && !sel {
             *selected = i;
             changed = true;
@@ -1643,7 +1663,7 @@ pub fn count_tabs(ui: &mut egui::Ui, p: &Palette, id_salt: &str, selected: &mut 
     ui.painter().rect_filled(bar, radius, p.field);
     let n = tabs.len().max(1) as f32;
     let tab_w = (bar.width() - 4.0 - 2.0 * (n - 1.0)) / n;
-    let id = egui::Id::new(id_salt);
+    let id = egui::Id::unique(id_salt);
     let line = |s: &str, size: f32, strong: bool, width: f32| {
         let family = if strong {
             super::fonts::semibold(ui.ctx())
@@ -1682,7 +1702,7 @@ pub fn count_tabs(ui: &mut egui::Ui, p: &Palette, id_salt: &str, selected: &mut 
         let x = r.center().x - total * 0.5;
         paint_row_text(ui.painter(), name, x, r.center().y, ink);
         paint_row_text(ui.painter(), num, x + nw + 6.0, r.center().y, p.muted);
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, *label));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, true, on, *label));
         if resp.clicked() && !on {
             *selected = i;
             changed = true;
@@ -1937,7 +1957,9 @@ pub fn height_slider(
 /// `text` is written under it; `{}` in it is replaced by the percentage
 /// shown, so the figures glide with the bar.
 pub fn progress(ui: &mut egui::Ui, p: &Palette, id: &str, fraction: f32, width: f32, text: &str, tint: Option<Color32>) {
-    let shown = ui.ctx().animate_value_with_time(ui.id().with(id), fraction.clamp(0.0, 1.0), 0.45);
+    let shown = ui
+        .ctx()
+        .animate_value_with_time(ui.scope_id().with(id), fraction.clamp(0.0, 1.0), 0.45);
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
@@ -1962,7 +1984,9 @@ pub fn progress(ui: &mut egui::Ui, p: &Palette, id: &str, fraction: f32, width: 
 /// Level meter (microphone): the track of `progress` with a plain fill that
 /// follows its value closely, only smoothing the jitter between two samples.
 pub fn level(ui: &mut egui::Ui, p: &Palette, id: &str, value: f32, width: f32, color: Color32) {
-    let shown = ui.ctx().animate_value_with_time(ui.id().with(id), value.clamp(0.0, 1.0), 0.08);
+    let shown = ui
+        .ctx()
+        .animate_value_with_time(ui.scope_id().with(id), value.clamp(0.0, 1.0), 0.08);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 6.0), Sense::hover());
     ui.painter().rect_filled(rect, TRACK_RADIUS, p.raised);
     let fill = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * shown, rect.height()));
@@ -2103,7 +2127,7 @@ pub fn action_button_keyed(
     if hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     resp
 }
 
@@ -2154,14 +2178,16 @@ pub fn action_menu_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &st
     if hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     resp
 }
 
 /// A thin countdown bar (3 px): the track of `progress`, filled with
 /// `color` from the left, gliding to its value like `progress`.
 pub fn countdown_bar(ui: &mut egui::Ui, p: &Palette, id: &str, fraction: f32, width: f32, color: Color32) {
-    let shown = ui.ctx().animate_value_with_time(ui.id().with(id), fraction.clamp(0.0, 1.0), 0.35);
+    let shown = ui
+        .ctx()
+        .animate_value_with_time(ui.scope_id().with(id), fraction.clamp(0.0, 1.0), 0.35);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 3.0), Sense::hover());
     ui.painter().rect_filled(rect, TRACK_RADIUS, p.raised);
     let fill = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width() * shown, rect.height()));
@@ -2218,7 +2244,7 @@ pub fn dialog_buttons(ui: &mut egui::Ui, p: &Palette, buttons: &[DialogButton<'_
 /// The native button retains input and accessibility without painting a face.
 pub fn glass_action_icon(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, size: Vec2, icon_color: Color32) -> egui::Response {
     let response = ui.add_sized(size, egui::Button::new("").frame(false));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
     if ui.is_rect_visible(response.rect) {
         let rect = response.rect;
         let pressed = response.is_pointer_button_down_on();
@@ -2374,7 +2400,7 @@ pub fn region_rating(ctx: &egui::Context, ratings: &crate::world::worldmap::Regi
 }
 
 fn wanted_regions_id() -> egui::Id {
-    egui::Id::new("aurora-wanted-region-ratings")
+    egui::Id::unique("aurora-wanted-region-ratings")
 }
 
 fn want_region(ctx: &egui::Context, region: &str) {
@@ -2541,6 +2567,23 @@ pub fn row_text_origin(painter: &egui::Painter, galley: &egui::Galley, left: f32
 pub fn paint_row_text(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left: f32, center_y: f32, color: Color32) {
     let pos = row_text_origin(painter, &galley, left, center_y);
     painter.galley(pos, galley, color);
+}
+
+/// The margin that puts the capitals of a text field in `font` in the middle
+/// of the field (the human's choice of 2026-10-22): egui centres the text's
+/// row, whose room for descenders leaves the letters high (Inter at 13
+/// points: 1.1 points). What it adds above it takes below, so the field keeps
+/// its height. Every field gets it: the theme's (`theme::FieldSize`) and the
+/// bare ones laid on their own face (`pills::icon_field`…).
+pub fn field_text_margin(ctx: &egui::Context, font: &egui::FontId) -> egui::Margin {
+    let probe = ctx.fonts_mut(|f| f.layout_no_wrap("H".into(), font.clone(), Color32::PLACEHOLDER));
+    let ink = ink_rect(&probe);
+    let lower = ((probe.size().y - ink.bottom() - ink.top()) / 2.0).round().clamp(0.0, 4.0) as i8;
+    egui::Margin {
+        top: lower,
+        bottom: -lower,
+        ..egui::Margin::ZERO
+    }
 }
 
 const ROW_TAG_PAD: f32 = 6.0;

@@ -221,7 +221,7 @@ pub fn top_controls(
     }
     if st.panel_open {
         let anchor = sp.rect.right_bottom() + Vec2::new(4.0, 6.0);
-        let area = egui::Area::new(egui::Id::new("volume_panel"))
+        let area = egui::Area::new(egui::Id::unique("volume_panel"))
             .fade_in(false)
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::RIGHT_TOP)

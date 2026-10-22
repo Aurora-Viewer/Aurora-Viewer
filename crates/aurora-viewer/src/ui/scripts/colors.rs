@@ -219,9 +219,9 @@ mod tests {
         let original = "vector a = <0,0,0>; vector b = <1,0,0>;";
         let mut source = original.to_owned();
         let mut state = State::new("switch".into());
-        state.open(&mut source, &ctx, Id::new("source"), Id::new("parent"), 0);
+        state.open(&mut source, &ctx, Id::unique("source"), Id::unique("parent"), 0);
         state.event(&ctx, &mut source, Event::Preview([0.5; 3]));
-        state.open(&mut source, &ctx, Id::new("source"), Id::new("parent"), 1);
+        state.open(&mut source, &ctx, Id::unique("source"), Id::unique("parent"), 1);
         assert_eq!(source, original);
         state.event(&ctx, &mut source, Event::Accept([0.0, 1.0, 0.0]));
         assert_eq!(source, "vector a = <0,0,0>; vector b = <0.000,1.000,0>;");
@@ -235,10 +235,10 @@ mod tests {
         let mut state = State::new("precise".into());
         let color = literal(original);
         let rgb = color.rgb;
-        state.open(&mut source, &ctx, Id::new("source"), Id::new("parent"), 0);
+        state.open(&mut source, &ctx, Id::unique("source"), Id::unique("parent"), 0);
         state.event(&ctx, &mut source, Event::Accept(rgb));
         assert_eq!(source, original);
-        state.open(&mut source, &ctx, Id::new("source"), Id::new("parent"), 0);
+        state.open(&mut source, &ctx, Id::unique("source"), Id::unique("parent"), 0);
         state.event(&ctx, &mut source, Event::Preview([rgb[0], 0.5, rgb[2]]));
         assert_eq!(source, "vector color = <0.1234567, 0.500, 1e-1>;");
         state.event(&ctx, &mut source, Event::Cancel);
@@ -248,16 +248,16 @@ mod tests {
     #[test]
     fn preview_cancel_preserves_exact_text_accept_is_one_native_undo_and_external_edits_are_kept() {
         let ctx = egui::Context::default();
-        let id = Id::new("source");
+        let id = Id::unique("source");
         let original = "// éあ\nvector c = <.1, /*green*/\t0.2,\n +3e-1>;";
         let mut source = original.to_owned();
         let mut state = State::new("color_test".into());
-        state.open(&mut source, &ctx, id, Id::new("parent"), 0);
+        state.open(&mut source, &ctx, id, Id::unique("parent"), 0);
         state.event(&ctx, &mut source, Event::Preview([1.0, 0.0, 0.5]));
         assert_eq!(source, "// éあ\nvector c = <1.000, /*green*/\t0.000,\n 0.500>;");
         state.event(&ctx, &mut source, Event::Cancel);
         assert_eq!(source, original);
-        state.open(&mut source, &ctx, id, Id::new("parent"), 0);
+        state.open(&mut source, &ctx, id, Id::unique("parent"), 0);
         state.event(&ctx, &mut source, Event::Preview([1.0, 0.0, 0.5]));
         state.event(&ctx, &mut source, Event::Preview([0.0, 1.0, 0.25]));
         state.event(&ctx, &mut source, Event::Accept([0.0, 1.0, 0.25]));
@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(source, original);
         editing::undo(&ctx, id, &mut source, true);
         assert_eq!(source, accepted);
-        state.open(&mut source, &ctx, id, Id::new("parent"), 0);
+        state.open(&mut source, &ctx, id, Id::unique("parent"), 0);
         state.event(&ctx, &mut source, Event::Preview([0.0; 3]));
         source.push_str("\n// external change");
         let external = source.clone();

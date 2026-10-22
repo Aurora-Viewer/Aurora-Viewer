@@ -727,7 +727,7 @@ fn dialog(st: &mut GroupProfileUi, ctx: &egui::Context, p: &Palette, v: &View, d
         ),
     };
     let mut done: Option<bool> = None;
-    let modal = widgets::Modal::new(egui::Id::new("group_admin_dialog")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("group_admin_dialog")).show(ctx, |ui| {
         ui.set_width(400.0);
         ui.label(egui::RichText::new(&text).size(12.5).color(p.ink));
         ui.add_space(10.0);

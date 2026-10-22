@@ -302,7 +302,7 @@ fn spawn_row(ui: &mut egui::Ui, p: &Palette, text: &str, removable: bool) -> boo
         return false;
     }
     let x = egui::Rect::from_center_size(egui::pos2(rect.right() - 16.0, rect.center().y), Vec2::splat(20.0));
-    let xr = ui.interact(x, ui.id().with(("region_spawn_remove", rect.top() as i32)), Sense::click());
+    let xr = ui.interact(x, ui.scope_id().with(("region_spawn_remove", rect.top() as i32)), Sense::click());
     sheet::icon_at(ui, "x", x.center(), 14.0, if xr.hovered() { p.danger } else { p.muted });
     xr.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-remove"))

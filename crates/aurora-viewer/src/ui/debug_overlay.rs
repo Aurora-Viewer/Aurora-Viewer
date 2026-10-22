@@ -214,7 +214,7 @@ pub fn draw(
         return;
     }
     let lines = Lines {
-        painter: ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("debug_overlay"))),
+        painter: ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("debug_overlay"))),
         proj,
     };
     let now = Instant::now();

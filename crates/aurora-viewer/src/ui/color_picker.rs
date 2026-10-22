@@ -175,7 +175,7 @@ impl ColorPicker {
         let screen = ctx.content_rect();
         let size = Vec2::new((screen.width() - 32.0).clamp(360.0, 460.0), 420.0);
         let parent = self.parent.and_then(|id| ctx.memory(|m| m.area_rect(id)));
-        let moving = ctx.is_being_dragged(egui::Id::new(window_id).with("move"));
+        let moving = ctx.is_being_dragged(egui::Id::unique(window_id).with("move"));
         if moving {
             // LLFloater::translate only moves dependents still snapped to it.
             // Keep the color owner for the context cone, even while detached.
@@ -184,7 +184,7 @@ impl ColorPicker {
         let following = self.dock.is_some() && (self.opening || parent != self.parent_rect || self.screen_rect != Some(screen));
         if let Some(parent) = parent.filter(|_| following) {
             let height = ctx
-                .memory(|m| m.area_rect(egui::Id::new(window_id)))
+                .memory(|m| m.area_rect(egui::Id::unique(window_id)))
                 .map_or(size.y, |rect| rect.height());
             let measured = Vec2::new(size.x, height);
             let (pos, side) = adjacent_position(screen, parent, measured, self.dock.unwrap_or(DockSide::Right));
@@ -272,7 +272,7 @@ impl ColorPicker {
             });
         });
         if let Some(parent) = parent.filter(|_| following)
-            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(window_id)))
+            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique(window_id)))
         {
             // Auto-height is known after the first layout. Correct the screen
             // constraint in another pass so opening near the bottom stays visible.
@@ -286,7 +286,7 @@ impl ColorPicker {
         if self.dragging
             && !moving
             && let Some(parent) = parent
-            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(window_id)))
+            && let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique(window_id)))
             && let Some(side) = nearby_snap(screen, parent, rect)
         {
             self.dock = Some(side);
@@ -324,7 +324,7 @@ impl ColorPicker {
     /// LLFloater::drawConeToOwner / LLFloaterColorPicker::draw (Firestorm,
     /// originally LGPL 2.1): fade a context cone while moving the dialog.
     fn draw_owner_link(&mut self, ctx: &egui::Context, p: &Palette) {
-        let id = egui::Id::new(self.window_id());
+        let id = egui::Id::unique(self.window_id());
         if let Some(rect) = ctx.memory(|m| m.area_rect(id)) {
             self.record(Control::Title, Rect::from_min_size(rect.min, Vec2::new(rect.width() - 100.0, 40.0)));
         }
@@ -384,7 +384,7 @@ impl ColorPicker {
                         [120.0, 23.0],
                         egui::TextEdit::singleline(&mut draft.hex)
                             .font(egui::TextStyle::Monospace)
-                            .vertical_align(egui::Align::Center)
+                            .align(egui::Align2::LEFT_CENTER)
                             .desired_width(120.0)
                             .char_limit(7),
                     )

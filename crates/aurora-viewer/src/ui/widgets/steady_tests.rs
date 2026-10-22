@@ -31,7 +31,12 @@ pub(crate) fn assert_window_steady<S>(
             let mut texts = Vec::new();
             for _ in 0..30 {
                 texts = frames.run(Vec::new(), |ui| show(&mut state, ui.ctx(), &p));
-                rects.push(frames.ctx.memory(|m| m.area_rect(egui::Id::new(id))).expect("the window is shown"));
+                rects.push(
+                    frames
+                        .ctx
+                        .memory(|m| m.area_rect(egui::Id::unique(id)))
+                        .expect("the window is shown"),
+                );
             }
             // its height from the start; its width once a list's scroll bar
             // has faded in (egui widens the window by a fraction of a point

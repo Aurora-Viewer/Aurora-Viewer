@@ -25,11 +25,11 @@ pub(crate) fn folder(ui: &egui::Ui, r: &egui::Response, editor: Uuid, id: Uuid, 
     if !active(ui.ctx()) || !ui.rect_contains_pointer(r.rect) {
         return;
     }
-    let key = egui::Id::new(("inventory_drag_folder_visit", editor, id));
+    let key = egui::Id::unique(("inventory_drag_folder_visit", editor, id));
     let pass = ui.ctx().cumulative_pass_nr();
     let now = ui.input(|i| i.time);
     let toggle = ui.ctx().data_mut(|data| {
-        let state = data.get_temp_mut_or_insert_with(egui::Id::new("inventory_drag_folder_hover"), || Hover {
+        let state = data.get_temp_mut_or_insert_with(egui::Id::unique("inventory_drag_folder_hover"), || Hover {
             folder: key,
             pass,
             since: now,
@@ -69,13 +69,13 @@ struct Motion {
 /// Scroll the actual container, including virtualized search results. Retain
 /// the last entered inventory when the pointer leaves vertically into the
 /// header/footer/world, but never scroll a window covered by another window.
-pub(crate) fn scroll<R>(ui: &egui::Ui, out: &mut egui::scroll_area::ScrollAreaOutput<R>, editor: Uuid) {
+pub(crate) fn scroll<R>(ui: &egui::Ui, out: &egui::scroll_area::ScrollAreaOutput<R>, editor: Uuid) {
     let ctx = ui.ctx();
-    let owner_id = egui::Id::new("inventory_drag_scroll_owner");
+    let owner_id = egui::Id::unique("inventory_drag_scroll_owner");
     let motion_id = out.id.with("inventory_drag_scroll_motion");
     let rect = out.inner_rect.intersect(ui.clip_rect());
     if cfg!(test) || demo::enabled() {
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(("inventory_drag_viewport", editor)), (rect, out.id)));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("inventory_drag_viewport", editor)), (rect, out.id)));
     }
     if !active(ctx) {
         ctx.data_mut(|d| {
@@ -134,13 +134,13 @@ pub(crate) fn scroll<R>(ui: &egui::Ui, out: &mut egui::scroll_area::ScrollAreaOu
     // based on elapsed time rather than frame count. Keep horizontal scrolling.
     let speed = (100.0 + (now - since) as f32 * 300.0).min(1000.0);
     let max = (out.content_size.y - out.inner_rect.height()).max(0.0);
-    let next = (out.state.offset.y + direction * speed * dt).clamp(0.0, max);
-    if (next - out.state.offset.y).abs() < 0.01 {
+    let offset = out.state.unclamped_offset();
+    let next = (offset.y + direction * speed * dt).clamp(0.0, max);
+    if (next - offset.y).abs() < 0.01 {
         ctx.data_mut(|d| d.remove::<Motion>(motion_id));
         return;
     }
-    out.state.offset.y = next;
-    out.state.store(ctx, out.id);
+    crate::ui::widgets::scroll_offset::set(ctx, out.id, egui::vec2(offset.x, next));
     ctx.request_repaint();
 }
 

@@ -317,7 +317,10 @@ pub fn target(view: &str) -> Option<Uuid> {
         | "clipboard-folder"
         | "clipboard-cut-folder"
         | "clipboard-progress"
-        | "clipboard-window" => 8100,
+        | "clipboard-window"
+        | "keyboard"
+        | "aurora-keyboard"
+        | "aurora-keyboard-wide" => 8100,
         "animation" | "animation-open" | "animation-properties" | "image" | "image-photo" | "image-picker" | "image-photo-save" => 8101,
         "script" => 8102,
         "note" | "note-open" | "note-edit" | "note-save" | "note-close" | "note-error" | "note-readonly" | "note-embedded" | "note-new"

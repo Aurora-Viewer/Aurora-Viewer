@@ -91,7 +91,7 @@ fn show_impl(ctx: &Context, p: &Palette, icons: &Icons, settings: &mut Settings,
     form.manager
         .drag
         .begin(ctx, form.manager.pending.is_none() && !form.busy && form.pending_connect.is_none());
-    let response = widgets::Modal::new(Id::new("manage_login_accounts"))
+    let response = widgets::Modal::new(Id::unique("manage_login_accounts"))
         .login_surface(p)
         .show(ctx, |ui| {
             ui.set_width(width);
@@ -304,7 +304,7 @@ fn show_impl(ctx: &Context, p: &Palette, icons: &Icons, settings: &mut Settings,
                         }
                     });
                 });
-            form.manager.drag.scroll = scroll.state.offset.y;
+            form.manager.drag.scroll = scroll.state.unclamped_offset().y;
             if let Some(painter) = list_painter {
                 moved = form.manager.drag.finish(ctx, p, &painter, scroll.inner_rect);
             }
@@ -384,7 +384,7 @@ fn show_impl(ctx: &Context, p: &Palette, icons: &Icons, settings: &mut Settings,
             (at.x + 16.0).min(screen.right() - 282.0).max(screen.left()),
             (at.y + 20.0).min(screen.bottom() - 90.0).max(screen.top()),
         );
-        egui::Area::new(Id::new("moving_login_account"))
+        egui::Area::new(Id::unique("moving_login_account"))
             .order(egui::Order::Tooltip)
             .interactable(false)
             .fixed_pos(pos)

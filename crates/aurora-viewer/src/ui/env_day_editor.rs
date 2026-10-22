@@ -687,7 +687,8 @@ impl DayEditorUi {
                 can,
             );
             super::menu::dropdown(&load, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                let items = SettingsCatalog::items_of(inv, SettingsKind::Day);
+                let order = super::inventory::view::picker_order(ui.ctx(), inv);
+                let items = SettingsCatalog::items_of(inv, SettingsKind::Day, |id| order.rank(id));
                 if items.is_empty() {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-no-days")).size(12.0).color(p.muted));
                 }
@@ -773,7 +774,8 @@ impl DayEditorUi {
             let l = widgets::action_button_if(ui, p, "briefcase-filled", load, ActionKind::Flat, size, can);
             super::menu::dropdown(&l, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                 let kind = if water { SettingsKind::Water } else { SettingsKind::Sky };
-                let items = SettingsCatalog::items_of(inv, kind);
+                let order = super::inventory::view::picker_order(ui.ctx(), inv);
+                let items = SettingsCatalog::items_of(inv, kind, |id| order.rank(id));
                 if items.is_empty() {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-env-editor-no-items")).size(12.0).color(p.muted));
                 }
@@ -949,7 +951,7 @@ impl DayEditorUi {
         if self.confirm.is_some() {
             let name = self.name.clone();
             let mut answer = None;
-            let modal = widgets::Modal::new(egui::Id::new("env_day_editor_confirm")).show(ctx, |ui| {
+            let modal = widgets::Modal::new(egui::Id::unique("env_day_editor_confirm")).show(ctx, |ui| {
                 ui.set_width(380.0);
                 ui.label(
                     RichText::new(aurora_i18n::tr!("ui-env-editor-confirm-loss", name = name))
@@ -985,7 +987,7 @@ impl DayEditorUi {
         }
         if let Some(mut name) = self.save_as.clone() {
             let mut close = false;
-            let modal = widgets::Modal::new(egui::Id::new("env_day_editor_save_as")).show(ctx, |ui| {
+            let modal = widgets::Modal::new(egui::Id::unique("env_day_editor_save_as")).show(ctx, |ui| {
                 ui.set_width(380.0);
                 ui.label(RichText::new(aurora_i18n::tr!("common-save-as")).size(17.0).strong().color(p.ink));
                 ui.add_space(6.0);
@@ -1010,7 +1012,7 @@ impl DayEditorUi {
         // SettingsMakeNoTrans: the loaded settings make the day no-transfer
         if self.no_trans_ask.is_some() {
             let mut answer = None;
-            let modal = widgets::Modal::new(egui::Id::new("env_day_editor_no_trans")).show(ctx, |ui| {
+            let modal = widgets::Modal::new(egui::Id::unique("env_day_editor_no_trans")).show(ctx, |ui| {
                 ui.set_width(400.0);
                 ui.add(
                     egui::Label::new(
@@ -1050,7 +1052,7 @@ impl DayEditorUi {
         // LLFloaterTrackPicker after "Load Track From": which track to copy
         if let Some(src) = self.track_source.clone() {
             let mut done = false;
-            let modal = widgets::Modal::new(egui::Id::new("env_day_editor_track_source")).show(ctx, |ui| {
+            let modal = widgets::Modal::new(egui::Id::unique("env_day_editor_track_source")).show(ctx, |ui| {
                 ui.set_width(340.0);
                 ui.label(
                     RichText::new(aurora_i18n::tr!("ui-day-editor-choose-track"))

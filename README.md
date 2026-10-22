@@ -8,14 +8,15 @@
 A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 [![Download](docs/readme/button-download.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/latest)&nbsp;
+[![Download for Linux](docs/readme/button-download-linux.svg)](docs/LINUX.md)&nbsp;
 [![Discord](docs/readme/button-discord.svg)](https://discord.gg/TK4nbMGmKt)&nbsp;
-[![Website](docs/readme/button-website.svg)](https://auroraviewer.com)
+[![Website](docs/readme/button-website.svg)](https://aurora-viewer.org)
 
 [![CI](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/Aurora-Viewer/Aurora-Viewer/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/Aurora-Viewer/Aurora-Viewer?include_prereleases&color=8B5CF6)](https://github.com/Aurora-Viewer/Aurora-Viewer/releases)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-4F46E5)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![Platform](https://img.shields.io/badge/platform-Windows-070B1F)](#build)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-070B1F)](#build)
 
 [Why Aurora](#why-aurora) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
 
@@ -242,7 +243,9 @@ are planned or in progress: they are not in the viewer yet.
 ### Open
 
 - **Free software (GPLv3)**, written from scratch: it is not a fork.
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **Linux and macOS builds**: the code is portable, the builds remain to be
+- **Windows and Linux**: every release has a Linux build too
+  ([install guide](docs/LINUX.md)).
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **macOS build**: the code is portable, the build remains to be
   validated.
 
 ## Performance
@@ -333,7 +336,9 @@ completed work from features awaiting that validation.
 
 - RLVa and the clothing texture / colour editors.
 - Photo filters, depth exports and 360° snapshots.
-- Linux and macOS builds: the code is portable but not validated.
+- A macOS build: the code is portable but not validated.
+- Automatic installation of updates on Linux (the viewer points to the
+  new release instead).
 
 Voice is WebRTC only; Vivox is not supported.
 
@@ -594,7 +599,8 @@ files never leave the machine and are never attached to a bug report.
 ## Build
 
 Requirements: Windows 10/11, [Rust](https://rustup.rs) (stable, selected
-automatically by `rust-toolchain.toml`), a GPU with Vulkan support.
+automatically by `rust-toolchain.toml`), a GPU with Vulkan support. On Linux,
+see [Installing on Linux](docs/LINUX.md#building-from-source).
 
 **Development environment:** create a folder for the project, clone this
 repository into it, then double-click **`aurora-tools.cmd`**:

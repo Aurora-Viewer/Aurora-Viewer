@@ -131,6 +131,7 @@ fn the_place_is_saved_and_defaults_to_the_top_right() {
 /// The top bar's state the geometry test draws the bars with.
 fn status(classic: bool) -> StatusInfo<'static> {
     StatusInfo {
+        location_hidden: false,
         show_bug_report: true,
         show_huds: true,
         hud_zoom: 1.0,
@@ -248,6 +249,8 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
     for i in 0..3u128 {
         list.push_presence(Uuid::from_u128(100 + i), format!("Friend {i} is online."), true);
     }
+    // the bars' panels: their ids salt the id of the ui they are shown in
+    let mut root = Id::NULL;
     for frame in 0..8 {
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
@@ -255,6 +258,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
             ..Default::default()
         };
         let mut out = ctx.run_ui(input, |ui| {
+            root = ui.scope_id();
             bars::top_bars(
                 ui,
                 &p,
@@ -326,19 +330,19 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
     let visible = |layer: LayerId| ctx.memory(|m| m.areas().visible_last_frame(&layer).then(|| m.area_rect(layer.id)).flatten());
     let mut bars: Vec<Rect> = ["nav_bar", "bottom_bar"]
         .into_iter()
-        .filter_map(|id| egui::containers::panel::PanelState::load(&ctx, Id::new(id)))
+        .filter_map(|id| egui::containers::panel::PanelState::load(&ctx, root.with(id)))
         .map(|s| s.outer_rect)
         .collect();
     for name in ["menu", "bug", "place", "account", "system", "bell", "chat", "dock"] {
-        bars.extend(visible(LayerId::new(egui::Order::Middle, Id::new(("bars_island", name)))));
+        bars.extend(visible(LayerId::new(egui::Order::Middle, Id::unique(("bars_island", name)))));
     }
     Frame {
         bars,
-        chat: visible(LayerId::new(egui::Order::Background, Id::new("chat_toasts"))),
-        toasts: visible(LayerId::new(egui::Order::Foreground, Id::new("notification_presence"))),
-        system: visible(LayerId::new(egui::Order::Middle, Id::new(("bars_island", "system")))),
-        bell: visible(LayerId::new(egui::Order::Middle, Id::new(("bars_island", "bell")))),
-        panel: visible(LayerId::new(egui::Order::Foreground, Id::new("notification_center"))),
+        chat: visible(LayerId::new(egui::Order::Background, Id::unique("chat_toasts"))),
+        toasts: visible(LayerId::new(egui::Order::Foreground, Id::unique("notification_presence"))),
+        system: visible(LayerId::new(egui::Order::Middle, Id::unique(("bars_island", "system")))),
+        bell: visible(LayerId::new(egui::Order::Middle, Id::unique(("bars_island", "bell")))),
+        panel: visible(LayerId::new(egui::Order::Foreground, Id::unique("notification_center"))),
     }
 }
 
@@ -454,7 +458,7 @@ impl Clicks {
         for _ in 0..3 {
             self.frame(at, Vec::new());
         }
-        let layer = LayerId::new(egui::Order::Foreground, Id::new("notification_presence"));
+        let layer = LayerId::new(egui::Order::Foreground, Id::unique("notification_presence"));
         self.ctx
             .memory(|m| m.areas().visible_last_frame(&layer).then(|| m.area_rect(layer.id)).flatten())
     }

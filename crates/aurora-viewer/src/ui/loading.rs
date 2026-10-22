@@ -462,7 +462,7 @@ pub fn show(
     draw_backdrop(ui, p, backdrop);
     let ctx = ui.ctx().clone();
     let screen = ctx.content_rect();
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("loading_splash")));
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("loading_splash")));
     let t = ctx.input(|i| i.time) as f32;
     let detail = stage_line(info.stage, info.region, info.terrain, info.objects, info.textures);
     let corner = banner(
@@ -482,7 +482,7 @@ pub fn show(
     ctx.request_repaint();
     let mut cancel = false;
     if info.elapsed > 20.0 {
-        egui::Area::new(egui::Id::new("loading_cancel"))
+        egui::Area::new(egui::Id::unique("loading_cancel"))
             .pivot(egui::Align2::RIGHT_CENTER)
             .fixed_pos(corner)
             .show(&ctx, |ui| {
@@ -514,7 +514,7 @@ pub fn teleport_overlay(
     let a = alpha.clamp(0.0, 1.0);
     let rect = ctx.content_rect();
     let t = ctx.input(|i| i.time) as f32;
-    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("teleport_overlay"));
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("teleport_overlay"));
     egui::Area::new(layer.id)
         .order(layer.order)
         .fixed_pos(rect.min)

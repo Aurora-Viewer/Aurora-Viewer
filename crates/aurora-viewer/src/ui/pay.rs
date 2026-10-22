@@ -549,7 +549,7 @@ impl PayUi {
             ..
         }) = self.payee
         {
-            let answer = Modal::new(egui::Id::new("pay_classic_confirm"))
+            let answer = Modal::new(egui::Id::unique("pay_classic_confirm"))
                 .show(ctx, |ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-pay-confirm", amount = money(value), name = name.clone())).color(p.ink));
                     widgets::dialog_buttons(
@@ -609,7 +609,7 @@ impl PayUi {
         let mut open = true;
         let mut close = false;
         let mut result = None;
-        let confirm_id = egui::Id::new("pay_object_confirm");
+        let confirm_id = egui::Id::unique("pay_object_confirm");
         let mut asked: Option<i32> = ctx.data(|data| data.get_temp(confirm_id));
         let available = world.objects.index_of_uuid(&d.target.object).is_some();
         let owner = d.props.as_ref().map(|props| {
@@ -807,7 +807,7 @@ impl PayUi {
     /// answer once given.
     pub fn show_object_confirm(&mut self, ctx: &egui::Context, p: &Palette) -> Option<i32> {
         let (amount, name) = self.object_confirm.clone()?;
-        let answer = Modal::new(egui::Id::new("pay_object_confirm_classic"))
+        let answer = Modal::new(egui::Id::unique("pay_object_confirm_classic"))
             .show(ctx, |ui| {
                 ui.label(RichText::new(aurora_i18n::tr!("ui-pay-confirm", amount = money(amount), name = name)).color(p.ink));
                 widgets::dialog_buttons(

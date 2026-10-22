@@ -70,14 +70,14 @@ pub(super) fn show(
         .max_height(content_height)
         .show(&mut content_ui, |ui| {
             ui.ctx()
-                .data_mut(|d| d.insert_temp(egui::Id::new(("mesh_content_height", entry.id)), ui.available_height()));
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("mesh_content_height", entry.id)), ui.available_height()));
             // Keep full-width rows clear of the rounded viewport edge at fractional DPI.
             ui.set_max_width((ui.available_width() - ui.spacing().item_spacing.x).max(0.0));
             mesh_controls(ui, p, entry.id, draft, prefs, actions, section)
         });
     #[cfg(test)]
     ui.ctx()
-        .data_mut(|d| d.insert_temp(egui::Id::new(("mesh_viewport", entry.id)), (body.inner_rect, body.content_size)));
+        .data_mut(|d| d.insert_temp(egui::Id::unique(("mesh_viewport", entry.id)), (body.inner_rect, body.content_size)));
     let changed = body.inner;
     let mut summary_ui = ui.new_child(egui::UiBuilder::new().id_salt("mesh_summary").max_rect(summary_rect));
     summary_ui.set_clip_rect(summary_rect.intersect(ui.clip_rect()));
@@ -194,7 +194,7 @@ fn preview(
     let response = if let Some(model) = &entry.model {
         aurora_render::preview::paint(
             ui,
-            egui::Id::new(("mesh_preview", entry.id)),
+            egui::Id::unique(("mesh_preview", entry.id)),
             model.clone(),
             &mut entry.view,
             Vec2::new(width, height),
@@ -248,7 +248,7 @@ fn lod_source(source: mesh::LodSource) -> &'static str {
     }
 }
 fn mesh_section(ui: &mut egui::Ui, p: &Palette, id: Uuid, draft: &mut mesh::Draft) -> usize {
-    let section_id = egui::Id::new(("mesh_section", id));
+    let section_id = egui::Id::unique(("mesh_section", id));
     let mut section = ui
         .ctx()
         .data_mut(|d| d.get_temp::<usize>(section_id))
@@ -292,7 +292,7 @@ fn mesh_controls(
 ) -> bool {
     draft.inspector.verbose = ui
         .ctx()
-        .data(|data| data.get_temp::<bool>(egui::Id::new("import_mesh_detailed_logging")))
+        .data(|data| data.get_temp::<bool>(egui::Id::unique("import_mesh_detailed_logging")))
         .unwrap_or(false);
     let old = draft.options.clone();
     let mut changed = false;
@@ -425,7 +425,7 @@ fn mesh_controls(
                         }
                     });
                     ui.ctx()
-                        .data_mut(|data| data.insert_temp(egui::Id::new(("import_lod_card", id, level)), response.response.rect));
+                        .data_mut(|data| data.insert_temp(egui::Id::unique(("import_lod_card", id, level)), response.response.rect));
                     // Observe the press without placing an interaction over the native fields.
                     let position = ui.input(|input| input.pointer.primary_pressed().then(|| input.pointer.interact_pos()).flatten());
                     let clicked = ui.is_enabled()
@@ -560,7 +560,7 @@ fn mesh_controls(
         });
         let space = ui
             .ctx()
-            .data(|d| d.get_temp::<f32>(egui::Id::new(("mesh_content_height", id))))
+            .data(|d| d.get_temp::<f32>(egui::Id::unique(("mesh_content_height", id))))
             .unwrap_or(260.0);
         ui.add_space((space - (ui.cursor().top() - physics_top) - 44.0).max(8.0));
         widgets::divider(ui, p);
@@ -1081,7 +1081,7 @@ mod tests {
 
         drop(frame(Vec::new(), &mut entry));
         let card = ctx
-            .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("import_lod_card", entry.id, 1))))
+            .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("import_lod_card", entry.id, 1))))
             .expect("Low card");
         let low = card.right_bottom() - Vec2::splat(4.0);
         entry.preview_error = Some("previous preparation failure".into());

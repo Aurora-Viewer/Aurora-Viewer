@@ -198,7 +198,7 @@ fn hits(ui: &mut egui::Ui, p: &Palette, s: &Snapshot) {
             let meter = egui::Rect::from_min_max(egui::pos2(rect.left() + 218.0, cy - 3.0), egui::pos2(vx - 12.0, cy + 3.0));
             draw::paint_meter(ui, p, meter, hit.map_or(0.0, |h| h.0 / 100.0), p.teal);
             if let Some((_, reads)) = hit {
-                ui.interact(rect, ui.id().with(("monitor-hits", name)), egui::Sense::hover())
+                ui.interact(rect, ui.scope_id().with(("monitor-hits", name)), egui::Sense::hover())
                     .on_hover_text(tr!("monitor-reads", count = fmt::count(*reads as usize)));
             }
         }

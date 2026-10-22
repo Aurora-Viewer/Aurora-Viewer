@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn tessellation_keeps_lower_layers_before_the_blur_and_modal_layers_after_it() {
         let ctx = egui::Context::default();
-        let modal = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("modal"));
+        let modal = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("modal"));
         let mut output = ctx.run_ui(Default::default(), |_| {
             // Call order deliberately differs from layer order.
             blurred_backdrop(&ctx, modal);

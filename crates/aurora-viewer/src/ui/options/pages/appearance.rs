@@ -79,7 +79,7 @@ fn font(cx: &mut Cx) {
                     .find(|f| s.font == format!("system:{}", f.path.display()))
                     .map_or_else(|| tr!("ui-options-no-system-font").to_owned(), |f| f.name.clone());
                 let mut changed = false;
-                egui::ComboBox::from_id_salt(ui.id().with("system-font"))
+                egui::ComboBox::from_id_salt(ui.scope_id().with("system-font"))
                     .width(COMBO_W)
                     .selected_text(shown)
                     .truncate()
@@ -104,15 +104,8 @@ fn font(cx: &mut Cx) {
                 changed
             },
         );
-        cx.row(tr!("ui-options-text-size"), "", &field!(font_scale), |ui, s| {
-            ui.add(
-                egui::Slider::new(&mut s.font_scale, 0.8..=1.4)
-                    .suffix("×")
-                    .fixed_decimals(2)
-                    .custom_parser(aurora_i18n::parse_number)
-                    .trailing_fill(true),
-            )
-            .changed()
+        cx.row_with(tr!("ui-options-text-size"), "", &field!(font_scale), |ui, s, st, _| {
+            st.text_scale.show_text(ui, &mut s.font_scale)
         });
         cx.below().row(tr!("ui-options-preview"), "", &Nothing, |ui, _| {
             ui.vertical(|ui| {

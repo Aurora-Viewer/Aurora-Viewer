@@ -81,7 +81,7 @@ pub fn wash(p: &Palette) -> Color32 {
 /// Where the message of the row being drawn spans (top, and bottom when the
 /// drawer knows it), below its day and "New" lines.
 fn message_key() -> egui::Id {
-    egui::Id::new("conv_find_message_span")
+    egui::Id::unique("conv_find_message_span")
 }
 
 /// A row's drawer says where its message starts, below the day and "New"
@@ -111,11 +111,11 @@ pub fn current_marker(ui: &egui::Ui, p: &Palette) {
 }
 
 pub fn field_id() -> egui::Id {
-    egui::Id::new("conv_find_field")
+    egui::Id::unique("conv_find_field")
 }
 
 pub fn filter_id() -> egui::Id {
-    egui::Id::new("conv_filter_field")
+    egui::Id::unique("conv_filter_field")
 }
 
 /// Ctrl+F was pressed for the window this `ui` is in: the keyboard is in
@@ -176,7 +176,10 @@ pub fn field(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, face: Color32, f:
     let edit = ui.add(
         egui::TextEdit::singleline(&mut f.text)
             .id(field_id())
-            .frame(egui::Frame::NONE)
+            .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
+                ui.ctx(),
+                &egui::TextStyle::Body.resolve(ui.style()),
+            )))
             .hint_text(aurora_i18n::tr!("ui-chat-find"))
             .desired_width(text_w),
     );
@@ -230,17 +233,17 @@ mod tests {
         frames.run(events, |ui| {
             let ctx = ui.ctx().clone();
             if let Some(field) = keyboard {
-                ctx.memory_mut(|m| m.request_focus(egui::Id::new(field)));
+                ctx.memory_mut(|m| m.request_focus(egui::Id::unique(field)));
             }
-            let window = |name: &str, x: f32| egui::Area::new(egui::Id::new(name)).fixed_pos(egui::pos2(x, 0.0));
+            let window = |name: &str, x: f32| egui::Area::new(egui::Id::unique(name)).fixed_pos(egui::pos2(x, 0.0));
             window("ours", 0.0).show(&ctx, |ui| {
                 ui.set_min_size(egui::vec2(300.0, 300.0));
-                ui.add(egui::TextEdit::singleline(&mut ours).id(egui::Id::new(OWN)));
-                taken = wants_shortcut(ui, &[egui::Id::new(OWN)]);
+                ui.add(egui::TextEdit::singleline(&mut ours).id(egui::Id::unique(OWN)));
+                taken = wants_shortcut(ui, &[egui::Id::unique(OWN)]);
             });
             window("other", 600.0).show(&ctx, |ui| {
                 ui.set_min_size(egui::vec2(300.0, 300.0));
-                ui.add(egui::TextEdit::singleline(&mut theirs).id(egui::Id::new(OTHER)));
+                ui.add(egui::TextEdit::singleline(&mut theirs).id(egui::Id::unique(OTHER)));
                 left = ui.input(|i| i.key_pressed(egui::Key::F));
             });
         });

@@ -8,8 +8,9 @@
 //! LLLandmarksPanel, LLTeleportHistoryPanel, LLPanelPlaceProfile,
 //! LLPanelLandmarkInfo, indra/newview, originally LGPL 2.1): the Favorites and
 //! Landmarks folders, the saved teleport history, the parcel of a place asked
-//! with RemoteParcelRequest / ParcelInfoRequest for the one previewed only,
-//! the TeleportFromLandmark / TeleportToHistoryEntry confirmations, the
+//! with RemoteParcelRequest / ParcelInfoRequest for the one previewed (and,
+//! for its snapshot only, each row on screen without a thumbnail,
+//! `world/place_snapshots.rs`), the TeleportFromLandmark / TeleportToHistoryEntry confirmations, the
 //! favourites bar's order. What Aurora adds is drawn from those: a landmark
 //! and its copy in Favorites are one place with a star (the star copies the
 //! landmark into Favorites as "add_to_favbar" does, and takes the copy away),
@@ -25,12 +26,15 @@ use crate::ui::{menu, widgets};
 use crate::world::World;
 use crate::world::inventory::Inventory;
 use crate::world::inventory::actions;
+use crate::world::landmarks::{Landmarks, Resolved};
 use crate::world::place_details::{Source as Profile, Stage};
+use crate::world::place_snapshots::Spot;
 use crate::world::tphistory::{self, HistoryItem};
 use aurora_llsd::llsd_map;
 use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Vec2};
-use std::collections::{HashMap, HashSet};
+use glam::DVec3;
+use std::collections::HashSet;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -81,8 +85,6 @@ pub struct AuroraState {
     rename_folder: Option<(Uuid, String)>,
     /// The favourite dragged in the Favorites list (its item).
     drag: Option<Uuid>,
-    /// Snapshots of the parcels seen in the preview, for the rows.
-    snapshots: HashMap<Key, Uuid>,
     /// The places, and what they were built from.
     catalog: Option<(CatalogKey, Arc<Catalog>)>,
     /// AURORA_DEMO_PLACES=…:open: the first place selected (a narrow row
@@ -122,9 +124,17 @@ fn profile_of(place: &Place, inv: &Inventory, history: &[HistoryItem]) -> Option
     })
 }
 
-/// The key the snapshot of a place is kept under.
-fn picture_key(key: Key, place: &Place) -> Key {
-    place.asset.map_or(key, Key::Landmark)
+/// Where the parcel snapshot of a row without a thumbnail comes from: its
+/// landmark's point (shared with the favourites bar), or the spot a history
+/// entry arrived at; with the region id, nil when unknown.
+fn snapshot_spot(place: &Place, landmarks: &Landmarks) -> Option<(Spot, DVec3, Uuid)> {
+    match place.asset {
+        Some(asset) => match landmarks.peek(asset) {
+            Resolved::Ready { global, region_id, .. } => Some((Spot::Landmark(asset), global, region_id)),
+            _ => None,
+        },
+        None => place.global.map(|g| (Spot::at(g), g, Uuid::nil())),
+    }
 }
 
 /// A one-line text cut with "…" at `width`.
@@ -383,7 +393,6 @@ impl PlacesUi {
                 self.select(*k, place, &world.inventory, history, actions);
             }
         }
-        self.remember_snapshot(world, cat, history);
         if wide {
             self.wide(ui, c, env, cat, &lines, link.is_some(), actions);
         } else {
@@ -408,24 +417,6 @@ impl PlacesUi {
                 None => actions.push(PlacesAction::CloseProfile),
             }
             self.aurora.previewed = profile;
-        }
-    }
-
-    /// The snapshot of the previewed parcel is kept for its row.
-    fn remember_snapshot(&mut self, world: &World, cat: &Catalog, history: &[HistoryItem]) {
-        let (Some(key), Some(panel)) = (self.aurora.selected, world.place_details.panel.as_ref()) else {
-            return;
-        };
-        if self.aurora.previewed.as_ref() != Some(&panel.source) {
-            return;
-        }
-        let Some(d) = panel.parcel().and_then(|id| world.profiles.parcels.get(&id)) else {
-            return;
-        };
-        if !d.snapshot.is_nil()
-            && let Some(place) = cat.place(key, history)
-        {
-            self.aurora.snapshots.insert(picture_key(key, &place), d.snapshot);
         }
     }
 
@@ -745,12 +736,23 @@ impl PlacesUi {
                 Line::Place(k, place) => (*k, place),
             };
             let selected = self.aurora.selected == Some(key);
-            let snapshot = if place.thumbnail.is_nil() {
-                self.aurora.snapshots.get(&picture_key(key, place)).copied().unwrap_or_default()
+            let spot = if place.thumbnail.is_nil() {
+                snapshot_spot(place, &world.landmarks)
             } else {
-                place.thumbnail
+                None
+            };
+            let snapshot = match spot {
+                Some((s, ..)) => world.place_snapshots.snapshot(s, &world.profiles.parcels).unwrap_or_default(),
+                None => place.thumbnail,
             };
             let out = place_row(ui, p, c, place, selected, snapshot, draggable, wide);
+            // every row on screen asks for its picture, not only the one
+            // previewed (#798)
+            if let Some(s) = spot
+                && ui.is_rect_visible(out.resp.rect)
+            {
+                self.want_snapshots.push(s);
+            }
             if let Some(fav) = place.favorite.filter(|_| draggable) {
                 rects.push((out.resp.rect, fav));
                 if out.resp.drag_started() {
@@ -909,7 +911,16 @@ impl PlacesUi {
             }
             if menu::item(ui, p, "trash-filled", aurora_i18n::tr!("ui-places-remove-from-history")) {
                 actions.push(PlacesAction::RemoveHistory(i));
+                // the entries after it move up one index: nothing stays
+                // keyed by one (#798)
                 self.aurora.selected = None;
+                let by_index = |k: &Key| matches!(k, Key::Visit(_));
+                if self.aurora.note.as_ref().is_some_and(|(k, _)| by_index(k)) {
+                    self.aurora.note = None;
+                }
+                if self.aurora.rename.as_ref().is_some_and(|(k, _)| by_index(k)) {
+                    self.aurora.rename = None;
+                }
             }
         }
     }
@@ -953,13 +964,15 @@ impl PlacesUi {
         let fmt = |color: Color32| egui::TextFormat::simple(FontId::proportional(12.0), color);
         job.append(&format!("{here} "), 0.0, fmt(p.muted));
         let parcel = if world.parcel_name.is_empty() {
-            world.region_name()
+            world.rlva_region_label()
         } else {
-            world.parcel_name.clone()
+            world.rlva_parcel_label()
         };
         job.append(&parcel, 0.0, fmt(p.ink));
         let pos = world.agent.position;
-        let rest = if wide {
+        let rest = if world.rlva.has("showloc") {
+            String::new()
+        } else if wide {
             format!(
                 ", {} ({}, {}, {})",
                 world.region_name(),
@@ -1173,7 +1186,7 @@ impl PlacesUi {
                 let r = ui.add(egui::TextEdit::singleline(name).char_limit(63).desired_width(width));
                 // the field takes the keyboard when it appears, and a click
                 // elsewhere then ends the edit
-                let fresh = egui::Id::new(("places-rename", key));
+                let fresh = egui::Id::unique(("places-rename", key));
                 if ui.data_mut(|d| d.get_temp::<bool>(fresh).is_none()) {
                     ui.data_mut(|d| d.insert_temp(fresh, true));
                     r.request_focus();
@@ -1556,7 +1569,7 @@ impl PlacesUi {
 /// Cancel / Escape.
 fn name_dialog(ctx: &egui::Context, p: &Palette, id: &str, prompt: &str, name: &mut String) -> Option<bool> {
     let mut done = None;
-    let modal = widgets::Modal::new(egui::Id::new(id)).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique(id)).show(ctx, |ui| {
         ui.set_width(320.0);
         ui.label(egui::RichText::new(prompt).size(12.5).color(p.ink));
         ui.add_space(6.0);
@@ -1848,5 +1861,29 @@ mod tests {
         assert_eq!(change.operations.len(), 2, "both copies keep the same notes");
     }
 
-    use crate::world::landmarks::Landmarks;
+    #[test]
+    fn a_history_picture_follows_its_entry_not_its_index() {
+        let entry = |title: &str, x: f64, date: f64| HistoryItem {
+            title: title.into(),
+            global: DVec3::new(256_000.0 + x, 256_300.0, 22.0),
+            date,
+            slurl: String::new(),
+        };
+        let mut history = vec![entry("Lagune", 40.0, 1.0), entry("Nordheim", 140.0, 2.0)];
+        let lm = Landmarks::default();
+        let spot = |history: &[HistoryItem], i: usize| {
+            let cat = model::catalog(&inventory(), &lm, &Default::default(), history, false);
+            let place = cat.place(Key::Visit(i), history).expect("line");
+            snapshot_spot(&place, &lm).map(|(s, ..)| s)
+        };
+        let nordheim = Some(Spot::at(history[1].global));
+        assert_eq!(spot(&history, 1), nordheim);
+        assert_ne!(spot(&history, 0), nordheim);
+        // "Remove from history" of the first: Nordheim is now index 0 and
+        // keeps its own picture (#798)
+        history.remove(0);
+        assert_eq!(spot(&history, 0), nordheim);
+        // a landmark whose asset is not read yet waits for it
+        assert_eq!(snapshot_spot(&place(&inventory(), 1000), &lm), None);
+    }
 }

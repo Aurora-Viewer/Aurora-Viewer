@@ -7,14 +7,14 @@
 //! - "Search", the accelerator of Firestorm's menu (menu_viewer.xml),
 //!   a shortcut of the viewer (`keybinds::Action::Search` by default).
 //!
-//! One rule decides, [`owner`]: the window whose field has the keyboard
-//! wins (script editor, find window); with the keyboard nowhere, the find
-//! window under the pointer; else the viewer's shortcut. It is asked from
+//! One rule decides, [`owner`]: an active script editor owns its shortcut
+//! across its fields, controls and menus. Otherwise the find window whose
+//! field has the keyboard wins; with the keyboard nowhere, the find window
+//! under the pointer; else the viewer's shortcut. It is asked from
 //! both ends with the same egui state: by a find window while it is drawn
 //! ([`take`]), and by the app before it runs the viewer's shortcut bound to
-//! these keys ([`window_takes_it`]). The script editor reads its keys while
-//! its text has the keyboard (`scripts/view.rs`), which is the first case of
-//! the rule.
+//! these keys ([`window_takes_it`]). `scripts/focus.rs` tracks script
+//! activation and dispatches the key after all editor commands have run.
 
 use egui::{Id, LayerId};
 
@@ -23,7 +23,7 @@ use egui::{Id, LayerId};
 pub enum Keyboard {
     /// In no field.
     Nowhere,
-    /// In the text of a script editor.
+    /// In the active script editor, including its controls and popup menus.
     ScriptEditor,
     /// In a field of a window that has a find bar: the layer of that window.
     FindWindow(LayerId),
@@ -63,7 +63,7 @@ struct Claim {
 }
 
 fn claims_id() -> Id {
-    Id::new("find_shortcut_claims")
+    Id::unique("find_shortcut_claims")
 }
 
 /// The windows with a find bar drawn on the last frame.
@@ -91,13 +91,16 @@ fn claim(ctx: &egui::Context, layer: LayerId, fields: &[Id]) {
 /// Who gets Ctrl+F now: the rule on where the keyboard and the pointer are.
 pub fn current_owner(ctx: &egui::Context) -> Owner {
     let claims = claims(ctx);
-    let keyboard = match ctx.memory(|m| m.focused()) {
-        None => Keyboard::Nowhere,
-        Some(field) => match claims.iter().find(|claim| claim.fields.contains(&field)) {
-            Some(claim) => Keyboard::FindWindow(claim.layer),
-            None if super::scripts::editor_focused(ctx) => Keyboard::ScriptEditor,
-            None => Keyboard::Elsewhere,
-        },
+    let keyboard = if super::scripts::editor_focused(ctx) {
+        Keyboard::ScriptEditor
+    } else {
+        match ctx.memory(|m| m.focused()) {
+            None => Keyboard::Nowhere,
+            Some(field) => match claims.iter().find(|claim| claim.fields.contains(&field)) {
+                Some(claim) => Keyboard::FindWindow(claim.layer),
+                None => Keyboard::Elsewhere,
+            },
+        }
     };
     let pointer = ctx
         .pointer_latest_pos()
@@ -128,7 +131,7 @@ mod tests {
     use crate::ui::widgets::elide_tests::Frames;
 
     fn window(name: &str) -> LayerId {
-        LayerId::new(egui::Order::Middle, Id::new(name))
+        LayerId::new(egui::Order::Middle, Id::unique(name))
     }
 
     #[test]
@@ -168,19 +171,19 @@ mod tests {
             frames.run(events, |ui| {
                 let ctx = ui.ctx().clone();
                 if let Some(field) = keyboard {
-                    ctx.memory_mut(|m| m.request_focus(Id::new(field)));
+                    ctx.memory_mut(|m| m.request_focus(Id::unique(field)));
                 }
-                let area = |name: &str, x: f32| egui::Area::new(Id::new(name)).fixed_pos(egui::pos2(x, 0.0));
+                let area = |name: &str, x: f32| egui::Area::new(Id::unique(name)).fixed_pos(egui::pos2(x, 0.0));
                 if find_window_shown {
                     area("find", 0.0).show(&ctx, |ui| {
                         ui.set_min_size(egui::vec2(300.0, 300.0));
-                        ui.add(egui::TextEdit::singleline(&mut find).id(Id::new(FIND_FIELD)));
-                        taken = take(ui, &[Id::new(FIND_FIELD)]);
+                        ui.add(egui::TextEdit::singleline(&mut find).id(Id::unique(FIND_FIELD)));
+                        taken = take(ui, &[Id::unique(FIND_FIELD)]);
                     });
                 }
                 area("other", 600.0).show(&ctx, |ui| {
                     ui.set_min_size(egui::vec2(300.0, 300.0));
-                    ui.add(egui::TextEdit::singleline(&mut other).id(Id::new(OTHER_FIELD)));
+                    ui.add(egui::TextEdit::singleline(&mut other).id(Id::unique(OTHER_FIELD)));
                 });
             });
         };
@@ -222,7 +225,7 @@ mod tests {
             frames.run(vec![egui::Event::PointerMoved(ON_FIND_WINDOW)], |ui| {
                 let ctx = ui.ctx().clone();
                 if shown {
-                    egui::Area::new(Id::new("find")).fixed_pos(egui::Pos2::ZERO).show(&ctx, |ui| {
+                    egui::Area::new(Id::unique("find")).fixed_pos(egui::Pos2::ZERO).show(&ctx, |ui| {
                         ui.set_min_size(egui::vec2(300.0, 300.0));
                         take(ui, &[]);
                     });

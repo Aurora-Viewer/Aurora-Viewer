@@ -120,14 +120,14 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
         frame(Vec::new(), &mut state);
     }
     let rect = ctx
-        .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("resource_texture_preview", item))))
+        .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("resource_texture_preview", item))))
         .expect("preview image");
     assert!((rect.aspect_ratio() - 2.0).abs() < 0.01, "preview keeps the image aspect ratio");
     let destination = egui::pos2(100.0, 700.0);
     for source in [rect.center(), row] {
         if source == row {
             let window = ctx
-                .memory(|m| m.area_rect(egui::Id::new(crate::ui::texture_library::preview_window_id(item))))
+                .memory(|m| m.area_rect(egui::Id::unique(crate::ui::texture_library::preview_window_id(item))))
                 .expect("preview window");
             let close = egui::pos2(window.right() - 18.0, window.top() + 19.0);
             frame(button(close, true), &mut state);

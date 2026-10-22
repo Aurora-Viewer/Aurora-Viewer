@@ -331,7 +331,7 @@ pub fn page_tabs<P: Copy + PartialEq>(
             icon_at(ui, it.icon, egui::pos2(rect.left() + 12.0 + 7.0, rect.center().y), 14.0, ink);
             let pos = crate::ui::widgets::row_text_origin(ui.painter(), &galley, rect.left() + 12.0 + 14.0 + 6.0, rect.center().y);
             ui.painter().galley(pos, galley, ink);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, it.label));
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, it.label));
             if let Some(why) = it.disabled {
                 resp.on_hover_text(why);
             } else if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
@@ -477,7 +477,7 @@ fn linked_text(
 /// pointer's hand over it).
 fn paint_linked(ui: &mut egui::Ui, galley: std::sync::Arc<egui::Galley>, pos: Pos2, link_at: usize, color: Color32) -> bool {
     let rect = Rect::from_min_size(pos, galley.size());
-    let id = ui.id().with(("linked_text", pos.x as i32, pos.y as i32));
+    let id = ui.scope_id().with(("linked_text", pos.x as i32, pos.y as i32));
     let r = ui.interact(rect, id, Sense::click());
     let on_link = r.hover_pos().is_some_and(|at| {
         galley.cursor_from_pos(at - pos).index >= egui::text::CharIndex(link_at)
@@ -666,7 +666,7 @@ pub fn nav_compact(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, lit:
         let pos = crate::ui::widgets::row_text_origin(ui.painter(), &g, rect.left() + 8.0 + ICON + 9.0, rect.center().y);
         ui.painter().galley(pos, g, ink);
     }
-    r.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, lit, label));
+    r.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, lit, label));
     r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(label)
 }
 
@@ -831,7 +831,7 @@ fn section_column<S: Copy + PartialEq>(
     });
     // the section in view follows the scrolling, not a jump that could not
     // bring the last sections to the top
-    let offset = out.state.offset.y;
+    let offset = out.state.unclamped_offset().y;
     let settling = ui.input(|i| i.time) - state.jumped_at < 0.8;
     if (offset - state.scroll).abs() > 0.5 {
         state.scroll = offset;

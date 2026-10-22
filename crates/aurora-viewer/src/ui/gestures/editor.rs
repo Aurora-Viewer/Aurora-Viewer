@@ -332,10 +332,10 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
     if let Some(id) = state.raise_editor.take() {
         let window_id = format!("gesture_{id}");
         widgets::open_floater(ctx, &window_id, &mut true);
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(window_id)));
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(window_id)));
     }
     if let Some(id) = state.discard {
-        let response = widgets::Modal::new(egui::Id::new("gesture_discard")).show(ctx, |ui| {
+        let response = widgets::Modal::new(egui::Id::unique("gesture_discard")).show(ctx, |ui| {
             ui.set_width(400.0);
             widgets::section_header(ui, p, "device-floppy", aurora_i18n::tr!("ui-inventory-dialogs-save-changes"));
             ui.label(aurora_i18n::tr!("gesture-unsaved"));

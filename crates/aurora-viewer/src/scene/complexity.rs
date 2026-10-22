@@ -366,6 +366,33 @@ impl Scene {
                 self.too_complex.remove(&idx);
             }
         }
+        // Rlv silhouettes take precedence over Always Render and friendship.
+        // Their radius follows the agent, independently of the slow ARC walk.
+        let distance = world.rlva.silhouette_distance();
+        if distance.is_none() && self.rlva_silhouettes.is_empty() {
+            return;
+        }
+        let mut silhouettes = HashSet::new();
+        for (idx, object) in world.objects.avatars() {
+            if object.full_id == world.agent_id {
+                continue;
+            }
+            let hidden = distance.is_some_and(|radius| {
+                super::Scene::object_transform_unshifted(world, idx, std::time::Instant::now())
+                    .is_some_and(|(p, _, _)| p.distance_squared(world.agent.position) > radius * radius)
+            });
+            if hidden {
+                silhouettes.insert(idx);
+                self.too_complex.insert(idx);
+            } else if self.rlva_silhouettes.contains(&idx) {
+                let complexity = self.avatar_complexity.get(&object.full_id).copied().unwrap_or_default();
+                let area = self.avatar_area.get(&object.full_id).copied().unwrap_or_default();
+                if !rules.too_complex(&object.full_id, false, complexity, area) {
+                    self.too_complex.remove(&idx);
+                }
+            }
+        }
+        self.rlva_silhouettes = silhouettes;
     }
 }
 

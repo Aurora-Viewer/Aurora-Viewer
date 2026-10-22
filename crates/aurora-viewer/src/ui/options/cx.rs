@@ -235,6 +235,8 @@ struct Next {
     experimental: bool,
     wide: bool,
     below: bool,
+    /// Its `subs` always show under it, without a cog.
+    unfolded: bool,
     keywords: String,
 }
 
@@ -270,14 +272,16 @@ pub(super) struct Cx<'a> {
     pub r: &'a mut OptionsResult,
     d: &'a Settings,
     mode: Mode,
+    number_width: f32,
     words: Vec<String>,
     page: Page,
     tab: usize,
     group: String,
     /// The search or modified view still has to title the current group.
     group_untitled: bool,
-    /// The last row declared: the parent of the `subs` that follow.
-    last: Option<(egui::Id, String)>,
+    /// The last row declared: the parent of the `subs` that follow, and
+    /// whether they show without a cog (`unfolded`).
+    last: Option<(egui::Id, String, bool)>,
     /// Inside a parent's `subs`: its label (shown before the row in the
     /// search) and whether it is off (its rows greyed).
     parent: Option<Parent>,
@@ -308,6 +312,24 @@ impl<'a> Cx<'a> {
         mode: Mode,
         query: &str,
     ) -> Self {
+        // DragValue uses interact_size.x for its button AND text editor.
+        // Reserve its slot before measuring the right-aligned controls:
+        // changing digits, units or a named value must not move the rail.
+        let number_width = if mode.draws() {
+            let font = ui.style().drag_value_text_style.resolve(ui.style());
+            [
+                i32::MIN.to_string(),
+                format!("65536{}", aurora_i18n::tr!("bandwidth-kbps-suffix")),
+                aurora_i18n::tr!("ui-options-away-disabled").to_owned(),
+                aurora_i18n::tr!("ui-options-unlimited").to_owned(),
+            ]
+            .into_iter()
+            .map(|text| ui.painter().layout_no_wrap(text, font.clone(), p.ink).size().x)
+            .fold(0.0, f32::max)
+                + 2.0 * ui.spacing().button_padding.x
+        } else {
+            0.0
+        };
         Cx {
             ui,
             p,
@@ -316,6 +338,7 @@ impl<'a> Cx<'a> {
             r,
             d,
             mode,
+            number_width,
             words: words(query),
             page: Page::Aurora,
             tab: 0,
@@ -358,6 +381,14 @@ impl<'a> Cx<'a> {
     pub fn below(&mut self) -> &mut Self {
         self.next.wide = true;
         self.next.below = true;
+        self
+    }
+
+    /// The `subs` of the next row always show under it, as behind an open
+    /// cog, and it has no cog: for the one value its switch is turned on
+    /// to set (a frame rate limit).
+    pub fn unfolded(&mut self) -> &mut Self {
+        self.next.unfolded = true;
         self
     }
 
@@ -416,7 +447,7 @@ impl<'a> Cx<'a> {
     /// another row, or another window edits them).
     pub fn track(&mut self, t: &dyn Track) {
         match self.mode {
-            Mode::Reset => t.reset(self.s, self.d),
+            Mode::Reset if !self.rlva_locked(t) => t.reset(self.s, self.d),
             #[cfg(test)]
             Mode::Collect => {
                 let mut paths = Vec::new();
@@ -425,6 +456,19 @@ impl<'a> Cx<'a> {
             }
             _ => {}
         }
+    }
+
+    fn rlva_locked(&self, track: &dyn Track) -> bool {
+        if !self.st.rlva_camera_preset_locked && !self.st.rlva_camera_fov_locked {
+            return false;
+        }
+        let mut paths = Vec::new();
+        track.paths(&mut paths);
+        paths.iter().any(|path| match *path {
+            "camera.preset" | "camera.camera_offset" | "camera.focus_offset" | "camera.offset_scale" => self.st.rlva_camera_preset_locked,
+            "camera.fov" => self.st.rlva_camera_fov_locked,
+            _ => false,
+        })
     }
 
     /// A row: `label` on the left (`hint` under the pointer), the control
@@ -445,11 +489,13 @@ impl<'a> Cx<'a> {
         let next = std::mem::take(&mut self.next);
         self.rows_seen += 1;
         let id = self.row_id(label);
-        self.last = Some((id, label.to_owned()));
+        self.last = Some((id, label.to_owned(), next.unfolded));
         let modified = t.modified(self.s, self.d);
         match self.mode {
             Mode::Reset => {
-                t.reset(self.s, self.d);
+                if !self.rlva_locked(t) {
+                    t.reset(self.s, self.d);
+                }
                 return false;
             }
             #[cfg(test)]
@@ -504,14 +550,15 @@ impl<'a> Cx<'a> {
     /// The rows behind the cog of the row just declared. `off`: that row
     /// is off, they are greyed and its cog dimmed. On the page they show
     /// while its cog is open; the search, the modified view and the resets
-    /// always go through them.
+    /// always go through them. Under an `unfolded` row they always show.
     pub fn subs(&mut self, off: bool, body: impl FnOnce(&mut Self)) {
-        let Some((id, label)) = self.last.take() else {
+        let Some((id, label, unfolded)) = self.last.take() else {
             body(self);
             return;
         };
         let before = self.parent.replace(Parent { label, off, id });
         match self.mode {
+            Mode::Count if unfolded => body(self),
             Mode::Count => {
                 // the number shown on the cog, and whether to dim it (the
                 // hidden rows still count for their page)
@@ -523,7 +570,7 @@ impl<'a> Cx<'a> {
                 }
             }
             Mode::Show => {
-                if self.st.open_subs.contains(&id) {
+                if unfolded || self.st.open_subs.contains(&id) {
                     // greyed one by one while the parent is off (`draw_row`)
                     let indent = self.grid.indent;
                     self.grid.indent += SUB_INDENT;
@@ -531,6 +578,10 @@ impl<'a> Cx<'a> {
                     self.end_line();
                     self.end_block();
                     self.grid.indent = indent;
+                    if unfolded {
+                        // two in a row read as two blocks, not one
+                        self.ui.add_space(6.0);
+                    }
                 }
             }
             _ => body(self),
@@ -594,7 +645,7 @@ impl<'a> Cx<'a> {
     /// A colour.
     pub fn color(&mut self, label: &str, hint: &str, f: &F<crate::settings::Rgba>) -> bool {
         let (p, get) = (self.p, f.get_mut);
-        self.row(label, hint, f, |ui, s| super::swatch(ui, &p, ui.id().with("swatch"), get(s)))
+        self.row(label, hint, f, |ui, s| super::swatch(ui, &p, ui.scope_id().with("swatch"), get(s)))
     }
 
     /// A row that opens another page (`button` on its link).
@@ -612,7 +663,7 @@ impl<'a> Cx<'a> {
 
     fn row_id(&self, label: &str) -> egui::Id {
         let parent = self.parent.as_ref().map_or("", |p| p.label.as_str());
-        egui::Id::new(("preferences-row", self.page, self.group.as_str(), parent, label))
+        egui::Id::unique(("preferences-row", self.page, self.group.as_str(), parent, label))
     }
 
     /// The search finds a row by its name, its help and its choices; not
@@ -748,7 +799,7 @@ impl<'a> Cx<'a> {
         }
         let resp = self.ui.interact(
             link,
-            egui::Id::new(("preferences-crumb", page, tab, group.as_str())),
+            egui::Id::unique(("preferences-crumb", page, tab, group.as_str())),
             Sense::click(),
         );
         if resp.hovered() {
@@ -787,7 +838,7 @@ impl<'a> Cx<'a> {
         let p = self.p;
         let search = matches!(self.mode, Mode::Search | Mode::Modified);
         let cog = if search { None } else { self.st.subs.get(&id).copied() };
-        let open = cog.is_some() && self.st.open_subs.contains(&id);
+        let open = !search && (next.unfolded || (cog.is_some() && self.st.open_subs.contains(&id)));
         let wide = next.wide || open;
         if open {
             self.end_line();
@@ -796,7 +847,7 @@ impl<'a> Cx<'a> {
             self.block = Some((top, shape));
         }
         let cell = self.cell(wide);
-        let parent_off = self.greyed || self.parent.as_ref().is_some_and(|p| p.off);
+        let parent_off = self.greyed || self.parent.as_ref().is_some_and(|p| p.off) || self.rlva_locked(t);
         let size_key = id.with("control");
         let control = self
             .st
@@ -809,7 +860,10 @@ impl<'a> Cx<'a> {
         let cog_w = if cog.is_some() { COG_W + 8.0 } else { 0.0 };
         let go_w = if search { 26.0 } else { 0.0 };
         let mark_w = if next.experimental { 19.0 } else { 0.0 };
-        let label_w = if next.below {
+        // Keep a readable label when a column cannot fit the stable value
+        // slot beside it (including narrow windows and larger fonts).
+        let below = next.below || control.x + cog_w + 14.0 + mark_w + go_w + 90.0 > right - left;
+        let label_w = if below {
             right - left - mark_w - go_w
         } else {
             (right - left - control.x - cog_w - 14.0 - mark_w - go_w).max(90.0)
@@ -836,7 +890,7 @@ impl<'a> Cx<'a> {
         job.wrap.max_width = label_w.max(1.0);
         let galley = ctx.fonts_mut(|f| f.layout_job(job));
         let text_h = galley.size().y;
-        let height = if next.below {
+        let height = if below {
             text_h + 6.0 + control.y + 16.0
         } else {
             text_h.max(control.y).max(20.0) + 12.0
@@ -846,12 +900,12 @@ impl<'a> Cx<'a> {
         let background = self.ui.painter().add(Shape::Noop);
 
         // the control, at the right end of the row (or under the label)
-        let control_rect = if next.below {
+        let control_rect = if below {
             Rect::from_min_size(pos2(left, row.top() + 8.0 + text_h + 6.0), vec2(right - left, control.y))
         } else {
             Rect::from_min_size(pos2(right - control.x, row.center().y - control.y / 2.0), control)
         };
-        let room = if next.below {
+        let room = if below {
             control_rect
         } else {
             Rect::from_min_max(control_rect.min, pos2(right, control_rect.max.y))
@@ -864,6 +918,7 @@ impl<'a> Cx<'a> {
         );
         child.spacing_mut().item_spacing = vec2(8.0, 6.0);
         child.spacing_mut().slider_width = super::SLIDER_W;
+        child.spacing_mut().interact_size.x = self.number_width;
         if parent_off {
             child.disable();
         }
@@ -876,7 +931,7 @@ impl<'a> Cx<'a> {
         }
 
         // the label
-        let label_pos = if next.below {
+        let label_pos = if below {
             pos2(left, row.top() + 8.0)
         } else {
             pos2(left, row.center().y - text_h / 2.0)
@@ -959,7 +1014,7 @@ impl<'a> Cx<'a> {
 
         // the modified dot: a click puts the row back to its default
         let mut reset = false;
-        if modified {
+        if modified && !self.rlva_locked(t) {
             let dot = Rect::from_center_size(pos2(cell.left() + GUTTER / 2.0 + 1.0, label_rect.center().y), Vec2::splat(16.0));
             let resp = self
                 .ui

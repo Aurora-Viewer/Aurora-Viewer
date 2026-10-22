@@ -150,8 +150,8 @@ agent: "archive the finished tasks".
 
 You can also ask an agent: "release 0.4.0" (or "make a release": it suggests
 the number). In both cases, GitHub Actions builds the viewer, creates the
-release with the Windows zip and writes the notes, sorted by category, from
-the merged PRs. By hand, it is:
+release with the Windows zip, adds the Linux archive and writes the notes,
+sorted by category, from the merged PRs. By hand, it is:
 
 ```bash
 git switch main && git pull

@@ -3,7 +3,7 @@
 //! Detect DragValue edits centrally, including the numeric part of Sliders;
 //! slider tracks, window handles and text editing keep their positional input.
 
-use egui::{Context, Event, Id, Pos2, RawInput, Vec2, WidgetType, output::OutputEvent};
+use egui::{Context, Event, Id, Pos2, RawInput, Role, Vec2, output::OutputEvent};
 
 struct Drag {
     id: Id,
@@ -64,7 +64,7 @@ impl NumericDrag {
         if self.drag.is_none()
             && !events
                 .iter()
-                .any(|event| matches!(event, OutputEvent::ValueChanged(info) if info.typ == WidgetType::DragValue))
+                .any(|event| matches!(event, OutputEvent::ValueChanged(info) if info.role == Role::SpinButton))
         {
             return None;
         }

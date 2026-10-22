@@ -83,7 +83,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, pref
                 imports.open_file_picker(choice);
             }
             widgets::open_floater(ctx, choice.window_id(), &mut imports.open);
-            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(choice.window_id())));
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(choice.window_id())));
         }
     }
     if settings {
@@ -106,12 +106,12 @@ pub(super) fn keep_accessible(ctx: &egui::Context, window: &str) {
     {
         // On a narrow viewport there may be no room beside the bar: its
         // type buttons, toggle and close action must remain reachable.
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(WINDOW)));
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(WINDOW)));
     }
 }
 
 fn bounds(ctx: &egui::Context, id: &str) -> Option<egui::Rect> {
-    let state = egui::AreaState::load(ctx, egui::Id::new(id))?;
+    let state = egui::AreaState::load(ctx, egui::Id::unique(id))?;
     Some(egui::Rect::from_min_size(state.left_top_pos(), state.size?))
 }
 

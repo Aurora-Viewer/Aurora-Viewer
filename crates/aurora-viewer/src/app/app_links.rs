@@ -52,7 +52,7 @@ impl App {
             _ => return,
         };
         self.egui_ctx
-            .data_mut(|d| d.insert_temp(egui::Id::new("uri_restore_demo"), (window, action.clone())));
+            .data_mut(|d| d.insert_temp(egui::Id::unique("uri_restore_demo"), (window, action.clone())));
     }
 
     pub(super) fn demo_uri_restore(&mut self) {
@@ -61,7 +61,7 @@ impl App {
         }
         let Some((window, action)) = self
             .egui_ctx
-            .data(|d| d.get_temp::<(String, CtxAction)>(egui::Id::new("uri_restore_demo")))
+            .data(|d| d.get_temp::<(String, CtxAction)>(egui::Id::unique("uri_restore_demo")))
         else {
             return;
         };
@@ -70,7 +70,7 @@ impl App {
             500 | 660 => ui::context::request(&self.egui_ctx, action),
             _ => {
                 let minimized = ui::widgets::floater_minimized(&self.egui_ctx, &window);
-                let height = self.egui_ctx.memory(|m| m.area_rect(egui::Id::new(&window))).map(|r| r.height());
+                let height = self.egui_ctx.memory(|m| m.area_rect(egui::Id::unique(&window))).map(|r| r.height());
                 log::info!("URI restore demo: {window}, minimized={minimized}, height={height:?}");
             }
         }

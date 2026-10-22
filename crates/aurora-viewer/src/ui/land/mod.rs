@@ -290,6 +290,9 @@ pub struct LandUi {
     /// parcel), pass price / hours being edited.
     pass_to_group: bool,
     pass_edit: Option<(i32, f32)>,
+    /// "Buy access" of the ground menu: when it was asked, while the
+    /// properties of the parcel it selected are awaited.
+    pass_wanted: Option<std::time::Instant>,
     /// Export / import file dialog running.
     file_job: Option<files::Job>,
     /// Offline demo: the region answers LandResources.
@@ -308,6 +311,60 @@ impl LandUi {
         if let Some((h, pos, size)) = Self::region_at_global(world, gx, gy) {
             world.land.select_at(h, pos, size);
         }
+    }
+
+    /// Land.BuyPass of the ground menu (LLLandBuyPass): the parcel at a
+    /// global position is selected, and the question follows once its
+    /// properties arrive, with or without the floater.
+    pub fn buy_pass_at(&mut self, world: &mut World, gx: f64, gy: f64) {
+        if let Some((h, pos, size)) = Self::region_at_global(world, gx, gy) {
+            world.land.select_at(h, pos, size);
+            self.pass_wanted = Some(std::time::Instant::now());
+        }
+    }
+
+    /// The pass question is shown.
+    fn asks_pass(&self) -> bool {
+        matches!(self.dialog, Some(Dialog::Confirm(dialogs::Confirm::BuyPass)))
+    }
+
+    /// LLPanelLandGeneral::onClickBuyPass, once the parcel asked by the
+    /// ground menu is known. The menu cannot grey the entry as
+    /// LLMenuParcelObserver does (it does not know the parcel before it is
+    /// selected), so a parcel without a pass for us says why instead.
+    fn pass_question(&mut self, world: &mut World) {
+        /// No answer from the simulator: the question is dropped.
+        const WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+        let Some(asked) = self.pass_wanted else {
+            return;
+        };
+        let Some(sel) = world.land.sel.as_ref() else {
+            self.pass_wanted = None;
+            return;
+        };
+        let Some(parcel) = sel.parcel.clone() else {
+            if asked.elapsed() > WAIT {
+                log::info!("Buy access: no parcel properties after {} s", WAIT.as_secs());
+                self.pass_wanted = None;
+            }
+            return;
+        };
+        self.pass_wanted = None;
+        let why = match overview::pass_refusal(&parcel, world.agent_id, overview::collision_banned(world)) {
+            None => {
+                self.dialog = Some(Dialog::Confirm(dialogs::Confirm::BuyPass));
+                return;
+            }
+            Some(overview::NoPass::Own) => aurora_i18n::tr!("ui-land-pass-own-land"),
+            Some(overview::NoPass::NotSold) => aurora_i18n::tr!("ui-land-pass-not-sold"),
+            Some(overview::NoPass::Banned) => aurora_i18n::tr!("ui-land-pass-banned"),
+        };
+        world.notifications.push(
+            crate::world::notifications::Kind::Info,
+            aurora_i18n::tr!("ui-context-buy-access"),
+            why,
+            crate::world::notifications::Data::None,
+        );
     }
 
     /// The region we are connected to that holds a global position: its
@@ -435,17 +492,34 @@ impl LandUi {
         if !*open {
             if self.was_open {
                 // onVisibilityChanged: the selection is dropped with the
-                // floater, and the objects "Show" highlighted (unhighlightAll)
-                world.land.deselect();
+                // floater, and the objects "Show" highlighted (unhighlightAll);
+                // the pass question keeps it until answered (EXT-6464)
                 world.land.unhighlight();
-                self.dialog = None;
+                if !self.asks_pass() {
+                    self.dialog = None;
+                }
+                if self.pass_wanted.is_none() && !self.asks_pass() {
+                    world.land.deselect();
+                }
                 self.scripts.open = false;
                 self.picker.open = false;
                 self.texture.open = false;
                 self.was_open = false;
             }
+            // the ground menu's question, without the floater; a selection
+            // only the question used goes with it
+            let asking = self.pass_wanted.is_some() || self.asks_pass();
+            self.pass_question(world);
+            if self.asks_pass() {
+                let view = self.view(world);
+                dialogs::show(ctx, p, self, &view, world);
+            }
+            if asking && self.pass_wanted.is_none() && !self.asks_pass() {
+                world.land.deselect();
+            }
             return false;
         }
+        self.pass_question(world);
         if !self.was_open {
             self.was_open = true;
             if world.land.sel.is_none() {

@@ -236,6 +236,9 @@ pub fn history_sections(items: &[HistoryItem], filter: &str, now: f64) -> Vec<(u
 /// The region of a SLURL for a global position: the map's, else the region
 /// part of a history title ("Parcel, Region").
 fn slurl_at(world: &World, global: DVec3, title: &str) -> Option<String> {
+    if world.rlva.has("showloc") {
+        return None;
+    }
     let region = world
         .map
         .sim_at_global(global.x, global.y)
@@ -277,6 +280,9 @@ pub struct PlacesUi {
     pub want_folders: HashSet<Uuid>,
     /// Map cells (region grid x, y) whose region names Aurora's rows wait for.
     pub want_cells: Vec<(i64, i64)>,
+    /// Parcel snapshots of Aurora's rows on screen without a thumbnail
+    /// (spot, global point, region id or nil), for `World::place_snapshots`.
+    pub want_snapshots: Vec<(crate::world::place_snapshots::Spot, glam::DVec3, Uuid)>,
     /// Aurora's look.
     pub aurora: aurora::AuroraState,
     /// Inventory changes asked from a menu, sent with the window's actions.
@@ -384,7 +390,7 @@ impl PlacesUi {
             Some(text) => super::context::teleport_confirm(ctx, p, "places_confirm", &text, &mut self.dont_ask),
             None => {
                 let mut answer = None;
-                let modal = crate::ui::widgets::Modal::new(egui::Id::new("places_confirm")).show(ctx, |ui| {
+                let modal = crate::ui::widgets::Modal::new(egui::Id::unique("places_confirm")).show(ctx, |ui| {
                     ui.set_width(340.0);
                     ui.label(
                         RichText::new(aurora_i18n::tr!("common-teleport-history"))

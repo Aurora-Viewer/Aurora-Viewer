@@ -122,7 +122,7 @@ fn field(
     text: &mut String,
     password: Option<&mut bool>,
 ) -> egui::Response {
-    let id = egui::Id::new(id);
+    let id = egui::Id::unique(id);
     let focused = ui.memory(|m| m.has_focus(id));
     let stroke = if focused {
         Stroke::new(1.0, p.violet)
@@ -151,8 +151,10 @@ fn field(
                     TextEdit::singleline(text)
                         .id(id)
                         .interactive(ui.is_enabled())
-                        .frame(egui::Frame::NONE)
-                        .margin(Margin::ZERO)
+                        .frame(
+                            egui::Frame::NONE
+                                .inner_margin(crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(14.0))),
+                        )
                         .password(hidden)
                         .hint_text(RichText::new(hint).color(p.muted_dim))
                         .font(egui::FontId::proportional(14.0))
@@ -441,7 +443,7 @@ fn news_panel(ui: &mut egui::Ui, p: &Palette, icons: &Icons, info: &LoginInfo, h
                         })
                         .response;
                     if has_url {
-                        let r = ui.interact(resp.rect, ui.id().with(("news", i)), Sense::click());
+                        let r = ui.interact(resp.rect, ui.scope_id().with(("news", i)), Sense::click());
                         if r.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         }
@@ -477,7 +479,7 @@ pub fn show(
 
     // ---- brand + login card (center)
     let mut login_card = egui::Rect::NOTHING;
-    let area = egui::Id::new("login_area");
+    let area = egui::Id::unique("login_area");
     // In a low window (1280 × 720) the centred block would reach the line of
     // buttons along the bottom: the news, as tall as the card, then stood
     // over the version and Quit. The block moves up by what it needs, and
@@ -507,7 +509,7 @@ pub fn show(
                 if let Some(l) = logo {
                     let r = ui.add(egui::Image::new(l).fit_to_exact_size(Vec2::splat(logo_size))).rect;
                     // soft light behind the logo (additive)
-                    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("halo")));
+                    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("halo")));
                     super::aurora_bg::radial_glow(&painter, r.center(), 150.0, p.violet, 0.42);
                 }
                 ui.add_space(2.0);
@@ -744,7 +746,7 @@ pub fn show(
             action = LoginAction::CheckUpdates;
         }
     } else if info.can_check_updates {
-        egui::Area::new(egui::Id::new("login_check_updates"))
+        egui::Area::new(egui::Id::unique("login_check_updates"))
             // left of the preferences cogwheel of `chrome::footer`
             .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-63.0, 20.0))
             .show(&ctx, |ui| {
@@ -841,7 +843,7 @@ mod tests {
             );
             assert!(matches!(action, LoginAction::None));
         }
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("login_pass")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("login_pass")));
         let (action, _) = draw(
             vec![egui::Event::Key {
                 key: egui::Key::Enter,
@@ -924,7 +926,7 @@ mod tests {
         let info = LoginInfo::preview_release("0.3.0");
         let logo = ctx.load_texture("logo", egui::ColorImage::filled([4, 4], Color32::WHITE), Default::default());
         let rect = |name: &str| {
-            ctx.memory(|m| m.area_rect(egui::Id::new(name)))
+            ctx.memory(|m| m.area_rect(egui::Id::unique(name)))
                 .expect("an area of the login screen")
         };
         // (the fonts of a test make the block some 60 px lower than in the
@@ -1002,7 +1004,7 @@ mod tests {
             for _ in 0..3 {
                 frame(vec![]);
             }
-            let rect = |name: &str| ctx.memory(|m| m.area_rect(egui::Id::new(name)));
+            let rect = |name: &str| ctx.memory(|m| m.area_rect(egui::Id::unique(name)));
             let cog = rect("login_settings").expect("the cogwheel");
             assert!(
                 cog.right() <= size.x - 20.0 && cog.right() >= size.x - 30.0 && cog.top() <= 25.0,
@@ -1106,9 +1108,9 @@ mod tests {
                 .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == REMEMBERED_PASSWORD_MASK))
         };
         assert!(!has_mask(&draw("", vec![])));
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("test_pass")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("test_pass")));
         assert!(has_mask(&draw(REMEMBERED_PASSWORD_MASK, vec![])));
-        assert!(ctx.memory(|m| m.has_focus(egui::Id::new("test_pass"))));
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::unique("test_pass"))));
         draw(REMEMBERED_PASSWORD_MASK, vec![egui::Event::Text("replacement".into())]);
         // egui paints the empty-field hint for the entry frame; the next frame
         // must show the newly typed value rather than the remembered marker.

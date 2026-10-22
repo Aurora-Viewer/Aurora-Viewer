@@ -307,11 +307,19 @@ fn window(ctx: &egui::Context, p: &Palette, title: &str, width: f32, body: impl 
     open
 }
 
+/// A row of buttons at the right, one button high: a right-to-left layout
+/// alone takes all the height the dialog may grow to.
+fn right_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let row = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), add)
+        .inner
+}
+
 /// OK / Cancel (or Yes / No) at the bottom right; Some(true) for OK.
 fn buttons(ui: &mut egui::Ui, p: &Palette, ok: &str, cancel: &str, ok_enabled: bool) -> Option<bool> {
     let mut out = None;
     ui.add_space(6.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    right_row(ui, |ui| {
         if super::super::widgets::flat_button(ui, p, cancel).clicked() {
             out = Some(false);
         }
@@ -333,7 +341,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
             let open = window(ctx, p, aurora_i18n::tr!("common-about-land"), 380.0, |ui| {
                 ui.add(egui::Label::new(RichText::new(&msg).size(12.5).color(p.ink)).wrap());
                 ui.add_space(6.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right_row(ui, |ui| {
                     done = super::super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked();
                 });
             });
@@ -389,7 +397,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                         }
                     }
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right_row(ui, |ui| {
                     if super::super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                         keep = false;
                     }
@@ -491,7 +499,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                     dim(ui, p, aurora_i18n::tr!("common-loading"));
                 }
                 ui.add_space(6.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right_row(ui, |ui| {
                     if super::button(ui, p, aurora_i18n::tr!("common-cancel"), !waiting).clicked() {
                         close = true;
                     }
@@ -781,7 +789,8 @@ fn experience_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut 
 fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut EnvironmentPicker, close: &mut bool) {
     // the settings folders load as the environment selector's do
     let loading = env_select::scan_step(&mut world.inventory) > 0;
-    let catalog = SettingsCatalog::build(&world.inventory);
+    let order = crate::ui::inventory::view::picker_order(ui.ctx(), &world.inventory);
+    let catalog = SettingsCatalog::build(&world.inventory, |id| order.rank(id));
     ui.add(
         egui::TextEdit::singleline(&mut f.filter)
             .hint_text(aurora_i18n::tr!("common-search"))
@@ -797,24 +806,22 @@ fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let mut any = false;
-            for kind in settings_kinds(f.track) {
+            for (kind, c) in catalog.choices(settings_kinds(f.track), |id| order.rank(id)) {
                 let icon = match kind {
                     SettingsKind::Day => "sunrise-filled",
                     SettingsKind::Sky => "sun-filled",
                     SettingsKind::Water => "droplet-filled",
                 };
-                for c in catalog.list(*kind) {
-                    if !needle.is_empty() && !c.name.to_lowercase().contains(&needle) {
-                        continue;
-                    }
-                    any = true;
-                    let r = pick_row(ui, p, icon, &c.name, f.selected == Some(c.asset));
-                    if r.clicked() {
-                        f.selected = Some(c.asset);
-                    }
-                    if r.double_clicked() {
-                        chosen = Some((c.asset, c.name.clone()));
-                    }
+                if !needle.is_empty() && !c.name.to_lowercase().contains(&needle) {
+                    continue;
+                }
+                any = true;
+                let r = pick_row(ui, p, icon, &c.name, f.selected == Some(c.asset));
+                if r.clicked() {
+                    f.selected = Some(c.asset);
+                }
+                if r.double_clicked() {
+                    chosen = Some((c.asset, c.name.clone()));
                 }
             }
             if !any {

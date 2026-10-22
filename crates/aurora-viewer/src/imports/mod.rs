@@ -550,7 +550,7 @@ impl Imports {
     /// The shortcut opens the type chooser without scheduling a disk dialog.
     pub fn open_launcher(&mut self, ctx: &egui::Context) {
         crate::ui::widgets::open_floater(ctx, ui::launcher::WINDOW, &mut self.launcher_open);
-        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(ui::launcher::WINDOW)));
+        ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(ui::launcher::WINDOW)));
     }
 
     pub fn open_file_picker(&mut self, choice: Choice) {

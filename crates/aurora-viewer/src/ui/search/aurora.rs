@@ -282,7 +282,7 @@ fn number_field(ui: &mut egui::Ui, label: &str, text: &mut String) -> bool {
                 .hint_text(label)
                 .desired_width(90.0)
                 .char_limit(9)
-                .vertical_align(egui::Align::Center),
+                .align(egui::Align2::LEFT_CENTER),
         )
         .on_hover_text(label);
     if field.changed() {

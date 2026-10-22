@@ -81,7 +81,7 @@ pub(super) fn show(
     }
     let mut cancel = false;
     let mut submit = false;
-    let modal = widgets::Modal::new(egui::Id::new("ao_combination")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("ao_combination")).show(ctx, |ui| {
         ui.set_width(410.0);
         ui.label(
             RichText::new(aurora_i18n::text(if dialog.rename.is_some() {

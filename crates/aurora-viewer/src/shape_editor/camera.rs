@@ -5,7 +5,30 @@ use crate::{scene::Scene, world::World};
 use glam::{Quat, Vec3};
 use std::time::Instant;
 
-pub fn view(world: &World, scene: &Scene, group: usize, fov: f32) -> Option<(Vec3, Vec3)> {
+/// Where the camera looks from, in the frame of the avatar's face (+X the
+/// way it faces): the height of the subparts' camera offset over their
+/// target offset, the face being on the negative side of their root frame
+/// (the customise animation turns the avatar around). The whole body is
+/// seen from above, the head nearly level. Straight in front: the subparts'
+/// small sideways offsets are taken up, on the Legacy Viewer's screen, by
+/// the end of the turn, which leaves the avatar facing the camera.
+fn direction(group: usize) -> Vec3 {
+    match group {
+        1..=6 => Vec3::new(0.5, 0.0, 0.02),
+        7 => Vec3::X,
+        8 => Vec3::X,
+        _ => Vec3::new(2.5, 0.0, 0.7),
+    }
+    .normalize()
+}
+
+/// `turned`: the customise animation plays, which turns our avatar half a
+/// turn around its pelvis (ANIM_AGENT_CUSTOMIZE ends at 180°): its face is
+/// then behind the root, where the Legacy Viewer puts the camera
+/// (LLAgentCamera::changeCameraToCustomizeAvatar, LLMorphView::updateCamera
+/// with the root joint's rotation). The root is the one drawn, not the
+/// agent's heading: the body of our avatar follows that heading late.
+pub fn view(world: &World, scene: &Scene, group: usize, fov: f32, turned: bool) -> Option<(Vec3, Vec3)> {
     let now = Instant::now();
     let id = world.agent_id;
     let pelvis = scene.joint_world(world, &id, "mPelvis", now)?;
@@ -14,25 +37,36 @@ pub fn view(world: &World, scene: &Scene, group: usize, fov: f32) -> Option<(Vec
     let (target, distance) = match group {
         1..=6 => (head + Vec3::Z * 0.05, 0.75),
         7 => (scene.joint_world(world, &id, "mTorso", now)? + Vec3::Z * 0.25, 1.3),
-        8 => ((pelvis + foot) * 0.5, 1.55),
+        8 => (pelvis.with_z((pelvis.z + foot.z) * 0.5), 1.55),
         _ => {
             let height = (head.z - foot.z + 0.35).max(1.0);
             (
-                (head + foot) * 0.5 + Vec3::Z * 0.07,
-                (height * 0.65 / (fov * 0.5).tan().max(0.1)).max(2.4),
+                pelvis.with_z((head.z + foot.z) * 0.5 + 0.07),
+                (height * 0.6 / (fov * 0.5).tan().max(0.1)).max(2.2),
             )
         }
     };
-    let facing = Quat::from_rotation_z(world.agent.yaw);
-    Some((target + facing * Vec3::new(distance, 0.08 * distance, 0.04 * distance), target))
+    let root = world
+        .objects
+        .index_of_uuid(&id)
+        .and_then(|index| Scene::object_transform(world, index, now, 0))
+        .map(|(_, rotation, _)| rotation * Vec3::X)
+        .filter(|at| at.truncate().length_squared() > 1e-6)
+        .map_or(world.agent.yaw, |at| at.y.atan2(at.x));
+    let face = Quat::from_rotation_z(root + if turned { std::f32::consts::PI } else { 0.0 });
+    Some((target + face * direction(group) * distance, target))
 }
 
-/// Keep the edited part in the larger free area beside the editor, including
-/// narrow viewports. Shift eye and focus together to retain the front angle.
+/// The avatar stays in the middle of the window, as the Legacy Viewer shows
+/// it; only when the editor covers that middle (a narrow window, an editor
+/// moved there) is the edited part moved to the larger free area beside
+/// it. Eye and focus shift together to retain the front angle.
 pub fn beside_editor((eye, target): (Vec3, Vec3), fov: f32, viewport: egui::Rect, editor: egui::Rect) -> (Vec3, Vec3) {
     let left = (editor.left() - viewport.left()).max(0.0);
     let right = (viewport.right() - editor.right()).max(0.0);
-    if viewport.width() < 1.0 || viewport.height() < 1.0 || left.max(right) < 180.0 {
+    let middle = viewport.width() * 0.15;
+    let covered = editor.right() > viewport.center().x - middle && editor.left() < viewport.center().x + middle;
+    if viewport.width() < 1.0 || viewport.height() < 1.0 || left.max(right) < 180.0 || !covered {
         return (eye, target);
     }
     let x = if right >= left {
@@ -56,23 +90,47 @@ mod tests {
             world.apply(event);
         }
         let scene = Scene::new(std::env::temp_dir().join("aurora-shape-camera"), world.avatar_lib.clone());
-        let body = view(&world, &scene, 0, 1.05).expect("body");
-        let head = view(&world, &scene, 1, 1.05).expect("head");
-        let torso = view(&world, &scene, 7, 1.05).expect("torso");
-        let legs = view(&world, &scene, 8, 1.05).expect("legs");
+        let body = view(&world, &scene, 0, 1.05, false).expect("body");
+        let head = view(&world, &scene, 1, 1.05, false).expect("head");
+        let torso = view(&world, &scene, 7, 1.05, false).expect("torso");
+        let legs = view(&world, &scene, 8, 1.05, false).expect("legs");
         assert!(head.1.z > torso.1.z && torso.1.z > legs.1.z);
         assert!(body.0.distance(body.1) > torso.0.distance(torso.1));
         assert!(head.0.distance(head.1) < torso.0.distance(torso.1));
         for category in 2..=6 {
-            assert_eq!(view(&world, &scene, category, 1.05), Some(head));
+            assert_eq!(view(&world, &scene, category, 1.05, false), Some(head));
         }
         world.avatar_poses.insert(
             world.agent_id,
             vec![glam::Mat4::from_translation(Vec3::Z * 2.0); world.avatar_lib.rig.len()],
         );
         world.avatar_shape_dz.insert(world.agent_id, 0.25);
-        let posed = view(&world, &scene, 1, 1.05).expect("posed head");
+        let posed = view(&world, &scene, 1, 1.05, false).expect("posed head");
         assert!((posed.1.z - head.1.z - 2.25).abs() < 1e-5, "use rendered pose and root height");
+    }
+    #[test]
+    fn the_customise_turn_puts_the_camera_behind_the_root() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        // the heading the body has not caught up with yet does not count
+        world.agent.yaw += 2.0;
+        let scene = Scene::new(std::env::temp_dir().join("aurora-shape-camera-turn"), world.avatar_lib.clone());
+        let index = world.objects.index_of_uuid(&world.agent_id).expect("our avatar");
+        let (_, rotation, _) = Scene::object_transform(&world, index, Instant::now(), 0).expect("drawn");
+        let (at, left) = (rotation * Vec3::X, rotation * Vec3::Y);
+        for group in [0, 1, 7, 8] {
+            let (eye, target) = view(&world, &scene, group, 1.05, false).expect("front");
+            assert!((eye - target).normalize().dot(at) > 0.9, "in front of the root");
+            assert!((eye - target).dot(left).abs() < 1e-3, "straight in front");
+            let (eye, turned) = view(&world, &scene, group, 1.05, true).expect("turned");
+            assert_eq!(turned, target);
+            assert!((eye - target).normalize().dot(at) < -0.9, "behind the root, before the turned face");
+            assert!((eye - target).dot(left).abs() < 1e-3, "straight in front of the turned face");
+        }
+        let (eye, target) = view(&world, &scene, 0, 1.05, true).expect("body");
+        assert!(eye.z - target.z > 0.2 * eye.distance(target), "the whole body seen from above");
     }
     #[test]
     fn edited_head_stays_visible_beside_a_narrow_or_right_hand_editor() {
@@ -90,5 +148,9 @@ mod tests {
         let right = left.translate(egui::vec2(320.0, 0.0));
         let shifted = beside_editor((eye, Vec3::ZERO), 1.05, viewport, right);
         assert!(project(shifted.0, shifted.1) < right.left());
+        // a wide window: the editor leaves the middle free, the avatar stays there
+        let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(2000.0, 1080.0));
+        let editor = egui::Rect::from_min_size(egui::pos2(65.0, 300.0), egui::vec2(340.0, 520.0));
+        assert_eq!(beside_editor((eye, Vec3::ZERO), 1.05, wide, editor), (eye, Vec3::ZERO));
     }
 }

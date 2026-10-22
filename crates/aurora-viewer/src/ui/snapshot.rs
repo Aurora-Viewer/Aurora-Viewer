@@ -701,7 +701,7 @@ impl SnapshotUi {
         let size = Vec2::new(0.0, 26.0);
         if let Some(cost) = confirm {
             let mut answer = None;
-            let response = Modal::new(egui::Id::new("photo_upload_confirm")).show(ctx, |ui| {
+            let response = Modal::new(egui::Id::unique("photo_upload_confirm")).show(ctx, |ui| {
                 ui.set_width(350.0);
                 ui.label(RichText::new(aurora_i18n::tr!("photo-confirm-title")).size(17.0).color(p.ink));
                 ui.add_space(8.0);
@@ -724,7 +724,7 @@ impl SnapshotUi {
         }
         if let Some(cost) = short {
             let mut close = false;
-            let response = Modal::new(egui::Id::new("photo_cannot_afford")).show(ctx, |ui| {
+            let response = Modal::new(egui::Id::unique("photo_cannot_afford")).show(ctx, |ui| {
                 ui.set_width(350.0);
                 ui.label(aurora_i18n::tr!("photo-cannot-afford", cost = cost));
                 ui.add_space(8.0);
@@ -753,7 +753,7 @@ impl SnapshotUi {
         let mut out = Vec::new();
         let screen = ctx.content_rect();
         let frame = fit(screen, photo.0 as f32 / photo.1.max(1) as f32);
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("photo_full_frame")));
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("photo_full_frame")));
         let mask = p.navy.gamma_multiply(0.62);
         for r in outside(screen, frame) {
             painter.rect_filled(r, 0.0, mask);
@@ -762,7 +762,7 @@ impl SnapshotUi {
         guide_lines(&painter, frame, s.guide, p.ink.gamma_multiply(0.55));
 
         let tag = |id: &str, pos: Pos2, align: egui::Align2, icon: &str, text: String| {
-            egui::Area::new(egui::Id::new(id))
+            egui::Area::new(egui::Id::unique(id))
                 .order(egui::Order::Foreground)
                 .pivot(align)
                 .fixed_pos(pos)
@@ -793,7 +793,7 @@ impl SnapshotUi {
         );
 
         let before = s.clone();
-        egui::Area::new(egui::Id::new("photo_full_strip"))
+        egui::Area::new(egui::Id::unique("photo_full_strip"))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::CENTER_BOTTOM)
             .fixed_pos(Pos2::new(screen.center().x, screen.bottom() - 14.0))
@@ -1107,7 +1107,7 @@ pub fn frozen(ctx: &egui::Context, p: &Palette, texture: &egui::TextureHandle) {
     let screen = ctx.content_rect();
     let size = texture.size_vec2();
     let rect = fit(screen, size.x / size.y.max(1.0));
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("photo_frozen")));
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("photo_frozen")));
     painter.rect_filled(screen, 0.0, p.navy);
     painter.image(
         texture.id(),
@@ -1216,7 +1216,7 @@ fn preview(ui: &mut egui::Ui, p: &Palette, s: &Settings, view: &View) -> bool {
     ui.painter().galley(badge_rect.min + Vec2::new(5.0, 2.0), galley, p.ink);
     // the refresh button
     let button = Rect::from_min_size(rect.left_bottom() + Vec2::new(6.0, -28.0), Vec2::splat(22.0));
-    let resp = ui.interact(button, ui.id().with("photo_refresh"), Sense::click());
+    let resp = ui.interact(button, ui.scope_id().with("photo_refresh"), Sense::click());
     let fill = if resp.hovered() { p.raised } else { p.navy.gamma_multiply(0.72) };
     ui.painter().rect_filled(button, radius, fill);
     if let Some(t) = super::icons::global("refresh") {
@@ -1410,7 +1410,7 @@ fn chip(ui: &mut egui::Ui, p: &Palette, label: &str, sub: Option<&str>, on: bool
         let at = crate::ui::widgets::row_text_origin(ui.painter(), &g, x, rect.center().y);
         ui.painter().galley(at, g, text.gamma_multiply(0.8));
     }
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, on, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::RadioButton, enabled, on, label));
     resp
 }
 

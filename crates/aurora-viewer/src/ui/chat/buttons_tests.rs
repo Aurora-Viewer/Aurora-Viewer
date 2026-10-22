@@ -429,7 +429,7 @@ fn the_column_searches_and_starts_conversations() {
             h.shown(entry_id(Pinned::Conversation(JANE))).is_none(),
             "{style:?}: Jane filtered out"
         );
-        h.press(egui::Id::new("conversation_find"));
+        h.press(egui::Id::unique("conversation_find"));
         assert!(h.st.picker.open && h.st.start == Start::Im, "{style:?}: the resident search");
         h.st.picker.open = false;
         h.st.side_filter.clear();
@@ -592,7 +592,7 @@ fn the_message_menu_acts() {
         assert_eq!(out.cursor_icon, egui::CursorIcon::Default, "{style:?}: the arrow over a message");
         let jane = h.world.social.ims.iter().find(|s| s.other == JANE).expect("Jane").lines[0].clone();
         for salt in ["copy", "quote", "profile", "more"] {
-            let id = egui::Id::new(("thread_tool", salt, jane.time, jane.source, jane.text.as_str()));
+            let id = egui::Id::unique(("thread_tool", salt, jane.time, jane.source, jane.text.as_str()));
             assert!(h.shown(id).is_none(), "{style:?}: no {salt} button");
         }
         // copy
@@ -662,6 +662,7 @@ fn incoming_messages_keep_chat_context_menus_open() {
                             unit: egui::MouseWheelUnit::Point,
                             delta: egui::vec2(0.0, 250.0),
                             phase: egui::TouchPhase::Move,
+                            source: egui::MouseWheelSource::Unknown,
                             modifiers: Default::default(),
                         },
                     ]);
@@ -834,9 +835,9 @@ fn dragging_the_conversation_closes_its_context_menu() {
             let at = h.text_rect(if sender { "Jane" } else { "hi builders" }).center();
             h.right_click(at);
             assert!(h.painted(aurora_i18n::tr!("common-ignore")), "{style:?}: menu opened");
-            let window = h.frames.ctx.memory(|m| m.area_rect(egui::Id::new("conversations")).unwrap());
+            let window = h.frames.ctx.memory(|m| m.area_rect(egui::Id::unique("conversations")).unwrap());
             let grab = h
-                .shown(egui::Id::new("conversations").with("title_double_click"))
+                .shown(egui::Id::unique("conversations").with("title_double_click"))
                 .expect("window title")
                 .center();
             h.frame(vec![egui::Event::PointerMoved(grab)]);
@@ -849,7 +850,7 @@ fn dragging_the_conversation_closes_its_context_menu() {
             for step in 1..=3 {
                 h.frame(vec![egui::Event::PointerMoved(grab + egui::vec2(25.0, 15.0) * step as f32)]);
             }
-            let moved = h.frames.ctx.memory(|m| m.area_rect(egui::Id::new("conversations")).unwrap());
+            let moved = h.frames.ctx.memory(|m| m.area_rect(egui::Id::unique("conversations")).unwrap());
             assert!(
                 moved.min.distance(window.min) > 10.0,
                 "{style:?}: the real window moved: {window:?} -> {moved:?}, grab={grab:?}, dragged={:?}",
@@ -896,7 +897,7 @@ fn resizing_the_conversation_closes_its_context_menu() {
                 let window = || {
                     h.frames
                         .ctx
-                        .memory(|m| m.area_rect(egui::Id::new("conversations")).expect("window"))
+                        .memory(|m| m.area_rect(egui::Id::unique("conversations")).expect("window"))
                 };
                 let before = window();
                 let grab = grab_of(before);
@@ -913,7 +914,7 @@ fn resizing_the_conversation_closes_its_context_menu() {
                 let resized = h
                     .frames
                     .ctx
-                    .memory(|m| m.area_rect(egui::Id::new("conversations")).expect("window"));
+                    .memory(|m| m.area_rect(egui::Id::unique("conversations")).expect("window"));
                 assert!(
                     (resized.size() - before.size()).length() > 10.0,
                     "{style:?}, sender={sender}, {edge}: the real window resized: {before:?} -> {resized:?}"

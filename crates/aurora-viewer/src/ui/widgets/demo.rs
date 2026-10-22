@@ -12,7 +12,7 @@ pub fn rez_row(response: &egui::Response, item: uuid::Uuid) {
     if item == wanted {
         response
             .ctx
-            .data_mut(|d| d.insert_temp(egui::Id::new("demo_rez_row"), response.rect.center()));
+            .data_mut(|d| d.insert_temp(egui::Id::unique("demo_rez_row"), response.rect.center()));
     }
 }
 
@@ -32,7 +32,7 @@ pub fn rez_events(ctx: &egui::Context, frame: u64, destination: egui::Pos2) -> V
     };
     // Keep the world target clear of the user's persisted demo window layout,
     // using its real title bar rather than changing production window defaults.
-    let window = egui::Id::new("inventory");
+    let window = egui::Id::unique("inventory");
     let moving = window.with("demo_rez_move");
     if frame == 640
         && let Some(title) = ctx.read_response(window.with("title_double_click"))
@@ -51,7 +51,7 @@ pub fn rez_events(ctx: &egui::Context, frame: u64, destination: egui::Pos2) -> V
             return vec![button(to, false)];
         }
     }
-    let Some(source) = ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("demo_rez_row"))) else {
+    let Some(source) = ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique("demo_rez_row"))) else {
         return Vec::new();
     };
     match frame {
@@ -87,7 +87,7 @@ pub fn worn_row(response: &egui::Response, item: uuid::Uuid) {
     if worn_clicks().iter().any(|(_, wanted)| *wanted == item) {
         response
             .ctx
-            .data_mut(|d| d.insert_temp(egui::Id::new(("demo_worn_row", item)), response.rect.center()));
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("demo_worn_row", item)), response.rect.center()));
     }
 }
 
@@ -97,7 +97,7 @@ pub fn worn_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let Some(&(start, item)) = worn_clicks().iter().find(|(start, _)| (*start..*start + 4).contains(&frame)) else {
         return Vec::new();
     };
-    let Some(pos) = ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::new(("demo_worn_row", item)))) else {
+    let Some(pos) = ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("demo_worn_row", item)))) else {
         return Vec::new();
     };
     if frame == start {
@@ -118,7 +118,7 @@ pub fn events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let Ok(mode) = std::env::var("AURORA_DEMO_WINDOWS") else {
         return Vec::new();
     };
-    let id = egui::Id::new("inventory").with("title_double_click");
+    let id = egui::Id::unique("inventory").with("title_double_click");
     let Some(title) = ctx.read_response(id) else {
         return Vec::new();
     };
@@ -164,7 +164,7 @@ fn island_gap(ctx: &egui::Context, top: bool) -> Option<egui::Pos2> {
     let names = ["menu", "bug", "place", "system", "account", "bell", "chat", "dock"];
     let mut row: Vec<egui::Rect> = names
         .iter()
-        .filter_map(|name| ctx.memory(|m| m.area_rect(egui::Id::new(("bars_island", *name)))))
+        .filter_map(|name| ctx.memory(|m| m.area_rect(egui::Id::unique(("bars_island", *name)))))
         .filter(|r| (r.center().y < screen.center().y) == top)
         .collect();
     row.sort_by(|a, b| a.left().total_cmp(&b.left()));
@@ -225,7 +225,7 @@ pub fn minimized_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
         pressed,
         modifiers: egui::Modifiers::NONE,
     };
-    let title = egui::Id::new("conversations").with("title_double_click");
+    let title = egui::Id::unique("conversations").with("title_double_click");
     let at = |id: egui::Id| ctx.read_response(id).map(|r| r.rect.left_center() + egui::vec2(30.0, 0.0));
     match frame {
         600 | 604 => at(title).map_or(Vec::new(), |pos| vec![egui::Event::PointerMoved(pos), button(pos, true)]),
@@ -259,7 +259,7 @@ pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
         return Vec::new();
     }
     let (mode, window) = value.split_once(',').unwrap_or((value.as_str(), "conversations"));
-    let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(window.trim()))) else {
+    let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique(window.trim()))) else {
         return Vec::new();
     };
     let button = |pos, pressed| egui::Event::PointerButton {
@@ -274,7 +274,7 @@ pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
         "corner" => vec![egui::Event::PointerMoved(corner)],
         "edge" => vec![egui::Event::PointerMoved(egui::pos2(rect.right() - 1.0, rect.center().y))],
         "drag" => {
-            let start = egui::Id::new("demo_resize_start");
+            let start = egui::Id::unique("demo_resize_start");
             let Some(from) = ctx.data(|d| d.get_temp::<egui::Pos2>(start)) else {
                 ctx.data_mut(|d| d.insert_temp(start, corner));
                 return vec![egui::Event::PointerMoved(corner), button(corner, true)];
@@ -287,7 +287,7 @@ pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
             }
         }
         "sweep" | "sweep-h" | "sweep-fast" => {
-            let start = egui::Id::new("demo_resize_start");
+            let start = egui::Id::unique("demo_resize_start");
             let Some(from) = ctx.data(|d| d.get_temp::<egui::Pos2>(start)) else {
                 ctx.data_mut(|d| d.insert_temp(start, corner));
                 return vec![egui::Event::PointerMoved(corner), button(corner, true)];
@@ -361,14 +361,14 @@ pub fn snap_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
         pressed,
         modifiers,
     };
-    let (chat, people) = (egui::Id::new("conversations"), egui::Id::new("people"));
+    let (chat, people) = (egui::Id::unique("conversations"), egui::Id::unique("people"));
     let rect = |window: egui::Id| ctx.memory(|m| m.area_rect(window));
     let title = |window: egui::Id| {
         ctx.read_response(window.with("title_double_click"))
             .map(|r| r.rect.left_center() + egui::vec2(60.0, 0.0))
     };
     // (where the pointer is pressed, where it is held)
-    let path = egui::Id::new("demo_snap_path");
+    let path = egui::Id::unique("demo_snap_path");
     let begin = |from: egui::Pos2, to: egui::Pos2| {
         ctx.data_mut(|d| d.insert_temp(path, (from, to)));
         vec![egui::Event::PointerMoved(from), button(from, true)]
