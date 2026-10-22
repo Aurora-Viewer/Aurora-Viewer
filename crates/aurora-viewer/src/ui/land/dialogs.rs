@@ -307,11 +307,19 @@ fn window(ctx: &egui::Context, p: &Palette, title: &str, width: f32, body: impl 
     open
 }
 
+/// A row of buttons at the right, one button high: a right-to-left layout
+/// alone takes all the height the dialog may grow to.
+fn right_row<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let row = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(row, egui::Layout::right_to_left(egui::Align::Center), add)
+        .inner
+}
+
 /// OK / Cancel (or Yes / No) at the bottom right; Some(true) for OK.
 fn buttons(ui: &mut egui::Ui, p: &Palette, ok: &str, cancel: &str, ok_enabled: bool) -> Option<bool> {
     let mut out = None;
     ui.add_space(6.0);
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    right_row(ui, |ui| {
         if super::super::widgets::flat_button(ui, p, cancel).clicked() {
             out = Some(false);
         }
@@ -333,7 +341,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
             let open = window(ctx, p, aurora_i18n::tr!("common-about-land"), 380.0, |ui| {
                 ui.add(egui::Label::new(RichText::new(&msg).size(12.5).color(p.ink)).wrap());
                 ui.add_space(6.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right_row(ui, |ui| {
                     done = super::super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-ok")).clicked();
                 });
             });
@@ -389,7 +397,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                         }
                     }
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right_row(ui, |ui| {
                     if super::super::widgets::flat_button(ui, p, aurora_i18n::tr!("common-cancel")).clicked() {
                         keep = false;
                     }
@@ -491,7 +499,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut LandUi, v: &View, w
                     dim(ui, p, aurora_i18n::tr!("common-loading"));
                 }
                 ui.add_space(6.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right_row(ui, |ui| {
                     if super::button(ui, p, aurora_i18n::tr!("common-cancel"), !waiting).clicked() {
                         close = true;
                     }

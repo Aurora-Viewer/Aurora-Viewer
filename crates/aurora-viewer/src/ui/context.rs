@@ -229,6 +229,8 @@ pub enum CtxAction {
     AboutLand(Vec3),
     /// Buy Land on the parcel at the clicked point (Land.Buy).
     BuyLand(Vec3),
+    /// A pass for the parcel at the clicked point (Land.BuyPass).
+    BuyPass(Vec3),
     StandUp,
     SitGround,
     ToggleFly,

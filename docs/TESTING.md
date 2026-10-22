@@ -2668,6 +2668,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
+| `AURORA_DEMO_BUY_PASS=sell\|none\|own` | The ground menu's "Buy access" on the plaza parcel |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
 | `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
@@ -2822,6 +2823,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   refuses, with its "Go to website" link. `:confirm` after a mode (`rich:confirm`,
   `upgrade:confirm`) ticks the covenant and opens the confirmation by itself,
   for captures.
+- **`AURORA_DEMO_BUY_PASS=sell|none|own`**: at frame 240, the ground menu's
+  "Buy access" where the avatar stands, on the plaza parcel, without About
+  Land. `sell`: Loup's parcel sells passes of an hour for L$ 88; the
+  question shows the price, the parcel's name and the hours, OK logs
+  `demo action: ParcelBuyPass` (nothing is sent). `none`: Loup's parcel
+  without passes, `own`: the avatar's; both show a notice saying why instead
+  of the question. Capture at frame 620. `AURORA_DEMO_RCLICK="x,y"` on the
+  ground shows the entry in the menu.
 - **`AURORA_DEMO_IMPORTS=launcher|settings`** opens the compact horizontal
   import chooser or its saved-defaults window, without loading fixtures or
   opening a disk dialog. The configurable Import shortcut (Ctrl+U by default)

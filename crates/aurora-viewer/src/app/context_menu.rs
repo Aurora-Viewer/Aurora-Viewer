@@ -310,6 +310,10 @@ impl App {
                 ui::land::LandUi::select_at_global(&mut self.world, gx, gy);
                 self.open_buy_land(buy_land::BuyLandSource::Parcel, false);
             }
+            CtxAction::BuyPass(point) => {
+                let (gx, gy) = ui::minimap::to_global(&self.world, point);
+                self.land_ui.buy_pass_at(&mut self.world, gx, gy);
+            }
             CtxAction::DisplayName => self.display_name_ui.open(),
             CtxAction::HoverHeight => self.hover_height_ui.open = true,
             CtxAction::ReportAbuse(target) => self.open_report_abuse(target),

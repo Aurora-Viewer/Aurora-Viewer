@@ -272,7 +272,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     let buy_group = !active_group.is_nil() && can_agent_buy(&parcel, &v.rights(), Some(active_group), can_access);
     let release = v.owns(powers::LAND_RELEASE) || (estate_manager && v.region.as_ref().is_some_and(|r| parcel.owner_id != r.owner));
     // a pass: someone else's land selling passes (not while banned)
-    let use_pass = parcel.owner_id != agent && parcel.flags & pf::USE_PASS_LIST != 0;
+    let use_pass = super::overview::can_buy_pass(&parcel, agent, super::overview::collision_banned(world));
     ui.horizontal(|ui| {
         // onClickBuyLand: startBuyLand on the selection
         if button(ui, p, aurora_i18n::tr!("ui-land-general-buy-land"), buy)
