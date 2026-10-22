@@ -294,21 +294,23 @@ mod tests {
 
     /// Settings whose login, window, folders and devices are this PC's.
     fn this_pc() -> Settings {
-        let mut s = Settings::default();
-        s.username = "someone".into();
-        s.remember_username = true;
-        s.remember_password = true;
-        s.grid = crate::settings::GridChoice::Custom;
-        s.custom_login_uri = "http://grid.test/".into();
-        s.start_location = "last".into();
-        s.start_region = "Somewhere".into();
-        s.window_width = 1234;
-        s.window_height = 777;
-        s.window_x = Some(12);
-        s.window_y = Some(34);
-        s.window_maximized = true;
-        s.cache_location = "D:\\cache".into();
-        s.chat_log_location = "D:\\logs".into();
+        let mut s = Settings {
+            username: "someone".into(),
+            remember_username: true,
+            remember_password: true,
+            grid: crate::settings::GridChoice::Custom,
+            custom_login_uri: "http://grid.test/".into(),
+            start_location: "last".into(),
+            start_region: "Somewhere".into(),
+            window_width: 1234,
+            window_height: 777,
+            window_x: Some(12),
+            window_y: Some(34),
+            window_maximized: true,
+            cache_location: "D:\\cache".into(),
+            chat_log_location: "D:\\logs".into(),
+            ..Settings::default()
+        };
         s.audio.output_device = "Speakers".into();
         s.audio.input_device = "Microphone".into();
         s

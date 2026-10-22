@@ -751,9 +751,11 @@ fn the_demo_opens_the_page_asked() {
 /// "Restore" button: the settings in the end, and what the app is asked.
 fn confirm_restore(s: &mut Settings, untick: Option<&str>) -> Option<backup::Restored> {
     use crate::settings::backup::Backup;
-    let mut other = Settings::default();
-    other.draw_distance = 300.0;
-    other.window_width = 640;
+    let other = Settings {
+        draw_distance: 300.0,
+        window_width: 640,
+        ..Settings::default()
+    };
     let backup = Backup::parse(&Backup::new(&other, Some("layout".into())).to_bytes().unwrap()).unwrap();
     let mut st = OptionsUi {
         restore: Some(backup::Pending::new(backup, None)),
