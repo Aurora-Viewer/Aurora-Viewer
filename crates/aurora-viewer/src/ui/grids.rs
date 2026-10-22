@@ -8,13 +8,14 @@ use crate::ui::{context, widgets};
 use egui::{Context, RichText, Vec2};
 
 fn request_id() -> egui::Id {
-    egui::Id::new("open_grid_manager")
+    egui::Id::unique("open_grid_manager")
 }
 
 /// The carousel also reads raw wheel/key events, outside egui's modal routing.
 pub fn is_open(ctx: &Context) -> bool {
     ctx.data(|data| {
-        data.get_temp::<bool>(request_id()).unwrap_or(false) || data.get_temp::<bool>(egui::Id::new("grid_manager_open")).unwrap_or(false)
+        data.get_temp::<bool>(request_id()).unwrap_or(false)
+            || data.get_temp::<bool>(egui::Id::unique("grid_manager_open")).unwrap_or(false)
     })
 }
 
@@ -35,7 +36,7 @@ pub fn selector(ui: &mut egui::Ui, catalogue: &[Grid], uri: &mut String) {
             .map_or(aurora_i18n::tr!("grids-custom"), |grid| grid.name.as_str()),
     }
     .to_owned();
-    egui::ComboBox::from_id_salt(ui.id().with("grid_catalogue"))
+    egui::ComboBox::from_id_salt(ui.scope_id().with("grid_catalogue"))
         .width(ui.available_width())
         .truncate()
         .selected_text(selected)
@@ -121,7 +122,7 @@ impl Manager {
                 Err(crossbeam_channel::TryRecvError::Empty) => {}
             }
         }
-        ctx.data_mut(|data| data.insert_temp(egui::Id::new("grid_manager_open"), self.open));
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("grid_manager_open"), self.open));
         if !self.open {
             return;
         }
@@ -131,7 +132,9 @@ impl Manager {
         let height = (ctx.content_rect().height() - 260.0).clamp(140.0, 390.0);
         let editable = can_edit && self.result.is_none();
         let mut close = false;
-        let dialog = widgets::Modal::new(egui::Id::new("grid_manager")).login_surface(p).stronger_tint();
+        let dialog = widgets::Modal::new(egui::Id::unique("grid_manager"))
+            .login_surface(p)
+            .stronger_tint();
         let response = dialog.show(ctx, |ui| {
             ui.set_width(width);
             ui.spacing_mut().item_spacing.y = 8.0;
@@ -338,7 +341,7 @@ impl Manager {
         }
         if let Some((service, name)) = self.remove.clone() {
             let mut answer = None;
-            let modal = widgets::Modal::new(egui::Id::new("remove_grid")).show(ctx, |ui| {
+            let modal = widgets::Modal::new(egui::Id::unique("remove_grid")).show(ctx, |ui| {
                 ui.set_width(360.0);
                 ui.label(aurora_i18n::tr!("grids-remove-question", name = name));
                 ui.horizontal(|ui| {
@@ -374,7 +377,7 @@ impl Manager {
                 }
             }
         }
-        ctx.data_mut(|data| data.insert_temp(egui::Id::new("grid_manager_open"), self.open));
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique("grid_manager_open"), self.open));
     }
 }
 

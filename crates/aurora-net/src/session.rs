@@ -5291,15 +5291,25 @@ mod event_queue_tests {
             aurora_msg::build_packet(&reply, 1, true, false, &[], &mut bytes);
             session.dispatch(main, &parse_packet(&bytes).expect("map reply")).expect("dispatch");
             assert!(session.pending_named_tp.is_none());
-            let result = received.try_iter().find_map(|(_, event)| match event {
-                NetEvent::TeleportRegionResolved { request, result } if request == ticket => Some(result),
-                _ => None,
-            }).expect("region resolution ticket");
-            assert!(simulator.try_recv_from(&mut datagram).is_err(), "resolution must preserve the viewer's RLVa approval step");
+            let result = received
+                .try_iter()
+                .find_map(|(_, event)| match event {
+                    NetEvent::TeleportRegionResolved { request, result } if request == ticket => Some(result),
+                    _ => None,
+                })
+                .expect("region resolution ticket");
+            assert!(
+                simulator.try_recv_from(&mut datagram).is_err(),
+                "resolution must preserve the viewer's RLVa approval step"
+            );
             if found {
                 let handle = result.expect("resolved region");
                 assert_eq!(handle, ((100 * 256_u64) << 32) | (200 * 256));
-                session.on_command(NetCommand::TeleportTo { handle, position, look_at: Vec3::X });
+                session.on_command(NetCommand::TeleportTo {
+                    handle,
+                    position,
+                    look_at: Vec3::X,
+                });
                 let (len, _) = tokio::time::timeout(Duration::from_secs(2), simulator.recv_from(&mut datagram))
                     .await
                     .expect("teleport")
