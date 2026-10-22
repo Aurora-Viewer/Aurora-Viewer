@@ -160,6 +160,10 @@ impl App {
                 | "insert-filter"
                 | "insert-empty"
                 | "search"
+                | "search-left"
+                | "search-inline"
+                | "search-overlay"
+                | "search-outside"
                 | "preferences"
                 | "help"
                 | "colors"
@@ -306,6 +310,10 @@ impl App {
             && matches!(
                 mode.as_str(),
                 "search"
+                    | "search-left"
+                    | "search-inline"
+                    | "search-overlay"
+                    | "search-outside"
                     | "preferences"
                     | "word-wrap-preferences"
                     | "help"

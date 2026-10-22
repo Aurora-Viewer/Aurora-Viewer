@@ -169,6 +169,14 @@ impl Default for Edges {
     }
 }
 
+impl Edges {
+    pub const OPEN: Self = Self {
+        left: false,
+        right: false,
+        bottom: false,
+    };
+}
+
 fn edges_id() -> Id {
     Id::new("layout_window_edges")
 }
@@ -183,6 +191,19 @@ pub(crate) fn set_window_edges(ctx: &egui::Context, edges: Edges) {
 /// nothing set it.
 pub(crate) fn window_edges(ctx: &egui::Context) -> Edges {
     ctx.data(|d| d.get_temp::<Edges>(edges_id())).unwrap_or_default()
+}
+
+/// Per-window exception to the edge stops, retaining the shared title grip.
+pub(crate) fn set_partial_outside(ctx: &egui::Context, id: Id, allowed: bool) {
+    ctx.data_mut(|d| d.insert_temp(id.with("partial_outside"), allowed));
+}
+
+fn partial_outside(ctx: &egui::Context, id: Id) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(id.with("partial_outside"))).unwrap_or(false)
+}
+
+pub(crate) fn edges_for(ctx: &egui::Context, id: Id) -> Edges {
+    if partial_outside(ctx, id) { Edges::OPEN } else { window_edges(ctx) }
 }
 
 /// The rect a window of `size` is kept in (`egui::Window::constrain_to`):
@@ -322,6 +343,7 @@ struct Shown {
     /// The frame (`Live::frame`) it was last shown in.
     frame: u64,
     minimized: bool,
+    partial_outside: bool,
 }
 
 /// What is known of the windows for the session only.
@@ -515,6 +537,7 @@ impl Slot {
     pub(crate) fn shown(self, ctx: &egui::Context, rect: Rect, minimized: bool) {
         let screen = ctx.content_rect();
         let room = move_area(ctx);
+        let partial_outside = partial_outside(ctx, self.id);
         windows(ctx, |w| {
             let key = self.id.value();
             let recorded = w.placed.get(&key).copied();
@@ -566,6 +589,7 @@ impl Slot {
                     rect,
                     frame,
                     minimized,
+                    partial_outside,
                 },
             );
         });

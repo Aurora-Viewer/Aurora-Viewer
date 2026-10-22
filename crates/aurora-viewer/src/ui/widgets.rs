@@ -176,14 +176,14 @@ fn title_in_reach(
     asked: Option<egui::Pos2>,
     sized: Option<Vec2>,
 ) -> Option<egui::Pos2> {
-    use super::layout::{TITLE_BAR_H, TITLE_GRIP, clear_of_islands, islands, keep_title_in, window_edges};
+    use super::layout::{TITLE_BAR_H, TITLE_GRIP, clear_of_islands, edges_for, islands, keep_title_in};
     let state = egui::AreaState::load(ctx, id).filter(|s| s.size.is_some());
     // `sized`: the size it takes this frame (an edge dragged)
     let size = sized
         .or_else(|| state.as_ref().and_then(|s| s.size))
         .unwrap_or(egui::vec2(TITLE_GRIP, TITLE_BAR_H));
     let pos = asked.or_else(|| state.as_ref().map(|s| s.left_top_pos()))?;
-    let edges = window_edges(ctx);
+    let edges = edges_for(ctx, id);
     let mut kept = keep_title_in(area, pos, size, edges);
     if !ctx.input(|i| i.pointer.any_down()) {
         kept = clear_of_islands(area, kept, size, edges, &islands(ctx));
@@ -269,6 +269,7 @@ pub struct Floater<'a> {
     /// exact rect and cut at its edges (see `steady_size`).
     pub steady_size: bool,
     cascade: Option<CascadeGroup>,
+    partial_outside: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -296,11 +297,19 @@ impl<'a> Floater<'a> {
             flush_body: false,
             steady_size: false,
             cascade: None,
+            partial_outside: false,
         }
     }
 
     pub fn fixed(mut self) -> Self {
         self.resizable = false;
+        self
+    }
+
+    /// Let this window cross the side/bottom stops while its title stays
+    /// reachable, as LLFloaterView::adjustToFitScreen(allow_partial_outside).
+    pub(crate) fn allow_partial_outside(mut self) -> Self {
+        self.partial_outside = true;
         self
     }
 
@@ -393,6 +402,7 @@ impl<'a> Floater<'a> {
 
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
+        super::layout::set_partial_outside(ctx, egui::Id::new(self.id), self.partial_outside);
         if window_hidden(ctx, egui::Id::new(self.id), *open) {
             if self.cascade.is_some() {
                 cascade::hidden(ctx, egui::Id::new(self.id));
@@ -546,7 +556,7 @@ impl<'a> Floater<'a> {
         let size = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
             .unwrap_or(self.default_size);
-        let edges = super::layout::window_edges(ctx);
+        let edges = super::layout::edges_for(ctx, window_id);
         // While an edge is dragged the drag keeps the window in its bounds
         // and its title in reach (`title_in_reach` below): egui would
         // constrain the asked position with the last frame's size, and a

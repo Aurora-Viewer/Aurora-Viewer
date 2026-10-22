@@ -20,6 +20,9 @@ use egui::{Id, RichText, Vec2};
 pub(super) struct Tools {
     pub focus_start: bool,
     pub body_top: f32,
+    pub search_slot: Option<egui::Ui>,
+    header_width: f32,
+    search_height: f32,
     pub help: Help,
     pub insert_filter: String,
     pub insert_button: Option<egui::Rect>,
@@ -237,6 +240,73 @@ pub(super) fn body(
 ) {
     let ctx = ui.ctx().clone();
     e.tools.body_top = ui.cursor().top();
+    e.tools.search_slot = None;
+    let gap = ui.spacing().item_spacing.x;
+    let inline = settings.search_inline
+        && prefs.search.owns(id)
+        && e.tools.header_width > 0.0
+        && ui.available_width() >= e.tools.header_width + gap + Search::INLINE_WIDTH;
+    if inline {
+        let left = ui.available_width() - gap - Search::INLINE_WIDTH;
+        ui.horizontal_top(|ui| {
+            ui.allocate_ui_with_layout(Vec2::new(left, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                header(ui, p, e, id, settings, prefs, actions);
+            });
+            let height = e.tools.search_height.max(140.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(Search::INLINE_WIDTH, height), egui::Sense::hover());
+            if !ui.is_sizing_pass() && ui.is_enabled() {
+                // Render the shared controls after all editor commands have
+                // selected their owner, using this editor's layer and style.
+                e.tools.search_slot = Some(
+                    ui.new_child(
+                        egui::UiBuilder::new()
+                            .id_salt("inline_search")
+                            .max_rect(rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    ),
+                );
+            }
+        });
+    } else {
+        header(ui, p, e, id, settings, prefs, actions);
+    }
+    if e.loaded && !e.can_edit {
+        ui.label(RichText::new(aurora_i18n::tr!("script-read-only")).color(p.warn));
+    }
+    if settings.preprocessor || e.tools.has_processed || e.tools.processed {
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut e.tools.processed, false, aurora_i18n::tr!("script-tab-source"));
+            ui.selectable_value(&mut e.tools.processed, true, aurora_i18n::tr!("script-tab-processed"));
+        });
+    } else {
+        e.tools.processed = false;
+    }
+    // Measure the actual controls, including object-only rows and diagnostics.
+    // Repaint after a width/status change, without replaying asynchronous actions.
+    let footer_height = if e.tools.footer_height > 0.0 {
+        e.tools.footer_height
+    } else {
+        155.0
+    };
+    let height = (ui.available_height() - footer_height - ui.spacing().item_spacing.y - 8.0).max(120.0);
+    source(ui, p, e, id, settings, height, &prefs.search);
+    let footer = ui.scope(|ui| footer(ui, p, e, id, actions));
+    if (e.tools.footer_height - footer.response.rect.height()).abs() > 0.5 {
+        e.tools.footer_height = footer.response.rect.height();
+        ctx.request_repaint();
+    }
+}
+
+fn header(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    e: &mut Editor,
+    id: Id,
+    settings: &ScriptSettings,
+    prefs: &mut Panels,
+    actions: &mut Vec<Action>,
+) {
+    let ctx = ui.ctx().clone();
     let mut chosen = None;
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button(aurora_i18n::tr!("script-menu-file"), |ui| {
@@ -271,6 +341,7 @@ pub(super) fn body(
         });
     });
     ui.horizontal(|ui| {
+        let left = ui.cursor().left();
         for (command, icon, label) in [
             (Command::Save, "device-floppy-filled", aurora_i18n::tr!("common-save")),
             (Command::Export, "download-filled", aurora_i18n::tr!("script-menu-export")),
@@ -302,6 +373,7 @@ pub(super) fn body(
                 },
             );
         }
+        e.tools.header_width = ui.cursor().left() - left;
     });
     if let Some(command) = chosen {
         run(command, e, &ctx, id, settings, prefs, actions);
@@ -320,31 +392,6 @@ pub(super) fn body(
                 run(command, e, &ctx, id, settings, prefs, actions);
             }
         }
-    }
-    if e.loaded && !e.can_edit {
-        ui.label(RichText::new(aurora_i18n::tr!("script-read-only")).color(p.warn));
-    }
-    if settings.preprocessor || e.tools.has_processed || e.tools.processed {
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut e.tools.processed, false, aurora_i18n::tr!("script-tab-source"));
-            ui.selectable_value(&mut e.tools.processed, true, aurora_i18n::tr!("script-tab-processed"));
-        });
-    } else {
-        e.tools.processed = false;
-    }
-    // Measure the actual controls, including object-only rows and diagnostics.
-    // Repaint after a width/status change, without replaying asynchronous actions.
-    let footer_height = if e.tools.footer_height > 0.0 {
-        e.tools.footer_height
-    } else {
-        155.0
-    };
-    let height = (ui.available_height() - footer_height - ui.spacing().item_spacing.y - 8.0).max(120.0);
-    source(ui, p, e, id, settings, height, &prefs.search);
-    let footer = ui.scope(|ui| footer(ui, p, e, id, actions));
-    if (e.tools.footer_height - footer.response.rect.height()).abs() > 0.5 {
-        e.tools.footer_height = footer.response.rect.height();
-        ctx.request_repaint();
     }
 }
 
@@ -832,14 +879,53 @@ pub(super) fn dialogs(
     }
 }
 
-pub(super) fn search(ctx: &egui::Context, p: &Palette, e: &mut Editor, id: Id, search: &mut Search, mut parent: egui::Rect) {
+pub(super) fn search(
+    ctx: &egui::Context,
+    p: &Palette,
+    e: &mut Editor,
+    id: Id,
+    search: &mut Search,
+    (parent_id, parent): (Id, egui::Rect),
+    prefer_left: bool,
+) {
     let id = visible_id(id, e.tools.processed);
     let cursor = editing::cursor(ctx, id);
     let editable = e.can_edit && e.loaded && e.saving.is_none() && e.loading.is_none() && !e.tools.processed && !e.colors.active();
-    // If screen constraints make search overlap its owner, leave the title
-    // and its close/minimize buttons accessible, at any font scale.
-    if parent.right() + Search::width(ctx) > crate::ui::layout::work_area(ctx).right() {
-        parent.min.y = e.tools.body_top;
+    if let Some(mut ui) = e.tools.search_slot.take() {
+        if search.focus {
+            ctx.move_to_top(ui.layer_id());
+        }
+        search.controls(
+            &mut ui,
+            p,
+            id,
+            if e.tools.processed {
+                &mut e.tools.processed_source
+            } else {
+                &mut e.source
+            },
+            editable,
+            true,
+        );
+        let height = ui.min_rect().height();
+        if (height - e.tools.search_height).abs() > 0.5 {
+            e.tools.search_height = height;
+            ctx.request_repaint();
+        }
+        e.tools.scroll_to_cursor |= cursor != editing::cursor(ctx, id);
+        return;
+    }
+    let (pos, overlap) = Search::placement(ctx, parent, e.tools.body_top, prefer_left);
+    if overlap {
+        let owner = egui::LayerId::new(egui::Order::Middle, parent_id);
+        let child = egui::LayerId::new(egui::Order::Middle, Id::new(Search::WINDOW));
+        // Dependent ordering, as LLFloater::addDependentFloater: clicking
+        // the script keeps its search above it without covering other windows.
+        ctx.set_sublayer(owner, child);
+        let pressed = ctx.input(|i| i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten());
+        if search.focus || pressed.is_some_and(|at| ctx.layer_id_at(at) == Some(child)) || ctx.is_being_dragged(child.id.with("move")) {
+            ctx.move_to_top(owner);
+        }
     }
     search.show(
         ctx,
@@ -851,7 +937,7 @@ pub(super) fn search(ctx: &egui::Context, p: &Palette, e: &mut Editor, id: Id, s
             &mut e.source
         },
         editable,
-        parent,
+        pos,
     );
     e.tools.scroll_to_cursor |= cursor != editing::cursor(ctx, id);
 }

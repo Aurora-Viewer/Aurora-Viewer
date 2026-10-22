@@ -31,6 +31,8 @@ pub(super) struct Search {
 
 impl Search {
     pub const WINDOW: &str = "script_search";
+    const SIZE: Vec2 = Vec2::new(360.0, 185.0);
+    pub const INLINE_WIDTH: f32 = 360.0;
 
     pub fn owns(&self, id: Id) -> bool {
         self.open && self.owner == Some(id)
@@ -41,8 +43,25 @@ impl Search {
         ctx.memory(|m| m.has_focus(window.with("query")) || m.has_focus(window.with("replacement")))
     }
 
-    pub fn width(ctx: &egui::Context) -> f32 {
-        ctx.memory(|m| m.area_rect(Id::new(Self::WINDOW))).map_or(420.0, |r| r.width())
+    pub fn placement(ctx: &egui::Context, parent: egui::Rect, content_top: f32, prefer_left: bool) -> (egui::Pos2, bool) {
+        let room = crate::ui::layout::work_area(ctx);
+        let size = ctx.memory(|m| m.area_rect(Id::new(Self::WINDOW))).map_or(Self::SIZE, |r| r.size());
+        let fits = |x| x >= room.left() && x + size.x <= room.right();
+        let right = parent.right();
+        let left = parent.left() - size.x;
+        let sides = if prefer_left { [left, right] } else { [right, left] };
+        let (x, y, overlap) = if let Some(x) = sides.into_iter().find(|&x| fits(x)) {
+            (x, parent.top(), false)
+        } else {
+            (parent.right() - size.x, content_top, true)
+        };
+        (
+            egui::pos2(
+                x.clamp(room.left(), (room.right() - size.x).max(room.left())),
+                y.clamp(room.top(), (room.bottom() - size.y).max(room.top())),
+            ),
+            overlap,
+        )
     }
 
     // LLFloaterSearchReplace::show rebinds one shared search to its editor.
@@ -61,70 +80,85 @@ impl Search {
         crate::ui::widgets::expand_floater(ctx, Self::WINDOW);
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, id: Id, source: &mut String, editable: bool, parent: egui::Rect) {
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, id: Id, source: &mut String, editable: bool, pos: egui::Pos2) {
         if !self.open {
             return;
         }
-        if Self::focused(ctx) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
-            self.focus = true;
-        }
         let window = Id::new(Self::WINDOW);
-        // Requested improvement: attach to the script's upper-right corner.
-        // Keep the search reachable when there is less room beside the script.
-        let room = crate::ui::layout::work_area(ctx);
-        let pos = egui::pos2(parent.right().min(room.right() - Self::width(ctx)).max(room.left()), parent.top());
+        // Adopt the narrower default once, retaining later manual resizes.
+        let compact = ctx.data_mut(|d| {
+            let key = window.with("compact_width_v1");
+            let done = d.get_persisted::<bool>(key).unwrap_or(false);
+            d.insert_persisted(key, true);
+            !done
+        });
+        if compact {
+            let height = ctx.memory(|m| m.area_rect(window)).map_or(Self::SIZE.y, |r| r.height());
+            crate::ui::widgets::place_floater(ctx, Self::WINDOW, pos, Vec2::new(Self::SIZE.x, height));
+        }
         crate::ui::widgets::move_floater(ctx, Self::WINDOW, pos);
         if self.focus {
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window));
         }
         let mut open = true;
-        Floater::new(Self::WINDOW, aurora_i18n::tr!("script-search-title"), pos, Vec2::new(420.0, 185.0)).show(ctx, p, &mut open, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(aurora_i18n::tr!("script-search-query"));
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.query)
-                        .id(window.with("query"))
-                        .desired_width(280.0),
-                );
-                if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
-                    response.request_focus();
-                }
-                if (response.has_focus() || response.lost_focus())
-                    && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
-                {
-                    self.find(ctx, id, source);
-                    response.request_focus();
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(aurora_i18n::tr!("script-search-replacement"));
-                ui.add_enabled(
-                    editable,
-                    egui::TextEdit::singleline(&mut self.replacement)
-                        .id(window.with("replacement"))
-                        .desired_width(280.0),
-                );
-            });
-            ui.horizontal(|ui| {
-                crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
-                crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
-            });
-            ui.horizontal(|ui| {
-                if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
-                    self.find(ctx, id, source);
-                }
-                ui.add_enabled_ui(editable && !self.query.is_empty(), |ui| {
-                    if flat_button(ui, p, aurora_i18n::tr!("script-search-replace")).clicked() {
-                        self.replace(ctx, id, source);
-                    }
-                    if flat_button(ui, p, aurora_i18n::tr!("script-search-replace-all")).clicked() {
-                        self.replace_all(ctx, id, source);
-                    }
-                });
-            });
-            ui.label(RichText::new(&self.status).color(p.muted));
+        Floater::new(Self::WINDOW, aurora_i18n::tr!("script-search-title"), pos, Self::SIZE).show(ctx, p, &mut open, |ui| {
+            self.controls(ui, p, id, source, editable, false);
         });
         self.open = open;
+    }
+
+    pub fn controls(&mut self, ui: &mut egui::Ui, p: &Palette, id: Id, source: &mut String, editable: bool, inline: bool) {
+        let ctx = ui.ctx().clone();
+        let window = Id::new(Self::WINDOW);
+        if Self::focused(&ctx) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
+            self.focus = true;
+        }
+        ui.horizontal(|ui| {
+            ui.label(aurora_i18n::tr!("script-search-query"));
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut self.query)
+                    .id(window.with("query"))
+                    .desired_width(220.0),
+            );
+            if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
+                response.request_focus();
+            }
+            if (response.has_focus() || response.lost_focus()) && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+                self.find(&ctx, id, source);
+                response.request_focus();
+            }
+            if inline && icon_button(ui, p, "x", aurora_i18n::tr!("common-close"), true) {
+                self.open = false;
+                ctx.memory_mut(|m| m.request_focus(id));
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(aurora_i18n::tr!("script-search-replacement"));
+            ui.add_enabled(
+                editable,
+                egui::TextEdit::singleline(&mut self.replacement)
+                    .id(window.with("replacement"))
+                    .desired_width(220.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
+            crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
+        });
+        ui.horizontal(|ui| {
+            if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
+                self.find(&ctx, id, source);
+            }
+            ui.add_enabled_ui(editable && !self.query.is_empty(), |ui| {
+                if flat_button(ui, p, aurora_i18n::tr!("script-search-replace")).clicked() {
+                    self.replace(&ctx, id, source);
+                }
+                if flat_button(ui, p, aurora_i18n::tr!("script-search-replace-all")).clicked() {
+                    self.replace_all(&ctx, id, source);
+                }
+            });
+        });
+        ui.label(RichText::new(&self.status).color(p.muted));
     }
 
     pub fn find(&mut self, ctx: &egui::Context, id: Id, source: &str) {
@@ -218,6 +252,8 @@ impl Preferences {
                     });
                     crate::ui::widgets::divider(ui, p);
                     crate::ui::widgets::switch_labeled(ui, p, &mut settings.word_wrap, aurora_i18n::tr!("script-preferences-word-wrap"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.search_prefer_left, aurora_i18n::tr!("script-preferences-search-left"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.search_inline, aurora_i18n::tr!("script-preferences-search-inline"));
                     crate::ui::widgets::switch_labeled(ui, p, &mut settings.convert_tabs, aurora_i18n::tr!("script-preferences-convert-tabs"));
                     crate::ui::widgets::switch_labeled(ui, p, &mut settings.preprocessor, aurora_i18n::tr!("script-preferences-preprocessor"));
                     ui.add_enabled_ui(settings.preprocessor, |ui| {

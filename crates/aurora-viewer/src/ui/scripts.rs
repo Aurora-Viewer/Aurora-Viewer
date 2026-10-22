@@ -355,7 +355,19 @@ impl Editors {
         let id = format!("script_editor_{}_{}", target.object, target.item);
         let text_id = egui::Id::new((&id, "source_text"));
         match mode {
-            "search" => {
+            "search" | "search-left" | "search-inline" | "search-overlay" | "search-outside" => {
+                settings.search_prefer_left = mode == "search-left";
+                settings.search_inline = mode == "search-inline";
+                let geometry = match mode {
+                    "search-left" => Some((egui::pos2(450.0, 130.0), Vec2::new(660.0, 650.0))),
+                    "search-inline" => Some((egui::pos2(170.0, 130.0), Vec2::new(1250.0, 700.0))),
+                    "search-overlay" => Some((egui::pos2(140.0, 130.0), Vec2::new(1300.0, 700.0))),
+                    "search-outside" => Some((egui::pos2(-380.0, 130.0), Vec2::new(660.0, 650.0))),
+                    _ => None,
+                };
+                if let Some((pos, size)) = geometry {
+                    super::widgets::place_floater(ctx, &id, pos, size);
+                }
                 self.panels.search.begin(ctx, text_id, text_id, &e.source);
                 self.panels.search.query = "llSay".into();
                 self.panels.search.replacement = "llOwnerSay".into();
@@ -685,6 +697,7 @@ impl Editors {
                 Vec2::new(660.0, 520.0),
             )
             .cascade(super::widgets::CascadeGroup::Script)
+            .allow_partial_outside()
             .show(ctx, p, &mut open, |ui| {
                 view::body(
                     ui,
@@ -781,13 +794,18 @@ impl Editors {
                     .data_mut(|d| d.get_persisted::<bool>(egui::Id::new((&window, "minimized"))))
                     .unwrap_or(false);
                 if !minimized && let Some(parent) = ctx.memory(|m| m.area_rect(egui::Id::new(&window))) {
-                    view::search(ctx, p, e, id, search, parent);
+                    view::search(ctx, p, e, id, search, (egui::Id::new(&window), parent), settings.search_prefer_left);
                 }
                 break;
             }
         }
         if !bound {
             search.open = false;
+        }
+        // An owner can change while a later editor handles Ctrl+F. Drop its
+        // unused reserved UI within this pass, without drawing another search.
+        for e in &mut self.documents {
+            e.tools.search_slot = None;
         }
         if *color_prefs != colors_before {
             actions.push(Action::SettingsChanged);
@@ -809,6 +827,15 @@ mod tests {
     }
 
     fn frame(ctx: &egui::Context, editors: &mut Editors, events: Vec<egui::Event>) -> egui::FullOutput {
+        frame_settings(ctx, editors, &mut settings::ScriptSettings::default(), events)
+    }
+
+    fn frame_settings(
+        ctx: &egui::Context,
+        editors: &mut Editors,
+        settings: &mut settings::ScriptSettings,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
         let theme = crate::theme::Theme::default();
         theme.apply(ctx, 1.0);
         ctx.run_ui(
@@ -819,10 +846,11 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
+                super::super::layout::frame(ui.ctx(), &theme.palette(), false);
                 editors.show(
                     ui.ctx(),
                     &theme.palette(),
-                    &mut settings::ScriptSettings::default(),
+                    settings,
                     &mut super::super::color_picker::Preferences::default(),
                 );
             },
@@ -846,7 +874,11 @@ mod tests {
     }
 
     fn click_label(ctx: &egui::Context, editors: &mut Editors, label: &str) {
-        let output = frame(ctx, editors, vec![]);
+        click_label_settings(ctx, editors, &mut settings::ScriptSettings::default(), label);
+    }
+
+    fn click_label_settings(ctx: &egui::Context, editors: &mut Editors, settings: &mut settings::ScriptSettings, label: &str) {
+        let output = frame_settings(ctx, editors, settings, vec![]);
         let pos = output
             .shapes
             .iter()
@@ -856,9 +888,10 @@ mod tests {
             })
             .expect("visible button");
         for pressed in [true, false] {
-            frame(
+            frame_settings(
                 ctx,
                 editors,
+                settings,
                 vec![
                     egui::Event::PointerMoved(pos),
                     egui::Event::PointerButton {
@@ -985,7 +1018,7 @@ mod tests {
     }
 
     #[test]
-    fn script_search_follows_its_owners_upper_right_corner_and_hides_with_it() {
+    fn script_search_tries_both_sides_then_overlays_its_owner_and_hides_with_it() {
         let ctx = egui::Context::default();
         let mut editors = Editors::default();
         let target = target(1);
@@ -1003,15 +1036,14 @@ mod tests {
             settle(&ctx, &mut editors);
             let parent = ctx.memory(|m| m.area_rect(egui::Id::new(window(target)))).unwrap();
             let search = ctx.memory(|m| m.area_rect(egui::Id::new(dialogs::Search::WINDOW))).unwrap();
-            let overlap = parent.right() + search.width() > 1600.0;
-            let expected = egui::pos2(
-                parent.right().min(1600.0 - search.width()),
-                if overlap {
-                    editors.documents[0].tools.body_top
-                } else {
-                    parent.top()
-                },
-            );
+            assert!(search.width() < 420.0, "compact default: {search:?}");
+            let expected = if parent.right() + search.width() <= 1600.0 {
+                parent.right_top()
+            } else if parent.left() >= search.width() {
+                egui::pos2(parent.left() - search.width(), parent.top())
+            } else {
+                egui::pos2(parent.right() - search.width(), editors.documents[0].tools.body_top)
+            };
             assert!((search.left_top() - expected).length() < 1.5, "{parent:?} / {search:?}");
         }
         ctx.data_mut(|d| d.insert_persisted(egui::Id::new((window(target), "minimized")), true));
@@ -1029,6 +1061,171 @@ mod tests {
         editors.demo_close_clean(target);
         settle(&ctx, &mut editors);
         assert!(!editors.panels.search.open);
+    }
+
+    #[test]
+    fn search_moves_between_left_floating_and_inline_without_losing_fields_or_focus() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let target = target(1);
+        let load = editors.open(target, "Responsive search".into(), true, true).unwrap();
+        editors.loaded(load, target, Ok("needle needle".into()));
+        let mut settings = settings::ScriptSettings {
+            search_prefer_left: true,
+            search_inline: true,
+            ..Default::default()
+        };
+        let parent_id = egui::Id::new(window(target));
+        let search_id = egui::Id::new(dialogs::Search::WINDOW);
+        let query_id = search_id.with("query");
+        super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(470.0, 120.0), Vec2::new(660.0, 650.0));
+        for _ in 0..4 {
+            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+        }
+        frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+        editors.panels.search.query = "needle".into();
+        editors.panels.search.replacement = "thread".into();
+        editors.panels.search.insensitive = false;
+        editors.panels.search.up = true;
+        for _ in 0..4 {
+            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+        }
+        let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
+        let search = ctx.memory(|m| m.area_rect(search_id)).unwrap();
+        assert!((search.right() - parent.left()).abs() < 1.5, "{parent:?} / {search:?}");
+        assert_eq!(ctx.read_response(query_id).unwrap().layer_id.id, search_id);
+        editing::select(&ctx, query_id, 2..2, true);
+        for width in [1250.0, 660.0, 1250.0] {
+            super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 120.0), Vec2::new(width, 650.0));
+            for _ in 0..4 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            let output = frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            let query = ctx.read_response(query_id).unwrap();
+            assert_eq!(query.layer_id.id, if width > 1000.0 { parent_id } else { search_id });
+            if width > 1000.0 {
+                let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
+                assert!(parent.contains_rect(query.rect) && query.rect.left() > parent.center().x);
+                assert!(ctx.read_response(source_id(target)).unwrap().rect.top() > query.rect.bottom());
+                assert!(
+                    !output
+                        .shapes
+                        .iter()
+                        .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
+                );
+            }
+            assert_eq!(editing::cursor(&ctx, query_id).primary.index.0, 2);
+            assert!(ctx.memory(|m| m.has_focus(query_id)));
+            assert_eq!(editors.panels.search.query, "needle");
+            assert_eq!(editors.panels.search.replacement, "thread");
+            assert!(!editors.panels.search.insensitive && editors.panels.search.up);
+            assert_eq!(
+                output
+                    .shapes
+                    .iter()
+                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-query")))
+                    .count(),
+                2 // The query label and Find button share their text.
+            );
+        }
+        click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[0].source, "thread thread");
+        editors.documents[0].can_edit = false;
+        editors.panels.search.query = "thread".into();
+        editors.panels.search.replacement = "blocked".into();
+        click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[0].source, "thread thread");
+    }
+
+    #[test]
+    fn overlapping_search_stays_above_its_owner_without_covering_unrelated_windows() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let first = target(1);
+        let second = target(2);
+        for target in [first, second] {
+            let load = editors.open(target, "Layer ordering".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("source".into()));
+        }
+        settle(&ctx, &mut editors);
+        super::super::widgets::place_floater(&ctx, &window(first), egui::pos2(260.0, 120.0), Vec2::new(1100.0, 650.0));
+        editors.panels.search.begin(&ctx, source_id(first), source_id(first), "source");
+        settle(&ctx, &mut editors);
+        let owner = egui::LayerId::new(egui::Order::Middle, egui::Id::new(window(first)));
+        let other = egui::LayerId::new(egui::Order::Middle, egui::Id::new(window(second)));
+        let search = egui::LayerId::new(egui::Order::Middle, egui::Id::new(dialogs::Search::WINDOW));
+        for top in [owner, other] {
+            ctx.move_to_top(top);
+            settle(&ctx, &mut editors);
+            let layers = ctx.memory(|m| m.layer_ids().collect::<Vec<_>>());
+            let at = |layer| layers.iter().position(|&l| l == layer).unwrap();
+            assert!(at(search) > at(owner));
+            if top == other {
+                assert!(at(other) > at(search));
+            }
+        }
+    }
+
+    #[test]
+    fn dragging_scripts_can_cross_closed_edges_but_keeps_the_title_reachable() {
+        for delta in [
+            egui::vec2(-2000.0, 0.0),
+            egui::vec2(2000.0, 0.0),
+            egui::vec2(0.0, 2000.0),
+            egui::vec2(0.0, -2000.0),
+        ] {
+            let ctx = egui::Context::default();
+            let mut editors = Editors::default();
+            let target = target(1);
+            let load = editors.open(target, "Reachable".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("source".into()));
+            settle(&ctx, &mut editors);
+            let id = egui::Id::new(window(target));
+            let start = ctx.read_response(id.with("title_double_click")).unwrap().rect.center();
+            frame(&ctx, &mut editors, vec![egui::Event::PointerMoved(start)]);
+            frame(
+                &ctx,
+                &mut editors,
+                vec![egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            let end = start + delta;
+            frame(&ctx, &mut editors, vec![egui::Event::PointerMoved(end)]);
+            frame(
+                &ctx,
+                &mut editors,
+                vec![egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            settle(&ctx, &mut editors);
+            let rect = ctx.memory(|m| m.area_rect(id)).unwrap();
+            let room = super::super::layout::move_area(&ctx);
+            let visible = rect.intersect(room);
+            assert!(visible.width() >= super::super::layout::TITLE_GRIP - 1.5, "{delta:?}: {rect:?}");
+            assert!(visible.height() >= super::super::layout::TITLE_BAR_H - 1.5, "{delta:?}: {rect:?}");
+            if delta.x < 0.0 {
+                assert!(rect.left() < room.left());
+            }
+            if delta.x > 0.0 {
+                assert!(rect.right() > room.right());
+            }
+            if delta.y > 0.0 {
+                assert!(rect.bottom() > room.bottom());
+            }
+            assert!(rect.top() >= room.top());
+            assert_eq!(
+                super::super::layout::edges_for(&ctx, egui::Id::new("ordinary_window")),
+                super::super::layout::Edges::default()
+            );
+        }
     }
 
     fn target(n: u128) -> ScriptTarget {

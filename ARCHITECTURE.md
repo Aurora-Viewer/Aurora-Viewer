@@ -596,10 +596,18 @@ preferences and the keyword help.
 `Editors` owns one search/replace panel shared by all scripts, following
 `LLFloaterSearchReplace::show`. Opening search rebinds its editor, retaining
 the query, replacement and options. It is drawn once after all editors have
-handled commands, anchored beside the owner's upper-right corner and kept
-inside the available work area; minimizing or closing its owner hides it.
-When space constraints make search overlap its owner, its top follows the
-measured body start so the script's title buttons remain accessible.
+handled commands. The compact floating panel tries the owner's right side,
+then its left (reversed by the saved left-side preference), within the work
+area; minimizing or closing its owner hides it. If neither side fits, its
+top follows the measured body start, preserving the title controls, and a
+dependent sublayer keeps it directly above its owner. Unrelated windows can
+still cover both. A second saved preference embeds the same controls in the
+header's right column when the measured toolbar and search both fit. The
+header reserves a child UI; the shared panel renders it after all commands,
+preserving field IDs, focus and options across changes of width or owner.
+Script floaters opt into the shared partial-outside policy even with edge
+stops enabled: dragging can cross the sides/bottom while retaining the
+standard reachable title grip. Other floaters keep the global edge policy.
 Opening an editor focuses character zero once its source is ready; only the
 latest explicit opening may take focus after an asynchronous load.
 `settings.rs` keeps the editor's colours and options in the common settings.

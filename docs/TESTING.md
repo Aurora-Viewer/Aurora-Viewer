@@ -906,7 +906,7 @@ tests compare the complete physical trajectories at 30–500 fps, variable
 rates, the smoothing between steps, the anchoring, the change of origin and
 the catch-up after a long frame.
 
-**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|word-wrap|no-word-wrap|word-wrap-preferences|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`**:
+**`AURORA_DEMO_SCRIPTS=inventory|object|both|save|object-save|error|readonly|syntax|object-syntax|syntax-readonly|indent|object-indent|tabstops|object-tabstops|close-brace|object-close-brace|colors|color-picker|color-accept|color-cancel|comment-lines|comment-block|multiline-indent|multiline-outdent|folding|object-folding|word-wrap|no-word-wrap|word-wrap-preferences|experience|experience-save|workbench|object-workbench|insert-filter|insert-empty|search|search-left|search-inline|search-overlay|search-outside|preferences|help|preprocessor|object-preprocessor|processed|preprocessor-error`**:
 opens a script editor from the inventory, the contents of an object or both
 at frame 280. `save` and `object-save` save a modified source then close and
 reopen the editor at frame 360 with a masked asset UUID, to check the
@@ -977,8 +977,19 @@ never saved on the PC in demo. The file pickers and the external editor
 remain explicit actions of the tester.
 With `both`, open Find in each editor in turn: the same search window and
 its query, replacement and options must follow the selected script. Move
-and resize that script: search stays at its upper-right corner, within the
-work area. Opening either script focuses its text before character zero.
+and resize that script: the compact search follows its upper-right corner,
+switches to the left if necessary, then overlaps below the title controls
+if neither side fits. In that case it stays above its owner when the script
+is clicked; another editor can still cover both. Preferences offers two
+saved switches: prefer the left side, and embed search at the header's right
+when the editor is wide enough. Resize wide/narrow with this enabled:
+query, replacement, options and field focus must survive the transition.
+Drag scripts across the sides and bottom with global edge stops enabled:
+they may extend outside, but a usable title grip must always remain.
+Opening either script focuses its text before character zero.
+For native captures at 1600 × 1000, `search-left`, `search-inline`,
+`search-overlay` and `search-outside` seed these four placements with the
+same find/replace values; `preferences` shows the switches.
 `preprocessor` and `object-preprocessor` save a script using an include from
 the inventory, a macro, an extended list and a `switch`, then reopen it: the
 original text must be kept. `processed` shows the result sent to the

@@ -203,7 +203,7 @@ impl Windows {
             self.live.limits = Some((window, limits));
             limits
         } else {
-            super::reach(room, start.size(), edges)
+            super::reach(room, start.size(), if shown.partial_outside { super::Edges::OPEN } else { edges })
         };
         let travel = constrained(start.translate(pointer.total), limits, pixels_per_point) - start.min;
         for (id, rect) in moved.start.iter().skip(1) {
