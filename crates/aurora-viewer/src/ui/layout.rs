@@ -69,9 +69,7 @@ pub fn text(ctx: &egui::Context) -> Option<String> {
     let room = move_area(ctx);
     windows(ctx, |w| w.refresh_anchors(room));
     let mem = ctx.memory(|m| m.clone());
-    ron::to_string(&mem)
-        .inspect_err(|e| log::warn!("ui layout not saved: {e}"))
-        .ok()
+    ron::to_string(&mem).inspect_err(|e| log::warn!("ui layout not saved: {e}")).ok()
 }
 
 /// Takes a layout from a settings backup, at once and for the next

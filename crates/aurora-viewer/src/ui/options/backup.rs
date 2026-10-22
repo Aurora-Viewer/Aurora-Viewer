@@ -50,7 +50,12 @@ pub(super) fn restore_modal(ctx: &egui::Context, p: &Palette, s: &mut Settings, 
         use crate::ui::widgets::{ActionKind, action_button, checkbox, primary_button_sized};
         use aurora_i18n::tr;
         ui.set_width(400.0);
-        ui.label(RichText::new(tr!("ui-options-backup-restore-title")).size(15.0).strong().color(p.ink));
+        ui.label(
+            RichText::new(tr!("ui-options-backup-restore-title"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
         ui.add_space(6.0);
         ui.label(
             RichText::new(tr!(

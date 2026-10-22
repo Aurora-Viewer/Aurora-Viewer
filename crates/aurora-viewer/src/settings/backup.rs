@@ -160,7 +160,10 @@ impl Backup {
         }
         if backup.version > VERSION {
             // read what this build knows of it, as the settings themselves
-            log::info!("settings backup: written by a newer Aurora ({}), read as version {VERSION}", backup.viewer);
+            log::info!(
+                "settings backup: written by a newer Aurora ({}), read as version {VERSION}",
+                backup.viewer
+            );
         }
         Some(backup)
     }
@@ -315,7 +318,15 @@ mod tests {
     fn a_backup_holds_nothing_of_the_login_nor_of_this_pc() {
         let backup = Backup::new(&this_pc(), None);
         let text = String::from_utf8(backup.to_bytes().unwrap()).unwrap();
-        for value in ["someone", "grid.test", "Somewhere", "D:\\\\cache", "D:\\\\logs", "Speakers", "Microphone"] {
+        for value in [
+            "someone",
+            "grid.test",
+            "Somewhere",
+            "D:\\\\cache",
+            "D:\\\\logs",
+            "Speakers",
+            "Microphone",
+        ] {
             assert!(!text.contains(value), "{value} written in the backup");
         }
         let settings = backup.settings.as_ref().unwrap();
@@ -350,10 +361,7 @@ mod tests {
         assert_eq!(restored.draw_distance, 256.0);
         assert_eq!(restored.vsync, other.vsync);
         assert_eq!(restored.colors.chat_direct, [1, 2, 3, 255]);
-        let (restored, current) = (
-            serde_json::to_value(&restored).unwrap(),
-            serde_json::to_value(&current).unwrap(),
-        );
+        let (restored, current) = (serde_json::to_value(&restored).unwrap(), serde_json::to_value(&current).unwrap());
         for key in THIS_PC {
             assert_eq!(restored[key], current[key], "{key} not kept");
         }

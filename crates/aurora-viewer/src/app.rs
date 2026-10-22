@@ -12461,8 +12461,7 @@ impl ApplicationHandler for App {
                 // the confirmation of a restore, for a backup of the demo's
                 // own profile
                 if value.split(':').nth(1) == Some("restore") {
-                    let mut backup =
-                        crate::settings::backup::Backup::new(&self.settings, ui::layout::text(&self.egui_ctx));
+                    let mut backup = crate::settings::backup::Backup::new(&self.settings, ui::layout::text(&self.egui_ctx));
                     backup.read_files(&crate::settings::config_dir());
                     let logged_in = self.world.login.as_ref().map(|l| l.agent_id);
                     self.options_ui.restore = Some(ui::options::backup::Pending::new(backup, logged_in));

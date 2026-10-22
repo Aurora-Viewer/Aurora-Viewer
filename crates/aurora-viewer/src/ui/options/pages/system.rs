@@ -85,27 +85,55 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("ui-options-backup"), |cx| {
         use crate::ui::widgets::{ActionKind, action_button};
         let size = Vec2::new(0.0, 26.0);
-        cx.row_with(tr!("ui-options-backup-save"), tr!("ui-options-backup-save-help"), &Nothing, |ui, _, st, r| {
-            ui.vertical(|ui| {
-                if action_button(ui, &p, "file-download-filled", tr!("ui-options-backup-save-button"), ActionKind::Flat, size).clicked() {
-                    r.back_up = true;
-                }
-                if !st.backup_status.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(&st.backup_status).size(11.5).color(p.muted)).wrap());
-                }
-            });
-            false
-        });
-        cx.row_with(tr!("ui-options-backup-restore"), tr!("ui-options-backup-restore-help"), &Nothing, |ui, _, st, r| {
-            ui.vertical(|ui| {
-                if action_button(ui, &p, "file-upload-filled", tr!("ui-options-backup-restore-button"), ActionKind::Flat, size).clicked() {
-                    r.pick_backup = true;
-                }
-                if !st.restore_status.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(&st.restore_status).size(11.5).color(p.muted)).wrap());
-                }
-            });
-            false
-        });
+        cx.row_with(
+            tr!("ui-options-backup-save"),
+            tr!("ui-options-backup-save-help"),
+            &Nothing,
+            |ui, _, st, r| {
+                ui.vertical(|ui| {
+                    if action_button(
+                        ui,
+                        &p,
+                        "file-download-filled",
+                        tr!("ui-options-backup-save-button"),
+                        ActionKind::Flat,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        r.back_up = true;
+                    }
+                    if !st.backup_status.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(&st.backup_status).size(11.5).color(p.muted)).wrap());
+                    }
+                });
+                false
+            },
+        );
+        cx.row_with(
+            tr!("ui-options-backup-restore"),
+            tr!("ui-options-backup-restore-help"),
+            &Nothing,
+            |ui, _, st, r| {
+                ui.vertical(|ui| {
+                    if action_button(
+                        ui,
+                        &p,
+                        "file-upload-filled",
+                        tr!("ui-options-backup-restore-button"),
+                        ActionKind::Flat,
+                        size,
+                    )
+                    .clicked()
+                    {
+                        r.pick_backup = true;
+                    }
+                    if !st.restore_status.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(&st.restore_status).size(11.5).color(p.muted)).wrap());
+                    }
+                });
+                false
+            },
+        );
     });
 }

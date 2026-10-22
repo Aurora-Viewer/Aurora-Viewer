@@ -36,7 +36,11 @@ impl App {
                 return Outcome::Cancelled;
             };
             backup.read_files(&crate::settings::config_dir());
-            match backup.to_bytes().map_err(std::io::Error::other).and_then(|b| crate::atomic_file::write(&path, &b)) {
+            match backup
+                .to_bytes()
+                .map_err(std::io::Error::other)
+                .and_then(|b| crate::atomic_file::write(&path, &b))
+            {
                 Ok(()) => {
                     log::info!("settings backed up to {}", path.display());
                     Outcome::Saved(path)
@@ -156,10 +160,8 @@ fn file_dialog() -> rfd::FileDialog {
 
 fn spawn(work: impl FnOnce() -> Outcome + Send + 'static) -> Receiver<Outcome> {
     let (tx, rx) = std::sync::mpsc::channel();
-    let _ = std::thread::Builder::new()
-        .name("aurora-settings-backup".into())
-        .spawn(move || {
-            let _ = tx.send(work());
-        });
+    let _ = std::thread::Builder::new().name("aurora-settings-backup".into()).spawn(move || {
+        let _ = tx.send(work());
+    });
     rx
 }
