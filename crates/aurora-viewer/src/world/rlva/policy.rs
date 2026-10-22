@@ -332,6 +332,7 @@ impl World {
     /// Queries requiring world state and force commands are consumed in their
     /// original order. The issuing object may bypass only its own locks.
     pub fn rlva_pending(&mut self) -> Vec<(Uuid, NetCommand)> {
+        self.rlva_relative_tick(std::time::Instant::now());
         let mut commands = Vec::new();
         if self.rlva.appearance_busy || !self.rlva.appearance.is_empty() {
             return commands;
@@ -451,7 +452,8 @@ impl World {
                 "tpto" => teleport(&c.option),
                 _ => None,
             };
-            if let Some(command) = command
+            if let Some(mut command) = command
+                && self.rlva_normalize_teleport(&mut command)
                 && self.rlva_allows_command(&command, source)
             {
                 if matches!(command, NetCommand::RequestSit { .. }) && self.rlva.has("standtp") {
@@ -478,7 +480,7 @@ fn teleport(option: &str) -> Option<NetCommand> {
             let (sin, cos) = angle.sin_cos();
             Vec3::new(cos, sin, 0.0)
         }
-        None => Vec3::X,
+        None => Vec3::ZERO,
     };
     let parts: Vec<_> = destination.split('/').collect();
     let (name, coordinates) = match parts.as_slice() {
@@ -491,7 +493,7 @@ fn teleport(option: &str) -> Option<NetCommand> {
         coordinates[1].parse().ok()?,
         coordinates[2].parse().ok()?,
     );
-    if !p.is_finite() || p.x < 0.0 || p.y < 0.0 {
+    if !p.is_finite() {
         return None;
     }
     if let Some(name) = name {
@@ -502,7 +504,7 @@ fn teleport(option: &str) -> Option<NetCommand> {
             look_at,
         })
     } else {
-        if p.x >= u32::MAX as f64 || p.y >= u32::MAX as f64 || p.z.abs() > f32::MAX as f64 {
+        if p.x < 0.0 || p.y < 0.0 || p.x >= u32::MAX as f64 || p.y >= u32::MAX as f64 || p.z.abs() > f32::MAX as f64 {
             return None;
         }
         let x = (p.x as u32 / 256) * 256;
@@ -532,7 +534,10 @@ mod teleport_tests {
         assert!(
             matches!(teleport("region/1.25/2.5/40;-1.57079632679"), Some(NetCommand::TeleportToRegion { position, look_at, .. }) if position == Vec3::new(1.25, 2.5, 40.0) && look_at.abs_diff_eq(Vec3::NEG_Y, 1e-6))
         );
-        assert!(matches!(teleport("1/2/3"), Some(NetCommand::TeleportTo { look_at, .. }) if look_at == Vec3::X));
+        assert!(matches!(teleport("1/2/3"), Some(NetCommand::TeleportTo { look_at, .. }) if look_at == Vec3::ZERO));
+        assert!(
+            matches!(teleport("region/-1.25/300.5/40"), Some(NetCommand::TeleportToRegion { position, .. }) if position == Vec3::new(-1.25, 300.5, 40.0))
+        );
         for invalid in [
             "1/2/3;bad",
             "1/2/3;",

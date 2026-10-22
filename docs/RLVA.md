@@ -53,7 +53,11 @@ script authors; the command lists below describe this branch specifically.
   manufacture transitions. Disabling clears pending actors and actions.
 - Teleports: tplm, tploc, tplocal and sittp, with named-region or global tpto.
   Optional radian headings survive name resolution; global coordinates retain
-  double precision until their region origin is removed. Named lookups return
+  double precision until their region origin is removed. Named lookups pass
+  offsets, including negative offsets, through global-coordinate normalization.
+  Current large regions retain their local coordinates; remote destinations
+  use 256-metre tiles. Without a heading the wire look field is local position
+  plus X; explicit headings stay unit vectors. Named lookups return
   a request ticket through the common action guard before teleporting, so new
   restrictions apply and superseded replies are ignored. Maturity deferrals
   also retain the issuer. Disabling cancels deferred scripted teleports.
@@ -90,6 +94,12 @@ script authors; the command lists below describe this branch specifically.
   exempt the requesting issuer without allowing a forced removal through its
   own lock. Body parts remain visible. getinv excludes folded folders and
   findfolder chooses the deepest matching path in native traversal order.
+  getpath returns the first original's shared path; getpathnew retains all
+  paths, COF order and duplicates. They fold one parent and exclude originals
+  outside #RLV; folder-lock link traversal remains independent. Relative force
+  wear from a controller whose object has not arrived waits up to thirty
+  seconds for attachment, then rechecks locks. Other issuers continue while it
+  waits. Issuer cleanup and global disable cancel those callbacks.
   Folded folders contribute their own items without recursively collecting
   nested folders. Linked hidden folders are excluded; dot folder names are
   literal inventory children. Worn queries retain slash-containing names.
@@ -174,7 +184,9 @@ script authors; the command lists below describe this branch specifically.
   properties and discovery, matching the native NoSetEnv setting. Existing
   locks can still be cleared or released by global disable. Supported properties
   include legacy colour components and intensity, sun/moon angles,
-  asset UUIDs and named library sky/day presets. Temporary overrides restore
+  asset UUIDs and named library sky/day presets.
+  Positive query-angle domains, exact axis cases and solar-glow component
+  resets follow the native conversion helpers. Temporary overrides restore
   the user's local environment when released or disabled. Native environment
   changes respect the lock.
 - Editing: edit, editobj, editattach and editworld at selection, local

@@ -88,11 +88,20 @@ named teleports behind a single request ticket. Map resolution only returns
 that ticket; the app sends the resolved teleport through the common guard.
 Superseded replies are ignored. Maturity deferrals also retain the issuer;
 disabling cancels delayed script teleports while preserving user requests.
+`rlva/teleport.rs` normalizes scripted destinations after named lookup and
+before the action guard. Current large regions retain their local coordinates;
+remote destinations use the native 256-metre tile. The no-angle look field
+uses local position plus X; explicit headings remain unit vectors.
 `rlva/naming.rs` handles balanced attachment-name blocks and legacy folder
 syntax. `collection.rs` is shared by forced wear and worn-inventory queries:
 it folds point folders and single-level folder links, includes gestures,
 honors shared-wear and prefix preferences, and reports missing targets for
 asynchronous fetching. Query counts use one ancestry walk per collected item.
+Path queries preserve original COF order, return one path for getpath and all
+paths for getpathnew, and fold only one parent. Folder-lock link traversal
+remains separate. `relative.rs` waits at most thirty seconds for a missing
+controller attachment, without blocking other issuers; issuer cleanup or disable cancels
+the callback and resumed wear rechecks the ordinary action policy.
 `preferences.rs` persists user choices separately from session restrictions.
 `rlva/im_queries.rs` handles online version/stop/list/exception requests after
 mute/friends-only checks and before IM receive restrictions. Listing uses the

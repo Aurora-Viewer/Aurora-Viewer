@@ -137,20 +137,9 @@ impl World {
     }
 
     fn rlva_controller_root(&self, source: Uuid) -> Option<(Uuid, bool)> {
-        let mut index = self.objects.index_of_uuid(&source)?;
-        for _ in 0..64 {
-            let object = self.objects.get(index)?;
-            let parent = self
-                .objects
-                .parent_of(object)
-                .and_then(|index| self.objects.get(index).map(|parent| (index, parent)))?;
-            if parent.1.is_avatar() {
-                return (parent.1.full_id == self.agent_id && object.attachment_point() != 0)
-                    .then_some((object.full_id, object.attachment_item_id() == Some(object.full_id)));
-            }
-            index = parent.0;
-        }
-        None
+        let root = self.rlva_own_attachment_root(source)?;
+        let object = self.objects.index_of_uuid(&root).and_then(|index| self.objects.get(index))?;
+        Some((root, object.attachment_item_id() == Some(root)))
     }
 
     pub(crate) fn rlva_bind_controller(&mut self, source: Uuid) {

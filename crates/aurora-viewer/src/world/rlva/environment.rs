@@ -135,7 +135,6 @@ fn scalar<'a>(s: &'a mut SkyFrame, name: &str) -> Option<(&'a mut f32, f32)> {
         "cloudvariance" => (&mut s.cloud_variance, 1.0),
         "moonbrightness" => (&mut s.moon_brightness, 1.0),
         "moonscale" => (&mut s.moon_scale, 1.0),
-        "sunglowfocus" => (&mut s.glow.z, -5.0),
         "sunscale" => (&mut s.sun_scale, 1.0),
         "starbrightness" => (&mut s.star_brightness, 1.0),
         _ => return None,
@@ -208,15 +207,28 @@ pub fn property(s: &mut SkyFrame, name: &str, value: Option<&str>) -> Option<Str
         }
         return Some(field.to_string());
     }
-    if name == "sunglowsize" {
+    if matches!(name, "sunglowsize" | "sunglowfocus") {
         if let Some(v) = value {
-            let g = (2.0 - number(v)?) * 20.0;
-            if !g.is_finite() {
+            let mut glow = s.glow;
+            if name == "sunglowsize" {
+                glow.x = (2.0 - number(v)?) * 20.0;
+            } else {
+                glow.z = number(v)? * -5.0;
+            }
+            glow.y = 0.0;
+            if !glow.is_finite() {
                 return None;
             }
-            s.glow.x = g;
+            s.glow = glow;
         }
-        return Some(format!("{:.6}", 2.0 - s.glow.x / 20.0));
+        return Some(format!(
+            "{:.6}",
+            if name == "sunglowsize" {
+                2.0 - s.glow.x / 20.0
+            } else {
+                s.glow.z / -5.0
+            }
+        ));
     }
     if !matches!(
         name,
@@ -226,8 +238,7 @@ pub fn property(s: &mut SkyFrame, name: &str, value: Option<&str>) -> Option<Str
     }
     let moon = name.starts_with("moon");
     let dir = (if moon { s.moon_rotation } else { s.sun_rotation }) * Vec3::X;
-    let mut azimuth = dir.y.atan2(dir.x);
-    let mut elevation = dir.z.clamp(-1.0, 1.0).asin();
+    let (mut azimuth, mut elevation) = angles(dir);
     if let Some(v) = value {
         let v = number(v)?;
         match name {
@@ -258,6 +269,30 @@ pub fn property(s: &mut SkyFrame, name: &str, value: Option<&str>) -> Option<Str
             _ => elevation,
         }
     ))
+}
+
+/// rlvGetAzimuth/ElevationFromDirectionVector uses an exact zero test and
+/// positive angles, including the legacy axis cases. Preserve those query
+/// values even when several angle pairs describe the same direction.
+fn angles(direction: Vec3) -> (f32, f32) {
+    let positive = |angle: f32| if angle >= 0.0 { angle } else { angle + TAU };
+    let azimuth = if direction.y == 0.0 {
+        0.0
+    } else if direction.x == 0.0 {
+        FRAC_PI_2
+    } else {
+        positive(direction.y.atan2(direction.x))
+    };
+    let elevation = if direction.z == 0.0 {
+        0.0
+    } else if direction.x == 0.0 && direction.y != 0.0 {
+        positive(direction.z.atan2(direction.y))
+    } else if direction.x != 0.0 && direction.y == 0.0 {
+        positive(direction.z.atan2(direction.x))
+    } else {
+        positive(direction.z.clamp(-1.0, 1.0).asin())
+    };
+    (azimuth, elevation)
 }
 
 impl World {
@@ -350,5 +385,71 @@ impl super::Rlva {
         self.environment_water = None;
         self.environment_day = None;
         self.environment_request = None;
+    }
+}
+
+#[cfg(test)]
+mod conformance_tests {
+    use super::*;
+    #[test]
+    fn rlva_environment_angles_keep_native_positive_domains_and_legacy_axis_cases() {
+        assert_eq!(angles(Vec3::NEG_X), (0.0, 0.0));
+        assert_eq!(angles(Vec3::NEG_Y), (FRAC_PI_2, 0.0));
+        assert_eq!(angles(Vec3::NEG_Z), (0.0, 3.0 * FRAC_PI_2));
+        let (azimuth, elevation) = angles(Vec3::new(0.5, -0.5, -0.5));
+        assert!((azimuth - (TAU - PI / 4.0)).abs() < 1e-6);
+        assert!((elevation - (TAU - PI / 6.0)).abs() < 1e-6);
+        let mut sky = SkyFrame {
+            sun_rotation: Quat::from_rotation_z(-1.0) * Quat::from_rotation_y(0.2),
+            ..Default::default()
+        };
+        let azimuth: f32 = property(&mut sky, "sunazimuth", None).unwrap().parse().unwrap();
+        let elevation: f32 = property(&mut sky, "sunelevation", None).unwrap().parse().unwrap();
+        assert!((azimuth - (TAU - 1.0)).abs() < 1e-5);
+        assert!((elevation - (TAU - 0.2)).abs() < 1e-5);
+        assert_eq!(property(&mut sky, "sunglowsize", Some("1.5")), Some("1.500000".into()));
+        sky.glow.y = 12.0;
+        assert_eq!(property(&mut sky, "sunglowfocus", Some("0.25")), Some("0.250000".into()));
+        assert_eq!(sky.glow, Vec3::new(10.0, 0.0, -1.25));
+    }
+
+    #[test]
+    fn rlva_environment_registered_properties_round_trip_without_mutating_on_invalid_input() {
+        let mut sky = SkyFrame::default();
+        for name in SCALARS.iter().copied().filter(|name| {
+            !matches!(
+                *name,
+                "sunazimuth" | "sunelevation" | "moonazimuth" | "moonelevation" | "eastangle" | "sunmoonposition"
+            )
+        }) {
+            let expected: f32 = 0.125;
+            assert!(property(&mut sky, name, Some("0.125")).is_some(), "{name}");
+            let queried: f32 = property(&mut sky, name, None).unwrap().parse().unwrap();
+            assert!((queried - expected).abs() < 1e-5, "{name}: {queried}");
+            let before = property(&mut sky, name, None);
+            assert!(property(&mut sky, name, Some("nan")).is_none());
+            assert_eq!(property(&mut sky, name, None), before);
+        }
+        for name in COLORS {
+            assert_eq!(
+                property(&mut sky, name, Some("0.25/0.5/0.75")),
+                Some("0.250000/0.500000/0.750000".into()),
+                "{name}"
+            );
+            assert_eq!(property(&mut sky, name, None), Some("0.250000/0.500000/0.750000".into()), "{name}");
+        }
+        for name in TEXTURES {
+            let texture = Uuid::from_u128(42).to_string();
+            assert_eq!(property(&mut sky, name, Some(&texture)), Some(texture.clone()));
+            assert_eq!(property(&mut sky, name, None), Some(texture));
+        }
+        for name in LEGACY {
+            for (suffix, value) in [("r", "0.25"), ("g", "0.5")] {
+                let component = format!("{name}{suffix}");
+                assert!(property(&mut sky, &component, Some(value)).is_some());
+                let actual: f32 = property(&mut sky, &component, None).unwrap().parse().unwrap();
+                assert!((actual - value.parse::<f32>().unwrap()).abs() < 1e-5, "{component}");
+            }
+        }
     }
 }

@@ -4,6 +4,23 @@ use super::super::{World, objects::ObjKey};
 use uuid::Uuid;
 
 impl World {
+    /// Resolve only a real linkset worn by this agent, including child prims.
+    pub(super) fn rlva_own_attachment_root(&self, source: Uuid) -> Option<Uuid> {
+        let mut index = self.objects.index_of_uuid(&source)?;
+        for _ in 0..64 {
+            let object = self.objects.get(index)?;
+            let parent = self
+                .objects
+                .parent_of(object)
+                .and_then(|index| self.objects.get(index).map(|parent| (index, parent)))?;
+            if parent.1.is_avatar() {
+                return (parent.1.full_id == self.agent_id && object.attachment_point() != 0).then_some(object.full_id);
+            }
+            index = parent.0;
+        }
+        None
+    }
+
     pub(super) fn rlva_worn_attachment_points(&self) -> std::collections::HashMap<Uuid, u8> {
         let Some(agent) = self.objects.index_of_uuid(&self.agent_id).and_then(|i| self.objects.get(i)) else {
             return Default::default();

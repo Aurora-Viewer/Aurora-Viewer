@@ -27,8 +27,10 @@ pub mod offers;
 mod policy;
 pub mod preferences;
 pub mod privacy;
+mod relative;
 mod rename;
 mod sitting;
+mod teleport;
 mod temporary;
 mod wardrobe;
 pub mod watchdog;
@@ -430,6 +432,7 @@ pub struct Rlva {
     pub rename: rename::RenameOnWear,
     pub offers: offers::Offers,
     pub controllers: controllers::Controllers,
+    pub relative: relative::RelativeWear,
     pub im: im_queries::Queries,
     rules: BTreeMap<Uuid, BTreeSet<Rule>>,
     pub pending: Vec<(Uuid, Command)>,
@@ -525,6 +528,7 @@ impl Rlva {
         self.rename = Default::default();
         self.offers = Default::default();
         self.controllers = Default::default();
+        self.relative = Default::default();
         self.im = Default::default();
         self.pending.clear();
         self.out.clear();
@@ -552,6 +556,7 @@ impl Rlva {
     }
 
     pub fn forget(&mut self, source: Uuid) {
+        self.relative.forget(source);
         let was_fov_locked = self.has("setcam_fovmin") || self.has("setcam_fovmax");
         self.watchdog.sources.remove(&source);
         self.visuals.forget(source);

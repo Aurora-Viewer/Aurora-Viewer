@@ -1,7 +1,10 @@
 //! Shared inventory paths and wear locks, following RlvInventory,
 //! RlvAttachmentLocks and RlvWearableLocks (rlvinventory.cpp, rlvlocks.cpp).
 
-use super::super::{World, appearance, inventory::Inventory};
+use super::super::{
+    World, appearance,
+    inventory::{Inventory, actions},
+};
 use super::Command;
 use aurora_net::outfits::OutfitLink;
 use std::collections::HashSet;
@@ -278,7 +281,7 @@ impl World {
         let point = self.avatar_lib.attach_points.get(&point)?;
         if point.hud { Some("hud") } else { group_name(point.group) }
     }
-    /// Shared originals can live elsewhere; locks and getpath follow every
+    /// Shared originals can live elsewhere; folder locks follow every
     /// shared link, then fold attachment-point folders into their parent.
     fn rlva_item_folders(&self, item: Uuid) -> Vec<Uuid> {
         self.inventory
@@ -314,6 +317,61 @@ impl World {
         folders.sort();
         folders.dedup();
         folders
+    }
+
+    /// RlvCommandOptionGetPath and RlvInventory::getPath use original COF
+    /// item order and fold one containing folder. Folder-lock resolution is
+    /// separate: a link outside #RLV must not manufacture a query path.
+    fn rlva_path_folders(&self, source: Uuid, option: &str) -> Vec<Uuid> {
+        let worn = self.rlva_worn_attachment_points();
+        let cof = appearance::cof(&self.inventory)
+            .map(|id| appearance::folder_links(&self.inventory, id))
+            .unwrap_or_default();
+        let items = if let Some(point) = point(option) {
+            cof.iter()
+                .filter(|link| worn.get(&link.target) == Some(&point))
+                .map(|link| link.target)
+                .collect::<Vec<_>>()
+        } else if let Some(layer) = layer(option) {
+            cof.iter()
+                .filter(|link| {
+                    self.inventory
+                        .items
+                        .get(&link.target)
+                        .is_some_and(|item| matches!(item.asset_type, 5 | 13) && item.flags & 0xff == u32::from(layer))
+                })
+                .map(|link| link.target)
+                .collect()
+        } else if option.is_empty() || Uuid::parse_str(option).is_ok() {
+            let object = if option.is_empty() {
+                source
+            } else {
+                Uuid::parse_str(option).unwrap_or_default()
+            };
+            self.rlva_own_attachment_root(object)
+                .and_then(|root| self.rlva_attachment_item(root))
+                .into_iter()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let Some(root) = shared_root(&self.inventory) else {
+            return Vec::new();
+        };
+        items
+            .into_iter()
+            .filter_map(|id| {
+                let item = self.inventory.items.get(&id)?;
+                if !actions::under(&self.inventory, item.parent, root) {
+                    return None;
+                }
+                let mut parent = self.inventory.folders.get(&item.parent)?;
+                if folded(&parent.info.name, self.rlva.preferences.legacy_naming) {
+                    parent = self.inventory.folders.get(&parent.info.parent)?;
+                }
+                path(&self.inventory, parent.info.id).map(|_| parent.info.id)
+            })
+            .collect()
     }
 
     pub(super) fn rlva_folder_allowed(&self, folder: Uuid, add: bool, actor: Uuid) -> bool {
@@ -572,6 +630,10 @@ impl World {
     pub fn rlva_inventory_force(&mut self, source: Uuid, c: &Command) -> bool {
         let Some(name) = force_kind(&c.behaviour) else { return false };
         let context = c.behaviour.contains("this");
+        if context && c.option.is_empty() && self.objects.index_of_uuid(&source).is_none() {
+            self.rlva.relative.wait(source, c.clone(), std::time::Instant::now());
+            return true;
+        }
         if !context && c.option.is_empty() && matches!(name, "attach" | "attachover" | "attachall" | "attachallover" | "detachall") {
             return true;
         }
@@ -623,7 +685,7 @@ impl World {
                 return false;
             }
             let bases = if context {
-                self.rlva_context_folders(source, &c.option)
+                self.rlva_path_folders(source, &c.option)
             } else {
                 resolve(&self.inventory, &c.option)
                     .filter(|id| Some(*id) != shared_root(&self.inventory))
@@ -636,7 +698,11 @@ impl World {
             let mut ids = Vec::new();
             let mut points = std::collections::HashMap::new();
             let mut modes = std::collections::HashMap::new();
+            let shared = shared_root(&self.inventory);
             for base in bases {
+                if Some(base) == shared {
+                    continue;
+                }
                 let Some(entries) = self.rlva_collect(base, all, attach, replace) else {
                     return false;
                 };
@@ -1009,14 +1075,16 @@ impl World {
                 if !self.rlva_shared_ready() {
                     return None;
                 }
-                let mut paths: Vec<_> = self
-                    .rlva_context_folders(source, &c.option)
+                let paths: Vec<_> = self
+                    .rlva_path_folders(source, &c.option)
                     .into_iter()
                     .filter_map(|id| path(&self.inventory, id))
                     .collect();
-                paths.sort();
-                paths.dedup();
-                return Some(paths.join(","));
+                return Some(if c.behaviour == "getpath" {
+                    paths.into_iter().next().unwrap_or_default()
+                } else {
+                    paths.join(",")
+                });
             }
             _ => {}
         }

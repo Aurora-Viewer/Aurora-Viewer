@@ -437,4 +437,61 @@ mod tests {
         world.inventory.folders.get_mut(&cof).unwrap().info.type_default = 46;
         assert!(crate::world::appearance::plan(&world.inventory, plan, &Default::default()).is_ok());
     }
+
+    #[test]
+    fn rlva_getpath_returns_one_original_path_and_getpathnew_preserves_cof_order_and_duplicates() {
+        use super::super::Command;
+        use crate::world::World;
+        let (mut inv, base) = fixture();
+        let root = inv.root;
+        let shared = inv.folders[&base].info.parent;
+        let second = folder(&mut inv, 8, shared, "Second");
+        let external = folder(&mut inv, 9, root, "External");
+        let fold = folder(&mut inv, 10, base, ".(chest)");
+        let nested = folder(&mut inv, 11, fold, ".(skull)");
+        let cof = folder(&mut inv, 12, root, "Current Outfit");
+        inv.folders.get_mut(&cof).unwrap().info.type_default = 46;
+        for (number, parent) in [(100, second), (101, base), (102, base), (103, external), (104, nested)] {
+            let original = item(&mut inv, number, parent, "Shirt", 5);
+            inv.items.get_mut(&original).unwrap().flags = 4;
+            let link = item(&mut inv, number + 100, cof, "COF link", 24);
+            inv.items.get_mut(&link).unwrap().asset_id = original;
+        }
+        let link = item(&mut inv, 301, base, "Shared link to an external original", 24);
+        inv.items.get_mut(&link).unwrap().asset_id = Uuid::from_u128(103);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        world.inventory = inv;
+        world.rlva_configure(true);
+        let mut query = |text| world.rlva_inventory_query(&Command::parse(text).unwrap(), Uuid::nil()).unwrap();
+        assert_eq!(query("getpath:shirt=123"), "Second");
+        assert_eq!(query("getpathnew:shirt=123"), "Second,Outfit,Outfit,Outfit/.(chest)");
+        assert_eq!(query("getpath:Outfit=123"), "", "a folder name is not a getpath context option");
+        assert_eq!(query("getpath=123"), "", "an unknown controller has no query path");
+        assert!(world.rlva_inventory_force(Uuid::nil(), &Command::parse("attachthis:Outfit=force").unwrap()));
+        assert!(
+            world.rlva.appearance.is_empty(),
+            "relative force options use the same native context parser"
+        );
+        let object = item(&mut world.inventory, 105, base, "Object", 6);
+        let update = crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+            item_id: object,
+            owner_id: world.agent_id,
+            point: 1,
+            add: true,
+            flags: 0,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: "Object".into(),
+            desc: String::new(),
+        });
+        world.objects.upsert(world.main_region.unwrap(), update);
+        assert_eq!(
+            world.rlva_inventory_query(&Command::parse("getpath=123").unwrap(), object),
+            Some("Outfit".into())
+        );
+    }
 }

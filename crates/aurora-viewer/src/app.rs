@@ -1228,6 +1228,9 @@ impl App {
             }
         }
         self.world.rlva_prepare_outfit(&mut cmd, actor);
+        if !actor.is_nil() && !self.world.rlva_normalize_teleport(&mut cmd) {
+            return;
+        }
         if let NetCommand::OfferTeleport { to, .. } = &mut cmd {
             self.world.rlva_filter_teleport_offer(to);
         }
