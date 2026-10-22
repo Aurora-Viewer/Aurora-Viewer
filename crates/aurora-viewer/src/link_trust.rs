@@ -21,7 +21,9 @@ const TRUSTED: &[&str] = &[
     // viewers
     "firestormviewer.org",
     "phoenixviewer.com",
-    "auroraviewer.com",
+    // the project's official domain; the former auroraviewer.com is no
+    // longer trusted (once released, anyone could own it)
+    "aurora-viewer.org",
     // OpenSimulator
     "opensimulator.org",
     "osgrid.org",
@@ -185,7 +187,8 @@ mod tests {
             "http://community.secondlife.com/forums",
             "https://marketplace.secondlife.com:443/p/x",
             "https://WWW.LindenLab.com",
-            "https://auroraviewer.com",
+            "https://aurora-viewer.org",
+            "https://www.aurora-viewer.org/downloads",
             "https://github.com/Aurora-Viewer/Aurora-Viewer/pulls",
             "https://gist.github.com/x",
             "https://secondlife.com./x",
@@ -224,6 +227,9 @@ mod tests {
             "https://evilsecondlife.com",
             "https://second-life-login.example",
             "https://firestorm-viewer.download",
+            "https://auroraviewer.com",
+            "https://aurora-viewer.org.evil.example",
+            "https://aurora-viewer-login.example",
             "https://youtube.com.evil.example/watch",
             "https://bit.ly/abc",
             "https://linktr.ee/x",

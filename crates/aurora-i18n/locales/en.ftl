@@ -655,7 +655,7 @@ notecard-markdown-demo =
 
     > Embedded items remain part of the notecard.
 
-    { "[" }Aurora Viewer](https://auroraviewer.com)
+    { "[" }Aurora Viewer](https://aurora-viewer.org)
 
     ```text
     A plain code block

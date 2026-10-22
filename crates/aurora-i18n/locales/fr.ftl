@@ -658,7 +658,7 @@ notecard-markdown-demo =
 
     > Les pièces jointes font toujours partie de la note.
 
-    { "[" }Aurora Viewer](https://auroraviewer.com)
+    { "[" }Aurora Viewer](https://aurora-viewer.org)
 
     ```text
     Un bloc de code brut
