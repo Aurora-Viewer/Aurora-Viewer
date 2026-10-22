@@ -586,10 +586,10 @@ impl App {
             pos(pad.orbit.y),
             pos(-pad.rocker),
             pos(pad.rocker),
-            pos(-pad.pan.x),
-            pos(pad.pan.x),
-            pos(-pad.pan.y),
-            pos(pad.pan.y),
+            pos(-pad.pan.x) * PAD_PAN,
+            pos(pad.pan.x) * PAD_PAN,
+            pos(-pad.pan.y) * PAD_PAN,
+            pos(pad.pan.y) * PAD_PAN,
         ])
     }
 
@@ -889,6 +889,10 @@ impl App {
         }
     }
 }
+
+/// The pad's Slide stick at full tilt, as a share of the pan keys' rate:
+/// framing wants smaller moves than the keys give.
+const PAD_PAN: f32 = 0.55;
 
 /// About half a head's depth (m): from its middle to the face.
 const HEAD_RADIUS: f32 = 0.09;
