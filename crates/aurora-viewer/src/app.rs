@@ -7195,7 +7195,15 @@ impl App {
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
-                        "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
+                        "rename"
+                            | "new-script"
+                            | "new-note"
+                            | "new-folder"
+                            | "resize-left"
+                            | "resize-right"
+                            | "keyboard"
+                            | "aurora-keyboard"
+                            | "aurora-keyboard-wide"
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
                 }))
@@ -13869,7 +13877,7 @@ impl ApplicationHandler for App {
                         self.inventory_ui.thumbnail.open(id);
                         self.inventory_ui.thumbnail.picker_open = view == "image-picker";
                         self.inventory_ui.thumbnail.photo_open = matches!(view.as_str(), "image-photo" | "image-photo-save");
-                    } else {
+                    } else if !matches!(view.as_str(), "keyboard" | "aurora-keyboard" | "aurora-keyboard-wide") {
                         self.inventory_ui.demo_menu = Some(id);
                     }
                 } else if !configured_view && crate::world::inventory::demo::big().is_none() {
