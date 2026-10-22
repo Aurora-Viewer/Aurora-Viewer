@@ -10,7 +10,7 @@ from mathutils import Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import aurora_live
-from aurora_live import exporter, rigging, skinning, starter, tracking
+from aurora_live import exporter, handles, rigging, skinning, starter, tracking
 
 
 class RigToolsTests(unittest.TestCase):
@@ -207,6 +207,65 @@ class RigToolsTests(unittest.TestCase):
                 solved = self.pose(key)
                 rigging.set_ik(bpy.context, self.rig, key, False)
                 self.assertPoseNear(solved, self.pose(key), 0.0001)
+
+    def test_widgets_have_distinct_solid_shapes_and_preserve_solver_pose_and_export(self):
+        rigging.setup(bpy.context, self.rig)
+        for key in rigging.LIMBS:
+            rigging.set_ik(bpy.context, self.rig, key, True)
+        before = {b.name: b.matrix.copy() for b in self.rig.pose.bones}
+        rest = {b.name: (b.matrix_local.copy(), b.parent.name if b.parent else None) for b in self.rig.data.bones}
+        snapshot = exporter.snapshot([self.shirt], set(rest), 1)
+        constraints = {key: (rigging.constraint(self.rig, key).influence, rigging.constraint(self.rig, key).pole_angle) for key in rigging.LIMBS}
+        self.assertEqual(bpy.ops.aurora.refresh_ik_handles(), {"FINISHED"})
+        bpy.context.view_layer.update()
+        styles = set()
+        for key in rigging.LIMBS:
+            for pole in (False, True):
+                bone = self.rig.pose.bones[rigging.control_name(key, pole)]
+                self.assertTrue(bone.custom_shape.data.polygons)
+                self.assertFalse(bone.custom_shape.users_collection)
+                self.assertFalse(bone.use_custom_shape_bone_size)
+                styles.add(bone.custom_shape["aurora_ik_shape"].split(":")[0][:-1])
+                self.assertFalse(bone.bone.use_deform)
+        self.assertEqual(styles, {"HAND", "FOOT", "ELBOW", "KNEE"})
+        self.assertEqual(before, {b.name: b.matrix.copy() for b in self.rig.pose.bones})
+        self.assertEqual(rest, {b.name: (b.matrix_local.copy(), b.parent.name if b.parent else None) for b in self.rig.data.bones})
+        self.assertEqual(snapshot, exporter.snapshot([self.shirt], set(rest), 1))
+        self.assertEqual(constraints, {key: (rigging.constraint(self.rig, key).influence, rigging.constraint(self.rig, key).pole_angle) for key in rigging.LIMBS})
+
+    def test_widget_size_is_per_rig_and_cache_does_not_create_scene_meshes(self):
+        rigging.setup(bpy.context, self.rig)
+        names = [rigging.control_name(key, pole) for key in rigging.LIMBS for pole in (False, True)]
+        scales = {name: self.rig.pose.bones[name].custom_shape_scale_xyz.x if hasattr(self.rig.pose.bones[name], "custom_shape_scale_xyz") else self.rig.pose.bones[name].custom_shape_scale for name in names}
+        other = self.rig.copy()
+        bpy.context.collection.objects.link(other)
+        objects, meshes, scene_objects = len(bpy.data.objects), len(bpy.data.meshes), len(bpy.context.scene.objects)
+        self.rig.aurora_live_ik_handle_size = 1.75
+        for _ in range(3):
+            handles.apply(self.rig)
+        for name in names:
+            pose = self.rig.pose.bones[name]
+            other_pose = other.pose.bones[name]
+            scale = pose.custom_shape_scale_xyz.x if hasattr(pose, "custom_shape_scale_xyz") else pose.custom_shape_scale
+            other_scale = other_pose.custom_shape_scale_xyz.x if hasattr(other_pose, "custom_shape_scale_xyz") else other_pose.custom_shape_scale
+            self.assertAlmostEqual(scale, scales[name] * 1.75)
+            self.assertAlmostEqual(other_scale, scales[name])
+        self.assertEqual((objects, meshes, scene_objects), (len(bpy.data.objects), len(bpy.data.meshes), len(bpy.context.scene.objects)))
+
+    def test_old_rigs_migrate_without_replacing_authored_widgets_or_altering_the_pose(self):
+        rigging.setup(bpy.context, self.rig)
+        names = [rigging.control_name(key, pole) for key in rigging.LIMBS for pole in (False, True)]
+        for name in names:
+            self.rig.pose.bones[name].custom_shape = None
+        authored = bpy.data.objects.new("Authored hand widget", bpy.data.meshes.new("Authored widget"))
+        self.rig.pose.bones[names[0]].custom_shape = authored
+        before = {bone.name: bone.matrix.copy() for bone in self.rig.pose.bones}
+        aurora_live._refresh_handles()
+        self.assertEqual(self.rig.pose.bones[names[0]].custom_shape, authored)
+        self.assertTrue(all(self.rig.pose.bones[name].custom_shape for name in names[1:]))
+        self.assertEqual(before, {bone.name: bone.matrix.copy() for bone in self.rig.pose.bones})
+        handles.apply(self.rig, replace=True)
+        self.assertIsNot(self.rig.pose.bones[names[0]].custom_shape, authored)
 
     def test_visibility_buttons_change_the_native_pose_hide_flag_repeatedly(self):
         rigging.setup(bpy.context, self.rig)

@@ -77,8 +77,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.8.0.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.0-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.8.1.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.1-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -183,6 +183,29 @@ excluded from live export, and kept in an **Aurora IK** collection (layer 32
 in Blender 2.93–3.x). Creating controls again is idempotent. Use a simple,
 editable SL armature; limbs already constrained by another rigging tool are
 rejected before adding controls.
+
+Plug-in 0.8.1 gives IK controls substantial, selectable custom shapes:
+hand cuffs with a palm/thumb and direction arrow, foot soles with ankle rings,
+elbow diamonds and knee rings. Tubular surfaces stay visible from different
+angles and provide actual selectable geometry. Left controls are cyan/blue;
+right controls are orange. L/R marks supplement the colors. Shape size follows
+limb proportions, independent of the tiny underlying helper bone's length.
+
+In **Controls**, adjust **Handle size** (0.4–3 times normal) for the current
+rig. **In front** keeps handles visible through the garment. The refresh icon
+rebuilds all eight IK widgets without resetting a pose or changing the solver.
+Selecting **Target** or **Pole** enters Pose Mode and selects the corresponding
+control; you can also click its custom shape directly in the viewport.
+The native [Blender custom-shape display system](https://docs.blender.org/manual/en/4.2/animation/armatures/bones/properties/display.html)
+keeps these shapes outside rendered geometry.
+
+Existing Aurora rigs receive missing/older Aurora widgets on plug-in enable
+or file load. Hand-authored custom shapes are preserved during automatic
+migration and size changes; the explicit refresh action replaces them.
+Widget templates are unlinked datablocks, never scene meshes or synchronized
+objects. Existing poses, keyframes, rest bones, weights, constraints and live
+capture stay unchanged. Size is saved per armature object. Earlier Blender
+uses left/right bone groups for the same colors; 4.0+ uses pose-bone colors.
 
 Enable each hand or foot independently. **Target** selects its control in
 Pose Mode: move it to position the wrist/ankle, rotate it to orient the
@@ -315,7 +338,7 @@ entries, and weight changes trigger a new capture.
 
 ## Live materials
 
-Plug-in **0.8.0 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.8.1 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value

@@ -2,7 +2,7 @@
 import bpy
 from bpy.app.translations import pgettext_iface as tr
 from bpy.props import BoolProperty, EnumProperty
-from . import rigging, skinning, posing
+from . import rigging, skinning, posing, handles
 
 on_weights_changed = None
 
@@ -58,6 +58,27 @@ class AURORA_OT_ik_setup(bpy.types.Operator):
     def execute(self, context):
         try:
             rigging.setup(context, rigging.resolve(context))
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, tr(str(error)))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class AURORA_OT_ik_handles(bpy.types.Operator):
+    bl_idname = "aurora.refresh_ik_handles"
+    bl_label = "Refresh IK handles"
+    bl_description = "Replace IK widgets without changing the pose, weights or solver"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            rig = rigging.resolve(context)
+            rigging.editable(rig)
+            if rig.mode == "EDIT":
+                raise ValueError("Leave Edit Mode before creating IK controls")
+            if not rigging.ready(rig):
+                raise ValueError("Create Aurora IK controls first")
+            handles.apply(rig, replace=True)
         except (ValueError, RuntimeError) as error:
             self.report({"ERROR"}, tr(str(error)))
             return {"CANCELLED"}
@@ -238,6 +259,11 @@ def draw_ik(layout, context):
     if not rigging.ready(rig):
         layout.operator("aurora.create_ik", text="Create IK controls", icon="ADD")
     else:
+        box = layout.box()
+        box.prop(rig, "aurora_live_ik_handle_size", text="Handle size", slider=True)
+        row = box.row(align=True)
+        row.prop(rig, "show_in_front", text="In front")
+        row.operator("aurora.refresh_ik_handles", text="", icon="FILE_REFRESH")
         for prefix, label in (("HAND", "Hands"), ("FOOT", "Feet")):
             box = layout.box()
             box.label(text=label)
@@ -304,5 +330,5 @@ def draw_clean(layout, context):
     layout.operator("aurora.transfer_weights", text="Normalize to 4 weights", icon="BRUSH_DATA").clean = True
 
 
-CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_switch, AURORA_OT_ik_select,
+CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_handles, AURORA_OT_ik_switch, AURORA_OT_ik_select,
            AURORA_OT_pose_setup, AURORA_OT_pose_select, AURORA_OT_look_switch, AURORA_OT_look_center, AURORA_OT_transfer)

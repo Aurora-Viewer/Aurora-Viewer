@@ -2,6 +2,7 @@
 import math
 import bpy
 from mathutils import Matrix, Vector
+from . import handles
 
 PARTS = (
     ("BACK", "Back / torso"), ("HEAD", "Head / neck"), ("ARMS", "Arms"), ("LEGS", "Legs"), ("HANDS", "Bento fingers"),
@@ -177,6 +178,7 @@ def _pole(root, middle, end):
 def setup(context, rig):
     editable(rig)
     if ready(rig):
+        handles.apply(rig)
         return
     if rig.mode == "EDIT":
         raise ValueError("Leave Edit Mode before creating IK controls")
@@ -252,6 +254,7 @@ def setup(context, rig):
             rotation.owner_space = rotation.target_space = "POSE"
             rotation.influence = 0
         rig["aurora_ik_version"] = 1
+        handles.apply(rig)
         context.view_layer.update()
     finally:
         if context.object and context.object.mode != "OBJECT":

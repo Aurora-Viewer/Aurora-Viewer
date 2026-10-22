@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 8, 0), "blender": (2, 93, 0),
+    "version": (0, 8, 1), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -14,11 +14,11 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
-from . import compat, client, materials, weights, starter, exporter, tracking, rigging, skinning, posing, tools_ui
+from . import compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui
 if _reloading:
     # Blender reloads the package during an in-place extension upgrade. Reload
     # dependencies first so the old exporter/client cannot survive that upgrade.
-    for _module in (compat, client, materials, weights, starter, exporter, tracking, rigging, skinning, posing, tools_ui):
+    for _module in (compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui):
         importlib.reload(_module)
 Client = client.Client
 
@@ -66,6 +66,17 @@ def _changed(_scene, depsgraph):
 @persistent
 def _load_pre(_unused):
     _stop()
+
+
+@persistent
+def _refresh_handles(_unused=None):
+    for obj in list(bpy.data.objects):
+        if obj.type == "ARMATURE":
+            handles.apply(obj)
+
+
+def _handle_size_changed(obj, _context):
+    handles.apply(obj)
 
 
 def _stop():
@@ -389,6 +400,9 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "The source stays unchanged.": "Le donneur est préservé.",
     "Back / torso": "Dos / torse", "Head / neck": "Tête / cou", "Bento spine": "Colonne Bento",
     "Controls": "Contrôles", "Hand/foot IK, root/COG and eye targets": "IK des mains/pieds, Root/COG et cibles du regard",
+    "Handle size": "Taille des poignées", "Refresh IK handles": "Actualiser les poignées IK",
+    "Replace IK widgets without changing the pose, weights or solver":
+        "Remplacer les poignées IK sans modifier la pose, les poids ni le solveur",
     "Root / COG": "Root / COG", "Root": "Root", "COG": "COG", "Add root / COG": "Ajouter Root / COG",
     "Look at": "Regard", "Classic eyes": "Yeux classiques", "Bento eyes": "Yeux Bento",
     "Classic": "Classiques", "Bento": "Bento",
@@ -519,12 +533,16 @@ def register():
     for cls in _classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.aurora_live = PointerProperty(type=AURORA_PG_live)
+    bpy.types.Object.aurora_live_ik_handle_size = FloatProperty(name="Handle size", default=1, min=0.4, max=3,
+                                                              update=_handle_size_changed)
     bpy.types.WindowManager.aurora_live_tab = EnumProperty(name="Section", items=tools_ui.TABS, default="LIVE", options={"SKIP_SAVE"})
     bpy.types.WindowManager.aurora_live_show_connection = BoolProperty(default=False, options={"SKIP_SAVE"})
     bpy.types.WindowManager.aurora_live_show_starter = BoolProperty(default=False, options={"SKIP_SAVE"})
     bpy.types.WindowManager.aurora_live_show_advanced_bones = BoolProperty(default=False, options={"SKIP_SAVE"})
     bpy.app.handlers.depsgraph_update_post.append(_changed)
     bpy.app.handlers.load_pre.append(_load_pre)
+    bpy.app.handlers.load_post.append(_refresh_handles)
+    bpy.app.timers.register(_refresh_handles, first_interval=0.1)
 
 
 def unregister():
@@ -532,11 +550,16 @@ def unregister():
     tracking.on_change = None
     tools_ui.on_weights_changed = None
     bpy.app.translations.unregister(__name__)
-    for handlers, callback in ((bpy.app.handlers.depsgraph_update_post, _changed), (bpy.app.handlers.load_pre, _load_pre)):
+    if bpy.app.timers.is_registered(_refresh_handles):
+        bpy.app.timers.unregister(_refresh_handles)
+    for handlers, callback in ((bpy.app.handlers.depsgraph_update_post, _changed), (bpy.app.handlers.load_pre, _load_pre),
+                               (bpy.app.handlers.load_post, _refresh_handles)):
         if callback in handlers:
             handlers.remove(callback)
     if hasattr(bpy.types.Scene, "aurora_live"):
         del bpy.types.Scene.aurora_live
+    if hasattr(bpy.types.Object, "aurora_live_ik_handle_size"):
+        del bpy.types.Object.aurora_live_ik_handle_size
     for name in ("aurora_live_tab", "aurora_live_show_connection", "aurora_live_show_starter", "aurora_live_show_advanced_bones"):
         if hasattr(bpy.types.WindowManager, name):
             delattr(bpy.types.WindowManager, name)

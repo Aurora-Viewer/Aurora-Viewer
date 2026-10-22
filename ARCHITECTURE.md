@@ -31,6 +31,14 @@ optional independent hand/foot IK target/pole controls, preserving SL rest
 bones. Pose selection and visibility use `PoseBone` in Blender 5 and `Bone`
 in older APIs; Edit Mode visibility stays on `EditBone`. In Blender 5,
 `Bone.hide` affects Edit Mode only, so pose display must not read that flag.
+`handles.py` builds cached, unlinked custom-shape meshes with tubular surfaces
+for IK hands, feet, elbows and knees. Feet use the SL foot direction transformed
+back to bone space, keeping their rest soles horizontal. Blue/orange side
+colors use pose-bone color overrides in 4.0+ and separate pose groups earlier.
+A per-object size property updates only widgets. Registration/load migration
+fills missing or older Aurora shapes while retaining authored custom widgets;
+explicit refresh replaces those too. The timer and load hook are removed on
+unregister. No widget operation modifies solver state or deformation/export.
 The ordinary Back group contains only the classic pelvis/torso/chest and
 resets the four folded Bento spine joints to hidden on both show and hide.
 Head/neck is separate. A collapsed Advanced bones section exposes the four
