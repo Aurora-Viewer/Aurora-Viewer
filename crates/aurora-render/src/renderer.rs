@@ -785,6 +785,7 @@ struct Pipelines {
     pick: wgpu::RenderPipeline,
     pick_2s: wgpu::RenderPipeline,
     pick_visible: wgpu::RenderPipeline,
+    pick_overlay: wgpu::RenderPipeline,
 }
 
 struct Ssao {
@@ -3184,6 +3185,10 @@ impl Backend {
             fs: Some("fs_pick_visible"),
             ..pick_desc("visible pick", Some(wgpu::Face::Back))
         });
+        let pick_overlay = pipe(PipeDesc {
+            fs: Some("fs_pick_overlay"),
+            ..pick_desc("transparency overlay pick", None)
+        });
         let refl_obj = refl("reflection objects", "vs_main", "fs_reflect", Vb::Mesh);
         let shadow_desc = |label, fs| PipeDesc {
             label,
@@ -3296,6 +3301,7 @@ impl Backend {
             pick,
             pick_2s,
             pick_visible,
+            pick_overlay,
         }
     }
 
@@ -6334,7 +6340,16 @@ impl Backend {
                     (&self.pipelines.pick, rg.mask, Some(2)),
                     (&self.pipelines.pick_2s, rg.mask_2s, Some(3)),
                 ],
-                &[(blend_pick, rg.blend, None)],
+                &[
+                    (blend_pick, rg.blend, None),
+                    // LLViewerWindow::pickAsync / pickImmediate: debug alpha
+                    // makes transparent surfaces pickable. Reuse the actual
+                    // overlay lists, including hidden faces and only the
+                    // rigged geometry enabled for display, with their full
+                    // two-sided triangles instead of their texture cutouts.
+                    (&self.pipelines.pick_overlay, rg.debug_red, None),
+                    (&self.pipelines.pick_overlay, rg.debug_blue, None),
+                ],
             ];
             for (k, draws) in layers.iter().enumerate() {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

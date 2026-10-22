@@ -1336,6 +1336,14 @@ fn vs_pick(in: VsIn) -> PickOut {
     return out;
 }
 
+// The transparency overlay shows full triangles, independent of alpha.
+// LLViewerWindow::pickAsync / pickImmediate include them while debug alpha
+// is shown, so camera focus must stop at that displayed surface too.
+@fragment
+fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
+    return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
+}
+
 // Record + 1, depth and surface coordinates: Mask keeps its displayed
 // cutout; Blend always intercepts the click, including zero-alpha texels.
 @fragment

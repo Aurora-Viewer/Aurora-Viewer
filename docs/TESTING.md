@@ -720,6 +720,14 @@ at 701, with the asynchronous GPU pick and input queue. Capture at frame 780
 or later. `camera-zero` puts a zero-alpha Blend texture before the Buy cube;
 `camera-te` uses an invisible scripted TE face. Alt-focus must reach the cube
 behind both; `camera-glass` instead reaches the translucent solid pane.
+`camera-mask` uses a fully transparent Mask texel and also reaches the cube.
+Add `-ctrl` to any `camera-*` mode to press Ctrl + Alt together. Repeat with
+`AURORA_DEMO_DEBUG=alpha`: all four modes must focus the highlighted panel
+(976) instead of the cube (971), including Mask holes and invisible TE faces;
+`demo world click result` logs the focus point and target. `camera-occluded`
+adds an opaque wall (977) in front, which must still take the focus with or
+without the overlay. Rigged faces participate only when
+their transparency overlay is displayed (`alpha_rigged` too).
 `plate-hidden` opens the profile of another resident through an invisible
 Blend panel; `plate-wall` keeps the profile closed behind a solid wall.
 `worn-prim` and `worn-mesh` put a scripted attachment on another resident,

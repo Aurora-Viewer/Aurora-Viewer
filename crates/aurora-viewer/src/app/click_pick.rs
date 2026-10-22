@@ -30,8 +30,9 @@
 //! With the depth, a click asks what the next frame draws under its pixel
 //! (`Renderer::request_drawn`): the object of a rigged mesh, which only the
 //! GPU poses, is designated from that answer (scene/drawn.rs). Camera picks
-//! reject transparent texture holes; interactions retain invisible Blend
-//! surfaces. The answer comes a frame after the depth.
+//! reject transparent texture holes unless the transparency overlay shows
+//! their surface; interactions retain invisible Blend surfaces. The answer
+//! comes a frame after the depth.
 //!
 //! `AURORA_CLICK_PICK=wait` reads the depth as before, waiting;
 //! `AURORA_CLICK_PICK=check` does both and logs every click (`click
@@ -339,8 +340,8 @@ impl App {
             (depth, t.elapsed())
         });
         let ticket = g.renderer.request_pick(x, y);
-        // LLToolCamera::handleMouseDown: visible surfaces only. Reading the
-        // posed geometry also avoids phantom hits on an attachment's bind pose.
+        // LLToolCamera::handleMouseDown: displayed surfaces, including the
+        // transparency overlay. Posed geometry avoids an attachment's bind pose.
         let camera = self.alt || self.object_view || (self.build.open && self.build.tool == crate::build::Tool::Focus);
         let mode = if camera {
             aurora_render::DrawnMode::Visible

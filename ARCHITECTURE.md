@@ -1640,7 +1640,12 @@ scene, into a target of 2 × 2 texels (draw record, depth, surface
 coordinates): opaque and masked faces, then the transparent faces in front
 of them. The camera (Alt-click, Object view and Focus) uses the same posed
 geometry with a visible-texture alpha test; touch/build keeps invisible
-Blend surfaces. CPU searches never intersect the unposed rest geometry of
+Blend surfaces. Red/blue transparency overlays contribute their actual draw
+lists to the second pass with full, two-sided triangles and no alpha test,
+including hidden faces and only the rigged faces enabled for display.
+Camera focus therefore stops on the highlighted surface while opaque depth
+still occludes it (`LLViewerWindow::pickAsync` / `pickImmediate`).
+CPU searches never intersect the unposed rest geometry of
 GPU-posed meshes. Nothing is drawn or allocated per frame outside a click.
 Name-tag hit planes and their rectangles are captured with the press and
 tested against that frame's displayed depth, matching the label shader;
