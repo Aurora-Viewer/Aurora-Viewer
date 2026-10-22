@@ -1219,6 +1219,7 @@ impl App {
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
         self.world.rlva.configure(self.settings.rlva_enabled);
+        self.world.rlva.preferences.clone_from(&self.settings.rlva);
         if !self.settings.rlva_enabled {
             self.named_teleport.cancel_scripts();
             self.world.maturity.cancel_script_teleports();

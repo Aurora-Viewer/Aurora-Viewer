@@ -50,7 +50,8 @@ script authors; the command lists below describe this branch specifically.
 - Inventory: detach, addattach/remattach, addoutfit/remoutfit,
   sharedwear/unwear, unsharedwear/unwear. COF changes are checked as deltas;
   native detach and attach messages are checked too. Scripted removal honors
-  nostrip on an item or its ancestors.
+  the case-sensitive nostrip marker on originals, containing folders and
+  folded parent folders. A link's own label does not create that marker.
   Node/subtree attachthis/detachthis locks and same-issuer exceptions follow
   shared links and folded folders; inventory mutation checks prevent moves,
   copies, renames or deletion from invalidating folder locks.
@@ -61,6 +62,18 @@ script authors; the command lists below describe this branch specifically.
   Folded point folders choose the attachment point. Sequential outfit
   transactions retain their issuer until attachment sync finishes; later
   queries wait. Missing shared originals are fetched with bounded retries.
+  Forced wear and getinvworn share a collector, including gestures and
+  single-level folder links. Linked outfits, links back into the operation's
+  subtree and second-level links are excluded. Point folders fold only one
+  object while attaching; gesture and clothing handling follow native folding.
+  Attachment-name blocks are balanced, follow originals before links, and
+  respect modify/no-modify precedence. Legacy folder names, unnamed shared
+  wear, hidden locked presence replies and add/replace folder prefixes are
+  user preferences with the reference's defaults. The default add prefix is
+  `+`; an empty replace prefix disables that override. Presence queries can
+  exempt the requesting issuer without allowing a forced removal through its
+  own lock. Body parts remain visible. getinv excludes folded folders and
+  findfolder chooses the deepest matching path in native traversal order.
   The attachment watchdog preserves locked COF links during replacement,
   adds before resolving an unknown point and removes only unlocked previous
   attachments. Lost locked inventory items are restored at their exact point
@@ -182,9 +195,9 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,341 workspace
+Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,349 workspace
 tests passed, zero failures and 27 ignored; scripts, formatting and Clippy
-are clean. This includes 61 RLVa logic/integration/shader tests, covering
+are clean. This includes 69 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
@@ -205,6 +218,11 @@ aspect-dependent FOV bounds, OwnerSay case folding and malformed clear,
 attachment-name casing, double-precision destinations and teleport headings,
 deferred actors and one-use resolution tickets. An offline packet test proves
 that map resolution emits the ticket without sending a teleport itself.
+Inventory conformance also covers balanced names, link/permission precedence,
+gesture COF planning, folder-link boundaries, folded content rules, deepest
+folder search, old/partial preference defaults, prefix modes, hidden locked
+presence replies and the exact nostrip scope. Native French enabled and
+English disabled captures show the inventory options and their disabled state.
 The additional Vulkan test
 `cargo test --workspace rlva_gpu --locked -- --ignored` checks five sphere
 modes, chained masks, reduced-scene upscaling and overlay alpha holes from

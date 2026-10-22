@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 pub mod camera;
+mod collection;
 mod debug;
 mod editing;
 pub mod effects;
@@ -17,7 +18,9 @@ pub mod environment;
 mod events;
 mod groups;
 mod inventory;
+mod naming;
 mod policy;
+pub mod preferences;
 pub mod privacy;
 mod sitting;
 mod temporary;
@@ -417,6 +420,7 @@ fn valid_option(c: &Command) -> bool {
 #[derive(Default)]
 pub struct Rlva {
     enabled: bool,
+    pub preferences: preferences::Preferences,
     rules: BTreeMap<Uuid, BTreeSet<Rule>>,
     pub pending: Vec<(Uuid, Command)>,
     pub out: Vec<NetCommand>,

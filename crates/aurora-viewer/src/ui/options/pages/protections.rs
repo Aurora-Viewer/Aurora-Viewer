@@ -15,6 +15,33 @@ pub fn page(cx: &mut Cx) {
         cx.keywords("RLVa RLV RestrainedLove")
             .toggle(tr!("rlva-enable"), tr!("rlva-enable-hint"), &field!(rlva_enabled));
         cx.note(tr!("rlva-session-hint"));
+        cx.greyed(!cx.s.rlva_enabled);
+        cx.toggle(tr!("rlva-shared-wear"), tr!("rlva-shared-wear-hint"), &field!(rlva.shared_wear));
+        cx.toggle(
+            tr!("rlva-legacy-naming"),
+            tr!("rlva-legacy-naming-hint"),
+            &field!(rlva.legacy_naming),
+        );
+        cx.toggle(
+            tr!("rlva-hide-attachments"),
+            tr!("rlva-hide-attachments-hint"),
+            &field!(rlva.hide_locked_attachments),
+        );
+        cx.toggle(
+            tr!("rlva-hide-layers"),
+            tr!("rlva-hide-layers-hint"),
+            &field!(rlva.hide_locked_layers),
+        );
+        for (label, field) in [
+            (tr!("rlva-add-prefix"), field!(rlva.wear_add_prefix)),
+            (tr!("rlva-replace-prefix"), field!(rlva.wear_replace_prefix)),
+        ] {
+            cx.row(label, tr!("rlva-prefix-hint"), &field, |ui, settings| {
+                ui.add(egui::TextEdit::singleline((field.get_mut)(settings)).desired_width(100.0))
+                    .changed()
+            });
+        }
+        cx.greyed(false);
         cx.keywords("RLVa RLV RestrainedLove")
             .below()
             .row_with(tr!("rlva-active"), "", &Nothing, |ui, _, st, _| {

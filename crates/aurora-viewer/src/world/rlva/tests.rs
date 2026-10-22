@@ -361,6 +361,101 @@ fn chat(text: &str) -> ChatMessage {
 }
 
 #[test]
+fn rlva_presence_queries_hide_locked_slots_but_exempt_the_requester_and_keep_bodyparts() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::{
+        AttachRequest,
+        inventory::{InvFolder, InvItem},
+    };
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    world.rlva.preferences.hide_locked_layers = true;
+    world.rlva.preferences.hide_locked_attachments = true;
+    let cof = Uuid::from_u128(900);
+    let shirt = Uuid::from_u128(901);
+    let shape = Uuid::from_u128(902);
+    let attachment = Uuid::from_u128(903);
+    world.inventory.folders.insert(
+        cof,
+        Folder {
+            info: InvFolder {
+                id: cof,
+                parent: world.inventory.root,
+                type_default: 46,
+                ..Default::default()
+            },
+            children: vec![],
+            items: vec![shirt, shape, attachment],
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    for (id, kind, flags) in [(shirt, 5, 4), (shape, 13, 0), (attachment, 6, 1)] {
+        world.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                parent: cof,
+                name: "Item".into(),
+                asset_type: kind,
+                flags,
+                ..Default::default()
+            },
+        );
+    }
+    let object = crate::demo::outfit_attachment(&AttachRequest {
+        item_id: attachment,
+        owner_id: world.agent_id,
+        point: 1,
+        add: true,
+        flags: 0,
+        group_mask: 0,
+        everyone_mask: 0,
+        next_owner_mask: 0,
+        name: String::new(),
+        desc: String::new(),
+    });
+    world.objects.upsert(world.main_region.unwrap(), object);
+    command(&mut world.rlva, A, "@remoutfit=n,remattach:chest=n");
+    let shirt_query = Command::parse("getoutfit:shirt=123").unwrap();
+    let attachment_query = Command::parse("getattach:chest=123").unwrap();
+    for query in [&shirt_query, &attachment_query] {
+        assert_eq!(world.rlva_inventory_query(query, A).as_deref(), Some("1"));
+        assert_eq!(world.rlva_inventory_query(query, B).as_deref(), Some("0"));
+    }
+    assert_eq!(
+        world
+            .rlva_inventory_query(&Command::parse("getoutfit:shape=123").unwrap(), B)
+            .as_deref(),
+        Some("1")
+    );
+    assert!(
+        world
+            .rlva_inventory_query(&Command::parse("getoutfitnames=123").unwrap(), B)
+            .unwrap()
+            .split(',')
+            .any(|name| name == "shirt")
+    );
+    assert!(
+        !world.rlva_can_remove(shirt, A),
+        "query exemption does not authorize a forced removal through its own lock"
+    );
+    command(&mut world.rlva, B, "@remoutfit=n,remattach:chest=n");
+    for query in [&shirt_query, &attachment_query] {
+        assert_eq!(world.rlva_inventory_query(query, A).as_deref(), Some("0"));
+    }
+    command(&mut world.rlva, A, "@clear");
+    command(&mut world.rlva, B, "@clear");
+    world.inventory.items.get_mut(&shirt).unwrap().name = "nostrip".into();
+    assert_eq!(world.rlva_inventory_query(&shirt_query, A).as_deref(), Some("0"));
+    world.rlva.preferences.hide_locked_layers = false;
+    assert_eq!(world.rlva_inventory_query(&shirt_query, A).as_deref(), Some("1"));
+}
+
+#[test]
 fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_disable() {
     use crate::world::maturity::{MaturityPreference, Outcome};
     use aurora_net::search::{SIM_ACCESS_MATURE, SIM_ACCESS_PG};

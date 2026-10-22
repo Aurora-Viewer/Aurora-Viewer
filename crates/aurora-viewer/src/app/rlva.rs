@@ -25,6 +25,7 @@ impl App {
     pub(super) fn update_rlva(&mut self) {
         self.demo_rlva();
         self.world.rlva.configure(self.settings.rlva_enabled);
+        self.world.rlva.preferences.clone_from(&self.settings.rlva);
         if !self.settings.rlva_enabled {
             self.named_teleport.cancel_scripts();
             self.world.maturity.cancel_script_teleports();

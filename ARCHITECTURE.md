@@ -88,6 +88,12 @@ named teleports behind a single request ticket. Map resolution only returns
 that ticket; the app sends the resolved teleport through the common guard.
 Superseded replies are ignored. Maturity deferrals also retain the issuer;
 disabling cancels delayed script teleports while preserving user requests.
+`rlva/naming.rs` handles balanced attachment-name blocks and legacy folder
+syntax. `collection.rs` is shared by forced wear and worn-inventory queries:
+it folds point folders and single-level folder links, includes gestures,
+honors shared-wear and prefix preferences, and reports missing targets for
+asynchronous fetching. Query counts use one ancestry walk per collected item.
+`preferences.rs` persists user choices separately from session restrictions.
 
 This does not yet provide full RLVa parity. [RLVa implementation status](docs/RLVA.md)
 lists the supported commands and remaining families; versionnum deliberately
