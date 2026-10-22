@@ -23,18 +23,55 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 </div>
 
 **High framerates and low frame time, ultra fast teleports/loading, thanks to modern technologies like Vulkan/Rust.**  
-<img width="2559" height="1393" alt="image psd(1)" src="https://github.com/user-attachments/assets/8adae9f8-fcfe-4c6a-a733-678d10414755" />  
+<img width="1920" height="1032" alt="Aurora Viewer in a Japanese garden, with the People, Controls, Places, Inventory, Performance and Conversations windows open" src="docs/screenshots/world.webp" />  
 
 
 **All the tools you need to experience SecondLife the way it's meant to be experienced, Photo tools, Auto Hover Height, tons of QoL !**  
-<img width="2559" height="1390" alt="image" src="https://github.com/user-attachments/assets/297a89a3-fd89-4741-b676-010f257e7736" />  
+<img width="1920" height="1029" alt="Building in Aurora: the Transform panel next to a selected box, with the About Land, Region / Estate, profile and voice windows" src="docs/screenshots/build-land.webp" />  
 
 
 **Modern UI and Legacy toggles to get the Legacy UI back on the modules you want! (if you prefer).**  
-<img width="2559" height="1390" alt="image" src="https://github.com/user-attachments/assets/4c52560f-eef6-41e0-b5a1-594ebaf7f6c8" />  
+<img width="1116" height="717" alt="The Aurora page of Preferences, with an Aurora or Legacy choice for each redesigned window" src="docs/screenshots/preferences.webp" />  
 
 **New login experience with multi-avatar support.**  
-<img width="2559" height="1393" alt="image psd(2)" src="https://github.com/user-attachments/assets/8fcc3f12-96c9-42eb-9894-1cc4be0569c8" />  
+<img width="1920" height="1032" alt="The Aurora login screen under an aurora, with two avatar accounts side by side and the news" src="docs/screenshots/login.webp" />  
+
+<details>
+<summary><b>More screenshots</b>: conversations, notifications, inventory, places, search and the resource monitor</summary>
+<br>
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/conversations.webp" alt="The Conversations window: a private chat with bubbles and a teleport offer as a card"><br>
+      <b>Conversations</b> like a messenger: bubbles, pictures, and teleport offers or gifts right in the thread.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/notification-center.webp" alt="The notification center unrolled from the bell, with a teleport offer and a simulator notice"><br>
+      <b>A notification center</b> that unrolls from the bell, with the history of everything you missed.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/screenshots/inventory.webp" alt="The inventory widened into an explorer, with folders, item rights and a detail pane"><br>
+      <b>An inventory</b> that widens into an explorer: folders, details, filters and each item's rights at a glance.
+    </td>
+    <td valign="top">
+      <img src="docs/screenshots/places.webp" alt="The Places window: landmarks and visited places in one list, with a preview of the selected place"><br>
+      <b>Places</b>: favourites, landmarks and history in one list, with a preview of each place.
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <img src="docs/screenshots/search.webp" alt="The Search window: one field, type chips, rating filters and the details beside the results"><br>
+      <b>One search</b> for residents, places, events, groups and classifieds, with the details beside the results.
+    </td>
+    <td valign="top">
+      <img src="docs/screenshots/performance.webp" alt="The resource monitor: processor, graphics card, memory, network and disk, with the frame time split by task"><br>
+      <b>A resource monitor</b> that shows where every millisecond, megabyte and kilobit goes.
+    </td>
+  </tr>
+</table>
+</details>
 
 
 Aurora Viewer is a Second Life client built from scratch in Rust, with a
@@ -162,7 +199,7 @@ are planned or in progress: they are not in the viewer yet.
 
 ### A photo mode like a real camera
 
-<img width="2000" height="1070" alt="The photo viewfinder: rule of thirds, the autofocus point locked on an avatar's face, the focal ring and the exposure readouts" src="docs/screenshots/photo-viewfinder.jpg" />
+<img width="1920" height="1025" alt="The photo viewfinder: rule of thirds, the autofocus point locked on an avatar's face, the camera pad, the focal ring and the exposure readouts" src="docs/screenshots/viewfinder.webp" />
 
 - **A viewfinder, full screen**: the world under a camera's overlay, with
   three display levels from everything to the picture alone.
