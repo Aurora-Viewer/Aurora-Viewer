@@ -107,7 +107,7 @@ Until 2026-10-15 these buttons opened a report form inside the viewer. It is
 disabled for now; its code stays in the tree, out of the build, to be
 brought back later: uncomment every line marked "Bug report form (disabled,
 see main.rs)" (`main.rs` lists its files). The rest of this page describes
-that form, as it works once enabled, and its GitHub / API setup.
+that form, as it works once enabled, and its GitHub setup.
 `AURORA_DEMO_BUG_REPORT` has no effect while it is disabled.
 
 The shared form can be reached from the top bar, Help and the login screen.
@@ -122,8 +122,8 @@ button opens the same form with a title and the data kept from the stopped
 session. The tester states what they were doing, chooses the information to
 publish, then authorises the sending. The language, the version and the log
 come from the session that crashed, even when the window is recovered at the
-next launch. The public diagnostics and the private ZIP are unticked at
-first; the full traces can join the private ZIP if the tester chooses so.
+next launch. The public diagnostics are unticked at first; the full traces
+stay in the local `private-do-not-upload` folder of the saved copy.
 An image can be attached from a file. As the viewer's GitHub authorisation
 is kept in memory only, sending directly from the crash window requires a
 new authorisation from the tester.
@@ -134,9 +134,7 @@ Create a **GitHub App**, in the developer settings of the Aurora-Viewer
 organisation, then:
 
 - turn on **Enable Device Flow**, keep the expiry of the authorisations;
-- for the Device Flow alone, leave the callback and setup URLs empty; for
-  the private ZIPs, add the callback described further down. Disable the
-  webhook;
+- leave the callback and setup URLs empty and disable the webhook;
 - repository permissions: **Issues — Read and write**, read-only metadata,
   no other permission;
 - public application (**Any account**) for the testers; install it on the
@@ -176,8 +174,8 @@ A new report starts on Description. Closing the window keeps in memory the
 text, the tab, the scroll position, the checkboxes, the image and the
 sending mode, including the GitHub authorisation in progress, until the end
 of the viewer session.
-A sending error also keeps the draft. After the issue and its files have
-been fully published, the link of the report and its folder stay available;
+A sending error also keeps the draft. After the issue has been published,
+the link of the report and its folder stay available;
 reopening the window or choosing "New report" then prepares a fresh form.
 The browser does not confirm the publication to the viewer: the tester
 clicks "I have published the report" after sending on GitHub to clear the
@@ -202,46 +200,11 @@ This option never replaces an image imported from a file.
 Each save creates a folder under `data/bug-reports/`, next to `data/logs/`.
 The `public` subfolder contains the chosen text and, if included,
 `screenshot.png`. The `private-do-not-upload` folder contains the private
-local diagnostics and must never be attached to a public issue. The images
-of the direct sending are uploaded to `api.auroraviewer.com`, then displayed
-in the issue. The tester's GitHub authorisation is never sent to this
-service. The browser mode keeps the manual addition of the screenshot from
-`public`.
-
-### Public images and private logs
-
-The PHP service is in the private repository
-[aurora-api](https://github.com/Aurora-Viewer/aurora-api), linked to Clever Cloud.
-The Cellar bucket stays private: the API exposes the screenshots and
-protects the ZIPs. The viewer checks that the service is available before
-creating an issue with files, declares their SHA-256 hashes in the report,
-then sends them once the issue number has been received. The service
-accepts only the file announced in a recent issue of the Aurora-Viewer
-repository. Images: 16 MiB, 1920 pixels a side at most, PNG re-encoding on
-the server side.
-
-"Share complete logs with developers only", in Data, is unticked by default
-and offered for sending from Aurora. The ZIP contains the log of this
-session and the full diagnostics; it can therefore include fields unticked
-for the public report and personal information. It stays in
-`private-do-not-upload`, separate from the public copy. Limits: 64 MiB
-before compression and 16 MiB compressed; a missing or oversized log stops
-the preparation and keeps the draft. No real ZIP is sent in demo mode.
-
-The link of the ZIP appears in the public issue, but downloading it requires
-the GitHub authorisation of an account that has access to the private
-`aurora-api` repository. The GitHub App must include this repository in its
-installation and have the callback URL
-`https://api.auroraviewer.com/auth/callback`. Its Client secret is
-configured only in the Clever Cloud variable `GITHUB_CLIENT_SECRET`.
-The developer sessions last fifteen minutes and the access right is checked
-again at each download. No public cache receives the ZIPs.
-
-After a partial error, the issue number, the files and the draft stay in
-memory, including after the form is closed. "Finish uploading files"
-resumes the same report and keeps the changes made in GitHub; it does not
-create a second issue. A new form is prepared only after the whole sending
-has succeeded.
+local diagnostics and must never be attached to a public issue. Nothing
+leaves the PC besides the text of the issue: GitHub's API takes no
+attachment, so in both modes the viewer opens the `public` folder and the
+tester drags `screenshot.png` into the issue themselves. Aurora runs no
+server of its own for the reports.
 
 ### Validation
 
