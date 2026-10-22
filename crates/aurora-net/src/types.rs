@@ -1387,6 +1387,13 @@ pub enum NetCommand {
         message: String,
         channel: i32,
     },
+    /// A protocol IM response, after query/consent checks rather than user IM policy.
+    ImReply {
+        to: Uuid,
+        message: String,
+        busy: bool,
+        offline: bool,
+    },
     RequestObjects {
         handle: RegionHandle,
         local_ids: Vec<u32>,

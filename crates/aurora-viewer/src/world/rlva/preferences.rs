@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
+    pub im_queries: bool,
+    pub im_queries_auto_share: bool,
     pub legacy_naming: bool,
     pub shared_wear: bool,
     pub hide_locked_attachments: bool,
@@ -16,6 +18,8 @@ pub struct Preferences {
 impl Default for Preferences {
     fn default() -> Self {
         Self {
+            im_queries: true,
+            im_queries_auto_share: false,
             legacy_naming: true,
             shared_wear: true,
             hide_locked_attachments: false,

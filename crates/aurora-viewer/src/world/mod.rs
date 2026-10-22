@@ -3074,15 +3074,23 @@ impl World {
     }
 
     fn on_im(&mut self, im: InstantMessage) {
-        if matches!(im.dialog, 0 | 17 | 41 | 42)
-            && !self.rlva_allows_im("recvim", if im.dialog == 17 { im.session_id } else { im.from_agent_id })
-        {
-            return;
-        }
         if self.im_blocked(&im) {
             return;
         }
         if self.anti_spam_im(&im) {
+            return;
+        }
+        // IM queries obey the same friends-only policy, before recvim.
+        if im.dialog == 0 && self.friends_only_drops(&im.from_agent_id, &im.from_name) {
+            log::info!("message from a non-friend dropped (friends only)");
+            return;
+        }
+        if self.rlva_im_query(&im) {
+            return;
+        }
+        if matches!(im.dialog, 0 | 17 | 41 | 42)
+            && !self.rlva_allows_im("recvim", if im.dialog == 17 { im.session_id } else { im.from_agent_id })
+        {
             return;
         }
         // IM_TYPING_START / STOP (llimprocessing.cpp: processIMTypingStart /
@@ -3094,12 +3102,6 @@ impl World {
             return;
         }
         if self.on_session_im(&im) || self.on_status_im(&im) || self.on_im_offer(&im) {
-            return;
-        }
-        // VoiceCallsFriendsOnly: a non-friend's message is neither shown nor
-        // answered
-        if im.dialog == 0 && self.friends_only_drops(&im.from_agent_id, &im.from_name) {
-            log::info!("message from a non-friend dropped (friends only)");
             return;
         }
         // decided before the message opens its conversation
@@ -3477,6 +3479,11 @@ impl World {
     /// Answer a notification: messages to send and a URL to open.
     pub fn respond_notification(&mut self, id: u64, r: notifications::Response) -> (Vec<aurora_net::NetCommand>, Option<String>) {
         let data = self.notifications.list.iter().find(|n| n.id == id).map(|n| n.data.clone());
+        if let Some(notifications::Data::RlvaQuery { from, exceptions }) = data {
+            self.rlva_answer_im_query(from, exceptions, &r);
+            self.notifications.respond(id, r, |_| Uuid::nil(), Uuid::nil());
+            return (Vec::new(), None);
+        }
         // the experience's profile opens over its question, which stays
         if let notifications::Response::OpenExperience(experience) = r {
             self.experiences.open_profile(experience);

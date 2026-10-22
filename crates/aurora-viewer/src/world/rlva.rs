@@ -9,6 +9,8 @@ use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetCommand};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
+const VERSION: &str = "RestrainedLove viewer v0.0 (Aurora experimental RLVa)";
+
 pub mod camera;
 mod collection;
 mod debug;
@@ -17,6 +19,7 @@ pub mod effects;
 pub mod environment;
 mod events;
 mod groups;
+mod im_queries;
 mod inventory;
 mod naming;
 mod policy;
@@ -421,6 +424,7 @@ fn valid_option(c: &Command) -> bool {
 pub struct Rlva {
     enabled: bool,
     pub preferences: preferences::Preferences,
+    pub im: im_queries::Queries,
     rules: BTreeMap<Uuid, BTreeSet<Rule>>,
     pub pending: Vec<(Uuid, Command)>,
     pub out: Vec<NetCommand>,
@@ -437,7 +441,7 @@ pub struct Rlva {
     pub environment_water: Option<super::eep::WaterFrame>,
     pub environment_day: Option<std::sync::Arc<super::eep::DayCycle>>,
     pub environment_request: Option<(Uuid, Command)>,
-    pub pseudo_sex: Option<bool>,
+    pub pseudo_sex: Option<String>,
     pub resolution_divisor: Option<u32>,
     pub appearance_busy: bool,
     pub self_detach: Option<(Uuid, Uuid)>,
@@ -512,6 +516,7 @@ impl Rlva {
         }
         self.enabled = enabled;
         self.rules.clear();
+        self.im = Default::default();
         self.pending.clear();
         self.out.clear();
         self.appearance.clear();
@@ -707,7 +712,7 @@ impl Rlva {
             {
                 let reply = match c.behaviour.as_str() {
                     // Do not claim a full specification version before parity.
-                    "version" | "versionnew" => Some("RestrainedLove viewer v0.0 (Aurora experimental RLVa)".to_owned()),
+                    "version" | "versionnew" => Some(VERSION.to_owned()),
                     "versionnum" => Some("0".to_owned()),
                     "getstatus" => Some(self.status(Some(source), &c.option)),
                     "getstatusall" => Some(self.status(None, &c.option)),

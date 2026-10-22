@@ -2776,6 +2776,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   them, then switches RLVa off at frame 760. Capture after frame 800 in EN
   and FR: verify the switch, the active list and the empty released list.
   This scenario never saves the opt-in to the normal viewer's preferences.
+  `im-query` applies fly/IM restrictions and delivers an online synthetic
+  `@list` request at frame 740. The native permission card offers sharing
+  once, remembering consent, or declining. Capture after frame 800 in EN/FR.
   `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
   `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
   mode to the same scene. `overlay` uses the demo's transparent-hole texture

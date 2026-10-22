@@ -26,6 +26,15 @@ script authors; the command lists below describe this branch specifically.
 - IM: sendim/to, recvim/from, startim/to; share and sendgesture.
   Distance exclusion ranges are intersected across issuers, including the
   unbounded/off-region case; specific recipient blocks still win.
+- Online private IM queries: exact @version, @stopim, @list and @except,
+  filtered by mute, spam and friends-only policy before recvim. Listing
+  restrictions or exceptions requires a native permission question by default;
+  sharing once, remembering consent and declining are distinct actions.
+  The remembered choice is a user preference. stopim closes an existing
+  startim-restricted conversation and its call even when optional queries are
+  disabled. Protocol replies bypass user IM locks, with bounded UTF-8 packets,
+  busy/normal session fields and the offline-friend flag. Global disable drops
+  pending replies and questions; IMs never become object command sources.
 - Movement: fly, jump, unsit, sit, alwaysrun and temprun;
   forced fly, setrot, sit, sitground and unsit.
   A forced ground sit leaves an object seat, waits for the confirmed stand,
@@ -160,6 +169,8 @@ script authors; the command lists below describe this branch specifically.
   world labels, overlays, HUDs and UI. Window-space picks map to the reduced
   depth surface. `default` or disabling RLVa releases the override. Arbitrary
   settings are not exposed.
+  AvatarSex preserves the exact accepted boolean text in its reply; `default`
+  is not a pseudo boolean. Disabling clears that session-only value.
 
 `getcommand` advertises the handlers actually present. `versionnum` returns
 0 and the version string identifies the experimental implementation rather
@@ -195,9 +206,9 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,349 workspace
+Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,356 workspace
 tests passed, zero failures and 27 ignored; scripts, formatting and Clippy
-are clean. This includes 69 RLVa logic/integration/shader tests, covering
+are clean. This includes 76 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
@@ -223,6 +234,10 @@ gesture COF planning, folder-link boundaries, folded content rules, deepest
 folder search, old/partial preference defaults, prefix modes, hidden locked
 presence replies and the exact nostrip scope. Native French enabled and
 English disabled captures show the inventory options and their disabled state.
+IM-query tests cover consent, deduplicated questions, exception formatting,
+remembered permission, friends/block/receive filters, session closure,
+disable cancellation, Unicode splitting and encoded busy/normal IM fields.
+Native EN/FR captures show the real consent card while IM locks are active.
 The additional Vulkan test
 `cargo test --workspace rlva_gpu --locked -- --ignored` checks five sphere
 modes, chained masks, reduced-scene upscaling and overlay alpha holes from

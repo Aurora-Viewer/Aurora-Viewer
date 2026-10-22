@@ -1834,6 +1834,17 @@ impl Session<'_> {
             }
             NetCommand::RequestDisplayNames(ids) => self.request_display_names(ids),
             NetCommand::SetDisplayName { old, new } => self.set_display_name(old, new),
+            NetCommand::ImReply {
+                to,
+                message,
+                busy,
+                offline,
+            } => {
+                let name = format!("{} {}", self.login.first_name, self.login.last_name);
+                if let Some(packet) = crate::im_reply::packet(self.agent_id(), self.session_id(), &name, to, &message, busy, offline) {
+                    self.send_main(&packet, true);
+                }
+            }
             NetCommand::SendIm { to, message } => self.send_im(to, &message, 0),
             NetCommand::OfferTeleport { to, message } => {
                 let mut m = StartLure::default();

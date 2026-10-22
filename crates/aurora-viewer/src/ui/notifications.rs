@@ -400,6 +400,11 @@ pub(super) fn card(
                         ));
                     }
                 }
+                Data::RlvaQuery { .. } => {
+                    buttons.push((aurora_i18n::tr!("rlva-im-share-once").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("rlva-im-share-always").into(), Response::Button(1), false));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
+                }
                 Data::Friend { .. } | Data::Group { .. } | Data::CallingCard { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));

@@ -24,8 +24,27 @@ impl App {
 
     pub(super) fn update_rlva(&mut self) {
         self.demo_rlva();
+        if std::mem::take(&mut self.world.rlva.im.remember) {
+            self.settings.rlva.im_queries_auto_share = true;
+            if !self.demo {
+                self.settings.save();
+            }
+        }
         self.world.rlva.configure(self.settings.rlva_enabled);
         self.world.rlva.preferences.clone_from(&self.settings.rlva);
+        if !self.settings.rlva_enabled || !self.settings.rlva.im_queries {
+            self.world
+                .notifications
+                .list
+                .retain(|notification| !matches!(notification.data, crate::world::notifications::Data::RlvaQuery { .. }));
+        }
+        for id in std::mem::take(&mut self.world.rlva.im.close) {
+            self.chat_ui.forget(id);
+            if self.chat_ui.selected == Some(id) {
+                self.chat_ui.selected = None;
+                self.chat_ui.show_profile = false;
+            }
+        }
         if !self.settings.rlva_enabled {
             self.named_teleport.cancel_scripts();
             self.world.maturity.cancel_script_teleports();
@@ -85,7 +104,7 @@ impl App {
         // Protocol replies are not user chat and must bypass chat redirection
         // and sendchannel, as RlvUtil::sendChatReply does.
         for command in std::mem::take(&mut self.world.rlva.out) {
-            if matches!(command, NetCommand::ChatReply { .. }) {
+            if matches!(command, NetCommand::ChatReply { .. } | NetCommand::ImReply { .. }) {
                 self.net.send(command);
             } else {
                 self.send(command);
@@ -177,6 +196,11 @@ impl App {
                     "@setcam_focus:{};4;0/-1/0=force,setcam_fovmin:0.6=n,setcam_fovmax:0.9=n",
                     crate::demo::DEMO_LOUP
                 )
+            } else if scenario == "im-query" {
+                self.panels.settings = false;
+                self.panels.inventory = false;
+                self.panels.chat = true;
+                "@fly=n,recvim=n,sendim=n".to_owned()
             } else if scenario == "sitting" {
                 self.panels.settings = false;
                 self.panels.chat = false;
@@ -270,6 +294,20 @@ impl App {
         }
         if mode == "sitting" && self.frame_count == 740 {
             self.rlva_demo_message("@sitground=force".to_owned());
+        }
+        if mode == "im-query" && self.frame_count == 740 {
+            self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: crate::demo::DEMO_TESS,
+                from_name: "Tess Example".into(),
+                to_agent_id: self.world.agent_id,
+                dialog: 0,
+                session_id: Uuid::nil(),
+                message: "@list".into(),
+                offline: false,
+                from_group: false,
+                binary_bucket: vec![],
+                timestamp: 0,
+            }));
         }
         if mode == "sitting" && self.frame_count == 810 {
             log::info!(
@@ -402,7 +440,7 @@ impl App {
             if c.behaviour.starts_with("getdebug_") {
                 if let Param::Reply(channel) = c.param {
                     let text = match c.behaviour.as_str() {
-                        "getdebug_avatarsex" => self.world.rlva.pseudo_sex.map_or_else(
+                        "getdebug_avatarsex" => self.world.rlva.pseudo_sex.as_deref().map_or_else(
                             || {
                                 self.world
                                     .visual_params(&self.world.agent_id)
@@ -412,7 +450,7 @@ impl App {
                                     })
                                     .unwrap_or_default()
                             },
-                            |value| u8::from(value).to_string(),
+                            str::to_owned,
                         ),
                         "getdebug_aspectratio" => {
                             let rect = self.egui_ctx.content_rect();

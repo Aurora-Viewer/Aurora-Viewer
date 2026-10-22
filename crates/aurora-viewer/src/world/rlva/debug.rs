@@ -16,9 +16,7 @@ impl Rlva {
         }
         match command.behaviour.as_str() {
             "setdebug_avatarsex" => match command.option.as_str() {
-                "true" | "1" => self.pseudo_sex = Some(true),
-                "false" | "0" => self.pseudo_sex = Some(false),
-                "default" => self.pseudo_sex = None,
+                "true" | "1" | "false" | "0" => self.pseudo_sex = Some(command.option.clone()),
                 _ => {}
             },
             _ => {
@@ -30,5 +28,27 @@ impl Rlva {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rlva_avatar_sex_pseudo_debug_retains_the_original_boolean_text() {
+        let mut r = Rlva::default();
+        r.configure(true);
+        for text in ["true", "false", "1", "0"] {
+            r.debug_force(
+                Uuid::from_u128(1),
+                &Command::parse(&format!("setdebug_avatarsex:{text}=force")).unwrap(),
+            );
+            assert_eq!(r.pseudo_sex.as_deref(), Some(text));
+        }
+        r.debug_force(Uuid::from_u128(1), &Command::parse("setdebug_avatarsex:default=force").unwrap());
+        assert_eq!(r.pseudo_sex.as_deref(), Some("0"), "default is not a valid pseudo boolean");
+        r.configure(false);
+        assert!(r.pseudo_sex.is_none());
     }
 }

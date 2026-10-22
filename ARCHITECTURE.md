@@ -94,6 +94,11 @@ it folds point folders and single-level folder links, includes gestures,
 honors shared-wear and prefix preferences, and reports missing targets for
 asynchronous fetching. Query counts use one ancestry walk per collected item.
 `preferences.rs` persists user choices separately from session restrictions.
+`rlva/im_queries.rs` handles online version/stop/list/exception requests after
+mute/friends-only checks and before IM receive restrictions. Listing uses the
+native notification consent path, with an explicit remembered preference.
+`aurora-net/im_reply.rs` encodes bounded busy/normal responses independently
+of user IM locks; disabling drops pending responses and permission questions.
 
 This does not yet provide full RLVa parity. [RLVa implementation status](docs/RLVA.md)
 lists the supported commands and remaining families; versionnum deliberately
