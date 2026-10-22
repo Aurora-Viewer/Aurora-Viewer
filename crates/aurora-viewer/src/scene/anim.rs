@@ -995,7 +995,9 @@ impl Controller {
         // joint states per joint: (priority, weight, rotation, position),
         // highest priority first, newer motions first among equals
         // (LLJointStateBlender::addJointState)
-        type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>, bool);
+        // Last flag: this source motion predates the editing arm, which
+        // starts on selection rather than with the default motions.
+        type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>, bool, bool);
         let mut states: Vec<Vec<State>> = vec![Vec::new(); n];
         for m in self.motions.iter_mut().filter(|_| !hold_pose) {
             if m.weight <= 0.0 {
@@ -1022,7 +1024,8 @@ impl Controller {
                 let s = &mut states[j];
                 let at = s.iter().position(|o| prio > o.0).unwrap_or(s.len());
                 if at < JOINT_STATES {
-                    s.insert(at, (prio, m.weight, rot, pos, false));
+                    let activation = if a.looping { m.continuous_activation } else { m.activation };
+                    s.insert(at, (prio, m.weight, rot, pos, false, self.pointing.animation_is_older(activation)));
                     s.truncate(JOINT_STATES);
                 }
             }
@@ -1041,15 +1044,22 @@ impl Controller {
         };
         for (j, prio, w, r, additive) in procedural {
             if let Some(s) = states.get_mut(j) {
+                let editing_arm = !additive && prio == HIGH_PRIORITY && self.pointing.arm_joint(j);
                 // the additive motions are blended first
                 // (LLMotionController::updateMotions), so they come before
                 // the regular states of their priority
                 let at = s
                     .iter()
-                    .position(|o| if additive { prio >= o.0 } else { prio > o.0 })
+                    .position(|o| {
+                        if additive {
+                            prio >= o.0
+                        } else {
+                            prio > o.0 || editing_arm && prio == o.0 && o.5
+                        }
+                    })
                     .unwrap_or(s.len());
                 if at < JOINT_STATES {
-                    s.insert(at, (prio, w, Some(r), None, additive));
+                    s.insert(at, (prio, w, Some(r), None, additive, false));
                     s.truncate(JOINT_STATES);
                 }
             }
@@ -1064,7 +1074,7 @@ impl Controller {
             let mut pos = Vec3::ZERO;
             let mut top = 0.0f32;
             let mut added: Option<Quat> = None;
-            for &(_, w, r, p, additive) in s {
+            for &(_, w, r, p, additive, _) in s {
                 if additive {
                     // LLJointStateBlender::blendJointStates: what the
                     // stronger regular states leave of its weight
@@ -1145,7 +1155,7 @@ impl Controller {
                 rig.names
                     .get(*name)
                     .and_then(|&j| states.get(j))
-                    .is_some_and(|states| states.iter().any(|&(priority, weight, _, _, _)| priority >= 5 && weight > 0.01))
+                    .is_some_and(|states| states.iter().any(|&(priority, weight, _, _, _, _)| priority >= 5 && weight > 0.01))
             })
         };
         let allowed = [
@@ -1261,8 +1271,8 @@ impl Controller {
             }
         }
         // LLEditingMotion requests HAND_POSE_RELAXED_R at priority 3.
-        if self.pointing.editing() && request.is_none_or(|(priority, _)| priority < HIGH_PRIORITY) {
-            request = Some((HIGH_PRIORITY, 7));
+        if self.pointing.editing() && request.is_none_or(|(priority, _)| priority < 3) {
+            request = Some((3, 7));
         }
         self.hands.update(request.map(|r| r.1), now);
         self.live_morphs.extend(self.hands.weights());

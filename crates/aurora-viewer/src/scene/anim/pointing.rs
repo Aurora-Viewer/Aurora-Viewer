@@ -22,15 +22,24 @@ pub(super) struct Pointing {
     target: Fade,
     arm: Option<[(usize, Quat); 4]>,
     original: Option<[(usize, Quat); 4]>,
+    started: Option<Instant>,
     torso: Quat,
 }
 
 impl Pointing {
+    pub(super) fn animation_is_older(&self, activation: Instant) -> bool {
+        self.started.is_none_or(|started| activation <= started)
+    }
+
+    pub(super) fn arm_joint(&self, joint: usize) -> bool {
+        self.original.is_some_and(|joints| joints.iter().any(|(j, _)| *j == joint))
+    }
     pub(super) fn editing(&self) -> bool {
         self.edit.weight > 0.0
     }
 
     pub(super) fn resume(&mut self, duration: Duration) {
+        self.started = self.started.map(|at| at + duration);
         for fade in [&mut self.edit, &mut self.target] {
             fade.change = fade.change.map(|at| at + duration);
         }
@@ -38,6 +47,9 @@ impl Pointing {
 
     pub(super) fn states(&mut self, rig: &Rig, frame: Frame<'_>, now: Instant, dt: f32) -> Vec<ProceduralState> {
         let editing = frame.point.is_some_and(|p| p.is_finite());
+        if editing && !self.edit.on {
+            self.started = Some(now);
+        }
         let weight = self.edit.update(editing, now, if editing { 0.0 } else { 0.5 });
         let target_weight = self.target.update(frame.aiming, now, if frame.aiming { 0.3 } else { 0.5 });
         let mut out = Vec::new();
@@ -120,7 +132,7 @@ impl Pointing {
         }
         if target_weight > 0.0
             && let (Some(torso), Some(hand), Some(look)) = (joint("mTorso"), joint("mWristRight"), frame.look)
-            && let (Some(aim), Some(hand_aim)) = (facing(look), facing(rotation(world[hand]) * -Vec3::Y))
+            && let (Some(aim), Some(hand_aim)) = (look.try_normalize().and_then(facing), facing(rotation(world[hand]) * -Vec3::Y))
         {
             let current = rotation(world[torso]);
             let goal = (current.inverse() * aim * hand_aim.inverse() * current).normalize();
@@ -295,5 +307,94 @@ mod tests {
             evaluate(&mut c, &rig, now + Duration::from_secs_f32(frame as f32 / 60.0));
         }
         assert_eq!(c.pointing.target.weight, 0.0);
+    }
+
+    #[test]
+    fn editing_priority_ties_follow_motion_activation_order() {
+        let rig = rig();
+        let shoulder = rig.names["mShoulderLeft"];
+        let now = Instant::now();
+        let id = Uuid::new_v4();
+        let later = Uuid::new_v4();
+        let clip = |angle| {
+            Arc::new(BoundAnim::bind(
+                Animation {
+                    base_priority: 2,
+                    duration: 1.0,
+                    emote_name: String::new(),
+                    loop_in: 0.0,
+                    loop_out: 1.0,
+                    looping: true,
+                    ease_in: 0.0,
+                    ease_out: 0.0,
+                    hand_pose: 1,
+                    joints: vec![JointMotion {
+                        joint_name: "mShoulderLeft".into(),
+                        priority: 2,
+                        rot_keys: vec![aurora_assets::anim::RotKey {
+                            time: 0.0,
+                            rotation: Quat::from_rotation_x(angle),
+                        }],
+                        pos_keys: Vec::new(),
+                    }],
+                },
+                &rig,
+            ))
+        };
+        let older = clip(0.6);
+        let newer = clip(-0.5);
+        let signal = |id, at| PlayingAnimation {
+            id,
+            sequence: 1,
+            sequence_start: at,
+            continuous_start: at,
+        };
+        let mut c = Controller::default();
+        c.sync(&[signal(id, now)], now, |_| Some(older.clone()));
+        evaluate(&mut c, &rig, now);
+        c.point = Some(Vec3::new(4.0, 1.0, 1.5));
+        for frame in 1..100 {
+            evaluate(&mut c, &rig, now + Duration::from_secs_f32(frame as f32 / 60.0));
+        }
+        assert!(
+            c.rot[shoulder].angle_between(Quat::from_rotation_x(0.6)) > 0.2,
+            "a newer editing motion wins priority 2"
+        );
+        assert!(
+            c.live_morphs().iter().any(|&(param, weight)| param == 669 && weight > 0.9),
+            "the editing hand request has priority 3"
+        );
+        let at = now + Duration::from_secs(2);
+        c.sync(&[signal(id, now), signal(later, at)], at, |key| {
+            Some(if *key == id { older.clone() } else { newer.clone() })
+        });
+        evaluate(&mut c, &rig, at);
+        assert!(
+            c.rot[shoulder].angle_between(Quat::from_rotation_x(-0.5)) < 0.001,
+            "a newer priority-2 animation wins over editing"
+        );
+    }
+
+    #[test]
+    fn gun_targeting_depends_on_direction_rather_than_target_distance() {
+        let rig = rig();
+        let now = Instant::now();
+        let direction = Vec3::new(3.0, -2.0, 1.0);
+        let mut near = Controller {
+            aiming: true,
+            look: Some(direction),
+            ..Controller::default()
+        };
+        let mut far = Controller {
+            aiming: true,
+            look: Some(direction * 10.0),
+            ..Controller::default()
+        };
+        for frame in 0..120 {
+            let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+            evaluate(&mut near, &rig, at);
+            evaluate(&mut far, &rig, at);
+        }
+        assert!(near.pointing.torso.angle_between(far.pointing.torso) < 0.002);
     }
 }

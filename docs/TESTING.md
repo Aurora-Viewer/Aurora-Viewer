@@ -613,6 +613,10 @@ when unfocused") is ignored during a screenshot.
   `remote-release` receives a clear then. Capture at 760 and 940 to check the
   arm pointing and its half-second release. `aim` adds a synthetic gun pose
   to exercise the additive torso targeting motion. No grid assets are used.
+  The fixture disables the demo account's AO and Movelock and closes the
+  inventory so the gesture is visible.
+  `AURORA_DEMO_CLASSIC=1` supplies the remote avatar's appearance. Keep
+  that avatar rendered fully instead of as a complexity silhouette.
 - **`AURORA_DEMO_LOOKAT=1`**: gaze tracking enabled (in memory only) and
   gaze of a remote avatar; the cursor is held on the left of the window,
   moving by a pixel. **`AURORA_DEMO_LOOKAT=own`**: the same with

@@ -10,6 +10,11 @@ pub fn tick(world: &mut World, scene: &mut Scene, build: &mut BuildTool, setting
         let p = world.agent.position;
         world.agent.yaw = 0.0;
         world.bodies.insert(world.agent_id, Body::new(Vec3::X));
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(crate::ao::State::Standing.motion(), frame as i32)],
+            sources: Vec::new(),
+        });
         let target = p + Vec3::new(3.0, 1.0, 0.2);
         let mut object = prim(
             9390,
@@ -30,7 +35,7 @@ pub fn tick(world: &mut World, scene: &mut Scene, build: &mut BuildTool, setting
         if mode.starts_with("remote") {
             world.apply(NetEvent::PointAt {
                 effect: Uuid::from_u128(9390),
-                source: DEMO_NOVA,
+                source: DEMO_LOUP,
                 target: id,
                 offset: [0.0; 3],
                 kind: 1,
@@ -73,7 +78,7 @@ pub fn tick(world: &mut World, scene: &mut Scene, build: &mut BuildTool, setting
     if frame == 840 && mode == "remote-release" {
         world.apply(NetEvent::PointAt {
             effect: Uuid::from_u128(9390),
-            source: DEMO_NOVA,
+            source: DEMO_LOUP,
             target: Uuid::nil(),
             offset: [0.0; 3],
             kind: 0,
@@ -87,5 +92,27 @@ pub fn tick(world: &mut World, scene: &mut Scene, build: &mut BuildTool, setting
             world.point_at.own.target.kind,
             world.point_at.remote.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_pointing_demo_uses_a_present_avatar_and_clears_its_target() {
+        let library = Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        let mut world = World::new(library.clone());
+        for event in events() {
+            world.apply(event);
+        }
+        let mut scene = Scene::new(std::env::temp_dir().join("aurora-pointing-demo"), library);
+        let mut build = BuildTool::default();
+        let mut settings = BuildSettings::default();
+        tick(&mut world, &mut scene, &mut build, &mut settings, 600, "remote-release");
+        assert_eq!(world.point_at.remote.len(), 1);
+        assert!(world.point_at.remote.contains_key(&DEMO_LOUP));
+        tick(&mut world, &mut scene, &mut build, &mut settings, 840, "remote-release");
+        assert!(world.point_at.remote.is_empty());
     }
 }

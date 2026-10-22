@@ -11,6 +11,12 @@ impl App {
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_POINTING")
         {
+            if self.frame_count == 600 {
+                self.settings.ao.accounts.entry(self.world.agent_id).or_default().enabled = false;
+                self.settings.bridge.entry(self.world.agent_id).or_default().enabled = false;
+                self.ao_ui.prototype = None;
+                self.release_native_movelock();
+            }
             crate::demo::pointing::tick(
                 &mut self.world,
                 &mut self.scene,
@@ -22,8 +28,21 @@ impl App {
             if self.frame_count == 600 {
                 self.settings.lookat.private_point_at = false;
                 self.camera.demo_orbit(2.6, 0.2, Some(5.0), &self.settings.camera);
+                if mode.starts_with("remote")
+                    && let Some(idx) = self.world.objects.index_of_uuid(&crate::demo::DEMO_LOUP)
+                    && let Some((at, _, _)) = crate::scene::Scene::object_transform(&self.world, idx, Instant::now(), 0)
+                {
+                    self.camera.set_view(
+                        at + glam::Vec3::new(-4.0, -3.0, 1.5),
+                        at,
+                        &mut self.world.agent,
+                        &self.settings.camera,
+                    );
+                }
                 self.panels.people = false;
                 self.panels.chat = false;
+                self.panels.inventory = false;
+                self.panels.ao = false;
             }
             if self.frame_count == 840 && mode == "private" {
                 self.settings.lookat.private_point_at = true;
