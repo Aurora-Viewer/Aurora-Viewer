@@ -204,6 +204,42 @@ fn animation_picker_links_into_selected_state_and_import_blocks_edits() {
 }
 
 #[test]
+fn open_animation_and_notecard_pickers_reorder_when_inventory_sort_changes() {
+    use crate::ui::inventory::view::{Sort, set_picker_sort};
+    let mut f = Fixture::new();
+    for (notecard, asset_type) in [(false, 20), (true, 7)] {
+        f.inv.add_items(
+            [("Sort 10", 200), ("sort 2", 100)]
+                .into_iter()
+                .enumerate()
+                .map(|(i, (name, date))| aurora_net::inventory::InvItem {
+                    id: Uuid::from_u128(78000 + i as u128),
+                    parent: f.inv.root,
+                    name: name.into(),
+                    created_at: date,
+                    asset_type,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        f.state.picker = Some(notecard);
+        f.state.filter = "sort".into();
+        for by_date in [false, true, false] {
+            set_picker_sort(
+                &f.ctx,
+                Sort {
+                    by_date,
+                    ..Default::default()
+                },
+            );
+            f.settle();
+            let names: Vec<_> = f.state.rows.iter().map(|row| row.1.as_str()).collect();
+            assert_eq!(names, if by_date { ["Sort 10", "sort 2"] } else { ["sort 2", "Sort 10"] });
+        }
+    }
+}
+
+#[test]
 fn design_movement_switches_are_independent_of_ao_and_never_write_inventory() {
     let mut f = Fixture::new();
     f.state.prototype = Some(prototype::Prototype::new("design-movement"));

@@ -687,7 +687,8 @@ impl DayEditorUi {
                 can,
             );
             super::menu::dropdown(&load, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                let items = SettingsCatalog::items_of(inv, SettingsKind::Day);
+                let order = super::inventory::view::picker_order(ui.ctx(), inv);
+                let items = SettingsCatalog::items_of(inv, SettingsKind::Day, |id| order.rank(id));
                 if items.is_empty() {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-day-editor-no-days")).size(12.0).color(p.muted));
                 }
@@ -773,7 +774,8 @@ impl DayEditorUi {
             let l = widgets::action_button_if(ui, p, "briefcase-filled", load, ActionKind::Flat, size, can);
             super::menu::dropdown(&l, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                 let kind = if water { SettingsKind::Water } else { SettingsKind::Sky };
-                let items = SettingsCatalog::items_of(inv, kind);
+                let order = super::inventory::view::picker_order(ui.ctx(), inv);
+                let items = SettingsCatalog::items_of(inv, kind, |id| order.rank(id));
                 if items.is_empty() {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-env-editor-no-items")).size(12.0).color(p.muted));
                 }

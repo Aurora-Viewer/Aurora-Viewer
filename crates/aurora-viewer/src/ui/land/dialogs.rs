@@ -781,7 +781,8 @@ fn experience_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut 
 fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut EnvironmentPicker, close: &mut bool) {
     // the settings folders load as the environment selector's do
     let loading = env_select::scan_step(&mut world.inventory) > 0;
-    let catalog = SettingsCatalog::build(&world.inventory);
+    let order = crate::ui::inventory::view::picker_order(ui.ctx(), &world.inventory);
+    let catalog = SettingsCatalog::build(&world.inventory, |id| order.rank(id));
     ui.add(
         egui::TextEdit::singleline(&mut f.filter)
             .hint_text(aurora_i18n::tr!("common-search"))
@@ -797,24 +798,22 @@ fn environment_picker(ui: &mut egui::Ui, p: &Palette, world: &mut World, f: &mut
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let mut any = false;
-            for kind in settings_kinds(f.track) {
+            for (kind, c) in catalog.choices(settings_kinds(f.track), |id| order.rank(id)) {
                 let icon = match kind {
                     SettingsKind::Day => "sunrise-filled",
                     SettingsKind::Sky => "sun-filled",
                     SettingsKind::Water => "droplet-filled",
                 };
-                for c in catalog.list(*kind) {
-                    if !needle.is_empty() && !c.name.to_lowercase().contains(&needle) {
-                        continue;
-                    }
-                    any = true;
-                    let r = pick_row(ui, p, icon, &c.name, f.selected == Some(c.asset));
-                    if r.clicked() {
-                        f.selected = Some(c.asset);
-                    }
-                    if r.double_clicked() {
-                        chosen = Some((c.asset, c.name.clone()));
-                    }
+                if !needle.is_empty() && !c.name.to_lowercase().contains(&needle) {
+                    continue;
+                }
+                any = true;
+                let r = pick_row(ui, p, icon, &c.name, f.selected == Some(c.asset));
+                if r.clicked() {
+                    f.selected = Some(c.asset);
+                }
+                if r.double_clicked() {
+                    chosen = Some((c.asset, c.name.clone()));
                 }
             }
             if !any {

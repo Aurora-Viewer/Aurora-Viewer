@@ -32,16 +32,13 @@ impl Tree {
 
     #[cfg(test)]
     pub fn prepare(&mut self, inv: &mut Inventory, agent: Uuid, materials: bool, query: &str) {
-        self.prepare_root(inv, agent, materials, query, inv.root);
+        self.prepare_root(inv, agent, materials, query, inv.root, view::Sort::default());
     }
 
-    pub fn prepare_root(&mut self, inv: &mut Inventory, agent: Uuid, materials: bool, query: &str, root: Uuid) {
+    pub fn prepare_root(&mut self, inv: &mut Inventory, agent: Uuid, materials: bool, query: &str, root: Uuid, sort: view::Sort) {
         self.fetch(inv);
         let prefs = InventoryPreferences {
-            sort: view::Sort {
-                by_date: false,
-                ..Default::default()
-            },
+            sort,
             ..Default::default()
         };
         let filters = view::Filters {

@@ -143,6 +143,67 @@ impl Default for Sort {
     }
 }
 
+/// The main inventory's saved order is published once per UI frame. All
+/// inventory selectors inherit it, as LLInventoryPanel's DEFAULT_SORT_ORDER
+/// does (indra/newview/llinventorypanel.cpp).
+pub fn set_picker_sort(ctx: &egui::Context, sort: Sort) {
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new("inventory_picker_sort"), sort));
+}
+
+pub fn picker_sort(ctx: &egui::Context) -> Sort {
+    ctx.data(|data| data.get_temp(egui::Id::new("inventory_picker_sort")))
+        .unwrap_or_default()
+}
+
+/// A shared, immutable projection for selectors that display a flat list or
+/// browse folders themselves. Keep the inventory's comparator, folder dates,
+/// support folders and Library placement in one place.
+pub struct PickerOrder {
+    version: (Uuid, Uuid, u64, Sort, &'static str),
+    ranks: HashMap<Uuid, usize>,
+    children: IdMap<Vec<Uuid>>,
+}
+
+impl PickerOrder {
+    pub fn rank(&self, id: Uuid) -> usize {
+        self.ranks.get(&id).copied().unwrap_or(usize::MAX)
+    }
+
+    pub fn children(&self, id: Uuid) -> &[Uuid] {
+        self.children.get(&id).map_or(&[], Vec::as_slice)
+    }
+}
+
+pub fn picker_order(ctx: &egui::Context, inv: &Inventory) -> std::sync::Arc<PickerOrder> {
+    let key = egui::Id::new("inventory_picker_order");
+    let version = (inv.root, inv.lib_root, inv.generation, picker_sort(ctx), aurora_i18n::language());
+    if let Some(order) = ctx.data(|data| data.get_temp::<std::sync::Arc<PickerOrder>>(key))
+        && order.version == version
+    {
+        return order;
+    }
+    let mut view = ViewCache::default();
+    view.prepare(inv, version.3);
+    // A flattened selector still keeps the user's items before Library.
+    let ranks = [false, true]
+        .into_iter()
+        .flat_map(|library| view.entries.iter().filter(move |entry| entry.library == library))
+        .enumerate()
+        .map(|(rank, entry)| (entry.id, rank))
+        .collect();
+    let order = std::sync::Arc::new(PickerOrder {
+        version,
+        ranks,
+        children: view.children,
+    });
+    ctx.data_mut(|data| data.insert_temp(key, order.clone()));
+    order
+}
+
+pub fn picker_name_cmp(a: &str, b: &str) -> Ordering {
+    natural_cmp(&a.to_lowercase(), &b.to_lowercase())
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SearchField {
     #[default]
@@ -1052,6 +1113,58 @@ mod tests {
             ..prefs
         };
         assert!(!cache.children(inv.root, &hidden, inv.lib_root).contains(&id(3)));
+    }
+
+    #[test]
+    fn picker_order_tracks_every_inventory_sort_and_invalidates_only_on_changes() {
+        let ctx = egui::Context::default();
+        let (mut inv, _) = fixture();
+        let root = inv.root;
+        folder(&mut inv, 30, root, -1, "#Aurora");
+        folder(&mut inv, 31, id(2), -1, "Folder 10");
+        folder(&mut inv, 32, id(2), -1, "folder 2");
+        inv.add_items(vec![
+            item(13, id(31), "Nested new item", 700),
+            item(14, id(2), "Texture 10", 500),
+            item(15, id(2), "texture 2", 400),
+            item(16, inv.lib_root, "AAA Library", 900),
+        ]);
+        for by_date in [false, true] {
+            for folders_by_name in [false, true] {
+                for system_first in [false, true] {
+                    let sort = Sort {
+                        by_date,
+                        folders_by_name,
+                        system_first,
+                    };
+                    set_picker_sort(&ctx, sort);
+                    let order = picker_order(&ctx, &inv);
+                    let mut inventory = ViewCache::default();
+                    inventory.prepare(&inv, sort);
+                    for folder in inv.folders.keys() {
+                        let expected: Vec<_> = inventory.children_iter(*folder, true, inv.lib_root).collect();
+                        assert_eq!(order.children(*folder), expected, "{sort:?}, {folder}");
+                        let mut flat = expected.clone();
+                        flat.sort_by_key(|id| order.rank(*id));
+                        assert_eq!(flat, expected);
+                    }
+                    assert_eq!(order.children(root).first(), Some(&id(30)));
+                    assert_eq!(order.children(root).last(), Some(&inv.lib_root));
+                    assert!(order.rank(id(15)) < order.rank(id(16)), "Library stays after personal items");
+                    assert_eq!(order.rank(id(14)) < order.rank(id(15)), by_date);
+                    assert!(
+                        std::sync::Arc::ptr_eq(&order, &picker_order(&ctx, &inv)),
+                        "reuse the cached projection"
+                    );
+                }
+            }
+        }
+        let before = picker_order(&ctx, &inv);
+        inv.add_items(vec![item(10, id(2), "A older", 1000)]);
+        let after = picker_order(&ctx, &inv);
+        assert!(!std::sync::Arc::ptr_eq(&before, &after));
+        assert!(after.rank(id(10)) < after.rank(id(14)));
+        assert!(picker_name_cmp("texture 2", "Texture 10").is_lt());
     }
 
     #[test]

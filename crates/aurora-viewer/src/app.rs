@@ -10225,6 +10225,7 @@ impl App {
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
+        ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
         self.beacon_hit = None;
         let mut t = Instant::now();
@@ -11347,6 +11348,7 @@ impl App {
                     }
                 }
                 self.panels.inventory = open;
+                ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
                 self.show_gestures(&ctx, &p);
                 self.show_texture_library(&ctx, &p);
                 if self.settings.inventory != inventory_preferences {
@@ -12037,7 +12039,7 @@ impl App {
                         self.env_scan = true;
                         self.env_ui.scan_left = usize::MAX;
                     }
-                    self.env_ui.refresh(&self.world.inventory);
+                    self.env_ui.refresh(&ctx, &self.world.inventory);
                 }
                 let mut open = self.panels.environment;
                 let mut lighting = self.panels.personal_lighting;
