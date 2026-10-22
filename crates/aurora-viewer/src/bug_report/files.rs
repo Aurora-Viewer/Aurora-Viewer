@@ -52,7 +52,7 @@ pub fn diagnostics(demo: bool) -> Diagnostics {
     };
     Diagnostics {
         fields,
-        excerpt: super::privacy::excerpt(&log),
+        excerpt: crate::crash::privacy::excerpt(&log),
     }
 }
 
@@ -91,7 +91,7 @@ pub fn preserved_diagnostics(dir: &Path) -> Diagnostics {
     }
     Diagnostics {
         fields: Vec::new(),
-        excerpt: super::privacy::excerpt(&log),
+        excerpt: crate::crash::privacy::excerpt(&log),
     }
 }
 
