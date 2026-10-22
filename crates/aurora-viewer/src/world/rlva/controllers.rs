@@ -296,6 +296,15 @@ mod tests {
         assert!(allowed(&prefs, &details));
         details.maturity = 42;
         assert!(allowed(&prefs, &details));
+        let blocked_default = ExperienceDetails {
+            id: Uuid::parse_str("bfe25fb4-222c-11e5-85a2-fa4c4ccaa202").unwrap(),
+            maturity: 42,
+            ..Default::default()
+        };
+        assert!(
+            !allowed(&prefs, &blocked_default),
+            "the native blocked experience stays blocked at every rating"
+        );
         prefs.experience_maturity = 0;
         assert!(!allowed(&prefs, &details));
         prefs.experience_maturity = 1;

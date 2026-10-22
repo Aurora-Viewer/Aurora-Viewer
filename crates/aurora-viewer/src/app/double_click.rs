@@ -92,12 +92,15 @@ impl App {
                 position.z
             )
         };
-        self.begin_teleport(label, !here);
-        self.send(NetCommand::TeleportTo {
-            handle,
-            position,
-            look_at: self.camera.forward(),
-        });
+        self.request_user_teleport(
+            NetCommand::TeleportTo {
+                handle,
+                position,
+                look_at: self.camera.forward(),
+            },
+            label,
+            !here,
+        );
     }
 
     /// Running while walking there, besides "Always run" and a double-tap

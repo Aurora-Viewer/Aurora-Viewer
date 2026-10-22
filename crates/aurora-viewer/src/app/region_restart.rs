@@ -496,14 +496,16 @@ impl App {
     fn region_restart_action(&mut self, action: Action) {
         match action {
             Action::Home => {
-                self.begin_teleport(aurora_i18n::tr!("common-home").into(), false);
-                self.send(NetCommand::TeleportHome);
+                self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
             }
             Action::Landmark(asset) => {
                 // gAgent.teleportViaLandmark, without the confirmation of
                 // the landmark lists (LLFloaterRegionRestarting::onTeleportClicked)
-                self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
-                self.send(NetCommand::TeleportLandmark(asset));
+                self.request_user_teleport(
+                    NetCommand::TeleportLandmark(asset),
+                    aurora_i18n::tr!("common-landmark").into(),
+                    false,
+                );
             }
             Action::Neighbour => {
                 if let Some(((x, y), _)) = self.restart_neighbour() {

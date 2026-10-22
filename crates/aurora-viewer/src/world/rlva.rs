@@ -9,9 +9,10 @@ use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetCommand};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
-const VERSION: &str = "RestrainedLove viewer v0.0 (Aurora experimental RLVa)";
+const VERSION: &str = version::VERSION_NEW;
 
 pub mod camera;
+mod chat;
 mod collection;
 mod controllers;
 mod debug;
@@ -22,6 +23,7 @@ mod events;
 mod groups;
 mod im_queries;
 mod inventory;
+pub mod login;
 mod naming;
 pub mod offers;
 mod policy;
@@ -32,6 +34,7 @@ mod rename;
 mod sitting;
 mod teleport;
 mod temporary;
+mod version;
 mod wardrobe;
 pub mod watchdog;
 
@@ -433,6 +436,7 @@ pub struct Rlva {
     pub offers: offers::Offers,
     pub controllers: controllers::Controllers,
     pub relative: relative::RelativeWear,
+    pub version: version::Version,
     pub im: im_queries::Queries,
     rules: BTreeMap<Uuid, BTreeSet<Rule>>,
     pub pending: Vec<(Uuid, Command)>,
@@ -529,6 +533,7 @@ impl Rlva {
         self.offers = Default::default();
         self.controllers = Default::default();
         self.relative = Default::default();
+        self.version = Default::default();
         self.im = Default::default();
         self.pending.clear();
         self.out.clear();
@@ -557,6 +562,7 @@ impl Rlva {
 
     pub fn forget(&mut self, source: Uuid) {
         self.relative.forget(source);
+        self.version.forget(source);
         let was_fov_locked = self.has("setcam_fovmin") || self.has("setcam_fovmax");
         self.watchdog.sources.remove(&source);
         self.visuals.forget(source);
@@ -730,9 +736,7 @@ impl Rlva {
                         || c.behaviour.starts_with("getdebug_")) =>
             {
                 let reply = match c.behaviour.as_str() {
-                    // Do not claim a full specification version before parity.
-                    "version" | "versionnew" => Some(VERSION.to_owned()),
-                    "versionnum" => Some("0".to_owned()),
+                    "version" | "versionnew" | "versionnum" => self.version.query(source, &c),
                     "getstatus" => Some(self.status(Some(source), &c.option)),
                     "getstatusall" => Some(self.status(None, &c.option)),
                     "getcommand" => Some(command_list(&c.option)),
@@ -876,90 +880,6 @@ impl Rlva {
     pub fn allows_channel(&self, channel: i32) -> bool {
         self.allows("sendchannel", &channel.to_string()) && !self.targets("sendchannel_except", &channel.to_string())
     }
-
-    pub fn receive_chat(&self, chat: &mut ChatMessage, own: Uuid) -> bool {
-        if !self.enabled || chat.source_id == own || chat.source_type == ChatSourceType::System || chat.chat_type == ChatType::OwnerSay {
-            return true;
-        }
-        let emote = is_emote(&chat.message);
-        let (all, specific) = if emote {
-            ("recvemote", "recvemotefrom")
-        } else {
-            ("recvchat", "recvchatfrom")
-        };
-        let id = chat.source_id.to_string();
-        if !self.allows(all, &id) || self.targets(specific, &id) {
-            chat.message = if emote { "/me ..." } else { "..." }.to_owned();
-        }
-        true
-    }
-
-    /// Transform one chat line into zero or more sends. Redirection is checked
-    /// before sendchat, and redirected text never returns to public chat.
-    pub fn outgoing_chat(&self, message: &str, channel: i32, mut kind: ChatType) -> Vec<NetCommand> {
-        let make = |message: String, channel, chat_type| NetCommand::Chat {
-            message,
-            channel,
-            chat_type,
-        };
-        if !self.enabled {
-            return vec![make(message.to_owned(), channel, kind)];
-        }
-        if channel != 0 {
-            return if self.allows_channel(channel) {
-                vec![make(message.to_owned(), channel, kind)]
-            } else {
-                Vec::new()
-            };
-        }
-        if matches!(kind, ChatType::StartTyping | ChatType::StopTyping) {
-            return if kind == ChatType::StartTyping && self.has_options("redirchat") {
-                Vec::new()
-            } else {
-                vec![make(message.to_owned(), channel, kind)]
-            };
-        }
-        let emote = is_emote(message);
-        let redirect = if emote { "rediremote" } else { "redirchat" };
-        if self.has_options(redirect) && (emote || filtered_chat(message, false, false) != message) {
-            let channels: BTreeSet<_> = self
-                .rules
-                .values()
-                .flat_map(|rs| rs.iter())
-                .filter(|r| r.behaviour == redirect)
-                .filter_map(|r| r.option.parse::<i32>().ok())
-                .filter(|c| self.allows_channel(*c))
-                .collect();
-            return channels.into_iter().map(|c| make(message.to_owned(), c, ChatType::Shout)).collect();
-        }
-        let text = if self.has("sendchat") {
-            filtered_chat(message, true, self.has("emote"))
-        } else {
-            message.to_owned()
-        };
-        if kind == ChatType::Shout && self.has("chatshout") {
-            kind = ChatType::Normal;
-        }
-        if kind == ChatType::Whisper && self.has("chatwhisper") {
-            kind = ChatType::Normal;
-        }
-        if kind == ChatType::Normal && self.has("chatnormal") {
-            kind = if self.has("chatwhisper") {
-                ChatType::Shout
-            } else {
-                ChatType::Whisper
-            };
-        }
-        if (kind == ChatType::Shout && self.has("chatshout")) || text.is_empty() {
-            Vec::new()
-        } else {
-            vec![make(text, 0, kind)]
-        }
-    }
-
-    fn has_options(&self, name: &str) -> bool {
-        self.enabled && self.rules.values().any(|rs| rs.iter().any(|r| r.behaviour == name))
-    }
 }
 
 fn rule_text(r: &Rule) -> String {
@@ -1014,35 +934,6 @@ fn command_list(option: &str) -> String {
 
 pub fn is_emote(text: &str) -> bool {
     text.starts_with("/me ") || text.starts_with("/me'")
-}
-
-fn filtered_chat(text: &str, filter_emote: bool, allow_long_emote: bool) -> String {
-    if is_emote(text) {
-        if !filter_emote {
-            return text.to_owned();
-        }
-        if text.contains(['"', '(', ')', '*', '=', '^', '_', '?', '~']) || text.contains(" -") || text.contains("- ") || text.contains("''")
-        {
-            return "...".to_owned();
-        }
-        if !allow_long_emote {
-            return text
-                .chars()
-                .take(
-                    text.chars()
-                        .position(|c| c == '.')
-                        .filter(|i| *i > 0 && *i < 20)
-                        .map_or(20, |i| i + 1),
-                )
-                .collect();
-        }
-        return text.to_owned();
-    }
-    if (text.starts_with('/') && text.chars().count() <= 7) || (text.len() >= 4 && text.starts_with("((") && text.ends_with("))")) {
-        text.to_owned()
-    } else {
-        "...".to_owned()
-    }
 }
 
 #[cfg(test)]

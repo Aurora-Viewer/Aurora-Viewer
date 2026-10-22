@@ -3013,6 +3013,7 @@ impl World {
             && c.message.starts_with('@')
         {
             self.rlva_bind_controller(c.source_id);
+            self.rlva_prepare_version(c.source_id, &c.message);
         }
         if self.rlva.receive(&c) {
             self.eep.rlva_locked = self.rlva.has("setenv");
@@ -3032,7 +3033,13 @@ impl World {
         if let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message) {
             c.message = text;
         }
-        self.rlva.receive_chat(&mut c, self.agent_id);
+        let own_attachment = self.rlva.enabled()
+            && c.source_type == aurora_net::ChatSourceType::Object
+            && c.owner_id == self.agent_id
+            && self.rlva_own_attachment_root(c.source_id).is_some();
+        if !own_attachment && !self.rlva.receive_chat(&mut c, self.agent_id) {
+            return;
+        }
         if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) || self.object_chat_filtered(&c) {
             return;
         }

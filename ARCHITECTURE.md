@@ -127,9 +127,22 @@ after five minutes; resolved blocks last until detach or global disable.
 The network's `session/experience_events.rs` handles native UDP/HTTP generic
 messages, retaining the experience invoice and attachment name.
 
-This does not yet provide full RLVa parity. [RLVa implementation status](docs/RLVA.md)
-lists the supported commands and remaining families; versionnum deliberately
-returns 0 until complete protocol compatibility can be claimed.
+`chat.rs` follows native OOC/ellipsis choices and exempts directed object chat
+and owned worn attachments. Redirection uses one bounded protocol reply by
+default, with optional word-boundary splitting. Hidden received messages stop
+before chat history and bubbles. `version.rs` retains immediate handshakes,
+including legacy/new strings, protocol 3.4.3 and implementation 2.4.2, with
+creator/name-based 2.9.28 compatibility. Name regexes compile once per edit
+and use bounded fancy-regex evaluation for native lookarounds/backreferences.
+`login.rs` persists only UUID-scoped next-login flags. Ordered, coalesced atomic
+writes run on its own worker; shutdown flushes the final snapshot. Demo mode
+uses in-memory state. Global disable clears these flags as well as all locks.
+Native teleport entry points preflight the common RLVa action guard before
+starting progress UI or demo transitions, including chat shortcuts, history,
+landmarks, map actions and invitation acceptance. History cancels a rejected
+pending move without changing its cursor. Network sends still recheck policy.
+[RLVa validation status](docs/RLVA.md) lists the implemented families and the
+human grid checks required before publication.
 
 Explicit profile openings restore their destination through the shared floater
 expansion, following `LLFloater::openFloater`: avatar profiles (both layouts),

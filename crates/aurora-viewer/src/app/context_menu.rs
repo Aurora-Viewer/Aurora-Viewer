@@ -505,9 +505,10 @@ impl App {
             CtxAction::AnswerTeleport { invite, accept } => {
                 for c in self.world.answer_teleport_invite(invite, accept) {
                     if matches!(c, NetCommand::AcceptLure { .. }) {
-                        self.begin_teleport(String::new(), false);
+                        self.request_user_teleport(c, String::new(), false);
+                    } else {
+                        self.send(c);
                     }
-                    self.send(c);
                 }
             }
             CtxAction::AnswerInventoryOffer { offer, keep } => {

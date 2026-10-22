@@ -13,6 +13,10 @@ pub struct Preferences {
     /// Native selector: 0 none, 1 general, 2 moderate, 3 adult.
     pub experience_maturity: u8,
     pub blocked_experiences: String,
+    pub allow_ooc: bool,
+    pub show_ellipsis: bool,
+    pub split_redirect_chat: bool,
+    pub compatibility_list: String,
     pub legacy_naming: bool,
     pub shared_wear: bool,
     pub auto_rename: bool,
@@ -31,7 +35,11 @@ impl Default for Preferences {
             allow_environment_locks: true,
             temporary_controllers: true,
             experience_maturity: 2,
-            blocked_experiences: String::new(),
+            blocked_experiences: "bfe25fb4-222c-11e5-85a2-fa4c4ccaa202".into(),
+            allow_ooc: true,
+            show_ellipsis: true,
+            split_redirect_chat: false,
+            compatibility_list: String::new(),
             legacy_naming: true,
             shared_wear: true,
             auto_rename: true,
@@ -66,6 +74,9 @@ mod tests {
     fn rlva_inventory_preferences_keep_reference_defaults_for_old_and_partial_settings() {
         let settings: crate::settings::Settings = serde_json::from_str("{}").unwrap();
         assert!(!settings.rlva_enabled);
+        assert!(settings.rlva.allow_ooc && settings.rlva.show_ellipsis);
+        assert!(!settings.rlva.split_redirect_chat && settings.rlva.compatibility_list.is_empty());
+        assert_eq!(settings.rlva.blocked_experiences, "bfe25fb4-222c-11e5-85a2-fa4c4ccaa202");
         assert_eq!(settings.rlva, Preferences::default());
         let preferences: Preferences = serde_json::from_str(r#"{"shared_wear":false}"#).unwrap();
         assert!(!preferences.shared_wear && preferences.legacy_naming);

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 impl World {
     /// Resolve only a real linkset worn by this agent, including child prims.
-    pub(super) fn rlva_own_attachment_root(&self, source: Uuid) -> Option<Uuid> {
+    pub(crate) fn rlva_own_attachment_root(&self, source: Uuid) -> Option<Uuid> {
         let mut index = self.objects.index_of_uuid(&source)?;
         for _ in 0..64 {
             let object = self.objects.get(index)?;

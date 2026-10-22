@@ -1,10 +1,16 @@
 # RLVa implementation status
 
-The `rlva` task is an experimental port in progress, referenced by issue #687.
-It is **not full RLVa support**. Preferences > Protections > Enable RLVa is
+The `rlva` task implements the Legacy Viewer's RLVa 2.4.2 command families,
+targeting RLV protocol 3.4.3, referenced by issue #687. Human grid validation
+is pending. Preferences > Protections > Enable RLVa is
 off by default, including settings written before the option existed.
 Disabling it releases all session restrictions and discards queued commands.
-The preference persists; object locks never do.
+The preference persists; object locks never do. The native next-login flag
+persists separately by avatar UUID after tploc or a locked sitting session,
+forcing the last position while RLVa remains enabled. It initially defaults
+to the last position, as in the reference. Disabling clears that flag too.
+Its ordered, coalesced writes run off the frame thread and flush at shutdown;
+offline demos never read or write this catalogue.
 
 Reference: `RlvCommand`, `RlvHandler`, `RlvActions`, `RlvInventory`,
 `RlvAttachmentLocks` and `RlvWearableLocks` in `indra/newview/rlv*.cpp` of the
@@ -23,6 +29,12 @@ script authors; the command lists below describe this branch specifically.
   redirchat, rediremote, sendchannel and sendchannel_except. Redirection
   deduplicates channels, obeys channel locks and never falls back to public
   chat when every destination is restricted.
+  OOC messages and short slash commands follow native filtering. OOC is allowed
+  by default; ellipses are shown by default. Turning ellipses off suppresses
+  filtered incoming messages before history/bubbles and suppresses blocked
+  outgoing text. Directed object chat and owned worn attachments are exempt
+  from receive restrictions. Redirection uses a single bounded shout reply by
+  default; optional splitting uses word boundaries and UTF-8-safe packets.
 - IM: sendim/to, recvim/from, startim/to; share and sendgesture.
   Distance exclusion ranges are intersected across issuers, including the
   unbounded/off-region case; specific recipient blocks still win.
@@ -36,8 +48,8 @@ script authors; the command lists below describe this branch specifically.
   busy/normal session fields and the offline-friend flag. Global disable drops
   pending replies and questions; IMs never become object command sources.
 - Experience-origin controllers use the native temporary-attachment option
-  (on), minimum experience rating (Moderate) and blocked-experience list
-  (empty). Classification waits for cached details and AttachmentResources;
+  (on), minimum experience rating (Moderate) and the reference's default
+  blocked-experience list. Classification waits for cached details and AttachmentResources;
   a refused controller loses existing rules and cannot issue new ones.
   The check covers child prims and deferred actions, keeps clear/removal
   available, and retires a block on confirmed detach or global disable.
@@ -61,6 +73,10 @@ script authors; the command lists below describe this branch specifically.
   a request ticket through the common action guard before teleporting, so new
   restrictions apply and superseded replies are ignored. Maturity deferrals
   also retain the issuer. Disabling cancels deferred scripted teleports.
+  Native teleport entry points check restrictions before starting progress
+  UI, moving a history cursor or simulating an offline transition. Chat home
+  shortcuts, maps, favourites, landmarks and invitation acceptance use this
+  path; network sends retain their final policy check.
   tplure/tprequest exceptions and accepttp/accepttprequest auto-acceptance
   retain maturity checks and recheck consent when an invitation is answered.
   standtp records the pre-sit location and returns only after a successful
@@ -211,32 +227,36 @@ script authors; the command lists below describe this branch specifically.
   AvatarSex preserves the exact accepted boolean text in its reply; `default`
   is not a pseudo boolean. Disabling clears that session-only value.
 
-`getcommand` advertises the handlers actually present. `versionnum` returns
-0 and the version string identifies the experimental implementation rather
-than asserting a complete RLV specification version.
+`getcommand` advertises the handlers actually present. `version` retains the
+legacy RestrainedLife prefix; `versionnew` uses RestrainedLove. `versionnum`
+returns `3040300`, or `2092800` for a matching worn creator/name compatibility
+entry. `versionnum:impl` returns `2040213`; an unknown numeric-version option
+gets an empty reply. Creator UUIDs and full, case-insensitive name regexes
+use semicolon-separated `creator:` / `name:` entries. The list defaults empty.
+Regexes compile once per edit; invalid expressions are ignored and evaluation
+is bounded. The MIT-licensed [fancy-regex](https://github.com/fancy-regex/fancy-regex)
+dependency retains lookaround/backreference use cases of native Perl expressions.
 
-## Work still required before parity
+## Human grid validation required
 
 - Live-script validation of location and identity restrictions across the
   implemented UI paths, including delayed name resolutions, exceptions and
   opening an already-visible window while a restriction changes.
-- Complete environment/debug conformance, wearable/attachment/sit
-  notifications and permission entry-point validation.
-  The new native ground-sit and clothing-notification handlers require live
+- Environment/debug replies, wearable/attachment/sit
+  notifications and permission entry points. Ground-sit and clothing handlers require live
   validation with delayed simulator responses and intervening restrictions.
-- Complete linked/folded-folder and queue timeout conformance; live validation
-  of shared inventory gifts, experience-origin controller approval and
+- Linked/folded-folder behavior and delayed callbacks; shared inventory gifts, experience-origin controller approval and
   attachment recovery across crossings.
-- Every media/touch interaction path and surface-distance checks; all edit,
-  inventory and document entry points must be audited against live scripts.
+- Media/touch interactions and surface-distance checks; edit,
+  inventory and document entry points with live scripts.
 - Live visual comparison of sphere/overlay effects, forced textures,
-  silhouettes and camera focus; final audit of native camera entry points.
-- Protocol conformance fixtures for every registered command and every UI
-  entry point, source disappearance/reattachment across region crossings,
-  and human grid validation with real scripts and attachments.
+  silhouettes and camera focus, including native camera controls.
+- Real controller handshakes, compatibility entries, source disappearance/
+  reattachment across crossings, and relogin from a locked session. Verify
+  disabling releases every restriction and cancels the next-login override.
 
-Keep these items open in TASKS.md; do not close #687 or publish this as full
-RLVa support. No grid connection or credentials are needed for offline tests.
+Keep these checks open in TASKS.md; do not close #687 or publish before human
+validation. No grid connection or credentials are needed for offline tests.
 
 ## Offline validation
 

@@ -16,6 +16,22 @@ pub fn page(cx: &mut Cx) {
             .toggle(tr!("rlva-enable"), tr!("rlva-enable-hint"), &field!(rlva_enabled));
         cx.note(tr!("rlva-session-hint"));
         cx.greyed(!cx.s.rlva_enabled);
+        cx.toggle(tr!("rlva-ooc"), tr!("rlva-ooc-hint"), &field!(rlva.allow_ooc));
+        cx.toggle(tr!("rlva-ellipsis"), tr!("rlva-ellipsis-hint"), &field!(rlva.show_ellipsis));
+        cx.toggle(
+            tr!("rlva-split-redirect"),
+            tr!("rlva-split-redirect-hint"),
+            &field!(rlva.split_redirect_chat),
+        );
+        cx.row(
+            tr!("rlva-compatibility"),
+            tr!("rlva-compatibility-hint"),
+            &field!(rlva.compatibility_list),
+            |ui, settings| {
+                ui.add(egui::TextEdit::singleline(&mut settings.rlva.compatibility_list).desired_width(180.0))
+                    .changed()
+            },
+        );
         cx.toggle(
             tr!("rlva-env-locks"),
             tr!("rlva-env-locks-hint"),

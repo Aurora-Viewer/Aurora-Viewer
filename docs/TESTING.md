@@ -2794,6 +2794,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   jump=true`. `experience-released` also disables RLVa at frame 760, clearing
   the controller block and all restrictions. Capture after frame 810 to
   inspect the rating, temporary-controller and blocked-list controls in EN/FR.
+  `chat` shows synthetic OOC, restricted ordinary/emote and directed-object
+  messages in nearby chat. The log reports `ooc=true, direct=true,
+  filtered_rows=2`; `chat-silent` disables ellipses and reports zero filtered
+  rows while OOC and directed chat remain visible. `version` logs legacy/new
+  handshakes with numeric `3040300` and implementation `2040213` at frame 740.
+  `version-compat` seeds an owned attachment matching a creator compatibility
+  entry and logs numeric `2092800`, retaining the same implementation number.
+  `chat-home` enables the native `tph` shortcut, applies tplm and invokes the
+  actual chat-command route. Its log must report `handled=true,
+  requested=false, pending_ui=false`: no teleport or progress UI starts.
   `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
   `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
   mode to the same scene. `overlay` uses the demo's transparent-hole texture

@@ -425,6 +425,7 @@ pub struct App {
     loading_target: f32,
     frame_count: u64,
     demo_rlva_frame: Option<u64>,
+    rlva_login: crate::world::rlva::login::State,
     named_teleport: teleport_lookup::NamedTeleport,
     /// Refresh rate of the screen the window is on, followed while it runs.
     screen_rate: crate::screen_rate::ScreenRate,
@@ -1014,6 +1015,11 @@ impl App {
             loading_target: 0.0,
             frame_count: 0,
             demo_rlva_frame: None,
+            rlva_login: if std::env::var("AURORA_DEMO").as_deref() == Ok("1") {
+                Default::default()
+            } else {
+                crate::world::rlva::login::State::load(crate::settings::config_dir().join("rlva-login.json"))
+            },
             named_teleport: Default::default(),
             screen_rate: Default::default(),
             focused: true,
@@ -2026,6 +2032,18 @@ impl App {
             },
             _ => StartLocation::Last,
         });
+        let catalog_key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
+        let login_agent = self
+            .login_form
+            .accounts
+            .iter()
+            .find(|account| account.key() == catalog_key)
+            .and_then(|account| account.agent);
+        let start = if self.rlva_login.requires_last(self.settings.rlva_enabled, login_agent) {
+            StartLocation::Last
+        } else {
+            start
+        };
         let (mac, id0) = self.settings.hashed_ids();
         // typed password first, else the remembered one (already hashed)
         let password = match (&self.login_form.stored, self.login_form.password.is_empty()) {
@@ -4480,15 +4498,29 @@ impl App {
     fn teleport_to_location(&mut self, region: String, pos: Vec3) {
         let here = self.world.region_name();
         let local = region.eq_ignore_ascii_case(&here);
+        let command = if local {
+            let Some(handle) = self.world.main_region else {
+                return;
+            };
+            NetCommand::TeleportTo {
+                handle,
+                position: pos,
+                look_at: Vec3::X,
+            }
+        } else {
+            NetCommand::TeleportToRegion {
+                request: uuid::Uuid::new_v4(),
+                name: region.clone(),
+                position: pos,
+                look_at: Vec3::X,
+            }
+        };
+        if !self.user_teleport_allowed(&command) {
+            return;
+        }
         self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z), !local);
         if local {
-            if let Some(handle) = self.world.main_region {
-                self.send(NetCommand::TeleportTo {
-                    handle,
-                    position: pos,
-                    look_at: Vec3::X,
-                });
-            }
+            self.send(command);
         } else if self.demo {
             // Only inter-region demo teleports simulate a connection delay.
             aurora_net::transition::begin(
@@ -4499,12 +4531,7 @@ impl App {
             self.demo_tp_start = Some(Instant::now());
             self.demo_tp_dest = Some(pos);
         } else {
-            self.send(NetCommand::TeleportToRegion {
-                request: uuid::Uuid::new_v4(),
-                name: region,
-                position: pos,
-                look_at: Vec3::X,
-            });
+            self.send(command);
         }
     }
 
@@ -5142,10 +5169,29 @@ impl App {
         }
     }
 
-    /// Show progress only for a known destination outside the current region.
-    /// Unlike Firestorm's fallback for an unresolved landmark, wait for the
-    /// server's destination before showing a screen for an unknown destination,
-    /// so even these local teleports remain direct.
+    /// RlvActions::canTeleport*: reject before UI and demo side effects.
+    fn user_teleport_allowed(&mut self, command: &NetCommand) -> bool {
+        self.world.rlva_configure(self.settings.rlva_enabled);
+        self.world.rlva.preferences.clone_from(&self.settings.rlva);
+        if self.world.rlva_allows_command(command, uuid::Uuid::nil()) {
+            true
+        } else {
+            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            false
+        }
+    }
+
+    /// Preflight before UI/simulation side effects, including offline demos.
+    fn request_user_teleport(&mut self, command: NetCommand, dest: String, show_progress: bool) -> bool {
+        if self.user_teleport_allowed(&command) {
+            self.begin_teleport(dest, show_progress);
+            self.send(command);
+            true
+        } else {
+            false
+        }
+    }
+
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
         self.drop_clicks();
         self.stop_autopilot(true);
@@ -5176,12 +5222,17 @@ impl App {
         if let Some(e) = dest {
             self.world
                 .system_message(aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()));
-            self.begin_teleport(e.region.clone(), Some(e.handle) != self.world.main_region);
-            self.send(NetCommand::TeleportTo {
-                handle: e.handle,
-                position: e.position,
-                look_at: Vec3::X,
-            });
+            if !self.request_user_teleport(
+                NetCommand::TeleportTo {
+                    handle: e.handle,
+                    position: e.position,
+                    look_at: Vec3::X,
+                },
+                e.region.clone(),
+                Some(e.handle) != self.world.main_region,
+            ) {
+                self.world.tp_history.failed();
+            }
         }
     }
 
@@ -6043,16 +6094,19 @@ impl App {
         self.world.refresh_teleport_places();
         for c in self.world.teleport_invites.take_commands() {
             if matches!(c, NetCommand::AcceptLure { .. }) {
-                self.begin_teleport(String::new(), false);
+                self.request_user_teleport(c, String::new(), false);
+            } else {
+                self.send(c);
             }
-            self.send(c);
         }
         for c in self.world.map.take_commands() {
             if let NetCommand::TeleportTo { handle, .. } = &c {
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
-                self.begin_teleport(dest, Some(*handle) != self.world.main_region);
+                let show = Some(*handle) != self.world.main_region;
+                self.request_user_teleport(c, dest, show);
+            } else {
+                self.send(c);
             }
-            self.send(c);
         }
         self.minimap_ui.prune(&self.world);
         // parcel overlays of regions we left (their lines would be stale on return)
@@ -9339,8 +9393,11 @@ impl App {
         }
         if let Some(asset) = a.landmark {
             self.record_library_asset(asset, 3);
-            self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
-            self.send(NetCommand::TeleportLandmark(asset));
+            self.request_user_teleport(
+                NetCommand::TeleportLandmark(asset),
+                aurora_i18n::tr!("common-landmark").into(),
+                false,
+            );
         }
         if a.cancel_loading {
             self.release_bridge();
@@ -9408,8 +9465,7 @@ impl App {
                 self.request_exit();
             }
             BarAction::TeleportHome => {
-                self.begin_teleport(aurora_i18n::tr!("common-home").into(), false);
-                self.send(NetCommand::TeleportHome);
+                self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
             }
             BarAction::SetHome => {
                 if let Some(cmd) = self.world.set_home_here() {
@@ -9590,8 +9646,11 @@ impl App {
         match action {
             // LLFavoritesBarCtrl::onButtonClick: no confirmation
             FavAction::Teleport(asset) => {
-                self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
-                self.send(NetCommand::TeleportLandmark(asset));
+                self.request_user_teleport(
+                    NetCommand::TeleportLandmark(asset),
+                    aurora_i18n::tr!("common-landmark").into(),
+                    false,
+                );
             }
             FavAction::ShowOnMap(g) => {
                 self.world.map.track_location(g.x, g.y, g.z as f32, false);
@@ -11846,11 +11905,12 @@ impl App {
                         continue;
                     }
                     let (cmds, url) = self.world.respond_notification(id, r);
-                    if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
-                        self.begin_teleport(String::new(), false);
-                    }
                     for c in cmds {
-                        self.send(c);
+                        if matches!(c, NetCommand::AcceptLure { .. }) {
+                            self.request_user_teleport(c, String::new(), false);
+                        } else {
+                            self.send(c);
+                        }
                     }
                     // only web links (llLoadURL / goto URL), opened after the user's click
                     if let Some(u) = url.filter(|u| u.starts_with("https://") || u.starts_with("http://")) {

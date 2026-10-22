@@ -59,6 +59,13 @@ impl App {
             self.appearance_ui.pending_actor = Uuid::nil();
         }
         self.world.rlva_controllers_tick(Instant::now());
+        let login_locked = self.world.rlva.has("tploc") || (self.world.agent.is_sitting() && self.world.rlva.has("unsit"));
+        self.rlva_login.update(
+            self.settings.rlva_enabled,
+            self.world.agent_id,
+            self.world.movement_complete,
+            login_locked,
+        );
         self.world.eep.rlva_locked = self.world.rlva.has("setenv");
         self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
         self.script_editors.rlva_hidden = self.world.rlva.has("viewscript");
@@ -248,6 +255,23 @@ impl App {
                 });
                 self.camera.change_to_default(&mut self.world.agent, &self.settings.camera);
                 format!("@notify:123=n,sit:{id}=force")
+            } else if scenario == "chat-home" {
+                self.settings.chat_commands.enabled = true;
+                self.settings.chat_commands.teleport_home = "tph".into();
+                "@tplm=n".to_owned()
+            } else if matches!(scenario, "chat" | "chat-silent") {
+                self.panels.settings = false;
+                self.panels.inventory = false;
+                self.panels.chat = true;
+                self.chat_ui.selected = None;
+                self.settings.rlva.show_ellipsis = scenario == "chat";
+                "@recvchat=n,recvemote=n".to_owned()
+            } else if scenario.starts_with("version") {
+                if scenario == "version-compat" {
+                    self.world.rlva_demo_version_seed();
+                    self.settings.rlva.compatibility_list = format!("creator:{}", Uuid::from_u128(0x726c766163726561));
+                }
+                "@notify:123=n".to_owned()
             } else if scenario.starts_with("experience") {
                 self.world
                     .rlva_demo_experience(if scenario == "experience-allowed" { 21 } else { 13 }, false);
@@ -344,6 +368,21 @@ impl App {
         }
         if mode.starts_with("experience") && self.frame_count == 810 {
             self.world.rlva_demo_experience_report();
+        }
+        if matches!(mode.as_str(), "chat" | "chat-silent") && self.frame_count == 740 {
+            self.world.rlva_demo_chat();
+        }
+        if mode == "chat-home" && self.frame_count == 740 {
+            let handled = self.chat_command("tph");
+            log::info!(
+                "RLVa home shortcut demo: handled={handled}, requested={}, pending_ui={}",
+                self.world.teleporting,
+                self.tp_dest.is_some()
+            );
+        }
+        if mode.starts_with("version") && self.frame_count == 740 {
+            self.rlva_demo_message("@version=123,versionnew=124,versionnum=125,versionnum:impl=126".into());
+            self.world.rlva_demo_version_report();
         }
         if mode == "im-query" && self.frame_count == 740 {
             self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
