@@ -45,7 +45,7 @@ const COMBO_W: f32 = 216.0;
 pub struct EnvironmentUi {
     catalog: SettingsCatalog,
     /// Inventory generation the lists were built from, and when.
-    built: Option<u64>,
+    built: Option<(u64, super::inventory::view::Sort)>,
     built_at: Option<std::time::Instant>,
     /// Folders still to load for the lists (0: complete).
     pub scan_left: usize,
@@ -61,11 +61,14 @@ pub struct EnvironmentUi {
 impl EnvironmentUi {
     /// Rebuild the lists when the inventory changed (loadPresets), at most
     /// once a second while folders keep arriving.
-    pub fn refresh(&mut self, inv: &Inventory) {
+    pub fn refresh(&mut self, ctx: &egui::Context, inv: &Inventory) {
+        let version = (inv.generation, super::inventory::view::picker_sort(ctx));
         let due = self.built_at.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) || self.scan_left == 0;
-        if self.built != Some(inv.generation) && due {
-            self.catalog = SettingsCatalog::build(inv);
-            self.built = Some(inv.generation);
+        let sort_changed = self.built.is_some_and(|built| built.1 != version.1);
+        if self.built != Some(version) && (due || sort_changed) {
+            let order = super::inventory::view::picker_order(ctx, inv);
+            self.catalog = SettingsCatalog::build(inv, |id| order.rank(id));
+            self.built = Some(version);
             self.built_at = Some(std::time::Instant::now());
         }
     }

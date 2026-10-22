@@ -866,6 +866,14 @@ local previews already loaded, textures or materials depending on the choice
 requested, and follows the search filter. A click applies the local preview;
 "OK" keeps it, "Cancel" restores it. To show the synthetic local files,
 combine this scenario with `AURORA_DEMO_IMPORTS=local`.
+Keep the picker open while changing the main inventory's name/date order,
+"Folders always by name" and "System folders first": its tree and search
+results must follow those options, including in the Aurora Library tab.
+The inventory image picker, AO animation/notecard pickers, Move to, Replace
+links, environment settings and covenant notecard selectors share this order.
+Local names compare without case and with numeric runs (2 before 10).
+Both scenarios include resources numbered 2 and 10 with distinct dates:
+name order puts 2 first, date order puts 10 first.
 `faces-picker-material,object:99620` opens the same picker for a PBR
 material, with the demo's tiled PBR material selected: the preview is a GPU-rendered
 sphere with the material's maps, while list rows remain icons. Drag the sphere

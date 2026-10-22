@@ -345,7 +345,8 @@ impl EnvEditorUi {
             )
             .on_hover_text(aurora_i18n::tr!("ui-env-editor-load-tip"));
             super::menu::dropdown(&load, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-                let items = SettingsCatalog::items_of(inv, kind);
+                let order = super::inventory::view::picker_order(ui.ctx(), inv);
+                let items = SettingsCatalog::items_of(inv, kind, |id| order.rank(id));
                 if items.is_empty() {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-env-editor-no-items")).size(12.0).color(p.muted));
                 }

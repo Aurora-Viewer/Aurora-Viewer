@@ -199,7 +199,9 @@ pub(super) fn show(
                             .is_some_and(|(kind, subtype)| it.asset_type == kind && (!matches!(kind, 5 | 13) || it.flags & 0xff == subtype))
                     })
                     .collect();
-                candidates.sort_by_key(|it| it.name.to_lowercase());
+                view::set_picker_sort(ctx, prefs.sort);
+                let order = view::picker_order(ctx, inv);
+                candidates.sort_by_key(|it| order.rank(it.id));
                 egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
                     for it in candidates {
                         if ui.selectable_label(*selected == Some(it.id), &it.name).clicked() {

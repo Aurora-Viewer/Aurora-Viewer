@@ -228,6 +228,8 @@ impl ThumbnailUi {
             self.photo_open &= photo_open && !cancel;
         }
         if self.picker_open {
+            view::set_picker_sort(ctx, prefs.sort);
+            let order = view::picker_order(ctx, &world.inventory);
             let mut picker_open = true;
             let mut chosen = None;
             let mut cancel = false;
@@ -266,7 +268,7 @@ impl ThumbnailUi {
                                 let query = self.filter.trim().to_lowercase();
                                 if query.is_empty() {
                                     let root = world.inventory.root;
-                                    picker_folder(ui, p, icons, &mut world.inventory, root, 0, &mut self.selected);
+                                    picker_folder(ui, p, icons, &mut world.inventory, &order, root, 0, &mut self.selected);
                                 } else {
                                     let mut items: Vec<_> = world
                                         .inventory
@@ -274,7 +276,7 @@ impl ThumbnailUi {
                                         .values()
                                         .filter(|it| usable(&world.inventory, it) && it.name.to_lowercase().contains(&query))
                                         .collect();
-                                    items.sort_by_key(|it| it.name.to_lowercase());
+                                    items.sort_by_key(|it| order.rank(it.id));
                                     for it in items.into_iter().take(500) {
                                         ui.horizontal(|ui| {
                                             item_type_icon(ui, icons, it, p);
@@ -387,7 +389,17 @@ pub(crate) fn usable(inv: &Inventory, it: &aurora_net::inventory::InvItem) -> bo
         && !rules::in_type(inv, it.id, 14)
         && (rules::library(inv, it.id) || it.owner_mask & (rules::COPY | rules::TRANSFER) == rules::COPY | rules::TRANSFER)
 }
-fn picker_folder(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &mut Inventory, id: Uuid, depth: usize, selected: &mut Option<Uuid>) {
+#[allow(clippy::too_many_arguments)]
+fn picker_folder(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &Icons,
+    inv: &mut Inventory,
+    order: &view::PickerOrder,
+    id: Uuid,
+    depth: usize,
+    selected: &mut Option<Uuid>,
+) {
     if depth > 24 {
         return;
     }
@@ -405,23 +417,6 @@ fn picker_folder(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &mut Invent
     } else {
         folder.info.name.clone()
     };
-    let mut children = folder.children.clone();
-    if id == inv.root
-        && !inv.lib_root.is_nil()
-        && inv.lib_root != id
-        && inv.folders.contains_key(&inv.lib_root)
-        && !children.contains(&inv.lib_root)
-    {
-        children.push(inv.lib_root);
-        children.sort_by_cached_key(|id| {
-            if *id == inv.lib_root {
-                aurora_i18n::tr!("ui-inventory-thumbnail-library").to_owned()
-            } else {
-                rules::name(inv, *id).to_lowercase()
-            }
-        });
-    }
-    let items = folder.items.clone();
     let state = egui::collapsing_header::CollapsingState::load_with_default_open(
         ui.ctx(),
         ui.make_persistent_id(("thumbnail_folder", id)),
@@ -438,11 +433,10 @@ fn picker_folder(ui: &mut egui::Ui, p: &Palette, icons: &Icons, inv: &mut Invent
         })
         .body(|ui| {
             inv.request(id);
-            for child in children {
-                picker_folder(ui, p, icons, inv, child, depth + 1, selected);
-            }
-            for item in items {
-                if let Some(it) = inv.items.get(&item)
+            for &item in order.children(id) {
+                if inv.folders.contains_key(&item) {
+                    picker_folder(ui, p, icons, inv, order, item, depth + 1, selected);
+                } else if let Some(it) = inv.items.get(&item)
                     && usable(inv, it)
                 {
                     ui.horizontal(|ui| {
@@ -480,6 +474,83 @@ fn toolbar_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, enabled
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_thumbnail_picker_tracks_inventory_order_in_tree_and_search() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let root = Uuid::from_u128(1);
+        world.inventory.root = root;
+        world.inventory.created_folders(vec![aurora_net::inventory::InvFolder {
+            id: root,
+            name: "Inventory".into(),
+            type_default: -1,
+            ..Default::default()
+        }]);
+        world.inventory.folders.get_mut(&root).expect("root").state = FetchState::Fetched;
+        world.inventory.add_items(
+            [("Texture 10", 200), ("texture 2", 100)]
+                .into_iter()
+                .enumerate()
+                .map(|(i, (name, date))| aurora_net::inventory::InvItem {
+                    id: Uuid::from_u128(10 + i as u128),
+                    parent: root,
+                    asset_id: Uuid::from_u128(110 + i as u128),
+                    name: name.into(),
+                    created_at: date,
+                    asset_type: 0,
+                    inv_type: 0,
+                    owner_mask: rules::COPY | rules::TRANSFER,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let mut picker = ThumbnailUi {
+            item: Some(root),
+            picker_open: true,
+            ..Default::default()
+        };
+        for (by_date, query) in [(false, ""), (true, ""), (false, "texture"), (true, "texture")] {
+            let prefs = InventoryPreferences {
+                sort: view::Sort {
+                    by_date,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            picker.filter = query.into();
+            let mut names = HashMap::new();
+            for _ in 0..3 {
+                let output = headless_output(ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                        ..Default::default()
+                    },
+                    |_| {
+                        picker.show(
+                            &ctx,
+                            &crate::theme::Theme::default().palette(),
+                            &Icons::default(),
+                            &mut world,
+                            &prefs,
+                            Uuid::nil(),
+                            &HashMap::new(),
+                            &mut HashSet::new(),
+                            false,
+                            &mut Vec::new(),
+                        )
+                    },
+                ));
+                for shape in output.shapes {
+                    if let egui::Shape::Text(text) = shape.shape {
+                        names.insert(text.galley.text().to_owned(), text.pos.y);
+                    }
+                }
+            }
+            assert_eq!(names["Texture 10"] < names["texture 2"], by_date, "query={query}");
+        }
+    }
 
     #[test]
     fn clicking_save_uploads_the_photo_and_closes_only_the_snapshot_window() {

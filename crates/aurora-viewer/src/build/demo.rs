@@ -223,6 +223,20 @@ pub fn texture_inventory(world: &mut World) {
         name: aurora_i18n::tr!("build-demo-sim-light-wood").repeat(20),
         ..Default::default()
     }]);
+    // Distinct names and dates make the shared inventory order visible in
+    // the existing texture/material picker scenarios.
+    for (index, number) in [2, 10].into_iter().enumerate() {
+        world.inventory.add_items(vec![InvItem {
+            id: Uuid::from_u128(99874 + index as u128),
+            parent: wood,
+            asset_id: aurora_prim::te::BLANK_TEXTURE,
+            inv_type: 0,
+            owner_mask: aurora_net::build::perm::COPY,
+            name: format!("{} {number}", aurora_i18n::tr!("build-demo-sim-light-wood")),
+            created_at: 100 + index as i64,
+            ..Default::default()
+        }]);
+    }
     world.inventory.generation += 1;
     if let Some((asset_id, _)) = crate::demo::pbr_materials().first() {
         world.inventory.add_items(vec![InvItem {
@@ -235,6 +249,19 @@ pub fn texture_inventory(world: &mut World) {
             name: aurora_i18n::tr!("build-ui-texture-material").to_owned(),
             ..Default::default()
         }]);
+        for (index, number) in [2, 10].into_iter().enumerate() {
+            world.inventory.add_items(vec![InvItem {
+                id: Uuid::from_u128(99876 + index as u128),
+                parent: project,
+                asset_id: *asset_id,
+                asset_type: 57,
+                inv_type: 26,
+                owner_mask: aurora_net::build::perm::COPY,
+                name: format!("{} {number}", aurora_i18n::tr!("build-ui-texture-material")),
+                created_at: 100 + index as i64,
+                ..Default::default()
+            }]);
+        }
     }
 }
 

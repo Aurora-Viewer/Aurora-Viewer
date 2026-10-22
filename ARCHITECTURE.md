@@ -306,6 +306,14 @@ including wrapped and empty rows. Inline code retains its glyph highlight.
 
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
 shared folder/search/type state and inventory management shortcut.
+
+`ui/inventory/view.rs` also publishes the main inventory's saved sort into
+the UI context each frame. Texture/material trees inherit that sort directly;
+independent inventory selectors share an immutable order projection, cached by
+inventory roots/generation, sort and language. They reuse the inventory's
+comparator and descendant-based folder dates, including support-folder pins
+and Library placement. Environment catalogues accept item ranks rather than
+owning a separate ordering policy. Local previews use natural name order.
 `ui/texture_library/windows.rs` owns independent, resizable texture/material
 windows keyed by inventory item. `texture_view.rs` handles fitted, ratio-constrained
 or native-pixel images and worker decoding/export. Profile photos share its image

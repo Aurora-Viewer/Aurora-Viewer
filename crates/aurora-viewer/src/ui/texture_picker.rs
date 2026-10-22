@@ -354,8 +354,14 @@ impl TexturePicker {
             } else {
                 world.inventory.root
             };
-            self.tree
-                .prepare_root(&mut world.inventory, world.agent_id, self.materials, &self.filter, root);
+            self.tree.prepare_root(
+                &mut world.inventory,
+                world.agent_id,
+                self.materials,
+                &self.filter,
+                root,
+                super::inventory::view::picker_sort(ctx),
+            );
             let hint = if self.materials {
                 aurora_i18n::tr!("ui-texture-picker-filter-materials")
             } else {
@@ -397,7 +403,7 @@ impl TexturePicker {
                     self.allow_local && *material == self.materials && (filter.is_empty() || name.to_lowercase().contains(&filter))
                 })
                 .collect();
-            locals.sort_by(|a, b| a.1.0.cmp(&b.1.0).then_with(|| a.0.cmp(b.0)));
+            locals.sort_by(|a, b| super::inventory::view::picker_name_cmp(&a.1.0, &b.1.0).then_with(|| a.0.cmp(b.0)));
             let tab = usize::from(!self.filter.trim().is_empty());
             let local_count = if self.allow_local && self.source == 1 {
                 1 + if self.local_open[tab] { locals.len() } else { 0 }
@@ -971,6 +977,82 @@ mod tests {
             },
         );
         assert!(can_preview(&inv, link));
+    }
+
+    #[test]
+    fn open_texture_and_material_selectors_follow_live_inventory_sort_in_search_and_aurora() {
+        use super::super::inventory::view::{Sort, set_picker_sort};
+        for (materials, source) in [false, true]
+            .into_iter()
+            .flat_map(|materials| [0, 2].map(move |source| (materials, source)))
+        {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let root = Uuid::from_u128(1);
+            world.inventory.root = root;
+            let parent = if source == 0 { root } else { Uuid::from_u128(3) };
+            world.inventory.created_folders(
+                [(1, 0, "Inventory"), (2, 1, "#Aurora"), (3, 2, "Aurora Library")]
+                    .into_iter()
+                    .map(|(id, parent, name)| aurora_net::inventory::InvFolder {
+                        id: Uuid::from_u128(id),
+                        parent: Uuid::from_u128(parent),
+                        name: name.into(),
+                        type_default: -1,
+                        ..Default::default()
+                    })
+                    .collect(),
+            );
+            for folder in world.inventory.folders.values_mut() {
+                folder.state = crate::world::inventory::FetchState::Fetched;
+            }
+            world.inventory.add_items(
+                [("Texture 10", 200), ("texture 2", 100)]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (name, date))| aurora_net::inventory::InvItem {
+                        id: Uuid::from_u128(10 + i as u128),
+                        asset_id: Uuid::from_u128(110 + i as u128),
+                        parent,
+                        name: name.into(),
+                        created_at: date,
+                        inv_type: if materials { INV_MATERIAL } else { INV_TEXTURE },
+                        ..Default::default()
+                    })
+                    .collect(),
+            );
+            let mut picker = TexturePicker::default();
+            if materials {
+                picker.open_materials("Material", Uuid::nil());
+            } else {
+                picker.open("Texture", Uuid::nil());
+            }
+            picker.source = source;
+            // Exercise the same picker while open, both filtered and browsing.
+            for (i, (by_date, query)) in [(false, ""), (true, ""), (true, "texture"), (false, "texture"), (true, "")]
+                .into_iter()
+                .enumerate()
+            {
+                set_picker_sort(
+                    &ctx,
+                    Sort {
+                        by_date,
+                        ..Default::default()
+                    },
+                );
+                picker.filter = query.into();
+                let mut labels = HashMap::new();
+                for pass in 0..3 {
+                    labels = frame(&ctx, &mut picker, &mut world, (i * 3 + pass) as f64 / 60.0, vec![]);
+                }
+                assert_eq!(
+                    labels["Texture 10"].y < labels["texture 2"].y,
+                    by_date,
+                    "materials={materials}, query={query}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -20,7 +20,7 @@ pub(super) struct MoveTo {
     pub(super) filter: String,
     selected: Option<Uuid>,
     focus: bool,
-    generation: Option<(u64, &'static str)>,
+    generation: Option<(u64, &'static str, view::Sort)>,
     protected: HashSet<Uuid>,
     destinations: Vec<Destination>,
     visible: Vec<usize>,
@@ -50,10 +50,12 @@ impl MoveTo {
         }
     }
 
-    fn update(&mut self, inv: &Inventory, protected: &HashSet<Uuid>) {
-        let generation = (inv.generation, aurora_i18n::language());
+    fn update(&mut self, ctx: &egui::Context, inv: &Inventory, protected: &HashSet<Uuid>) {
+        let generation = (inv.generation, aurora_i18n::language(), view::picker_sort(ctx));
         if self.generation != Some(generation) || self.protected != *protected {
             self.destinations = destinations(inv, &self.ids, protected);
+            let order = view::picker_order(ctx, inv);
+            self.destinations.par_sort_unstable_by_key(|row| order.rank(row.id));
             self.failed = inv
                 .folders
                 .values()
@@ -95,8 +97,7 @@ fn destinations(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>) -> Vec
         .chain(protected.iter().copied())
         .chain(roots.iter().filter(|id| inv.folders.contains_key(id)).copied())
         .collect();
-    let mut rows: Vec<_> = inv
-        .folders
+    inv.folders
         .par_iter()
         .filter_map(|(&id, _)| {
             if roots.iter().all(|source| rules::parent(inv, *source) == Some(id)) {
@@ -125,9 +126,7 @@ fn destinations(inv: &Inventory, ids: &[Uuid], protected: &HashSet<Uuid>) -> Vec
             }
             None
         })
-        .collect();
-    rows.par_sort_unstable_by(|a, b| a.search.cmp(&b.search).then(a.path.cmp(&b.path)).then(a.id.cmp(&b.id)));
-    rows
+        .collect()
 }
 
 pub(super) fn show(
@@ -148,7 +147,8 @@ pub(super) fn show(
         picker.loaded = rules::request_tree(inv, inv.root);
         picker.fetch_poll = Some(Instant::now());
     }
-    picker.update(inv, &prefs.protected);
+    view::set_picker_sort(ctx, prefs.sort);
+    picker.update(ctx, inv, &prefs.protected);
     let mut open = true;
     let mut done = false;
     let window_id = format!("inventory_move_to_{}", st.ui_id);
@@ -172,7 +172,7 @@ pub(super) fn show(
             filter.request_focus();
             picker.focus = false;
         }
-        picker.update(inv, &prefs.protected);
+        picker.update(ctx, inv, &prefs.protected);
         let keyboard = filter.has_focus() || filter.lost_focus();
         let enter = keyboard && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if keyboard && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -392,31 +392,75 @@ mod tests {
         }
         let mut picker = MoveTo::new(vec![id(8100)]);
         picker.filter = "  dEsTiNa  ".into();
-        picker.update(&inv, &HashSet::new());
+        picker.update(&egui::Context::default(), &inv, &HashSet::new());
         assert_eq!(picker.visible.len(), 2);
         let rows: Vec<_> = picker.visible.iter().map(|i| &picker.destinations[*i]).collect();
         assert_eq!(rows[0].name, rows[1].name);
         assert_ne!(rows[0].path, rows[1].path);
         picker.selected = Some(rows[0].id);
         picker.filter = "absent".into();
-        picker.update(&inv, &HashSet::new());
+        picker.update(&egui::Context::default(), &inv, &HashSet::new());
         assert!(picker.visible.is_empty());
         assert!(picker.selected.is_none());
+    }
+
+    #[test]
+    fn open_destination_picker_tracks_folder_date_and_name_options() {
+        let ctx = egui::Context::default();
+        let mut inv = fixture();
+        for (n, name, date) in [(8500, "Sort folder 10", 200), (8501, "sort folder 2", 100)] {
+            inv.created_folders(vec![InvFolder {
+                id: id(n),
+                parent: inv.root,
+                name: name.into(),
+                type_default: -1,
+                ..Default::default()
+            }]);
+            inv.add_items(vec![aurora_net::inventory::InvItem {
+                id: id(n + 10),
+                parent: id(n),
+                name: "Nested item".into(),
+                created_at: date,
+                ..Default::default()
+            }]);
+        }
+        let mut picker = MoveTo::new(vec![id(8100)]);
+        picker.filter = "sort folder".into();
+        for (by_date, folders_by_name) in [(false, true), (true, false), (true, true), (true, false)] {
+            view::set_picker_sort(
+                &ctx,
+                view::Sort {
+                    by_date,
+                    folders_by_name,
+                    ..Default::default()
+                },
+            );
+            picker.update(&ctx, &inv, &HashSet::new());
+            let names: Vec<_> = picker.visible.iter().map(|i| picker.destinations[*i].name.as_str()).collect();
+            assert_eq!(
+                names,
+                if by_date && !folders_by_name {
+                    ["Sort folder 10", "sort folder 2"]
+                } else {
+                    ["sort folder 2", "Sort folder 10"]
+                }
+            );
+        }
     }
 
     #[test]
     fn changing_permissions_or_folder_membership_invalidates_the_destination() {
         let mut inv = fixture();
         let mut picker = MoveTo::new(vec![id(8100)]);
-        picker.update(&inv, &HashSet::new());
+        picker.update(&egui::Context::default(), &inv, &HashSet::new());
         picker.selected = Some(id(8001));
-        picker.update(&inv, &HashSet::from([id(8001)]));
+        picker.update(&egui::Context::default(), &inv, &HashSet::from([id(8001)]));
         assert!(picker.selected.is_none());
-        picker.update(&inv, &HashSet::new());
+        picker.update(&egui::Context::default(), &inv, &HashSet::new());
         picker.selected = Some(id(8001));
         let change = rules::move_selection(&inv, &picker.ids, id(8001), &HashSet::new(), &HashSet::new()).expect("move");
         rules::demo_mutate(&mut inv, id(2), change).expect("demo move");
-        picker.update(&inv, &HashSet::new());
+        picker.update(&egui::Context::default(), &inv, &HashSet::new());
         assert!(picker.selected.is_none(), "the new parent is no longer a useful destination");
     }
 
@@ -747,7 +791,7 @@ mod tests {
         // Pick any eligible system destination from the actual list.
         let picker = st.move_to.as_mut().expect("picker");
         picker.filter.clear();
-        picker.update(&inv, &prefs.protected);
+        picker.update(&egui::Context::default(), &inv, &prefs.protected);
         let to = picker.destinations.first().expect("destination").id;
         picker.selected = Some(to);
         frame(&ctx, &mut inv, &mut st, &prefs, Vec::new());

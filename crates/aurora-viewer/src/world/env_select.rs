@@ -55,6 +55,7 @@ impl SettingsKind {
 /// One entry of a list: the item name and the settings asset it applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsChoice {
+    pub item: Uuid,
     pub name: String,
     pub asset: Uuid,
 }
@@ -124,8 +125,17 @@ impl SettingsCatalog {
         self.list(kind).iter().find(|c| c.asset == asset).map(|c| c.name.as_str())
     }
 
+    pub fn choices(&self, kinds: &[SettingsKind], rank: impl Fn(Uuid) -> usize) -> Vec<(SettingsKind, &SettingsChoice)> {
+        let mut choices: Vec<_> = kinds
+            .iter()
+            .flat_map(|kind| self.list(*kind).iter().map(move |choice| (*kind, choice)))
+            .collect();
+        choices.sort_by_key(|(_, choice)| rank(choice.item));
+        choices
+    }
+
     /// The lists from the loaded inventory and library (loadPresets).
-    pub fn build(inv: &Inventory) -> SettingsCatalog {
+    pub fn build(inv: &Inventory, rank: impl Fn(Uuid) -> usize) -> SettingsCatalog {
         let places = places(inv);
         let mut items: Vec<(&InvItem, bool)> = inv
             .items
@@ -136,16 +146,16 @@ impl SettingsCatalog {
                 (!p.excluded).then_some((it, p.library))
             })
             .collect();
-        // a stable traversal: the user's items before the library's (the
-        // first item of an asset gives its name), then by name and id
-        items.sort_by(|(a, la), (b, lb)| la.cmp(lb).then_with(|| a.name.cmp(&b.name)).then_with(|| a.id.cmp(&b.id)));
+        // Preserve the inventory selector's order and prefer the user's copy
+        // over Library when several items reference the same settings asset.
+        items.sort_by_key(|(item, library)| (*library, rank(item.id)));
         Self::from_items(items.into_iter().map(|(it, _)| it))
     }
 
     /// Settings items of one type an editor can load (LLFloaterSettingsPicker
     /// filtered by type): (item, name), the user's before the library's,
     /// Trash and Marketplace listings left out.
-    pub fn items_of(inv: &Inventory, kind: SettingsKind) -> Vec<(Uuid, String)> {
+    pub fn items_of(inv: &Inventory, kind: SettingsKind, rank: impl Fn(Uuid) -> usize) -> Vec<(Uuid, String)> {
         let places = places(inv);
         let mut items: Vec<(&InvItem, bool)> = inv
             .items
@@ -156,15 +166,12 @@ impl SettingsCatalog {
                 (!p.excluded).then_some((it, p.library))
             })
             .collect();
-        items.sort_by(|(a, la), (b, lb)| la.cmp(lb).then_with(|| a.name.cmp(&b.name)).then_with(|| a.id.cmp(&b.id)));
+        items.sort_by_key(|(item, library)| (*library, rank(item.id)));
         items.into_iter().map(|(it, _)| (it.id, it.name.clone())).collect()
     }
 
-    /// FSSettingsCollector + the three multimaps of loadPresets: one entry
-    /// per settings asset (the first item seen), items of an invalid settings
-    /// type dropped, each list sorted by name. Firestorm's std::multimap
-    /// compares names byte by byte (case-sensitive: "Zebra" before "apple"),
-    /// equal names keeping their order.
+    /// FSSettingsCollector's filtering and asset deduplication, preserving
+    /// the caller's inventory order within each settings kind.
     pub fn from_items<'a>(items: impl IntoIterator<Item = &'a InvItem>) -> SettingsCatalog {
         let mut seen = HashSet::new();
         let mut out = SettingsCatalog::default();
@@ -182,6 +189,7 @@ impl SettingsCatalog {
                 continue;
             };
             let choice = SettingsChoice {
+                item: it.id,
                 name: it.name.clone(),
                 asset: it.asset_id,
             };
@@ -190,9 +198,6 @@ impl SettingsCatalog {
                 SettingsKind::Water => out.water.push(choice),
                 SettingsKind::Day => out.day.push(choice),
             }
-        }
-        for list in [&mut out.sky, &mut out.water, &mut out.day] {
-            list.sort_by(|a, b| a.name.as_bytes().cmp(b.name.as_bytes()));
         }
         out
     }
@@ -323,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn lists_are_deduplicated_and_sorted_like_firestorm() {
+    fn lists_preserve_the_supplied_order_and_deduplicate_assets() {
         let f = Uuid::nil();
         let items = [
             item("Midday", 0, 1, f),
@@ -342,10 +347,10 @@ mod tests {
         ];
         let c = SettingsCatalog::from_items(items.iter());
         let names = |l: &[SettingsChoice]| l.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
-        // byte order: capitals before lower case, equal names in order
-        assert_eq!(names(&c.sky), ["A-6PM", "Coastal Sunset", "Midday", "Same", "Same", "annan sky"]);
-        assert_eq!(c.sky[3].asset, Uuid::from_u128(10));
-        assert_eq!(names(&c.water), ["Default Water", "Murky"]);
+        // The first occurrence of an asset keeps its position and name.
+        assert_eq!(names(&c.sky), ["Midday", "A-6PM", "annan sky", "Coastal Sunset", "Same", "Same"]);
+        assert_eq!(c.sky[4].asset, Uuid::from_u128(10));
+        assert_eq!(names(&c.water), ["Murky", "Default Water"]);
         assert_eq!(names(&c.day), ["Dynamic"]);
         assert_eq!(c.name_of(SettingsKind::Sky, Uuid::from_u128(1)), Some("Midday"));
     }
@@ -392,10 +397,62 @@ mod tests {
             let it = item(&format!("Sky {i}"), 0, 100 + i as u128, Uuid::from_u128(parent));
             inv.items.insert(it.id, it);
         }
-        let c = SettingsCatalog::build(&inv);
+        let order = crate::ui::inventory::view::picker_order(&egui::Context::default(), &inv);
+        let c = SettingsCatalog::build(&inv, |id| order.rank(id));
         let names: Vec<&str> = c.sky.iter().map(|c| c.name.as_str()).collect();
         // Settings, Objects, library Environments and any other library folder
         assert_eq!(names, ["Sky 0", "Sky 2", "Sky 4", "Sky 5"]);
+    }
+
+    #[test]
+    fn settings_selectors_share_inventory_dates_and_natural_order_across_kinds() {
+        use crate::ui::inventory::view::{Sort, picker_order, set_picker_sort};
+        let ctx = egui::Context::default();
+        let mut inv = test_inventory();
+        inv.root = Uuid::from_u128(1);
+        inv.lib_root = Uuid::from_u128(10);
+        let mut a = item("Setting 10", 0, 100, Uuid::from_u128(2));
+        a.created_at = 200;
+        let mut b = item("setting 2", 0, 101, Uuid::from_u128(2));
+        b.created_at = 100;
+        let mut water = item("Setting 3", 1, 102, Uuid::from_u128(2));
+        water.created_at = 300;
+        inv.add_items(vec![a, b, water]);
+        for by_date in [false, true, false] {
+            set_picker_sort(
+                &ctx,
+                Sort {
+                    by_date,
+                    ..Default::default()
+                },
+            );
+            let order = picker_order(&ctx, &inv);
+            let catalog = SettingsCatalog::build(&inv, |id| order.rank(id));
+            let sky: Vec<_> = catalog.sky.iter().map(|c| c.name.as_str()).collect();
+            let items = SettingsCatalog::items_of(&inv, SettingsKind::Sky, |id| order.rank(id));
+            assert_eq!(
+                sky,
+                if by_date {
+                    ["Setting 10", "setting 2"]
+                } else {
+                    ["setting 2", "Setting 10"]
+                }
+            );
+            assert_eq!(items.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>(), sky);
+            let mixed: Vec<_> = catalog
+                .choices(&[SettingsKind::Sky, SettingsKind::Water], |id| order.rank(id))
+                .into_iter()
+                .map(|(_, c)| c.name.as_str())
+                .collect();
+            assert_eq!(
+                mixed,
+                if by_date {
+                    ["Setting 3", "Setting 10", "setting 2"]
+                } else {
+                    ["setting 2", "Setting 3", "Setting 10"]
+                }
+            );
+        }
     }
 
     #[test]
@@ -425,6 +482,7 @@ mod tests {
     fn arrows_skip_the_fixed_entries_and_wrap() {
         let list: Vec<SettingsChoice> = (1..=3)
             .map(|i| SettingsChoice {
+                item: Uuid::from_u128(i),
                 name: format!("S{i}"),
                 asset: Uuid::from_u128(i),
             })
