@@ -600,7 +600,20 @@ fn stepped(ui: &mut egui::Ui, p: &Palette, v: &mut u8, labels: &[&str]) -> bool 
             .show_value(false),
     );
     let label = labels.get((*v).min(max) as usize).copied().unwrap_or("");
-    ui.label(RichText::new(label).size(12.0).color(p.violet_pale));
+    let font = egui::FontId::proportional(12.0);
+    let width = labels
+        .iter()
+        .map(|label| {
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), font.clone(), p.violet_pale)
+                .size()
+                .x
+        })
+        .fold(0.0, f32::max);
+    ui.add_sized(
+        vec2(width, ui.spacing().interact_size.y),
+        egui::Label::new(RichText::new(label).size(12.0).color(p.violet_pale)).wrap_mode(egui::TextWrapMode::Extend),
+    );
     r.changed()
 }
 

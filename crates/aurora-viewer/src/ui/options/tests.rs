@@ -483,6 +483,145 @@ fn click(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
     ]
 }
 
+fn preference_shapes(
+    frames: &mut Frames,
+    s: &mut Settings,
+    st: &mut OptionsUi,
+    r: &mut OptionsResult,
+    view: (Page, usize, f32),
+    events: Vec<egui::Event>,
+) -> Vec<egui::Shape> {
+    let p = crate::theme::Theme::default().palette();
+    let d = Settings::default();
+    frames.shapes(events, |ui| {
+        ui.set_width(view.2);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        count(ui, &p, s, &d, st, r);
+        let mut cx = Cx::new(ui, p, s, &d, st, r, Mode::Show, "");
+        run_page(&mut cx, view.0, Some(view.1));
+    })
+}
+
+/// The full painted rails, excluding the shorter accent fills and handles.
+fn slider_rails(frames: &Frames, shapes: &[egui::Shape]) -> Vec<egui::Rect> {
+    shapes
+        .iter()
+        .filter_map(|shape| match shape {
+            egui::Shape::Rect(r)
+                if [
+                    (r.rect.width() - SLIDER_W).abs(),
+                    (r.rect.width() - (SLIDER_W - 30.0)).abs(),
+                    (r.rect.width() - (SLIDER_W + 40.0)).abs(),
+                ]
+                .into_iter()
+                .any(|delta| delta < 1.0)
+                    && r.rect.height() < 12.0
+                    && r.fill == frames.ctx.style_of(frames.ctx.theme()).visuals.widgets.inactive.bg_fill =>
+            {
+                Some(r.rect)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn preference_slider_rails_stay_in_place_when_values_change() {
+    for width in [420.0, 700.0, 900.0] {
+        for (page, tab) in [
+            (Page::Chat, 4),
+            (Page::Graphics, 0),
+            (Page::Graphics, 5),
+            (Page::Network, 0),
+            (Page::Sound, 0),
+        ] {
+            let mut frames = Frames::new();
+            let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+            s.fps_cap = true;
+            s.background_fps_cap = true;
+            let view = (page, tab, width);
+            let mut shapes = Vec::new();
+            for _ in 0..3 {
+                shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, view, Vec::new());
+            }
+            let rails = slider_rails(&frames, &shapes);
+            assert!(!rails.is_empty(), "{page:?}/{tab} paints sliders");
+            for minutes in [1, 20, 59, 0] {
+                s.autoresponse.away_after_minutes = minutes;
+                s.autoresponse.quit_after_away_minutes = minutes;
+                s.draw_distance = if minutes == 1 { 16.0 } else { 512.0 };
+                s.lod_factor = if minutes == 1 { 0.5 } else { 4.0 };
+                s.max_particles = if minutes == 1 { 1 } else { 8000 };
+                s.loading_avatars = if minutes == 1 { 0 } else { 2 };
+                s.fps_limit = if minutes == 1 { 9 } else { 144 };
+                s.background_fps_limit = if minutes == 1 { 9 } else { 100 };
+                s.bandwidth_kbps = if minutes == 1 { 50 } else { 20000 };
+                s.cache_size_mb = if minutes == 1 { 512 } else { 32768 };
+                s.audio.volume.fill(minutes as f32 / 60.0);
+                for _ in 0..3 {
+                    shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, view, Vec::new());
+                    assert_eq!(
+                        slider_rails(&frames, &shapes),
+                        rails,
+                        "{page:?}/{tab}, {width} points, value {minutes}"
+                    );
+                    for rail in &rails {
+                        for shape in &shapes {
+                            if let egui::Shape::Text(t) = shape {
+                                let text = egui::Rect::from_min_size(t.pos, t.galley.size());
+                                assert!(!text.intersects(*rail), "{page:?}/{tab}: text overlaps a rail at {width} points");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn away_slider_rails_stay_in_place_during_typing_and_pointer_changes() {
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    let view = (Page::Chat, 4, 900.0);
+    let mut shapes = Vec::new();
+    for _ in 0..3 {
+        shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, view, Vec::new());
+    }
+    let rails = slider_rails(&frames, &shapes);
+    assert_eq!(rails.len(), 2);
+    for (index, rail) in rails.iter().enumerate() {
+        let field = shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Text(t)
+                    if t.galley.text() == aurora_i18n::tr!("ui-options-away-disabled")
+                        && (t.pos.y + t.galley.size().y / 2.0 - rail.center().y).abs() < 8.0 =>
+                {
+                    Some(t.pos + t.galley.size() / 2.0)
+                }
+                _ => None,
+            })
+            .expect("the disabled value beside this rail");
+        for events in click(field).into_iter().chain([vec![egui::Event::Text("20".to_owned())]]) {
+            shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, view, events);
+            assert_eq!(slider_rails(&frames, &shapes), rails, "typing must not move either rail");
+        }
+        let value = |s: &Settings| match index {
+            0 => s.autoresponse.away_after_minutes,
+            _ => s.autoresponse.quit_after_away_minutes,
+        };
+        assert_eq!(value(&s), 20, "the number is editable");
+        for at in [rail.center(), egui::pos2(rail.left() + 1.0, rail.center().y)] {
+            for events in click(at) {
+                shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, view, events);
+                assert_eq!(slider_rails(&frames, &shapes), rails, "pointer changes must not move either rail");
+            }
+        }
+        assert_eq!(value(&s), 0, "the pointer can restore Disabled");
+    }
+}
+
 #[test]
 fn the_conversations_choice_switches_the_style() {
     use crate::settings::ChatStyle;
