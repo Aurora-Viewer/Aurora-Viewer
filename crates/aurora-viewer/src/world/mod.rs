@@ -2386,6 +2386,13 @@ impl World {
                 }
                 None
             }
+            NetEvent::ExperienceAttachment { experience, object_name } => {
+                if self.rlva.enabled() {
+                    self.rlva.controllers.attachment(experience, object_name, Instant::now());
+                    self.rlva_controllers_tick(Instant::now());
+                }
+                None
+            }
             NetEvent::ExperiencePermission { experience, result, .. } => {
                 self.experiences.permission(experience, result);
                 None
@@ -2597,6 +2604,12 @@ impl World {
                 None
             }
             NetEvent::Land(ev) => {
+                if let aurora_net::land::LandEvent::AttachmentScripts(result) = &ev {
+                    match result {
+                        Ok((_, attachments)) => self.rlva_controller_resources(attachments),
+                        Err(_) => self.rlva_controller_resources(&[]),
+                    }
+                }
                 let ctx = land::SelectionContext {
                     agent_region: self.main_region,
                     region_id: self
@@ -2995,6 +3008,12 @@ impl World {
     }
 
     fn on_chat(&mut self, c: ChatMessage) {
+        if c.source_type == aurora_net::ChatSourceType::Object
+            && c.chat_type == aurora_net::ChatType::OwnerSay
+            && c.message.starts_with('@')
+        {
+            self.rlva_bind_controller(c.source_id);
+        }
         if self.rlva.receive(&c) {
             self.eep.rlva_locked = self.rlva.has("setenv");
             let environment_owner = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id);

@@ -131,6 +131,9 @@ impl World {
         if !r.enabled() {
             return true;
         }
+        if !actor.is_nil() && r.controllers.blocked(actor) {
+            return false;
+        }
         let blocked = |name| r.has_except(name, actor);
         match command {
             NetCommand::CreateInventoryItem {
@@ -337,6 +340,9 @@ impl World {
         while let Some((source, c)) = pending.next() {
             if !self.rlva.enabled() {
                 break;
+            }
+            if !self.rlva.controllers.accepts(source, c.param) {
+                continue;
             }
             if self.rlva_environment_command(source, &c) {
                 continue;

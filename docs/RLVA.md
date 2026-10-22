@@ -35,6 +35,13 @@ script authors; the command lists below describe this branch specifically.
   disabled. Protocol replies bypass user IM locks, with bounded UTF-8 packets,
   busy/normal session fields and the offline-friend flag. Global disable drops
   pending replies and questions; IMs never become object command sources.
+- Experience-origin controllers use the native temporary-attachment option
+  (on), minimum experience rating (Moderate) and blocked-experience list
+  (empty). Classification waits for cached details and AttachmentResources;
+  a refused controller loses existing rules and cannot issue new ones.
+  The check covers child prims and deferred actions, keeps clear/removal
+  available, and retires a block on confirmed detach or global disable.
+  An unresolved attachment name expires after five minutes.
 - Movement: fly, jump, unsit, sit, alwaysrun and temprun;
   forced fly, setrot, sit, sitground and unsit.
   A forced ground sit leaves an object seat, waits for the confirmed stand,
@@ -162,7 +169,11 @@ script authors; the command lists below describe this branch specifically.
   recheck setgroup; simulator-triggered group changes restore the last
   permitted membership without flooding activation messages.
 - Environment: exclusive setenv ownership, scalar/vector/texture get/set
-  extensions, legacy colour components and intensity, sun/moon angles,
+  commands. The optional environment-lock preference defaults to on;
+  disabling it rejects setenv add/remove commands while retaining force
+  properties and discovery, matching the native NoSetEnv setting. Existing
+  locks can still be cleared or released by global disable. Supported properties
+  include legacy colour components and intensity, sun/moon angles,
   asset UUIDs and named library sky/day presets. Temporary overrides restore
   the user's local environment when released or disabled. Native environment
   changes respect the lock.
@@ -201,9 +212,9 @@ than asserting a complete RLV specification version.
   notifications and permission entry-point validation.
   The new native ground-sit and clothing-notification handlers require live
   validation with delayed simulator responses and intervening restrictions.
-- Complete linked/folded-folder conformance, shared inventory offer filing,
-  experience-origin controller approval, queue timeout
-  behavior and live confirmation of attachment recovery across crossings.
+- Complete linked/folded-folder and queue timeout conformance; live validation
+  of shared inventory gifts, experience-origin controller approval and
+  attachment recovery across crossings.
 - Every media/touch interaction path and surface-distance checks; all edit,
   inventory and document entry points must be audited against live scripts.
 - Live visual comparison of sphere/overlay effects, forced textures,

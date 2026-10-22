@@ -761,6 +761,11 @@ pub enum NetEvent {
     /// GetExperienceInfo: the details of the experiences asked for (unknown
     /// ones when they could not be read).
     ExperienceInfo(Vec<crate::experience::ExperienceDetails>),
+    /// ExperienceEvent's permission-4 event, with the experience in its invoice.
+    ExperienceAttachment {
+        experience: Uuid,
+        object_name: String,
+    },
     /// GroupExperiences: the experiences a group owns (empty on a failure).
     GroupExperiences {
         group: Uuid,

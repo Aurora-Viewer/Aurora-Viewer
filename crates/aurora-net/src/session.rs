@@ -9,6 +9,7 @@ mod asset_imports;
 mod build_cmds;
 mod currency;
 mod estate;
+mod experience_events;
 mod gestures;
 mod inventory_copies;
 mod inventory_moves;
@@ -3145,7 +3146,7 @@ impl Session<'_> {
             transition::step_once("first event", || format!("first event queue event of the region ({})", e.message));
         }
         let b = &e.body;
-        if self.on_inventory_eq(&e) {
+        if self.on_inventory_eq(&e) || self.on_experience_eq(&e) {
             return;
         }
         if self.on_social_eq(&e.message, b)
@@ -4258,11 +4259,31 @@ impl Session<'_> {
             );
         } else if id == GenericMessage::ID {
             let m: GenericMessage = pkt.decode()?;
+            self.on_experience_generic(
+                m.agent_data.agent_id,
+                &m.method_data.method,
+                m.method_data.invoice,
+                &m.param_list
+                    .iter()
+                    .take(3)
+                    .map(|parameter| parameter.parameter.as_slice())
+                    .collect::<Vec<_>>(),
+            );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }
         } else if id == LargeGenericMessage::ID {
             let m: LargeGenericMessage = pkt.decode()?;
+            self.on_experience_generic(
+                m.agent_data.agent_id,
+                &m.method_data.method,
+                m.method_data.invoice,
+                &m.param_list
+                    .iter()
+                    .take(3)
+                    .map(|parameter| parameter.parameter.as_slice())
+                    .collect::<Vec<_>>(),
+            );
             if let Some(parameter) = m.param_list.first() {
                 self.on_inventory_generic(m.agent_data.agent_id, &m.method_data.method, &parameter.parameter);
             }

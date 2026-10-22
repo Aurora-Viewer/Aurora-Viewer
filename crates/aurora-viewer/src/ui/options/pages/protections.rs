@@ -17,6 +17,38 @@ pub fn page(cx: &mut Cx) {
         cx.note(tr!("rlva-session-hint"));
         cx.greyed(!cx.s.rlva_enabled);
         cx.toggle(
+            tr!("rlva-env-locks"),
+            tr!("rlva-env-locks-hint"),
+            &field!(rlva.allow_environment_locks),
+        );
+        cx.toggle(
+            tr!("rlva-temp-controllers"),
+            tr!("rlva-temp-controllers-hint"),
+            &field!(rlva.temporary_controllers),
+        );
+        cx.greyed(!cx.s.rlva_enabled || !cx.s.rlva.temporary_controllers);
+        cx.combo(
+            tr!("rlva-experience-maturity"),
+            tr!("rlva-experience-maturity-hint"),
+            &field!(rlva.experience_maturity),
+            &[
+                (0, tr!("common-none")),
+                (1, tr!("common-general")),
+                (2, tr!("common-moderate")),
+                (3, tr!("common-adult")),
+            ],
+        );
+        cx.row(
+            tr!("rlva-blocked-experiences"),
+            tr!("rlva-blocked-experiences-hint"),
+            &field!(rlva.blocked_experiences),
+            |ui, settings| {
+                ui.add(egui::TextEdit::singleline(&mut settings.rlva.blocked_experiences).desired_width(180.0))
+                    .changed()
+            },
+        );
+        cx.greyed(!cx.s.rlva_enabled);
+        cx.toggle(
             tr!("rlva-shared-offers"),
             tr!("rlva-shared-offers-hint"),
             &field!(rlva.allow_shared_offers),

@@ -110,6 +110,13 @@ their folder headers. Only the matching accepted gift may create its path,
 move and rename; every step waits for confirmed inventory metadata. Its
 internal actor authorizes exactly the pending mutation. Disabling cancels
 filing and restores ordinary filing for unanswered notifications.
+`controllers.rs` resolves ExperienceEvent attachments through the shared
+experience cache and AttachmentResources. It applies temporary-controller,
+maturity and blocked-experience preferences, clears late-identified issuers
+and checks child prims at the common action boundary. Unresolved names expire
+after five minutes; resolved blocks last until detach or global disable.
+The network's `session/experience_events.rs` handles native UDP/HTTP generic
+messages, retaining the experience invoice and attachment name.
 
 This does not yet provide full RLVa parity. [RLVa implementation status](docs/RLVA.md)
 lists the supported commands and remaining families; versionnum deliberately

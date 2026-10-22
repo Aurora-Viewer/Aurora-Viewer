@@ -123,7 +123,11 @@ fn parse_template(event: &EqEvent, expected: Uuid) -> Result<Update, ()> {
         })
         .collect();
     Ok(Update {
-        transaction: b["AgentData"].at(0)["TransactionID"].as_uuid(),
+        transaction: if event.message == "BulkUpdateInventory" {
+            b["AgentData"].at(0)["TransactionID"].as_uuid()
+        } else {
+            Uuid::nil()
+        },
         items,
         folders,
     })
@@ -259,7 +263,14 @@ mod tests {
                 .expect("supported direct HTTP update")
                 .expect("valid");
             assert_eq!(update.items[0].0, 41);
-            assert_eq!(update.transaction, Uuid::from_u128(202));
+            assert_eq!(
+                update.transaction,
+                if name == "BulkUpdateInventory" {
+                    Uuid::from_u128(202)
+                } else {
+                    Uuid::nil()
+                }
+            );
             assert_eq!(update.items[0].1.parent, Uuid::from_u128(100));
             assert_eq!(update.items[0].1.name, "Copied item");
             assert_eq!(update.items[0].1.owner_mask, 0x7fffffff);
@@ -451,7 +462,9 @@ mod tests {
                             completion = Some(result);
                         }
                     }
-                    if delivered && let Some(result) = completion.take() {
+                    if (delivered || name == "UpdateCreateInventoryItem")
+                        && let Some(result) = completion.take()
+                    {
                         return result;
                     }
                     tokio::time::sleep(Duration::from_millis(1)).await;
@@ -485,5 +498,15 @@ mod tests {
         let movement: MoveInventoryItem = parse_packet(&bytes[..size]).expect("packet").decode().expect("move");
         assert_eq!(movement.inventory_data[0].folder_id, Uuid::from_u128(200));
         assert!(received.try_iter().any(|(_, event)| matches!(event, NetEvent::InventoryEdited { request: done, result: Ok(reply) } if done == request && reply.moves_queued && reply.contents.is_empty())), "moves are queued without an HTTP capability or a readback gate");
+        for message in ["GenericMessage", "LargeGenericMessage"] {
+            session.on_eq_event(EqEvent {
+                sim: address, message: message.into(), body: llsd_map! {
+                    "AgentData" => Llsd::Array(vec![llsd_map! { "AgentID" => agent }]),
+                    "MethodData" => Llsd::Array(vec![llsd_map! { "Method" => Llsd::Binary(b"ExperienceEvent\0".to_vec()), "Invoice" => Uuid::from_u128(700) }]),
+                    "ParamList" => Llsd::Array(vec![llsd_map! { "Parameter" => Llsd::Binary(b"{'Permission':i4}".to_vec()) }, llsd_map! { "Parameter" => Llsd::Binary(b"Controller\0".to_vec()) }])
+                }
+            });
+            assert!(received.try_iter().any(|(_, event)| matches!(event, NetEvent::ExperienceAttachment { experience, object_name } if experience == Uuid::from_u128(700) && object_name == "Controller")));
+        }
     }
 }

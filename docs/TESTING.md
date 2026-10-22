@@ -2787,6 +2787,13 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   740 and delivers the matching inventory transaction; by frame 810 the log
   must report `path=~Demo/Cuffs`. The native offer and shared-gift preference
   use the same EN/FR controls as real offers. No grid is contacted.
+  `experience` attaches a synthetic General-rated experience controller,
+  applies fly/jump locks and identifies it through attachment resources at
+  frame 740. By frame 810 the log reports `blocked=true, fly=false, jump=false`.
+  `experience-allowed` uses a Moderate rating: `blocked=false, fly=true,
+  jump=true`. `experience-released` also disables RLVa at frame 760, clearing
+  the controller block and all restrictions. Capture after frame 810 to
+  inspect the rating, temporary-controller and blocked-list controls in EN/FR.
   `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
   `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
   mode to the same scene. `overlay` uses the demo's transparent-hole texture

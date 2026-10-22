@@ -58,6 +58,7 @@ impl App {
             self.appearance_ui.attachments.clear();
             self.appearance_ui.pending_actor = Uuid::nil();
         }
+        self.world.rlva_controllers_tick(Instant::now());
         self.world.eep.rlva_locked = self.world.rlva.has("setenv");
         self.world.inventory.rlva_preview_mask = self.world.rlva.preview_mask();
         self.script_editors.rlva_hidden = self.world.rlva.has("viewscript");
@@ -247,6 +248,10 @@ impl App {
                 });
                 self.camera.change_to_default(&mut self.world.agent, &self.settings.camera);
                 format!("@notify:123=n,sit:{id}=force")
+            } else if scenario.starts_with("experience") {
+                self.world
+                    .rlva_demo_experience(if scenario == "experience-allowed" { 21 } else { 13 }, false);
+                "@notify:123=n".to_owned()
             } else if scenario.starts_with("shared-offer") {
                 self.world.rlva_demo_shared_offer(false);
                 "@notify:123;inv_offer=n".to_owned()
@@ -333,6 +338,12 @@ impl App {
         }
         if mode == "shared-offer-accepted" && self.frame_count == 810 {
             self.world.rlva_demo_shared_offer_report();
+        }
+        if mode.starts_with("experience") && self.frame_count == 740 {
+            self.world.rlva_demo_experience(0, true);
+        }
+        if mode.starts_with("experience") && self.frame_count == 810 {
+            self.world.rlva_demo_experience_report();
         }
         if mode == "im-query" && self.frame_count == 740 {
             self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
@@ -498,7 +509,7 @@ impl App {
                         "getdebug_renderresolutiondivisor" => self.world.rlva.resolution_divisor.unwrap_or(1).to_string(),
                         "getdebug_windlightuseatmosshaders" => "1".to_owned(),
                         "getdebug_restrainedloveforbidgivetorlv" => u8::from(!self.settings.rlva.allow_shared_offers).to_string(),
-                        "getdebug_restrainedlovenosetenv" => "0".to_owned(),
+                        "getdebug_restrainedlovenosetenv" => u8::from(!self.settings.rlva.allow_environment_locks).to_string(),
                         _ => String::new(),
                     };
                     self.world.rlva.reply(channel, text);

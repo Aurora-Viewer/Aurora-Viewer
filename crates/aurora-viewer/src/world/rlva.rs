@@ -13,6 +13,7 @@ const VERSION: &str = "RestrainedLove viewer v0.0 (Aurora experimental RLVa)";
 
 pub mod camera;
 mod collection;
+mod controllers;
 mod debug;
 mod editing;
 pub mod effects;
@@ -428,6 +429,7 @@ pub struct Rlva {
     pub preferences: preferences::Preferences,
     pub rename: rename::RenameOnWear,
     pub offers: offers::Offers,
+    pub controllers: controllers::Controllers,
     pub im: im_queries::Queries,
     rules: BTreeMap<Uuid, BTreeSet<Rule>>,
     pub pending: Vec<(Uuid, Command)>,
@@ -522,6 +524,7 @@ impl Rlva {
         self.rules.clear();
         self.rename = Default::default();
         self.offers = Default::default();
+        self.controllers = Default::default();
         self.im = Default::default();
         self.pending.clear();
         self.out.clear();
@@ -646,6 +649,11 @@ impl Rlva {
     }
 
     fn process(&mut self, source: Uuid, c: Command) {
+        if !self.controllers.accepts(source, c.param)
+            || (c.behaviour == "setenv" && matches!(c.param, Param::Add | Param::Remove) && !self.preferences.allow_environment_locks)
+        {
+            return;
+        }
         if effects::MODIFIERS.contains(&c.behaviour.as_str()) {
             if c.param == Param::Force && !c.strict && self.rules.get(&source).is_some_and(|r| !r.is_empty()) {
                 self.visuals.command(source, &c, std::time::Instant::now());

@@ -51,4 +51,39 @@ mod tests {
         r.configure(false);
         assert!(r.pseudo_sex.is_none());
     }
+
+    #[test]
+    fn rlva_no_set_environment_preference_blocks_only_the_reference_lock_commands() {
+        use aurora_net::{ChatMessage, ChatSourceType, ChatType};
+        let mut r = Rlva::default();
+        r.configure(true);
+        r.preferences.allow_environment_locks = false;
+        let mut chat = ChatMessage {
+            from_name: "Controller".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::from_u128(2),
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: "@setenv=n,setenv_daytime:0.5=force,getenv_daytime=123,getcommand:setenv;add=123".into(),
+        };
+        assert!(r.receive(&chat));
+        assert!(!r.has("setenv"));
+        assert_eq!(r.pending.len(), 2, "environment forces and replies remain available");
+        assert!(
+            matches!(r.out.last(), Some(aurora_net::NetCommand::ChatReply { message, .. }) if message == "setenv"),
+            "discovery retains disabled commands, as the native dictionary does"
+        );
+        r.preferences.allow_environment_locks = true;
+        chat.message = "@setenv=n".into();
+        r.receive(&chat);
+        assert!(r.has("setenv"));
+        r.preferences.allow_environment_locks = false;
+        chat.message = "@setenv=y".into();
+        r.receive(&chat);
+        assert!(r.has("setenv"), "the compatibility option disables both add and remove processing");
+        chat.message = "@clear".into();
+        r.receive(&chat);
+        assert!(!r.has("setenv"));
+    }
 }
