@@ -233,6 +233,38 @@ class RigToolsTests(unittest.TestCase):
         self.assertEqual(snapshot, exporter.snapshot([self.shirt], set(rest), 1))
         self.assertEqual(constraints, {key: (rigging.constraint(self.rig, key).influence, rigging.constraint(self.rig, key).pole_angle) for key in rigging.LIMBS})
 
+    def test_hand_frames_lie_flat_and_follow_both_wrists_in_each_starter_axis(self):
+        for forward in ("NATIVE", "NEGATIVE_Y"):
+            rig, _shirt = starter.create(bpy.context, forward=forward)
+            rigging.setup(bpy.context, rig)
+            for key in ("HAND_L", "HAND_R"):
+                with self.subTest(forward=forward, hand=key):
+                    rigging.set_ik(bpy.context, rig, key, True)
+                    target = rig.pose.bones[rigging.control_name(key)]
+                    wrist = rig.pose.bones[rigging.chain(rig, key)[-1]]
+                    vertices = target.custom_shape.data.vertices
+
+                    def normal():
+                        a, b, c = (target.matrix @ vertices[i].co for i in (0, 13, 26))
+                        return (b - a).cross(c - a).normalized()
+
+                    # In the SL T-pose the palm is horizontal, on both sides.
+                    self.assertGreater(abs(normal().dot(Vector((0, 0, 1)))), 0.9999)
+                    along = target.bone.matrix_local.to_3x3().col[1]
+                    world_points = [target.bone.matrix_local.to_3x3() @ v.co for v in vertices[:52]]
+                    across = Vector((0, 0, 1)).cross(along)
+                    span = lambda axis: max(p.dot(axis) for p in world_points) - min(p.dot(axis) for p in world_points)
+                    self.assertGreater(span(along), span(across))
+                    target.rotation_mode = "XYZ"
+                    target.rotation_euler = (0.45, 0.7, -0.3)
+                    bpy.context.view_layer.update()
+                    self.assertGreater(abs(normal().dot(wrist.matrix.to_3x3().col[2].normalized())), 0.9999)
+                    self.assertLess(abs(normal().dot(Vector((0, 0, 1)))), 0.95)
+                    before = {bone.name: bone.matrix.copy() for bone in rig.pose.bones}
+                    handles.apply(rig)
+                    bpy.context.view_layer.update()
+                    self.assertEqual(before, {bone.name: bone.matrix.copy() for bone in rig.pose.bones})
+
     def test_widget_size_is_per_rig_and_cache_does_not_create_scene_meshes(self):
         rigging.setup(bpy.context, self.rig)
         names = [rigging.control_name(key, pole) for key in rigging.LIMBS for pole in (False, True)]

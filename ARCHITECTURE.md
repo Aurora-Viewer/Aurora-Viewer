@@ -34,6 +34,8 @@ in older APIs; Edit Mode visibility stays on `EditBone`. In Blender 5,
 `handles.py` builds cached, unlinked custom-shape meshes with continuous edge
 outlines for IK hands, feet, elbows and knees: rounded frames/platforms and
 simple diamond/circle poles, without decorative cages or 3D lettering.
+Hand frames use the wrist's local XY palm plane and local Y finger direction;
+their cache revision migrates earlier vertical frames without rotating bones.
 Feet use the SL foot direction transformed back to bone space, keeping their
 rest soles horizontal. Teal/coral side
 colors use pose-bone color overrides in 4.0+ and separate pose groups earlier.

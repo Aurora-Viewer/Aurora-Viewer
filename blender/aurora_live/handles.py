@@ -49,8 +49,9 @@ class _Mesh:
 def _geometry(style, side):
     mesh = _Mesh()
     if style == "HAND":
-        mesh.rounded(1.8, 1.3, 0.28, "YZ", center=(0, 0.3, 0))
-        mesh.stroke([(0, 1.02, -0.18), (0, 1.02, 0.18)])
+        # Wrist local Y points toward the fingers; XY follows the palm.
+        mesh.rounded(1.3, 1.8, 0.28, "XY", center=(0, 0.3, 0))
+        mesh.stroke([(-0.18, 1.02, 0), (0.18, 1.02, 0)])
     elif style == "FOOT":
         mesh.rounded(0.82, 1.9, 0.28, "XY", center=(0, 0.35, -0.32))
         mesh.stroke([(0.32 * math.cos(i * math.pi / 24), -0.35, -0.32 + 0.44 * math.sin(i * math.pi / 24))
@@ -67,7 +68,8 @@ def _geometry(style, side):
 
 
 def _shape(style, side, frame):
-    signature = style + side + ":3:" + repr(tuple(round(value, 5) for row in frame for value in row))
+    revision = "4" if style == "HAND" else "3"
+    signature = style + side + ":" + revision + ":" + repr(tuple(round(value, 5) for row in frame for value in row))
     obj = next((obj for obj in bpy.data.objects if obj.get("aurora_ik_shape") == signature), None)
     if obj is None:
         geometry = _geometry(style, side)
