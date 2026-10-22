@@ -79,6 +79,9 @@ pub struct Viewfinder {
     ring_mark: Option<i32>,
     /// The pointer was last near the controls (OnScreen::Hover).
     hover_seen: f64,
+    /// The display level drawn last frame (the interface just hidden says
+    /// how to show it again).
+    shown_display: Option<Display>,
 }
 
 /// What the app gives the viewfinder each frame.
@@ -503,6 +506,12 @@ impl Viewfinder {
         } else if ghost_disp(ctx, p, screen) {
             s.viewfinder.display = display.next();
         }
+        // just hidden: say how it comes back, a little longer than a
+        // setting's message
+        if !shows && self.shown_display != Some(display) {
+            self.message = Some((aurora_i18n::tr!("photo-vf-hidden-how").to_owned(), false, f.now + 4.5));
+        }
+        self.shown_display = Some(display);
         if pad {
             self.camera_pad(ctx, p, screen, f, &mut out);
         } else {
@@ -1730,15 +1739,24 @@ fn message(ctx: &egui::Context, p: &Palette, screen: Rect, text: &str, error: bo
 
 /// With the overlay hidden: a small DISP button to bring it back.
 fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
+    let id = Id::new("vf_ghost");
+    // discreet over the photo, plain under the pointer
+    let hovered = ctx
+        .memory(|m| m.area_rect(id))
+        .zip(ctx.pointer_hover_pos())
+        .is_some_and(|(r, pos)| r.contains(pos));
     let mut clicked = false;
-    egui::Area::new(Id::new("vf_ghost"))
+    egui::Area::new(id)
         .order(Order::Foreground)
         .fade_in(false)
         .pivot(Align2::RIGHT_BOTTOM)
         .fixed_pos(screen.right_bottom() - Vec2::new(20.0, 18.0))
         .show(ctx, |ui| {
-            ui.multiply_opacity(0.5);
-            clicked = text_button(ui, p, "DISP · I", regular(12.0), p.ink, aurora_i18n::tr!("photo-vf-disp-tip")).clicked();
+            ui.multiply_opacity(if hovered { 1.0 } else { 0.7 });
+            widgets::overlay(ui, p, egui::Margin::symmetric(10, 6), |ui| {
+                let text = aurora_i18n::tr!("photo-vf-show-ui");
+                clicked = icon_text_button(ui, p, "eye-filled", text, p.ink, aurora_i18n::tr!("photo-vf-disp-tip")).clicked();
+            });
         });
     clicked
 }
