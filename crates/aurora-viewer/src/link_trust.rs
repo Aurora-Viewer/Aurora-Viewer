@@ -134,7 +134,7 @@ fn in_list<'a>(host: &str, list: impl IntoIterator<Item = &'a str>) -> bool {
         .any(|d| host == d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
 }
 
-/// Preferences › Chat › Trusted sites: domains the user trusts too, and
+/// Preferences › Protections › Trusted sites: domains the user trusts too, and
 /// built-in ones they no longer trust (Aurora choice; the Legacy Viewer's
 /// list is fixed).
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]

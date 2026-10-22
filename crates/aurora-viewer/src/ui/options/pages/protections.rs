@@ -1,4 +1,5 @@
-//! Preferences › Protections: session-local anti-spam settings and blocks.
+//! Preferences › Protections: session-local anti-spam settings and blocks,
+//! and the trust given to web links (warning, trusted sites).
 //! Rows participate in preference search, modified settings and page reset.
 
 use super::super::OptionsResult;
@@ -219,6 +220,101 @@ pub fn page(cx: &mut Cx) {
                 false
             });
     });
+    // The web links of chat and profiles (link_trust.rs): the warning, and
+    // the trusted sites (Aurora choice, the Legacy Viewer's list is fixed).
+    cx.group(tr!("ui-options-web-links"), |cx| {
+        cx.toggle(
+            tr!("ui-options-warn-before-external-links"),
+            tr!("ui-options-warn-before-opening-a-link-to-a-site-that"),
+            &field!(warn_external_links),
+        );
+        let words = format!("{} {}", cx.s.trusted_sites.added.join(" "), crate::link_trust::built_in().join(" "));
+        cx.wide().below().keywords(&words).row_with(
+            tr!("ui-options-trusted-sites"),
+            tr!("ui-options-trusted-sites-hint"),
+            &field!(trusted_sites),
+            |ui, s, st, _| trusted_sites(ui, &p, &mut s.trusted_sites, &mut st.trusted_site_typed),
+        );
+    });
+}
+
+/// The sites the user added (each removable), a field to add one, then the
+/// built-in sites, each of which can stop being trusted. True on a change.
+fn trusted_sites(ui: &mut egui::Ui, p: &Palette, sites: &mut crate::link_trust::TrustedSites, typed: &mut String) -> bool {
+    use aurora_i18n::tr;
+    use egui::RichText;
+    let mut changed = false;
+    ui.vertical(|ui| {
+        if sites.added.is_empty() {
+            ui.label(RichText::new(tr!("ui-options-trusted-sites-none")).size(12.0).color(p.muted));
+        }
+        let mut removed = None;
+        for (i, site) in sites.added.iter().enumerate() {
+            ui.horizontal(|ui| {
+                if widgets::icon_button(ui, p, "trash-filled", tr!("ui-options-trusted-sites-remove"), true) {
+                    removed = Some(i);
+                }
+                ui.label(RichText::new(site).size(12.5).color(p.ink));
+            });
+        }
+        if let Some(i) = removed {
+            sites.added.remove(i);
+            changed = true;
+        }
+        ui.add_space(4.0);
+        let domain = crate::link_trust::normalize(typed);
+        ui.horizontal(|ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(typed)
+                    .desired_width(260.0)
+                    .hint_text(tr!("ui-options-trusted-sites-add-hint")),
+            );
+            let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let add = ui
+                .add_enabled_ui(domain.is_some(), |ui| {
+                    let label = tr!("ui-options-trusted-sites-add");
+                    widgets::action_button(
+                        ui,
+                        p,
+                        "circle-plus-filled",
+                        label,
+                        widgets::ActionKind::Flat,
+                        egui::vec2(90.0, 26.0),
+                    )
+                })
+                .inner
+                .clicked();
+            if let Some(domain) = &domain
+                && (add || entered)
+            {
+                changed |= sites.add(domain);
+                typed.clear();
+            }
+        });
+        if domain.is_none() && !typed.trim().is_empty() {
+            ui.label(RichText::new(tr!("ui-options-trusted-sites-invalid")).size(12.0).color(p.muted));
+        }
+        ui.add_space(4.0);
+        widgets::collapsing(
+            ui,
+            p,
+            "trusted_sites_built_in",
+            tr!("ui-options-trusted-sites-built-in"),
+            false,
+            |ui| {
+                for &builtin in crate::link_trust::built_in() {
+                    let was = !sites.removed.iter().any(|r| r == builtin);
+                    let mut on = was;
+                    widgets::checkbox(ui, p, &mut on, builtin);
+                    if on != was {
+                        sites.set_built_in(builtin, on);
+                        changed = true;
+                    }
+                }
+            },
+        );
+    });
+    changed
 }
 
 fn slider(cx: &mut Cx, label: &str, hint: &str, field: &F<u32>, range: std::ops::RangeInclusive<u32>, suffix: &str) {

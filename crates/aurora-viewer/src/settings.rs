@@ -617,7 +617,7 @@ pub struct Settings {
     /// "Do not warn me again" of the warning turns it off).
     pub warn_external_links: bool,
     /// Sites added to, or removed from, the built-in trusted domains
-    /// (Preferences › Chat; link_trust.rs).
+    /// (Preferences › Protections; link_trust.rs).
     pub trusted_sites: crate::link_trust::TrustedSites,
     /// FSMuteAllGroups: refuse every group chat.
     pub mute_all_groups: bool,

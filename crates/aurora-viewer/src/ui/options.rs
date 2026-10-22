@@ -146,7 +146,7 @@ impl Page {
             Page::Sound => aurora_i18n::tr!("ui-options-about-sound"),
             Page::Media => aurora_i18n::tr!("ui-options-about-media"),
             Page::Privacy => aurora_i18n::tr!("ui-options-about-privacy"),
-            Page::Protections => aurora_i18n::tr!("anti-spam-enable-hint"),
+            Page::Protections => aurora_i18n::tr!("ui-options-about-protections"),
             Page::Layout => aurora_i18n::tr!("ui-options-about-layout"),
             Page::Appearance => aurora_i18n::tr!("ui-options-about-appearance"),
             Page::Accessibility => aurora_i18n::tr!("ui-options-about-accessibility"),
@@ -370,7 +370,7 @@ pub struct OptionsUi {
     pub media_filter: Option<Vec<crate::media::filter::Rule>>,
     pub media_filter_edits: Vec<crate::media::filter::Edit>,
     media_filter_typed: String,
-    /// The site being typed in Preferences › Chat › Trusted sites.
+    /// The site being typed in Preferences › Protections › Trusted sites.
     trusted_site_typed: String,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
