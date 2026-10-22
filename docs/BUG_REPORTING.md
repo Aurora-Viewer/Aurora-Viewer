@@ -29,7 +29,41 @@ and a source line. A pull request that changes the Release workflow keeps
 the file of its dry run as the run's artifact. The PDB itself is not
 published. To resolve a stack by hand, unzip the file and look up, for
 `offset - 1` (a return address follows its call), the `FUNC` record that
-contains it and the line record under it.
+contains it and the line record under it; or use the triage script below.
+
+### Crash triage
+
+The Crash triage workflow (`.github/workflows/crash-triage.yml`) runs on
+every new issue whose body carries the `<!-- aurora-crash v1 -->` marker.
+`scripts/crash-triage.ps1` reads the issue through the API and validates
+each value again (anyone can write an issue). For a released version whose
+symbol file has the report's debug id, it resolves the viewer's frames,
+inlined functions included, to functions and source lines. It then:
+
+- appends a "Symbolized stack" section between
+  `<!-- crash-triage:start -->` and `<!-- crash-triage:end -->` (a new run
+  replaces it), ending with the crash's signature;
+- computes the signature from the crash kind (panic, or the exception code)
+  and the first three meaningful frames by name, without generic arguments
+  or closure numbers. The panic and exception machinery, the crash handler,
+  the process start and the system modules are skipped, so the same crash
+  keeps its signature across versions and offsets. Without symbols
+  (development build, release older than the symbols), the signature is the
+  build's debug id and its first offsets;
+- when an open issue already has the same signature, comments there with
+  the new occurrence (version, system, GPU) and closes the new issue as its
+  duplicate; otherwise renames the issue `Crash: <kind> in <function>` and
+  sets the Bug type.
+
+No label is needed: the signature lives in a hidden comment of the body. A
+closed issue is not a reference: a crash that comes back after its fix
+opens a new issue. "Run workflow" with an issue number triages it again,
+for example once the symbols of its version are published. Locally, on a
+crash session's `public-report.md` and an unzipped symbol file:
+`./scripts/crash-triage.ps1 -ReportFile <public-report.md> -SymbolFile <aurora_viewer.sym>`
+prints the section, title and signature without writing to GitHub.
+`scripts/test-crash-triage.ps1` holds the fixture tests; the workflow runs
+them on the pull requests that change the triage.
 
 The issue templates are in `.github/ISSUE_TEMPLATE/`; they set the issue
 type (Bug or Feature); the area labels (`chat`, `ui`, `avatar`…) are added
