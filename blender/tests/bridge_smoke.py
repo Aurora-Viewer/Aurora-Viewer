@@ -67,15 +67,15 @@ if args.pbr:
     normal_image = image_node("Live normal", [0.5,0.5,1,1], True)
     orm_image = image_node("Live ORM", [1,0.6,0.2,1], True)
     normal = nodes.new("ShaderNodeNormalMap")
-    separate = nodes.new("ShaderNodeSeparateColor")
+    separate = nodes.new("ShaderNodeSeparateRGB" if bpy.app.version < (3, 3, 0) else "ShaderNodeSeparateColor")
     links.new(painted.outputs["Color"], shader.inputs["Base Color"])
-    links.new(painted.outputs["Color"], shader.inputs["Emission Color"])
+    links.new(painted.outputs["Color"], shader.inputs["Emission" if bpy.app.version < (4, 0, 0) else "Emission Color"])
     shader.inputs["Emission Strength"].default_value = 0.02
     links.new(normal_image.outputs["Color"], normal.inputs["Color"])
     links.new(normal.outputs["Normal"], shader.inputs["Normal"])
     links.new(orm_image.outputs["Color"], separate.inputs[0])
-    links.new(separate.outputs["Green"], shader.inputs["Roughness"])
-    links.new(separate.outputs["Blue"], shader.inputs["Metallic"])
+    links.new(separate.outputs[1], shader.inputs["Roughness"])
+    links.new(separate.outputs[2], shader.inputs["Metallic"])
     materials.invalidate()
     if args.save_blend:
         for texture in (painted, normal_image, orm_image):

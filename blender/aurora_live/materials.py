@@ -2,6 +2,7 @@
 import base64
 import math
 import numpy as np
+from .compat import principled_input
 
 _cache = {}
 MAX_IMAGE = 1024
@@ -36,7 +37,7 @@ def signature(objects):
                 for node in tree.nodes:
                     result.append((node.as_pointer(), node.type))
                     result.append(tuple(getattr(node, name, None) for name in
-                                        ("vector_type", "interpolation", "projection", "extension", "uv_map", "space", "is_active_output")))
+                                        ("vector_type", "interpolation", "projection", "extension", "uv_map", "space", "mode", "is_active_output")))
                     if node.type in {"VALUE", "RGB"}:
                         value = node.outputs[0].default_value
                         result.append(tuple(value) if hasattr(value, "__len__") else value)
@@ -115,8 +116,10 @@ def _image(socket, normal=False, uv_name=None):
             raise ValueError("Live materials use the mesh's active UV map")
         node, output = _linked(node.inputs["Color"])
     channel = None
-    if node and node.type == "SEPARATE_COLOR":
-        channel = {"Red": 0, "Green": 1, "Blue": 2}.get(output)
+    if node and node.type in {"SEPARATE_COLOR", "SEPRGB"}:
+        if node.type == "SEPARATE_COLOR" and node.mode != "RGB":
+            raise ValueError("Bake procedural shaders to UV image textures for live materials")
+        channel = {"Red": 0, "Green": 1, "Blue": 2, "R": 0, "G": 1, "B": 2}.get(output)
         node, output = _linked(node.inputs[0])
     if not node or node.type != "TEX_IMAGE" or node.image is None or node.extension != "REPEAT":
         raise ValueError("Bake procedural shaders to UV image textures for live materials")
@@ -199,13 +202,13 @@ class Capture:
                 raise ValueError("Use a Principled BSDF surface for live PBR materials")
         if shader:
             for name in ("Subsurface Weight", "Coat Weight", "Sheen Weight", "Transmission Weight"):
-                socket = shader.inputs.get(name)
+                socket = principled_input(shader, name)
                 if socket and (socket.is_linked or abs(float(socket.default_value)) > 0.000001):
                     raise ValueError("Bake advanced Principled effects to textures for Second Life PBR")
             uv_name = source.data.uv_layers.active.name if source.data.uv_layers.active else ""
             alpha = _image(shader.inputs["Alpha"], uv_name=uv_name)
             def texture(name, index, color_space=True, normal=False):
-                spec = _image(shader.inputs[name], normal, uv_name)
+                spec = _image(principled_input(shader, name), normal, uv_name)
                 if spec:
                     image, channel, transform, node = spec
                     value = _pixels(image, color_space, bool(alpha and alpha[3] == node))
@@ -250,7 +253,7 @@ class Capture:
                 result["transforms"][2] = specs[0][2]
             emission = texture("Emission Color", 3)
             strength = _scalar(shader.inputs["Emission Strength"])
-            result["emissive"] = [strength * float(v) for v in ([1, 1, 1] if emission else _color(shader.inputs["Emission Color"])[:3])]
+            result["emissive"] = [strength * float(v) for v in ([1, 1, 1] if emission else _color(principled_input(shader, "Emission Color"))[:3])]
             if any(value is not None for value in result["textures"]) and not uv_name:
                 raise ValueError("Add an active UV map to use live image textures")
         if color[3] < 0.999:

@@ -72,6 +72,16 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
                 }
                 ui.add_space(8.0);
                 ui.label(aurora_i18n::tr!("blender-live-instructions"));
+                ui.add_enabled_ui(!live.addon.busy, |ui| {
+                    widgets::radio_value(
+                        ui,
+                        p,
+                        &mut live.addon.legacy,
+                        false,
+                        aurora_i18n::tr!("blender-live-package-extension"),
+                    );
+                    widgets::radio_value(ui, p, &mut live.addon.legacy, true, aurora_i18n::tr!("blender-live-package-legacy"));
+                });
                 if ui
                     .add_enabled_ui(!live.addon.busy, |ui| {
                         widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-save-addon"))

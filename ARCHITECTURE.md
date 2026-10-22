@@ -1,8 +1,9 @@
 # Aurora Viewer architecture
 
 `blender_live/` owns the opt-in loopback Blender transport, bounded v1 rest-mesh
-snapshots and UI. The matching extension is bundled by `blender_live/addon.rs`
-and exported to ZIP on a worker, using the shared atomic file writer.
+snapshots and UI. Both matching Blender package layouts are bundled by
+`blender_live/addon.rs` and exported to ZIP on a worker, using the shared atomic
+file writer: a native extension for 4.2+ or a classic add-on for 2.93–4.1.
 A dedicated thread validates, normalizes and encodes the latest snapshot;
 `app/blender_live.rs` maintains render-only attachments under
 our avatar in `world::objects::PREVIEW_REGION`. These have no simulator identity
@@ -10,10 +11,13 @@ or edit/touch target. Arrival cleanup excludes these private roots from stale
 simulator attachments. Normal GPU skinning supplies animations and avatar shape;
 existing draw objects retain their geometry while replacement meshes load.
 `scene/blender_live.rs` retires obsolete assets as soon as their geometry has
-no references or pending jobs. `blender/aurora_live/` is the Blender 4.3+
-extension, with main-thread rest capture, a separate socket worker and a
+no references or pending jobs. `blender/aurora_live/` is the shared Blender 2.93+
+implementation, with main-thread rest capture, a separate socket worker and a
 single latest-snapshot mailbox. `docs/BLENDER_LIVE.md` describes setup and
 wire limits; `blender/tests/` exercises real Blender capture and transport.
+`compat.py` maps renamed Principled sockets and uses bone collections in 4.0+
+or named pose groups and armature layers in 2.93–3.x. The mesh exporter reads
+corner normals in 4.1+ and calculates split loop normals in older versions.
 `blender/aurora_live/starter.py` creates the full Bento/Fitted Mesh armature
 from the same packaged `avatar_skeleton.xml`, and optionally an editable
 quad T-shirt with normalized weights, UVs and an Armature modifier.

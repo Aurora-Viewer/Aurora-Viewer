@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 import bpy
 import bmesh
 from mathutils import Euler, Matrix, Quaternion, Vector
+from .compat import organize_bones
 
 
 def _definition():
@@ -99,15 +100,14 @@ def _rig(context, collection, definitions, basis):
             bone.use_deform = True
     finally:
         bpy.ops.object.mode_set(mode="OBJECT")
+    assignments = []
     for joint in definitions:
         bone = data.bones[joint["name"]]
         bone["aurora_joint"] = joint["name"]
         bone["sl_collision_volume"] = joint["collision"]
         bone["sl_rest_scale"] = tuple(joint["scale"])
-        name = _collection_name(joint)
-        group = data.collections.get(name) or data.collections.new(name)
-        group.assign(bone)
-        group.is_visible = name in {"Body", "Bento Hands"}
+        assignments.append((bone, _collection_name(joint)))
+    organize_bones(rig, assignments)
     return rig
 
 

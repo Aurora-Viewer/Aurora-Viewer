@@ -1,4 +1,4 @@
-"""Exercise the starter with real Blender 4.3+, including deformation/export."""
+"""Exercise the starter with real Blender 2.93+, including deformation/export."""
 
 import json
 from pathlib import Path
@@ -44,7 +44,11 @@ class StarterTests(unittest.TestCase):
             self.assertLess((bone.head_local - definition["head"]).length, 0.000001)
             self.assertTrue(bone.use_deform)
             self.assertEqual(bone["aurora_joint"], bone.name)
-            self.assertEqual(len(bone.collections), 1)
+            if bpy.app.version >= (4, 0, 0):
+                self.assertEqual(len(bone.collections), 1)
+            else:
+                self.assertEqual(sum(bone.layers), 1)
+                self.assertIsNotNone(rig.pose.bones[bone.name].bone_group)
         self.assertAlmostEqual(rig.data.bones["mPelvis"].head_local.z, 1.067, places=6)
         self.assertAlmostEqual(rig.data.bones["mShoulderLeft"].head_local.z, 1.521, places=6)
         self.assertEqual(rig.data.bones["mHandIndex3Left"].parent.name, "mHandIndex2Left")
@@ -52,7 +56,14 @@ class StarterTests(unittest.TestCase):
         self.assertIn("mHindLimb4Right", rig.data.bones)
         self.assertIn("mWing4Left", rig.data.bones)
         self.assertIn("mFaceLipUpperCenter", rig.data.bones)
-        self.assertFalse(rig.data.collections["Fitted Mesh"].is_visible)
+        if bpy.app.version >= (4, 0, 0):
+            self.assertFalse(rig.data.collections["Fitted Mesh"].is_visible)
+        else:
+            layers = rig["aurora_bone_layers"]
+            self.assertFalse(rig.data.layers[layers["Fitted Mesh"]])
+            self.assertTrue(rig.data.layers[layers["Body"]])
+            self.assertTrue(rig.data.layers[layers["Bento Hands"]])
+            self.assertEqual(len({rig.pose.bones[b.name].bone_group.name for b in rig.data.bones if b["sl_collision_volume"]}), 1)
 
     def test_tshirt_has_four_openings_quads_uvs_and_normalized_weights(self):
         rig, shirt = starter.create(bpy.context)

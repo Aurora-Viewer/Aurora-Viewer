@@ -117,11 +117,13 @@ def _mesh(source, supported, forward, rest_axes, capture):
         positions = np.einsum("ij,kj->ki", np.array(transform.to_3x3()), positions.reshape((-1, 3))) + np.array(transform.translation)
         positions = positions.tolist()
         normals = np.empty(len(captured.loops) * 3, dtype=np.float32)
-        if hasattr(captured, "corner_normals"):
-            captured.corner_normals.foreach_get("vector", normals)
-        else:
+        if hasattr(captured, "calc_normals_split"):
+            # Before 4.1 even a present corner_normals collection can be empty
+            # until explicitly calculated (notably in Blender 3.6).
             captured.calc_normals_split()
             captured.loops.foreach_get("normal", normals)
+        else:
+            captured.corner_normals.foreach_get("vector", normals)
         normals = np.einsum("ij,kj->ki", np.array(normal_transform), normals.reshape((-1, 3)))
         normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-20)
         normals = normals.tolist()

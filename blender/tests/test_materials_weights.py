@@ -55,7 +55,8 @@ class MaterialWeightTests(unittest.TestCase):
         self.shader.inputs["Alpha"].default_value = 0.4
         self.shader.inputs["Metallic"].default_value = 0.7
         self.shader.inputs["Roughness"].default_value = 0.25
-        self.shader.inputs["Emission Color"].default_value = (0.2, 0.4, 0.6, 1)
+        emission = "Emission" if bpy.app.version < (4, 0, 0) else "Emission Color"
+        self.shader.inputs[emission].default_value = (0.2, 0.4, 0.6, 1)
         self.shader.inputs["Emission Strength"].default_value = 2
         face = self.capture()["meshes"][0]["faces"][0]
         self.assertAlmostEqual(face["color"][0], 0.1)
@@ -84,11 +85,11 @@ class MaterialWeightTests(unittest.TestCase):
     def test_normal_and_packed_metal_roughness_maps(self):
         image = self.image("PBR data", [0.2, 0.4, 0.6, 1] * 4)
         nodes, links = self.material.node_tree.nodes, self.material.node_tree.links
-        split = nodes.new("ShaderNodeSeparateColor")
+        split = nodes.new("ShaderNodeSeparateRGB" if bpy.app.version < (3, 3, 0) else "ShaderNodeSeparateColor")
         normal = nodes.new("ShaderNodeNormalMap")
         links.new(image.outputs["Color"], split.inputs[0])
-        links.new(split.outputs["Green"], self.shader.inputs["Roughness"])
-        links.new(split.outputs["Blue"], self.shader.inputs["Metallic"])
+        links.new(split.outputs[1], self.shader.inputs["Roughness"])
+        links.new(split.outputs[2], self.shader.inputs["Metallic"])
         links.new(image.outputs["Color"], normal.inputs["Color"])
         links.new(normal.outputs["Normal"], self.shader.inputs["Normal"])
         value = self.capture()
@@ -113,6 +114,31 @@ class MaterialWeightTests(unittest.TestCase):
         self.assertAlmostEqual(transform[0], 0.2 - math.sin(0.25) * 3, places=5)
         self.assertAlmostEqual(transform[1], 0.7 - math.cos(0.25) * 3, places=5)
         self.assertEqual(transform[2:], [2, 3, 0.25])
+
+    def test_advanced_principled_inputs_are_rejected_in_both_shader_generations(self):
+        names = ("Subsurface", "Clearcoat", "Sheen", "Transmission") if bpy.app.version < (4, 0, 0) else (
+            "Subsurface Weight", "Coat Weight", "Sheen Weight", "Transmission Weight")
+        for name in names:
+            with self.subTest(socket=name):
+                socket = self.shader.inputs[name]
+                original = socket.default_value
+                socket.default_value = 0.5
+                with self.assertRaisesRegex(ValueError, "advanced Principled"):
+                    self.capture()
+                socket.default_value = original
+
+    def test_legacy_separate_rgb_maps_export_the_actual_green_and_blue_channels(self):
+        image = self.image("Legacy channels", [0.1, 0.3, 0.9, 1] * 4)
+        nodes, links = self.material.node_tree.nodes, self.material.node_tree.links
+        split = nodes.new("ShaderNodeSeparateRGB")
+        links.new(image.outputs["Color"], split.inputs[0])
+        links.new(split.outputs[1], self.shader.inputs["Roughness"])
+        links.new(split.outputs[2], self.shader.inputs["Metallic"])
+        value = self.capture()
+        mat = value["meshes"][0]["faces"][0]["material"]
+        orm = base64.b64decode(value["images"][mat["textures"][2]]["rgba"])
+        self.assertIn(orm[1], (76, 77))
+        self.assertIn(orm[2], (229, 230))
 
     def test_timer_detects_shader_changes_and_texture_paint_without_geometry_edits(self):
         image = self.image("Paint", [1, 0, 0, 1] * 4, True)
@@ -199,7 +225,7 @@ class MaterialWeightTests(unittest.TestCase):
 
     def test_float_alpha_buffers_are_unpremultiplied_when_the_alpha_output_is_used(self):
         image = bpy.data.images.new("Premultiplied float", width=2, height=2, float_buffer=True)
-        image.colorspace_settings.name = "Linear Rec.709"
+        image.colorspace_settings.name = "Linear" if bpy.app.version < (4, 0, 0) else "Linear Rec.709"
         image.pixels.foreach_set([0.25, 0.25, 0.25, 0.5] * 4)
         image.update()
         node = self.material.node_tree.nodes.new("ShaderNodeTexImage")

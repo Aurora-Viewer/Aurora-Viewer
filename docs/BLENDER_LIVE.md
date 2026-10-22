@@ -8,12 +8,18 @@ inventory items or charge an upload fee.
 
 ## Install and connect
 
-1. In Aurora, open **Build → Blender Live** and click **Save Blender
-   plug-in…**. Choose where to save the ZIP. The viewer bundles its matching
-   plug-in; no source checkout or external Python installation is needed.
-2. In **Blender 4.3 or later**, open Preferences → Get Extensions → the
-   top-right menu → Install from Disk, choose that ZIP, and enable it.
-   Allow its network permission: it communicates with `127.0.0.1` only.
+1. In Aurora, open **Build → Blender Live**, choose your Blender version,
+   and click **Save Blender plug-in…**. Choose where to save the ZIP. The
+   viewer bundles both matching formats; no source checkout or external
+   Python installation is needed.
+2. Install the ZIP that matches your Blender version:
+   - **Blender 4.2 or later:** choose the **extension** package in Aurora.
+     In Blender, open Preferences → Get Extensions → the top-right menu →
+     Install from Disk, choose that ZIP, and enable it. Allow its network
+     permission: it communicates with `127.0.0.1` only.
+   - **Blender 2.93–4.1:** choose the **classic add-on** package in Aurora.
+     In Blender, open Preferences → Add-ons → Install, select the ZIP,
+     then enable **3D View: Aurora Live Mesh**. Keep the ZIP intact.
 3. In Aurora's **Blender Live** window, click **Enable preview**.
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
@@ -35,9 +41,21 @@ the preview; **Remove meshes** clears the current preview until Blender next
 sends a change. Closing the window keeps the bridge active. The listener is
 off on each viewer launch, and changing accounts stops it.
 
-Developers can also build the same extension from the repository root:
-`python blender/package.py .scratch/aurora-live-mesh-0.3.0.zip`.
-Blender 4.3 is the minimum supported version.
+Both packages contain the same rig, automatic weights, live materials and
+transport. Install only one format in each Blender profile; disable any older
+Aurora Live Mesh installation before switching between the two formats.
+Updating within the same format replaces the existing add-on. Blender 2.93 LTS
+is the minimum supported version; Blender 2.79 is not supported.
+
+Developers can build either format from the repository root:
+
+```powershell
+python blender/package.py .scratch/aurora-live-mesh-0.4.0.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.4.0-legacy.zip
+```
+
+The extension ZIP has a root manifest and targets Blender 4.2+. The classic
+ZIP contains an `aurora_live/` directory with `bl_info` and targets 2.93–4.1.
 
 ## Create a rig and test T-shirt
 
@@ -50,9 +68,12 @@ The operator supports Undo and never replaces existing scene objects.
 The rig contains **all 133 Second Life Bento bones and 26 Fitted Mesh
 collision bones**, using the same `avatar_skeleton.xml` as Aurora. Original
 joint names, parents and rest positions are preserved. Bone collections
-separate the body, hands, face, wings, tail and other extensions. Body and
-hand collections are visible initially; enable the other collections in
-Armature Data Properties when needed. All 159 bones can deform meshes.
+separate the body, hands, face, wings, tail and other extensions in Blender
+4.0+. Blender 2.93–3.x uses matching named pose groups and one armature layer
+per group. Body and hand sets are visible initially; enable other collections
+or layers in Armature Data Properties when needed. All 159 bones can deform
+meshes. Classic layer indices are recorded in the rig's
+`aurora_bone_layers` custom property.
 
 The optional T-shirt has editable quad topology, open neck/hem/cuffs, a UV
 map, a fabric material, an Armature modifier and normalized vertex weights
@@ -93,9 +114,10 @@ objects with at most one Armature modifier.
 
 ## Live materials
 
-Extension **0.3.0 requires its matching Aurora viewer**. It recognizes the
+Plug-in **0.4.0 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
-roughness, emission color/strength and backface culling. Direct RGB/Value
+roughness, emission color/strength and backface culling. Older Principled
+input names and Separate RGB channel nodes are supported. Direct RGB/Value
 constants work too. Changing material parameters or assignments updates the
 preview without moving the mesh. Texture painting also captures continuously
 at the normal update interval.
