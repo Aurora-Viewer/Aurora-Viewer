@@ -208,7 +208,8 @@ peaking), `point` the Point area, `pad` the camera pad shown, `timer` the
 2 s self-timer, `ael` AE-L on, `hover` or `nocontrols` the on-screen controls
 on hover or hidden (the lens ring and the AF choices show otherwise), `tilt`
 the camera rolled 20° clockwise (the level turns the other way, along the
-horizon), `focus`
+horizon), `tilt90` a quarter turn (the AF frame over a head keeps its size,
+lying on its side), `focus`
 the own avatar's face aimed at
 and the shutter half-pressed at `AURORA_DEMO_SNAPSHOT_FRAME`, `shoot` the
 same then released two frames later (the photo saved to disk; with `timer`

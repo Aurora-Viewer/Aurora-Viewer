@@ -249,7 +249,8 @@ impl Viewfinder {
     /// of the bottom bar, pressed and dragged at once (`sign` −1 for the
     /// ruler, which moves under its index; 1 for the bar's value, right for
     /// more), or the wheel over it a stop a notch; a click at each mark
-    /// crossed. The bar's value turned becomes the ring's.
+    /// crossed. The ring keeps its value: only a click on the bar's value
+    /// gives it another (`dial_input`).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn turn_dial(
         &mut self,
@@ -268,7 +269,6 @@ impl Viewfinder {
         if resp.drag_started()
             && let Some(x) = x
         {
-            self.dial = dial;
             self.ring_drag = Some((r.u, x));
             self.ring_mark = None;
         }
@@ -746,9 +746,13 @@ fn label(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.label(egui::RichText::new(text).size(11.5).color(p.ink));
 }
 
-/// A 32-point button of the ring and the rocker; true when clicked.
+/// A 32-point button of the ring, in the middle of a cell as tall as the
+/// ruler (laid first in the row, egui would leave it at the row's top);
+/// true when clicked.
 fn step_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
+    let (cell, _) = ui.allocate_exact_size(Vec2::new(32.0, RULER.y), Sense::hover());
+    let rect = Rect::from_center_size(cell.center(), Vec2::splat(32.0));
+    let resp = ui.interact(rect, ui.id().with(("vf_step", name)), Sense::click());
     paint_step(ui, p, rect, name, resp.hovered());
     if resp.clicked() {
         resp.surrender_focus();
@@ -756,7 +760,7 @@ fn step_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str) -> bool {
     resp.on_hover_text(tip).clicked()
 }
 
-/// The same, true while it is held.
+/// A 32-point button of the rocker, true while it is held.
 fn hold_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click_and_drag());
     let held = resp.is_pointer_button_down_on();
