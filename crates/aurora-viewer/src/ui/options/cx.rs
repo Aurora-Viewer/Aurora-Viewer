@@ -645,7 +645,7 @@ impl<'a> Cx<'a> {
     /// A colour.
     pub fn color(&mut self, label: &str, hint: &str, f: &F<crate::settings::Rgba>) -> bool {
         let (p, get) = (self.p, f.get_mut);
-        self.row(label, hint, f, |ui, s| super::swatch(ui, &p, ui.id().with("swatch"), get(s)))
+        self.row(label, hint, f, |ui, s| super::swatch(ui, &p, ui.scope_id().with("swatch"), get(s)))
     }
 
     /// A row that opens another page (`button` on its link).
@@ -663,7 +663,7 @@ impl<'a> Cx<'a> {
 
     fn row_id(&self, label: &str) -> egui::Id {
         let parent = self.parent.as_ref().map_or("", |p| p.label.as_str());
-        egui::Id::new(("preferences-row", self.page, self.group.as_str(), parent, label))
+        egui::Id::unique(("preferences-row", self.page, self.group.as_str(), parent, label))
     }
 
     /// The search finds a row by its name, its help and its choices; not
@@ -799,7 +799,7 @@ impl<'a> Cx<'a> {
         }
         let resp = self.ui.interact(
             link,
-            egui::Id::new(("preferences-crumb", page, tab, group.as_str())),
+            egui::Id::unique(("preferences-crumb", page, tab, group.as_str())),
             Sense::click(),
         );
         if resp.hovered() {

@@ -154,7 +154,7 @@ fn picture(
     if !thumbnail.is_nil() {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
         thumbnail::picture(&mut child, p, thumbnail, rect.width().min(rect.height()), images, wanted);
-        return ui.interact(rect, ui.id().with(("aurora_picture", id)), Sense::click());
+        return ui.interact(rect, ui.scope_id().with(("aurora_picture", id)), Sense::click());
     }
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.panel);
     let (icon, tint) = inv.items.get(&id).map_or_else(
@@ -176,7 +176,7 @@ fn picture(
             tint,
         );
     }
-    ui.interact(rect, ui.id().with(("aurora_picture", id)), Sense::click())
+    ui.interact(rect, ui.scope_id().with(("aurora_picture", id)), Sense::click())
 }
 
 /// The "more actions" button: the right-click menu of what it is about.

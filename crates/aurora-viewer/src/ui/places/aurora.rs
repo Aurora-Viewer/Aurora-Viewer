@@ -1175,7 +1175,7 @@ impl PlacesUi {
                 let r = ui.add(egui::TextEdit::singleline(name).char_limit(63).desired_width(width));
                 // the field takes the keyboard when it appears, and a click
                 // elsewhere then ends the edit
-                let fresh = egui::Id::new(("places-rename", key));
+                let fresh = egui::Id::unique(("places-rename", key));
                 if ui.data_mut(|d| d.get_temp::<bool>(fresh).is_none()) {
                     ui.data_mut(|d| d.insert_temp(fresh, true));
                     r.request_focus();
@@ -1558,7 +1558,7 @@ impl PlacesUi {
 /// Cancel / Escape.
 fn name_dialog(ctx: &egui::Context, p: &Palette, id: &str, prompt: &str, name: &mut String) -> Option<bool> {
     let mut done = None;
-    let modal = widgets::Modal::new(egui::Id::new(id)).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique(id)).show(ctx, |ui| {
         ui.set_width(320.0);
         ui.label(egui::RichText::new(prompt).size(12.5).color(p.ink));
         ui.add_space(6.0);

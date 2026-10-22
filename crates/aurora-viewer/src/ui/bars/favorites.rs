@@ -79,7 +79,7 @@ impl From<FavAction> for BarAction {
 struct Dragged(Uuid);
 
 fn shown_id() -> Id {
-    Id::new("bars_favorites_shown")
+    Id::unique("bars_favorites_shown")
 }
 
 /// The favourites were on screen this frame: the app resolves their
@@ -308,7 +308,7 @@ fn paint_drop(ui: &egui::Ui, p: &Palette, rects: &[Rect], rank: usize, vertical:
     let Some(first) = rects.first() else { return };
     let painter = ui
         .ctx()
-        .layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("bars_favorites_drop")));
+        .layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::unique("bars_favorites_drop")));
     if vertical {
         let y = rects
             .get(rank)
@@ -338,7 +338,7 @@ fn ghost(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View) {
     let (Some(fav), Some(pointer)) = (view.list.iter().find(|f| f.item == dragged.0), ctx.pointer_interact_pos()) else {
         return;
     };
-    egui::Area::new(Id::new("bars_favorites_ghost"))
+    egui::Area::new(Id::unique("bars_favorites_ghost"))
         .order(egui::Order::Tooltip)
         .interactable(false)
         .fade_in(false)
@@ -446,7 +446,7 @@ fn menu_row(
                 Some(FavAction::Edit(fav.item)),
             ),
         ] {
-            let r = ui.interact(slot, Id::new(("bars_favorites_row_act", fav.item, icon)), Sense::click());
+            let r = ui.interact(slot, Id::unique(("bars_favorites_row_act", fav.item, icon)), Sense::click());
             slot_face(ui, p, slot, r.hovered(), false);
             paint_icon(ui, icons, icon, slot, 15.0, if act.is_some() { p.ink } else { p.muted_dim });
             if r.on_hover_text(tip).clicked()
@@ -504,7 +504,7 @@ pub fn menu_body(ui: &mut egui::Ui, p: &Palette, icons: &Icons, view: &View, out
     } else {
         ui.set_width(390.0 - 12.0);
         header(ui, p, icons, view.list.len());
-        let filter_id = Id::new("bars_favorites_filter");
+        let filter_id = Id::unique("bars_favorites_filter");
         let mut filter = ui.ctx().data(|d| d.get_temp::<String>(filter_id)).unwrap_or_default();
         ui.horizontal(|ui| {
             ui.add_space(2.0);
@@ -564,7 +564,7 @@ pub fn menu_body(ui: &mut egui::Ui, p: &Palette, icons: &Icons, view: &View, out
 /// The Favorites button of the place island (F1): the icon alone, at every
 /// width, and its menu.
 pub fn place_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rect, view: &View) -> Option<BarAction> {
-    let resp = ui.interact(rect, Id::new("bars_place_favorites"), Sense::click());
+    let resp = ui.interact(rect, Id::unique("bars_place_favorites"), Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     let hot = resp.hovered() || open;
     slot_face(ui, p, rect, hot, false);
@@ -617,7 +617,7 @@ pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: 
         let rect = Rect::from_min_size(Pos2::new(under.left(), top), Vec2::new(PAD * 2.0 + SLOT + 14.0, ROW_HEIGHT));
         area(ctx, p, "favorites_tab", rect, |ui| {
             let slot = rect.shrink2(Vec2::new(PAD, (ROW_HEIGHT - PILL_H) / 2.0));
-            let resp = ui.interact(slot, Id::new("bars_favorites_unfold"), Sense::click());
+            let resp = ui.interact(slot, Id::unique("bars_favorites_unfold"), Sense::click());
             slot_face(ui, p, slot, resp.hovered(), false);
             let ink = slot_ink(p, resp.hovered(), true);
             let icon = Rect::from_center_size(Pos2::new(slot.left() + 6.0 + ICON / 2.0, slot.center().y), Vec2::splat(ICON));
@@ -634,11 +634,11 @@ pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: 
     let rect = Rect::from_min_max(Pos2::new(under.left() - 1.0, top), Pos2::new(under.right() + 1.0, top + ROW_HEIGHT));
     area(ctx, p, "favorites_row", rect, |ui| {
         mark_shown(ui.ctx());
-        let back = ui.interact(rect, Id::new("bars_favorites_row_back"), Sense::click());
+        let back = ui.interact(rect, Id::unique("bars_favorites_row_back"), Sense::click());
         row_menu(&back, p, view, &mut out);
         let cy = rect.center().y;
         let fold = Rect::from_min_size(Pos2::new(rect.right() - PAD - SLOT, cy - PILL_H / 2.0), Vec2::new(SLOT, PILL_H));
-        let r = ui.interact(fold, Id::new("bars_favorites_fold"), Sense::click());
+        let r = ui.interact(fold, Id::unique("bars_favorites_fold"), Sense::click());
         slot_face(ui, p, fold, r.hovered(), false);
         paint_icon(
             ui,
@@ -699,7 +699,7 @@ pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: 
             let pill = Rect::from_min_size(Pos2::new(x, cy - PILL_H / 2.0), Vec2::new(widths[i], PILL_H));
             x = pill.right() + GAP;
             rects.push((i, pill));
-            let resp = ui.interact(pill, Id::new(("bars_favorites_pill", fav.item)), Sense::click_and_drag());
+            let resp = ui.interact(pill, Id::unique(("bars_favorites_pill", fav.item)), Sense::click_and_drag());
             let moving = egui::DragAndDrop::payload::<Dragged>(ui.ctx()).is_some_and(|d| d.0 == fav.item);
             let hot = !dragging && resp.hovered();
             slot_face(ui, p, pill, hot, false);
@@ -739,7 +739,7 @@ pub fn row(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View, under: 
         if fits < view.list.len() {
             let n = view.list.len() - fits;
             let more = Rect::from_min_size(Pos2::new(x, cy - PILL_H / 2.0), Vec2::new(more_w(n), PILL_H));
-            let resp = ui.interact(more, Id::new("bars_favorites_more"), Sense::click());
+            let resp = ui.interact(more, Id::unique("bars_favorites_more"), Sense::click());
             let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
             slot_face(ui, p, more, resp.hovered() || open, false);
             let ink = slot_ink(p, resp.hovered() || open, true);
@@ -821,7 +821,7 @@ pub fn grid_body(ui: &mut egui::Ui, p: &Palette, icons: &Icons, view: &View, out
                         TILE,
                     );
                     rects.push((i, tile));
-                    let resp = ui.interact(tile, Id::new(("bars_favorites_tile", fav.item)), Sense::click_and_drag());
+                    let resp = ui.interact(tile, Id::unique(("bars_favorites_tile", fav.item)), Sense::click_and_drag());
                     let hot = !dragging && resp.hovered();
                     let radius = ui.visuals().window_corner_radius;
                     if hot {
@@ -898,7 +898,7 @@ fn demo_target(ctx: &egui::Context, kind: &'static str, rects: &[(usize, Rect)])
     }
     let k = if kind == "row" { 1 } else { 5 };
     if let Some((_, r)) = rects.iter().find(|(i, _)| *i == k) {
-        ctx.data_mut(|d| d.insert_temp(Id::new(("bars_favorites_demo_target", kind)), *r));
+        ctx.data_mut(|d| d.insert_temp(Id::unique(("bars_favorites_demo_target", kind)), *r));
     }
 }
 
@@ -917,7 +917,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
             "row"
         };
         return ctx
-            .data(|d| d.get_temp::<Rect>(Id::new(("bars_favorites_demo_target", kind))))
+            .data(|d| d.get_temp::<Rect>(Id::unique(("bars_favorites_demo_target", kind))))
             .map(|r| vec![egui::Event::PointerMoved(r.center())])
             .unwrap_or_default();
     }
@@ -925,7 +925,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
         return Vec::new();
     }
     let pill = |k: usize| {
-        ctx.read_response(Id::new(("bars_favorites_pill", crate::demo::place::bar_favorite_item(k))))
+        ctx.read_response(Id::unique(("bars_favorites_pill", crate::demo::place::bar_favorite_item(k))))
             .map(|r| r.rect)
     };
     let (Some(from), Some(to)) = (pill(1), pill(4)) else {

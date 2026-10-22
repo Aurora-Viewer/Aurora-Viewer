@@ -222,7 +222,7 @@ impl WorldMapUi {
                         ui.set_width(side);
                         ui.set_max_width(side);
                         ui.set_clip_rect(ui.max_rect().intersect(ui.clip_rect()));
-                        let footer_id = egui::Id::new("worldmap-position-height");
+                        let footer_id = egui::Id::unique("worldmap-position-height");
                         let footer_height = ui.ctx().data(|d| d.get_temp::<f32>(footer_id)).unwrap_or(180.0);
                         let scroll_height = (avail.y - footer_height - ui.spacing().item_spacing.y).max(0.0);
                         egui::ScrollArea::vertical()

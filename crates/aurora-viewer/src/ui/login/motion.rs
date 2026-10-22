@@ -44,6 +44,7 @@ impl State {
                         unit: egui::MouseWheelUnit::Line,
                         delta: egui::vec2(0.0, -1.0),
                         phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Unknown,
                         modifiers: egui::Modifiers::NONE,
                     },
                 ];

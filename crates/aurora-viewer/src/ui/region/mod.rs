@@ -190,11 +190,11 @@ pub struct ManageDemo {
 
 /// The menus' and About Land's request to open the window.
 pub fn request_open(ctx: &egui::Context) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("aurora_open_region_estate"), true));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aurora_open_region_estate"), true));
 }
 
 pub fn take_open_request(ctx: &egui::Context) -> bool {
-    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("aurora_open_region_estate")))
+    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique("aurora_open_region_estate")))
         .unwrap_or(false)
 }
 

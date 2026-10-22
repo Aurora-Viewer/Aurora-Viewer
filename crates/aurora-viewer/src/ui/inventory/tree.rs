@@ -78,7 +78,8 @@ pub fn frame<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui)
 }
 
 pub fn scroll(ui: &mut egui::Ui, height: f32) -> egui::ScrollArea {
-    egui::ScrollArea::both()
+    // (egui's own salt: the area keeps its saved offset)
+    crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::both(), "scroll_area")
         .auto_shrink([false, false])
         .max_width(ui.available_width())
         .max_height(height)
@@ -104,16 +105,16 @@ pub fn search_field(
     clear_shown: bool,
     clear_tip: &str,
 ) -> (egui::Response, bool) {
+    let centre = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
     let field = ui.add_sized(
         [width, ui.spacing().interact_size.y],
         egui::TextEdit::singleline(text)
             .hint_text(hint)
-            .vertical_align(egui::Align::Center)
+            .align(egui::Align2::LEFT_CENTER)
             .margin(egui::Margin {
                 left: 5,
                 right: 28,
-                top: 0,
-                bottom: 0,
+                ..centre
             }),
     );
     if !clear_shown {
@@ -124,7 +125,7 @@ pub fn search_field(
         .interact(rect, field.id.with("clear"), egui::Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(clear_tip);
-    clear.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), clear_tip));
+    clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), clear_tip));
     let color = if clear.hovered() { p.ink } else { p.muted };
     if let Some(icon) = crate::ui::icons::global("x") {
         ui.painter().image(

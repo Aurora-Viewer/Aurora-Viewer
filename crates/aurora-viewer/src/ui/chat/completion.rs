@@ -53,7 +53,7 @@ mod tests {
         fn new() -> Self {
             let ctx = egui::Context::default();
             crate::theme::Theme::default().apply(&ctx, 1.0);
-            ctx.memory_mut(|m| m.request_focus(egui::Id::new("nearby_chat_input")));
+            ctx.memory_mut(|m| m.request_focus(egui::Id::unique("nearby_chat_input")));
             let id = Uuid::from_u128(1);
             let mut gestures = Manager::default();
             gestures.entries.insert(
@@ -115,7 +115,7 @@ mod tests {
             }])
         }
         fn selection(&self) -> std::ops::Range<usize> {
-            let range = egui::text_edit::TextEditState::load(&self.ctx, egui::Id::new("nearby_chat_input"))
+            let range = egui::text_edit::TextEditState::load(&self.ctx, egui::Id::unique("nearby_chat_input"))
                 .and_then(|s| s.cursor.char_range())
                 .expect("chat cursor")
                 .as_sorted_char_range();
@@ -213,7 +213,7 @@ mod tests {
     fn color_emoji_input_keeps_inline_completion_and_selection() {
         let mut f = Fixture::new();
         f.gestures.entries.get_mut(&Uuid::from_u128(1)).expect("gesture").definition.trigger = "/😀 wave".into();
-        let id = egui::Id::new("color_gesture_input");
+        let id = egui::Id::unique("color_gesture_input");
         let mut emoji = crate::ui::emoji::Emoji::load();
         let mut text = "/😀".to_owned();
         f.ctx.memory_mut(|m| m.request_focus(id));

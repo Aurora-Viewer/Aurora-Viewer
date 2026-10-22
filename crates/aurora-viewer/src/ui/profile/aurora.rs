@@ -527,7 +527,7 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
     let ring = if compact { 3.0 } else { 4.0 };
     let status = status_of(world, &id, own, profile, friend);
     paint_photo(ui, p, photo_rect, ring, pic, &name, status, w.editing);
-    let photo_resp = ui.interact(photo_rect, ui.id().with(("profile-photo", id)), Sense::click());
+    let photo_resp = ui.interact(photo_rect, ui.scope_id().with(("profile-photo", id)), Sense::click());
     if pic.is_some() && !w.editing && photo_resp.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked() {
         w.open_photo(PictureSlot::SecondLife, profile.map_or(Uuid::nil(), |pr| pr.sl_image));
     }
@@ -713,7 +713,7 @@ fn banner_chip(ui: &mut egui::Ui, p: &Palette, banner: Rect, icon: &str, text: &
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, p.ink);
     let size = Vec2::new(8.0 + 12.0 + 4.0 + galley.size().x + 8.0, 20.0);
     let rect = Rect::from_min_size(pos2(banner.right() - 10.0 - size.x, banner.top() + 10.0), size);
-    let resp = ui.interact(rect, ui.id().with(("banner-chip", icon)), Sense::click());
+    let resp = ui.interact(rect, ui.scope_id().with(("banner-chip", icon)), Sense::click());
     let fill = if resp.hovered() {
         p.navy.gamma_multiply(0.7)
     } else {
@@ -760,7 +760,7 @@ fn camera_button(ui: &mut egui::Ui, env: &mut Env, photo: Rect, profile: Option<
     let p = env.p;
     let c = photo.min + Vec2::new(99.0, 101.0) * (photo.width() / 116.0);
     let rect = Rect::from_center_size(c, Vec2::splat(34.0));
-    let resp = ui.interact(rect, ui.id().with("profile-camera"), Sense::click());
+    let resp = ui.interact(rect, ui.scope_id().with("profile-camera"), Sense::click());
     let fill = if resp.hovered() { p.violet_light } else { p.violet };
     ui.painter().circle_filled(c, 17.0, fill);
     paint_icon(ui, "camera-filled", c, 17.0, p.on_accent);
@@ -1366,7 +1366,7 @@ fn tab_dropdown(ui: &mut egui::Ui, env: &Env, w: &mut Window, own: bool) {
     let width = ui.available_width() - 2.0 * INSET;
     let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::hover());
     let rect = Rect::from_min_size(pos2(row.left() + INSET, row.top()), Vec2::new(width, 32.0));
-    let resp = ui.interact(rect, ui.id().with(("profile-tabs", w.id)), Sense::click());
+    let resp = ui.interact(rect, ui.scope_id().with(("profile-tabs", w.id)), Sense::click());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     let fill = if resp.hovered() {
         p.raised.lerp_to_gamma(p.ink, 0.08)

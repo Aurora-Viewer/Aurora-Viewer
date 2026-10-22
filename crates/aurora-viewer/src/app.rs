@@ -7483,7 +7483,7 @@ impl App {
             && self.capture.is_some()
             && let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY")
             && matches!(view.as_str(), "resize-left" | "resize-right")
-            && let Some(rect) = self.egui_ctx.memory(|memory| memory.area_rect(egui::Id::new("inventory")))
+            && let Some(rect) = self.egui_ctx.memory(|memory| memory.area_rect(egui::Id::unique("inventory")))
         {
             let left = view == "resize-left";
             let start = if left { rect.left_center() } else { rect.right_center() };
@@ -9645,7 +9645,7 @@ impl App {
                 ui::widgets::open_floater(&self.egui_ctx, "perf", &mut self.panels.perf);
                 ui::perf::show_network(&self.egui_ctx);
                 self.egui_ctx
-                    .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("perf")));
+                    .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("perf")));
             }
             BarAction::CustomizeBars => self.toolbar_ui.open = true,
             BarAction::StopAnimations => self.stop_current_animations(),
@@ -10574,7 +10574,7 @@ impl App {
         let mut t = Instant::now();
         if self.exit_prompt.open {
             ui.disable();
-            ctx.memory_mut(|m| m.set_modal_layer(egui::Modal::default_area(egui::Id::new("viewer_exit")).layer()));
+            ctx.memory_mut(|m| m.set_modal_layer(egui::Modal::default_area(egui::Id::unique("viewer_exit")).layer()));
         }
         a.update_quit = !self.exit_prompt.open
             && ui::update::show_real(
@@ -10642,7 +10642,7 @@ impl App {
                 // on one would raise it over the window
                 self.draw_options(&ctx, &p, &mut a);
                 if self.panels.settings {
-                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(ui::options::WINDOW)));
+                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(ui::options::WINDOW)));
                 }
                 // Keep disconnected script drafts accessible for copying.
                 for action in self
@@ -11247,7 +11247,7 @@ impl App {
                 );
                 if self.camera.mouselook() {
                     let c = ctx.content_rect().center();
-                    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("xhair")));
+                    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("xhair")));
                     painter.circle_stroke(c, 4.0, egui::Stroke::new(1.5, p.ink));
                     if self.settings.camera.show_mouselook_instructions {
                         // LLViewerWindow::drawMouselookInstructions: the way
@@ -11506,7 +11506,7 @@ impl App {
                         ui::chat::ConvAction::OpenInventory => {
                             ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
                             self.egui_ctx
-                                .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("inventory")));
+                                .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("inventory")));
                         }
                         ui::chat::ConvAction::SetOutputDevice(device) => {
                             self.settings.audio.output_device = device;

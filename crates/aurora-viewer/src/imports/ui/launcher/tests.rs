@@ -233,7 +233,7 @@ fn import_launcher_stays_clickable_when_switching_types_with_an_inspector_open()
         let pos = positions[index];
         assert_eq!(
             ctx.layer_id_at(pos),
-            Some(egui::LayerId::new(egui::Order::Middle, egui::Id::new(WINDOW)))
+            Some(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(WINDOW)))
         );
         for pressed in [true, false] {
             drop(frame(
@@ -259,7 +259,7 @@ fn import_launcher_stays_clickable_when_switching_types_with_an_inspector_open()
         let settings = bar.right_center() - Vec2::new(44.0, 0.0);
         assert_eq!(
             ctx.layer_id_at(settings),
-            Some(egui::LayerId::new(egui::Order::Middle, egui::Id::new(WINDOW))),
+            Some(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(WINDOW))),
             "the last icons stay reachable on a narrow viewport"
         );
     }
@@ -366,7 +366,7 @@ fn import_launcher_has_no_title_or_shortcut_and_its_right_cross_closes_it() {
         .expect("plain close cross");
     assert!(close.x > icons[7].x);
     assert!((close.y - icons[7].y).abs() < 1.0);
-    let bar = egui::AreaState::load(&ctx, egui::Id::new(WINDOW)).expect("toolbar area");
+    let bar = egui::AreaState::load(&ctx, egui::Id::unique(WINDOW)).expect("toolbar area");
     assert!(bar.size.expect("measured size").y <= 40.0);
     assert!(
         !rectangles(&output)

@@ -112,7 +112,7 @@ pub(super) fn show(
                         && find::field(ui, p, rect, p.field, f, view, true)
                     {
                         search.find = None;
-                        ui.ctx().memory_mut(|m| m.request_focus(egui::Id::new(("conv_input", selected))));
+                        ui.ctx().memory_mut(|m| m.request_focus(egui::Id::unique(("conv_input", selected))));
                     }
                 } else {
                     picture_and_names(ui, p, icons, pics, world, st, actions, &who, status, names_w);

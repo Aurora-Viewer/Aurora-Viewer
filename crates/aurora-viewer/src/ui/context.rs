@@ -461,7 +461,7 @@ pub fn contact_set_submenu(ui: &mut egui::Ui, p: &Palette, world: &World, ids: &
 
 /// egui temp data: actions chosen in menus this frame.
 fn requests_id() -> egui::Id {
-    egui::Id::new("aurora_context_requests")
+    egui::Id::unique("aurora_context_requests")
 }
 
 /// Hand a menu choice to the app (run after the interface pass).
@@ -494,7 +494,7 @@ const HOVERED: &str = "world_context_menu_hovered";
 pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f: &Facts, use_pie: bool) {
     if menu::dismiss_on_window_change(ctx) {
         *menu = None;
-        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::new(HOVERED)));
+        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
         return;
     }
     let Some(m) = menu.clone() else {
@@ -516,7 +516,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
             m.pie_path.clear();
             m.pie_input_frame = None;
         }
-        menu::popup_at(ctx, egui::Id::new("world_context_menu"), m.pos, &mut open, p, |ui| {
+        menu::popup_at(ctx, egui::Id::unique("world_context_menu"), m.pos, &mut open, p, |ui| {
             if let Target::Avatar { id, own: false, .. } = m.target {
                 voice_row(ui, p, id, f.voice_volume);
             }
@@ -525,16 +525,16 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
     };
     // UISndPieMenuSliceHighlight0..7 when an enabled row gets hovered (the
     // eight slices of Firestorm's default pie menu, PieMenu::draw)
-    let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::new(HOVERED)).flatten());
+    let before = ctx.data_mut(|d| d.get_temp::<Option<usize>>(egui::Id::unique(HOVERED)).flatten());
     if hovered != before {
         if let Some(i) = hovered.filter(|i| *i < 8) {
             super::sound_cues::request(ctx, crate::ui_sound::UiSound::PieMenuSlice(i as u8));
         }
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new(HOVERED), hovered));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::unique(HOVERED), hovered));
     }
     if !open {
         *menu = None;
-        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::new(HOVERED)));
+        ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
     }
 }
 
@@ -951,7 +951,7 @@ pub fn delete_confirm(ctx: &egui::Context, p: &Palette, text: &str) -> Option<bo
     use crate::ui::widgets::{ActionKind, action_button};
     use egui::RichText;
     let mut answer = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new("object_delete_confirm")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("object_delete_confirm")).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-context-delete-object"))
@@ -994,7 +994,7 @@ pub struct Question<'a> {
 pub fn ask(ctx: &egui::Context, p: &Palette, q: &Question, dont_ask: &mut bool) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new(q.id)).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique(q.id)).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(RichText::new(q.title).size(15.0).strong().color(p.ink));
         ui.add_space(6.0);
@@ -1039,7 +1039,7 @@ pub fn place_teleport_question(region: &str) -> String {
 pub fn teleport_confirm(ctx: &egui::Context, p: &Palette, id: &str, text: &str, dont_ask: &mut bool) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new(id)).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique(id)).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("common-teleport-2"))
@@ -1082,7 +1082,7 @@ pub fn teleport_confirm(ctx: &egui::Context, p: &Palette, id: &str, text: &str, 
 pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_warn: &mut bool, danger: Option<&str>) -> Option<bool> {
     use egui::RichText;
     let mut answer = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new("external_link_confirm")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("external_link_confirm")).show(ctx, |ui| {
         ui.set_width(380.0);
         let (icon, col, title) = match danger {
             Some(_) => ("circle-x-filled", p.danger, aurora_i18n::tr!("ui-context-dangerous-link")),

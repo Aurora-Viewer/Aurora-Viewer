@@ -191,7 +191,7 @@ pub(super) fn fit_window(ctx: &egui::Context, st: &mut PeopleUi) {
     if st.sheet.is_none() || !st.sheet_grow {
         return;
     }
-    let Some(width) = egui::AreaState::load(ctx, egui::Id::new(super::WINDOW))
+    let Some(width) = egui::AreaState::load(ctx, egui::Id::unique(super::WINDOW))
         .and_then(|s| s.size)
         .map(|s| s.x)
     else {
@@ -214,7 +214,7 @@ const WINDOW_MARGINS: f32 = 20.0;
 /// Widen (or narrow) the People window by `dx`, at its place; returns what
 /// it took, or None before the window was ever laid out.
 fn resize_window(ctx: &egui::Context, dx: f32) -> Option<f32> {
-    let state = egui::AreaState::load(ctx, egui::Id::new(super::WINDOW))?;
+    let state = egui::AreaState::load(ctx, egui::Id::unique(super::WINDOW))?;
     let size = state.size?;
     let pos = state.left_top_pos();
     let work = crate::ui::layout::work_area(ctx);
@@ -451,7 +451,7 @@ fn density(ui: &mut egui::Ui, p: &Palette, compact: &mut bool) {
     .enumerate()
     {
         let rect = Rect::from_min_size(Pos2::new(track.left() + PAD + SEG.x * i as f32, track.top() + PAD), SEG);
-        let resp = ui.interact(rect, ui.id().with(("people-density", i)), Sense::click());
+        let resp = ui.interact(rect, ui.scope_id().with(("people-density", i)), Sense::click());
         let on = *compact == value;
         let (face, ink) = if on {
             (Some(p.violet), p.on_accent)
@@ -912,7 +912,7 @@ fn hover_actions(
         .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, p.raised);
     let mut menu_open = false;
     for ((icon, tip), r) in buttons.iter().zip(cells) {
-        let resp = ui.interact(*r, ui.id().with(("people-row-act", row.id, *icon)), Sense::click());
+        let resp = ui.interact(*r, ui.scope_id().with(("people-row-act", row.id, *icon)), Sense::click());
         if resp.hovered() {
             ui.painter().rect_filled(*r, widgets::inner_radius(ui.visuals()), p.bar);
         }

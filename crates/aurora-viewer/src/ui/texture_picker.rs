@@ -211,7 +211,7 @@ impl TexturePicker {
         let size = Vec2::new(320.0, 720.0);
         // Adopt the portrait default once for layouts saved by the wider picker.
         // Later manual resizing remains part of the user's persisted layout.
-        let layout_id = egui::Id::new("texture_picker").with("portrait_default");
+        let layout_id = egui::Id::unique("texture_picker").with("portrait_default");
         let adopt_default = ctx.data_mut(|data| {
             let adopted = data.get_persisted::<bool>(layout_id).unwrap_or(false);
             data.insert_persisted(layout_id, true);
@@ -234,14 +234,14 @@ impl TexturePicker {
                         self.material_view.background = super::texture_library::previews::view(p).background;
                         let response = aurora_render::preview::paint(
                             ui,
-                            ui.id().with("selected_material_preview"),
+                            ui.scope_id().with("selected_material_preview"),
                             model,
                             &mut self.material_view,
                             Vec2::splat(side),
                         );
                         #[cfg(test)]
                         ui.ctx()
-                            .data_mut(|data| data.insert_temp(egui::Id::new("picker_material_scene"), response.rect));
+                            .data_mut(|data| data.insert_temp(egui::Id::unique("picker_material_scene"), response.rect));
                         let _ = response;
                         return;
                     }
@@ -591,7 +591,7 @@ impl TexturePicker {
                         [ui.available_width(), 24.0],
                         egui::TextEdit::singleline(&mut self.uuid_text)
                             .font(egui::FontId::monospace(10.0))
-                            .vertical_align(egui::Align::Center),
+                            .align(egui::Align2::LEFT_CENTER),
                     );
                     if response.changed() {
                         match Uuid::parse_str(self.uuid_text.trim()) {
@@ -756,9 +756,9 @@ mod tests {
                 }
             }
             let image = ctx
-                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new("picker_material_scene")))
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique("picker_material_scene")))
                 .unwrap();
-            let window = ctx.memory(|memory| memory.area_rect(egui::Id::new("texture_picker"))).unwrap();
+            let window = ctx.memory(|memory| memory.area_rect(egui::Id::unique("texture_picker"))).unwrap();
             let camera = picker.material_view;
             let start = image.center();
             let target = start + egui::vec2(35.0, 18.0);
@@ -791,7 +791,7 @@ mod tests {
             );
             assert_ne!(picker.material_view.yaw, camera.yaw, "dragging the material must orbit the preview");
             assert_ne!(picker.material_view.pitch, camera.pitch);
-            let after = ctx.memory(|memory| memory.area_rect(egui::Id::new("texture_picker"))).unwrap();
+            let after = ctx.memory(|memory| memory.area_rect(egui::Id::unique("texture_picker"))).unwrap();
             assert!(
                 (after.min - window.min).length() < 0.5,
                 "orbit moved the picker: {window:?} -> {after:?}"
@@ -1124,7 +1124,7 @@ mod tests {
                     },
                 );
                 output.textures_delta.clear();
-                let rect = ctx.memory(|m| m.area_rect(egui::Id::new("texture_picker"))).unwrap();
+                let rect = ctx.memory(|m| m.area_rect(egui::Id::unique("texture_picker"))).unwrap();
                 assert!(rect.width() < 350.0, "mode {mode}, frame {frame}: {rect:?}");
                 assert!(rect.height() < 790.0, "mode {mode}, frame {frame}: {rect:?}");
                 if frame == 20 {
@@ -1149,7 +1149,7 @@ mod tests {
             for n in 180..190 {
                 frame(&ctx, &mut picker, &mut world, n as f64 / 60.0, vec![]);
             }
-            let resized = ctx.memory(|m| m.area_rect(egui::Id::new("texture_picker"))).unwrap();
+            let resized = ctx.memory(|m| m.area_rect(egui::Id::unique("texture_picker"))).unwrap();
             assert!(resized.width() > initial.unwrap().width());
             assert!(resized.height() < initial.unwrap().height());
             if mode == 2 {
@@ -1160,7 +1160,7 @@ mod tests {
             for n in 190..200 {
                 frame(&ctx, &mut picker, &mut world, n as f64 / 60.0, vec![]);
             }
-            let reopened = ctx.memory(|m| m.area_rect(egui::Id::new("texture_picker"))).unwrap();
+            let reopened = ctx.memory(|m| m.area_rect(egui::Id::unique("texture_picker"))).unwrap();
             assert!((reopened.width() - resized.width()).abs() < 0.5, "resized width lost: {reopened:?}");
             assert!(
                 (reopened.height() - resized.height()).abs() < 0.5,

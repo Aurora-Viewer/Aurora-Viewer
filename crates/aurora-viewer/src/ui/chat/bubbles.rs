@@ -285,7 +285,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
             let pic = egui::Rect::from_min_size(egui::pos2(rect.left() - PIC_GAP - PIC, rect.bottom() - PIC), egui::Vec2::splat(PIC));
             sender_picture(ui, env, line, pic, &name, avatar, object, logged);
             if !avatar.is_nil() {
-                let resp = ui.interact(pic, ui.id().with("sender"), egui::Sense::click());
+                let resp = ui.interact(pic, ui.scope_id().with("sender"), egui::Sense::click());
                 line_name_menu(&resp, p, world, avatar, line, env.menu);
                 if resp
                     .on_hover_cursor(egui::CursorIcon::PointingHand)

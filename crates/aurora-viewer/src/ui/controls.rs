@@ -1082,7 +1082,7 @@ struct Stick {
 /// the pointer and the camera moves while it is held; a click on the centre
 /// without pulling resets.
 fn joystick(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str) -> Stick {
-    let resp = ui.interact(rect, ui.id().with(icon), Sense::click_and_drag());
+    let resp = ui.interact(rect, ui.scope_id().with(icon), Sense::click_and_drag());
     let resp = resp.on_hover_text(tip);
     let center = rect.center();
     let reach = (STICK - KNOB) / 2.0;
@@ -1173,7 +1173,7 @@ pub fn pan_actions(dir: Vec2) -> Vec<Action> {
 /// An icon button that counts while held, at `rect`: bare (the zoom's + and
 /// −) or on a button's face (the free camera's up and down).
 fn hold_icon(ui: &mut egui::Ui, p: &Palette, rect: Rect, icon: &str, tip: &str, face: bool) -> bool {
-    let resp = ui.interact(rect, ui.id().with(icon), Sense::click_and_drag());
+    let resp = ui.interact(rect, ui.scope_id().with(icon), Sense::click_and_drag());
     let held = resp.is_pointer_button_down_on();
     let resp = resp.on_hover_text(tip);
     let fill = match (held, resp.hovered(), face) {

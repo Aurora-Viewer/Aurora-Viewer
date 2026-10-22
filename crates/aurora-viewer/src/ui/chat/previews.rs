@@ -522,7 +522,7 @@ fn paint_icon(painter: &egui::Painter, icon: &str, rect: egui::Rect, color: Colo
 fn overlay_button(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, tip: &str) -> bool {
     let resp = ui.interact(
         rect,
-        ui.id().with(("preview_button", icon, rect.min.x as i32, rect.min.y as i32)),
+        ui.scope_id().with(("preview_button", icon, rect.min.x as i32, rect.min.y as i32)),
         egui::Sense::click(),
     );
     let fill = if resp.hovered() { p.raised } else { p.field };

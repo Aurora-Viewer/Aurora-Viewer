@@ -49,7 +49,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         let c = &mut s.camera;
                         let mut ch = false;
                         let mut preset = c.preset;
-                        egui::ComboBox::from_id_salt(ui.id().with("camera_preset"))
+                        egui::ComboBox::from_id_salt(ui.scope_id().with("camera_preset"))
                             .width(COMBO_W)
                             .selected_text(preset.label())
                             .show_ui(ui, |ui| {

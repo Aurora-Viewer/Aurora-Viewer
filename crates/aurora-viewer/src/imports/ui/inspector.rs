@@ -22,7 +22,7 @@ pub(super) fn show(
         imports.inspector.get_or_insert(window);
     }
     let multiple = window == Choice::Bulk;
-    let window_id = egui::Id::new(window.window_id());
+    let window_id = egui::Id::unique(window.window_id());
     if imports.demo_started && !imports.launcher_open && !imports.settings_open && imports.preview_zoom.is_none() {
         // Keep the requested demo inspector above other scripted floaters.
         ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window_id));
@@ -261,7 +261,7 @@ pub(super) fn show(
                                                         let canvas = if let Some(model) = &entry.model {
                                                             aurora_render::preview::paint_with_pose(
                                                                 ui,
-                                                                egui::Id::new(("animation_preview", entry.id)),
+                                                                egui::Id::unique(("animation_preview", entry.id)),
                                                                 model.clone(),
                                                                 &mut entry.view,
                                                                 Vec2::new(230.0, 190.0),
@@ -272,8 +272,8 @@ pub(super) fn show(
                                                         };
                                                         let reset = preview_camera_controls(ui, p, &mut entry.view);
                                                         ui.ctx().data_mut(|data| {
-                                                            data.insert_temp(egui::Id::new(("animation_canvas", entry.id)), canvas.rect);
-                                                            data.insert_temp(egui::Id::new(("animation_reset", entry.id)), reset.rect);
+                                                            data.insert_temp(egui::Id::unique(("animation_canvas", entry.id)), canvas.rect);
+                                                            data.insert_temp(egui::Id::unique(("animation_reset", entry.id)), reset.rect);
                                                         });
                                                         actions.extend(animation_transport(
                                                             ui,

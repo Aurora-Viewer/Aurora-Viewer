@@ -553,7 +553,7 @@ impl App {
         let Some(alert) = self.region_restart.ui.layer else {
             return;
         };
-        let layer = |name: &str| egui::LayerId::new(egui::Order::Foreground, egui::Id::new(name));
+        let layer = |name: &str| egui::LayerId::new(egui::Order::Foreground, egui::Id::unique(name));
         ctx.memory_mut(|m| {
             let areas = m.areas_mut();
             if aurora {

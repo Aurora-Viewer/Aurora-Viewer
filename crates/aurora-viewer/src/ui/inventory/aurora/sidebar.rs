@@ -137,7 +137,7 @@ fn entry(
     job.wrap = egui::text::TextWrapping::truncate_at_width((end - name_left).max(20.0));
     let galley = ui.painter().layout_job(job);
     widgets::paint_row_text(ui.painter(), galley, name_left, rect.center().y, p.ink);
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     response.on_hover_text(label)
 }
 
@@ -300,7 +300,7 @@ pub(super) fn show(
             if row.branches {
                 let caret = ui.interact(
                     Rect::from_center_size(caret_center, Vec2::splat(CARET + 6.0)),
-                    ui.id().with(("aurora_side_caret", row.id)),
+                    ui.scope_id().with(("aurora_side_caret", row.id)),
                     Sense::click(),
                 );
                 widgets::paint_glyph(

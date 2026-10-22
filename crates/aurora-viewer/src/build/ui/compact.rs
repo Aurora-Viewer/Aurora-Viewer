@@ -147,7 +147,7 @@ pub fn icon_button(ui: &mut egui::Ui, p: &Palette, name: &str, title: &str, enab
                 p.muted
             },
         );
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, title));
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, title));
         response.on_hover_text(title)
     })
     .inner
@@ -314,7 +314,7 @@ fn rail_button(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str, active: 
         icon,
         if active { p.violet_light } else { p.muted },
     );
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, title));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, title));
     response.on_hover_text(title).clicked()
 }
 
@@ -327,7 +327,7 @@ fn grid_mode_buttons(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
     ui.spacing_mut().item_spacing.x = 3.0;
     let (axes, _) = ui.allocate_exact_size(Vec2::new(34.0, 26.0), egui::Sense::hover());
     #[cfg(test)]
-    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("build_grid_axes"), axes));
+    ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("build_grid_axes"), axes));
     // The XYZ content uses the same axis palette as the build manipulator.
     let origin = axes.center() + egui::vec2(-2.0, 5.0);
     for (end, color) in [
@@ -347,14 +347,14 @@ fn grid_mode_buttons(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world
         let response = crate::ui::widgets::action_button(ui, p, "", "", kind, Vec2::new(34.0, 28.0));
         #[cfg(test)]
         ui.ctx()
-            .data_mut(|d| d.insert_temp(egui::Id::new(("build_grid_mode", mode)), response.rect));
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("build_grid_mode", mode)), response.rect));
         glyph(
             ui,
             egui::Rect::from_center_size(response.rect.center(), Vec2::splat(22.0)),
             icon,
             if active { p.on_accent } else { p.muted },
         );
-        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, label));
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, label));
         if response
             .on_hover_text(aurora_i18n::tr!("build-compact-grid-mode", mode = label))
             .clicked()

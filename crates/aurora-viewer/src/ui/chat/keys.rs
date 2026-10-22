@@ -56,7 +56,7 @@ pub(super) fn after_close(order: &[Tab], closed: Uuid) -> Tab {
 /// the conversations as the list shows them.
 pub(super) fn handle(ctx: &egui::Context, st: &mut ChatUi, order: &[Tab], actions: &mut Vec<ConvAction>) {
     let current = (!st.contacts).then_some(st.selected);
-    let window = egui::Id::new(WINDOW);
+    let window = egui::Id::unique(WINDOW);
     // the cross of the window otherwise (`widgets::Floater`)
     if let Some(Some(closed)) = current
         && !crate::ui::widgets::floater_minimized(ctx, WINDOW)

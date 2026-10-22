@@ -23,15 +23,15 @@
 use crate::ui_sound::UiSound;
 use egui::output::OutputEvent;
 use egui::text_selection::CCursorRange;
-use egui::{Context, Event, Id, Key, WidgetType};
+use egui::{Context, Event, Id, Key, Role};
 use std::collections::HashSet;
 
 fn requests_id() -> Id {
-    Id::new("aurora_ui_sound_requests")
+    Id::unique("aurora_ui_sound_requests")
 }
 
 fn floaters_id() -> Id {
-    Id::new("aurora_ui_sound_floaters")
+    Id::unique("aurora_ui_sound_floaters")
 }
 
 /// Plays `s` after this frame (gated by the sound settings).
@@ -40,7 +40,7 @@ pub fn request(ctx: &Context, s: UiSound) {
 }
 
 fn previews_id() -> Id {
-    Id::new("aurora_ui_sound_previews")
+    Id::unique("aurora_ui_sound_previews")
 }
 
 /// Plays the asset `id` whatever the settings (preview button, force_sound).
@@ -60,16 +60,11 @@ pub fn floater_shown(ctx: &Context, id: Id) {
 }
 
 /// Widgets that play the click sound when clicked from the keyboard.
-fn keyboard_clickable(t: WidgetType) -> bool {
+fn keyboard_clickable(t: Role) -> bool {
+    // (selectable labels are buttons since egui 0.37)
     matches!(
         t,
-        WidgetType::Button
-            | WidgetType::Checkbox
-            | WidgetType::RadioButton
-            | WidgetType::SelectableLabel
-            | WidgetType::ComboBox
-            | WidgetType::CollapsingHeader
-            | WidgetType::ColorButton
+        Role::Button | Role::CheckBox | Role::RadioButton | Role::ComboBox | Role::DisclosureTriangle | Role::ColorWell
     )
 }
 
@@ -137,7 +132,7 @@ impl SoundCues {
         let keyboard_click = self.clicked.is_empty()
             && events
                 .iter()
-                .any(|e| matches!(e, OutputEvent::Clicked(i) if keyboard_clickable(i.typ)));
+                .any(|e| matches!(e, OutputEvent::Clicked(i) if keyboard_clickable(i.role)));
         if !self.clicked.is_empty() || keyboard_click {
             out.push(UiSound::ClickRelease);
         }
@@ -145,7 +140,7 @@ impl SoundCues {
         // sliders: press when a drag starts changing one, release at the end
         let slider_moved = events
             .iter()
-            .any(|e| matches!(e, OutputEvent::ValueChanged(i) if i.typ == WidgetType::Slider));
+            .any(|e| matches!(e, OutputEvent::ValueChanged(i) if i.role == Role::Slider));
         if let Some(s) = self.slider
             && self.dragged != Some(s)
         {
@@ -166,7 +161,7 @@ impl SoundCues {
             // an empty field; prev_text_value is only set when the text changed
             let edited = events.iter().any(|e| {
                 matches!(e, OutputEvent::ValueChanged(i)
-                    if i.typ == WidgetType::TextEdit && i.prev_text_value.is_some())
+                    if i.role == Role::TextInput && i.prev_text_value.is_some())
             });
             let after = egui::text_edit::TextEditState::load(ctx, id).and_then(|s| s.cursor.char_range());
             if !edited && after == before {
@@ -208,7 +203,7 @@ mod tests {
         cues.before(ctx, &raw);
         let mut out = ctx.run_ui(raw, |ui| {
             cues.pass_start(ui.ctx());
-            let r = ui.add(egui::TextEdit::singleline(text).id(Id::new("field")));
+            let r = ui.add(egui::TextEdit::singleline(text).id(Id::unique("field")));
             r.request_focus();
         });
         // no renderer here (the font atlas would trip a debug assertion)

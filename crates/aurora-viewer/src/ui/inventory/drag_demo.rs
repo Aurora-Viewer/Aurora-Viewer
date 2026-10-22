@@ -61,7 +61,7 @@ pub fn setup(ctx: &egui::Context, inv: &mut Inventory, st: &mut InventoryUi, pre
     {
         prefs.protected.insert(to);
     }
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("inventory_drag_demo_editor"), w.id));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("inventory_drag_demo_editor"), w.id));
     crate::ui::widgets::place_floater(ctx, &format!("inventory_{}", w.id), egui::pos2(40.0, 65.0), Vec2::new(550.0, 550.0));
 }
 
@@ -75,7 +75,7 @@ fn destination(inv: &Inventory) -> Option<Uuid> {
 
 pub fn input(ctx: &egui::Context, frame: u64, inv: &Inventory, st: &InventoryUi, raw: &mut egui::RawInput) {
     let Some(mode) = mode() else { return };
-    let Some(editor) = ctx.data(|d| d.get_temp::<Uuid>(egui::Id::new("inventory_drag_demo_editor"))) else {
+    let Some(editor) = ctx.data(|d| d.get_temp::<Uuid>(egui::Id::unique("inventory_drag_demo_editor"))) else {
         return;
     };
     if !st.windows.iter().any(|w| w.id == editor) {
@@ -84,7 +84,7 @@ pub fn input(ctx: &egui::Context, frame: u64, inv: &Inventory, st: &InventoryUi,
     let items = crate::demo::texture_library::cascade_items(0);
     let Some(to) = destination(inv) else { return };
     let row = |id| {
-        ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_drag_row", editor, id))))
+        ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", editor, id))))
             .map(|r| r.min + Vec2::new(25.0, r.height() * 0.5))
     };
     let release = match mode {
@@ -108,7 +108,7 @@ pub fn input(ctx: &egui::Context, frame: u64, inv: &Inventory, st: &InventoryUi,
         _ => return,
     };
     let pos = if frame == 670 && mode == "inventory-move-scroll" {
-        ctx.data(|d| d.get_temp::<(egui::Rect, egui::Id)>(egui::Id::new(("inventory_drag_viewport", editor))))
+        ctx.data(|d| d.get_temp::<(egui::Rect, egui::Id)>(egui::Id::unique(("inventory_drag_viewport", editor))))
             .map(|(r, _)| egui::pos2(r.center().x, r.bottom() + 25.0))
     } else {
         row(id)

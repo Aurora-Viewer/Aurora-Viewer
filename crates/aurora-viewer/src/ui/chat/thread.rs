@@ -394,7 +394,11 @@ fn picture(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, name: &str, wh
     if who.avatar.is_nil() {
         return;
     }
-    let r = ui.interact(rect, ui.id().with(("thread_pic", line.time, line.source)), egui::Sense::click());
+    let r = ui.interact(
+        rect,
+        ui.scope_id().with(("thread_pic", line.time, line.source)),
+        egui::Sense::click(),
+    );
     line_name_menu(&r, p, env.world, who.avatar, line, env.menu);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(name).clicked() {
         crate::ui::profile::request_open(ui.ctx(), who.avatar);

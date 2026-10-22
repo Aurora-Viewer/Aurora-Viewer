@@ -126,7 +126,7 @@ pub fn nav_entry(ui: &mut egui::Ui, p: &Palette, label: &str, icon: &str, select
     let galley = ui.painter().layout_job(job);
     ui.painter()
         .galley(rect.left_center() + Vec2::new(34.0, -galley.size().y / 2.0), galley, p.ink);
-    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     response.on_hover_text(label)
 }
 

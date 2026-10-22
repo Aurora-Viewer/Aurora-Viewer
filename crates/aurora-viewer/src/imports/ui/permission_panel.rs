@@ -64,7 +64,7 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
                             .add_enabled_ui(index != 2 || before.copy, |ui| checkbox(ui, p, value, "").on_hover_text(help))
                             .inner;
                         ui.ctx()
-                            .data_mut(|data| data.insert_temp(egui::Id::new(("import_permission", kind, index)), response.rect));
+                            .data_mut(|data| data.insert_temp(egui::Id::unique(("import_permission", kind, index)), response.rect));
                     });
                 }
                 if !row.copy {

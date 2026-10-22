@@ -188,7 +188,7 @@ pub fn show(
     let arrow_top = (portrait_height + place_height + 190.0 * layout.text_scale) / 2.0 - 19.0;
     wheel(&ctx, settings, form, &layout);
     current_key = (settings.login_uri(), settings.username.trim().to_lowercase());
-    egui::Area::new(Id::new("accounts_content"))
+    egui::Area::new(Id::unique("accounts_content"))
         .fixed_pos(egui::pos2(screen.center().x - layout.main_width / 2.0, top))
         .show(&ctx, |ui| {
             // a scroll bar, when the content is taller than the room, takes
@@ -281,7 +281,7 @@ pub fn show(
                         .map(|(side, rect)| {
                             ui.interact(
                                 rect.intersect(ui.clip_rect()),
-                                ui.id().with(("account_grip", side)),
+                                ui.scope_id().with(("account_grip", side)),
                                 if !can_drag {
                                     Sense::hover()
                                 } else if side == 2 {
@@ -386,7 +386,7 @@ pub fn show(
                                                 .is_some_and(|at| predicted.intersect(browse_rect).intersect(ui.clip_rect()).contains(at))
                                         });
                                     let hover =
-                                        ctx.animate_bool_with_time(ui.id().with(("account_hover", index, occurrence)), hovered, 0.12);
+                                        ctx.animate_bool_with_time(ui.scope_id().with(("account_hover", index, occurrence)), hovered, 0.12);
                                     let marker = ui.painter().add(egui::Shape::Noop);
                                     let result = ui.push_id(("account_card", index, occurrence), |ui| {
                                         if faded {
@@ -588,7 +588,7 @@ pub fn show(
             form.content_height = scroll.content_size.y;
         });
     if !first_account {
-        egui::Area::new(Id::new("accounts_footer"))
+        egui::Area::new(Id::unique("accounts_footer"))
             .pivot(egui::Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(
                 screen.center().x,
@@ -953,6 +953,7 @@ mod tests {
             unit,
             delta,
             phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
             modifiers: egui::Modifiers::NONE,
         }
     }

@@ -798,7 +798,7 @@ pub fn show(
                     Vec2::new(width, 28.0),
                     egui::TextEdit::singleline(&mut st.search)
                         .hint_text(aurora_i18n::tr!("ui-appearance-filter-outfits"))
-                        .vertical_align(egui::Align::Center),
+                        .align(egui::Align2::LEFT_CENTER),
                 );
                 icon_menu(
                     ui,
@@ -845,7 +845,7 @@ pub fn show(
         // a guess too small (buttons wrapped in a narrow window, a long
         // message) made the window grow to fit them, the list take the new
         // room, and the window grow again at every frame.
-        let below_id = ui.id().with("appearance_below_list");
+        let below_id = ui.scope_id().with("appearance_below_list");
         let estimate = if st.editing || st.tab == 2 { 130.0 } else { 154.0 };
         let reserved = ui.ctx().data(|d| d.get_temp::<f32>(below_id)).unwrap_or(estimate);
         let list_top = ui.cursor().top();
@@ -1018,7 +1018,7 @@ pub fn show(
     });
     if let Some(mut name) = st.save_as.clone() {
         let mut close = false;
-        let response = crate::ui::widgets::Modal::new(egui::Id::new("outfit_save_as")).show(ctx, |ui| {
+        let response = crate::ui::widgets::Modal::new(egui::Id::unique("outfit_save_as")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.label(RichText::new(aurora_i18n::tr!("common-save-as")).size(17.0).strong().color(p.ink));
             ui.add_space(6.0);
@@ -1242,7 +1242,7 @@ mod tests {
         for _ in 0..80 {
             draw(&ctx, &mut world, &mut st, None);
         }
-        let rect = ctx.memory(|m| m.area_rect(egui::Id::new("appearance"))).expect("floater");
+        let rect = ctx.memory(|m| m.area_rect(egui::Id::unique("appearance"))).expect("floater");
         assert!(rect.width() < 620.0 && rect.height() < 720.0, "{rect:?}");
         st.save_as = Some("   ".into());
         draw(&ctx, &mut world, &mut st, None);
@@ -1270,7 +1270,7 @@ mod tests {
                 search: "no outfit has this name".into(),
                 ..Default::default()
             };
-            let area = || ctx.memory(|m| m.area_rect(egui::Id::new("appearance"))).expect("floater");
+            let area = || ctx.memory(|m| m.area_rect(egui::Id::unique("appearance"))).expect("floater");
             for _ in 0..10 {
                 draw(&ctx, &mut world, &mut st, None);
             }

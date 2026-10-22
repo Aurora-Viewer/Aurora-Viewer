@@ -53,7 +53,7 @@ impl Layout {
     /// The layout of the window `id` as it was last drawn (its title bar is
     /// laid out before its body).
     pub fn of_window(ctx: &egui::Context, id: &str) -> Self {
-        egui::AreaState::load(ctx, egui::Id::new(id))
+        egui::AreaState::load(ctx, egui::Id::unique(id))
             .and_then(|state| state.size)
             .map_or(Self::Compact, |size| Self::for_width(size.x - 20.0))
     }
@@ -73,7 +73,7 @@ const WIDE_SIZE: f32 = 1180.0;
 
 /// "Widen the window": the explorer with its details pane, as tall as it is.
 pub fn widen(ctx: &egui::Context, id: &str) {
-    let height = egui::AreaState::load(ctx, egui::Id::new(id))
+    let height = egui::AreaState::load(ctx, egui::Id::unique(id))
         .and_then(|state| state.size)
         .map_or(DEFAULT_SIZE.y, |size| size.y);
     widgets::size_floater(ctx, id, egui::vec2(WIDE_SIZE, height.max(DEFAULT_SIZE.y)));
@@ -266,9 +266,14 @@ fn row_menu(
 ) {
     let Some((id, pos)) = st.row_menu else { return };
     let mut open = true;
-    menu::popup_at(ui.ctx(), egui::Id::new(("inventory_row_menu", st.ui_id)), pos, &mut open, p, |ui| {
-        context::show(ui, p, inv, id, st, prefs, facts, actions)
-    });
+    menu::popup_at(
+        ui.ctx(),
+        egui::Id::unique(("inventory_row_menu", st.ui_id)),
+        pos,
+        &mut open,
+        p,
+        |ui| context::show(ui, p, inv, id, st, prefs, facts, actions),
+    );
     if !open || !(inv.items.contains_key(&id) || inv.folders.contains_key(&id)) {
         st.row_menu = None;
     }
@@ -339,7 +344,7 @@ fn compact(
             false,
         )
     });
-    let zone = ui.interact(out.inner_rect, ui.id().with("aurora_list_zone"), Sense::hover());
+    let zone = ui.interact(out.inner_rect, ui.scope_id().with("aurora_list_zone"), Sense::hover());
     let target = list_destination(st, root);
     task_drop::target(ui, p, &zone, inv, target, prefs, actions);
     drag::target(ui, p, &zone, inv, target, st, prefs, facts, actions);
@@ -423,7 +428,7 @@ fn explorer_list(
         Layout::Wide => toolbar::chips(ui, p, st, prefs),
         _ => toolbar::breadcrumb_row(ui, p, inv, st),
     }
-    let list_id = ui.id().with("aurora_inventory_list");
+    let list_id = ui.scope_id().with("aurora_inventory_list");
     let Some(frame) = st.aurora else { return };
     rows::header(ui, p, frame, list_id);
     ui.add_space(2.0);
@@ -471,7 +476,7 @@ fn explorer_list(
         })
     };
     widgets::remember_scroll_bar(ui, list_id, &out);
-    let zone = ui.interact(out.inner_rect, ui.id().with("aurora_list_zone"), Sense::hover());
+    let zone = ui.interact(out.inner_rect, ui.scope_id().with("aurora_list_zone"), Sense::hover());
     task_drop::target(ui, p, &zone, inv, target, prefs, actions);
     drag::target(ui, p, &zone, inv, target, st, prefs, facts, actions);
     in_rect(ui, foot, "aurora_inventory_foot", |ui| match layout {
@@ -669,7 +674,7 @@ mod tests {
             );
             let area = |h: &Harness| {
                 h.ctx
-                    .memory(|m| m.area_rect(egui::Id::new("aurora_inventory_test")))
+                    .memory(|m| m.area_rect(egui::Id::unique("aurora_inventory_test")))
                     .expect("window")
             };
             let before = area(&h).height();
@@ -707,7 +712,7 @@ mod tests {
                 h.frames(4);
                 let area = |h: &Harness| {
                     h.ctx
-                        .memory(|m| m.area_rect(egui::Id::new("aurora_inventory_test")))
+                        .memory(|m| m.area_rect(egui::Id::unique("aurora_inventory_test")))
                         .expect("window")
                 };
                 let before = area(&h).height();

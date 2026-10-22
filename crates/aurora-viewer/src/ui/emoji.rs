@@ -93,7 +93,7 @@ const OPEN_ID: &str = "emoji_picker_open";
 /// A picker was drawn in the last pass: Escape is its own, not the camera's
 /// (the window events come before the pass that would consume the key).
 pub fn picker_open(ctx: &egui::Context) -> bool {
-    let shown: Option<u64> = ctx.data(|d| d.get_temp(egui::Id::new(OPEN_ID)));
+    let shown: Option<u64> = ctx.data(|d| d.get_temp(egui::Id::unique(OPEN_ID)));
     shown.is_some_and(|p| p + 1 >= ctx.cumulative_pass_nr())
 }
 
@@ -419,7 +419,7 @@ impl Emoji {
         let pass = ui.ctx().cumulative_pass_nr();
         let opened = self.shown_pass.is_none_or(|last| last + 1 < pass);
         self.shown_pass = Some(pass);
-        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(OPEN_ID), pass));
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique(OPEN_ID), pass));
         let escape = ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         if !self.available() {
             ui.label(
@@ -456,7 +456,7 @@ impl Emoji {
         });
         let search = ui.add(
             egui::TextEdit::singleline(&mut self.query)
-                .id(egui::Id::new(SEARCH_ID))
+                .id(egui::Id::unique(SEARCH_ID))
                 .hint_text(aurora_i18n::tr!("ui-emoji-search-emoji-name-or-code"))
                 .desired_width(f32::INFINITY),
         );
@@ -570,7 +570,7 @@ mod tests {
         let p = crate::theme::Theme::default().palette();
         let icons = crate::ui::icons::Icons::load(&frames.ctx, None);
         let mut emoji = Emoji::load();
-        let field = egui::Id::new("field");
+        let field = egui::Id::unique("field");
         let mut text = String::new();
         let mut frame = |frames: &mut Frames, emoji: &mut Emoji, open: bool, events: Vec<egui::Event>| {
             let mut picked = Picked::default();
@@ -589,7 +589,7 @@ mod tests {
         // opened: the search has the keyboard and typing filters
         frame(&mut frames, &mut emoji, true, vec![]);
         frame(&mut frames, &mut emoji, true, vec![]);
-        assert!(frames.ctx.memory(|m| m.has_focus(egui::Id::new(SEARCH_ID))));
+        assert!(frames.ctx.memory(|m| m.has_focus(egui::Id::unique(SEARCH_ID))));
         assert!(picker_open(&frames.ctx));
         frame(&mut frames, &mut emoji, true, vec![egui::Event::Text("heart".into())]);
         assert_eq!(emoji.query, "heart");
@@ -606,6 +606,6 @@ mod tests {
         assert!(frames.ctx.memory(|m| m.has_focus(field)));
         frame(&mut frames, &mut emoji, true, vec![]);
         frame(&mut frames, &mut emoji, true, vec![]);
-        assert!(frames.ctx.memory(|m| m.has_focus(egui::Id::new(SEARCH_ID))));
+        assert!(frames.ctx.memory(|m| m.has_focus(egui::Id::unique(SEARCH_ID))));
     }
 }

@@ -5,7 +5,7 @@
 use super::*;
 
 pub(super) fn focus_id(st: &InventoryUi) -> egui::Id {
-    egui::Id::new(("inventory_clipboard_focus", st.ui_id))
+    egui::Id::unique(("inventory_clipboard_focus", st.ui_id))
 }
 
 pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
@@ -190,7 +190,7 @@ pub(super) fn demo_row(response: &egui::Response, st: &InventoryUi, item: Uuid) 
     if demo_mode().is_some() || super::delete::demo_enabled() || crate::demo::texture_library::inventory_drag_enabled() {
         response
             .ctx
-            .data_mut(|data| data.insert_temp(egui::Id::new(("clipboard_demo_row", st.ui_id, item)), response.rect.center()));
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("clipboard_demo_row", st.ui_id, item)), response.rect.center()));
     }
 }
 
@@ -198,14 +198,14 @@ pub(super) fn demo_caret(response: &egui::Response, st: &InventoryUi, folder: Uu
     if demo_mode().is_some() {
         response
             .ctx
-            .data_mut(|data| data.insert_temp(egui::Id::new(("clipboard_demo_caret", st.ui_id, folder)), response.rect.center()));
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("clipboard_demo_caret", st.ui_id, folder)), response.rect.center()));
     }
 }
 
 pub(super) fn demo_search(response: &egui::Response, st: &InventoryUi) {
     if demo_mode().is_some_and(|mode| mode.starts_with("search-selection")) {
         response.ctx.data_mut(|data| {
-            data.insert_temp(egui::Id::new(("inventory_demo_search", st.ui_id)), response.rect);
+            data.insert_temp(egui::Id::unique(("inventory_demo_search", st.ui_id)), response.rect);
         });
     }
 }
@@ -219,7 +219,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     if mode.starts_with("keyboard") || mode.starts_with("aurora-keyboard") {
         if matches!(frame, 650 | 651)
             && let Some(pos) =
-                ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_row", st.ui_id, Uuid::from_u128(8100)))))
+                ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, Uuid::from_u128(8100)))))
         {
             return vec![
                 egui::Event::PointerMoved(pos),
@@ -264,9 +264,9 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     if mode.starts_with("search-selection") {
         let keyboard = mode == "search-selection-keyboard";
         let pos = match frame {
-            650 | 651 => ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_row", st.ui_id, Uuid::from_u128(11490))))),
+            650 | 651 => ctx.data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, Uuid::from_u128(11490))))),
             720 | 721 => ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_demo_search", st.ui_id))))
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_demo_search", st.ui_id))))
                 .map(|rect| {
                     if keyboard {
                         rect.left_center() + egui::vec2(15.0, 0.0)
@@ -340,7 +340,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     if !window && matches!(frame, 780 | 781) {
         let to = if folder { st.selected } else { Some(Uuid::from_u128(8001)) };
         if let Some(pos) =
-            to.and_then(|to| ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_caret", st.ui_id, to)))))
+            to.and_then(|to| ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_caret", st.ui_id, to)))))
         {
             return vec![
                 egui::Event::PointerMoved(pos),
@@ -354,7 +354,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
         }
     }
     let row =
-        |ui_id, item| ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_row", ui_id, Uuid::from_u128(item)))));
+        |ui_id, item| ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", ui_id, Uuid::from_u128(item)))));
     let (pos, ctrl) = match frame {
         650 | 651 => (
             row(
@@ -535,7 +535,10 @@ mod tests {
             } else {
                 rules::name(&self.world.inventory, item)
             };
-            let rect = self.ctx.memory(|m| m.area_rect(egui::Id::new(window))).expect("inventory window");
+            let rect = self
+                .ctx
+                .memory(|m| m.area_rect(egui::Id::unique(window)))
+                .expect("inventory window");
             let state = self
                 .st
                 .windows
@@ -545,7 +548,7 @@ mod tests {
             let list = self.ctx.read_response(focus_id(state)).expect("inventory list").rect;
             let row = self
                 .ctx
-                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("inventory_drag_row", state.ui_id, item))))
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", state.ui_id, item))))
                 .expect("drawn row");
             self.output
                 .shapes
@@ -608,7 +611,7 @@ mod tests {
 
         fn trash_button(&self, ui_id: Uuid) -> egui::Rect {
             self.ctx
-                .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("inventory_delete_button", ui_id))))
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_delete_button", ui_id))))
                 .expect("trash button")
         }
 
@@ -736,7 +739,7 @@ mod tests {
         h.frame(vec![arrow(false, true)]);
         assert_eq!(h.st.selection, HashSet::from([id(20_060)]));
         h.st.rename = None;
-        h.ctx.memory_mut(|m| m.request_focus(egui::Id::new("other_field")));
+        h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("other_field")));
         h.frame(vec![arrow(false, true)]);
         assert_eq!(h.st.selected, Some(id(20_060)));
         h.st.show_original(&h.world.inventory, id(20_000));
@@ -1096,7 +1099,7 @@ mod tests {
         let window = h.st.windows[0].id;
         h.ctx.data_mut(|d| {
             d.insert_temp(
-                egui::Id::new(format!("inventory_{window}")).with("place_pos"),
+                egui::Id::unique(format!("inventory_{window}")).with("place_pos"),
                 egui::pos2(30.0, 50.0),
             )
         });
@@ -1114,13 +1117,13 @@ mod tests {
         let dest = &h.st.windows[1].state;
         let root = h
             .ctx
-            .memory(|m| m.area_rect(egui::Id::new(format!("inventory_{}", dest.ui_id))))
+            .memory(|m| m.area_rect(egui::Id::unique(format!("inventory_{}", dest.ui_id))))
             .expect("destination window");
         h.click(root.center(), Default::default());
         assert!(h.ctx.memory(|m| m.has_focus(focus_id(&h.st.windows[1].state))));
         let actions = h.paste();
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if change.copies.len() == 1 && change.copies[0].parent == id(8001)));
-        h.ctx.memory_mut(|m| m.request_focus(egui::Id::new("unrelated_widget")));
+        h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("unrelated_widget")));
         assert!(h.paste().is_empty());
     }
 }

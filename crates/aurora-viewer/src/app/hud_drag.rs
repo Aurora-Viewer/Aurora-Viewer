@@ -125,7 +125,7 @@ impl App {
             egui::pos2(bounds[0] / ppp, bounds[1] / ppp),
             egui::pos2(bounds[2] / ppp, bounds[3] / ppp),
         );
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("hud_scale")));
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("hud_scale")));
         painter.rect_stroke(
             rect.expand(2.0),
             2.0,

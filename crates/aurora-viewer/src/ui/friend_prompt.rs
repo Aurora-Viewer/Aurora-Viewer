@@ -123,7 +123,7 @@ impl FriendPromptUi {
         let behind = self.behind(list, id);
         let mut out = None;
         let mut later = false;
-        egui::Area::new(egui::Id::new("friend_prompt"))
+        egui::Area::new(egui::Id::unique("friend_prompt"))
             .fade_in(false)
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, (1.0 - arrive) * 24.0))

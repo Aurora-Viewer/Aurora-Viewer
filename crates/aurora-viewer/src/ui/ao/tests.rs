@@ -53,7 +53,7 @@ impl Fixture {
         let mut actions = Vec::new();
         let mut output = self.ctx.run_ui(input, |ui| {
             if let Some(quick) = &mut self.quick {
-                egui::Area::new(egui::Id::new("test_ao_toolbar"))
+                egui::Area::new(egui::Id::unique("test_ao_toolbar"))
                     .fixed_pos(egui::pos2(1200.0, 850.0))
                     .show(ui.ctx(), |ui| {
                         let response = ui.button("AO");

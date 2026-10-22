@@ -619,7 +619,7 @@ mod tests {
                             let mut open = true;
                             ui.show(egui_ui.ctx(), &p, &world, &pics, &mut open, false, legacy);
                         });
-                        rects.push(frames.ctx.memory(|m| m.area_rect(egui::Id::new(id))).expect("window"));
+                        rects.push(frames.ctx.memory(|m| m.area_rect(egui::Id::unique(id))).expect("window"));
                     }
                     let first = rects[2];
                     assert!(

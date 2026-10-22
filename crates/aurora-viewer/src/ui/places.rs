@@ -387,7 +387,7 @@ impl PlacesUi {
             Some(text) => super::context::teleport_confirm(ctx, p, "places_confirm", &text, &mut self.dont_ask),
             None => {
                 let mut answer = None;
-                let modal = crate::ui::widgets::Modal::new(egui::Id::new("places_confirm")).show(ctx, |ui| {
+                let modal = crate::ui::widgets::Modal::new(egui::Id::unique("places_confirm")).show(ctx, |ui| {
                     ui.set_width(340.0);
                     ui.label(
                         RichText::new(aurora_i18n::tr!("common-teleport-history"))

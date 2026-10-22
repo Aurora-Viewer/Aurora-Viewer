@@ -203,11 +203,11 @@ pub fn island(
     let top = rect.center().y - SLOT / 2.0;
 
     // a right click anywhere on the island: its two settings
-    let back = ui.interact(rect, Id::new("bars_place_island"), Sense::click());
+    let back = ui.interact(rect, Id::unique("bars_place_island"), Sense::click());
     place_options(&back, p, st, &mut action);
     // the demo cannot right-click: the same menu where the pointer would be
     if super::demo::get().open == Some(super::demo::Open::PlaceOptions) && ui.ctx().cumulative_frame_nr() >= 300 {
-        let id = Id::new("bars_place_demo_options");
+        let id = Id::unique("bars_place_demo_options");
         let mut open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         let at = Pos2::new(rect.left() + rect.width() * 0.3, rect.center().y);
         menu::popup_at(ui.ctx(), id, at, &mut open, p, |ui| options_body(ui, p, st, &mut action));
@@ -222,7 +222,7 @@ pub fn island(
     };
     // back / forward through the teleport history, home
     for (left, dest) in [(true, st.tp_back.as_deref()), (false, st.tp_forward.as_deref())] {
-        let id = Id::new(("bars_place_arrow", left));
+        let id = Id::unique(("bars_place_arrow", left));
         let icon = if left { "arrow-left" } else { "arrow-right" };
         let resp = icon_slot(ui, p, icons, next(SLOT), id, icon, dest.is_some());
         let tip = match dest {
@@ -239,7 +239,7 @@ pub fn island(
             });
         }
     }
-    let home = icon_slot(ui, p, icons, next(SLOT), Id::new("bars_place_home"), "home-filled", true)
+    let home = icon_slot(ui, p, icons, next(SLOT), Id::unique("bars_place_home"), "home-filled", true)
         .on_hover_text(aurora_i18n::tr!("common-go-home"));
     if home.clicked() {
         action = Some(BarAction::TeleportHome);
@@ -305,7 +305,7 @@ fn options_body(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, action: &mut Op
 /// button): the outline star opens the quick menu, the amber one edits the
 /// landmark of this parcel.
 fn star_slot(ui: &mut egui::Ui, p: &Palette, icons: &Icons, rect: Rect, st: &StatusInfo) -> Option<StarAction> {
-    let resp = ui.interact(rect, Id::new("bars_place_star"), Sense::click());
+    let resp = ui.interact(rect, Id::unique("bars_place_star"), Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     let hot = resp.hovered() || open;
     slot_face(ui, p, rect, hot, false);
@@ -350,7 +350,7 @@ fn place(
     detail: Detail,
 ) -> Option<BarAction> {
     let mut action = None;
-    let resp = ui.interact(rect, Id::new("bars_place_location"), Sense::click());
+    let resp = ui.interact(rect, Id::unique("bars_place_location"), Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
     let hot = resp.hovered() || open;
     slot_face(ui, p, rect, hot, false);
@@ -396,7 +396,7 @@ fn place(
         let w = right_width(ui, it, detail);
         let slot = Rect::from_min_size(Pos2::new(rx, cy - SLOT_HEIGHT / 2.0), Vec2::new(w, SLOT_HEIGHT));
         rx += w + RIGHT_GAP;
-        let r = ui.interact(slot, Id::new(("bars_place_right", i)), Sense::click());
+        let r = ui.interact(slot, Id::unique(("bars_place_right", i)), Sense::click());
         if r.hovered() {
             ui.painter()
                 .rect_filled(slot.expand(1.0), ui.visuals().window_corner_radius, p.raised);
@@ -548,7 +548,7 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
     });
     ui.add_space(6.0);
     // a destination: SLURL, Region/x/y/z or a region's name, then Enter
-    let dest_id = Id::new("bars_place_destination");
+    let dest_id = Id::unique("bars_place_destination");
     let mut text = ui.ctx().data_mut(|d| d.get_temp::<String>(dest_id)).unwrap_or_default();
     let dest = &mut text;
     let field = ui

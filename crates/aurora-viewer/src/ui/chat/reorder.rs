@@ -136,7 +136,7 @@ impl State {
 }
 
 fn demo_id() -> egui::Id {
-    egui::Id::new("conversation_reorder_demo")
+    egui::Id::unique("conversation_reorder_demo")
 }
 
 /// Synthetic pointer events, enabled only by the explicit offline fixture.

@@ -176,7 +176,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View,
     }
     buttons.push((button(main, main_kind), Choice::Ok));
     let mut answer = None;
-    let modal = widgets::Modal::new(egui::Id::new("region_estate_ask")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("region_estate_ask")).show(ctx, |ui| {
         // wider when its buttons, all of the widest one's width, need it
         let widest = buttons
             .iter()

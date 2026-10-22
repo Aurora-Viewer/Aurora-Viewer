@@ -179,7 +179,7 @@ pub(super) fn show(
             done = true;
         }
         #[cfg(test)]
-        ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_move_filter", st.ui_id)), filter.rect));
+        ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_move_filter", st.ui_id)), filter.rect));
 
         // the destinations in exactly the room the count, the buttons and the
         // message leave
@@ -226,7 +226,7 @@ pub(super) fn show(
                             ui.painter().galley(rect.min + offset, galley, color);
                         }
                         #[cfg(test)]
-                        ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_move_destination", st.ui_id, row.id)), rect));
+                        ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_move_destination", st.ui_id, row.id)), rect));
                         if response.on_hover_text(&row.path).clicked() {
                             picker.selected = Some(row.id);
                             picker.message.clear();
@@ -252,7 +252,7 @@ pub(super) fn show(
                 ui.add_enabled_ui(enabled, |ui| {
                     let button = flat_button(ui, p, aurora_i18n::tr!("inventory-move-confirm"));
                     #[cfg(test)]
-                    ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_move_confirm", st.ui_id)), button.rect));
+                    ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_move_confirm", st.ui_id)), button.rect));
                     if (button.clicked() || enter)
                         && enabled
                         && let Some(to) = picker.selected
@@ -271,7 +271,7 @@ pub(super) fn show(
                 });
                 let cancel = flat_button(ui, p, aurora_i18n::tr!("common-cancel"));
                 #[cfg(test)]
-                ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_move_cancel", st.ui_id)), cancel.rect));
+                ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_move_cancel", st.ui_id)), cancel.rect));
                 done |= cancel.clicked();
             });
             if !picker.message.is_empty() {
@@ -522,7 +522,7 @@ mod tests {
     }
 
     fn rect(ctx: &egui::Context, key: impl std::hash::Hash + std::fmt::Debug) -> egui::Rect {
-        ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new(key)))
+        ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(key)))
             .expect("widget drawn")
     }
 
@@ -656,7 +656,7 @@ mod tests {
                     |ui| {
                         crate::ui::menu::popup_at(
                             ui.ctx(),
-                            egui::Id::new("move_menu_test"),
+                            egui::Id::unique("move_menu_test"),
                             egui::pos2(10.0, 10.0),
                             &mut open,
                             &p,

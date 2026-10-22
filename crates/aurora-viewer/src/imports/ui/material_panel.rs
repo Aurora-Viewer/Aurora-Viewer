@@ -33,7 +33,7 @@ pub(super) fn show(
                 })
                 .inner;
             ui.ctx()
-                .data_mut(|data| data.insert_temp(egui::Id::new(("material_card", id, slot)), card));
+                .data_mut(|data| data.insert_temp(egui::Id::unique(("material_card", id, slot)), card));
         }
     } else {
         let preview_width = 230.0;
@@ -62,7 +62,7 @@ pub(super) fn show(
                                     .response
                                     .rect;
                                 ui.ctx()
-                                    .data_mut(|data| data.insert_temp(egui::Id::new(("material_card", id, slot)), card));
+                                    .data_mut(|data| data.insert_temp(egui::Id::unique(("material_card", id, slot)), card));
                             });
                         }
                     });
@@ -93,13 +93,19 @@ fn preview(
         ui.horizontal(|ui| {
             ui.add_space(((ui.available_width() - 176.0) * 0.5).max(0.0));
             let response = if let Some(model) = model {
-                aurora_render::preview::paint(ui, egui::Id::new(("material_preview", id)), model.clone(), view, Vec2::splat(176.0))
+                aurora_render::preview::paint(
+                    ui,
+                    egui::Id::unique(("material_preview", id)),
+                    model.clone(),
+                    view,
+                    Vec2::splat(176.0),
+                )
             } else {
                 widgets::picture(ui, p, None, Vec2::splat(176.0), "cube-3d-sphere", "")
             }
             .on_hover_text(aurora_i18n::tr!("import-preview-gestures"));
             ui.ctx()
-                .data_mut(|data| data.insert_temp(egui::Id::new(("material_canvas", id)), response.rect));
+                .data_mut(|data| data.insert_temp(egui::Id::unique(("material_canvas", id)), response.rect));
         });
         return;
     }
@@ -109,14 +115,21 @@ fn preview(
         .horizontal(|ui| {
             ui.add_space(((ui.available_width() - 230.0) * 0.5).max(0.0));
             if let Some(model) = model {
-                aurora_render::preview::paint(ui, egui::Id::new(("material_preview", id)), model.clone(), view, Vec2::splat(230.0)).rect
+                aurora_render::preview::paint(
+                    ui,
+                    egui::Id::unique(("material_preview", id)),
+                    model.clone(),
+                    view,
+                    Vec2::splat(230.0),
+                )
+                .rect
             } else {
                 widgets::picture(ui, p, None, Vec2::splat(230.0), "cube-3d-sphere", "").rect
             }
         })
         .inner;
     ui.ctx()
-        .data_mut(|data| data.insert_temp(egui::Id::new(("material_canvas", id)), rect));
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("material_canvas", id)), rect));
     camera_hint(ui, p);
     checkbox(ui, p, &mut material.double_sided, aurora_i18n::tr!("import-double-sided"));
 }
@@ -143,7 +156,7 @@ fn preview_tools(
         }
         let rect = egui::Rect::from_min_size(ui.next_widget_position(), Vec2::splat(20.0));
         ui.ctx()
-            .data_mut(|data| data.insert_temp(egui::Id::new(("material_reset", id)), rect));
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("material_reset", id)), rect));
         if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("import-preview-reset-view"), true) {
             view.reset_camera();
         }

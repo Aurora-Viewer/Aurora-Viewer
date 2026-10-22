@@ -437,7 +437,7 @@ fn header(ui: &mut egui::Ui, p: &Palette, settings: &mut RadarSettings, counts: 
     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
     for (column, cell) in cells(settings, rect.with_max_x(rect.left() + columns)) {
         let index = Column::ALL.iter().position(|c| *c == column).unwrap_or(0) as u8;
-        let resp = ui.interact(cell, ui.id().with(("radar_header", index)), Sense::click());
+        let resp = ui.interact(cell, ui.scope_id().with(("radar_header", index)), Sense::click());
         let sorted = settings.sort == index;
         let color = if sorted || resp.hovered() { p.ink } else { p.muted };
         let font = egui::FontId::proportional(12.0);
@@ -785,7 +785,7 @@ pub fn tab(
         list.iter().filter(|r| r.same_region).count(),
         list.iter().filter(|r| r.range.is_some_and(|d| d <= CHAT_RANGE)).count(),
     );
-    let rows_id = ui.id().with("radar_list");
+    let rows_id = ui.scope_id().with("radar_list");
     header(ui, p, data.settings, counts, rows_id);
     let out = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 1.0;

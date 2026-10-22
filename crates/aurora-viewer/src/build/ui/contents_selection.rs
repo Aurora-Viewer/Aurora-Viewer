@@ -79,10 +79,10 @@ pub struct Rename {
 }
 
 pub(super) fn focus_id(object: Uuid) -> Id {
-    Id::new(("task_contents_focus", object))
+    Id::unique(("task_contents_focus", object))
 }
 fn rename_id(edit: &Rename) -> Id {
-    Id::new(("task_contents_rename", edit.object, edit.item))
+    Id::unique(("task_contents_rename", edit.object, edit.item))
 }
 
 pub(super) fn begin_rename(tool: &mut BuildTool, world: &World, object: Uuid, item: Uuid) {

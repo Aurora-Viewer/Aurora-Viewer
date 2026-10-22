@@ -63,7 +63,7 @@ struct Claim {
 }
 
 fn claims_id() -> Id {
-    Id::new("find_shortcut_claims")
+    Id::unique("find_shortcut_claims")
 }
 
 /// The windows with a find bar drawn on the last frame.
@@ -131,7 +131,7 @@ mod tests {
     use crate::ui::widgets::elide_tests::Frames;
 
     fn window(name: &str) -> LayerId {
-        LayerId::new(egui::Order::Middle, Id::new(name))
+        LayerId::new(egui::Order::Middle, Id::unique(name))
     }
 
     #[test]
@@ -171,19 +171,19 @@ mod tests {
             frames.run(events, |ui| {
                 let ctx = ui.ctx().clone();
                 if let Some(field) = keyboard {
-                    ctx.memory_mut(|m| m.request_focus(Id::new(field)));
+                    ctx.memory_mut(|m| m.request_focus(Id::unique(field)));
                 }
-                let area = |name: &str, x: f32| egui::Area::new(Id::new(name)).fixed_pos(egui::pos2(x, 0.0));
+                let area = |name: &str, x: f32| egui::Area::new(Id::unique(name)).fixed_pos(egui::pos2(x, 0.0));
                 if find_window_shown {
                     area("find", 0.0).show(&ctx, |ui| {
                         ui.set_min_size(egui::vec2(300.0, 300.0));
-                        ui.add(egui::TextEdit::singleline(&mut find).id(Id::new(FIND_FIELD)));
-                        taken = take(ui, &[Id::new(FIND_FIELD)]);
+                        ui.add(egui::TextEdit::singleline(&mut find).id(Id::unique(FIND_FIELD)));
+                        taken = take(ui, &[Id::unique(FIND_FIELD)]);
                     });
                 }
                 area("other", 600.0).show(&ctx, |ui| {
                     ui.set_min_size(egui::vec2(300.0, 300.0));
-                    ui.add(egui::TextEdit::singleline(&mut other).id(Id::new(OTHER_FIELD)));
+                    ui.add(egui::TextEdit::singleline(&mut other).id(Id::unique(OTHER_FIELD)));
                 });
             });
         };
@@ -225,7 +225,7 @@ mod tests {
             frames.run(vec![egui::Event::PointerMoved(ON_FIND_WINDOW)], |ui| {
                 let ctx = ui.ctx().clone();
                 if shown {
-                    egui::Area::new(Id::new("find")).fixed_pos(egui::Pos2::ZERO).show(&ctx, |ui| {
+                    egui::Area::new(Id::unique("find")).fixed_pos(egui::Pos2::ZERO).show(&ctx, |ui| {
                         ui.set_min_size(egui::vec2(300.0, 300.0));
                         take(ui, &[]);
                     });

@@ -169,7 +169,7 @@ impl TextMenu {
             self.clipboard = clipboard().is_some_and(|text| !text.is_empty());
         }
         if let Some(frame) = demo_frame.filter(|_| demo_wanted()) {
-            let chat = Id::new("nearby_chat_input");
+            let chat = Id::unique("nearby_chat_input");
             match frame {
                 DEMO_FOCUS => ctx.memory_mut(|m| m.request_focus(chat)),
                 DEMO_TYPE => {
@@ -203,7 +203,7 @@ impl TextMenu {
         let clicked = ctx.input(|i| i.pointer.secondary_clicked().then(|| i.pointer.interact_pos()).flatten());
         let demo = std::mem::take(&mut self.demo_open)
             .then(|| {
-                let field = Id::new("nearby_chat_input");
+                let field = Id::unique("nearby_chat_input");
                 ctx.read_response(field).map(|r| (field, r.rect.center()))
             })
             .flatten();
@@ -238,7 +238,7 @@ impl TextMenu {
         let (field, can, clipboard) = (open.field, open.can, open.clipboard);
         let mut keep = true;
         let mut chosen = None;
-        super::menu::popup_at(ctx, Id::new("text_field_menu").with(open.serial), open.pos, &mut keep, p, |ui| {
+        super::menu::popup_at(ctx, Id::unique("text_field_menu").with(open.serial), open.pos, &mut keep, p, |ui| {
             for (entry, icon) in ENTRIES {
                 if super::menu::item_if(ui, p, icon, label(entry), enabled(entry, can, clipboard)) {
                     chosen = Some(entry);

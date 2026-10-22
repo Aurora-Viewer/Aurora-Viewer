@@ -6,7 +6,7 @@ use super::*;
 pub(super) fn show(ctx: &egui::Context, p: &Palette, catalog: &inventory::Catalog, state: &mut AoUi, out: &mut Vec<Action>) {
     let Some(migration) = state.migration.as_mut() else { return };
     let mut cancel = false;
-    let modal = widgets::Modal::new(egui::Id::new("ao_migrate_firestorm")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("ao_migrate_firestorm")).show(ctx, |ui| {
         ui.set_width(450.0);
         ui.label(RichText::new(aurora_i18n::tr!("ao-migrate")).strong().color(p.ink));
         ui.label(aurora_i18n::tr!("ao-migrate-help"));

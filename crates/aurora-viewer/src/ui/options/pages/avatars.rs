@@ -126,7 +126,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 ] {
                     let get = f.get_mut;
                     cx.row(label, only, &f, |ui, s| {
-                        ui.add_enabled_ui(classic, |ui| swatch(ui, &p, ui.id().with("swatch"), get(s)))
+                        ui.add_enabled_ui(classic, |ui| swatch(ui, &p, ui.scope_id().with("swatch"), get(s)))
                             .inner
                     });
                 }

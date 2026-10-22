@@ -545,7 +545,7 @@ impl View {
         // Measuring a variable number of rows advances egui's auto ids.
         // The menu and selection must keep the same owner on every frame.
         let (_, rect) = ui.allocate_space(egui::vec2(width, height));
-        let content = ui.interact(rect, ui.id().with("conv_content"), egui::Sense::click_and_drag());
+        let content = ui.interact(rect, ui.scope_id().with("conv_content"), egui::Sense::click_and_drag());
         // Aurora's workspace keeps a short conversation against the field,
         // as a chat does: its lines start from the bottom
         let lift = if self.layout.workspace() {
@@ -588,7 +588,7 @@ impl View {
             let row_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), base + row.y), egui::vec2(width, row.h));
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
-                    .id(ui.id().with(("conv_row", first + row.line as u64)))
+                    .scope_id(ui.scope_id().with(("conv_row", first + row.line as u64)))
                     .max_rect(row_rect),
             );
             draw(&mut child, &row, true);
@@ -829,8 +829,7 @@ mod tests {
             let mut last = None;
             frames.run(Vec::new(), |ui| {
                 ui.set_max_width(width);
-                let out = egui::ScrollArea::vertical()
-                    .id_salt("resize")
+                let out = crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), "resize")
                     .stick_to_bottom(true)
                     .auto_shrink([false, false])
                     .max_height(300.0)
@@ -857,9 +856,8 @@ mod tests {
                         shift
                     });
                 if out.inner != 0.0 {
-                    let mut state = out.state;
-                    state.offset.y += out.inner;
-                    state.store(ui.ctx(), out.id);
+                    let offset = out.state.unclamped_offset() + egui::vec2(0.0, out.inner);
+                    crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
                 }
             });
             bottoms.push(last.expect("the last message is drawn"));
@@ -880,8 +878,7 @@ mod tests {
         let mut frame = |view: &mut View, lines: &VecDeque<ChatLine>, clock: LineClock, jump: bool| {
             frames.run(Vec::new(), |ui| {
                 ui.set_max_width(400.0);
-                let out = egui::ScrollArea::vertical()
-                    .id_salt("latest")
+                let out = crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), "latest")
                     .stick_to_bottom(true)
                     .auto_shrink([false, false])
                     .max_height(300.0)
@@ -901,12 +898,11 @@ mod tests {
                         })
                         .0
                     });
-                let mut state = out.state;
-                state.offset.y += out.inner;
+                let mut offset = out.state.unclamped_offset() + egui::vec2(0.0, out.inner);
                 if jump {
-                    state.offset.y = out.content_size.y;
+                    offset.y = out.content_size.y;
                 }
-                state.store(ui.ctx(), out.id);
+                crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
             });
         };
         for _ in 0..3 {

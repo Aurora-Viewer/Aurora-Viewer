@@ -248,8 +248,8 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                let output = edit(ui, Id::new("code"), source, |ui, source| {
-                    egui::TextEdit::multiline(source).id(Id::new("code")).code_editor().show(ui)
+                let output = edit(ui, Id::unique("code"), source, |ui, source| {
+                    egui::TextEdit::multiline(source).id(Id::unique("code")).code_editor().show(ui)
                 });
                 cursor = output.cursor_range;
             },
@@ -261,12 +261,12 @@ mod tests {
 
     fn setup(ctx: &egui::Context, source: &mut String, start: usize, end: usize) {
         frame(ctx, source, vec![], 0.0);
-        let mut state = egui::TextEdit::load_state(ctx, Id::new("code")).expect("state");
+        let mut state = egui::TextEdit::load_state(ctx, Id::unique("code")).expect("state");
         state
             .cursor
             .set_char_range(Some(CCursorRange::two(CCursor::new(start), CCursor::new(end))));
-        state.store(ctx, Id::new("code"));
-        ctx.memory_mut(|m| m.request_focus(Id::new("code")));
+        state.store(ctx, Id::unique("code"));
+        ctx.memory_mut(|m| m.request_focus(Id::unique("code")));
         // Let code_editor register its focus filter before sending Tab, as it
         // does on the real mouse-focus frame in the viewer.
         frame(ctx, source, vec![], 0.01);

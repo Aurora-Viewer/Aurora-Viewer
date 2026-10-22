@@ -287,7 +287,7 @@ fn light_section(
             false,
             on,
         );
-        let demo_picker = egui::Id::new("demo_light_texture_picker_opened");
+        let demo_picker = egui::Id::unique("demo_light_texture_picker_opened");
         let demo_open = env.demo
             && on
             && std::env::var("AURORA_DEMO_BUILD_TAB").is_ok_and(|v| v == "features:light-picker")

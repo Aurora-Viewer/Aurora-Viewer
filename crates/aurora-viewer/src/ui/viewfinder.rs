@@ -461,8 +461,8 @@ impl Viewfinder {
         let display = s.viewfinder.display;
         let full = display == Display::Full;
         let shows = display != Display::Hidden;
-        let back = ctx.layer_painter(egui::LayerId::new(Order::Background, Id::new("vf_back")));
-        let front = ctx.layer_painter(egui::LayerId::new(Order::Middle, Id::new("vf_front")));
+        let back = ctx.layer_painter(egui::LayerId::new(Order::Background, Id::unique("vf_back")));
+        let front = ctx.layer_painter(egui::LayerId::new(Order::Middle, Id::unique("vf_front")));
 
         // the photo's proportions: the rest darkened, a fine frame, the guide
         let ratio = f.photo.0 as f32 / f.photo.1.max(1) as f32;
@@ -535,7 +535,7 @@ impl Viewfinder {
             let k = ((f.now - t) as f32 / 0.18).clamp(0.0, 1.0);
             let alpha = if f.now - t < 0.09 { 1.0 } else { 1.0 - k };
             if alpha > 0.0 {
-                let top = ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::new("vf_flash")));
+                let top = ctx.layer_painter(egui::LayerId::new(Order::Foreground, Id::unique("vf_flash")));
                 top.rect_filled(screen, 0.0, p.navy.gamma_multiply(alpha));
                 ctx.request_repaint();
             } else {
@@ -580,7 +580,7 @@ impl Viewfinder {
             Color32::TRANSPARENT,
         );
         // (the AF mode and area are the bottom bar's, once)
-        egui::Area::new(Id::new("vf_top_left"))
+        egui::Area::new(Id::unique("vf_top_left"))
             .order(Order::Foreground)
             .fade_in(false)
             .fixed_pos(screen.left_top() + Vec2::new(GAP, 12.0))
@@ -616,7 +616,7 @@ impl Viewfinder {
             });
 
         // what the photo will be: each a switch, a click for the next value
-        egui::Area::new(Id::new("vf_top_right"))
+        egui::Area::new(Id::unique("vf_top_right"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::RIGHT_TOP)
@@ -724,7 +724,7 @@ impl Viewfinder {
             *y += 24.0;
         };
         // (the time of day is a switch too)
-        egui::Area::new(Id::new("vf_time"))
+        egui::Area::new(Id::unique("vf_time"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::LEFT_CENTER)
@@ -1158,7 +1158,7 @@ impl Viewfinder {
             );
         } else {
             // the depth of field off: a click turns it on
-            egui::Area::new(Id::new("vf_all_sharp"))
+            egui::Area::new(Id::unique("vf_all_sharp"))
                 .order(Order::Foreground)
                 .fade_in(false)
                 .pivot(Align2::RIGHT_TOP)
@@ -1172,7 +1172,7 @@ impl Viewfinder {
         }
 
         // the dials
-        egui::Area::new(Id::new("vf_dials"))
+        egui::Area::new(Id::unique("vf_dials"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::CENTER_BOTTOM)
@@ -1285,7 +1285,7 @@ impl Viewfinder {
                     // frame's middle on the line
                     let (cell, _) = ui.allocate_exact_size(Vec2::new(44.0, MIDDLE + 13.0), Sense::hover());
                     let rect = Rect::from_min_size(Pos2::new(cell.left(), cell.top() + MIDDLE - 13.0), Vec2::new(44.0, 26.0));
-                    let resp = ui.interact(rect, Id::new("vf_ael"), Sense::click());
+                    let resp = ui.interact(rect, Id::unique("vf_ael"), Sense::click());
                     let color = if self.ae_lock {
                         p.teal
                     } else if resp.hovered() {
@@ -1356,7 +1356,7 @@ impl Viewfinder {
 
     /// The dock on the right: everything the mouse needs.
     fn dock(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &mut Settings, f: &Frame, out: &mut Vec<Out>) {
-        egui::Area::new(Id::new("vf_dock"))
+        egui::Area::new(Id::unique("vf_dock"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::RIGHT_CENTER)
@@ -1454,7 +1454,7 @@ impl Viewfinder {
     ) {
         let cols = 9.0;
         let width = (screen.width() - 2.0 * GAP - 120.0).min(1300.0);
-        egui::Area::new(Id::new("vf_menu"))
+        egui::Area::new(Id::unique("vf_menu"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::CENTER_BOTTOM)
@@ -1500,7 +1500,7 @@ impl Viewfinder {
 
     /// The keys and the mouse, in a panel in the middle.
     fn help_panel(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame) {
-        egui::Area::new(Id::new("vf_help"))
+        egui::Area::new(Id::unique("vf_help"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::CENTER_CENTER)
@@ -1641,7 +1641,7 @@ impl Viewfinder {
         view: &View,
         out: &mut Vec<Out>,
     ) {
-        egui::Area::new(Id::new("vf_drawer"))
+        egui::Area::new(Id::unique("vf_drawer"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::RIGHT_TOP)
@@ -1695,7 +1695,7 @@ fn brackets(painter: &egui::Painter, c: Pos2, scale: f32, stroke: Stroke, shadow
 
 /// The first hint: how to focus and take the photo.
 fn hint(ctx: &egui::Context, p: &Palette, screen: Rect, bottom: f32, pad_hint: bool) {
-    egui::Area::new(Id::new("vf_hint"))
+    egui::Area::new(Id::unique("vf_hint"))
         .order(Order::Foreground)
         .fade_in(false)
         .interactable(false)
@@ -1724,7 +1724,7 @@ fn hint(ctx: &egui::Context, p: &Palette, screen: Rect, bottom: f32, pad_hint: b
 
 /// A line at the top (an error in its colour).
 fn message(ctx: &egui::Context, p: &Palette, screen: Rect, text: &str, error: bool) {
-    egui::Area::new(Id::new("vf_message"))
+    egui::Area::new(Id::unique("vf_message"))
         .order(Order::Foreground)
         .fade_in(false)
         .interactable(false)
@@ -1739,7 +1739,7 @@ fn message(ctx: &egui::Context, p: &Palette, screen: Rect, text: &str, error: bo
 
 /// With the overlay hidden: a small DISP button to bring it back.
 fn ghost_disp(ctx: &egui::Context, p: &Palette, screen: Rect) -> bool {
-    let id = Id::new("vf_ghost");
+    let id = Id::unique("vf_ghost");
     // discreet over the photo, plain under the pointer
     let hovered = ctx
         .memory(|m| m.area_rect(id))
@@ -1766,7 +1766,7 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut V
     let Some((texture, label, kind)) = &f.review else {
         return;
     };
-    egui::Area::new(Id::new("vf_review"))
+    egui::Area::new(Id::unique("vf_review"))
         .order(Order::Foreground)
         .fade_in(false)
         .pivot(Align2::LEFT_BOTTOM)

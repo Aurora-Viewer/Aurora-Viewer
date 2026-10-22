@@ -277,7 +277,7 @@ pub(super) fn actions(
     );
     ui.painter()
         .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, p.raised);
-    let id = ui.id().with(salt);
+    let id = ui.scope_id().with(salt);
     buttons
         .iter()
         .enumerate()

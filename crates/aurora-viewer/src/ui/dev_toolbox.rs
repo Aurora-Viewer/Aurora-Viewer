@@ -355,7 +355,7 @@ fn groups(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, layout: &Layout
             })
             .response;
         if st.edit {
-            let title_resp = ui.interact(title_resp.rect, ui.id().with(("dev_toolbox_group", gi)), Sense::drag());
+            let title_resp = ui.interact(title_resp.rect, ui.scope_id().with(("dev_toolbox_group", gi)), Sense::drag());
             if !favorites && title_resp.drag_started_by(egui::PointerButton::Primary) {
                 title_resp.dnd_set_drag_payload(DragGroup(gi));
             }
@@ -426,7 +426,7 @@ fn tool_button(
 ) {
     let Some(tool) = tools::find(id) else { return };
     let sense = if st.edit { Sense::click_and_drag() } else { Sense::click() };
-    let resp = ui.interact(rect, ui.id().with(("dev_toolbox_tool", gi, rank)), sense);
+    let resp = ui.interact(rect, ui.scope_id().with(("dev_toolbox_tool", gi, rank)), sense);
     let on = tool.kind == Kind::Toggle && view.on.contains(id);
     let selected = shows_result(id) && st.selected == id;
     let radius = ui.visuals().widgets.inactive.corner_radius;
@@ -554,7 +554,7 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi) {
 
 /// Customize: the tile that puts a tool in this group.
 fn add_tile(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, layout: &Layout, rect: Rect, gi: usize) {
-    let resp = ui.interact(rect, ui.id().with(("dev_toolbox_add", gi)), Sense::click());
+    let resp = ui.interact(rect, ui.scope_id().with(("dev_toolbox_add", gi)), Sense::click());
     let radius = ui.visuals().widgets.inactive.corner_radius;
     let color = if resp.hovered() { p.ink } else { p.muted };
     ui.painter()
@@ -591,7 +591,7 @@ fn add_tile(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, layout: &Layo
 
 /// Customize: where a dragged tool would go in this group, and its drop.
 fn drop_zone(ui: &mut egui::Ui, p: &Palette, st: &mut DevToolboxUi, grid: Rect, gi: usize, len: usize, rects: &[(usize, Rect)]) {
-    let zone = ui.interact(grid.expand(GAP / 2.0), ui.id().with(("dev_toolbox_drop", gi)), Sense::hover());
+    let zone = ui.interact(grid.expand(GAP / 2.0), ui.scope_id().with(("dev_toolbox_drop", gi)), Sense::hover());
     if zone.dnd_hover_payload::<DragTool>().is_none() {
         return;
     }

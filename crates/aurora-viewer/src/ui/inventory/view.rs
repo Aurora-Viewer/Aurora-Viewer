@@ -147,11 +147,11 @@ impl Default for Sort {
 /// inventory selectors inherit it, as LLInventoryPanel's DEFAULT_SORT_ORDER
 /// does (indra/newview/llinventorypanel.cpp).
 pub fn set_picker_sort(ctx: &egui::Context, sort: Sort) {
-    ctx.data_mut(|data| data.insert_temp(egui::Id::new("inventory_picker_sort"), sort));
+    ctx.data_mut(|data| data.insert_temp(egui::Id::unique("inventory_picker_sort"), sort));
 }
 
 pub fn picker_sort(ctx: &egui::Context) -> Sort {
-    ctx.data(|data| data.get_temp(egui::Id::new("inventory_picker_sort")))
+    ctx.data(|data| data.get_temp(egui::Id::unique("inventory_picker_sort")))
         .unwrap_or_default()
 }
 
@@ -175,7 +175,7 @@ impl PickerOrder {
 }
 
 pub fn picker_order(ctx: &egui::Context, inv: &Inventory) -> std::sync::Arc<PickerOrder> {
-    let key = egui::Id::new("inventory_picker_order");
+    let key = egui::Id::unique("inventory_picker_order");
     let version = (inv.root, inv.lib_root, inv.generation, picker_sort(ctx), aurora_i18n::language());
     if let Some(order) = ctx.data(|data| data.get_temp::<std::sync::Arc<PickerOrder>>(key))
         && order.version == version

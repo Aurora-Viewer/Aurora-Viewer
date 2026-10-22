@@ -85,8 +85,8 @@ impl UpdateDemo {
             ctx.request_repaint();
         }
         let width = (ctx.content_rect().width() - 64.0).clamp(280.0, 620.0);
-        aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::new("viewer_update")).layer());
-        let response = super::widgets::Modal::new(egui::Id::new("viewer_update"))
+        aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::unique("viewer_update")).layer());
+        let response = super::widgets::Modal::new(egui::Id::unique("viewer_update"))
             .transparent_backdrop()
             .show(ctx, |ui| {
                 ui.set_width(width);
@@ -238,8 +238,8 @@ pub fn show_real(
     let mut quit = false;
     let width = (ctx.content_rect().width() - 64.0).clamp(280.0, 620.0);
     let required = updater.required();
-    aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::new("viewer_update")).layer());
-    let response = super::widgets::Modal::new(egui::Id::new("viewer_update"))
+    aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(egui::Id::unique("viewer_update")).layer());
+    let response = super::widgets::Modal::new(egui::Id::unique("viewer_update"))
         .transparent_backdrop()
         .show(ctx, |ui| {
             ui.set_width(width);

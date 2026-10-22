@@ -11,13 +11,13 @@ use egui::{Context, Id, Rect, RichText, Vec2};
 
 pub fn sidebar(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, card: Rect, width: f32, lowest: f32) -> bool {
     let left = ctx.content_rect().right() - 32.0 - width;
-    egui::Area::new(Id::new("login_news"))
+    egui::Area::new(Id::unique("login_news"))
         .fixed_pos(egui::pos2(left, card.top()))
         .show(ctx, |ui| {
             ui.set_width(width);
             super::news_panel(ui, p, icons, info, card.height().min(lowest - card.top()).max(120.0));
         });
-    egui::Area::new(Id::new("login_version"))
+    egui::Area::new(Id::unique("login_version"))
         .pivot(egui::Align2::LEFT_BOTTOM)
         .fixed_pos(egui::pos2(left, card.top() - 14.0))
         .show(ctx, |ui| {
@@ -35,7 +35,7 @@ fn version(ui: &mut egui::Ui, p: &Palette) {
 pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sidebar_visible: bool, form: &mut LoginForm) -> LoginAction {
     let mut action = LoginAction::None;
     let screen = ctx.content_rect();
-    egui::Area::new(Id::new("login_links"))
+    egui::Area::new(Id::unique("login_links"))
         .anchor(egui::Align2::LEFT_BOTTOM, Vec2::new(25.0, -20.0))
         .show(ctx, |ui| {
             ui.label(
@@ -77,13 +77,13 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
             });
         });
     if screen.width() < 1100.0 {
-        egui::Area::new(Id::new("login_footer_version"))
+        egui::Area::new(Id::unique("login_footer_version"))
             .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-25.0, -59.0))
             .show(ctx, |ui| version(ui, p));
     }
     // The preferences before login (Firestorm opens them from the menu bar of
     // its login screen, menu_login.xml): one cogwheel in the top right corner.
-    egui::Area::new(Id::new("login_settings"))
+    egui::Area::new(Id::unique("login_settings"))
         .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-25.0, 20.0))
         .show(ctx, |ui| {
             if widgets::action_button(ui, p, "settings-filled", "", ActionKind::Flat, Vec2::splat(30.0))
@@ -93,7 +93,7 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
                 action = LoginAction::Preferences;
             }
         });
-    egui::Area::new(Id::new("login_quit"))
+    egui::Area::new(Id::unique("login_quit"))
         .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-25.0, -20.0))
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -116,7 +116,7 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
             });
         });
     if form.show_info {
-        let response = widgets::Modal::new(Id::new("accounts_news_dialog")).show(ctx, |ui| {
+        let response = widgets::Modal::new(Id::unique("accounts_news_dialog")).show(ctx, |ui| {
             ui.set_width(340.0);
             if super::version_panel(ui, p, icons, info) {
                 action = LoginAction::CheckUpdates;

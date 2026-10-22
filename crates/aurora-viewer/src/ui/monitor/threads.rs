@@ -168,7 +168,7 @@ fn cores(ui: &mut egui::Ui, p: &Palette, per_core: &[f32]) {
             ui.painter()
                 .rect_filled(Rect::from_min_max(pos2(x, bar.bottom() - h), bar.max), radius, p.violet);
         }
-        ui.interact(bar, ui.id().with(("monitor-core", i)), Sense::hover())
+        ui.interact(bar, ui.scope_id().with(("monitor-core", i)), Sense::hover())
             .on_hover_text(tr!("monitor-core-load", core = i as i64, load = fmt::pct(f64::from(*load))));
     }
 }

@@ -21,7 +21,7 @@ const CARD_W: f32 = 300.0;
 const KEY_W: f32 = 86.0;
 
 fn area_id(form: &'static str) -> Id {
-    Id::new(("hover_tip", form))
+    Id::unique(("hover_tip", form))
 }
 
 /// The tip drawn this frame: where, and the button clicked on it.

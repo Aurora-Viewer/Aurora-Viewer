@@ -116,7 +116,7 @@ pub mod pipette {
     }
 
     fn key() -> egui::Id {
-        egui::Id::new("aurora_color_pipette")
+        egui::Id::unique("aurora_color_pipette")
     }
 
     fn load(ctx: &egui::Context) -> Shared {
@@ -440,8 +440,8 @@ fn patch(painter: &egui::Painter, p: &Palette, rect: Rect, color: Rgba, alpha: b
 fn swatches(ui: &mut egui::Ui, p: &Palette, color: Rgba, original: Rgba, alpha: bool) -> bool {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(COLUMN - 26.0, 40.0), Sense::hover());
     let (top, bottom) = rect.split_top_bottom_at_fraction(0.5);
-    let new = ui.interact(top, ui.id().with("color_new"), Sense::hover());
-    let old = ui.interact(bottom, ui.id().with("color_original"), Sense::click());
+    let new = ui.interact(top, ui.scope_id().with("color_new"), Sense::hover());
+    let old = ui.interact(bottom, ui.scope_id().with("color_original"), Sense::click());
     let radius = ui.visuals().window_corner_radius;
     let painter = ui.painter().with_clip_rect(rect);
     let (upper, lower) = (
@@ -576,7 +576,7 @@ fn demo_opens(ctx: &egui::Context) -> bool {
     if !*DEMO.get_or_init(|| std::env::var_os("AURORA_DEMO_COLORPICK").is_some()) || ctx.cumulative_frame_nr() != 300 {
         return false;
     }
-    let done = egui::Id::new("aurora_color_pick_demo");
+    let done = egui::Id::unique("aurora_color_pick_demo");
     let first = !ctx.data(|d| d.get_temp::<bool>(done)).unwrap_or(false);
     ctx.data_mut(|d| d.insert_temp(done, true));
     first
@@ -842,7 +842,7 @@ mod tests {
         pipette::arm(&bench.ctx, bench.id);
         bench.click(SWATCH + Vec2::new(8.0, 8.0));
         assert!(!pipette::armed(&bench.ctx));
-        pipette::arm(&bench.ctx, egui::Id::new("gone"));
+        pipette::arm(&bench.ctx, egui::Id::unique("gone"));
         for _ in 0..4 {
             bench.frame(vec![]);
         }

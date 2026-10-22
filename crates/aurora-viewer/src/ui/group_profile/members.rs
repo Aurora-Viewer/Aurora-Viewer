@@ -289,7 +289,7 @@ fn confirm_dialog(st: &mut GroupProfileUi, ctx: &egui::Context, c: &Ctx, v: &Vie
         }
     };
     let mut done: Option<bool> = None;
-    let modal = widgets::Modal::new(egui::Id::new("group_members_confirm")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("group_members_confirm")).show(ctx, |ui| {
         ui.set_width(380.0);
         ui.label(egui::RichText::new(&text).size(12.5).color(p.ink));
         ui.add_space(10.0);
@@ -516,7 +516,7 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
         }
         ui.painter().galley(pos.round(), galley, p.muted_dim);
         if let Some(sort) = sort {
-            let r = ui.interact(cell, ui.id().with(("group_members_head", i)), Sense::click());
+            let r = ui.interact(cell, ui.scope_id().with(("group_members_head", i)), Sense::click());
             if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 if st.members.sort == *sort {
                     st.members.reversed = !st.members.reversed;
@@ -583,7 +583,10 @@ fn list(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &
                             color,
                         );
                     }
-                    if ui.interact(tick, ui.id().with(("group_member_tick", id)), Sense::click()).clicked() {
+                    if ui
+                        .interact(tick, ui.scope_id().with(("group_member_tick", id)), Sense::click())
+                        .clicked()
+                    {
                         toggle(&mut st.members.checked, id);
                         st.members.selected = Some(id);
                     }

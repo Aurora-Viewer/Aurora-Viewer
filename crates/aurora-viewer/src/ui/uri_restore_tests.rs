@@ -183,7 +183,9 @@ fn uri_destinations_restore_on_explicit_open_and_stay_minimized_otherwise() {
                     !widgets::floater_minimized(&ctx, &window),
                     "{destination:?}, classic={classic}, reopening={reopening}"
                 );
-                let rect = ctx.memory(|m| m.area_rect(egui::Id::new(&window))).expect("destination is drawn");
+                let rect = ctx
+                    .memory(|m| m.area_rect(egui::Id::unique(&window)))
+                    .expect("destination is drawn");
                 assert!(rect.height() > 100.0, "expanded body: {destination:?} {rect:?}");
                 widgets::minimize_floater(&ctx, &window);
                 for _ in 0..4 {

@@ -71,7 +71,7 @@ fn tile(ui: &mut egui::Ui, p: &Palette, rect: Rect, button: &ToolButton, state: 
     } else {
         egui::Sense::hover()
     };
-    let response = ui.interact(rect, egui::Id::new(("toolbar_tile", &button.command)), sense);
+    let response = ui.interact(rect, egui::Id::unique(("toolbar_tile", &button.command)), sense);
     let radius = ui.visuals().widgets.inactive.corner_radius;
     let fade = if state == Tile::Dragged { 0.35 } else { 1.0 };
     let painter = ui.painter();
@@ -275,7 +275,7 @@ impl ToolbarUi {
                             };
                             let response = tile(ui, p, rect, button, state);
                             ui.ctx()
-                                .data_mut(|d| d.insert_temp(egui::Id::new(("toolbar_catalogue", &button.command)), rect));
+                                .data_mut(|d| d.insert_temp(egui::Id::unique(("toolbar_catalogue", &button.command)), rect));
                             match state {
                                 Tile::Free => {
                                     if response.drag_started_by(egui::PointerButton::Primary) {
@@ -336,7 +336,7 @@ impl ToolbarUi {
             });
         // a toolbar button dropped on the window goes back to it
         // (LLFloaterToybox::handleDragAndDrop on its read-only toolbar)
-        let window = ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW)));
+        let window = ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW)));
         if let (true, Some(window), Some(drag)) = (was_open, window, dragged.as_ref())
             && drag.from.is_some()
             && !settings.locked
@@ -349,7 +349,7 @@ impl ToolbarUi {
         // ConfirmRestoreToolbarDefaults / ConfirmClearAllToolbars
         if let Some(restore) = self.confirm {
             let width = (screen.width() - 80.0).clamp(240.0, 400.0);
-            let shown = widgets::Modal::new(egui::Id::new("toolbar_confirm")).show(ctx, |ui| {
+            let shown = widgets::Modal::new(egui::Id::unique("toolbar_confirm")).show(ctx, |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing = Vec2::new(8.0, 10.0);
                 ui.horizontal(|ui| {
@@ -405,7 +405,7 @@ impl ToolbarUi {
 
 /// The button being dragged, under the pointer: the mockup's violet ghost.
 fn ghost(ctx: &egui::Context, p: &Palette, button: &ToolButton, pointer: egui::Pos2) {
-    egui::Area::new(egui::Id::new("toolbar_drag_preview"))
+    egui::Area::new(egui::Id::unique("toolbar_drag_preview"))
         .order(egui::Order::Tooltip)
         .interactable(false)
         .pivot(egui::Align2::LEFT_BOTTOM)
@@ -498,7 +498,7 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, state: &mut ToolbarUi) -> Ve
         return Vec::new();
     }
     let bar = |command| ctx.read_response(crate::ui::bars::tool_button_id(command)).map(|r| r.rect);
-    let catalogue = |command: &str| ctx.data(|d| d.get_temp::<Rect>(egui::Id::new(("toolbar_catalogue", command))));
+    let catalogue = |command: &str| ctx.data(|d| d.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", command))));
     let source = match mode {
         "reorder" | "menu" => bar("preferences").map(|r| r.center()),
         "sidemenu" => bar("radar").map(|r| r.center()),

@@ -448,7 +448,7 @@ impl CreateLandmarkUi {
         });
         if let Some(name) = self.new_folder.as_mut() {
             let mut done = None;
-            widgets::Modal::new(egui::Id::new("create_landmark_folder_name")).show(ctx, |ui| {
+            widgets::Modal::new(egui::Id::unique("create_landmark_folder_name")).show(ctx, |ui| {
                 ui.set_width(320.0);
                 ui.label(
                     RichText::new(aurora_i18n::tr!("landmark-create-folder-prompt"))

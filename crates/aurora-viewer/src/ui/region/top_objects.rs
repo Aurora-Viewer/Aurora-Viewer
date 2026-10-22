@@ -415,7 +415,7 @@ fn table(ui: &mut egui::Ui, p: &Palette, s: &mut TopState, rows: &[&TopObject], 
     for c in &columns {
         let w = width_of(c);
         let rect = egui::Rect::from_min_size(egui::pos2(x, head.top()), Vec2::new(w, head.height()));
-        let r = ui.interact(rect, ui.id().with(("top_head", c.0 as u8)), Sense::click());
+        let r = ui.interact(rect, ui.scope_id().with(("top_head", c.0 as u8)), Sense::click());
         let lit = s.sort.is_some_and(|(col, _)| col == c.0);
         let mut text = c.1.to_owned();
         if let Some((col, desc)) = s.sort
@@ -522,7 +522,7 @@ pub(crate) fn date_text(time: u32) -> String {
 /// ReturnAllTopObjects: every listed object back to its owner.
 fn return_all(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World) {
     let mut answer = None;
-    let modal = widgets::Modal::new(egui::Id::new("region_top_return_all")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("region_top_return_all")).show(ctx, |ui| {
         ui.set_width(400.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;

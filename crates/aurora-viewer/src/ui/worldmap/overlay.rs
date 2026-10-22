@@ -66,7 +66,7 @@ const FOLDER_TRASH: i32 = 14;
 const FOLDER_FAVORITES: i32 = 23;
 
 fn search_id() -> egui::Id {
-    egui::Id::new("worldmap-search")
+    egui::Id::unique("worldmap-search")
 }
 
 /// A landmark placed on the map.
@@ -564,7 +564,7 @@ impl PillFace<'_> {
         if hot {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, self.enabled, self.on, self.label));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, self.enabled, self.on, self.label));
         resp
     }
 }
@@ -650,7 +650,7 @@ impl WorldMapUi {
         self.follow_landmark(world, cam);
         // the panels of the last frame keep the map's clicks and drags
         for (key, r) in std::mem::take(&mut self.ov.rects) {
-            ui.interact(r, egui::Id::new(("worldmap-panel-blocker", key)), Sense::click_and_drag());
+            ui.interact(r, egui::Id::unique(("worldmap-panel-blocker", key)), Sense::click_and_drag());
         }
         let fade = if dragging { 0.55 } else { 1.0 };
         let card = self.place_card(ui, p, world, tiles, cam, pictures, map, fade, actions);
@@ -833,7 +833,10 @@ impl WorldMapUi {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.ov.query)
                         .id(id)
-                        .frame(egui::Frame::NONE)
+                        .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
+                            ui.ctx(),
+                            &egui::TextStyle::Body.resolve(ui.style()),
+                        )))
                         .hint_text(aurora_i18n::tr!("ui-worldmap-search-anything"))
                         .desired_width(w),
                 );
@@ -1029,7 +1032,7 @@ impl WorldMapUi {
             };
             let w = face.width(ui);
             let r = Rect::from_min_size(pos2(x, row.top()), Vec2::new(w, PILL_H));
-            let id = ui.id().with(("drawer-tab", t as u8));
+            let id = ui.scope_id().with(("drawer-tab", t as u8));
             if face.show(ui, p, r, id).clicked() {
                 new_tab = Some(t);
             }
@@ -1175,7 +1178,7 @@ impl WorldMapUi {
         match row {
             Row::Folder { index, open } => {
                 let f = &self.ov.landmarks.folders[*index];
-                let id = ui.id().with(("folder", f.id));
+                let id = ui.scope_id().with(("folder", f.id));
                 let resp = ui.interact(rect, id, Sense::click());
                 let ink = if resp.hovered() { p.muted } else { p.muted_dim };
                 let caret = if *open { "caret-down-filled" } else { "caret-right-filled" };
@@ -1205,7 +1208,7 @@ impl WorldMapUi {
             Row::Landmark(i) => {
                 let l = &self.ov.landmarks.items[*i];
                 let (asset, item, thumb_id, name) = (l.asset, l.item, l.thumbnail, l.name.clone());
-                let id = ui.id().with(("landmark", item));
+                let id = ui.scope_id().with(("landmark", item));
                 let resp = ui.interact(rect, id, Sense::click());
                 let go = Rect::from_center_size(pos2(rect.right() - 18.0, rect.center().y), Vec2::splat(24.0));
                 let go_resp = ui.interact(go, id.with("go"), Sense::click());
@@ -1266,7 +1269,7 @@ impl WorldMapUi {
             Row::History(i) => {
                 let h: &HistoryItem = world.tp_storage.items.get(*i)?;
                 let title = h.title.clone();
-                let id = ui.id().with(("history", *i));
+                let id = ui.scope_id().with(("history", *i));
                 let resp = ui.interact(rect, id, Sense::click());
                 let go = Rect::from_center_size(pos2(rect.right() - 18.0, rect.center().y), Vec2::splat(24.0));
                 let go_resp = ui.interact(go, id.with("go"), Sense::click());
@@ -1303,7 +1306,7 @@ impl WorldMapUi {
             }
             Row::Friend { id, name, mappable } => {
                 let sense = if *mappable { Sense::click() } else { Sense::hover() };
-                let row_id = ui.id().with(("friend", *id));
+                let row_id = ui.scope_id().with(("friend", *id));
                 let resp = ui.interact(rect, row_id, sense);
                 let followed = world.map.avatar.as_ref().is_some_and(|a| a.id == *id);
                 if followed {
@@ -1483,7 +1486,7 @@ impl WorldMapUi {
             let y = area.top() + r as f32 * (PILL_H + 5.0);
             for i in range.clone() {
                 let rect = Rect::from_min_size(pos2(x, y), Vec2::new(widths[i], PILL_H));
-                let id = ui.id().with(("layer", i));
+                let id = ui.scope_id().with(("layer", i));
                 let mut resp = faces[i].show(ui, p, rect, id);
                 resp = if faces[i].enabled {
                     resp.on_hover_text(tips[i])

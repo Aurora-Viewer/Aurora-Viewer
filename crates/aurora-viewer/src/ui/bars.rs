@@ -603,7 +603,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // Firestorm keeps its double-click teleport beside its movement
         let locked = ui
             .ctx()
-            .data(|d| d.get_temp::<bool>(egui::Id::new("movelock_requested")))
+            .data(|d| d.get_temp::<bool>(egui::Id::unique("movelock_requested")))
             .unwrap_or(false);
         if menu::check(ui, p, "lock-filled", aurora_i18n::tr!("movelock-title"), locked, true) {
             *action = BarAction::ToggleMoveLock;
@@ -1265,7 +1265,7 @@ fn voice_light(ui: &mut egui::Ui, p: &Palette, icons: &Icons, light: crate::voic
 /// selected and ready to copy; typing or pasting a place then Enter
 /// teleports there; Escape or a click elsewhere restores the location.
 fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, loc: &str, slurl: &str, w: f32) -> Option<BarAction> {
-    let id = egui::Id::new("nav_location_edit");
+    let id = egui::Id::unique("nav_location_edit");
     let Some(text) = panels.nav_edit.as_mut() else {
         // exactly the text width (truncated when too long): the maturity badge
         // stays right after the location
@@ -1297,8 +1297,7 @@ fn location_field(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, loc: &str
     let resp = ui.add(
         egui::TextEdit::singleline(text)
             .id(id)
-            .frame(egui::Frame::NONE)
-            .margin(egui::Margin::ZERO)
+            .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(12.0))))
             .font(egui::FontId::proportional(12.0))
             .text_color(p.ink)
             .hint_text(aurora_i18n::tr!("ui-bars-slurl-region-x-y-z-or-region-name"))
@@ -1497,7 +1496,7 @@ pub fn top_bars(
                                 field.x_range(),
                                 ui.max_rect().center().y - 10.0..=ui.max_rect().center().y + 10.0,
                             );
-                            let bg = ui.interact(field, ui.id().with("nav_location_area"), egui::Sense::click());
+                            let bg = ui.interact(field, ui.scope_id().with("nav_location_area"), egui::Sense::click());
                             if panels.nav_edit.is_none() {
                                 if bg.hovered() {
                                     ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
@@ -1684,7 +1683,7 @@ fn tool_fill(p: &Palette, active: bool, hovered: bool) -> Option<Color32> {
 /// The id of the toolbar button of `command`, for the demo scenarios that
 /// click it.
 pub(crate) fn tool_button_id(command: &str) -> egui::Id {
-    egui::Id::new(("toolbar_button", command))
+    egui::Id::unique(("toolbar_button", command))
 }
 
 /// The size of a toolbar button and of its icon: Firestorm's full-width bar
@@ -1966,10 +1965,10 @@ fn mic_button(
         let icon_rect = egui::Rect::from_center_size(egui::pos2(icon_x, rect.center().y), Vec2::splat(icon_size));
         (Some(icon_rect), None, icon_rect.right())
     };
-    let resp = ui.interact(rect, ui.id().with("mic_main"), egui::Sense::click_and_drag());
+    let resp = ui.interact(rect, ui.scope_id().with("mic_main"), egui::Sense::click_and_drag());
     let arrow = with_arrow.then(|| {
         let zone = egui::Rect::from_min_max(egui::pos2(arrow_left, rect.top()), egui::pos2(arrow_left + arrow_w, rect.bottom()));
-        ui.interact(zone, ui.id().with("mic_arrow"), egui::Sense::click())
+        ui.interact(zone, ui.scope_id().with("mic_arrow"), egui::Sense::click())
     });
     if mic.hold {
         mic.held = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
@@ -1979,7 +1978,7 @@ fn mic_button(
     // The panel keeps its open state itself. egui's memory holds a single
     // open pop-up, and the list of a device combo is one: kept there, the
     // panel would close as soon as such a list unfolds.
-    let open_id = ui.id().with("mic_panel_open");
+    let open_id = ui.scope_id().with("mic_panel_open");
     let open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
     let on_arrow = arrow.as_ref().is_some_and(|r| r.hovered());
     let radius = ui.visuals().window_corner_radius;
@@ -1990,7 +1989,7 @@ fn mic_button(
     // own level, along the bottom of the button: it follows the voice
     // closely, only smoothing the jitter between two samples
     let level = if live { mic.level.clamp(0.0, 1.0) } else { 0.0 };
-    let level = ui.ctx().animate_value_with_time(ui.id().with("mic_level"), level, 0.08);
+    let level = ui.ctx().animate_value_with_time(ui.scope_id().with("mic_level"), level, 0.08);
     // the dock's bar is a share of the whole button (the mockup's `.level`)
     let level_width = if look.dock { rect.width() } else { rect.width() - 6.0 } * level;
     // 2 px above the dock button's bottom, 1 px above the bar's
@@ -2090,7 +2089,7 @@ fn mic_button(
     let anchor = arrow.as_ref().unwrap_or(&resp);
     // a click in the list of a device combo is a click outside the panel:
     // the panel closes itself, and not while such a list is (or just was) open
-    let list_id = ui.id().with("mic_device_list");
+    let list_id = ui.scope_id().with("mic_device_list");
     let list_was_open = ui.ctx().data(|d| d.get_temp::<bool>(list_id)).unwrap_or(false);
     let mut list_open = false;
     let mut open_now = open != toggled;
@@ -2370,7 +2369,7 @@ pub(crate) fn toolbar_row(
             tip
         };
         // the Favorites button: its grid of favourites opens upwards
-        let grid_id = egui::Id::new("bars_favorites_grid_open");
+        let grid_id = egui::Id::unique("bars_favorites_grid_open");
         let active = active || (b.command == "favorites" && ui.ctx().data(|d| d.get_temp::<bool>(grid_id)).unwrap_or(false));
         let response = tool_button(
             ui,
@@ -2559,7 +2558,7 @@ pub fn bottom_bar(
                 let used = widths.iter().sum::<f32>() + gap * (n - 1.0);
                 let lead = (sizing::place(style.align, 0.0, remaining - 1.0, used)).max(0.0);
                 let zone = egui::Rect::from_min_size(ui.cursor().min, Vec2::new(remaining.max(4.0), 22.0));
-                let target = ui.interact(zone, egui::Id::new("toolbar_background"), egui::Sense::click());
+                let target = ui.interact(zone, egui::Id::unique("toolbar_background"), egui::Sense::click());
                 toolbar.context(&target, p, bar, style, None, toolbar_settings.locked);
                 let mut rects = Vec::new();
                 egui::ScrollArea::horizontal()
@@ -2917,7 +2916,7 @@ mod tests {
             assert!(open(&panels), "{cmd}: a minimized window stays open, to expand");
         }
         // shown again (its floater took the request): the button closes it
-        ctx.data_mut(|d| d.insert_persisted(egui::Id::new(("conversations", "minimized")), false));
+        ctx.data_mut(|d| d.insert_persisted(egui::Id::unique(("conversations", "minimized")), false));
         run_command(&ctx, "conversations", &mut panels);
         assert!(!panels.chat);
     }

@@ -539,7 +539,7 @@ fn focused_text_history_stays_in_singleline_and_multiline_fields_instead_of_the_
     for multiline in [false, true] {
         let (mut world, mut tool, mut settings) = fixture();
         let ctx = egui::Context::default();
-        let id = egui::Id::new("history_text");
+        let id = egui::Id::unique("history_text");
         let mut text = String::new();
         let mut frame = |time, events: Vec<egui::Event>| {
             let mut output = ctx.run_ui(
@@ -919,7 +919,9 @@ impl Inspector {
         for shape in output.shapes {
             text_shapes(&shape.shape, &mut texts);
         }
-        let rect = self.ctx.memory(|m| m.area_rect(egui::Id::new(super::super::INSPECTOR_ID)).unwrap());
+        let rect = self
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique(super::super::INSPECTOR_ID)).unwrap());
         (rect, texts)
     }
 }
@@ -1241,7 +1243,7 @@ fn construction_coordinate_icons_select_one_mode_and_keep_the_right_edge() {
                     .1;
                 let target = inspector
                     .ctx
-                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("build_grid_mode", mode))))
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("build_grid_mode", mode))))
                     .unwrap();
                 assert!(
                     rect.contains_rect(target),
@@ -1250,7 +1252,7 @@ fn construction_coordinate_icons_select_one_mode_and_keep_the_right_edge() {
                 let point = target.center();
                 let axes = inspector
                     .ctx
-                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new("build_grid_axes")))
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique("build_grid_axes")))
                     .unwrap();
                 assert!(
                     (axes.right() - target.right()).abs() < 0.5,

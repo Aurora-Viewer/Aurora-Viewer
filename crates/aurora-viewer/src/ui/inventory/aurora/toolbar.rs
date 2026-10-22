@@ -33,7 +33,7 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, lit: bool)
     if hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     response.on_hover_text(tip)
 }
 
@@ -59,7 +59,7 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inv
             Pos2::new(rect.left() + n as f32 * (width + 2.0), rect.top()),
             Vec2::new(width, rect.height()),
         );
-        let response = ui.interact(cell, ui.id().with(("inventory_tab", tab)), Sense::click());
+        let response = ui.interact(cell, ui.scope_id().with(("inventory_tab", tab)), Sense::click());
         let selected = st.tab == tab;
         let hot = response.hovered();
         if selected || hot {
@@ -84,7 +84,7 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inv
                 widgets::CountSize::Bar,
             );
         }
-        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+        response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
         if response.clicked() {
             set_tab(st, prefs, tab);
         }
@@ -311,7 +311,7 @@ fn counted_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, count
     if hot {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
     response
 }
 
@@ -624,7 +624,7 @@ fn chip(ui: &mut egui::Ui, p: &Palette, text: &str) -> bool {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     let tip = aurora_i18n::tr!("inventory-chip-remove");
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     response.on_hover_text(tip).clicked()
 }
 

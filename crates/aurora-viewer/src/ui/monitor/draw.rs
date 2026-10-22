@@ -326,7 +326,7 @@ pub fn header(ui: &mut egui::Ui, p: &Palette, cols: &[Col]) -> Option<usize> {
     for (i, (c, (l, r))) in cols.iter().zip(&ranges).enumerate() {
         let cell = Rect::from_min_max(pos2(*l, rect.top()), pos2(*r, rect.bottom()));
         let resp = if c.sortable {
-            Some(ui.interact(cell, ui.id().with(("monitor-col", i)), Sense::click()))
+            Some(ui.interact(cell, ui.scope_id().with(("monitor-col", i)), Sense::click()))
         } else {
             None
         };

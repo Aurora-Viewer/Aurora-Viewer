@@ -55,7 +55,7 @@ impl CallInviteUi {
         }
         let (other, agents) = self.confirm.clone()?;
         let mut answer = None;
-        let response = widgets::Modal::new(egui::Id::new("call_invite_confirm")).show(ctx, |ui| {
+        let response = widgets::Modal::new(egui::Id::unique("call_invite_confirm")).show(ctx, |ui| {
             ui.set_width(360.0);
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-call-invite-confirm-title"))

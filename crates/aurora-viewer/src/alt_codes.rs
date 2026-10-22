@@ -313,7 +313,7 @@ mod tests {
     fn a_focused_field_receives_the_character_and_not_the_digits() {
         let ctx = egui::Context::default();
         let mut text = String::from("I ");
-        let id = egui::Id::new("alt-code-field");
+        let id = egui::Id::unique("alt-code-field");
         let frame = |events: Vec<egui::Event>, text: &mut String| {
             let raw = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 200.0))),

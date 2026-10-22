@@ -198,7 +198,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, m: &Mute, all: &[Mute]
     let mut menu_open = false;
     for ((bit, label), cell) in blocked.iter().rev().zip(items) {
         let r = Rect::from_center_size(cell.center(), Vec2::new(cell.width(), 26.0));
-        let pill = widgets::filter_pill_at(ui, p, r, ui.id().with(("people-blocked-pill", id, *bit)), "", label, false);
+        let pill = widgets::filter_pill_at(ui, p, r, ui.scope_id().with(("people-blocked-pill", id, *bit)), "", label, false);
         if m.kind != MuteType::ByName {
             menu_open |= menu::dropdown(&pill, p, egui::PopupCloseBehavior::CloseOnClick, |ui| parts_menu(ui, c, m));
         }

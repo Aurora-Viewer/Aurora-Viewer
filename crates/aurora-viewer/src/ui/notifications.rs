@@ -72,7 +72,7 @@ pub struct ToastEnv<'a> {
 /// `Social::focus_im`, set by `World::open_from_notification`.
 pub fn open_conversations(ctx: &egui::Context, open: &mut bool) {
     super::widgets::open_floater(ctx, "conversations", open);
-    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("conversations")));
+    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("conversations")));
 }
 
 /// How long the toast of `n` stays.
@@ -235,7 +235,11 @@ pub(super) fn person_card(
     };
     // the whole card answers the click, over its text: the cross hides it,
     // the rest opens what it is about
-    let cover = ui.interact(frame.rect, egui::Id::new(("notification_card", n.id, toast)), egui::Sense::click());
+    let cover = ui.interact(
+        frame.rect,
+        egui::Id::unique(("notification_card", n.id, toast)),
+        egui::Sense::click(),
+    );
     let on_close = cover.hover_pos().is_some_and(|pos| close.contains(pos));
     if n.opens() && !on_close && cover.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -623,7 +627,7 @@ pub fn show(
     if nui.open {
         nui.toasts.clear();
         list.mark_all_read();
-        let area = egui::Area::new(egui::Id::new("notification_list"))
+        let area = egui::Area::new(egui::Id::unique("notification_list"))
             .fade_in(false)
             .order(egui::Order::Foreground)
             .fixed_pos(anchor + Vec2::new(0.0, 2.0))
@@ -720,7 +724,7 @@ pub fn show(
         }
     } else if !nui.toasts.is_empty() && !env.hidden {
         let screen = ctx.content_rect();
-        egui::Area::new(egui::Id::new("notification_toasts"))
+        egui::Area::new(egui::Id::unique("notification_toasts"))
             .fade_in(false)
             .order(egui::Order::Foreground)
             .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-10.0, anchor.y.min(screen.height()) + 6.0))

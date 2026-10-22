@@ -141,7 +141,7 @@ fn adjacent_position_prefers_right_then_left_and_keeps_dialog_on_screen() {
 #[test]
 fn opening_from_a_moved_parent_overrides_saved_position_and_aligns_both_sides() {
     let mut t = UiTest::new();
-    let owner = egui::Id::new("color_picker_owner_fixture");
+    let owner = egui::Id::unique("color_picker_owner_fixture");
     for pos in [Pos2::new(12.0, 40.0), Pos2::new(680.0, 40.0), Pos2::new(680.0, 540.0)] {
         t.owner = Some(pos);
         t.picker.open_from([0.5, 0.25, 1.0], false, owner);
@@ -149,7 +149,7 @@ fn opening_from_a_moved_parent_overrides_saved_position_and_aligns_both_sides() 
             t.frame(Vec::new());
         }
         let parent = t.ctx.memory(|m| m.area_rect(owner)).unwrap();
-        let picker = t.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID))).unwrap();
+        let picker = t.ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW_ID))).unwrap();
         if pos.x < 500.0 {
             assert!((picker.left() - parent.right()).abs() < 0.5, "{parent:?} -> {picker:?}");
         } else {
@@ -168,7 +168,7 @@ fn opening_from_a_moved_parent_overrides_saved_position_and_aligns_both_sides() 
 #[test]
 fn dragging_the_parent_follows_every_frame_and_switches_back_to_either_side() {
     let mut t = UiTest::new();
-    let owner = egui::Id::new("color_picker_owner_fixture");
+    let owner = egui::Id::unique("color_picker_owner_fixture");
     t.owner = Some(Pos2::new(12.0, 40.0));
     t.picker.open_from([0.5, 0.25, 1.0], false, owner);
     for _ in 0..4 {
@@ -180,7 +180,7 @@ fn dragging_the_parent_follows_every_frame_and_switches_back_to_either_side() {
     for dx in [100.0, 220.0, 420.0, 560.0, 220.0, 0.0] {
         t.frame(vec![Input::PointerMoved(start + egui::vec2(dx, 24.0))]);
         let parent = t.ctx.memory(|m| m.area_rect(owner)).unwrap();
-        let picker = t.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID))).unwrap();
+        let picker = t.ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW_ID))).unwrap();
         let expected = adjacent_position(t.ctx.content_rect(), parent, picker.size(), t.picker.dock.unwrap()).0;
         assert!(picker.min.distance(expected) < 0.5, "{parent:?} -> {picker:?}, wanted {expected:?}");
     }
@@ -194,8 +194,8 @@ fn dragging_the_parent_follows_every_frame_and_switches_back_to_either_side() {
 fn detached_dialog_moves_independently_and_snapping_to_either_side_restores_following() {
     let mut t = UiTest::new();
     t.screen_size.x = 1600.0;
-    let owner = egui::Id::new("color_picker_owner_fixture");
-    let picker = egui::Id::new(WINDOW_ID);
+    let owner = egui::Id::unique("color_picker_owner_fixture");
+    let picker = egui::Id::unique(WINDOW_ID);
     t.owner = Some(Pos2::new(12.0, 40.0));
     t.picker.open_from([0.5, 0.25, 1.0], false, owner);
     for _ in 0..4 {
@@ -284,11 +284,11 @@ fn moving_the_dialog_shows_a_fading_cone_to_the_current_swatch_without_changing_
     let mut t = UiTest::new();
     t.owner = Some(Pos2::new(12.0, 40.0));
     t.picker
-        .open_from([0.5, 0.25, 1.0], false, egui::Id::new("color_picker_owner_fixture"));
+        .open_from([0.5, 0.25, 1.0], false, egui::Id::unique("color_picker_owner_fixture"));
     for _ in 0..4 {
         t.frame(Vec::new());
     }
-    let window = t.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID))).unwrap();
+    let window = t.ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW_ID))).unwrap();
     let start = window.min + egui::vec2(80.0, 20.0);
     let end = start + egui::vec2(100.0, 80.0);
     t.frame(vec![Input::PointerMoved(start), UiTest::button(start, true)]);
@@ -304,7 +304,7 @@ fn moving_the_dialog_shows_a_fading_cone_to_the_current_swatch_without_changing_
             "the context cone must appear during the window drag"
         );
     }
-    let moved = t.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW_ID))).unwrap();
+    let moved = t.ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW_ID))).unwrap();
     assert!(moved.min.distance(window.min + egui::vec2(100.0, 80.0)) < 0.5);
     t.frame(vec![UiTest::button(end, false)]);
     for _ in 0..12 {

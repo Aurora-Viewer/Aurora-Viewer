@@ -976,7 +976,7 @@ impl BuyLandUi {
                         egui::TextEdit::singleline(&mut self.text)
                             .desired_width(80.0)
                             .char_limit(10)
-                            .horizontal_align(egui::Align::RIGHT),
+                            .align(egui::Align2::RIGHT_TOP),
                     );
                     ui.label(RichText::new("L$").size(12.0).color(p.muted));
                     if field.changed() {
@@ -1168,7 +1168,7 @@ impl BuyLandUi {
         let needs_password = self.site.as_ref().is_some_and(|s| s.confirm == "password");
         let lines = self.action_summary(seller);
         let mut answer = None;
-        let modal = Modal::new(egui::Id::new("buy_land_confirm")).show(ctx, |ui| {
+        let modal = Modal::new(egui::Id::unique("buy_land_confirm")).show(ctx, |ui| {
             ui.set_width(CONFIRM_WIDTH);
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 10.0);
             ui.horizontal(|ui| {

@@ -83,7 +83,7 @@ impl App {
         let effective = self.native_anchor.bridge_preferences(*prefs);
         self.bridge_runtime.update(&mut self.world, &effective, online, Instant::now());
         self.egui_ctx
-            .data_mut(|d| d.insert_temp(egui::Id::new("movelock_requested"), prefs.enabled));
+            .data_mut(|d| d.insert_temp(egui::Id::unique("movelock_requested"), prefs.enabled));
         if self.demo {
             let mode = std::env::var("AURORA_DEMO_MOVELOCK").unwrap_or_default();
             self.bridge_demo.startup_stalled = mode == "timeout";

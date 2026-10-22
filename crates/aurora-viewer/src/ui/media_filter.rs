@@ -35,7 +35,7 @@ pub fn prompt(ctx: &egui::Context, p: &Palette, q: &Question, first_use: bool, s
         st.remember = Remember::Once;
     }
     let mut answer = None;
-    let modal = widgets::Modal::new(egui::Id::new("media_filter_question")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("media_filter_question")).show(ctx, |ui| {
         ui.set_width(400.0);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());

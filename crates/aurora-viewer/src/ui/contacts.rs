@@ -841,7 +841,7 @@ fn friend_table(
     let mut x = hrect.left();
     let hcell = egui::Rect::from_min_size(egui::pos2(x, hrect.top()), Vec2::new(status_w, 20.0));
     ui.painter().circle_filled(hcell.center(), 3.5, p.success.gamma_multiply(0.7));
-    ui.interact(hcell, ui.id().with("h_status"), Sense::hover())
+    ui.interact(hcell, ui.scope_id().with("h_status"), Sense::hover())
         .on_hover_text(aurora_i18n::tr!("ui-contacts-status"));
     x += status_w;
     for (i, (label, tip, _)) in names.iter().enumerate() {
@@ -853,7 +853,8 @@ fn friend_table(
             egui::FontId::proportional(12.0),
             p.muted,
         );
-        ui.interact(cell, ui.id().with(("h_name", i)), Sense::hover()).on_hover_text(*tip);
+        ui.interact(cell, ui.scope_id().with(("h_name", i)), Sense::hover())
+            .on_hover_text(*tip);
         x += name_w;
     }
     if settings.column_permissions {
@@ -870,7 +871,8 @@ fn friend_table(
                     tint,
                 );
             }
-            ui.interact(cell, ui.id().with(("h_right", i)), Sense::hover()).on_hover_text(*tip);
+            ui.interact(cell, ui.scope_id().with(("h_right", i)), Sense::hover())
+                .on_hover_text(*tip);
         }
     }
     // nothing under the list
@@ -930,7 +932,7 @@ fn friend_table(
                         for (i, (on, editable, bit)) in cells.into_iter().enumerate() {
                             let cell =
                                 egui::Rect::from_min_size(egui::pos2(rx + i as f32 * right_w, rect.top()), Vec2::new(right_w, ROW_H));
-                            if right_cell(ui, p, cell, on, editable, ui.id().with(("right", r.id, i))) {
+                            if right_cell(ui, p, cell, on, editable, ui.scope_id().with(("right", r.id, i))) {
                                 clicked_right = true;
                                 let new = rights_after(r.given, bit, !on);
                                 if bit == rights::MODIFY_OBJECTS {
@@ -2070,7 +2072,7 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
         })
         .flatten();
     let mut done: Option<bool> = None;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new("contacts_dialog")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("contacts_dialog")).show(ctx, |ui| {
         ui.set_width(360.0);
         ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
         ui.add_space(6.0);

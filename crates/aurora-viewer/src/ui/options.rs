@@ -641,7 +641,7 @@ fn toggle(ui: &mut egui::Ui, p: &Palette, v: &mut bool) -> bool {
 fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, value: &mut T, choices: &[(T, &str)]) -> bool {
     let shown = choices.iter().find(|(v, _)| v == value).map_or("", |(_, l)| *l);
     let mut changed = false;
-    egui::ComboBox::from_id_salt(ui.id().with("combo"))
+    egui::ComboBox::from_id_salt(ui.scope_id().with("combo"))
         .width(COMBO_W)
         .selected_text(shown)
         .truncate()
@@ -972,7 +972,7 @@ fn erase_logs_modal(ctx: &egui::Context, p: &Palette, st: &mut OptionsUi, r: &mu
     if !(st.confirm_erase_logs && open) {
         return;
     }
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new("options_erase_chat_logs")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_erase_chat_logs")).show(ctx, |ui| {
         ui.set_width(360.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("ui-options-chat-logs-erase-title"))
@@ -1355,9 +1355,9 @@ fn page_area(
         Mode::Show
     };
     let scroll_id = match mode {
-        Mode::Search => egui::Id::new("preferences-search"),
-        Mode::Modified => egui::Id::new("preferences-modified"),
-        _ => egui::Id::new(("preferences-page", page, st.tab)),
+        Mode::Search => egui::Id::unique("preferences-search"),
+        Mode::Modified => egui::Id::unique("preferences-modified"),
+        _ => egui::Id::unique(("preferences-page", page, st.tab)),
     };
     let query = st.query.clone();
     let tab = st.tab;
