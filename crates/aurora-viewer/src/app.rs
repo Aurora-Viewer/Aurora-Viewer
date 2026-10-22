@@ -5978,6 +5978,9 @@ impl App {
         for (x, y) in std::mem::take(&mut self.places_ui.want_cells) {
             self.world.map.want_regions(x, y, x, y);
         }
+        for (spot, global, region_id) in self.places_ui.want_snapshots.drain(..) {
+            self.world.place_snapshots.want(spot, global, region_id, now);
+        }
         for g in self.place_groups.drain() {
             self.world.land.group_name(&g, &self.world.groups.groups);
         }
@@ -9825,10 +9828,11 @@ impl App {
             }
             // the item's thumbnail, else the snapshot of the landmark's parcel
             let picture = if thumb.is_nil() {
+                let spot = crate::world::place_snapshots::Spot::Landmark(asset);
                 if shown && let Some(g) = global {
-                    self.world.place_snapshots.want(asset, g, region_id, now);
+                    self.world.place_snapshots.want(spot, g, region_id, now);
                 }
-                self.world.place_snapshots.snapshot(asset, &self.world.profiles.parcels)
+                self.world.place_snapshots.snapshot(spot, &self.world.profiles.parcels)
             } else {
                 Some(thumb)
             };
