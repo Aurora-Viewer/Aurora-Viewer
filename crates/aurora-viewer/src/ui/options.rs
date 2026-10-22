@@ -370,6 +370,8 @@ pub struct OptionsUi {
     pub media_filter: Option<Vec<crate::media::filter::Rule>>,
     pub media_filter_edits: Vec<crate::media::filter::Edit>,
     media_filter_typed: String,
+    /// The site being typed in Preferences › Chat › Trusted sites.
+    trusted_site_typed: String,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,
@@ -468,6 +470,7 @@ impl OptionsUi {
         self.capture = None;
         self.keyword_sound_text = None;
         self.ui_sound_text.clear();
+        self.trusted_site_typed.clear();
     }
 
     /// Announces a reset whose undo went away.
