@@ -1801,6 +1801,20 @@ impl Session<'_> {
                     .push(lookat_effect(self.agent_id(), effect, target, offset, kind, duration));
                 self.send_main(&m, false);
             }
+            NetCommand::PointAt {
+                effect,
+                target,
+                offset,
+                kind,
+                duration,
+            } => {
+                let mut m = ViewerEffect::default();
+                m.agent_data.agent_id = self.agent_id();
+                m.agent_data.session_id = self.session_id();
+                m.effect
+                    .push(pointat_effect(self.agent_id(), effect, target, offset, kind, duration));
+                self.send_main(&m, false);
+            }
             NetCommand::ResetSkeleton {
                 effect,
                 target,
@@ -4477,6 +4491,18 @@ impl Session<'_> {
                             duration: e.duration,
                         },
                     );
+                } else if let Some((source, target, offset, kind)) = parse_pointat(e) {
+                    emit(
+                        self.sh,
+                        NetEvent::PointAt {
+                            effect: e.id,
+                            source,
+                            target,
+                            offset,
+                            kind,
+                            duration: e.duration,
+                        },
+                    );
                 } else if let Some((target, animations)) = parse_reset_skeleton(e) {
                     emit(
                         self.sh,
@@ -4643,6 +4669,8 @@ impl Session<'_> {
 
 /// LLHUDObject::LL_HUD_EFFECT_LOOKAT.
 const HUD_EFFECT_LOOKAT: u8 = 14;
+/// LLHUDObject::LL_HUD_EFFECT_POINTAT; same binary layout as look-at.
+const HUD_EFFECT_POINTAT: u8 = 15;
 /// LLHUDEffectLookAt type data: source avatar (16), target object (16),
 /// target offset or global position (3 x F64), look-at type (1).
 const LOOKAT_PKT_SIZE: usize = 57;
@@ -4814,7 +4842,28 @@ mod script_teleport_tests {
 }
 
 fn parse_lookat(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, uuid::Uuid, [f64; 3], u8)> {
-    if e.type_ != HUD_EFFECT_LOOKAT || e.type_data.len() != LOOKAT_PKT_SIZE {
+    parse_attention(e, HUD_EFFECT_LOOKAT)
+}
+
+fn pointat_effect(
+    agent: uuid::Uuid,
+    effect: uuid::Uuid,
+    target: uuid::Uuid,
+    offset: [f64; 3],
+    kind: u8,
+    duration: f32,
+) -> msgs::viewer_effect::Effect {
+    let mut e = lookat_effect(agent, effect, target, offset, kind, duration);
+    e.type_ = HUD_EFFECT_POINTAT;
+    e
+}
+
+fn parse_pointat(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, uuid::Uuid, [f64; 3], u8)> {
+    parse_attention(e, HUD_EFFECT_POINTAT)
+}
+
+fn parse_attention(e: &msgs::viewer_effect::Effect, effect_type: u8) -> Option<(uuid::Uuid, uuid::Uuid, [f64; 3], u8)> {
+    if e.type_ != effect_type || e.type_data.len() != LOOKAT_PKT_SIZE {
         return None;
     }
     let d = &e.type_data;
@@ -4824,6 +4873,9 @@ fn parse_lookat(e: &msgs::viewer_effect::Effect) -> Option<(uuid::Uuid, uuid::Uu
     for (i, v) in offset.iter_mut().enumerate() {
         let b: [u8; 8] = d[32 + i * 8..40 + i * 8].try_into().ok()?;
         *v = f64::from_le_bytes(b);
+        if !v.is_finite() {
+            return None;
+        }
     }
     Some((source, target, offset, d[56]))
 }
@@ -4833,6 +4885,37 @@ const HUD_EFFECT_RESET_SKELETON: u8 = 19;
 /// LLHUDEffectResetSkeleton type data: target object (16), then a byte of
 /// which only bit 0 is read (reset the animations too).
 const RESET_SKELETON_PKT_SIZE: usize = 17;
+
+#[cfg(test)]
+mod pointat_tests {
+    use super::*;
+
+    #[test]
+    fn pointat_roundtrip_matches_the_legacy_packet_and_rejects_bad_data() {
+        let source = uuid::Uuid::new_v4();
+        let target = uuid::Uuid::new_v4();
+        let effect = uuid::Uuid::new_v4();
+        let mut packet = ViewerEffect::default();
+        packet
+            .effect
+            .push(pointat_effect(source, effect, target, [0.125, -2.5, 300.0], 1, f32::MAX / 4.0));
+        let mut data = aurora_msg::Writer::new();
+        packet.encode_body(&mut data);
+        let decoded = ViewerEffect::decode(&data.buf).expect("decode effect");
+        let e = &decoded.effect[0];
+        assert_eq!(e.type_, 15);
+        assert_eq!(e.id, effect);
+        assert_eq!(e.type_data.len(), 57);
+        assert_eq!(&e.type_data[32..40], &0.125f64.to_le_bytes());
+        assert_eq!(parse_pointat(e), Some((source, target, [0.125, -2.5, 300.0], 1)));
+        assert!(parse_lookat(e).is_none());
+        let mut invalid = e.clone();
+        invalid.type_data[32..40].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(parse_pointat(&invalid).is_none());
+        invalid.type_data.pop();
+        assert!(parse_pointat(&invalid).is_none());
+    }
+}
 
 /// LLHUDEffectResetSkeleton::packData, with LLHUDEffect's defaults: a 1 s
 /// duration and an unused colour (LLColor4U(): opaque black).

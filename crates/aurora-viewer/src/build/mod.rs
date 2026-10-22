@@ -33,6 +33,7 @@ pub mod silhouette;
 pub mod task_inventory;
 pub mod ui;
 
+use crate::scene::Scene;
 use crate::world::World;
 use crate::world::objects::{LocalAppearance, ObjKey};
 use aurora_net::build::{BuildCmd, ObjectProps, TransformUpdate, derez};
@@ -438,6 +439,8 @@ pub struct BuildTool {
     pub grab_mode: GrabMode,
     /// Selected units (linksets, or prims with "Edit linked"), latest first.
     pub selection: Vec<ObjKey>,
+    /// Last world pick, retained in the object's frame while it moves.
+    point_pick: Option<(ObjKey, glam::DVec3)>,
     /// "Select face" mode: the faces chosen on each selected prim (missing
     /// = all its faces; LLSelectNode::isTESelected).
     pub faces: HashMap<ObjKey, Vec<u8>>,
@@ -509,6 +512,7 @@ impl Default for BuildTool {
             focus_mode: FocusMode::Zoom,
             grab_mode: GrabMode::Move,
             selection: Vec::new(),
+            point_pick: None,
             faces: HashMap::new(),
             last_face: None,
             face_counts: HashMap::new(),
@@ -1486,6 +1490,11 @@ impl BuildTool {
             return true;
         }
         let now = Instant::now();
+        self.point_pick = target.zip(hit).and_then(|(idx, point)| {
+            let o = world.objects.get(idx)?;
+            let (at, rot, _) = Scene::object_transform(world, idx, now, 0)?;
+            Some((o.key, crate::world::lookat::local_offset(point, at, rot)))
+        });
         match self.tool {
             Tool::Focus => false,
             Tool::Grab => {
@@ -1553,6 +1562,33 @@ impl BuildTool {
                 used
             }
         }
+    }
+
+    /// LLSelectMgr::updatePointAt / LLAgentCamera::setPointAt: selected
+    /// world objects only; attachments and avatars never raise the arm.
+    pub fn pointing_target(&self, world: &World, now: Instant) -> Option<crate::world::lookat::Target> {
+        if !(self.open || self.menu_selection) || self.select_type(world) != SelectType::World {
+            return None;
+        }
+        let picked = self.point_pick.and_then(|(key, offset)| {
+            let idx = world.objects.index_of(&key)?;
+            let selected = Self::unit_of(world, idx, self.selection_linked).is_some_and(|unit| self.is_selected(&unit));
+            (selected || self.tool == Tool::Grab && self.grab.state.is_some()).then_some((idx, offset))
+        });
+        let (idx, offset) = picked.or_else(|| Some((world.objects.index_of(self.selection.first()?)?, glam::DVec3::ZERO)))?;
+        let o = world.objects.get(idx)?;
+        if o.is_avatar() || select_type(world, idx) != SelectType::World || Scene::object_transform(world, idx, now, 0)?.2 {
+            return None;
+        }
+        Some(crate::world::lookat::Target {
+            kind: if self.tool == Tool::Grab && self.grab.state.is_some() {
+                crate::world::pointat::GRAB
+            } else {
+                crate::world::pointat::SELECT
+            },
+            object: Some(o.full_id),
+            offset,
+        })
     }
 
     /// LLToolFace::pickCallback: a click selects that face of that prim

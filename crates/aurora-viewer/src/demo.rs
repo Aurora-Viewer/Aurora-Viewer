@@ -14,6 +14,8 @@ use uuid::Uuid;
 
 #[path = "demo_anti_spam.rs"]
 pub mod anti_spam;
+#[path = "demo_pointing.rs"]
+pub mod pointing;
 
 #[path = "demo_texture_library.rs"]
 pub mod texture_library;

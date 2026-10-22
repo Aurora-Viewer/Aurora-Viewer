@@ -72,6 +72,7 @@ mod own_motion;
 mod pay;
 mod physics_editor;
 mod plate_click;
+mod pointing;
 mod region_restart;
 mod region_window;
 mod report_abuse;
@@ -6353,6 +6354,7 @@ impl App {
             let step_back = self.settings.walk_backwards_without_turning;
             self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml, step_back);
             self.trace_own_motion();
+            self.update_pointing();
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
             // the walk to a double-clicked point (src/autopilot.rs)

@@ -502,6 +502,15 @@ pub enum NetEvent {
         kind: u8,
         duration: f32,
     },
+    /// Selection/grab target driving LLEditingMotion (LLHUDEffectPointAt).
+    PointAt {
+        effect: Uuid,
+        source: Uuid,
+        target: Uuid,
+        offset: [f64; 3],
+        kind: u8,
+        duration: f32,
+    },
     /// An avatar asks the others to reset its skeleton (ViewerEffect,
     /// LLHUDEffectResetSkeleton::unpackData): `source` is the sender, `target`
     /// the object to reset (the sender itself when the packet names none).
@@ -1440,6 +1449,14 @@ pub enum NetCommand {
     SetAlwaysRun(bool),
     /// Our look-at target (ViewerEffect, LLHUDEffectLookAt::packData).
     LookAt {
+        effect: Uuid,
+        target: Uuid,
+        offset: [f64; 3],
+        kind: u8,
+        duration: f32,
+    },
+    /// Our selection/grab target (LLHUDEffectPointAt::packData).
+    PointAt {
         effect: Uuid,
         target: Uuid,
         offset: [f64; 3],
