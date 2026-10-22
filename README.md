@@ -134,8 +134,6 @@ are planned or in progress: they are not in the viewer yet.
   expect: same messages, same request rates.
 - **Shape editing**, with 82 body and face controls, textured mesh previews
   and saved copies; manual or automatic hover height keeps your feet grounded.
-- **Photos with room to compose**: high-resolution snapshots, depth of field,
-  a free camera and lighting controls, saved to disk, inventory or the profile feed.
 - **Gestures**, with a manager, an editor, chat triggers, shortcuts,
   animations and sounds.
 - **Your own sky and water**, with EEP sky, water and day-cycle editors,
@@ -155,8 +153,32 @@ are planned or in progress: they are not in the viewer yet.
   shores and around what floats, caustics, wakes and an underwater view, each
   effect switched on its own; the built-in AO swims, at the surface and
   underwater.
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **RLVa and the clothing editors.**
+- **RLVa, when you want it**: the restrictions, exceptions and commands that
+  scripted outfits, furniture and experiences rely on (RLV 3.4.3 /
+  RLVa 2.4.2). Off by default: turn it on in Preferences › Protections;
+  turning it off releases every restriction at once ([details](docs/RLVA.md)).
+- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **The clothing editors.**
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **PBR terrain.**
+
+### A photo mode like a real camera
+
+<img width="2000" height="1070" alt="The photo viewfinder: rule of thirds, the autofocus point locked on an avatar's face, the focal ring and the exposure readouts" src="docs/screenshots/photo-viewfinder.jpg" />
+
+- **A viewfinder, full screen**: the world under a camera's overlay, with
+  three display levels from everything to the picture alone.
+- **Autofocus that finds faces**: AF-S, AF-C or manual focus. On an avatar
+  the focus locks between the eyes and follows them; the AF point turns
+  green with a double beep.
+- **Lens rings**: focal length, aperture and exposure on rings you drag, or
+  on the mouse wheel; Enter is a two-stage shutter.
+- **Real depth of field**, on by default, with focus peaking in manual focus
+  to see exactly what is sharp.
+- **Light under control**: a live luminance histogram, exposure lock (AE-L),
+  and a level to keep the horizon straight, or tilt it.
+- **A camera that goes where you want**: orbit, free or first person from an
+  on-screen camera pad, and a 2 s or 10 s self-timer to get into your pose.
+- **Up to 8K**: 4K by default, in PNG, JPEG or BMP, to disk, inventory or the
+  profile feed ([how to use it](#photos)).
 
 ### An interface made for today
 
@@ -218,8 +240,12 @@ are planned or in progress: they are not in the viewer yet.
 - **A clean way out**: on closing, a dialog over a blurred background offers
   Quit, Log out (back to the login screen) and Cancel. Esc cancels; the
   viewer waits for the logout before closing.
-- **It keeps itself up to date**: release checks, verified downloads,
-  installation and restart with rollback.
+- **Updates in one click**: at launch Aurora offers the new version,
+  downloads it in the background, checks it against its published hash,
+  installs it and restarts your session, and rolls back if anything goes
+  wrong. Before you agree, it tells you whether your cache and settings are
+  kept. On Linux it shows the new release instead
+  ([details](docs/UPDATES.md)).
 
 ### Only in Aurora
 
@@ -291,7 +317,9 @@ The texture memory budget is set automatically from the detected VRAM.
 - **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
   sky, water and day-cycle editors, world sounds, parcel music and media
   on prims, with Aurora's downloadable media plugins pack.
-- **Photos and camera** — high-resolution snapshots to disk, inventory or
+- **Photos and camera** — a full-screen viewfinder with face autofocus, lens
+  rings, focus peaking, a live histogram, exposure lock and a self-timer;
+  snapshots up to 8K to disk, inventory or
   the profile feed; depth of field, a maximum-quality photo mode with 8× MSAA,
   temporary lighting controls, keyboard free camera and a combined camera /
   movement Controls window.
@@ -334,7 +362,7 @@ completed work from features awaiting that validation.
 
 **Not there yet**
 
-- RLVa and the clothing texture / colour editors.
+- The clothing texture / colour editors.
 - Photo filters, depth exports and 360° snapshots.
 - A macOS build: the code is portable but not validated.
 - Automatic installation of updates on Linux (the viewer points to the
@@ -399,6 +427,15 @@ new copies. Right-click a HUD to reset its size to 100% or forget its saved
 size (the current copy keeps its size). While editing a HUD, scrolling
 without the HUD key zooms the entire HUD view, revealing off-screen HUDs
 while keeping their saved local sizes.
+
+### RLVa
+
+RLVa is off by default. Turn it on in **Preferences › Protections › Enable
+RLVa**: scripted outfits, furniture and experiences can then restrict and
+drive your viewer with the RLV 3.4.3 / RLVa 2.4.2 commands. Turning it off
+releases every restriction of the session and drops the queued commands;
+attachment and folder locks never outlive the session. What is implemented,
+command family by command family, is in [docs/RLVA.md](docs/RLVA.md).
 
 ### Animation Overrider (AO)
 
