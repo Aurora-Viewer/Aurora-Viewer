@@ -524,7 +524,7 @@ pub fn show(
             login_card = card(ui, p, 24, true, |ui| {
                 ui.set_width(card_w - 48.0);
                 ui.spacing_mut().item_spacing.y = 6.0;
-                let enabled = !form.busy;
+                let enabled = !form.busy && !super::grids::is_open(&ctx);
                 ui.add_enabled_ui(enabled, |ui| {
                     ui.label(RichText::new(aurora_i18n::tr!("ui-login-login")).size(18.0).strong().color(p.ink));
                     ui.add_space(6.0);
@@ -689,7 +689,7 @@ pub fn show(
                     }
                     let enter =
                         (user.lost_focus() || pass.lost_focus() || resp.has_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if (resp.clicked() || enter) && can && !form.busy {
+                    if (resp.clicked() || enter) && can && enabled {
                         action = LoginAction::Login;
                     }
                 });

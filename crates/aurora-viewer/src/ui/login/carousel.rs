@@ -107,6 +107,7 @@ pub fn show(
 ) -> LoginAction {
     super::draw_background(ui, p);
     let ctx = ui.ctx().clone();
+    let grids_open = crate::ui::grids::is_open(&ctx);
     let screen = ctx.content_rect();
     if form.block_reason.is_some() && !form.busy {
         form.transition = None;
@@ -169,8 +170,9 @@ pub fn show(
     let mut card_rect = Rect::NOTHING;
     let mut arrow_direction = 0;
     let mut centred = None;
-    let enter_shortcut =
-        !egui::Popup::is_any_open(&ctx) && ctx.input(|i| i.modifiers == egui::Modifiers::NONE && i.key_pressed(egui::Key::Enter));
+    let enter_shortcut = !grids_open
+        && !egui::Popup::is_any_open(&ctx)
+        && ctx.input(|i| i.modifiers == egui::Modifiers::NONE && i.key_pressed(egui::Key::Enter));
     let available_height = (screen.height() - if first_account { 84.0 } else { 148.0 }).max(100.0);
     let content_height = if form.content_height > 0.0 { form.content_height } else { 650.0 };
     let top = ((screen.height() - 112.0 - content_height.min(available_height)) / 2.0).max(12.0);
@@ -255,6 +257,7 @@ pub fn show(
                         let browse_rect = viewport.expand2(Vec2::new(layout.peek, 0.0));
                         form.motion.viewport = viewport;
                         let can_drag = paginated
+                            && !grids_open
                             && !form.editing
                             && !form.managing
                             && !form.show_info
@@ -640,7 +643,13 @@ pub fn show(
             form.accounts = crate::login_accounts::replace(&previous, account);
         }
     }
-    if !form.busy && !form.editing && !form.managing && !form.show_info && form.pending_connect.is_none() && !egui::Popup::is_any_open(&ctx)
+    if !grids_open
+        && !form.busy
+        && !form.editing
+        && !form.managing
+        && !form.show_info
+        && form.pending_connect.is_none()
+        && !egui::Popup::is_any_open(&ctx)
     {
         if arrow_direction != 0 {
             navigate(settings, form, arrow_direction, per_page);
@@ -755,6 +764,7 @@ fn centre_index(form: &LoginForm, per_page: usize, stride: f32) -> usize {
 /// consume them. The full browse rectangle includes gaps and faded previews.
 fn wheel(ctx: &Context, settings: &mut Settings, form: &mut LoginForm, layout: &super::layout::Layout) {
     let active = layout.paginated
+        && !crate::ui::grids::is_open(ctx)
         && !form.editing
         && !form.managing
         && !form.show_info
@@ -850,6 +860,17 @@ mod tests {
         frame: usize,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
+        draw_fixture_with_manager(ctx, settings, form, frame, events, None)
+    }
+
+    fn draw_fixture_with_manager(
+        ctx: &Context,
+        settings: &mut Settings,
+        form: &mut LoginForm,
+        frame: usize,
+        events: Vec<egui::Event>,
+        mut manager: Option<(&mut crate::ui::grids::Manager, &tokio::runtime::Handle)>,
+    ) -> egui::FullOutput {
         let theme = crate::theme::Theme::default();
         theme.apply(ctx, 1.0);
         super::super::test_output(ctx.run_ui(
@@ -870,6 +891,9 @@ mod tests {
                     &LoginInfo::preview_release("0.3.0"),
                     None,
                 );
+                if let Some((manager, runtime)) = manager.as_mut() {
+                    manager.show(ctx, &theme.palette(), settings, true, runtime);
+                }
             },
         ))
     }
@@ -1050,6 +1074,81 @@ mod tests {
             vec![wheel_event(egui::MouseWheelUnit::Line, Vec2::new(0.0, -1.0))],
         );
         assert_eq!(settings.username, "synthetic-2");
+    }
+
+    #[test]
+    fn grid_manager_owns_wheel_keys_and_pointer_until_closed() {
+        let ctx = Context::default();
+        let (mut settings, mut form) = fixture(8);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let mut manager = crate::ui::grids::Manager::default();
+        for frame in 0..8 {
+            draw_fixture(&ctx, &mut settings, &mut form, frame, vec![]);
+        }
+        let at = form.motion.viewport.left_top() + Vec2::new(form.motion.stride() - 8.0, 45.0);
+        let page = form.page;
+        manager.demo(&mut settings);
+        crate::ui::grids::request_open(&ctx);
+        // Cover both the pending opening request and an already displayed modal.
+        for frame in 8..16 {
+            let events = vec![
+                egui::Event::PointerMoved(at),
+                wheel_event(egui::MouseWheelUnit::Line, Vec2::new(0.0, -1.0)),
+                key(egui::Key::ArrowRight),
+                key(egui::Key::Enter),
+            ];
+            draw_fixture_with_manager(
+                &ctx,
+                &mut settings,
+                &mut form,
+                frame,
+                events,
+                Some((&mut manager, runtime.handle())),
+            );
+            assert_eq!(settings.username, "synthetic-0");
+            assert_eq!(form.page, page);
+            assert!(!form.motion.moving() && form.pending_connect.is_none() && !form.editing);
+            assert!(manager.open);
+        }
+        let output = draw_fixture_with_manager(&ctx, &mut settings, &mut form, 16, vec![], Some((&mut manager, runtime.handle())));
+        let close = text_rect(&output, aurora_i18n::tr!("common-close")).expect("close button").center();
+        for (frame, pressed) in [(17, true), (18, false)] {
+            draw_fixture_with_manager(
+                &ctx,
+                &mut settings,
+                &mut form,
+                frame,
+                vec![
+                    egui::Event::PointerMoved(close),
+                    egui::Event::PointerButton {
+                        pos: close,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                Some((&mut manager, runtime.handle())),
+            );
+        }
+        assert!(!manager.open && !crate::ui::grids::is_open(&ctx));
+        draw_fixture_with_manager(
+            &ctx,
+            &mut settings,
+            &mut form,
+            19,
+            vec![
+                egui::Event::PointerMoved(at),
+                wheel_event(egui::MouseWheelUnit::Line, Vec2::new(0.0, -1.0)),
+            ],
+            Some((&mut manager, runtime.handle())),
+        );
+        assert_eq!(
+            settings.username, "synthetic-1",
+            "normal browsing resumes after closing the manager"
+        );
     }
 
     #[test]

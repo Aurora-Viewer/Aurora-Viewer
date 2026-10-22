@@ -29,10 +29,12 @@ pub fn content(
     new_account: bool,
     progress: Option<(&str, f32)>,
 ) -> bool {
-    let enter =
-        !egui::Popup::is_any_open(ui.ctx()) && ui.input(|i| i.modifiers == egui::Modifiers::NONE && i.key_pressed(egui::Key::Enter));
+    let grids_open = crate::ui::grids::is_open(ui.ctx());
+    let enter = !grids_open
+        && !egui::Popup::is_any_open(ui.ctx())
+        && ui.input(|i| i.modifiers == egui::Modifiers::NONE && i.key_pressed(egui::Key::Enter));
     let can = ui
-        .add_enabled_ui(!form.busy, |ui| {
+        .add_enabled_ui(!form.busy && !grids_open, |ui| {
             ui.label(
                 RichText::new(if new_account {
                     aurora_i18n::tr!("login-accounts-add")
@@ -162,7 +164,8 @@ pub fn content(
                 && (!form.show_mfa || !form.mfa_token.trim().is_empty())
                 && (form.tos_message.is_none() || form.agree_tos)
         })
-        .inner;
+        .inner
+        && !grids_open;
     ui.add_space(10.0);
     if form.busy {
         connection_progress(ui, p, progress);

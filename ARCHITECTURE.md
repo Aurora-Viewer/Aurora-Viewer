@@ -251,7 +251,9 @@ taking over the techniques inherited from OpenGL (see
 Grid management and Hypergrid navigation are implemented in `grids.rs` and
 `ui/grids.rs` (#659). The saved catalogue contains discovery/login services,
 gatekeepers and grid web pages; explicit `get_grid_info` requests run on the
-network runtime with bounded responses. `slurl::Location` keeps a link's grid
+network runtime with bounded responses. The grid editor uses the shared
+login-glass modal; its open/pending state also gates the account carousel's
+raw wheel, key and drag handling. `slurl::Location` keeps a link's grid
 until the app resolves it into the current simulator's `gatekeeper:region`
 map-name request. Built-in SL grids reject Hypergrid destinations. OpenSim
 grid validation is still pending; this does not imply full OpenSim parity.
