@@ -67,7 +67,7 @@ pub(crate) fn group_name(world: &World, id: Uuid) -> String {
 /// What a command shows in the text (getLabel of its LLUrlEntry; the
 /// generic LLUrlEntrySL shows the address, unescaped).
 pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, link: &AppLink) -> String {
-    match link {
+    let label = match link {
         AppLink::Agent { id, .. } => {
             want_names.insert(*id);
             world.social.name_of(id)
@@ -123,7 +123,8 @@ pub(super) fn label(world: &World, want_names: &mut HashSet<Uuid>, url: &str, li
         // name to resolve. Keep the actual address in the copy-link menu.
         AppLink::Unsupported => aurora_i18n::tr!("ui-chat-applink-unsupported-label").to_owned(),
         _ => unescape(url),
-    }
+    };
+    world.rlva_filter_text(&label).into_owned()
 }
 
 /// Describe the actual click action, as LLUrlEntryAgent::getTooltip does
@@ -261,7 +262,13 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
         if !matches!(link, AppLink::Experience(_)) {
             menu::separator(ui, p);
         }
-        if menu::item(ui, p, "link-filled", aurora_i18n::tr!("common-copy-slurl")) {
+        if menu::item_if(
+            ui,
+            p,
+            "link-filled",
+            aurora_i18n::tr!("common-copy-slurl"),
+            world.rlva_filter_text(url) == url,
+        ) {
             ui.ctx().copy_text(url.to_owned());
         }
     });
@@ -270,6 +277,8 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
 /// A command of a wrapping text (conversation, profile…): its label in the
 /// link colour, the command run on a click.
 pub(super) fn link(ui: &mut egui::Ui, p: &Palette, world: &World, url: &str, link: &AppLink, text: &str, size: f32) {
+    let filtered = world.rlva_filter_text(text);
+    let text = filtered.as_ref();
     let k = super::super::colors::get();
     let r = super::action_marker::link(
         ui,

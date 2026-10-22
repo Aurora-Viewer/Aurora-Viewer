@@ -106,6 +106,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
         let size = match mode {
             "aurora-medium" => egui::vec2(800.0, 640.0),
             "aurora-wide"
+            | "aurora-keyboard-wide"
             | "aurora-rights"
             | "aurora-received-filing"
             | "aurora-received-unread"

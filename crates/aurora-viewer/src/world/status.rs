@@ -377,6 +377,15 @@ impl World {
         let friend = self.is_friend(&from);
         match im.dialog {
             d::LURE_USER | d::TELEPORT_REQUEST => {
+                // Forced acceptance overrides the user's rejection/status
+                // modes (LLIMProcessing::processNewMessage). DnD is still
+                // reported when the offer is actually accepted or blocked.
+                if self
+                    .rlva
+                    .auto_accept(if im.dialog == d::LURE_USER { "accepttp" } else { "accepttprequest" }, from)
+                {
+                    return false;
+                }
                 let c = &self.status.cfg;
                 if c.reject_teleports && !(c.dont_reject_friends_teleports && friend) {
                     // send_rejecting_tp_offers_message: answered, offer dropped
@@ -430,6 +439,11 @@ impl World {
             return None;
         }
         if self.social.has_session(&im.from_agent_id) {
+            return None;
+        }
+        // LLIMMgr::addMessage / processNewMessage: receiving a staff IM
+        // remains allowed under recvim; it must not disclose our auto reply.
+        if !self.rlva_allows_im("recvim", im.from_agent_id) || super::mutes::is_linden(&im.from_name) {
             return None;
         }
         self.status.response_for(self.is_friend(&im.from_agent_id)).map(str::to_owned)

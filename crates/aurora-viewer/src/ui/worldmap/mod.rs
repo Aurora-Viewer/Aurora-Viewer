@@ -345,11 +345,11 @@ impl WorldMapUi {
             if s.is_down() {
                 painter.rect_filled(r, 0.0, DOWN_FILL);
             }
-            if scale >= DRAW_TEXT_THRESHOLD && aurora {
+            if scale >= DRAW_TEXT_THRESHOLD && aurora && !world.rlva.has("showloc") {
                 let n: i32 = world.map.agents.get(key).map(|v| v.iter().map(|a| a.2).sum()).unwrap_or(0) + i32::from(my_sim == Some(*key));
                 let coords = opts.world_grid_coords.then_some(*key);
                 region_label(&painter.with_clip_rect(r.intersect(rect)), p, r, s, n, coords);
-            } else if scale >= DRAW_TEXT_THRESHOLD {
+            } else if scale >= DRAW_TEXT_THRESHOLD && !world.rlva.has("showloc") {
                 let lp = painter.with_clip_rect(r.intersect(rect));
                 let mut y = r.bottom() - 2.0;
                 if opts.world_grid_coords {
@@ -592,7 +592,12 @@ impl WorldMapUi {
             } else {
                 let g = view.to_global(m);
                 world.map.sim_at_global(g.0, g.1).map(|(key, s)| {
-                    let mut t = format!("{} ({})", s.name, s.access_label());
+                    let name = if world.rlva.has("showloc") {
+                        aurora_i18n::tr!("rlva-hidden-region")
+                    } else {
+                        &s.name
+                    };
+                    let mut t = format!("{} ({})", name, s.access_label());
                     if !s.is_down() {
                         let n: i32 =
                             world.map.agents.get(&key).map(|v| v.iter().map(|a| a.2).sum()).unwrap_or(0) + i32::from(my_sim == Some(key));
@@ -676,6 +681,9 @@ impl WorldMapUi {
     /// a destination. Without tracking, use our current region / position
     /// (onClearBtn's mSetToUserPosition), with editable fields throughout.
     fn coordinates(&mut self, ui: &mut egui::Ui, p: &Palette, world: &mut World) -> Option<[egui::Response; 3]> {
+        if world.rlva.has("showloc") {
+            return None;
+        }
         let tracked = world.map.track.clone();
         let (x, y, z) = if let Some(t) = &tracked {
             (t.x, t.y, t.z)
@@ -1008,8 +1016,12 @@ impl WorldMapUi {
                 ))
             });
             if ui
-                .add_enabled(slurl.is_some(), egui::Button::new(aurora_i18n::tr!("common-copy-slurl")))
+                .add_enabled(
+                    slurl.is_some() && !world.rlva.has("showloc"),
+                    egui::Button::new(aurora_i18n::tr!("common-copy-slurl")),
+                )
                 .clicked()
+                && !world.rlva.has("showloc")
                 && let Some(u) = slurl
             {
                 ui.ctx().copy_text(u);

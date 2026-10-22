@@ -120,6 +120,9 @@ fn parcel_font(ctx: &egui::Context) -> FontId {
 /// The parcel's name (the region's when the parcel has none), the region,
 /// the position.
 fn texts(st: &StatusInfo) -> (String, String, String) {
+    if st.location_hidden {
+        return (st.parcel.to_owned(), st.region.to_owned(), String::new());
+    }
     let position = format!("({:.0}, {:.0}, {:.0})", st.position.x, st.position.y, st.position.z);
     let (parcel, region) = (one_line(st.parcel), one_line(st.region));
     if parcel.is_empty() {
@@ -460,7 +463,9 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
             if !region.is_empty() {
                 sub.push(region.clone());
             }
-            sub.push(format!("{:.0}, {:.0}, {:.0}", st.position.x, st.position.y, st.position.z));
+            if !st.location_hidden {
+                sub.push(format!("{:.0}, {:.0}, {:.0}", st.position.x, st.position.y, st.position.z));
+            }
             if !st.maturity.is_empty() {
                 sub.push(st.maturity.to_owned());
             }
@@ -525,15 +530,17 @@ fn place_menu(ui: &mut egui::Ui, p: &Palette, icons: &Icons, panels: &mut Panels
                 Vec2::new(text_w, 20.0),
                 egui::Label::new(egui::RichText::new(&st.slurl).size(12.5).color(p.ink)).truncate(),
             );
-            if crate::ui::widgets::action_button(
+            if crate::ui::widgets::action_button_if(
                 ui,
                 p,
                 "copy-filled",
                 copy,
                 crate::ui::widgets::ActionKind::Flat,
                 Vec2::new(button_w, 22.0),
+                !st.location_hidden,
             )
             .clicked()
+                && !st.location_hidden
             {
                 ui.ctx().copy_text(st.slurl.clone());
             }

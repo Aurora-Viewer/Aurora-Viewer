@@ -58,6 +58,7 @@ pub mod received_items;
 pub mod recent;
 pub mod region_alerts;
 pub mod region_restart;
+pub mod rlva;
 pub mod script_debug;
 pub mod search;
 pub mod sim_console;
@@ -318,6 +319,10 @@ pub struct World {
     pub mutes: mutes::MuteList,
     /// Firestorm LSL bridge messages kept out of nearby chat.
     pub lsl_bridge: lslbridge::LslBridge,
+    pub rlva: rlva::Rlva,
+    pub rlva_privacy: rlva::privacy::TextFilter,
+    pub rlva_hover_privacy: rlva::privacy::TextFilter,
+    rlva_location_hidden: bool,
     /// Derendered objects and residents, and the asset blacklist.
     pub derender: derender::Derender,
     /// Our groups and the group / conference chat sessions.
@@ -572,6 +577,10 @@ impl World {
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
+            rlva: rlva::Rlva::default(),
+            rlva_privacy: Default::default(),
+            rlva_hover_privacy: Default::default(),
+            rlva_location_hidden: false,
             derender: derender::Derender::default(),
             groups: groups::GroupChats::default(),
             calls: calls::Calls::default(),
@@ -667,6 +676,9 @@ impl World {
         let Some((global, _)) = self.tp_record.take() else {
             return;
         };
+        if self.rlva.has("showloc") {
+            return;
+        }
         let region = self
             .main_region
             .and_then(|h| self.regions.get(&h))
@@ -1801,7 +1813,11 @@ impl World {
                 }
                 self.movement_complete = true;
                 if self.teleporting || !self.arrived_once {
-                    let region = self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default();
+                    let region = if self.rlva.has("showloc") {
+                        aurora_i18n::tr!("rlva-hidden-region").to_owned()
+                    } else {
+                        self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default()
+                    };
                     self.tp_history.arrived(tphistory::TpEntry { region, handle, position });
                     // LLViewerParcelMgr::onTeleportFinished: a local teleport keeps
                     // the agent parcel (the simulator only sends ParcelProperties
@@ -2313,6 +2329,16 @@ impl World {
                 experience,
                 region,
             } => {
+                let (questions, auto_accept) = self.rlva_script_permissions(task_id, questions);
+                if auto_accept && experience.is_nil() {
+                    self.rlva.out.push(aurora_net::NetCommand::ScriptAnswer {
+                        task_id,
+                        item_id,
+                        questions,
+                        region,
+                    });
+                    return None;
+                }
                 // process_script_question: an experience's question waits
                 // for the experience's details (LLExperienceCache::get), a
                 // caution permission keeps the ordinary dialog
@@ -2357,6 +2383,13 @@ impl World {
             NetEvent::ExperienceInfo(list) => {
                 for question in self.experiences.arrived(list) {
                     self.push_experience_question(question);
+                }
+                None
+            }
+            NetEvent::ExperienceAttachment { experience, object_name } => {
+                if self.rlva.enabled() {
+                    self.rlva.controllers.attachment(experience, object_name, Instant::now());
+                    self.rlva_controllers_tick(Instant::now());
                 }
                 None
             }
@@ -2571,6 +2604,12 @@ impl World {
                 None
             }
             NetEvent::Land(ev) => {
+                if let aurora_net::land::LandEvent::AttachmentScripts(result) = &ev {
+                    match result {
+                        Ok((_, attachments)) => self.rlva_controller_resources(attachments),
+                        Err(_) => self.rlva_controller_resources(&[]),
+                    }
+                }
                 let ctx = land::SelectionContext {
                     agent_region: self.main_region,
                     region_id: self
@@ -2845,8 +2884,20 @@ impl World {
                 self.inventory.add_items(items);
                 None
             }
+            NetEvent::AttachmentAssetSaved(item) => {
+                if self.rlva.enabled() {
+                    self.rlva.watchdog.saved(item, Instant::now());
+                }
+                None
+            }
             NetEvent::InventoryUpdated { folders, items } => {
                 self.inventory.server_updated(folders, items);
+                None
+            }
+            NetEvent::InventoryDelivery { transaction, folders } => {
+                if self.rlva.enabled() {
+                    self.rlva.offers.delivered(transaction, &folders, &self.inventory);
+                }
                 None
             }
             NetEvent::InventoryMoved { id, parent, folder } => {
@@ -2957,6 +3008,40 @@ impl World {
     }
 
     fn on_chat(&mut self, c: ChatMessage) {
+        let controller_allowed = self.rlva_controller_chat_allowed(c.source_id);
+        if c.source_type == aurora_net::ChatSourceType::Object
+            && c.chat_type == aurora_net::ChatType::OwnerSay
+            && c.message.starts_with('@')
+            && controller_allowed
+        {
+            self.rlva_bind_controller(c.source_id);
+            self.rlva_prepare_version(c.source_id, &c.message);
+        }
+        if controller_allowed && self.rlva.receive(&c) {
+            self.eep.rlva_locked = self.rlva.has("setenv");
+            let environment_owner = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id);
+            if self.eep.rlva_locked
+                && self.rlva.environment.is_none()
+                && let Some(actor) = environment_owner
+            {
+                self.rlva.environment = Some((actor, self.eep.current().0));
+            }
+            self.inventory.rlva_preview_mask = self.rlva.preview_mask();
+            self.refresh_rlva_privacy();
+            self.rlva_watchdog_tick(Instant::now());
+            return;
+        }
+        let mut c = c;
+        if let std::borrow::Cow::Owned(text) = self.rlva_filter_text(&c.message) {
+            c.message = text;
+        }
+        let own_attachment = self.rlva.enabled()
+            && c.source_type == aurora_net::ChatSourceType::Object
+            && c.owner_id == self.agent_id
+            && self.rlva_own_attachment_root(c.source_id).is_some();
+        if !own_attachment && !self.rlva.receive_chat(&mut c, self.agent_id) {
+            return;
+        }
         if c.message.is_empty() || self.lsl_bridge.hides(&c) || self.chat_blocked(&c) || self.object_chat_filtered(&c) {
             return;
         }
@@ -3022,13 +3107,22 @@ impl World {
         });
     }
 
-    fn on_im(&mut self, im: InstantMessage) {
+    fn on_im(&mut self, mut im: InstantMessage) {
         if self.im_blocked(&im) {
             return;
         }
         if self.anti_spam_im(&im) {
             return;
         }
+        // IM queries obey the same friends-only policy, before recvim.
+        if im.dialog == 0 && self.friends_only_drops(&im.from_agent_id, &im.from_name) {
+            log::info!("message from a non-friend dropped (friends only)");
+            return;
+        }
+        if self.rlva_im_query(&im) {
+            return;
+        }
+        let rlva_filter = self.rlva_receive_im(&mut im);
         // IM_TYPING_START / STOP (llimprocessing.cpp: processIMTypingStart /
         // Stop): "is typing" in their conversation, never a line
         if matches!(im.dialog, IM_TYPING_START | IM_TYPING_STOP) {
@@ -3038,12 +3132,6 @@ impl World {
             return;
         }
         if self.on_session_im(&im) || self.on_status_im(&im) || self.on_im_offer(&im) {
-            return;
-        }
-        // VoiceCallsFriendsOnly: a non-friend's message is neither shown nor
-        // answered
-        if im.dialog == 0 && self.friends_only_drops(&im.from_agent_id, &im.from_name) {
-            log::info!("message from a non-friend dropped (friends only)");
             return;
         }
         // decided before the message opens its conversation
@@ -3092,7 +3180,9 @@ impl World {
                 origin: Origin::Live,
             };
             self.conversation_push(im.from_agent_id, line, true);
-            self.send_autoresponse(&im, autoresponse);
+            if rlva_filter != rlva::communication::Received::Masked {
+                self.send_autoresponse(&im, autoresponse);
+            }
             return;
         }
         // dialog 19 = MessageFromObject
@@ -3209,7 +3299,9 @@ impl World {
                     },
                 );
                 self.on_inventory_offer_card(im, &from, asset_type, entry);
-                self.received_items.offer(im, entry);
+                if !self.rlva_inventory_offer(im, entry) {
+                    self.received_items.offer(im, entry);
+                }
             }
             // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
             // group we are already in is dropped unless asked for
@@ -3421,6 +3513,11 @@ impl World {
     /// Answer a notification: messages to send and a URL to open.
     pub fn respond_notification(&mut self, id: u64, r: notifications::Response) -> (Vec<aurora_net::NetCommand>, Option<String>) {
         let data = self.notifications.list.iter().find(|n| n.id == id).map(|n| n.data.clone());
+        if let Some(notifications::Data::RlvaQuery { from, exceptions }) = data {
+            self.rlva_answer_im_query(from, exceptions, &r);
+            self.notifications.respond(id, r, |_| Uuid::nil(), Uuid::nil());
+            return (Vec::new(), None);
+        }
         // the experience's profile opens over its question, which stays
         if let notifications::Response::OpenExperience(experience) = r {
             self.experiences.open_profile(experience);
@@ -3563,6 +3660,7 @@ impl World {
             |t| folders.iter().find(|(ft, _)| *ft == t).map(|(_, f)| *f).unwrap_or(root),
             calling,
         );
+        self.rlva_shared_offer_answer(id, &mut out.0);
         self.received_items.answer(id, &mut out.0);
         if let Some((asset_type, object)) = discard {
             self.discard_offer(asset_type, object);
@@ -3633,6 +3731,9 @@ impl World {
 
     /// Name of an avatar by id (from its object name-values).
     pub fn avatar_name(&self, id: &Uuid) -> Option<String> {
+        if !id.is_nil() && !self.rlva_can_name(*id) {
+            return Some(rlva::privacy::anonymous(*id).display_name.clone());
+        }
         let idx = self.objects.index_of_uuid(id)?;
         self.objects.get(idx)?.display_name()
     }
@@ -3788,7 +3889,11 @@ impl World {
 
     /// `id` talked with us now (LLRecentPeople::add), here.
     pub fn met(&mut self, id: Uuid) {
-        let region = self.region_name();
+        let region = if self.rlva.has("showloc") {
+            String::new()
+        } else {
+            self.region_name()
+        };
         let group = self.groups.is_member(&id);
         self.recent.add(self.agent_id, id, group, &region, std::time::SystemTime::now());
     }
@@ -3812,6 +3917,7 @@ impl World {
 
     /// Record an IM we sent.
     pub fn own_im(&mut self, to: Uuid, text: &str) {
+        let text = self.rlva_outgoing_im_text(to, false, text).into_owned();
         let me = self
             .login
             .as_ref()
@@ -3821,7 +3927,7 @@ impl World {
         let line = ChatLine {
             time: SystemTime::now(),
             from: me,
-            text: text.to_owned(),
+            text,
             kind: ChatKind::Own,
             source: Uuid::nil(),
             origin: Origin::Live,

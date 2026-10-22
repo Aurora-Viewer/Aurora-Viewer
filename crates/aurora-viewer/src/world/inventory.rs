@@ -32,6 +32,8 @@ pub struct Folder {
 
 #[derive(Default)]
 pub struct Inventory {
+    /// Session-only RLVa preview restrictions, shared by every inventory floater.
+    pub rlva_preview_mask: u8,
     pub root: Uuid,
     pub lib_root: Uuid,
     pub lib_owner: Uuid,
@@ -50,6 +52,16 @@ fn first_id(v: &Llsd, key: &str) -> Uuid {
 }
 
 impl Inventory {
+    pub fn can_preview(&self, asset_type: i32) -> bool {
+        self.rlva_preview_mask
+            & match asset_type {
+                0 => 1,
+                7 => 2,
+                10 => 4,
+                _ => 0,
+            }
+            == 0
+    }
     /// Check ancestry in O(depth), without finding system folders by a full
     /// inventory scan. The bound also rejects malformed parent cycles.
     pub fn in_folder_type(&self, id: Uuid, kind: i32) -> bool {

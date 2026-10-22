@@ -15,6 +15,37 @@ pub(super) const OLD_FOLDER: &str = "AO";
 const STAGING: &str = "Aurora AO (Legacy Viewer import)";
 // Existing interrupted imports must still prevent an automatic second copy.
 const OLD_STAGING: &str = "AO (Firestorm import)";
+/// ROOT_AO_FOLDER (Alchemy indra/newview/aoengine.h): the same set format as
+/// the Legacy Viewer, directly under the inventory root.
+pub const ALCHEMY_FOLDER: &str = "Animation Overrides";
+
+/// Where a catalogue reads its sets. Imports are read-only sources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Source {
+    #[default]
+    Native,
+    Legacy,
+    Alchemy,
+}
+
+impl Source {
+    /// Inventory path shown to the user; folder names are not translated.
+    pub fn path(self) -> &'static str {
+        match self {
+            Self::Native => "#Aurora/Aurora AO",
+            Self::Legacy => "#Firestorm/#AO",
+            Self::Alchemy => ALCHEMY_FOLDER,
+        }
+    }
+
+    fn root(self, inv: &Inventory) -> Option<Uuid> {
+        match self {
+            Self::Native => child(inv, inv.root, "#Aurora").and_then(|brand| native_root(inv, brand)),
+            Self::Legacy => child(inv, inv.root, "#Firestorm").and_then(|fs| child(inv, fs, "#AO")),
+            Self::Alchemy => child(inv, inv.root, ALCHEMY_FOLDER),
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Catalog {
@@ -25,7 +56,7 @@ pub struct Catalog {
     pub missing: Vec<Uuid>,
     generation: Option<u64>,
     waiting: Vec<(Uuid, FetchState)>,
-    firestorm: bool,
+    source: Source,
 }
 
 pub fn child(inv: &Inventory, parent: Uuid, name: &str) -> Option<Uuid> {
@@ -104,7 +135,7 @@ fn members(inv: &Inventory, folder: Uuid, missing: &mut Vec<Uuid>) -> Vec<Animat
 
 impl Catalog {
     pub fn swimming_ready(&self, selected: Uuid) -> bool {
-        !self.firestorm && !self.loading && !self.failed && self.selected(selected).is_some_and(|set| set.swimming_ready())
+        self.source == Source::Native && !self.loading && !self.failed && self.selected(selected).is_some_and(|set| set.swimming_ready())
     }
     pub fn invalidate(&mut self) {
         self.generation = None;
@@ -113,17 +144,17 @@ impl Catalog {
     /// Only rebuild after inventory events. Keep a previously loaded set
     /// during partial fetches, so loading another folder never stops the AO.
     pub fn refresh(&mut self, inv: &mut Inventory) {
-        self.refresh_source(inv, false);
+        self.refresh_source(inv, Source::Native);
     }
 
     pub(super) fn refresh_firestorm(&mut self, inv: &mut Inventory) {
-        self.refresh_source(inv, true);
+        self.refresh_source(inv, Source::Legacy);
     }
 
-    fn refresh_source(&mut self, inv: &mut Inventory, firestorm: bool) {
-        if self.firestorm != firestorm {
+    pub(super) fn refresh_source(&mut self, inv: &mut Inventory, source: Source) {
+        if self.source != source {
             *self = Self {
-                firestorm,
+                source,
                 ..Default::default()
             };
         }
@@ -140,13 +171,21 @@ impl Catalog {
         self.failed = false;
         self.missing.clear();
         self.loading = !fetch(inv, inv.root, &mut self.waiting, &mut self.failed);
-        let Some(fs) = child(inv, inv.root, if firestorm { "#Firestorm" } else { "#Aurora" }) else {
-            self.root = None;
-            self.sets.clear();
-            return;
+        // The brand folder must be fetched before its AO child can be found.
+        let brand = match source {
+            Source::Native => Some("#Aurora"),
+            Source::Legacy => Some("#Firestorm"),
+            Source::Alchemy => None,
         };
-        self.loading |= !fetch(inv, fs, &mut self.waiting, &mut self.failed);
-        self.root = if firestorm { child(inv, fs, "#AO") } else { native_root(inv, fs) };
+        if let Some(name) = brand {
+            let Some(fs) = child(inv, inv.root, name) else {
+                self.root = None;
+                self.sets.clear();
+                return;
+            };
+            self.loading |= !fetch(inv, fs, &mut self.waiting, &mut self.failed);
+        }
+        self.root = source.root(inv);
         let Some(root) = self.root else {
             self.sets.clear();
             return;
@@ -183,7 +222,7 @@ impl Catalog {
                 };
                 // Read actual legacy swim slots, including their cycles and
                 // originals. Aurora-only water slots are not source mappings.
-                if firestorm && state.swimming() && !State::LEGACY_VIEWER_SWIMMING.contains(&state) {
+                if source != Source::Native && state.swimming() && !State::LEGACY_VIEWER_SWIMMING.contains(&state) {
                     continue;
                 }
                 let mut config = StateConfig {
@@ -270,9 +309,10 @@ impl Catalog {
     }
 
     pub fn reload(&mut self, inv: &mut Inventory) {
-        let root = self
-            .root
-            .or_else(|| child(inv, inv.root, "#Firestorm").and_then(|fs| child(inv, fs, "#AO")));
+        let root = self.root.or_else(|| match self.source {
+            Source::Native => Source::Legacy.root(inv),
+            source => source.root(inv),
+        });
         let ids: Vec<_> = inv
             .folders
             .keys()
@@ -284,7 +324,7 @@ impl Catalog {
                 f.state = FetchState::Unknown;
             }
         }
-        for name in ["#Aurora", FOLDER, OLD_FOLDER, "#Firestorm", "#AO"] {
+        for name in ["#Aurora", FOLDER, OLD_FOLDER, "#Firestorm", "#AO", ALCHEMY_FOLDER] {
             let ids: Vec<_> = inv
                 .folders
                 .values()
@@ -356,7 +396,8 @@ fn finish(mut change: Mutation) -> Mutation {
 pub fn editable(inv: &Inventory, change: &Mutation, protected: &HashSet<Uuid>) -> bool {
     // AO startup and subsequent edits can read/link Firestorm originals, but
     // can never write into, rename, move or remove any part of its inventory.
-    let firestorm = child(inv, inv.root, "#Firestorm");
+    // The Alchemy import source is protected the same way.
+    let sources = [child(inv, inv.root, "#Firestorm"), Source::Alchemy.root(inv)];
     change
         .operations
         .iter()
@@ -369,7 +410,7 @@ pub fn editable(inv: &Inventory, change: &Mutation, protected: &HashSet<Uuid>) -
         .chain(change.copies.iter().map(|copy| copy.parent))
         .chain(change.refresh.iter().copied())
         .filter(|id| inv.folders.contains_key(id) || inv.items.contains_key(id))
-        .all(|id| !firestorm.is_some_and(|fs| actions::under(inv, id, fs)) && actions::mutable(inv, id, protected))
+        .all(|id| !sources.iter().flatten().any(|root| actions::under(inv, id, *root)) && actions::mutable(inv, id, protected))
 }
 
 /// Build the entire parent-before-child mutation before sending it. AIS

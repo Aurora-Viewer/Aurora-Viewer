@@ -188,8 +188,7 @@ impl App {
                 self.teleport_in_region(Vec3::new(pos.x, pos.y, amount.apply(pos.z)));
             }
             Command::TeleportHome => {
-                self.begin_teleport(aurora_i18n::tr!("common-home").into(), false);
-                self.net.send(NetCommand::TeleportHome);
+                self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
             }
             Command::RezPlatform(width) => self.rez_platform(width.unwrap_or(self.settings.chat_commands.platform_size)),
             Command::MapTo { region, pos } => {
@@ -302,8 +301,11 @@ impl App {
             self.teleport_in_region(pos);
         } else {
             let (x, y) = crate::ui::minimap::to_global(&self.world, pos);
-            self.begin_teleport(format!("({x:.0}, {y:.0}, {:.0})", pos.z), true);
-            self.send(crate::world::worldmap::teleport_command(x, y, pos.z));
+            self.request_user_teleport(
+                crate::world::worldmap::teleport_command(x, y, pos.z),
+                format!("({x:.0}, {y:.0}, {:.0})", pos.z),
+                true,
+            );
         }
     }
 

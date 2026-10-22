@@ -190,6 +190,20 @@ impl PlateClick {
     ];
 }
 
+/// What the crash window does with a crash report (Preferences › Privacy).
+/// It becomes a public GitHub issue in the tester's name, hence Ask by
+/// default where the Legacy Viewer always sends to its own server
+/// (llcrashlogger.cpp, CrashSubmitBehavior).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CrashReports {
+    #[default]
+    Ask,
+    /// Published as soon as the window opens, once GitHub is authorized.
+    Always,
+    /// No sending from the window; the report stays on the PC.
+    Never,
+}
+
 /// The look of the world's hover tips (Preferences › Interface): a bubble
 /// next to the pointer, a card with the details and the actions (the
 /// default), or a fixed readout in a corner.
@@ -331,6 +345,7 @@ const FORMER_LOOK_AT_UNLIMITED: f32 = 64.0;
 pub struct Settings {
     pub update_mode: crate::updater::Mode,
     pub ignored_update: String,
+    pub crash_reports: CrashReports,
     /// Firestorm Language: default follows the OS.
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
@@ -621,6 +636,9 @@ pub struct Settings {
     /// Object messages from elsewhere dropped (Preferences › Privacy, #623).
     pub object_im_filter: crate::world::object_im_filter::Settings,
     pub anti_spam: crate::world::anti_spam::Settings,
+    /// Global RLVa opt-in. Session restrictions are never persisted.
+    pub rlva_enabled: bool,
+    pub rlva: crate::world::rlva::preferences::Preferences,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
@@ -1268,6 +1286,7 @@ impl Default for Settings {
         Settings {
             update_mode: crate::updater::Mode::Ask,
             ignored_update: String::new(),
+            crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
             show_bug_report: true,
@@ -1406,6 +1425,8 @@ impl Default for Settings {
             sim_version_alert: true,
             object_im_filter: Default::default(),
             anti_spam: Default::default(),
+            rlva_enabled: false,
+            rlva: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             keywords: Default::default(),

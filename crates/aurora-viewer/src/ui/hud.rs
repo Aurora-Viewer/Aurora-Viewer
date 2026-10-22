@@ -212,6 +212,9 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
     };
     let painter = ctx.layer_painter(egui::LayerId::background());
     for (idx, o) in world.objects.texted() {
+        if !world.rlva.hover_visible(o.full_id, true) {
+            continue;
+        }
         if o.text_color[3] == 0 || !scene.gpu.get(idx).is_some_and(|g| g.hud && g.owner_avatar == own) {
             continue;
         }
@@ -226,7 +229,7 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
         painter.text(
             point,
             egui::Align2::CENTER_BOTTOM,
-            &o.text,
+            world.rlva_hover_privacy.apply(&o.text).as_ref(),
             egui::FontId::proportional(12.0 * scale),
             Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]),
         );
@@ -373,7 +376,13 @@ pub fn draw(
     // only the avatars and the objects with a text: a shop has thousands of
     // objects for a few dozen of these
     for (idx, o) in world.objects.avatars().chain(world.objects.texted()) {
+        if !o.is_avatar() && !world.rlva.hover_visible(o.full_id, scene.gpu.get(idx).is_some_and(|g| g.hud)) {
+            continue;
+        }
         if o.is_avatar() {
+            if world.rlva.has("shownearby") && o.full_id != world.agent_id {
+                continue;
+            }
             let own = o.full_id == world.agent_id;
             if (own && !show_own) || !name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) {
                 continue;
@@ -382,6 +391,12 @@ pub fn draw(
                 continue;
             };
             let d = pos.distance(eye);
+            if !world
+                .rlva
+                .nametag_visible(o.full_id, world.agent_id, pos.distance(world.agent.position))
+            {
+                continue;
+            }
             if d > settings.name_tag_distance {
                 continue;
             }
@@ -558,7 +573,8 @@ pub fn draw(
                 continue;
             };
             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (c[3] as f32 * fade) as u8);
-            let lines = o.text.lines().map(|l| (l.to_owned(), col, 12.0)).collect();
+            let text = world.rlva_hover_privacy.apply(&o.text);
+            let lines = text.lines().map(|l| (l.to_owned(), col, 12.0)).collect();
             tags.push((d + 1000.0, sp, lines, None, None, None, anchor, 1.0));
         }
     }

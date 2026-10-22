@@ -27,7 +27,7 @@ impl App {
     /// viewfinder the photo's own, so that the screen shows what the photo
     /// will hold.
     pub(super) fn huds_shown(&self) -> bool {
-        self.settings.show_huds && (!self.viewfinder_on() || self.settings.snapshot.huds)
+        (self.settings.show_huds || self.world.rlva_has_locked_hud()) && (!self.viewfinder_on() || self.settings.snapshot.huds)
     }
 
     fn vf_now(&self) -> f64 {

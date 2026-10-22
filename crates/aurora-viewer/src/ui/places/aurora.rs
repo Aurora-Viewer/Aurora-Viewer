@@ -953,13 +953,15 @@ impl PlacesUi {
         let fmt = |color: Color32| egui::TextFormat::simple(FontId::proportional(12.0), color);
         job.append(&format!("{here} "), 0.0, fmt(p.muted));
         let parcel = if world.parcel_name.is_empty() {
-            world.region_name()
+            world.rlva_region_label()
         } else {
-            world.parcel_name.clone()
+            world.rlva_parcel_label()
         };
         job.append(&parcel, 0.0, fmt(p.ink));
         let pos = world.agent.position;
-        let rest = if wide {
+        let rest = if world.rlva.has("showloc") {
+            String::new()
+        } else if wide {
             format!(
                 ", {} ({}, {}, {})",
                 world.region_name(),

@@ -473,6 +473,7 @@ fn preview(world: &World, line: &crate::world::ChatLine, named: bool) -> String 
     let own = world.own_name();
     let name = super::sender_name(world, &own, line);
     let (text, _) = super::line_body(line, &name);
+    let text = world.rlva_filter_text(&text).into_owned();
     let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     if emote || line.kind.is_notice() {

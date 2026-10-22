@@ -211,6 +211,14 @@ impl DepthPick {
         self.request = Some((x, y));
     }
 
+    /// Queued copies without a GPU slot refer to the old target dimensions.
+    /// Already submitted readbacks retain their own matrices and remain valid.
+    pub fn scene_changed(&mut self) {
+        self.click_answers
+            .extend(self.click_queue.drain(..).map(|(ticket, _, _)| (ticket, None)));
+        self.latest = None;
+    }
+
     /// The last hover answer (None for the sky or not yet known).
     pub fn latest(&self) -> Option<Vec3> {
         self.latest

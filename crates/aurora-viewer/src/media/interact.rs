@@ -172,13 +172,21 @@ impl MediaManager {
     }
 
     /// May the agent interact with this face (perms_interact)?
-    fn may_interact(&self, world: &World, key: &MediaKey) -> bool {
+    fn may_interact(&self, world: &World, key: &MediaKey, position: Option<Vec3>) -> bool {
         let MediaKey::Prim { object, .. } = key else {
             return false;
         };
         let Some(om) = self.objects.get(object) else {
             return false;
         };
+        if world.rlva.enabled()
+            && !world
+                .objects
+                .get(om.idx)
+                .is_some_and(|o| world.rlva_can_touch_at(o.key.region, o.key.local_id, position))
+        {
+            return false;
+        }
         let Some(entry) = self.find(key).and_then(|m| m.entry.as_ref()) else {
             return false;
         };
@@ -208,13 +216,15 @@ impl MediaManager {
             self.unfocus();
             return false;
         };
-        if !self.may_interact(world, &hit.key) {
+        let position = Some(ray.0 + ray.1 * hit.t);
+        if !self.may_interact(world, &hit.key, position) {
             return false;
         }
         let already = self.focus == Some(hit.key);
         if !already {
             self.unfocus();
             self.focus = Some(hit.key);
+            self.last_surface = position;
             let Some(m) = self.find_mut(&hit.key) else {
                 return false;
             };
@@ -237,6 +247,7 @@ impl MediaManager {
                 return true;
             }
         }
+        self.last_surface = position;
         if let Some((x, y)) = self.pixel(&hit.key, hit.st) {
             self.last_pixel = Some((x, y));
             if let Some(m) = self.find_mut(&hit.key)
@@ -277,6 +288,12 @@ impl MediaManager {
     ) -> Option<String> {
         let focus = self.focus?;
         let hit = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud).filter(|h| h.key == focus)?;
+        let position = Some(ray.0 + ray.1 * hit.t);
+        if !self.may_interact(world, &focus, position) {
+            self.unfocus();
+            return None;
+        }
+        self.last_surface = position;
         let (x, y) = self.pixel(&focus, hit.st)?;
         if self.last_pixel != Some((x, y)) {
             self.last_pixel = Some((x, y));
@@ -304,6 +321,12 @@ impl MediaManager {
         let Some(hit) = self.hit_test(world, scene, ray.0, ray.1, depth_t, hud).filter(|h| h.key == focus) else {
             return false;
         };
+        let position = Some(ray.0 + ray.1 * hit.t);
+        if !self.may_interact(world, &focus, position) {
+            self.unfocus();
+            return false;
+        }
+        self.last_surface = position;
         let Some((x, y)) = self.pixel(&focus, hit.st) else {
             return false;
         };
@@ -317,6 +340,7 @@ impl MediaManager {
     /// A key while a media has focus (true: used). Escape releases it.
     pub fn on_key(
         &mut self,
+        world: &World,
         code: winit::keyboard::KeyCode,
         scancode: u32,
         pressed: bool,
@@ -324,6 +348,7 @@ impl MediaManager {
         text: Option<&str>,
         mods: Modifiers,
     ) -> bool {
+        self.enforce_focus(world);
         if self.focus.is_none() {
             return false;
         }
@@ -338,6 +363,17 @@ impl MediaManager {
     }
 
     /// Release the focus (LLViewerMediaFocus::clearFocus).
+    pub fn enforce_focus(&mut self, world: &World) {
+        if world.rlva.enabled()
+            && self
+                .focus
+                .is_some_and(|key| matches!(key, MediaKey::Prim { .. }) && !self.may_interact(world, &key, self.last_surface))
+        {
+            self.unfocus();
+        }
+    }
+
+    /// Release the focus (LLViewerMediaFocus::clearFocus).
     pub fn unfocus(&mut self) {
         if let Some(m) = self.focused_mut() {
             m.mouse_down = false;
@@ -347,5 +383,6 @@ impl MediaManager {
         }
         self.focus = None;
         self.last_pixel = None;
+        self.last_surface = None;
     }
 }

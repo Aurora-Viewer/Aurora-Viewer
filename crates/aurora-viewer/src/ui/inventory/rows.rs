@@ -256,6 +256,7 @@ pub(super) fn scroll(
     // The ancestors of a revealed row open until it is shown.
     st.plain.open_all(st.reveal_path.iter().copied());
     st.plain.prepare(&st.view, inv, root, show_root, prefs.show_library);
+    let navigated = keyboard::navigate(ui, inv, st, false);
     for id in &st.plain.listed_open {
         if inv
             .folders
@@ -267,6 +268,9 @@ pub(super) fn scroll(
     }
     let height_of_row = row_height(st);
     let pitch = height_of_row + ui.spacing().item_spacing.y;
+    if navigated && let Some(index) = st.selected.and_then(|id| st.plain.position(id)) {
+        offset = Some(keyboard::scroll_offset(st, index, height_of_row, pitch, height));
+    }
     if let Some(index) = st.reveal.and_then(|id| st.plain.position(id)) {
         // Bring it in sight; the row centres itself once drawn.
         offset = Some((index as f32 * pitch - height / 2.0).max(0.0));
@@ -310,6 +314,7 @@ pub(super) fn scroll(
         ui.set_min_width(st.plain.width);
     });
     st.plain_scroll = out.state.unclamped_offset().y;
+    st.list_viewport = Some((out.state.unclamped_offset().y, out.inner_rect.height()));
     drag::navigation::scroll(ui, &out, st.ui_id);
     out
 }

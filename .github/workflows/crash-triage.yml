@@ -1,0 +1,51 @@
+name: Crash triage
+
+# A crash report sent from the viewer's crash window carries the
+# `<!-- aurora-crash v1 -->` marker (docs/BUG_REPORTING.md, "Crash triage"):
+# its stack is symbolized with the symbol file of its release, the issue is
+# signed and, when an open issue already has the same signature, closed as
+# its duplicate. The script reads the issue through the API: its text never
+# reaches a command line. Run by hand with an issue number to triage again
+# (symbols published later, a script fix). Pull requests that change the
+# triage run its fixture tests.
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number
+        required: true
+        type: number
+  pull_request:
+    paths:
+      - .github/workflows/crash-triage.yml
+      - scripts/crash-triage.ps1
+      - scripts/test-crash-triage.ps1
+      - scripts/tools/crash-triage.ps1
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  triage:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'issues' && contains(github.event.issue.body, '<!-- aurora-crash v1 -->'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Triage
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: ./scripts/crash-triage.ps1 -Issue $env:ISSUE
+
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fixture tests
+        shell: pwsh
+        run: ./scripts/test-crash-triage.ps1

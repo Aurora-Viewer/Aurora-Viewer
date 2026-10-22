@@ -1613,10 +1613,16 @@ impl WorldMapUi {
             .and_then(|t| world.map.sim_at_global(t.x, t.y))
             .map(|(k, s)| (k, s.clone()));
         let landmark = self.landmark.clone();
-        let title = if let Some((_, _, n)) = &landmark {
+        let title = if world.rlva.has("showloc") && landmark.is_none() && avatar.is_none() {
+            aurora_i18n::tr!("rlva-hidden-region").to_owned()
+        } else if let Some((_, _, n)) = &landmark {
             n.clone()
         } else if let Some(a) = &avatar {
-            a.name.clone()
+            if world.rlva_can_name(a.id) {
+                a.name.clone()
+            } else {
+                world.social.name_of(&a.id)
+            }
         } else if let Some((_, s)) = &region {
             s.name.clone()
         } else if track.as_ref().is_some_and(|t| t.pending) {
@@ -1655,18 +1661,22 @@ impl WorldMapUi {
         }
         let detail = parts.join(" · ");
         // the parcel there, as Firestorm's map asks it for a spot
-        if landmark.is_none() && avatar.is_none() {
+        if landmark.is_none() && avatar.is_none() && !world.rlva.has("showloc") {
             world.map.want_track_parcel();
         }
         let parcel = world
             .map
             .track_parcel_id()
-            .filter(|_| landmark.is_none() && avatar.is_none())
+            .filter(|_| landmark.is_none() && avatar.is_none() && !world.rlva.has("showloc"))
             .and_then(|id| world.profiles.parcels.get(&id))
             .map(|p| p.name.trim().to_owned())
             .filter(|n| !n.is_empty())
             .map(|name| aurora_i18n::tr!("ui-worldmap-parcel", name = name).to_string());
-        let tooltip = track.as_ref().map(|t| t.tooltip.clone()).filter(|t| !t.is_empty());
+        let tooltip = track
+            .as_ref()
+            .map(|t| t.tooltip.clone())
+            .filter(|t| !t.is_empty() && !world.rlva.has("showloc"));
+        let detail = if world.rlva.has("showloc") { String::new() } else { detail };
         // its picture
         let thumb_id = landmark
             .as_ref()
@@ -1739,7 +1749,9 @@ impl WorldMapUi {
         });
         // the position in the region, and how far it is
         let mut edited: Option<(f64, f64, f32, bool)> = None;
-        if let (Some(t), Some((k, _))) = (&track, &region) {
+        if let (Some(t), Some((k, _))) = (&track, &region)
+            && !world.rlva.has("showloc")
+        {
             ui.add_space(8.0);
             let l = local(t, *k);
             let (mut lx, mut ly, mut lz) = (l.x, l.y, l.z);
@@ -1790,7 +1802,7 @@ impl WorldMapUi {
                 aurora_i18n::tr!("common-copy-slurl"),
                 ActionKind::Flat,
                 h,
-                slurl.is_some(),
+                slurl.is_some() && !world.rlva.has("showloc"),
             )
             .clicked();
             info = widgets::action_button_if(
@@ -1800,7 +1812,7 @@ impl WorldMapUi {
                 aurora_i18n::tr!("ui-worldmap-info"),
                 ActionKind::Flat,
                 h,
-                source.is_some(),
+                source.is_some() && !world.rlva.has("showloc"),
             )
             .on_hover_text(aurora_i18n::tr!("ui-worldmap-info-help"))
             .clicked();
@@ -1848,10 +1860,16 @@ impl WorldMapUi {
                 _ => {}
             }
         }
-        if copy && let Some(u) = slurl {
+        if copy
+            && !world.rlva.has("showloc")
+            && let Some(u) = slurl
+        {
             ctx.copy_text(u);
         }
-        if info && let Some(s) = source {
+        if info
+            && !world.rlva.has("showloc")
+            && let Some(s) = source
+        {
             actions.push(WorldMapAction::OpenPlace(s));
         }
         if show && let Some(t) = &track {

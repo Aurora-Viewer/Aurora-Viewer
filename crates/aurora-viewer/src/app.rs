@@ -76,6 +76,7 @@ mod region_restart;
 mod region_window;
 mod report_abuse;
 mod reset_skeleton;
+mod rlva;
 mod script_clicks;
 mod scripts;
 mod settings_backup;
@@ -83,6 +84,7 @@ mod shape_editor;
 mod snapshot;
 mod social_menu_demo;
 mod task_notecards;
+mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
@@ -422,6 +424,9 @@ pub struct App {
     loading_frac: f32,
     loading_target: f32,
     frame_count: u64,
+    demo_rlva_frame: Option<u64>,
+    rlva_login: crate::world::rlva::login::State,
+    named_teleport: teleport_lookup::NamedTeleport,
     /// Refresh rate of the screen the window is on, followed while it runs.
     screen_rate: crate::screen_rate::ScreenRate,
     /// The window has the keyboard focus (background frame cap).
@@ -584,6 +589,8 @@ pub struct App {
     /// Other interface images by asset id (profiles: 1st life picture,
     /// group insignias).
     ui_images: std::collections::HashMap<uuid::Uuid, egui::TextureHandle>,
+    ui_image_masks: std::collections::HashMap<uuid::Uuid, crate::world::rlva::effects::AlphaMask>,
+    rlva_overlay_slots: std::collections::HashMap<uuid::Uuid, u32>,
     /// Avatar profile windows.
     profile_ui: ui::profile::ProfileUi,
     /// "Location details" windows (standalone place profiles).
@@ -1007,6 +1014,13 @@ impl App {
             loading_frac: 0.0,
             loading_target: 0.0,
             frame_count: 0,
+            demo_rlva_frame: None,
+            rlva_login: if std::env::var("AURORA_DEMO").as_deref() == Ok("1") {
+                Default::default()
+            } else {
+                crate::world::rlva::login::State::load(crate::settings::config_dir().join("rlva-login.json"))
+            },
+            named_teleport: Default::default(),
             screen_rate: Default::default(),
             focused: true,
             backdrop,
@@ -1108,6 +1122,8 @@ impl App {
             avatar_pics: Default::default(),
             avatar_pic_images: Default::default(),
             ui_images: Default::default(),
+            ui_image_masks: Default::default(),
+            rlva_overlay_slots: Default::default(),
             profile_ui: Default::default(),
             place_ui: Default::default(),
             places_ui: Default::default(),
@@ -1204,6 +1220,60 @@ impl App {
     }
 
     fn send(&mut self, cmd: NetCommand) {
+        self.send_from(cmd, uuid::Uuid::nil());
+    }
+
+    fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        self.world.rlva_configure(self.settings.rlva_enabled);
+        self.world.rlva.preferences.clone_from(&self.settings.rlva);
+        if !self.settings.rlva_enabled {
+            self.named_teleport.cancel_scripts();
+            self.world.maturity.cancel_script_teleports();
+            if !actor.is_nil() {
+                return;
+            }
+        }
+        self.world.rlva_prepare_outfit(&mut cmd, actor);
+        if !actor.is_nil() && !self.world.rlva_normalize_teleport(&mut cmd) {
+            return;
+        }
+        if let NetCommand::OfferTeleport { to, .. } = &mut cmd {
+            self.world.rlva_filter_teleport_offer(to);
+        }
+        let im_placeholder = actor.is_nil() && self.world.rlva_prepare_outgoing_im(&mut cmd);
+        if !im_placeholder && !self.world.rlva_allows_command(&cmd, actor) {
+            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            return;
+        }
+        if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
+            self.world.group_data.title_sent(*group, *role);
+        }
+        self.world.rlva_note_attachment_command(&cmd, actor, Instant::now());
+        self.world.rlva.note_sit_command(&cmd, actor);
+        if self.world.rlva.enabled()
+            && let NetCommand::RezAttachments(items) = &mut cmd
+        {
+            for item in items {
+                item.add = true;
+            }
+        }
+        let cmd = if let NetCommand::Chat {
+            message,
+            channel,
+            chat_type,
+        } = cmd
+        {
+            let mut outgoing = self.world.rlva.outgoing_chat(&message, channel, chat_type).into_iter();
+            let Some(first) = outgoing.next() else {
+                return;
+            };
+            for command in outgoing {
+                self.net.send(command);
+            }
+            first
+        } else {
+            cmd
+        };
         if let Some(flags) = self.native_anchor.observe(&cmd, self.world.agent.seated, Instant::now()) {
             let release = self.native_anchor.command(flags);
             self.send(release);
@@ -1222,6 +1292,7 @@ impl App {
         }
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
         // preference is not in sync with the server (TELEPORT_PENDING)
+        self.named_teleport.observe(&cmd, actor);
         if !self.world.maturity.synced()
             && matches!(
                 cmd,
@@ -1233,7 +1304,7 @@ impl App {
             )
         {
             log::info!("teleport: waiting for the maturity preference");
-            self.world.maturity.hold(cmd);
+            self.world.maturity.hold(cmd, actor);
             return;
         }
         // AURORA_DEMO_EXPERIENCE: the simulator and the capabilities
@@ -1962,6 +2033,18 @@ impl App {
             },
             _ => StartLocation::Last,
         });
+        let catalog_key = (self.settings.login_uri(), self.settings.username.trim().to_lowercase());
+        let login_agent = self
+            .login_form
+            .accounts
+            .iter()
+            .find(|account| account.key() == catalog_key)
+            .and_then(|account| account.agent);
+        let start = if self.rlva_login.requires_last(self.settings.rlva_enabled, login_agent) {
+            StartLocation::Last
+        } else {
+            start
+        };
         let (mac, id0) = self.settings.hashed_ids();
         // typed password first, else the remembered one (already hashed)
         let password = match (&self.login_form.stored, self.login_form.password.is_empty()) {
@@ -2100,6 +2183,26 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if self.world.rlva_offer_event(&ev) || self.world.rlva_rename_event(&ev, Instant::now()) {
+            if let NetEvent::InventoryEdited { request, .. } = ev {
+                self.world_edits.remove(&request);
+            }
+            return;
+        }
+        if let NetEvent::TeleportRegionResolved { request, result } = ev {
+            if !self.settings.rlva_enabled {
+                self.named_teleport.cancel_scripts();
+            }
+            if let Some((actor, result)) = self.named_teleport.resolve(request, result) {
+                match result {
+                    Ok(command) => self.send_deferred_teleport(command, actor),
+                    Err(reason) => {
+                        self.world.apply(NetEvent::TeleportFailed { reason });
+                    }
+                }
+            }
+            return;
+        }
         if self.world.received_items_event(&ev) {
             return;
         }
@@ -2294,6 +2397,7 @@ impl App {
                     Ok(reply) => {
                         self.world.inventory.remove(&reply.removed);
                         self.world.inventory.apply(reply.contents);
+                        self.world.inventory.created_folders(reply.folders);
                     }
                     Err(reason) => log::warn!("background inventory change not saved: {reason}"),
                 }
@@ -2399,6 +2503,7 @@ impl App {
         if let NetEvent::OutfitUpdated { request, result } = ev {
             if self.appearance_ui.pending.is_some_and(|(id, _)| id == request) {
                 let sync = self.appearance_ui.pending.take().is_some_and(|(_, sync)| sync);
+                let actor = std::mem::take(&mut self.appearance_ui.pending_actor);
                 match result {
                     Ok(contents) => {
                         self.world.inventory.apply(contents);
@@ -2418,7 +2523,7 @@ impl App {
                                 crate::world::appearance::apply_attachment_override(&mut commands, attachment);
                             }
                             for cmd in commands {
-                                self.send(cmd);
+                                self.send_from(cmd, actor);
                             }
                         }
                     }
@@ -2520,6 +2625,7 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.named_teleport = Default::default();
                 if !self.demo {
                     let root = self.world.inventory.root;
                     self.inventory_ui.load_received(
@@ -3830,6 +3936,9 @@ impl App {
                     self.world.notifications.restore(&e);
                 }
                 Follow::Conversation(session) => {
+                    if !self.world.rlva_start_ims(&[session]) {
+                        return;
+                    }
                     if !self.world.social.ims.iter().any(|s| s.other == session) {
                         self.world.social.session_mut(session);
                     }
@@ -4393,15 +4502,29 @@ impl App {
     fn teleport_to_location(&mut self, region: String, pos: Vec3) {
         let here = self.world.region_name();
         let local = region.eq_ignore_ascii_case(&here);
+        let command = if local {
+            let Some(handle) = self.world.main_region else {
+                return;
+            };
+            NetCommand::TeleportTo {
+                handle,
+                position: pos,
+                look_at: Vec3::X,
+            }
+        } else {
+            NetCommand::TeleportToRegion {
+                request: uuid::Uuid::new_v4(),
+                name: region.clone(),
+                position: pos,
+                look_at: Vec3::X,
+            }
+        };
+        if !self.user_teleport_allowed(&command) {
+            return;
+        }
         self.begin_teleport(format!("{} ({:.0}, {:.0}, {:.0})", region, pos.x, pos.y, pos.z), !local);
         if local {
-            if let Some(handle) = self.world.main_region {
-                self.send(NetCommand::TeleportTo {
-                    handle,
-                    position: pos,
-                    look_at: Vec3::X,
-                });
-            }
+            self.send(command);
         } else if self.demo {
             // Only inter-region demo teleports simulate a connection delay.
             aurora_net::transition::begin(
@@ -4412,10 +4535,7 @@ impl App {
             self.demo_tp_start = Some(Instant::now());
             self.demo_tp_dest = Some(pos);
         } else {
-            self.send(NetCommand::TeleportToRegion {
-                name: region,
-                position: pos,
-            });
+            self.send(command);
         }
     }
 
@@ -4431,7 +4551,11 @@ impl App {
         if !self.in_world() || self.world.teleporting || !self.radar.due(now) {
             return;
         }
-        let mut seen = crate::world::radar::sightings(&self.world);
+        let mut seen = if self.world.rlva.has("shownearby") {
+            Vec::new()
+        } else {
+            crate::world::radar::sightings(&self.world)
+        };
         let endpoint = self.sync_bridge_queries();
         if let Some(command) =
             self.bridge_services
@@ -4473,6 +4597,9 @@ impl App {
             events.extend(self.radar.age_alerts(i64::from(s.age_alert_days), |id| {
                 profiles.get(id).and_then(|p| ui::people::age_days(p, today))
             }));
+        }
+        if self.world.rlva.has("shownearby") {
+            events.clear();
         }
         for event in events {
             let meters = |d: f32| aurora_i18n::number(f64::from(d), 2);
@@ -5046,10 +5173,42 @@ impl App {
         }
     }
 
-    /// Show progress only for a known destination outside the current region.
-    /// Unlike Firestorm's fallback for an unresolved landmark, wait for the
-    /// server's destination before showing a screen for an unknown destination,
-    /// so even these local teleports remain direct.
+    /// RlvActions::canTeleport*: reject before UI and demo side effects.
+    fn user_teleport_allowed(&mut self, command: &NetCommand) -> bool {
+        self.world.rlva_configure(self.settings.rlva_enabled);
+        self.world.rlva.preferences.clone_from(&self.settings.rlva);
+        if self.world.rlva_allows_command(command, uuid::Uuid::nil()) {
+            true
+        } else {
+            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            false
+        }
+    }
+
+    /// Preflight before UI/simulation side effects, including offline demos.
+    fn request_user_teleport(&mut self, command: NetCommand, dest: String, show_progress: bool) -> bool {
+        if self.user_teleport_allowed(&command) {
+            self.begin_teleport(dest, show_progress);
+            self.send(command);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// A named lookup or maturity response can arrive after a new lock.
+    /// Finish the matching user's progress/history through the normal failure
+    /// path when that delayed action is refused; scripts retain their actor.
+    fn send_deferred_teleport(&mut self, command: NetCommand, actor: uuid::Uuid) {
+        if actor.is_nil() && !self.user_teleport_allowed(&command) {
+            self.world.apply(NetEvent::TeleportFailed {
+                reason: aurora_i18n::tr!("rlva-blocked").into(),
+            });
+        } else {
+            self.send_from(command, actor);
+        }
+    }
+
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
         self.drop_clicks();
         self.stop_autopilot(true);
@@ -5080,12 +5239,17 @@ impl App {
         if let Some(e) = dest {
             self.world
                 .system_message(aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()));
-            self.begin_teleport(e.region.clone(), Some(e.handle) != self.world.main_region);
-            self.send(NetCommand::TeleportTo {
-                handle: e.handle,
-                position: e.position,
-                look_at: Vec3::X,
-            });
+            if !self.request_user_teleport(
+                NetCommand::TeleportTo {
+                    handle: e.handle,
+                    position: e.position,
+                    look_at: Vec3::X,
+                },
+                e.region.clone(),
+                Some(e.handle) != self.world.main_region,
+            ) {
+                self.world.tp_history.failed();
+            }
         }
     }
 
@@ -5111,6 +5275,9 @@ impl App {
 
     /// "Always run" (Ctrl+R, the Controls window's Walk and Run).
     fn set_always_run(&mut self, on: bool) {
+        if on && self.world.rlva.has("alwaysrun") {
+            return;
+        }
         if on == self.always_run {
             return;
         }
@@ -5126,7 +5293,9 @@ impl App {
     /// Preferences › Camera › "Reset all", and the Controls window's reset:
     /// every camera setting back to its default, the view behind the avatar.
     fn reset_camera_all(&mut self) {
+        let before = self.settings.camera.clone();
         self.settings.camera = crate::camera::CameraSettings::default();
+        self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before);
         self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
     }
 
@@ -5134,6 +5303,9 @@ impl App {
     /// the FLY flag changes. No STOP with it: that flag brakes the avatar,
     /// and the fall must keep the flight's momentum, as in Firestorm.
     fn toggle_fly(&mut self) {
+        if !self.world.agent.flying && self.world.rlva.has("fly") {
+            return;
+        }
         self.release_native_movelock();
         self.movement_runtime.cancel_water_exit();
         self.world.agent.flying = !self.world.agent.flying;
@@ -5145,6 +5317,16 @@ impl App {
     /// LLFloater::setFocus → focusFirstItem). Openings that come from calls
     /// set `focus_im` alone and leave the keyboard where it is.
     pub(super) fn open_conversation_to_type(&mut self, id: uuid::Uuid) {
+        if !self.world.rlva_start_ims(&[id]) {
+            return;
+        }
+        // Create only after checking startim: pre-creating the session would
+        // incorrectly qualify every target for the open-session exemption.
+        if !self.world.is_group_session(&id) && !self.world.groups.is_member(&id) {
+            self.world.social.session_mut(id);
+            self.world.met(id);
+            self.world.ui_sounds.push(UiSound::StartIm);
+        }
         self.world.social.focus_im = Some(id);
         self.chat_ui.conv_focus_request = true;
         self.show_conversations();
@@ -5325,6 +5507,12 @@ impl App {
             i.strafe_right = false;
         }
         i.run = self.temp_run.is_some();
+        if self.world.rlva.has("temprun") {
+            i.run = false;
+        }
+        if self.world.rlva.has("jump") && !self.world.agent.flying {
+            i.up = false;
+        }
         // nudge phase: the first 0.25 s of a press makes small steps
         let now = Instant::now();
         let since = |s: &mut Option<Instant>, held: bool| -> bool {
@@ -5342,6 +5530,7 @@ impl App {
             let held = self.up_since.get_or_insert(now).elapsed().as_secs_f32();
             if held > FLY_TIME
                 && self.movement_runtime.native_fly_allowed()
+                && !self.world.rlva.has("fly")
                 && !self.world.agent.flying
                 && !self.world.agent.seated
                 && self.in_world()
@@ -5542,8 +5731,6 @@ impl App {
                 _ => {}
             },
             ContactsAction::Im(id) => {
-                self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.social.session_mut(id);
                 self.open_conversation_to_type(id);
             }
             ContactsAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
@@ -5674,6 +5861,27 @@ impl App {
         images.extend(self.env_editor.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
         images.extend(self.favorite_images.drain());
+        let overlays = self.world.rlva_overlay_frames(Instant::now());
+        self.rlva_overlay_slots.retain(|id, _| {
+            let keep = overlays.iter().any(|frame| frame.texture == *id);
+            if !keep {
+                self.scene.textures.release(id);
+            }
+            keep
+        });
+        for frame in &overlays {
+            self.rlva_overlay_slots.entry(frame.texture).or_insert_with(|| {
+                self.scene
+                    .textures
+                    .acquire(renderer, frame.texture, crate::scene::textures::TexSource::Asset)
+            });
+        }
+        images.extend(
+            self.world
+                .rlva_overlay_frames(Instant::now())
+                .into_iter()
+                .map(|frame| frame.texture),
+        );
         for note in self.task_notecards.values_mut() {
             images.extend(note.state.wanted_images.drain());
         }
@@ -5686,6 +5894,9 @@ impl App {
                 && rgba.len() == (w * h * 4) as usize
             {
                 let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                if let Some(mask) = crate::world::rlva::effects::AlphaMask::from_rgba(w, h, &rgba) {
+                    self.ui_image_masks.insert(image, mask);
+                }
                 let t = self.egui_ctx.load_texture(format!("img-{image}"), ci, egui::TextureOptions::LINEAR);
                 self.ui_images.insert(image, t);
             }
@@ -5878,8 +6089,22 @@ impl App {
         self.update_places();
         // the maturity preference's requests, and the teleport that waited
         // for it
-        for c in self.world.maturity.take_commands() {
-            self.send(c);
+        if !self.settings.rlva_enabled {
+            self.world.maturity.cancel_script_teleports();
+        }
+        for (actor, c) in self.world.maturity.take_commands() {
+            if matches!(
+                c,
+                NetCommand::TeleportTo { .. }
+                    | NetCommand::TeleportToRegion { .. }
+                    | NetCommand::TeleportHome
+                    | NetCommand::TeleportLandmark(_)
+                    | NetCommand::AcceptLure { .. }
+            ) {
+                self.send_deferred_teleport(c, actor);
+            } else {
+                self.send_from(c, actor);
+            }
         }
         // Preferences › Privacy's account settings
         for c in self.world.user_info.take_commands() {
@@ -5901,16 +6126,19 @@ impl App {
         self.world.refresh_teleport_places();
         for c in self.world.teleport_invites.take_commands() {
             if matches!(c, NetCommand::AcceptLure { .. }) {
-                self.begin_teleport(String::new(), false);
+                self.request_user_teleport(c, String::new(), false);
+            } else {
+                self.send(c);
             }
-            self.send(c);
         }
         for c in self.world.map.take_commands() {
             if let NetCommand::TeleportTo { handle, .. } = &c {
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
-                self.begin_teleport(dest, Some(*handle) != self.world.main_region);
+                let show = Some(*handle) != self.world.main_region;
+                self.request_user_teleport(c, dest, show);
+            } else {
+                self.send(c);
             }
-            self.send(c);
         }
         self.minimap_ui.prune(&self.world);
         // parcel overlays of regions we left (their lines would be stale on return)
@@ -5921,6 +6149,7 @@ impl App {
     fn frame(&mut self, event_loop: &ActiveEventLoop) {
         aurora_render::frame_priority::apply();
         self.world.anti_spam.configure(self.settings.anti_spam);
+        self.update_rlva();
         if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_ANTI_SPAM").is_some() {
             for event in crate::demo::anti_spam::events(self.world.agent_id) {
                 if let Some(event) = self.world.apply(event) {
@@ -6162,7 +6391,11 @@ impl App {
                 self.world.status.cfg = self.settings.autoresponse.clone();
             }
             // AFKTimeout: away after some idle time, back on the next input
-            let idle_limit = self.settings.autoresponse.away_after_minutes as u64 * 60;
+            let idle_limit = if self.world.rlva.has("allowidle") {
+                30 * 60
+            } else {
+                self.settings.autoresponse.away_after_minutes as u64 * 60
+            };
             if idle_limit > 0 && !self.world.status.away && self.last_input.elapsed().as_secs() >= idle_limit {
                 self.world.set_away(true);
                 self.auto_away = true;
@@ -6332,6 +6565,7 @@ impl App {
             }
             let frame = crate::camera::FrameInput {
                 dt,
+                aspect: self.camera_aspect(),
                 now: Instant::now(),
                 steering: self.mouse_mode == MouseMode::Steer,
                 build_mode: self.build.open,
@@ -6379,7 +6613,7 @@ impl App {
             }
             // send_agent_update: Alt or Ctrl turns script clicks into releases
             c.alt_or_ctrl = self.alt || self.ctrl;
-            if self.chat_ui.local_typing() {
+            if self.chat_ui.local_typing() && self.world.rlva.can_send_typing_start() {
                 c.state |= aurora_net::AGENT_STATE_TYPING;
             }
             // diagnostic: vertical controls sent to the simulator
@@ -6393,6 +6627,15 @@ impl App {
                     self.world.agent.server_pos.z
                 );
                 self.last_vertical_flags = vertical;
+            }
+            if self.world.rlva.has("unsit") {
+                c.control_flags &= !control::STAND_UP;
+            }
+            if self.world.rlva.has("sit") || (self.world.agent.is_sitting() && self.world.rlva.has("unsit")) {
+                c.control_flags &= !control::SIT_ON_GROUND;
+            }
+            if !self.world.agent.flying && self.world.rlva.has("jump") {
+                c.control_flags &= !control::UP_POS;
             }
             self.net.set_controls(c);
         }
@@ -6467,7 +6710,13 @@ impl App {
                 self.settings.debug.show_alpha_rigged = alpha.unwrap_or(false);
             }
             let debug_alpha = match self.settings.debug {
-                d if d.show_alpha => Some(d.show_alpha_rigged),
+                d if d.show_alpha
+                    && !self.world.rlva.has("viewtransparent")
+                    && !self.world.rlva.has("edit")
+                    && !self.world.rlva.has("showloc") =>
+                {
+                    Some(d.show_alpha_rigged)
+                }
                 _ => None,
             };
             self.scene.set_debug_alpha(&mut self.world, debug_alpha);
@@ -7096,6 +7345,21 @@ impl App {
             aurora_render::ProbeFrame::default()
         };
         let fp = FrameParams {
+            rlva_resolution_divisor: self.world.rlva.resolution_divisor.unwrap_or(1),
+            rlva_overlays: self
+                .world
+                .rlva_overlay_frames(Instant::now())
+                .into_iter()
+                .filter_map(|frame| {
+                    self.rlva_overlay_slots
+                        .get(&frame.texture)
+                        .map(|slot| aurora_render::OverlayEffect {
+                            color: frame.color,
+                            texture: [*slot, 0, 0, 0],
+                        })
+                })
+                .collect(),
+            rlva_spheres: self.world.rlva_sphere_frames(self.camera.position, Instant::now()),
             selection_color: egui::Rgba::from(self.palette.violet_light).to_array(),
             rez_gradient: {
                 // AURORA_REZ_STYLE=1|2|3: the effect's look (grid, scanlines,
@@ -7152,7 +7416,7 @@ impl App {
             water: env.water,
             mirror,
             probes,
-            wireframe: self.settings.debug.wireframe,
+            wireframe: self.settings.debug.wireframe && !self.world.rlva.has("viewwireframe") && !self.world.rlva_has_locked_hud(),
             debug_glow: self.settings.debug.glow_view,
             blend_late_discard: self.frame_profile.blend_late_discard(),
             all_lights: self.frame_profile.all_lights(),
@@ -7195,7 +7459,15 @@ impl App {
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
-                        "rename" | "new-script" | "new-note" | "new-folder" | "resize-left" | "resize-right"
+                        "rename"
+                            | "new-script"
+                            | "new-note"
+                            | "new-folder"
+                            | "resize-left"
+                            | "resize-right"
+                            | "keyboard"
+                            | "aurora-keyboard"
+                            | "aurora-keyboard-wide"
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
                 }))
@@ -8815,8 +9087,15 @@ impl App {
                     (KeyCode::KeyA, "a"),
                 ][k / 2];
                 let mods = aurora_media::Modifiers::default();
-                self.media
-                    .on_key(code, 0x1E, k.is_multiple_of(2), false, k.is_multiple_of(2).then_some(ch), mods);
+                self.media.on_key(
+                    &self.world,
+                    code,
+                    0x1E,
+                    k.is_multiple_of(2),
+                    false,
+                    k.is_multiple_of(2).then_some(ch),
+                    mods,
+                );
             }
         }
         // AURORA_DEMO_CAMERA="alt,x,y" (pan, zoom, ml, wheel, fly): camera/demo.rs
@@ -9034,6 +9313,10 @@ impl App {
     /// drawn (`ChatUi::local_typing_update`).
     fn update_local_typing(&mut self) {
         self.chat_ui.type_during_emote = self.settings.type_during_emote;
+        if !self.world.rlva.can_send_typing_start() {
+            self.stop_local_typing();
+            return;
+        }
         // AURORA_DEMO_TYPING: we type from our arrival on, no key needed
         if self.demo && crate::demo::typing_scenario() && matches!(self.screen, Screen::World) {
             if self.chat_ui.hold_local_typing(Instant::now()) {
@@ -9051,6 +9334,9 @@ impl App {
     /// notice on channel 0 for those in range. AGENT_STATE_TYPING follows
     /// in the agent updates (`ChatUi::local_typing`).
     fn send_local_typing(&mut self, typing: bool) {
+        if typing && !self.world.rlva.can_send_typing_start() {
+            return;
+        }
         log::info!("nearby chat: typing {}", if typing { "started" } else { "stopped" });
         if !typing || self.settings.play_typing_anim {
             self.send(NetCommand::AgentAnimation {
@@ -9151,12 +9437,20 @@ impl App {
         }
         // the invitation to edit first (handle_lure), for all those chosen
         if !a.offer_tp.is_empty() {
-            self.contacts_ui.ask_teleport_offer(a.offer_tp, &self.world.region_name());
+            let ids = a
+                .offer_tp
+                .into_iter()
+                .filter(|id| self.world.rlva_can_offer_teleport(*id))
+                .collect();
+            self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_region_label());
         }
         if let Some(asset) = a.landmark {
             self.record_library_asset(asset, 3);
-            self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
-            self.send(NetCommand::TeleportLandmark(asset));
+            self.request_user_teleport(
+                NetCommand::TeleportLandmark(asset),
+                aurora_i18n::tr!("common-landmark").into(),
+                false,
+            );
         }
         if a.cancel_loading {
             self.release_bridge();
@@ -9190,6 +9484,10 @@ impl App {
                 self.egui_ctx.request_repaint();
             }
             BarAction::ShowHuds(visible) => {
+                if !visible && self.world.rlva_has_locked_hud() {
+                    self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+                    return;
+                }
                 if self.hud_drag.is_some() {
                     self.on_left_release();
                 }
@@ -9224,8 +9522,7 @@ impl App {
                 self.request_exit();
             }
             BarAction::TeleportHome => {
-                self.begin_teleport(aurora_i18n::tr!("common-home").into(), false);
-                self.send(NetCommand::TeleportHome);
+                self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
             }
             BarAction::SetHome => {
                 if let Some(cmd) = self.world.set_home_here() {
@@ -9324,6 +9621,9 @@ impl App {
                 self.snapshots.settings_changed = true;
             }
             BarAction::CameraPreset(preset) => {
+                if self.world.rlva.camera_preset_locked(uuid::Uuid::nil()) {
+                    return;
+                }
                 // as the camera controls' presets (LLFloaterCamera::switchToPreset)
                 self.settings.camera.apply_preset(preset);
                 self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
@@ -9403,8 +9703,11 @@ impl App {
         match action {
             // LLFavoritesBarCtrl::onButtonClick: no confirmation
             FavAction::Teleport(asset) => {
-                self.begin_teleport(aurora_i18n::tr!("common-landmark").into(), false);
-                self.send(NetCommand::TeleportLandmark(asset));
+                self.request_user_teleport(
+                    NetCommand::TeleportLandmark(asset),
+                    aurora_i18n::tr!("common-landmark").into(),
+                    false,
+                );
             }
             FavAction::ShowOnMap(g) => {
                 self.world.map.track_location(g.x, g.y, g.z as f32, false);
@@ -9651,6 +9954,9 @@ impl App {
     /// Place, the Places "add" entries and About Land's Landmark button;
     /// `dest` is the folder chosen in Places.
     pub(super) fn open_create_landmark(&mut self, dest: Option<uuid::Uuid>) {
+        if self.world.rlva.has("showloc") {
+            return;
+        }
         if let Some(cmd) = self.create_landmark_ui.open(&self.world, dest) {
             self.send(cmd);
         }
@@ -9873,7 +10179,11 @@ impl App {
                 // LLGroupActions::startCall
                 GroupAction::Call(group) => self.on_ctx_action(ui::context::CtxAction::Call(group)),
                 GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
-                GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
+                GroupAction::SetTitle { group, role } => {
+                    if !self.world.rlva.has("setgroup") {
+                        self.world.group_data.set_title(group, role);
+                    }
+                }
                 GroupAction::SetFlags {
                     group,
                     accept_notices,
@@ -10137,7 +10447,12 @@ impl App {
                 })
                 .collect();
         }
+        self.options_ui.rlva_restrictions = self.world.rlva.restrictions();
+        self.options_ui.rlva_camera_preset_locked = self.world.rlva.camera_preset_locked(uuid::Uuid::nil());
+        self.options_ui.rlva_camera_fov_locked = self.world.rlva.camera_owner().is_some();
+        let before_camera = self.settings.camera.clone();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before_camera);
         // the panels hold the time of day shown and write it back to the
         // settings later in the frame: a choice made here (or by a reset)
         // goes to them first, or it is undone at once (#742)
@@ -10172,6 +10487,7 @@ impl App {
             self.world.anti_spam.unblock(queue, source);
         }
         self.world.anti_spam.configure(self.settings.anti_spam);
+        self.update_rlva();
         if let Some(change) = res.account
             && let Some(cmd) = self.world.change_user_info(change)
         {
@@ -10245,6 +10561,8 @@ impl App {
     }
 
     fn draw_ui(&mut self, ui: &mut egui::Ui, projector: &ui::hud::Projector, renderer: &Renderer) -> UiActions {
+        self.world.refresh_rlva_privacy();
+        self.notif_ui.privacy = self.world.rlva_privacy.clone();
         let mut a = UiActions::default();
         let p = self.palette;
         let ctx = ui.ctx().clone();
@@ -10523,6 +10841,7 @@ impl App {
                     .map(|i| ui::bars::maturity_name(i.sim_access))
                     .unwrap_or("");
                 let status = ui::bars::StatusInfo {
+                    location_hidden: self.world.rlva.has("showloc"),
                     show_bug_report: if self.demo {
                         ui::bars::demo::get().bug.unwrap_or(self.settings.show_bug_report)
                     } else {
@@ -10531,8 +10850,16 @@ impl App {
                     show_huds: self.settings.show_huds,
                     hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,
-                    region: &self.world.region_name(),
-                    parcel: parcel_name,
+                    region: if self.world.rlva.has("showloc") {
+                        aurora_i18n::tr!("rlva-hidden-region")
+                    } else {
+                        &self.world.region_name()
+                    },
+                    parcel: if self.world.rlva.has("showloc") {
+                        aurora_i18n::tr!("rlva-hidden-parcel")
+                    } else {
+                        parcel_name
+                    },
                     maturity,
                     position: self.world.agent.position,
                     fps: self.perf.fps,
@@ -10541,7 +10868,11 @@ impl App {
                     ping_ms: self.net.stats.ping_ms.load(std::sync::atomic::Ordering::Relaxed),
                     balance: self.world.balance,
                     voice: (self.voice.light, self.voice.status.clone()),
-                    slurl: crate::slurl::make(&self.world.region_name(), self.world.agent.position),
+                    slurl: if self.world.rlva.has("showloc") {
+                        String::new()
+                    } else {
+                        crate::slurl::make(&self.world.region_name(), self.world.agent.position)
+                    },
                     tp_back: self.world.tp_history.previous().map(|e| e.region.clone()),
                     tp_forward: self.world.tp_history.next().map(|e| e.region.clone()),
                     status: self.world.status.modes(),
@@ -11291,10 +11622,6 @@ impl App {
                 for pa in people.into_iter().chain(contacts_people) {
                     match pa {
                         ui::people::PeopleAction::OpenIm(id) => {
-                            // LLAvatarActions::startIM: they join the recent people
-                            self.world.met(id);
-                            self.world.ui_sounds.push(UiSound::StartIm);
-                            self.world.social.session_mut(id);
                             self.open_conversation_to_type(id);
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),
@@ -11332,7 +11659,11 @@ impl App {
                             self.search_ui.open_tab(crate::world::search::Tab::Groups);
                         }
                         ui::people::PeopleAction::GroupData(group) => self.world.group_data.open(group, true),
-                        ui::people::PeopleAction::GroupTitle { group, role } => self.world.group_data.set_title(group, role),
+                        ui::people::PeopleAction::GroupTitle { group, role } => {
+                            if !self.world.rlva.has("setgroup") {
+                                self.world.group_data.set_title(group, role);
+                            }
+                        }
                         ui::people::PeopleAction::GroupFlags { group, notices, profile } => {
                             self.world.groups.set_flags(group, notices, profile)
                         }
@@ -11627,11 +11958,12 @@ impl App {
                         continue;
                     }
                     let (cmds, url) = self.world.respond_notification(id, r);
-                    if cmds.iter().any(|c| matches!(c, NetCommand::AcceptLure { .. })) {
-                        self.begin_teleport(String::new(), false);
-                    }
                     for c in cmds {
-                        self.send(c);
+                        if matches!(c, NetCommand::AcceptLure { .. }) {
+                            self.request_user_teleport(c, String::new(), false);
+                        } else {
+                            self.send(c);
+                        }
                     }
                     // only web links (llLoadURL / goto URL), opened after the user's click
                     if let Some(u) = url.filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
@@ -11640,7 +11972,7 @@ impl App {
                 }
                 self.world.record_notification_history();
                 t = self.ui_parts.lap(Part::UiMenus, t);
-                let mut open = self.panels.about_land;
+                let mut open = self.panels.about_land && self.world.rlva_can_view_parcel();
                 // the mini-map's image of the selection's region, for the header
                 let land_map = open
                     .then(|| self.world.land.sel.as_ref().map(|s| s.handle).or(self.world.main_region))
@@ -11673,7 +12005,7 @@ impl App {
                     };
                     ui::widgets::open_floater(&ctx, id, &mut self.panels.region_estate);
                 }
-                let mut open = self.panels.region_estate;
+                let mut open = self.panels.region_estate && self.world.rlva_can_view_region();
                 if open {
                     self.feed_region_window();
                 }
@@ -12048,6 +12380,18 @@ impl App {
                 self.dev_toolbox_window(&ctx, &p, renderer);
                 let region = self.world.region_name();
                 let available = self.world.main_has_cap("SimConsoleAsync");
+                let rlva_actions = self.options_ui.rlva_tools.show(&ctx, &p, &self.world);
+                if rlva_actions.closed {
+                    self.world.rlva.close_console();
+                }
+                if rlva_actions.clear_log {
+                    self.world.rlva.diagnostics.entries.clear();
+                }
+                if let Some(input) = rlva_actions.input {
+                    self.world.rlva_configure(self.settings.rlva_enabled);
+                    self.world.rlva.preferences.clone_from(&self.settings.rlva);
+                    self.world.rlva_console_input(&input);
+                }
                 ui::sim_console::show(
                     &ctx,
                     &p,
@@ -13501,6 +13845,8 @@ impl ApplicationHandler for App {
                     crate::ao::demo::seed_folder_names(&mut self.world.inventory, self.world.agent_id)
                 } else if mode == "firestorm-wait" {
                     crate::ao::demo::seed_firestorm_wait(&mut self.world.inventory, self.world.agent_id)
+                } else if mode.starts_with("migrate-alchemy") {
+                    crate::ao::demo::seed_alchemy_migration(&mut self.world.inventory, self.world.agent_id)
                 } else if mode.starts_with("migrate") {
                     crate::ao::demo::seed_migration(&mut self.world.inventory, self.world.agent_id)
                 } else if mode == "firestorm" {
@@ -13867,7 +14213,7 @@ impl ApplicationHandler for App {
                         self.inventory_ui.thumbnail.open(id);
                         self.inventory_ui.thumbnail.picker_open = view == "image-picker";
                         self.inventory_ui.thumbnail.photo_open = matches!(view.as_str(), "image-photo" | "image-photo-save");
-                    } else {
+                    } else if !matches!(view.as_str(), "keyboard" | "aurora-keyboard" | "aurora-keyboard-wide") {
                         self.inventory_ui.demo_menu = Some(id);
                     }
                 } else if !configured_view && crate::world::inventory::demo::big().is_none() {
@@ -14447,7 +14793,11 @@ impl ApplicationHandler for App {
                             alt: self.alt,
                             shift: self.shift,
                         };
-                        if self.media.on_key(code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods) && pressed {
+                        if self
+                            .media
+                            .on_key(&self.world, code, scancode, pressed, ke.repeat, ke.text.as_deref(), mods)
+                            && pressed
+                        {
                             return;
                         }
                     }

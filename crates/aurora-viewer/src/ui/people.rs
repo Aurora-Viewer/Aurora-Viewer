@@ -325,6 +325,9 @@ impl PeopleUi {
 /// Nearby avatars, nearest first: the loaded ones at their exact place, the
 /// others from the coarse locations (the radar's sightings).
 pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
+    if world.rlva.has("shownearby") {
+        return Vec::new();
+    }
     let me = world.agent.position;
     let mut out: Vec<(Uuid, String, Vec3, f32)> = crate::world::radar::sightings(world)
         .into_iter()
@@ -367,6 +370,10 @@ pub fn people_window(
     aurora: bool,
 ) -> Vec<PeopleAction> {
     let mut actions = Vec::new();
+    if world.rlva.has("shownearby") && panels.people_tab == TAB_NEARBY {
+        nearby::close_sheet(st);
+        st.pending_sheet = None;
+    }
     let mut open = panels.people;
     let help = aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list");
     let pos = default_pos(super::layout::work_area(ctx));

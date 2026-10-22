@@ -622,7 +622,7 @@ fn full_list(
                     }
                 });
         }
-        Tab::History => history_list(ui, p, icons, hist, &mut nui.center.query, max_h, asks),
+        Tab::History => history_list(ui, p, icons, hist, &mut nui.center.query, max_h, asks, &nui.privacy),
     }
 }
 
@@ -642,6 +642,7 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, tab: &mut Tab) -> bool {
 
 /// The history with its search, by day, and the action left on each entry
 /// (shared by both styles).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn history_list(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -650,6 +651,7 @@ pub(super) fn history_list(
     query: &mut String,
     max_h: f32,
     asks: &mut Vec<Ask>,
+    privacy: &crate::world::rlva::privacy::TextFilter,
 ) {
     ui.add(
         egui::TextEdit::singleline(query)
@@ -657,7 +659,15 @@ pub(super) fn history_list(
             .desired_width(f32::INFINITY),
     );
     ui.add_space(4.0);
-    let found: Vec<(usize, Entry)> = history::search(hist, query).into_iter().map(|(i, e)| (i, e.clone())).collect();
+    let query = query.trim().to_lowercase();
+    let found: Vec<(usize, Entry)> = history::search(hist, "")
+        .into_iter()
+        .filter_map(|(i, e)| {
+            let mut e = e.clone();
+            privacy.redact_notice(&mut e.title, &mut e.body, &mut e.name_links);
+            (query.is_empty() || e.title.to_lowercase().contains(&query) || e.body.to_lowercase().contains(&query)).then_some((i, e))
+        })
+        .collect();
     if found.is_empty() {
         empty(ui, p, aurora_i18n::tr!("ui-notifications-history-empty"));
         return;

@@ -131,6 +131,7 @@ fn the_place_is_saved_and_defaults_to_the_top_right() {
 /// The top bar's state the geometry test draws the bars with.
 fn status(classic: bool) -> StatusInfo<'static> {
     StatusInfo {
+        location_hidden: false,
         show_bug_report: true,
         show_huds: true,
         hud_zoom: 1.0,

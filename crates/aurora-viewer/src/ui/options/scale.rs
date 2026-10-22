@@ -1,5 +1,5 @@
-//! Live UI scaling without feeding the resized control back into its gesture.
-//! Firestorm defers resolution updates to LLFloaterPreference::apply
+//! Live interface and text scaling without feeding the resized control back into its gesture.
+//! The Legacy Viewer defers resolution updates to LLFloaterPreference::apply
 //! (llfloaterpreference.cpp); Aurora keeps a physical reference while dragging.
 
 use egui::{Event, Pos2, RawInput, Vec2};
@@ -24,6 +24,41 @@ fn track_scale(position: f32) -> f32 {
         MIN + position * 2.0 * (1.0 - MIN)
     } else {
         1.0 + (position - 0.5) * 2.0 * (MAX - 1.0)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Interface,
+    Text,
+}
+
+impl Kind {
+    fn limits(self) -> (f32, f32) {
+        match self {
+            Self::Interface => (MIN, MAX),
+            Self::Text => (0.8, 1.4),
+        }
+    }
+
+    fn position(self, scale: f32) -> f32 {
+        match self {
+            Self::Interface => track_position(scale),
+            Self::Text => {
+                let (min, max) = self.limits();
+                (scale - min) / (max - min)
+            }
+        }
+    }
+
+    fn scale(self, position: f32) -> f32 {
+        match self {
+            Self::Interface => track_scale(position),
+            Self::Text => {
+                let (min, max) = self.limits();
+                min + position.clamp(0.0, 1.0) * (max - min)
+            }
+        }
     }
 }
 
@@ -117,6 +152,25 @@ impl ScaleSlider {
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, saved: &mut f32) -> bool {
+        self.show_kind(ui, saved, Kind::Interface)
+    }
+
+    pub fn show_text(&mut self, ui: &mut egui::Ui, saved: &mut f32) -> bool {
+        self.show_kind(ui, saved, Kind::Text)
+    }
+
+    fn show_kind(&mut self, ui: &mut egui::Ui, saved: &mut f32, kind: Kind) -> bool {
+        let (min, max) = kind.limits();
+        let (factor, suffix, decimals, label, hint) = match kind {
+            Kind::Interface => (
+                100.0,
+                "%",
+                0..=1,
+                aurora_i18n::tr!("ui-options-interface-scale"),
+                aurora_i18n::tr!("ui-options-interface-scale-help"),
+            ),
+            Kind::Text => (1.0, "×", 2..=2, aurora_i18n::tr!("ui-options-text-size"), ""),
+        };
         let frame = ui.ctx().cumulative_frame_nr();
         let previous = *saved;
         let had_gesture = self.gesture.is_some();
@@ -134,8 +188,8 @@ impl ScaleSlider {
                 }
             };
             value = match g.source {
-                Source::Track { .. } => track_scale(track_position(g.start) + travel * g.per_pixel),
-                Source::Numeric { .. } => (g.start + travel * g.per_pixel).clamp(MIN, MAX),
+                Source::Track { .. } => kind.scale(kind.position(g.start) + travel * g.per_pixel),
+                Source::Numeric { .. } => (g.start + travel * g.per_pixel).clamp(min, max),
             };
             g.value = value;
             g.frame = frame;
@@ -143,7 +197,7 @@ impl ScaleSlider {
         // Keep egui's normal click, keyboard and text editing, but ignore its
         // geometry-based proposals during an established physical gesture.
         let locked = had_gesture || (self.pointer.down && !self.pointer.pressed);
-        // The accessible track exposes percentages too. Consume SetValue here
+        // The accessible track exposes the displayed unit too. Consume SetValue here
         // before the normalized Slider can interpret it as a track position.
         if let Some(id) = self.track_id {
             ui.input_mut(|input| {
@@ -152,10 +206,10 @@ impl ScaleSlider {
                         && request.target_tree == egui::accesskit::TreeId::ROOT
                         && request.target_node == id.accesskit_id()
                         && request.action == egui::accesskit::Action::SetValue
-                        && let Some(egui::accesskit::ActionData::NumericValue(percent)) = request.data
+                        && let Some(egui::accesskit::ActionData::NumericValue(displayed)) = request.data
                     {
-                        if !locked && self.pointer.focused && percent.is_finite() {
-                            value = (percent / 100.0).clamp(MIN as f64, MAX as f64) as f32;
+                        if !locked && self.pointer.focused && displayed.is_finite() {
+                            value = (displayed / factor).clamp(min as f64, max as f64) as f32;
                         }
                         false
                     } else {
@@ -173,9 +227,9 @@ impl ScaleSlider {
                             && self.pointer.focused
                             && let Some(proposed) = proposed
                         {
-                            value = track_scale(proposed as f32);
+                            value = kind.scale(proposed as f32);
                         }
-                        track_position(value) as f64
+                        kind.position(value) as f64
                     })
                     .show_value(false)
                     .clamping(egui::SliderClamping::Edits)
@@ -187,17 +241,20 @@ impl ScaleSlider {
                             && self.pointer.focused
                             && let Some(proposed) = proposed
                         {
-                            value = (proposed / 100.0) as f32;
+                            value = (proposed / factor) as f32;
                         }
-                        value as f64 * 100.0
+                        value as f64 * factor
                     })
-                    .suffix("%")
-                    .custom_formatter(|percent, _| aurora_i18n::number_text(&egui::emath::format_with_decimals_in_range(percent, 0..=1)))
-                    .custom_parser(|text| aurora_i18n::parse_number(text.trim().trim_end_matches('%').trim()))
-                    .speed(if locked { 0.0 } else { NUMERIC_SPEED as f64 * 100.0 })
-                    .range(MIN as f64 * 100.0..=MAX as f64 * 100.0)
+                    .suffix(suffix)
+                    .custom_formatter(|displayed, _| {
+                        aurora_i18n::number_text(&egui::emath::format_with_decimals_in_range(displayed, decimals.clone()))
+                    })
+                    .custom_parser(|text| aurora_i18n::parse_number(text.trim().trim_end_matches(suffix).trim()))
+                    .speed(if locked { 0.0 } else { NUMERIC_SPEED as f64 * factor })
+                    .range(min as f64 * factor..=max as f64 * factor)
                     .clamp_existing_to_range(false)
-                    .max_decimals(1)
+                    .min_decimals(*decimals.start())
+                    .max_decimals(*decimals.end())
                     .update_while_editing(false),
                 );
                 (track, number)
@@ -239,26 +296,18 @@ impl ScaleSlider {
                 number.mark_changed();
                 number.output_event(egui::output::OutputEvent::ValueChanged(egui::WidgetInfo::drag_value(
                     ui.is_enabled(),
-                    value as f64 * 100.0,
+                    value as f64 * factor,
                 )));
             } else {
                 track.mark_changed();
             }
         }
-        track.widget_info(|| {
-            egui::WidgetInfo::slider(
-                ui.is_enabled(),
-                value as f64 * 100.0,
-                aurora_i18n::tr!("ui-options-interface-scale"),
-            )
-        });
+        track.widget_info(|| egui::WidgetInfo::slider(ui.is_enabled(), value as f64 * factor, label));
         ui.ctx().accesskit_node_builder(track.id, |builder| {
-            builder.set_min_numeric_value(MIN as f64 * 100.0);
-            builder.set_max_numeric_value(MAX as f64 * 100.0);
+            builder.set_min_numeric_value(min as f64 * factor);
+            builder.set_max_numeric_value(max as f64 * factor);
         });
-        track
-            .union(number)
-            .on_hover_text(aurora_i18n::tr!("ui-options-interface-scale-help"));
+        track.union(number).on_hover_text(hint);
         self.gesture = gesture.filter(|_| self.pointer.down && self.pointer.focused);
         *saved = value;
         value != previous
@@ -277,6 +326,7 @@ mod tests {
         numeric: NumericDrag,
         anchor: Option<Pos2>,
         saved: f32,
+        kind: Kind,
         native_scale: f32,
         time: f64,
         rect: Rect,
@@ -285,14 +335,25 @@ mod tests {
 
     impl Harness {
         fn new(saved: f32, native_scale: f32) -> Self {
+            Self::new_kind(saved, native_scale, Kind::Interface)
+        }
+
+        fn new_kind(saved: f32, native_scale: f32, kind: Kind) -> Self {
             let ctx = Context::default();
-            ctx.set_zoom_factor(saved);
+            match kind {
+                Kind::Interface => ctx.set_zoom_factor(saved),
+                Kind::Text => {
+                    crate::ui::fonts::apply(&ctx, crate::ui::fonts::INTER);
+                    crate::theme::Theme::default().apply(&ctx, saved);
+                }
+            }
             let mut h = Self {
                 ctx,
                 control: ScaleSlider::default(),
                 numeric: NumericDrag::default(),
                 anchor: None,
                 saved,
+                kind,
                 native_scale,
                 time: 0.0,
                 rect: Rect::NOTHING,
@@ -330,10 +391,19 @@ mod tests {
             let mut output = self.ctx.run_ui(input, |ui| {
                 if visible {
                     ui.add_space(180.0);
+                    // Real font metrics move the row while text is resized.
+                    if self.kind == Kind::Text {
+                        ui.label(aurora_i18n::tr!("ui-options-the-violet-wolf-howls-under-the-northern-lights"));
+                    }
                     rect = ui
                         .horizontal(|ui| {
                             ui.add_space(420.0);
-                            ui.horizontal(|ui| changed = self.control.show(ui, &mut self.saved)).response.rect
+                            if self.kind == Kind::Text {
+                                ui.label(aurora_i18n::tr!("ui-options-text-size"));
+                            }
+                            ui.horizontal(|ui| changed = self.control.show_kind(ui, &mut self.saved, self.kind))
+                                .response
+                                .rect
                         })
                         .inner;
                 }
@@ -356,7 +426,10 @@ mod tests {
                 .map(|p| p * self.ctx.pixels_per_point());
             output.textures_delta.clear();
             if changed {
-                self.ctx.set_zoom_factor(self.saved);
+                match self.kind {
+                    Kind::Interface => self.ctx.set_zoom_factor(self.saved),
+                    Kind::Text => crate::theme::Theme::default().apply(&self.ctx, self.saved),
+                }
             }
             changed
         }
@@ -601,6 +674,103 @@ mod tests {
                 true,
             ));
             assert!((h.saved as f64 - percent / 100.0).abs() < 0.000001);
+            h.settled();
+        }
+    }
+
+    #[test]
+    fn text_scale_track_stays_gradual_and_stationary_while_fonts_reflow() {
+        let (min, max) = Kind::Text.limits();
+        for native in [1.0, 1.5, 2.0] {
+            for initial in [min, 1.0, max] {
+                let mut h = Harness::new_kind(initial, native, Kind::Text);
+                for direction in [1.0, -1.0] {
+                    let start = h.track(Kind::Text.position(h.saved));
+                    h.press(start);
+                    let mut previous = h.saved;
+                    for step in 1..=40 {
+                        let pos = start + egui::vec2(4.0 * native * direction * step as f32, 0.0);
+                        h.frame(vec![Event::PointerMoved(pos)], true, true);
+                        let value = h.saved;
+                        assert!((value - previous).abs() < 0.03, "font reflow cannot cause a jump");
+                        assert!((value - previous) * direction >= -0.00001);
+                        for _ in 0..4 {
+                            assert!(!h.frame(Vec::new(), true, true));
+                            assert_eq!(h.saved, value, "a stationary pointer cannot follow the resized text");
+                        }
+                        assert!(!h.frame(vec![Event::PointerMoved(pos)], true, true));
+                        assert_eq!(h.saved, value);
+                        previous = value;
+                    }
+                    let target = if direction > 0.0 { max } else { min };
+                    assert_eq!(h.saved, target);
+                    h.frame(vec![Harness::button(Pos2::ZERO, false)], true, true);
+                    h.settled();
+                    assert_eq!(h.saved, target);
+                    assert_eq!(h.ctx.zoom_factor(), 1.0, "text sizing leaves the UI zoom independent");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn text_scale_scrubbing_keeps_its_anchor_sensitivity_and_reverses_during_reflow() {
+        for native in [1.0, 1.5, 2.0] {
+            let mut h = Harness::new_kind(1.0, native, Kind::Text);
+            let start = h.rect.right_center() - egui::vec2(15.0, 0.0);
+            h.press(start);
+            for (step, delta) in [24.0, 5.0, 5.0, -10.0].into_iter().enumerate() {
+                let previous = h.saved;
+                let position = if step == 0 { start + egui::vec2(delta, 0.0) } else { start };
+                assert!(h.frame(
+                    vec![Event::PointerMoved(position), Event::MouseMoved(egui::vec2(delta, 0.0))],
+                    true,
+                    true,
+                ));
+                assert!((h.saved - previous - delta * NUMERIC_SPEED / native).abs() < 0.00001);
+                assert!(h.numeric.active(), "numeric drag is captured at DPI {native}, step {step}");
+                assert!(h.anchor.expect("physical cursor anchor").distance(start) < 0.01);
+                let value = h.saved;
+                for _ in 0..4 {
+                    assert!(!h.frame(vec![Event::PointerMoved(start)], true, true));
+                    assert_eq!(h.saved, value, "font changes and cursor warps add no scrub motion");
+                }
+            }
+            let value = h.saved;
+            assert!(!h.frame(vec![Harness::button(start, false)], true, true));
+            h.settled();
+            assert_eq!(h.saved, value);
+            assert!(!h.numeric.active());
+        }
+    }
+
+    #[test]
+    fn text_scale_typing_and_accessibility_keep_multiplier_units_and_limits() {
+        let mut h = Harness::new_kind(1.234567, 1.5, Kind::Text);
+        assert_eq!(h.saved, 1.234567, "rendering cannot round the saved text size");
+        assert!(h.text.iter().any(|text| text.ends_with('×')));
+        let number = h.rect.right_center() - egui::vec2(15.0, 0.0);
+        h.press(number);
+        h.frame(vec![Harness::button(number, false)], true, true);
+        let input = format!("{}×", aurora_i18n::number_text("1.25"));
+        assert!(!h.frame(vec![Event::Text(input)], true, true));
+        assert_eq!(h.saved, 1.234567, "typing must not resize its own editor");
+        assert!(h.frame(vec![Harness::key(egui::Key::Enter)], true, true));
+        assert_eq!(h.saved, 1.25);
+        h.settled();
+        let id = h.control.track_id.expect("rendered text-size track");
+        for (displayed, expected) in [(0.5, 0.8), (1.3, 1.3), (2.0, 1.4)] {
+            assert!(h.frame(
+                vec![Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+                    action: egui::accesskit::Action::SetValue,
+                    target_tree: egui::accesskit::TreeId::ROOT,
+                    target_node: id.accesskit_id(),
+                    data: Some(egui::accesskit::ActionData::NumericValue(displayed)),
+                })],
+                true,
+                true,
+            ));
+            assert_eq!(h.saved, expected, "accessible values use multipliers, not percentages");
             h.settled();
         }
     }

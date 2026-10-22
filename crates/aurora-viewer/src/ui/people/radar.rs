@@ -290,6 +290,9 @@ fn unix_now() -> f64 {
 
 /// The avatars of the list, filtered and in the order chosen.
 pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
+    if world.rlva.has("shownearby") {
+        return Vec::new();
+    }
     let settings = &*data.settings;
     let today = unix_now();
     let mut rows: Vec<Row> = data

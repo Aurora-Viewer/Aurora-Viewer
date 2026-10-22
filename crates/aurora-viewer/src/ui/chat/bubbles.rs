@@ -221,6 +221,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
 
     // the text: an emote is the name in italics, a shout or a whisper says so
     let (text, italics) = super::line_body(line, &name);
+    let text = world.rlva_filter_text(&text).into_owned();
     let text_color = match (own, tone) {
         (true, None) => p.on_accent,
         (true, Some(_)) => p.on_accent.gamma_multiply(0.75),

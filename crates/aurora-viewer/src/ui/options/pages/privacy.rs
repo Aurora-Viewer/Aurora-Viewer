@@ -204,6 +204,36 @@ pub(super) fn page(cx: &mut Cx) {
             );
         }
     });
+    // What the crash window does with a report: a public GitHub issue in
+    // the tester's name (crash/github.rs), never sent elsewhere.
+    cx.group(tr!("ui-options-crash-reports"), |cx| {
+        use crate::settings::CrashReports;
+        cx.keywords("GitHub").choice(
+            tr!("ui-options-crash-reports-send"),
+            tr!("ui-options-crash-reports-send-hint"),
+            &field!(crash_reports),
+            &[
+                (CrashReports::Ask, tr!("crash-reports-ask"), false),
+                (CrashReports::Always, tr!("crash-reports-always"), false),
+                (CrashReports::Never, tr!("crash-reports-never"), false),
+            ],
+        );
+        // Always offered: reading the credential store at every frame to
+        // hide it would cost more than a harmless click.
+        let p = cx.p;
+        cx.keywords("GitHub").row(
+            tr!("ui-options-crash-github"),
+            tr!("ui-options-crash-github-hint"),
+            &Nothing,
+            |ui, _| {
+                let forget = tr!("ui-options-crash-github-forget");
+                if widgets::action_button(ui, &p, "unlink", forget, widgets::ActionKind::Flat, egui::Vec2::new(0.0, 26.0)).clicked() {
+                    crate::crash::github::forget_authorization();
+                }
+                false
+            },
+        );
+    });
 }
 
 #[cfg(test)]

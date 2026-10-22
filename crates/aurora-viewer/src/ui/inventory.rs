@@ -19,6 +19,7 @@ mod dialogs;
 mod document;
 pub(crate) mod drag;
 mod embedded;
+mod keyboard;
 mod markdown;
 pub use markdown::View as NotecardView;
 mod move_to;
@@ -334,6 +335,10 @@ pub struct InventoryUi {
     received_badge: received::Badge,
     pub selection: HashSet<Uuid>,
     anchor: Option<Uuid>,
+    keyboard_selection: bool,
+    /// Last actual scroll offset and viewport height of this window's list.
+    list_viewport: Option<(f32, f32)>,
+    list_focus_frame: Option<u64>,
     visible: Vec<Uuid>,
     pub clipboard: Vec<Uuid>,
     pub cut: bool,
@@ -437,6 +442,7 @@ impl InventoryUi {
 
     /// LLFolderView::startRenamingSelectedItem: edit and select the name in place.
     pub fn begin_rename(&mut self, inv: &Inventory, id: Uuid) {
+        self.keyboard_selection = false;
         self.selected = Some(id);
         self.selection.clear();
         self.selection.insert(id);
@@ -450,6 +456,7 @@ impl InventoryUi {
     }
     /// show_item_original: clear filters, expand ancestors, select and scroll to the original.
     pub fn show_original(&mut self, inv: &Inventory, id: Uuid) {
+        self.keyboard_selection = false;
         self.search.clear();
         self.filters = view::Filters::default();
         self.saved_filters = None;
@@ -513,7 +520,8 @@ impl InventoryUi {
     }
 
     fn select(&mut self, ui: &egui::Ui, id: Uuid, secondary: bool) {
-        ui.memory_mut(|m| m.request_focus(clipboard::focus_id(self)));
+        clipboard::request_focus(ui, self);
+        self.keyboard_selection = false;
         if secondary && self.selection.contains(&id) {
             self.selected = Some(id);
             return;
@@ -1057,9 +1065,14 @@ fn search_scroll(
     height: f32,
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
     tree_spacing(ui);
+    let navigated = keyboard::navigate(ui, inv, st, true);
     let total = st.result_tree.rows.len();
     let mut scroll = list_scroll(ui, height);
     let row_height = rows::row_height(st);
+    if navigated && let Some(index) = st.selected.and_then(|id| st.result_tree.order.iter().position(|row| *row == id)) {
+        let pitch = row_height + ui.spacing().item_spacing.y;
+        scroll = scroll.vertical_scroll_offset(keyboard::scroll_offset(st, index, row_height, pitch, height));
+    }
     if let Some(index) = st.reveal.and_then(|id| st.result_tree.order.iter().position(|row| *row == id)) {
         let pitch = row_height + ui.spacing().item_spacing.y;
         scroll = scroll.vertical_scroll_offset((index as f32 * pitch - height / 2.0).max(0.0));
@@ -1079,6 +1092,7 @@ fn search_scroll(
             ui.set_min_width(st.result_width);
         })
     };
+    st.list_viewport = Some((out.state.unclamped_offset().y, out.inner_rect.height()));
     drag::navigation::scroll(ui, &out, st.ui_id);
     out
 }

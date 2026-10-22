@@ -1728,7 +1728,7 @@ Movement presentation validation (2026-10-19): final `scripts/check.ps1` green, 
 
 Passage / water-walk validation (2026-10-18): full `scripts/check.ps1` green, 3,573 passed, zero failures, 26 ignored; scripts/formatting/Clippy clean. Built the default dev viewer and inspected `.scratch/ao-passage-layout-fr.png`, `ao-passage-layout-rebound-fr.png` and `ao-passage-layout-small-en.png`, compared with `ao-passage-layout-before-fr.png`. Both switches align beneath the run/flight boosts, concise passage text fits its column, default/rebound hints remain current, and swimming controls remain accessible at both viewport sizes. Last-five before/after FR medians: 60 FPS, UI 0.72/0.69 ms and GPU 2.04/2.09 ms; shared desktop load varies, so these are regression observations. Owned logs contain zero errors/panics and only the same synthetic missing-outfit warning. Human acceptance remains required before PR.
 
-Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, empty, design-current, design-tabs, design-movement, design-section, design-swim.
+Other existing AO modes: interface, interface-group, interface-track, interface-combine, interface-swim, interface-swim-missing, folder-names, folder-names-wait, 1, transitions, off, movement, movement-rebound, swim, swim-missing, firestorm, firestorm-wait, migrate, migrate-done, migrate-swim, migrate-alchemy, migrate-alchemy-done, empty, design-current, design-tabs, design-movement, design-section, design-swim.
 
 
 - **`AURORA_DEMO_ANIM_LOOP=1`**: loop whose first interval is missing,
@@ -2670,6 +2670,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
+| `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
@@ -2685,6 +2686,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
 | `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window |
 | `AURORA_DEMO_CRASH_DIR=<folder>` | Isolates the crash reports of offline tests |
+| `AURORA_DEMO_CRASH_SEND=<options>` | Crash report sending with a simulated GitHub |
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
 | `AURORA_CRASH_CAPTURE_EXIT=1` | Closes the window after its screenshot in demo |
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
@@ -2741,7 +2743,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows, keyboard and search selection; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -2768,6 +2770,93 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
 
 ### Details
+
+- **`AURORA_DEMO_RLVA`**: `enabled` opens Preferences > Protections and
+  applies synthetic object restrictions at frame 700. `disabled` delivers
+  the same commands while the global opt-in stays off; `released` enables
+  them, then switches RLVa off at frame 760. Capture after frame 800 in EN
+  and FR: verify the switch, the active list and the empty released list.
+  This scenario never saves the opt-in to the normal viewer's preferences.
+  `im-query` applies fly/IM restrictions and delivers an online synthetic
+  `@list` request at frame 740. The native permission card offers sharing
+  once, remembering consent, or declining. Capture after frame 800 in EN/FR.
+  `rename` turns shared wear off and enables automatic attachment naming.
+  Two new shared objects arrive at frame 740. By frame 810 the log reports
+  `Modifiable bracelet (chest)` and the no-modify object's `.(skull)` folder.
+  `shared-offer` opens the ordinary confirmation for a synthetic scripted
+  `#RLV/~Demo/Cuffs` folder gift. `shared-offer-accepted` accepts it at frame
+  740 and delivers the matching inventory transaction; by frame 810 the log
+  must report `path=~Demo/Cuffs`. The native offer and shared-gift preference
+  use the same EN/FR controls as real offers. No grid is contacted.
+  `experience` attaches a synthetic General-rated experience controller,
+  applies fly/jump locks and identifies it through attachment resources at
+  frame 740. By frame 810 the log reports `blocked=true, fly=false, jump=false`.
+  `experience-allowed` uses a Moderate rating: `blocked=false, fly=true,
+  jump=true`. `experience-released` also disables RLVa at frame 760, clearing
+  the controller block and all restrictions. Capture after frame 810 to
+  inspect the rating, temporary-controller and blocked-list controls in EN/FR.
+  `chat` shows synthetic OOC, restricted ordinary/emote and directed-object
+  messages in nearby chat. The log reports `ooc=true, direct=true,
+  filtered_rows=2`; `chat-silent` disables ellipses and reports zero filtered
+  rows while OOC and directed chat remain visible. `version` logs legacy/new
+  handshakes with numeric `3040300` and implementation `2040213` at frame 740.
+  `version-compat` seeds an owned attachment matching a creator compatibility
+  entry and logs numeric `2092800`, retaining the same implementation number.
+  `chat-home` enables the native `tph` shortcut, applies tplm and invokes the
+  actual chat-command route. Its log must report `handled=true,
+  requested=false, pending_ui=false`: no teleport or progress UI starts.
+  `tools` opens the native RLVa console and exercises local version/status
+  queries, duplicate feedback and a console-owned fly lock alongside another
+  issuer's jump lock. At frame 810 its log reports two local replies and no
+  channel-zero network reply. `tools-closed` closes the console at frame 810
+  and reports `fly=false, other_jump=true`. Capture after that frame in EN/FR.
+  `named-blocked` starts a named lookup, adds tploc and then resolves a distant
+  destination; `maturity-blocked` holds a home teleport for a maturity response
+  and adds tplm before releasing it. Both exercise the real deferred application
+  routes and log `requested=false, pending_ui=false, failed=true` at frame 810.
+  `communication` applies receive/send/start IM restrictions, receives an
+  ordinary message and sends a reply through the native action boundary.
+  Capture after frame 800: the conversation contains localized replacement
+  text for both messages. It also attempts a new IM through the actual
+  context-menu action before receiving the message; that must not create
+  an exempt session. The log reports `new_session_blocked=true`, `local_placeholders=true` and
+  `existing_session_allowed=true`. `temporary` disables temporary controllers
+  and delivers OwnerSay from an attachment with the native temporary marker,
+  without experience or inventory metadata. Its raw command remains nearby
+  chat; the log reports `option_off_jump=false, source_allowed=false`.
+  `hud-lock` seeds a temporary HUD with a point removal lock while requesting
+  hidden HUDs and wireframe rendering. Capture after frame 810: the HUD is
+  visible, the world stays filled and the log reports `locked=true,
+  shown=true, wireframe=false`.
+  `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
+  `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
+  mode to the same scene. `overlay` uses the demo's transparent-hole texture
+  with scripted opacity and touch blocking: world clicks through holes
+  remain available, opaque texels block them, and HUD/UI clicks stay usable.
+  Capture after frame 800; compare the same scene with `disabled` and close
+  Preferences for the unobstructed baseline. These modes never contact a grid.
+  Vision modes close Conversations and use the same fixed camera framing
+  around the avatar so its body and attachments remain visible.
+  `baseline` shows the unobstructed scene directly. `textures`, `silhouette`,
+  `self` and `head` exercise forced world textures, distant avatar silhouettes
+  and own-avatar visibility. `resolution` sets the real 3D resolution divisor
+  to 12: the scene becomes coarse while text, HUDs and controls stay sharp.
+  Compare it with `baseline` and `resolution-released`; check scene clicks
+  still address their visible surfaces. Append `-released` to an effect mode to disable
+  RLVa at frame 760 and verify restoration in the same run.
+  `privacy` hides nearby identities and the current place in Conversations
+  and the top bar; `privacy-except` permits one visible speaker through a
+  strict name exception. `privacy-released` restores names and location.
+  `nearby` opens People with an empty Nearby tab under shownearby. Inventory
+  is closed in these scenarios so the conversation and list remain visible.
+  `camera-focus` focuses a posed avatar's head at a scripted distance and
+  direction with FOV limits. `camera-prefs` opens Camera preferences under
+  an exclusive camera lock: preset, offset, distance and viewing-angle
+  controls must be disabled while unrelated options remain editable.
+  `sitting` sends a forced object sit at frame 700, then sitground at 740.
+  The native demo simulator must confirm the stand before the ground sit.
+  At frame 810 its log reports `ground_sit=true, object_seated=false`;
+  capture after frame 850 to inspect the final ground-sitting pose.
 
 - **`AURORA_DEMO_PERF`**: `compact` opens the compact view (frame rate and
   its graph); `full` the resource monitor on its overview; `network` the
@@ -3569,8 +3658,19 @@ failure. Grid validation and any paid upload are performed by the human.
   viewer runs, its session folder holds a `watching` marker; without it
   the watcher did not start (its error is the first line of the console)
   and no window would follow a crash.
-  The "Send a crash report" button must open GitHub's issue chooser in
-  the browser, like "Report a bug" in the viewer.
+  "Send a crash report" opens the preview of the issue to publish
+  (docs/BUG_REPORTING.md); it is absent when Preferences › Privacy says
+  Never.
+- **`AURORA_DEMO_CRASH_SEND=ask|always|never[,connected][,preview][,authorize][,sent][,fail]`**,
+  with `AURORA_DEMO_CRASH`: the crash window with a simulated GitHub (no
+  network, no credential store). The first word replaces the Preferences
+  choice; `connected` starts with an authorization, `preview` opens on the
+  preview, `authorize` also starts the connection (code `DEMO-1234`, then
+  authorized after three seconds), `sent` shows a report already sent as
+  issue 4242, `fail` makes the creation fail. `always,connected` sends at
+  once and shows "Sending…" then the issue; `always` alone asks to send
+  once to connect. A real authorization and a real issue are only tested
+  by the human, outside the demo.
 - **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`**: no effect
   while the built-in bug report form is disabled ("Report a bug" opens
   GitHub's issue chooser, see [BUG_REPORTING.md](BUG_REPORTING.md)); what
@@ -4728,6 +4828,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   unavailable), a text field (the Delete key edits the text) and a folder
   window. A selection entirely in the Trash asks for confirmation
   before permanent deletion.
+- `keyboard`, `aurora-keyboard`, `aurora-keyboard-wide`: click the demo
+  object at frame 650, extend its selection with Shift+Down twice, then
+  shrink it with Shift+Up at frame 710. Capture at 690 (three selected rows)
+  and 720 (two), in the Legacy, compact Aurora and wide Aurora layouts.
+  The log reports the selection count and visibility at both capture points.
+  Manually check held arrows, direction reversal, open-folder boundaries,
+  filtered lists, folder windows and arrow editing in search/rename fields.
 - `clipboard`: expanded inventory to test Ctrl+C / Ctrl+X / Ctrl+V on
   items, folders and multiple selections. Choose the destination
   folder (or one of its items) before pasting. The search and
@@ -6523,6 +6630,8 @@ AO startup validation (2026-10-16): 2,854 workspace tests pass, zero failures, 2
 **`AURORA_DEMO_AO=firestorm-wait`** — cached inventory with delayed write/readback services. Seeds a synthetic MonSet with Standing:CT15.00:CY:RN under #Firestorm/#AO and no native AO. Before frame 720, the ordinary AO window must show loading and no new AO folder. At frame 720 both synthetic capabilities become available through the same writable gate as production; the real bootstrap must reconstruct exactly one #Aurora/Aurora AO/MonSet, preserve the standing options, the four actual swim mappings and the original source. Capture at 620 (waiting) and 1000 (saved); offline only.
 
 **`AURORA_DEMO_AO=migrate|migrate-done|migrate-swim`** — explicit Legacy Viewer migration beside an already existing native AO. Both modes seed two synthetic legacy sets and one native default, so automatic fallback must do nothing. `migrate` opens the real picker at frame 360, initially showing the duplicate-name guard for Aurora AO. Choose Firestorm Walk Set or change the destination name, then migrate; cancel must leave inventory and the native selection unchanged. `migrate-done` chooses Firestorm Walk Set and invokes the real action at frame 720; capture at 1000 to check the new selection and saved status. The native default is retained, only one set is added, the legacy source stays unchanged and the four actual swim mappings retain their original animation targets, order and cycles. Aurora-only slots reuse the approved existing donor animations with new native links; missing donors remain empty. `migrate-swim` performs the same migration and reveals Underwater floating at frame 900; capture at 1100 to check the copied animation and the completed gate. These fixtures are offline only.
+
+**`AURORA_DEMO_AO=migrate-alchemy|migrate-alchemy-done`** — the same fixture plus one synthetic Alchemy set, Alchemy Dance Set, in an `Animation Overrides` folder at the inventory root. `migrate-alchemy` opens the picker with Alchemy chosen and that set selected; switching back to the first choice lists the two legacy sets again and drops the Alchemy choice. `migrate-alchemy-done` migrates Alchemy Dance Set at frame 720; capture at 1000. The native default is retained, the Alchemy folder stays unchanged and the four swim slots are completed like a Legacy Viewer set.
 
 AO interface integration validation (2026-10-16): scripts and formatting pass; Clippy is clean with warnings denied; 2,882 workspace tests pass, zero failures and 24 ignored, with the existing unrelated GPU transparency test excluded. The native row test performs pointer press/drag/release and reads back the acknowledged inventory order. Additional coverage checks guided cancellation, remapped/scoped editor selection, member/track ordering, group dissociation, original preservation, independent cycles and programmatic swimming-state reveal after the native smooth-scroll animation. The default dev viewer builds. Inspected owned `.scratch/ao-interface-interface-{fr,en}.png`, `interface-group-{fr,en}.png`, `interface-combine-{fr,en}.png`, `interface-swim-{fr,en}.png`, `interface-track-fr.png` and `movement-{fr,en}.png` (all with the `ao-interface-` prefix): controls and text fit the unchanged Aurora theme, swimming selection is visible in the rail and its remove action shares the picker row, and the movement layout retains its independent switches and diagnostics. Scoped offline logs contain no error/panic. The theme, fonts, shared widgets, complete LSL source and physical controller sources match their pre-integration hashes. Real-grid confirmation of grouping, dissociation and persisted ordering remains for the human.
 

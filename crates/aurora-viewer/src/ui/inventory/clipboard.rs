@@ -8,13 +8,52 @@ pub(super) fn focus_id(st: &InventoryUi) -> egui::Id {
     egui::Id::unique(("inventory_clipboard_focus", st.ui_id))
 }
 
+pub(super) fn request_focus(ui: &egui::Ui, st: &mut InventoryUi) {
+    st.list_focus_frame = Some(ui.ctx().cumulative_frame_nr());
+    ui.memory_mut(|m| {
+        m.request_focus(focus_id(st));
+        m.set_focus_lock_filter(
+            focus_id(st),
+            egui::EventFilter {
+                vertical_arrows: true,
+                ..Default::default()
+            },
+        );
+    });
+}
+
+pub(super) fn list_has_focus(ui: &egui::Ui, st: &InventoryUi) -> bool {
+    ui.is_enabled()
+        && st.dialog.is_none()
+        && ui.memory(|m| m.has_focus(focus_id(st)) && m.allows_interaction(ui.layer_id()))
+        && !ui.ctx().text_edit_focused()
+        && !egui::Popup::is_any_open(ui.ctx())
+}
+
 /// A stable focus target survives scrolling selected rows out of the viewport.
 /// Register the background before the rows so their clicks take precedence.
-pub(super) fn list_focus(ui: &mut egui::Ui, st: &InventoryUi, height: f32) {
+pub(super) fn list_focus(ui: &mut egui::Ui, st: &mut InventoryUi, height: f32) {
     let rect = egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), height));
     let response = ui.interact(rect, focus_id(st), egui::Sense::click());
-    if response.clicked() {
-        response.request_focus();
+    let leaving = ui.input(|i| {
+        i.pointer.any_pressed() && i.pointer.interact_pos().is_none_or(|pos| !rect.contains(pos))
+            || i.key_pressed(egui::Key::Tab)
+            || i.key_pressed(egui::Key::Escape)
+    });
+    if leaving {
+        st.list_focus_frame = None;
+    }
+    // A discarded sizing pass can omit the list and trigger egui's focus
+    // dead-man switch. Restore only its immediately preceding focus request,
+    // with no other focused widget, click outside, Tab, Escape or modal.
+    let restore = !leaving
+        && ui.is_enabled()
+        && st.dialog.is_none()
+        && !egui::Popup::is_any_open(ui.ctx())
+        && st.list_focus_frame.is_some_and(|frame| ui.ctx().cumulative_frame_nr() <= frame + 1)
+        && ui.memory(|m| m.focused().is_none() && m.allows_interaction(ui.layer_id()));
+    if response.clicked() || response.has_focus() || restore {
+        request_focus(ui, st);
     }
 }
 
@@ -72,12 +111,7 @@ pub(super) fn shortcuts(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    if !ui.is_enabled()
-        || st.dialog.is_some()
-        || !ui.memory(|m| m.has_focus(focus_id(st)) && m.allows_interaction(ui.layer_id()))
-        || ui.ctx().text_edit_focused()
-        || egui::Popup::is_any_open(ui.ctx())
-    {
+    if !list_has_focus(ui, st) {
         return;
     }
     if !actions.iter().any(|action| matches!(action, InvAction::Edit(_))) {
@@ -142,9 +176,12 @@ pub(super) fn shortcuts(
 fn demo_mode() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     MODE.get_or_init(|| {
-        std::env::var("AURORA_DEMO_INVENTORY")
-            .ok()
-            .filter(|mode| mode.starts_with("clipboard") || mode.starts_with("search-selection"))
+        std::env::var("AURORA_DEMO_INVENTORY").ok().filter(|mode| {
+            mode.starts_with("clipboard")
+                || mode.starts_with("search-selection")
+                || mode.starts_with("keyboard")
+                || mode.starts_with("aurora-keyboard")
+        })
     })
     .as_deref()
 }
@@ -179,6 +216,51 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &mut InventoryUi) -> Vec
     let Some(mode) = demo_mode().filter(|mode| *mode != "clipboard") else {
         return Vec::new();
     };
+    if mode.starts_with("keyboard") || mode.starts_with("aurora-keyboard") {
+        if matches!(frame, 650 | 651)
+            && let Some(pos) =
+                ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, Uuid::from_u128(8100)))))
+        {
+            return vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: frame == 650,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+        }
+        if matches!(frame, 665 | 680 | 710) {
+            log::info!(
+                "demo inventory keyboard input: focused={:?}, list_focus={}, text={}, popup={}, window_focus={}",
+                ctx.memory(|m| m.focused()),
+                ctx.memory(|m| m.has_focus(focus_id(st))),
+                ctx.text_edit_focused(),
+                egui::Popup::is_any_open(ctx),
+                ctx.input(|i| i.focused)
+            );
+            return vec![
+                egui::Event::ModifiersChanged(egui::Modifiers::SHIFT),
+                egui::Event::Key {
+                    key: if frame == 710 { egui::Key::ArrowUp } else { egui::Key::ArrowDown },
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::SHIFT,
+                },
+            ];
+        }
+        if matches!(frame, 690 | 720) {
+            log::info!(
+                "demo inventory keyboard: frame={frame}, selected_count={}, active={:?}, visible={}",
+                st.selection.len(),
+                st.selected,
+                st.selected.is_some_and(|id| st.visible.contains(&id))
+            );
+        }
+        return Vec::new();
+    }
     if mode.starts_with("search-selection") {
         let keyboard = mode == "search-selection-keyboard";
         let pos = match frame {
@@ -342,6 +424,7 @@ mod tests {
         prefs: InventoryPreferences,
         output: egui::FullOutput,
         time: f64,
+        classic: bool,
     }
 
     impl Harness {
@@ -386,6 +469,7 @@ mod tests {
                 prefs: InventoryPreferences::default(),
                 output: Default::default(),
                 time: 0.0,
+                classic: true,
             };
             harness.st.show_original(&harness.world.inventory, id(8100));
             harness.st.expand_all = Some(true);
@@ -395,7 +479,17 @@ mod tests {
             harness
         }
 
-        fn frame(&mut self, events: Vec<Event>) -> Vec<InvAction> {
+        fn frame(&mut self, mut events: Vec<Event>) -> Vec<InvAction> {
+            if let Some(modifiers) = events.iter().find_map(|event| match event {
+                Event::Key {
+                    key: egui::Key::ArrowDown | egui::Key::ArrowUp,
+                    modifiers,
+                    ..
+                } => Some(*modifiers),
+                _ => None,
+            }) {
+                events.insert(0, Event::ModifiersChanged(modifiers));
+            }
             self.time += 0.3;
             let mut actions = Vec::new();
             self.output = headless_output(self.ctx.run_ui(
@@ -417,7 +511,7 @@ mod tests {
                         false,
                         &Default::default(),
                         &Default::default(),
-                        true,
+                        self.classic,
                     );
                 },
             ));
@@ -445,11 +539,25 @@ mod tests {
                 .ctx
                 .memory(|m| m.area_rect(egui::Id::unique(window)))
                 .expect("inventory window");
+            let state = self
+                .st
+                .windows
+                .iter()
+                .find(|w| window == format!("inventory_{}", w.id))
+                .map_or(&self.st, |w| &*w.state);
+            let list = self.ctx.read_response(focus_id(state)).expect("inventory list").rect;
+            let row = self
+                .ctx
+                .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", state.ui_id, item))))
+                .expect("drawn row");
             self.output
                 .shapes
                 .iter()
                 .rev()
-                .find_map(|shape| position(&shape.shape, &label).filter(|pos| rect.contains(*pos) && shape.clip_rect.contains(*pos)))
+                .find_map(|shape| {
+                    position(&shape.shape, &label)
+                        .filter(|pos| rect.contains(*pos) && list.contains(*pos) && row.contains(*pos) && shape.clip_rect.contains(*pos))
+                })
                 .unwrap_or_else(|| panic!("missing visible row: {label}"))
         }
 
@@ -531,6 +639,153 @@ mod tests {
             repeat: false,
             modifiers,
         }
+    }
+
+    fn arrow(down: bool, shift: bool) -> Event {
+        Event::Key {
+            key: if down { egui::Key::ArrowDown } else { egui::Key::ArrowUp },
+            physical_key: None,
+            pressed: true,
+            repeat: true,
+            modifiers: if shift { egui::Modifiers::SHIFT } else { egui::Modifiers::NONE },
+        }
+    }
+
+    #[test]
+    fn inventory_keyboard_extends_shrinks_and_copies_in_every_layout() {
+        for (classic, width) in [(true, 680.0), (false, 440.0), (false, 800.0), (false, 1180.0)] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            super::super::super::widgets::place_floater(&h.ctx, "inventory", egui::pos2(10.0, 40.0), egui::vec2(width, 950.0));
+            h.st.show_original(&h.world.inventory, id(8100));
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            let order = if !classic && width >= 800.0 {
+                &h.st.flat.order
+            } else {
+                &h.st.plain.order
+            };
+            let siblings: Vec<_> = order
+                .iter()
+                .copied()
+                .filter(|row| h.world.inventory.items.contains_key(row))
+                .collect();
+            let [first, second, third, ..] = siblings[..] else {
+                panic!("three item rows")
+            };
+            h.select(first, false);
+            assert!(
+                h.ctx.memory(|m| m.has_focus(focus_id(&h.st))),
+                "the clicked row gives the list focus"
+            );
+            assert!(!h.ctx.text_edit_focused(), "the list is not a text field");
+            assert!(!egui::Popup::is_any_open(&h.ctx), "no popup takes the arrows");
+            let before = h.row(first);
+            h.frame(vec![arrow(true, true), arrow(true, true)]);
+            assert_eq!(h.st.selected, Some(third), "{classic}, {width}");
+            assert_eq!(h.st.selection, HashSet::from([first, second, third]));
+            assert_eq!(
+                h.row(first),
+                before,
+                "visible rows stay in place when using the arrows ({classic}, {width})"
+            );
+            h.frame(vec![arrow(false, true)]);
+            assert_eq!(h.st.selected, Some(second));
+            assert_eq!(h.st.selection, HashSet::from([first, second]));
+            h.frame(vec![Event::Copy]);
+            assert_eq!(h.st.clipboard.iter().copied().collect::<HashSet<_>>(), h.st.selection);
+            h.frame(vec![arrow(false, false)]);
+            assert_eq!(h.st.selected, Some(first));
+            assert_eq!(h.st.selection, HashSet::from([first]));
+            h.select(third, true);
+            h.frame(vec![arrow(false, true)]);
+            assert_eq!(
+                h.st.selection,
+                HashSet::from([second, third]),
+                "keyboard restarts at the last Ctrl-click"
+            );
+        }
+    }
+
+    #[test]
+    fn inventory_keyboard_scrolls_filtered_virtual_rows_and_keeps_text_focus() {
+        let mut h = Harness::new();
+        let original = h.world.inventory.items[&id(8100)].clone();
+        h.world.inventory.add_items(
+            (0..90)
+                .map(|n| aurora_net::inventory::InvItem {
+                    id: id(20_000 + n),
+                    name: format!("Keyboard {n:03}"),
+                    ..original.clone()
+                })
+                .collect(),
+        );
+        h.st.search = "Keyboard".into();
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
+        h.select(id(20_000), false);
+        h.frame((0..60).map(|_| arrow(true, true)).collect());
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
+        assert_eq!(h.st.selected, Some(id(20_060)));
+        assert_eq!(h.st.selection.len(), 61);
+        h.row(id(20_060)); // The active row is actually drawn inside the viewport.
+        h.st.begin_rename(&h.world.inventory, id(20_060));
+        h.frame(Vec::new());
+        assert!(h.ctx.text_edit_focused());
+        h.frame(vec![arrow(false, true)]);
+        assert_eq!(h.st.selection, HashSet::from([id(20_060)]));
+        h.st.rename = None;
+        h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("other_field")));
+        h.frame(vec![arrow(false, true)]);
+        assert_eq!(h.st.selected, Some(id(20_060)));
+        h.st.show_original(&h.world.inventory, id(20_000));
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
+        h.select(id(20_000), false);
+        h.frame((0..60).map(|_| arrow(true, true)).collect());
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
+        assert_eq!(h.st.selected, Some(id(20_060)));
+        assert_eq!(h.st.selection.len(), 61);
+        h.row(id(20_060)); // The unfiltered tree shares the same minimal scroll.
+    }
+
+    #[test]
+    fn inventory_keyboard_uses_only_the_focused_folder_window() {
+        let mut h = Harness::new();
+        h.st.open_folder_window(id(8000));
+        let window = h.st.windows[0].id;
+        super::super::super::widgets::place_floater(
+            &h.ctx,
+            &format!("inventory_{window}"),
+            egui::pos2(20.0, 50.0),
+            egui::vec2(600.0, 800.0),
+        );
+        for _ in 0..4 {
+            h.frame(Vec::new());
+        }
+        let order = &h.st.windows[0].state.plain.order;
+        let siblings: Vec<_> = order
+            .iter()
+            .copied()
+            .filter(|row| h.world.inventory.items.contains_key(row))
+            .collect();
+        let first = siblings[0];
+        let second = siblings[1];
+        let main = h.st.selection.clone();
+        h.click(h.row_in(first, &format!("inventory_{window}")), Default::default());
+        h.frame(vec![arrow(true, true)]);
+        assert_eq!(h.st.windows[0].state.selection, HashSet::from([first, second]));
+        assert_eq!(h.st.selection, main);
+        h.st.windows[0].state.dialog = Some(EditDialog::Delete(vec![first], false));
+        h.frame(vec![arrow(true, true)]);
+        assert_eq!(h.st.windows[0].state.selection, HashSet::from([first, second]));
     }
 
     #[test]

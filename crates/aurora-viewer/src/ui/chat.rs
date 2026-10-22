@@ -614,6 +614,16 @@ fn line_job(
     times: bool,
     look: JobLook<'_>,
 ) -> BubbleJob {
+    let filtered;
+    let line = if world.rlva.has("shownames") || world.rlva.has("showloc") {
+        let mut copy = line.clone();
+        copy.text = world.rlva_filter_text(&copy.text).into_owned();
+        copy.from = sender_name(world, &world.own_name(), &copy);
+        filtered = copy;
+        &filtered
+    } else {
+        line
+    };
     let pill = match look {
         JobLook::Pill(family) => Some(family),
         _ => None,
@@ -709,6 +719,13 @@ fn line_job(
     };
     let mut lead = name_gap;
     for (piece, link) in pieces(body, name_of) {
+        let piece = if let Some(Link::Agent(id)) = &link
+            && !world.rlva_can_name(*id)
+        {
+            world.social.name_of(id)
+        } else {
+            world.rlva_filter_text(&piece).into_owned()
+        };
         let badge = match &link {
             Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
             Some(Link::Place(_, place)) => world.map.ratings.get(&place.location.region).map(LinkBadge::Rating),
@@ -1226,6 +1243,8 @@ pub(crate) fn chat_text_marked(
     italics: bool,
     mark: Option<Mark>,
 ) {
+    let filtered = world.rlva_filter_text(text);
+    let text = filtered.as_ref();
     let segs = segments(text);
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(text, m.needle).is_empty());
@@ -1299,6 +1318,12 @@ fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32) {
 /// An avatar link of a text (its name, or the text it was written with):
 /// opens the profile, the name menu on a right click.
 fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, text: &str, size: f32) {
+    let projected = if world.rlva_can_name(id) {
+        world.rlva_filter_text(text).into_owned()
+    } else {
+        world.social.name_of(&id)
+    };
+    let text = projected.as_str();
     let k = super::colors::get();
     let r = action_marker::link(ui, action_marker::Action::Profile, text, size, super::colors::c(k.chat_slurl), None);
     name_menu(&r, p, world, id);
@@ -1399,6 +1424,9 @@ fn header_names(ui: &mut egui::Ui, p: &Palette, name: &str, username: Option<&st
 /// name looked up, mine, else the name the line came with; history lines are
 /// looked up for nothing.
 pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::ChatLine) -> String {
+    if !line.source.is_nil() && !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) && !world.rlva_can_name(line.source) {
+        return crate::world::rlva::privacy::anonymous(line.source).display_name.clone();
+    }
     let logged = line.origin != Origin::Live;
     let own = line.kind == ChatKind::Own;
     let object = matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm);
@@ -1411,7 +1439,7 @@ pub(crate) fn sender_name(world: &World, own_name: &str, line: &crate::world::Ch
     match cached {
         Some(n) => n.display(&names.options),
         None if own && !logged => own_name.to_owned(),
-        None => line.from.clone(),
+        None => world.rlva_filter_text(&line.from).into_owned(),
     }
 }
 
@@ -1438,7 +1466,7 @@ fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> Strin
         ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) => line.text.clone(),
         _ => line_body(line, name).0,
     };
-    segments(&body)
+    let text: String = segments(&body)
         .into_iter()
         .map(|s| match s {
             Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => t.to_owned(),
@@ -1448,7 +1476,8 @@ fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> Strin
             Seg::Agent(id) => world.social.name_of(&id),
             Seg::App(u, link) => app_links::label(world, &mut HashSet::new(), u, &link),
         })
-        .collect()
+        .collect();
+    world.rlva_filter_text(&text).into_owned()
 }
 
 /// What a copied line starts with when it is taken from its start, as

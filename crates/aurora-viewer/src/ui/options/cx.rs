@@ -272,6 +272,7 @@ pub(super) struct Cx<'a> {
     pub r: &'a mut OptionsResult,
     d: &'a Settings,
     mode: Mode,
+    number_width: f32,
     words: Vec<String>,
     page: Page,
     tab: usize,
@@ -311,6 +312,24 @@ impl<'a> Cx<'a> {
         mode: Mode,
         query: &str,
     ) -> Self {
+        // DragValue uses interact_size.x for its button AND text editor.
+        // Reserve its slot before measuring the right-aligned controls:
+        // changing digits, units or a named value must not move the rail.
+        let number_width = if mode.draws() {
+            let font = ui.style().drag_value_text_style.resolve(ui.style());
+            [
+                i32::MIN.to_string(),
+                format!("65536{}", aurora_i18n::tr!("bandwidth-kbps-suffix")),
+                aurora_i18n::tr!("ui-options-away-disabled").to_owned(),
+                aurora_i18n::tr!("ui-options-unlimited").to_owned(),
+            ]
+            .into_iter()
+            .map(|text| ui.painter().layout_no_wrap(text, font.clone(), p.ink).size().x)
+            .fold(0.0, f32::max)
+                + 2.0 * ui.spacing().button_padding.x
+        } else {
+            0.0
+        };
         Cx {
             ui,
             p,
@@ -319,6 +338,7 @@ impl<'a> Cx<'a> {
             r,
             d,
             mode,
+            number_width,
             words: words(query),
             page: Page::Aurora,
             tab: 0,
@@ -427,7 +447,7 @@ impl<'a> Cx<'a> {
     /// another row, or another window edits them).
     pub fn track(&mut self, t: &dyn Track) {
         match self.mode {
-            Mode::Reset => t.reset(self.s, self.d),
+            Mode::Reset if !self.rlva_locked(t) => t.reset(self.s, self.d),
             #[cfg(test)]
             Mode::Collect => {
                 let mut paths = Vec::new();
@@ -436,6 +456,19 @@ impl<'a> Cx<'a> {
             }
             _ => {}
         }
+    }
+
+    fn rlva_locked(&self, track: &dyn Track) -> bool {
+        if !self.st.rlva_camera_preset_locked && !self.st.rlva_camera_fov_locked {
+            return false;
+        }
+        let mut paths = Vec::new();
+        track.paths(&mut paths);
+        paths.iter().any(|path| match *path {
+            "camera.preset" | "camera.camera_offset" | "camera.focus_offset" | "camera.offset_scale" => self.st.rlva_camera_preset_locked,
+            "camera.fov" => self.st.rlva_camera_fov_locked,
+            _ => false,
+        })
     }
 
     /// A row: `label` on the left (`hint` under the pointer), the control
@@ -460,7 +493,9 @@ impl<'a> Cx<'a> {
         let modified = t.modified(self.s, self.d);
         match self.mode {
             Mode::Reset => {
-                t.reset(self.s, self.d);
+                if !self.rlva_locked(t) {
+                    t.reset(self.s, self.d);
+                }
                 return false;
             }
             #[cfg(test)]
@@ -812,7 +847,7 @@ impl<'a> Cx<'a> {
             self.block = Some((top, shape));
         }
         let cell = self.cell(wide);
-        let parent_off = self.greyed || self.parent.as_ref().is_some_and(|p| p.off);
+        let parent_off = self.greyed || self.parent.as_ref().is_some_and(|p| p.off) || self.rlva_locked(t);
         let size_key = id.with("control");
         let control = self
             .st
@@ -825,7 +860,10 @@ impl<'a> Cx<'a> {
         let cog_w = if cog.is_some() { COG_W + 8.0 } else { 0.0 };
         let go_w = if search { 26.0 } else { 0.0 };
         let mark_w = if next.experimental { 19.0 } else { 0.0 };
-        let label_w = if next.below {
+        // Keep a readable label when a column cannot fit the stable value
+        // slot beside it (including narrow windows and larger fonts).
+        let below = next.below || control.x + cog_w + 14.0 + mark_w + go_w + 90.0 > right - left;
+        let label_w = if below {
             right - left - mark_w - go_w
         } else {
             (right - left - control.x - cog_w - 14.0 - mark_w - go_w).max(90.0)
@@ -852,7 +890,7 @@ impl<'a> Cx<'a> {
         job.wrap.max_width = label_w.max(1.0);
         let galley = ctx.fonts_mut(|f| f.layout_job(job));
         let text_h = galley.size().y;
-        let height = if next.below {
+        let height = if below {
             text_h + 6.0 + control.y + 16.0
         } else {
             text_h.max(control.y).max(20.0) + 12.0
@@ -862,12 +900,12 @@ impl<'a> Cx<'a> {
         let background = self.ui.painter().add(Shape::Noop);
 
         // the control, at the right end of the row (or under the label)
-        let control_rect = if next.below {
+        let control_rect = if below {
             Rect::from_min_size(pos2(left, row.top() + 8.0 + text_h + 6.0), vec2(right - left, control.y))
         } else {
             Rect::from_min_size(pos2(right - control.x, row.center().y - control.y / 2.0), control)
         };
-        let room = if next.below {
+        let room = if below {
             control_rect
         } else {
             Rect::from_min_max(control_rect.min, pos2(right, control_rect.max.y))
@@ -880,6 +918,7 @@ impl<'a> Cx<'a> {
         );
         child.spacing_mut().item_spacing = vec2(8.0, 6.0);
         child.spacing_mut().slider_width = super::SLIDER_W;
+        child.spacing_mut().interact_size.x = self.number_width;
         if parent_off {
             child.disable();
         }
@@ -892,7 +931,7 @@ impl<'a> Cx<'a> {
         }
 
         // the label
-        let label_pos = if next.below {
+        let label_pos = if below {
             pos2(left, row.top() + 8.0)
         } else {
             pos2(left, row.center().y - text_h / 2.0)
@@ -975,7 +1014,7 @@ impl<'a> Cx<'a> {
 
         // the modified dot: a click puts the row back to its default
         let mut reset = false;
-        if modified {
+        if modified && !self.rlva_locked(t) {
             let dot = Rect::from_center_size(pos2(cell.left() + GUTTER / 2.0 + 1.0, label_rect.center().y), Vec2::splat(16.0));
             let resp = self
                 .ui

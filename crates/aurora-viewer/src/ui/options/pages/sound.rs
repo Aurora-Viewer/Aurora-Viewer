@@ -103,7 +103,16 @@ fn volumes(cx: &mut Cx) {
                             .show_value(false),
                     )
                     .changed();
-                ui.label(RichText::new(format!("{:>3.0} %", a.volume[i] * 100.0)).size(12.0).color(p.muted));
+                let percent_width = ui
+                    .painter()
+                    .layout_no_wrap("100 %".to_owned(), egui::FontId::proportional(12.0), p.muted)
+                    .size()
+                    .x;
+                ui.add_sized(
+                    egui::vec2(percent_width, ui.spacing().interact_size.y),
+                    egui::Label::new(RichText::new(format!("{:>3.0} %", a.volume[i] * 100.0)).size(12.0).color(p.muted))
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                );
                 let mut on = !a.muted[i];
                 if widgets::switch(ui, &p, &mut on)
                     .on_hover_text(if on { tr!("common-cut") } else { tr!("ui-options-restore") })

@@ -92,6 +92,11 @@ pub enum Kind {
 #[derive(Debug, Clone)]
 pub enum Data {
     None,
+    /// A resident requests the active RLVa restrictions or exceptions.
+    RlvaQuery {
+        from: Uuid,
+        exceptions: bool,
+    },
     /// A teleport offer (IM_LURE_USER), answered by `World::answer_teleport_invite`.
     Lure {
         from: Uuid,

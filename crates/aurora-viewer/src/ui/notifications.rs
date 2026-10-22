@@ -29,6 +29,7 @@ const MESSAGE_CHARS: usize = 160;
 
 #[derive(Default)]
 pub struct NotifUi {
+    pub privacy: crate::world::rlva::privacy::TextFilter,
     pub open: bool,
     /// Bottom-left of the bell (where the list opens).
     pub anchor: Option<egui::Pos2>,
@@ -403,6 +404,11 @@ pub(super) fn card(
                         ));
                     }
                 }
+                Data::RlvaQuery { .. } => {
+                    buttons.push((aurora_i18n::tr!("rlva-im-share-once").into(), Response::Accept, true));
+                    buttons.push((aurora_i18n::tr!("rlva-im-share-always").into(), Response::Button(1), false));
+                    buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
+                }
                 Data::Friend { .. } | Data::Group { .. } | Data::CallingCard { .. } => {
                     buttons.push((aurora_i18n::tr!("ui-notifications-accept").into(), Response::Accept, true));
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
@@ -670,6 +676,7 @@ pub fn show(
                                 &mut nui.center.query,
                                 ctx.content_rect().height() * 0.7,
                                 &mut asks,
+                                &nui.privacy,
                             );
                             return;
                         }

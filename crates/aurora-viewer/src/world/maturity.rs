@@ -10,6 +10,7 @@
 //! (reportPreferredMaturityError).
 
 use aurora_net::NetCommand;
+use uuid::Uuid;
 
 /// Requests sent again while the server answers another value.
 const MAX_RETRIES: u8 = 3;
@@ -26,8 +27,8 @@ pub struct MaturityPreference {
     last_response: u8,
     retries: u8,
     /// The teleport waiting for the preference to be in sync.
-    held: Option<NetCommand>,
-    out: Vec<NetCommand>,
+    held: Option<(Uuid, NetCommand)>,
+    out: Vec<(Uuid, NetCommand)>,
 }
 
 /// What an answer of the server leads to.
@@ -60,12 +61,21 @@ impl MaturityPreference {
     fn send(&mut self, maturity: u8) {
         self.request_id += 1;
         self.last_request = maturity;
-        self.out.push(NetCommand::SetMaturityPreference(maturity));
+        self.out.push((Uuid::nil(), NetCommand::SetMaturityPreference(maturity)));
     }
 
     /// A teleport asked while the preference is not in sync waits for it.
-    pub fn hold(&mut self, teleport: NetCommand) {
-        self.held = Some(teleport);
+    pub fn hold(&mut self, teleport: NetCommand, actor: Uuid) {
+        self.held = Some((actor, teleport));
+    }
+
+    /// Disabling RLVa cancels delayed scripted actions, including a teleport
+    /// already released by a maturity answer but not yet sent by the app.
+    pub fn cancel_script_teleports(&mut self) {
+        if self.held.as_ref().is_some_and(|(actor, _)| !actor.is_nil()) {
+            self.held = None;
+        }
+        self.out.retain(|(actor, _)| actor.is_nil());
     }
 
     pub fn holds_teleport(&self) -> bool {
@@ -124,7 +134,7 @@ impl MaturityPreference {
     }
 
     /// The requests to send, and the teleport released by the sync.
-    pub fn take_commands(&mut self) -> Vec<NetCommand> {
+    pub fn take_commands(&mut self) -> Vec<(Uuid, NetCommand)> {
         std::mem::take(&mut self.out)
     }
 }
@@ -146,12 +156,12 @@ mod tests {
         assert!(!m.synced());
         assert!(matches!(
             m.take_commands()[..],
-            [NetCommand::SetMaturityPreference(SIM_ACCESS_MATURE)]
+            [(_, NetCommand::SetMaturityPreference(SIM_ACCESS_MATURE))]
         ));
-        m.hold(teleport());
+        m.hold(teleport(), Uuid::nil());
         assert_eq!(m.answer(Some(SIM_ACCESS_MATURE)), Outcome::Synced);
         assert!(m.synced());
-        assert!(matches!(m.take_commands()[..], [NetCommand::TeleportHome]));
+        assert!(matches!(m.take_commands()[..], [(_, NetCommand::TeleportHome)]));
         assert_eq!(m.preferred, Some(SIM_ACCESS_MATURE));
     }
 
@@ -159,13 +169,13 @@ mod tests {
     fn a_server_keeping_another_value_is_asked_three_more_times_then_wins() {
         let mut m = MaturityPreference::default();
         m.request(SIM_ACCESS_ADULT, SIM_ACCESS_PG);
-        m.hold(teleport());
+        m.hold(teleport(), Uuid::nil());
         m.take_commands();
         for _ in 0..MAX_RETRIES {
             assert_eq!(m.answer(Some(SIM_ACCESS_PG)), Outcome::Waiting);
             assert!(matches!(
                 m.take_commands()[..],
-                [NetCommand::SetMaturityPreference(SIM_ACCESS_ADULT)]
+                [(_, NetCommand::SetMaturityPreference(SIM_ACCESS_ADULT))]
             ));
             assert!(m.holds_teleport());
         }
@@ -187,7 +197,7 @@ mod tests {
     fn a_failed_request_reports_at_once_unless_already_in_sync() {
         let mut m = MaturityPreference::default();
         m.request(SIM_ACCESS_MATURE, SIM_ACCESS_PG);
-        m.hold(teleport());
+        m.hold(teleport(), Uuid::nil());
         assert_eq!(
             m.answer(None),
             Outcome::Failed {

@@ -134,6 +134,7 @@ pub struct RecentPlace {
 }
 
 pub struct StatusInfo<'a> {
+    pub location_hidden: bool,
     pub show_bug_report: bool,
     pub show_huds: bool,
     pub hud_zoom: f32,
@@ -1514,6 +1515,10 @@ pub fn top_bars(
                                 "{} ({:.0}, {:.0}, {:.0})",
                                 st.region, st.position.x, st.position.y, st.position.z
                             ));
+                            if st.location_hidden {
+                                loc = format!("{}, {}", st.parcel, st.region);
+                                panels.nav_edit = None;
+                            }
                             if !st.maturity.is_empty() {
                                 loc.push_str(&format!(" - {}", st.maturity));
                             }

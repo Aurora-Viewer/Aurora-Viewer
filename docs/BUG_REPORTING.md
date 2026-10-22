@@ -4,10 +4,40 @@
 the project's
 [GitHub issue forms](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/new/choose)
 in the browser. The tester needs a GitHub account, chooses the bug report
-template and fills it in on GitHub. After a crash, "Send a crash report" in
-the standalone window opens the same page; "Copy trace" and "Open report
-folder" give the technical details to paste or attach, after reviewing them
-(the full trace may contain personal paths).
+template and fills it in on GitHub. "Copy trace" and "Open report folder",
+in the crash window, give the full technical details, to review before
+sharing them (the full trace may contain personal paths).
+
+## Crash reports
+
+After a crash, "Send a crash report" in the standalone window shows the
+issue to publish: exactly `public-report.md` (below), preceded by what the
+tester writes in the optional "What were you doing?" field. "Connect to
+GitHub" starts the GitHub App's Device Flow (`crash/github.rs`): the tester
+enters the code shown on github.com, in their browser; the viewer never sees
+a password. "Publish on GitHub" then creates the issue in the tester's
+name, with no label (the crash triage below sets the type). "Open in the
+browser" opens a new issue with the same title and text instead (text in
+the clipboard when the link would be too long).
+
+The authorization is kept in the system credential store (Windows
+Credential Manager, entry "Aurora Viewer GitHub"), never in the settings,
+the reports or the logs: an expiring user token and its refresh token,
+refreshed without any client secret (allowed for the Device Flow) and
+replaced at each refresh. "Forget the GitHub connection", in the crash
+window or Preferences › Privacy, deletes it; the tester can also revoke the
+app on github.com. A revoked or expired authorization is forgotten at the
+next attempt. A creation is never retried automatically (a lost reply may
+mean the issue exists); `sent.txt`, in the session folder, keeps the issue
+number so a reopened window never sends twice. No server of our own and no
+file upload: nothing else leaves the PC.
+
+Preferences › Privacy › Crash reports chooses Ask (the default), Always or
+Never. Always publishes the report as soon as the crash window opens, once
+an authorization is kept (until then the window asks to send one report to
+connect). Never removes the send button: the report stays on the PC. The
+Legacy Viewer always sends by default, to its own server; here a report is
+a public issue in the tester's name, hence Ask.
 
 Each crash session folder also holds `public-report.md`: what an automatic
 crash report would publish (version, commit, crash kind, system, GPU, the
@@ -16,6 +46,54 @@ location inside the sources, recognised warning categories). It never
 contains raw addresses, panic messages, paths or log lines; the
 `<!-- aurora-crash v1 -->` marker at its top is for the repository's crash
 triage.
+
+### Crash symbols
+
+Each Windows release carries `Aurora-Viewer-vX.Y.Z-windows-x64-symbols.zip`:
+the Breakpad symbol file of the exe, made by `dump_syms` from the release
+build's PDB (line tables only) and stored as
+`aurora_viewer.pdb/<debug id>/aurora_viewer.sym`. The debug id is the
+`id=` of the `aurora_viewer` line in a report's modules: the file of the
+version that crashed turns each `aurora_viewer+0xoffset` into a function
+and a source line. A pull request that changes the Release workflow keeps
+the file of its dry run as the run's artifact. The PDB itself is not
+published. To resolve a stack by hand, unzip the file and look up, for
+`offset - 1` (a return address follows its call), the `FUNC` record that
+contains it and the line record under it; or use the triage script below.
+
+### Crash triage
+
+The Crash triage workflow (`.github/workflows/crash-triage.yml`) runs on
+every new issue whose body carries the `<!-- aurora-crash v1 -->` marker.
+`scripts/crash-triage.ps1` reads the issue through the API and validates
+each value again (anyone can write an issue). For a released version whose
+symbol file has the report's debug id, it resolves the viewer's frames,
+inlined functions included, to functions and source lines. It then:
+
+- appends a "Symbolized stack" section between
+  `<!-- crash-triage:start -->` and `<!-- crash-triage:end -->` (a new run
+  replaces it), ending with the crash's signature;
+- computes the signature from the crash kind (panic, or the exception code)
+  and the first three meaningful frames by name, without generic arguments
+  or closure numbers. The panic and exception machinery, the crash handler,
+  the process start and the system modules are skipped, so the same crash
+  keeps its signature across versions and offsets. Without symbols
+  (development build, release older than the symbols), the signature is the
+  build's debug id and its first offsets;
+- when an open issue already has the same signature, comments there with
+  the new occurrence (version, system, GPU) and closes the new issue as its
+  duplicate; otherwise renames the issue `Crash: <kind> in <function>` and
+  sets the Bug type.
+
+No label is needed: the signature lives in a hidden comment of the body. A
+closed issue is not a reference: a crash that comes back after its fix
+opens a new issue. "Run workflow" with an issue number triages it again,
+for example once the symbols of its version are published. Locally, on a
+crash session's `public-report.md` and an unzipped symbol file:
+`./scripts/crash-triage.ps1 -ReportFile <public-report.md> -SymbolFile <aurora_viewer.sym>`
+prints the section, title and signature without writing to GitHub.
+`scripts/test-crash-triage.ps1` holds the fixture tests; the workflow runs
+them on the pull requests that change the triage.
 
 The issue templates are in `.github/ISSUE_TEMPLATE/`; they set the issue
 type (Bug or Feature); the area labels (`chat`, `ui`, `avatar`…) are added

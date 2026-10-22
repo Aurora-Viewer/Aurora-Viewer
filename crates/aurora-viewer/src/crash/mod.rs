@@ -1,8 +1,11 @@
 //! Crash recovery, independent of the viewer's event loop and GPU.
 //! Firestorm reference: llappviewer.cpp (errorCallback, marker files) and
 //! llcrashlogger.cpp (recovery on the next launch). Deliberate difference:
-//! no automatic submission; diagnostics stay in the local session folder.
+//! a report is sent only as a public GitHub issue in the tester's name
+//! (`github.rs`), with the text they can read first (`summary.rs`), and
+//! asked for by default; the full diagnostics stay in the session folder.
 
+pub mod github;
 mod native;
 pub mod privacy;
 // Bug report form (disabled, see main.rs):
@@ -42,6 +45,9 @@ pub struct Record {
     pub demo: bool,
     #[serde(default)]
     pub os: String,
+    /// The Preferences choice of the session that crashed.
+    #[serde(default)]
+    pub crash_reports: crate::settings::CrashReports,
 }
 
 struct Session {
@@ -208,6 +214,7 @@ fn start_inner() -> anyhow::Result<()> {
             sysinfo::System::kernel_version().unwrap_or_default(),
             std::env::consts::ARCH
         ),
+        crash_reports: settings.crash_reports,
     };
     save(&dir, &record)?;
     let panic_file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("panic.txt"))?;
@@ -243,6 +250,7 @@ pub fn update(theme: &crate::theme::Theme, settings: &crate::settings::Settings)
         record.language = aurora_i18n::language().into();
         record.font.clone_from(&settings.font);
         record.font_scale = settings.font_scale;
+        record.crash_reports = settings.crash_reports;
         if let Err(error) = save(&session.dir, &record) {
             log::warn!("cannot update crash session: {error}");
         }
@@ -349,7 +357,7 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
         let _ = std::fs::write(dir.join("summary-error.txt"), error.to_string());
     }
     aurora_i18n::select(&record.language, None);
-    if let Err(error) = window::show(dir, record) {
+    if let Err(error) = window::show(dir, record, summary) {
         let _ = std::fs::write(dir.join("dialog-error.txt"), format!("{error:#}"));
         return Err(error);
     }
@@ -407,6 +415,7 @@ mod tests {
             log_path: dir.join("viewer.log"),
             demo: true,
             os: String::new(),
+            crash_reports: Default::default(),
         };
         save(&dir, &record).unwrap();
         record.language = "en".into();
@@ -529,6 +538,7 @@ mod tests {
                 log_path: dir.join("viewer.log"),
                 demo: true,
                 os: String::new(),
+                crash_reports: Default::default(),
             };
             save(&dir, &record).unwrap();
             for marker in markers {

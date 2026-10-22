@@ -277,6 +277,8 @@ pub fn build_legacy_name(complete: &str, trim_resident: bool) -> String {
 /// LLAvatarNameCache.
 #[derive(Default)]
 pub struct AvatarNames {
+    rlva_private: bool,
+    rlva_allowed: HashSet<Uuid>,
     cache: HashMap<Uuid, AvatarName>,
     /// Names looked up while missing or expired: requested at the next poll.
     ask: Mutex<HashSet<Uuid>>,
@@ -323,6 +325,18 @@ fn with_alias(n: &AvatarName, alias: &str) -> AvatarName {
 }
 
 impl AvatarNames {
+    pub fn set_rlva_privacy(&mut self, private: bool, allowed: HashSet<Uuid>) {
+        if self.rlva_private != private || self.rlva_allowed != allowed {
+            self.rlva_private = private;
+            self.rlva_allowed = allowed;
+            self.generation = self.generation.wrapping_add(1);
+        }
+    }
+
+    /// Canonical data for privacy filtering; never a display accessor.
+    pub fn raw(&self, id: &Uuid) -> Option<&AvatarName> {
+        self.cache.get(id)
+    }
     /// The cached name (even expired, which queues a refresh); a missing
     /// one is queued for the next request.
     pub fn get(&self, id: &Uuid) -> Option<&AvatarName> {
@@ -332,6 +346,9 @@ impl AvatarNames {
         let n = self.cache.get(id);
         if n.is_none_or(|n| n.expires < now()) && !self.is_pending(id) {
             self.ask.lock().insert(*id);
+        }
+        if self.rlva_private && !self.rlva_allowed.contains(id) {
+            return Some(super::rlva::privacy::anonymous(*id));
         }
         n.map(|n| self.aliased.get(id).unwrap_or(n))
     }

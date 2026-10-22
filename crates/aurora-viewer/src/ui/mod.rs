@@ -82,6 +82,7 @@ pub mod region;
 pub mod region_restart;
 pub mod remote_object;
 pub mod report_abuse;
+pub mod rlva;
 pub mod script_queue;
 pub mod scripts;
 pub mod search;

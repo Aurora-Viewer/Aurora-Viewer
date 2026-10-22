@@ -168,6 +168,31 @@ fn firestorm_migration_is_explicit_cancellable_and_keeps_native_selection_until_
 }
 
 #[test]
+fn alchemy_choice_lists_its_sets_and_migrates_one_without_inventory_writes() {
+    let mut f = Fixture::new();
+    f.inv = Inventory::default();
+    f.account.selected = crate::ao::demo::seed_alchemy_migration(&mut f.inv, Uuid::from_u128(1));
+    f.catalog = Default::default();
+    f.catalog.refresh(&mut f.inv);
+    let generation = f.inv.generation;
+    assert!(f.click(aurora_i18n::tr!("ao-migrate")).is_empty());
+    f.state.migration.as_mut().expect("picker").refresh(&mut f.inv, true);
+    f.settle();
+    assert!(f.click(aurora_i18n::tr!("ao-migrate-alchemy")).is_empty());
+    let migration = f.state.migration.as_mut().expect("picker");
+    assert!(migration.alchemy);
+    migration.refresh(&mut f.inv, true);
+    f.settle();
+    assert!(matches!(
+        f.click(aurora_i18n::tr!("ao-migrate-confirm")).as_slice(),
+        [Action::Migrate]
+    ));
+    let migration = f.state.migration.as_ref().expect("picker");
+    assert_eq!(migration.name, "Alchemy Dance Set");
+    assert_eq!(f.inv.generation, generation);
+}
+
+#[test]
 fn rename_updates_existing_folder_and_new_set_creates_a_distinct_set() {
     let mut f = Fixture::new();
     f.state.name = "Renamed".into();
