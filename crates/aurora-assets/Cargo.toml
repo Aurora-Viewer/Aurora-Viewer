@@ -20,7 +20,7 @@ serde_json = "1.0.151"
 thiserror = "2.0.21"
 uuid = "1.27.0"
 vorbis_rs = "0.5.6"
-meshopt = "0.6.2"
+meshopt = "0.7.0"
 parry3d = "0.31.1"
 aurora-llsd = { path = "../aurora-llsd" }
 
