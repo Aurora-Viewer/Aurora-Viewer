@@ -3035,6 +3035,19 @@ impl App {
         }
     }
 
+    /// Master × media channel volume, 0 when either is muted or disabled
+    /// (LLViewerMedia::getVolume): the media on faces and the videos of the
+    /// conversations' cards. Demo captures stay silent unless
+    /// AURORA_DEMO_SOUND is set.
+    fn media_volume(&self) -> f32 {
+        if self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none() {
+            return 0.0;
+        }
+        let a = &self.settings.audio;
+        let channel = |i: usize| if a.muted[i] || !a.enabled[i] { 0.0 } else { a.volume[i] };
+        channel(0) * channel(5)
+    }
+
     /// Voice transmission wanted (microphone button / push-to-talk).
     fn talking(&self) -> bool {
         if self.settings.audio.mic_hold {
@@ -6658,19 +6671,13 @@ impl App {
             {
                 // web pages and videos on faces (LLViewerMedia::updateMedia)
                 let a = &self.settings.audio;
-                let channel = |i: usize| if a.muted[i] || !a.enabled[i] { 0.0 } else { a.volume[i] };
                 let cache_dir = crate::settings::cache_dir();
                 let frame = crate::media::MediaFrame {
                     view: &cull,
                     camera: self.camera.position,
                     settings: &self.settings.media,
                     autoplay: a.media_autoplay,
-                    // demo captures stay silent unless AURORA_DEMO_SOUND is set
-                    channel_volume: if self.demo && std::env::var_os("AURORA_DEMO_SOUND").is_none() {
-                        0.0
-                    } else {
-                        channel(0) * channel(5)
-                    },
+                    channel_volume: self.media_volume(),
                     agent_speed: self.world.agent.velocity.length(),
                     window_focused: self.focused,
                     net: (!self.demo).then(|| (self.net.runtime(), self.net.caps_http())),
@@ -10984,9 +10991,11 @@ impl App {
                 // plugins' browser
                 self.chat_ui.previews.settings.clone_from(&self.settings.link_previews);
                 self.chat_ui.previews.demo = self.demo && crate::demo::previews_offline();
+                let volume = self.media_volume();
                 self.chat_ui.previews.web = self.chat_ui.previews.playing().then(|| ui::chat::previews::WebEnv {
                     paths: self.media.plugins(&self.settings.media).cloned(),
                     browser: crate::media::browser_settings(&crate::settings::cache_dir(), aurora_i18n::language()),
+                    volume,
                 });
                 // who hears the nearby chat, and who of them types (the
                 // radar's avatars in chat range, `World::is_typing_nearby`)
