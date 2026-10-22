@@ -130,11 +130,26 @@ struct Playing {
     drawn: u64,
 }
 
-/// What the player needs of the app: the media plugins and the browser's
-/// settings.
+/// What the player needs of the app: the media plugins, the browser's
+/// settings and the media volume.
 pub struct WebEnv {
     pub paths: Option<aurora_media::PluginPaths>,
     pub browser: aurora_media::BrowserSettings,
+    /// Master × media channel volume (0 when muted), as for the media on
+    /// faces.
+    pub volume: f32,
+}
+
+impl WebEnv {
+    /// Draw the player. The plugin's browser starts muted
+    /// (MediaPluginCEF::mCurVolume), so it gets the volume every frame: the
+    /// plugin sends it only when it changes.
+    fn show(&self, web: &mut WebView, ui: &mut egui::Ui, p: &Palette, size: Vec2) {
+        web.show(ui, p, self.paths.as_ref(), &self.browser, None, size);
+        if let Some(plugin) = web.plugin_mut() {
+            plugin.set_volume(self.volume);
+        }
+    }
 }
 
 type Answer = (String, Result<Content, Failure>);
@@ -383,7 +398,7 @@ impl Previews {
             .action("external-link-filled", aurora_i18n::tr!("ui-chat-preview-open"), &mut browser)
             .show(ctx, p, &mut open, |ui| {
                 let size = ui.available_size().max(Vec2::splat(64.0));
-                v.web.show(ui, p, web.paths.as_ref(), &web.browser, None, size);
+                web.show(&mut v.web, ui, p, size);
             });
         if browser {
             super::open_web_link(ctx, &v.link);
@@ -737,7 +752,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             match (here, pv.playing.as_mut(), pv.web.as_ref()) {
                 (Some(false), Some(v), Some(web)) => {
                     v.drawn = pass;
-                    v.web.show(ui, p, web.paths.as_ref(), &web.browser, None, size);
+                    web.show(&mut v.web, ui, p, size);
                 }
                 _ => {
                     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
@@ -772,7 +787,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                         let x = rect.center().x - (galley.size().x + 22.0) * 0.5;
                         paint_icon(
                             ui.painter(),
-                            "app-window-filled",
+                            "picture-in-picture-filled",
                             egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 8.0), Vec2::splat(16.0)),
                             p.violet_pale,
                         );
@@ -830,7 +845,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                                 detach = crate::ui::widgets::icon_button(
                                     ui,
                                     p,
-                                    "app-window-filled",
+                                    "picture-in-picture-filled",
                                     aurora_i18n::tr!("ui-chat-preview-detach"),
                                     true,
                                 );
