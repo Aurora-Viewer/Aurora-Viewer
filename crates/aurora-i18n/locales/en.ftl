@@ -655,7 +655,7 @@ notecard-markdown-demo =
 
     > Embedded items remain part of the notecard.
 
-    { "[" }Aurora Viewer](https://auroraviewer.com)
+    { "[" }Aurora Viewer](https://aurora-viewer.org)
 
     ```text
     A plain code block
@@ -1398,6 +1398,15 @@ ui-parcel-icons-avatars-visible-people-on-other-parcels-can-see-and = Avatars vi
 ui-people-nearby-avatars-and-friends-list = Nearby avatars and friends list
 ui-contacts-with-a-nickname = With a nickname
 ui-options-warn-before-opening-a-link-to-a-site-that = Warn before opening a link to a site that is not trusted (green check). Dangerous links (red cross) always trigger a warning
+ui-options-web-links = Web links
+ui-options-trusted-sites = Trusted sites
+ui-options-trusted-sites-hint = Links to these sites and their subdomains get the green check and open without a warning. Add your own sites, or untick a built-in one to stop trusting it. Links that hide their destination stay dangerous.
+ui-options-trusted-sites-none = No site added.
+ui-options-trusted-sites-remove = Stop trusting this site
+ui-options-trusted-sites-add = Add
+ui-options-trusted-sites-add-hint = example.com
+ui-options-trusted-sites-invalid = Enter a site name, such as example.com.
+ui-options-trusted-sites-built-in = Built-in sites
 common-group-notice = Group notice
 build-ui-tools-edit-axis-at-root = Edit axis at root
 ui-environment-azimuth = Azimuth
@@ -4905,6 +4914,7 @@ ui-options-about-chat = Nearby chat, notifications, alerts, history and automati
 ui-options-about-sound = Devices, volumes, interface sounds and voice.
 ui-options-about-media = Web pages and videos on objects, HUDs and avatars.
 ui-options-about-privacy = Who sees you, who can write to you, what others and scripts learn of you.
+ui-options-about-protections = Scripted restrictions (RLVa), limits on spam from each source, and how far web links are trusted.
 ui-options-about-layout = Bars, windows, hover tips of the world and what opens at startup.
 ui-options-about-appearance = Font, text size, colours and skin.
 ui-options-about-accessibility = Colour blindness, motion and readability.

@@ -831,6 +831,7 @@ impl App {
         }
         ui::colors::set(&settings.colors);
         crate::keywords::set(&settings.keywords);
+        crate::link_trust::configure(&settings.trusted_sites);
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
@@ -7904,6 +7905,7 @@ impl App {
             self.skin.theme.apply(&self.egui_ctx, self.settings.font_scale);
             ui::colors::set(&self.settings.colors);
             crate::keywords::set(&self.keyword_settings());
+            crate::link_trust::configure(&self.settings.trusted_sites);
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));

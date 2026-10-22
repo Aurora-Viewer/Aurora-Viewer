@@ -616,6 +616,9 @@ pub struct Settings {
     /// Ask before opening a web link outside the trusted domains (the box
     /// "Do not warn me again" of the warning turns it off).
     pub warn_external_links: bool,
+    /// Sites added to, or removed from, the built-in trusted domains
+    /// (Preferences › Protections; link_trust.rs).
+    pub trusted_sites: crate::link_trust::TrustedSites,
     /// FSMuteAllGroups: refuse every group chat.
     pub mute_all_groups: bool,
     /// FSMuteGroupWhenNoticesDisabled: refuse group chat of groups whose
@@ -1416,6 +1419,7 @@ impl Default for Settings {
             log_show_history: true,
             log_dated_names: false,
             warn_external_links: true,
+            trusted_sites: Default::default(),
             mute_all_groups: false,
             mute_groups_without_notices: false,
             report_blocks: false,
