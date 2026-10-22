@@ -21,6 +21,33 @@ struct Source {
     cloud: bool,
 }
 
+impl Source {
+    fn update(&mut self, dt: f32, ctx: &SourceContext, budget: &mut usize, world: &World) {
+        self.ps.update_with_wind(dt, ctx, budget, |position| wind_at(world, position));
+    }
+}
+
+/// LLViewerPartGroup::getRegion / updateParticles: use the region containing
+/// the particle, even after it drifts away from its source or the source dies.
+/// LLWind::getVelocity's interpolation and factor of two are in WindGrid.
+fn wind_at(world: &World, position: Vec3) -> Vec3 {
+    for region in world.regions.values() {
+        let Some(offset) = world.region_offset(region.handle) else {
+            continue;
+        };
+        let local = position - offset;
+        if local.x >= 0.0 && local.y >= 0.0 && local.x < region.heightmap.size_x as f32 && local.y < region.heightmap.size_y as f32 {
+            return region.wind.velocity(local, region.heightmap.size_x as f32);
+        }
+    }
+    // LLViewerPartGroup falls back to the agent's region when no region
+    // contains the group. WindGrid keeps its clamped/wrapped coordinates.
+    world
+        .main_region
+        .and_then(|handle| world.regions.get(&handle))
+        .map_or(Vec3::ZERO, |region| region.wind.velocity(position, region.heightmap.size_x as f32))
+}
+
 /// Loading cloud: Firestorm's app_settings/cloud.xml motion, in Aurora's
 /// colors (violet to turquoise), on the default soft particle.
 fn cloud_data(avatar: Uuid) -> ps::PartSysData {
@@ -225,7 +252,7 @@ impl ParticleManager {
                 // object gone: stop emitting, let the particles live out
                 s.ps.stop();
                 let mut none = 0;
-                s.ps.update(dt, &SourceContext::default(), &mut none);
+                s.update(dt, &SourceContext::default(), &mut none, world);
                 if s.ps.is_dead() {
                     dead.push(*id);
                 }
@@ -266,9 +293,9 @@ impl ParticleManager {
             }
             if blocked || pos.distance(eye) > draw_distance {
                 let mut none = 0;
-                s.ps.update(dt, &ctx, &mut none);
+                s.update(dt, &ctx, &mut none, world);
             } else {
-                s.ps.update(dt, &ctx, &mut budget);
+                s.update(dt, &ctx, &mut budget, world);
             }
             // texture changes
             let tex = s.ps.texture();
@@ -361,6 +388,71 @@ fn quad_hit(origin: Vec3, dir: Vec3, right: Vec3, up: Vec3, pos: Vec3, size: gla
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn particle_wind_uses_live_region_grids_after_the_emitter_stops() {
+        use aurora_net::{NetEvent, terrain::WindGrid};
+        use std::sync::Arc;
+        let mut world = World::new(Arc::new(super::super::avatar::AvatarLibrary::load()));
+        let main = (1024u64 << 32) | 2048;
+        let east = (1280u64 << 32) | 2048;
+        world.main_region = Some(main);
+        for handle in [main, east] {
+            world.apply(NetEvent::Wind {
+                handle,
+                grid: Box::new(WindGrid {
+                    velocities: std::array::from_fn(|i| {
+                        if handle == main {
+                            Vec3::X * (i % 16) as f32
+                        } else {
+                            Vec3::Y * -4.0
+                        }
+                    }),
+                }),
+            });
+        }
+        assert_eq!(wind_at(&world, Vec3::new(24.0, 8.0, 1000.0)), Vec3::X * 3.0);
+        assert_eq!(wind_at(&world, Vec3::new(256.0, 8.0, 20.0)), Vec3::Y * -8.0);
+        assert_eq!(wind_at(&world, Vec3::new(-1.0, 8.0, 20.0)), Vec3::ZERO);
+        assert_eq!(wind_at(&world, Vec3::new(512.0, 8.0, 20.0)), Vec3::ZERO);
+        assert_eq!(wind_at(&world, Vec3::new(520.0, 8.0, 20.0)), Vec3::X);
+
+        let mut data = ps::PartSysData {
+            pattern: ps::LL_PART_SRC_PATTERN_DROP,
+            burst_part_count: 1,
+            burst_rate: 100.0,
+            ..Default::default()
+        };
+        data.part.flags = ps::LL_PART_WIND_MASK;
+        let mut source = Source {
+            ps: ParticleSource::new(data, 1),
+            texture: Uuid::nil(),
+            slot: 0,
+            cloud: false,
+        };
+        let ctx = SourceContext {
+            pos: Vec3::new(24.0, 8.0, 20.0),
+            ..Default::default()
+        };
+        let mut budget = 1;
+        source.update(0.0, &ctx, &mut budget, &world);
+        source.ps.stop();
+        source.update(0.1, &SourceContext::default(), &mut budget, &world);
+        assert!((source.ps.particles()[0].vel.x - 0.03).abs() < 1e-6);
+        world.apply(NetEvent::Wind {
+            handle: main,
+            grid: Box::new(WindGrid {
+                velocities: [Vec3::Y * 5.0; 256],
+            }),
+        });
+        source.update(0.1, &ctx, &mut budget, &world);
+        let p = source.ps.particles()[0];
+        assert!((p.vel.x - 0.0297).abs() < 1e-6);
+        assert!((p.vel.y - 0.1).abs() < 1e-6);
+        world.regions.clear();
+        source.update(0.1, &ctx, &mut budget, &world);
+        assert!((source.ps.particles()[0].vel - p.vel * 0.99).length() < 1e-6);
+    }
 
     #[test]
     fn a_ray_picks_a_particle_quad_in_front_only() {

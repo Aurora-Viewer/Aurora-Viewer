@@ -415,6 +415,18 @@ fn fountain_particles() -> Vec<u8> {
     out
 }
 
+/// Two otherwise identical smoke emitters, with only LL_PART_WIND_MASK
+/// differing. Keep the ordinary compressed-update path and default texture.
+fn region_wind_particles(affected: bool) -> Vec<u8> {
+    use aurora_prim::particles::*;
+    let mut out = scripted_particles(false, true);
+    let flags = LL_PART_EMISSIVE_MASK | LL_PART_INTERP_COLOR_MASK | LL_PART_INTERP_SCALE_MASK;
+    let part = PS_SYS_DATA_BLOCK_SIZE;
+    out[part..part + 4].copy_from_slice(&(flags | if affected { LL_PART_WIND_MASK } else { 0 }).to_le_bytes());
+    out[part + 4..part + 6].copy_from_slice(&(6u16 * 256).to_le_bytes());
+    out
+}
+
 /// Motorcycle wind / smoke script, using a default soft dot offline. The
 /// simulator clamps the wind's requested 5 m height to MAX_PART_SCALE (4 m).
 /// Layout follows LLPartSysData::unpack / LLPartData::unpack (llpartdata.cpp).
@@ -466,18 +478,21 @@ fn scripted_particles(wind: bool, legacy: bool) -> Vec<u8> {
 /// Feed the extended block through the compressed-object decoder, including
 /// its position after texture data, as LLVOVolume::processUpdateMessage does.
 fn compressed_scripted_particles(wind: bool, legacy: bool) -> Option<aurora_net::objects::ParticleUpdate> {
-    let block = scripted_particles(wind, legacy);
+    compressed_particle_block(&scripted_particles(wind, legacy), legacy)
+}
+
+fn compressed_particle_block(block: &[u8], legacy: bool) -> Option<aurora_net::objects::ParticleUpdate> {
     let mut data = vec![0; 84];
     data[20] = LL_PCODE_VOLUME;
     data[64..68].copy_from_slice(&(if legacy { 0x8u32 } else { 0x400u32 }).to_le_bytes());
     if legacy {
-        data.extend_from_slice(&block);
+        data.extend_from_slice(block);
     }
     data.push(0); // extra params
     data.extend_from_slice(&[0; 23]); // shape (demo object supplies its geometry)
     data.extend_from_slice(&0u32.to_le_bytes()); // texture entry
     if !legacy {
-        data.extend_from_slice(&block);
+        data.extend_from_slice(block);
     }
     aurora_net::objects::parse_compressed(&data, 0).map(|o| o.particles)
 }
@@ -4211,7 +4226,12 @@ pub fn events() -> Vec<NetEvent> {
                 ExtraParams::default(),
                 label,
             );
-            if let Some(particles) = compressed_scripted_particles(wind, mode == "legacy") {
+            let particles = if matches!(mode, "region-wind" | "region-calm") {
+                compressed_particle_block(&region_wind_particles(wind), true)
+            } else {
+                compressed_scripted_particles(wind, mode == "legacy")
+            };
+            if let Some(particles) = particles {
                 o.particles = particles;
             }
             add(o);
@@ -4459,6 +4479,18 @@ pub fn events() -> Vec<NetEvent> {
         objects: objs,
     });
     ev.extend(overrides);
+    if matches!(particles_mode.as_str(), "region-wind" | "region-calm") {
+        ev.push(NetEvent::Wind {
+            handle: HANDLE,
+            grid: Box::new(aurora_net::terrain::WindGrid {
+                velocities: [if particles_mode == "region-wind" {
+                    Vec3::new(0.0, -3.0, 0.0)
+                } else {
+                    Vec3::ZERO
+                }; 256],
+            }),
+        });
+    }
     if let Some((wind, _)) = crate::scene::wind_sound::demo_spec() {
         ev.push(NetEvent::Wind {
             handle: HANDLE,
@@ -7102,6 +7134,24 @@ fn demo_day(sky: Llsd) -> Llsd {
 #[cfg(test)]
 mod particle_tests {
     use super::*;
+
+    #[test]
+    fn particle_wind_demo_emitters_only_differ_by_the_wind_mask() {
+        use aurora_prim::particles as ps;
+        let parse = |wind| {
+            let Some(aurora_net::objects::ParticleUpdate::Set(block)) = compressed_particle_block(&region_wind_particles(wind), true)
+            else {
+                panic!("compressed particle update");
+            };
+            ps::parse(&block).expect("region wind particle data")
+        };
+        let mut wind = parse(true);
+        let calm = parse(false);
+        assert_eq!(wind.part.max_age, 6.0);
+        assert_ne!(wind.part.flags & ps::LL_PART_WIND_MASK, 0);
+        wind.part.flags &= !ps::LL_PART_WIND_MASK;
+        assert_eq!(wind, calm);
+    }
 
     #[test]
     fn agent_jitter_stays_within_its_size_and_changes_every_twelve_frames() {

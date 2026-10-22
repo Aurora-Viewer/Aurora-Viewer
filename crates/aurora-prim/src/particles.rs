@@ -409,8 +409,8 @@ pub struct SourceContext {
     /// Render position of the target object, if it is known. `None` makes
     /// the source its own target (as LL does when the target is missing).
     pub target: Option<Vec3>,
-    /// Wind velocity at the source (LL samples it at each particle; the
-    /// difference is negligible at particle scale).
+    /// Uniform wind for [`ParticleSource::update`]. The viewer uses
+    /// [`ParticleSource::update_with_wind`] to sample each particle instead.
     pub wind: Vec3,
 }
 
@@ -560,7 +560,6 @@ pub struct ParticleSource {
     pos: Vec3,
     rot: Quat,
     target_pos: Vec3,
-    wind: Vec3,
     /// Context has been received at least once.
     have_pos: bool,
 }
@@ -579,7 +578,6 @@ impl ParticleSource {
             pos: Vec3::ZERO,
             rot: Quat::IDENTITY,
             target_pos: Vec3::ZERO,
-            wind: Vec3::ZERO,
             have_pos: false,
         }
     }
@@ -622,14 +620,19 @@ impl ParticleSource {
     /// particles and drop expired ones. Each spawned particle decrements
     /// `budget`; nothing is spawned once it reaches 0.
     pub fn update(&mut self, dt: f32, ctx: &SourceContext, budget: &mut usize) {
+        self.update_with_wind(dt, ctx, budget, |_| ctx.wind);
+    }
+
+    /// Advance with world-space wind sampled at each wind-enabled particle,
+    /// including particles that outlive their source. Port of
+    /// LLViewerPartGroup::updateParticles (indra/newview/llviewerpartsim.cpp,
+    /// originally LGPL 2.1).
+    pub fn update_with_wind(&mut self, dt: f32, ctx: &SourceContext, budget: &mut usize, wind: impl Fn(Vec3) -> Vec3) {
         let dt = if dt.is_finite() { dt.clamp(0.0, MAX_PARTICLE_DT) } else { 0.0 };
-        if ctx.wind.is_finite() {
-            self.wind = ctx.wind;
-        }
         if !self.source_dead {
             self.update_source(dt, ctx, budget);
         }
-        self.update_particles(dt);
+        self.update_particles(dt, wind);
         self.link_ribbons();
     }
 
@@ -827,10 +830,9 @@ impl ParticleSource {
     /// `LLViewerPartGroup::updateParticles` for this source's particles.
     /// Order-preserving in-place compaction keeps the ribbon chain in spawn
     /// order without allocating.
-    fn update_particles(&mut self, dt: f32) {
+    fn update_particles(&mut self, dt: f32, wind: impl Fn(Vec3) -> Vec3) {
         let src_pos = self.pos;
         let target = self.target_pos;
-        let wind = self.wind;
         let n = self.particles.len();
         let mut w = 0;
         // `Some(chained)` when the previous element was removed.
@@ -854,6 +856,8 @@ impl ParticleSource {
             }
 
             if p.flags & LL_PART_WIND_MASK != 0 {
+                let sampled = wind(p.pos);
+                let wind = if sampled.is_finite() { sampled } else { Vec3::ZERO };
                 p.vel *= 1.0 - 0.1 * dt;
                 p.vel += 0.1 * dt * wind;
             }
@@ -1203,6 +1207,64 @@ mod tests {
             part_max_age,
         ))
         .expect("parses")
+    }
+
+    #[test]
+    fn particle_wind_samples_each_position_and_only_flagged_particles() {
+        let mut src = ParticleSource::new(explode_data(3, 5.0), 42);
+        let mut budget = 3;
+        let ctx = SourceContext::default();
+        src.update(0.0, &ctx, &mut budget);
+        for (i, p) in src.particles.iter_mut().enumerate() {
+            p.flags = if i < 2 { LL_PART_WIND_MASK } else { 0 };
+            p.pos = Vec3::new(16.0 * i as f32, 5.0, 10.0);
+            p.vel = Vec3::new(2.0, -1.0, 3.0);
+            p.accel = Vec3::new(0.0, 0.0, -2.0);
+        }
+        let old = src.particles.clone();
+        let samples = std::cell::RefCell::new(Vec::new());
+        src.update_with_wind(0.1, &ctx, &mut budget, |p| {
+            samples.borrow_mut().push(p);
+            Vec3::new(p.x, 4.0, 0.0)
+        });
+        assert_eq!(*samples.borrow(), [old[0].pos, old[1].pos]);
+        for (i, (p, old)) in src.particles.iter().zip(&old).enumerate() {
+            let relaxed = if i < 2 {
+                old.vel * 0.99 + Vec3::new(old.pos.x, 4.0, 0.0) * 0.01
+            } else {
+                old.vel
+            };
+            assert!((p.pos - (old.pos + relaxed * 0.1 + old.accel * 0.005)).length() < 1e-5);
+            assert!((p.vel - (relaxed + old.accel * 0.1)).length() < 1e-5);
+        }
+        // A stopped source still samples its live particles; malformed wind
+        // cannot poison their velocity or remove them.
+        src.stop();
+        src.update_with_wind(0.1, &ctx, &mut budget, |_| Vec3::splat(f32::NAN));
+        assert_eq!(src.particles.len(), 3);
+        assert!(src.particles.iter().all(|p| p.pos.is_finite() && p.vel.is_finite()));
+    }
+
+    #[test]
+    fn particle_wind_samples_after_follow_source_and_before_target_motion() {
+        let mut src = ParticleSource::new(explode_data(1, 5.0), 42);
+        let mut budget = 1;
+        let mut ctx = SourceContext::default();
+        src.update(0.0, &ctx, &mut budget);
+        src.particles[0].flags = LL_PART_WIND_MASK | LL_PART_FOLLOW_SRC_MASK;
+        src.particles[0].pos_offset = Vec3::X;
+        src.particles[0].vel = Vec3::ZERO;
+        ctx.pos = Vec3::new(100.0, 50.0, 20.0);
+        src.update_with_wind(0.1, &ctx, &mut budget, |position| {
+            assert_eq!(position, ctx.pos + Vec3::X);
+            Vec3::Y * 10.0
+        });
+        assert!((src.particles[0].vel.y - 0.1).abs() < 1e-5);
+        src.particles[0].flags |= LL_PART_TARGET_LINEAR_MASK;
+        ctx.target = Some(ctx.pos + Vec3::Z * 10.0);
+        src.update_with_wind(0.1, &ctx, &mut budget, |_| Vec3::Y * 100.0);
+        assert_eq!(src.particles[0].vel, Vec3::Z * 10.0);
+        assert!((src.particles[0].pos - (ctx.pos + Vec3::Z * 0.4)).length() < 1e-5);
     }
 
     #[test]

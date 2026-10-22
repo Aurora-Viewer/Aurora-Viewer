@@ -1906,7 +1906,7 @@ tests do not establish that this report uses an invalid joint or index.
 
 | Variable | Effect |
 |---|---|
-| `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, or particle load |
+| `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
@@ -1942,6 +1942,15 @@ tests do not establish that this report uses an invalid joint or index.
   motorbike and parameters of the smoke script received through compressed
   updates, in front of a dark panel; extended glow format (`legacy`:
   wind without glow), default soft texture of the particles offline.
+  `region-wind`: two otherwise identical six-second smoke emitters in front
+  of the panel; "Wind" has `LL_PART_WIND_MASK`, "Smoke" does not. The
+  region's wind blows towards negative Y at 6 m/s after the Legacy wind
+  scale: only the first plume drifts sideways. `region-calm` uses the same
+  emitters with zero wind: both keep their original motion. Override either
+  wind with `AURORA_DEMO_WIND=x,y` (raw grid values, scaled by two), for
+  example `0,3` to reverse the drift. No grid connection is needed.
+  These two modes frame the plumes automatically and close the demo's
+  Inventory/AO windows so saved camera preferences cannot hide the comparison.
   `load`: instead, 32 more fountains in a circle around the plaza,
   that is about 4,000 live particles, to measure the `p_part_*` parts
   of the profile (combine with `AURORA_DEMO_STREAM=<n>` for the

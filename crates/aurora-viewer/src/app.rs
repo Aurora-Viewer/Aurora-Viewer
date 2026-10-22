@@ -12720,6 +12720,19 @@ impl ApplicationHandler for App {
                     }
                 }
             }
+            if std::env::var("AURORA_DEMO_PARTICLES").is_ok_and(|mode| matches!(mode.as_str(), "region-wind" | "region-calm")) {
+                // Frame both plumes independently of the saved camera preset.
+                self.panels.inventory = false;
+                self.panels.ao = false;
+                let ground = self.world.ground_height(glam::Vec3::new(136.0, 127.0, 0.0)).unwrap_or(20.0);
+                self.camera.set_view(
+                    glam::Vec3::new(125.0, 124.0, ground + 4.0),
+                    glam::Vec3::new(137.0, 124.0, ground + 4.0),
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
+                self.camera.snap();
+            }
             // AURORA_DEMO_CAM="yaw,pitch,distance" (radians, meters) for captures
             if let Ok(v) = std::env::var("AURORA_DEMO_CAM") {
                 let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();

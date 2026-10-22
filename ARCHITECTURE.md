@@ -1,5 +1,14 @@
 # Aurora Viewer architecture
 
+Object particles sample the containing region's `WindGrid` at each live
+particle's render-space position through `scene/particles.rs` and
+`aurora_prim::particles::ParticleSource::update_with_wind`. Only `LL_PART_WIND_MASK`
+particles pay for the lookup. Region offsets, neighboring grids and particles
+outliving their emitter share this path. Outside the known regions the main
+region supplies wind, as in the Legacy Viewer; without a main grid it is zero.
+The grid owns Legacy interpolation/scaling, and the simulator retains the
+Legacy velocity relaxation before target and acceleration updates.
+
 Native links share `ui/chat/action_marker.rs`: a parsed action chooses its
 Tabler icon before the unchanged destination text. Wrapping text
 and console/bubble LayoutJobs share that prefix; the marker is part of the
