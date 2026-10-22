@@ -580,10 +580,10 @@ impl App {
         // window's orbit stick (LLJoystickCameraRotate::onHeldDown)
         let pos = |v: f32| v.max(0.0);
         Some([
-            pos(-pad.orbit.x),
-            pos(pad.orbit.x),
-            pos(-pad.orbit.y),
-            pos(pad.orbit.y),
+            pos(-pad.orbit.x) * PAD_TURN,
+            pos(pad.orbit.x) * PAD_TURN,
+            pos(-pad.orbit.y) * PAD_TURN,
+            pos(pad.orbit.y) * PAD_TURN,
             pos(-pad.rocker),
             pos(pad.rocker),
             pos(-pad.pan.x) * PAD_PAN,
@@ -890,9 +890,10 @@ impl App {
     }
 }
 
-/// The pad's Slide stick at full tilt, as a share of the pan keys' rate:
-/// framing wants smaller moves than the keys give.
-const PAD_PAN: f32 = 0.55;
+/// The pad's Turn and Slide sticks at full tilt, as a share of the orbit
+/// and pan keys' rates: framing wants smaller moves than the keys give.
+const PAD_TURN: f32 = 0.6;
+const PAD_PAN: f32 = 0.4;
 
 /// About half a head's depth (m): from its middle to the face.
 const HEAD_RADIUS: f32 = 0.09;
