@@ -208,7 +208,23 @@ impl Rlva {
         true
     }
 
-    pub fn camera_settings(&self, original: &CameraSettings) -> CameraSettings {
+    /// LLViewerCamera::getMinView/getMaxView bound vertical FOV by window
+    /// aspect. With no script FOV command the user's native view is intact.
+    pub fn camera_fov_limits(&self, aspect: f32) -> Option<(f32, f32)> {
+        let low = self.camera_number("setcam_fovmin", true);
+        let high = self.camera_number("setcam_fovmax", false);
+        if low.is_none() && high.is_none() && self.camera_value("setcam_fov").is_none() {
+            return None;
+        }
+        let aspect = if aspect.is_finite() && aspect > 0.0 { aspect } else { 1.0 };
+        let native_low = (5.0f32.to_radians() / aspect.min(1.0)).min(175.0f32.to_radians());
+        let native_high = (175.0f32.to_radians() / aspect.max(1.0)).max(native_low);
+        let low = low.unwrap_or(native_low).clamp(native_low, native_high);
+        let high = high.unwrap_or(native_high).clamp(low, native_high);
+        Some((low, high))
+    }
+
+    pub fn camera_settings(&self, original: &CameraSettings, aspect: f32) -> CameraSettings {
         let mut s = original.clone();
         if let Some(v) = self.camera_value("setcam_eyeoffset").and_then(vector) {
             s.camera_offset = v.to_array();
@@ -222,11 +238,9 @@ impl Rlva {
         if let Some(v) = self.camera_value("setcam_fov").and_then(|v| v.parse::<f32>().ok()) {
             s.fov = v;
         }
-        let lo = self.camera_limit("setcam_fovmin", 0.1, true).clamp(0.1, std::f32::consts::PI - 0.1);
-        let hi = self
-            .camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false)
-            .clamp(lo, std::f32::consts::PI - 0.1);
-        s.fov = s.fov.clamp(lo, hi);
+        if let Some((low, high)) = self.camera_fov_limits(aspect) {
+            s.fov = s.fov.clamp(low, high);
+        }
         s
     }
 }

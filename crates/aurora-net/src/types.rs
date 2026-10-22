@@ -596,6 +596,12 @@ pub enum NetEvent {
     TeleportFinished {
         handle: RegionHandle,
     },
+    /// A named destination lookup completed. The viewer rechecks the pending
+    /// action before issuing TeleportTo; resolving a name never teleports.
+    TeleportRegionResolved {
+        request: Uuid,
+        result: Result<RegionHandle, String>,
+    },
     /// The answer to `SetMaturityPreference`: the preference the server
     /// kept, or None when the request failed.
     MaturityPreference(Option<u8>),
@@ -1788,8 +1794,10 @@ pub enum NetCommand {
     CancelRegionRestart,
     /// Teleport to a region by name (map lookup), position in the region.
     TeleportToRegion {
+        request: Uuid,
         name: String,
         position: Vec3,
+        look_at: Vec3,
     },
     /// World map regions in a block of grid coordinates (region units,
     /// inclusive); `null_sims` asks for empty slots too (MAP_SIM_RETURN_NULL_SIMS).

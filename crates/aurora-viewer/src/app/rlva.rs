@@ -3,6 +3,13 @@ use super::*;
 use uuid::Uuid;
 
 impl App {
+    pub(super) fn camera_aspect(&self) -> f32 {
+        self.gfx
+            .as_ref()
+            .map(|g| g.window.inner_size())
+            .filter(|size| size.width > 0 && size.height > 0)
+            .map_or(1.0, |size| size.width as f32 / size.height as f32)
+    }
     pub(super) fn rlva_overlay_blocks(&self) -> bool {
         let size = self.gfx.as_ref().map(|g| g.window.inner_size());
         let Some(size) = size.filter(|s| s.width > 0 && s.height > 0) else {
@@ -18,6 +25,10 @@ impl App {
     pub(super) fn update_rlva(&mut self) {
         self.demo_rlva();
         self.world.rlva.configure(self.settings.rlva_enabled);
+        if !self.settings.rlva_enabled {
+            self.named_teleport.cancel_scripts();
+            self.world.maturity.cancel_script_teleports();
+        }
         self.create_landmark_ui.apply_rlva_privacy(self.world.rlva.has("showloc"));
         self.media.enforce_focus(&self.world);
         if !self.settings.rlva_enabled && !self.appearance_ui.pending_actor.is_nil() {
@@ -439,7 +450,7 @@ impl App {
                 continue;
             }
             if let Param::Reply(channel) = c.param {
-                let fov = self.world.rlva.camera_settings(&self.settings.camera).fov;
+                let fov = self.world.rlva.camera_settings(&self.settings.camera, self.camera_aspect()).fov;
                 if let Some(reply) = self
                     .world
                     .rlva

@@ -882,7 +882,7 @@ mod tests {
         ));
         assert!(matches!(
             w.maturity.take_commands()[..],
-            [NetCommand::SetMaturityPreference(aurora_net::search::SIM_ACCESS_ADULT)]
+            [(_, NetCommand::SetMaturityPreference(aurora_net::search::SIM_ACCESS_ADULT))]
         ));
         assert!(!w.maturity.synced());
         // declining such an offer is the plain decline

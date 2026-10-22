@@ -186,7 +186,7 @@ impl World {
                 let shift = Vec3::new((x as f64 - ox as f64) as f32, (y as f64 - oy as f64) as f32, 0.0);
                 self.rlva_teleport_delta_allowed(*position + shift - self.agent.position, actor)
             }
-            NetCommand::TeleportToRegion { name, position } => {
+            NetCommand::TeleportToRegion { name, position, .. } => {
                 let handle = self
                     .regions
                     .values()
@@ -453,14 +453,28 @@ impl World {
 }
 
 fn teleport(option: &str) -> Option<NetCommand> {
-    let destination = option.split(';').next()?;
+    // RlvForceHandler<TPTO> retains double precision until the region origin
+    // is removed and rotates the look vector by the optional radian angle.
+    let mut options = option.split(';');
+    let destination = options.next()?;
+    let look_at = match options.next() {
+        Some(angle) => {
+            let angle = angle.parse::<f32>().ok()?;
+            if !angle.is_finite() {
+                return None;
+            }
+            let (sin, cos) = angle.sin_cos();
+            Vec3::new(cos, sin, 0.0)
+        }
+        None => Vec3::X,
+    };
     let parts: Vec<_> = destination.split('/').collect();
     let (name, coordinates) = match parts.as_slice() {
         [x, y, z] => (None, [*x, *y, *z]),
         [region, x, y, z] if !region.is_empty() => (Some(*region), [*x, *y, *z]),
         _ => return None,
     };
-    let p = Vec3::new(
+    let p = glam::DVec3::new(
         coordinates[0].parse().ok()?,
         coordinates[1].parse().ok()?,
         coordinates[2].parse().ok()?,
@@ -470,19 +484,55 @@ fn teleport(option: &str) -> Option<NetCommand> {
     }
     if let Some(name) = name {
         Some(NetCommand::TeleportToRegion {
+            request: Uuid::new_v4(),
             name: name.to_owned(),
-            position: p,
+            position: p.as_vec3().is_finite().then_some(p.as_vec3())?,
+            look_at,
         })
     } else {
-        if p.x >= u32::MAX as f32 || p.y >= u32::MAX as f32 {
+        if p.x >= u32::MAX as f64 || p.y >= u32::MAX as f64 || p.z.abs() > f32::MAX as f64 {
             return None;
         }
         let x = (p.x as u32 / 256) * 256;
         let y = (p.y as u32 / 256) * 256;
         Some(NetCommand::TeleportTo {
             handle: aurora_net::origin_to_handle(x, y),
-            position: Vec3::new(p.x - x as f32, p.y - y as f32, p.z),
-            look_at: Vec3::X,
+            position: Vec3::new((p.x - x as f64) as f32, (p.y - y as f64) as f32, p.z as f32),
+            look_at,
         })
+    }
+}
+
+#[cfg(test)]
+mod teleport_tests {
+    use super::*;
+
+    #[test]
+    fn rlva_tpto_preserves_global_fractions_and_named_region_heading() {
+        let Some(NetCommand::TeleportTo { handle, position, look_at }) = teleport("10000000.125/20000000.75/42.5;1.57079632679") else {
+            panic!("global teleport")
+        };
+        let (x, y) = aurora_net::handle_to_origin(handle);
+        assert_eq!(x as f64 + position.x as f64, 10000000.125);
+        assert_eq!(y as f64 + position.y as f64, 20000000.75);
+        assert_eq!(position.z, 42.5);
+        assert!(look_at.abs_diff_eq(Vec3::Y, 1e-6));
+        assert!(
+            matches!(teleport("region/1.25/2.5/40;-1.57079632679"), Some(NetCommand::TeleportToRegion { position, look_at, .. }) if position == Vec3::new(1.25, 2.5, 40.0) && look_at.abs_diff_eq(Vec3::NEG_Y, 1e-6))
+        );
+        assert!(matches!(teleport("1/2/3"), Some(NetCommand::TeleportTo { look_at, .. }) if look_at == Vec3::X));
+        for invalid in [
+            "1/2/3;bad",
+            "1/2/3;",
+            "1/2/3;nan",
+            "region/1/2/3;inf",
+            "nan/2/3",
+            "1/inf/3",
+            "4294967296/2/3",
+            "region/1/2/1e100",
+            "region/1/2",
+        ] {
+            assert!(teleport(invalid).is_none(), "{invalid}");
+        }
     }
 }

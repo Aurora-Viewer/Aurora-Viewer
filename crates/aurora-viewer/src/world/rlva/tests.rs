@@ -5,6 +5,56 @@ const B: Uuid = Uuid::from_u128(2);
 const TARGET: Uuid = Uuid::from_u128(3);
 
 #[test]
+fn rlva_owner_say_folds_options_and_parameters_without_accepting_malformed_clear() {
+    let mut r = enabled();
+    assert!(!r.receive(&chat("@a")), "short non-command OwnerSay remains chat");
+    command(&mut r, A, "@FLY=N,DETACHTHIS:OutFit=N,NOTIFY:123;FlY=N,JUMP=N");
+    assert!(r.has("fly") && r.has("jump"));
+    assert!(r.restrictions().iter().any(|(_, rule)| rule == "detachthis:outfit"));
+    command(&mut r, A, "@FLY=Y");
+    assert!(matches!(r.out.last(), Some(NetCommand::ChatReply { message, .. }) if message == "/fly=y"));
+    command(&mut r, A, "@clear:missing");
+    assert!(r.has("jump"), "a missing equals sign cannot clear the issuer's restrictions");
+    assert!(Command::parse("clear:missing").is_none());
+    command(&mut r, A, "@CLEAR=");
+    assert!(r.restrictions().is_empty());
+}
+
+#[test]
+fn rlva_fov_bounds_follow_window_aspect_and_leave_unrestricted_native_views_intact() {
+    let mut r = enabled();
+    let native = crate::camera::CameraSettings {
+        fov: 2.97,
+        ..Default::default()
+    };
+    assert_eq!(r.camera_settings(&native, 2.0), native);
+    r.camera_force(A, &Command::parse("setcam_fov:0.09=force").unwrap());
+    assert!((r.camera_settings(&native, 1.0).fov - 0.09).abs() < 1e-6);
+    assert!((r.camera_settings(&native, 0.5).fov - 10.0f32.to_radians()).abs() < 1e-6);
+    r.camera_force(A, &Command::parse("setcam_fov:100=force").unwrap());
+    assert!((r.camera_settings(&native, 2.0).fov - 87.5f32.to_radians()).abs() < 1e-6);
+    command(&mut r, A, "@setcam=n,setcam_fovmin:0.5=n,setcam_fovmax:0.6=n");
+    command(&mut r, B, "@setcam_fovmin:1.0=n");
+    assert_eq!(
+        r.camera_settings(&native, 1.0).fov,
+        0.6,
+        "only the camera owner's limits are active"
+    );
+    command(&mut r, A, "@clear");
+    command(&mut r, B, "@clear");
+    assert_eq!(
+        r.camera_settings(&native, 1.0).fov,
+        2.97,
+        "releasing the last owned FOV limits restores the user's value"
+    );
+    for aspect in [f32::NAN, f32::INFINITY, 0.0, 0.001, 1000.0] {
+        assert!(r.camera_settings(&native, aspect).fov.is_finite());
+    }
+    r.configure(false);
+    assert_eq!(r.camera_settings(&native, 0.5), native);
+}
+
+#[test]
 fn rlva_inventory_wire_order_attachment_groups_and_own_locks_match_the_reference() {
     use crate::world::inventory::{FetchState, Folder};
     use aurora_net::{
@@ -75,20 +125,20 @@ fn rlva_inventory_wire_order_attachment_groups_and_own_locks_match_the_reference
         world.objects.upsert(world.main_region.unwrap(), update);
     }
     for (group, expected) in [
-        ("head", "skull"),
-        ("torso", "chest"),
-        ("arms", "left hand"),
-        ("legs", "left foot"),
-        ("hud", "center 2"),
+        ("head", "Skull"),
+        ("torso", "Chest"),
+        ("arms", "Left Hand"),
+        ("legs", "Left Foot"),
+        ("hud", "Center 2"),
     ] {
         let text = format!("getattachnames:{group}=123");
         let c = Command::parse(&text).unwrap();
         assert_eq!(world.rlva_inventory_query(&c, A).as_deref(), Some(expected));
     }
     let hud_points = world.rlva_inventory_query(&query("getaddattachnames:hud=123"), A).unwrap();
-    assert!(hud_points.split(',').any(|p| p == "center 2"));
+    assert!(hud_points.split(',').any(|p| p == "Center 2"));
     assert!(
-        !hud_points.split(',').any(|p| p == "left ring finger"),
+        !hud_points.split(',').any(|p| p == "Left Ring Finger"),
         "Bento group 8 is not a HUD"
     );
     let head = Uuid::from_u128(702);
@@ -110,7 +160,7 @@ fn rlva_inventory_wire_order_attachment_groups_and_own_locks_match_the_reference
             .rlva_inventory_query(&query("getaddattachnames:head=123"), A)
             .unwrap()
             .split(',')
-            .any(|p| p == "skull")
+            .any(|p| p == "Skull")
     );
     assert_eq!(
         world.rlva_inventory_query(&query("getremoutfitnames=123"), A).as_deref(),
@@ -307,6 +357,51 @@ fn chat(text: &str) -> ChatMessage {
         chat_type: ChatType::OwnerSay,
         position: glam::Vec3::ZERO,
         message: text.to_owned(),
+    }
+}
+
+#[test]
+fn rlva_maturity_deferred_teleports_keep_the_actor_recheck_locks_and_cancel_on_disable() {
+    use crate::world::maturity::{MaturityPreference, Outcome};
+    use aurora_net::search::{SIM_ACCESS_MATURE, SIM_ACCESS_PG};
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva.configure(true);
+    let mut maturity = MaturityPreference::default();
+    maturity.request(SIM_ACCESS_MATURE, SIM_ACCESS_PG);
+    maturity.take_commands();
+    maturity.hold(NetCommand::TeleportHome, A);
+    command(&mut world.rlva, A, "@tplm=n");
+    assert_eq!(maturity.answer(Some(SIM_ACCESS_MATURE)), Outcome::Synced);
+    let (actor, teleport) = maturity.take_commands().pop().unwrap();
+    assert_eq!(actor, A);
+    assert!(
+        world.rlva_allows_command(&teleport, actor),
+        "the original issuer can still force through its own lock"
+    );
+    command(&mut world.rlva, B, "@tplm=n");
+    assert!(
+        !world.rlva_allows_command(&teleport, actor),
+        "a new other issuer's lock applies before the delayed send"
+    );
+    for release_first in [false, true] {
+        let mut maturity = MaturityPreference::default();
+        maturity.request(SIM_ACCESS_MATURE, SIM_ACCESS_PG);
+        maturity.take_commands();
+        maturity.hold(NetCommand::TeleportHome, A);
+        if release_first {
+            maturity.answer(Some(SIM_ACCESS_MATURE));
+        }
+        maturity.cancel_script_teleports();
+        if !release_first {
+            maturity.answer(Some(SIM_ACCESS_MATURE));
+        }
+        assert!(maturity.take_commands().is_empty());
+        maturity.hold(NetCommand::TeleportHome, Uuid::nil());
+        maturity.cancel_script_teleports();
+        assert!(
+            maturity.holds_teleport(),
+            "the user's own queued action survives switching RLVa off"
+        );
     }
 }
 
@@ -620,11 +715,11 @@ fn rlva_camera_owner_and_clamps_are_temporary_and_reject_nonfinite_values() {
     assert_eq!(r.camera_owner(), Some(A));
     assert_eq!(r.camera_limit("setcam_avdistmin", 0.0, true), 2.0);
     let settings = crate::camera::CameraSettings::default();
-    assert_eq!(r.camera_settings(&settings).camera_offset, [-4.0, 0.0, 1.0]);
+    assert_eq!(r.camera_settings(&settings, 1.0).camera_offset, [-4.0, 0.0, 1.0]);
     command(&mut r, A, "@clear");
     assert_eq!(r.camera_limit("setcam_avdistmin", 0.0, true), 10.0);
     r.configure(false);
-    assert_eq!(r.camera_settings(&settings), settings);
+    assert_eq!(r.camera_settings(&settings, 1.0), settings);
 }
 
 #[test]
@@ -653,7 +748,7 @@ fn rlva_camera_replies_and_forces_match_modifier_lifetimes_and_preset_locks() {
     r.camera_force(B, &force("setcam_fov", "1.2"));
     assert!(r.camera_values.is_empty());
     r.camera_force(A, &force("setcam_eyeoffsetscale", "0"));
-    assert_eq!(r.camera_settings(&crate::camera::CameraSettings::default()).offset_scale, 0.0);
+    assert_eq!(r.camera_settings(&crate::camera::CameraSettings::default(), 1.0).offset_scale, 0.0);
     command(&mut r, A, "@setcam_eyeoffset:-4/0/1=n,setcam_fovmin:0.5=n");
     r.camera_force(A, &force("setcam_eyeoffsetscale", "3"));
     assert_eq!(
@@ -661,10 +756,10 @@ fn rlva_camera_replies_and_forces_match_modifier_lifetimes_and_preset_locks() {
         "an offset restriction locks forced preset writes too"
     );
     r.camera_force(A, &force("setcam_fov", "1.2"));
-    assert_eq!(r.camera_settings(&crate::camera::CameraSettings::default()).fov, 1.2);
+    assert_eq!(r.camera_settings(&crate::camera::CameraSettings::default(), 1.0).fov, 1.2);
     r.camera_force(A, &force("setcam_fov", ""));
     assert_eq!(
-        r.camera_settings(&crate::camera::CameraSettings::default()).fov,
+        r.camera_settings(&crate::camera::CameraSettings::default(), 1.0).fov,
         crate::camera::DEFAULT_FOV
     );
     command(&mut r, A, "@clear");
@@ -678,7 +773,7 @@ fn rlva_camera_replies_and_forces_match_modifier_lifetimes_and_preset_locks() {
     assert_eq!(r.camera_reply(&query("getcam_fovmin"), 5.0, 0.8).as_deref(), Some("1.047"));
     r.configure(false);
     assert_eq!(
-        r.camera_settings(&crate::camera::CameraSettings::default()),
+        r.camera_settings(&crate::camera::CameraSettings::default(), 1.0),
         crate::camera::CameraSettings::default()
     );
 }

@@ -212,7 +212,7 @@ struct Session<'a> {
     /// Agent parcel in the main region: (local id, environment version).
     agent_parcel: Option<(i32, i32)>,
     /// Teleport by region name waiting for its MapBlockReply (lowercase name, position).
-    pending_named_tp: Option<(String, Vec3)>,
+    pending_named_tp: Option<(String, Uuid)>,
     /// Object cache of each region, its files read and written off this
     /// loop (session/object_cache.rs).
     object_cache: object_cache::ObjectCaches,
@@ -1385,9 +1385,9 @@ impl Session<'_> {
                     &self.sh.stats,
                 );
             }
-            NetCommand::TeleportToRegion { name, position } => {
+            NetCommand::TeleportToRegion { request, name, .. } => {
                 // LLWorldMapMessage::sendNamedRegionRequest: the reply gives the grid position
-                self.pending_named_tp = Some((name.trim().to_lowercase(), position));
+                self.pending_named_tp = Some((name.trim().to_lowercase(), request));
                 let mut m = MapNameRequest::default();
                 m.agent_data.agent_id = self.agent_id();
                 m.agent_data.session_id = self.session_id();
@@ -4121,23 +4121,18 @@ impl Session<'_> {
             );
         } else if id == MapBlockReply::ID {
             let m: MapBlockReply = pkt.decode()?;
-            if let Some((want, pos)) = self.pending_named_tp.clone() {
+            if let Some((want, request)) = self.pending_named_tp.clone() {
                 let found = m.data.iter().find(|d| field_str(&d.name).to_lowercase() == want);
                 match found {
                     Some(d) => {
                         self.pending_named_tp = None;
                         let handle = ((d.x as u64 * 256) << 32) | (d.y as u64 * 256);
-                        let mut t = TeleportLocationRequest::default();
-                        t.agent_data.agent_id = self.agent_id();
-                        t.agent_data.session_id = self.session_id();
-                        t.info.region_handle = handle;
-                        t.info.position = pos;
-                        t.info.look_at = Vec3::X;
-                        self.send_main(&t, true);
-                        transition::begin(
-                            transition::Kind::Teleport,
-                            || format!("TeleportLocationRequest sent (region {}, found by name)", transition::grid(handle)),
-                            &self.sh.stats,
+                        emit(
+                            self.sh,
+                            NetEvent::TeleportRegionResolved {
+                                request,
+                                result: Ok(handle),
+                            },
                         );
                     }
                     // a name search answers with prefix matches and an empty
@@ -4150,8 +4145,9 @@ impl Session<'_> {
                         self.pending_named_tp = None;
                         emit(
                             self.sh,
-                            NetEvent::TeleportFailed {
-                                reason: aurora_i18n::tr!("session-region-not-found", want = want.to_string()),
+                            NetEvent::TeleportRegionResolved {
+                                request,
+                                result: Err(aurora_i18n::tr!("session-region-not-found", want = want.to_string())),
                             },
                         );
                     }
@@ -5085,6 +5081,39 @@ mod event_queue_tests {
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
         }
+    }
+
+    #[tokio::test]
+    async fn rlva_named_region_resolution_emits_a_ticket_without_sending_a_teleport() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("offline simulator");
+        let addr = main.local_addr().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock.clone(), addr, "127.0.0.1:13002".parse().unwrap());
+        let request = Uuid::from_u128(33);
+        session.pending_named_tp = Some(("region".into(), request));
+        let mut reply = MapBlockReply::default();
+        reply.data.push(msgs::map_block_reply::Data {
+            x: 1000,
+            y: 2000,
+            name: str_field("Region"),
+            ..Default::default()
+        });
+        let mut bytes = Vec::new();
+        aurora_msg::build_packet(&reply, 1, true, false, &[], &mut bytes);
+        sock.writable().await.unwrap();
+        session.dispatch(addr, &parse_packet(&bytes).unwrap()).unwrap();
+        assert!(received.try_iter().any(|(_, event)| matches!(event, NetEvent::TeleportRegionResolved { request: id, result: Ok(handle) } if id == request && handle == crate::origin_to_handle(256_000, 512_000))));
+        assert!(session.pending_named_tp.is_none());
+        // Dispatch must not enqueue a TeleportLocationRequest before the
+        // viewer can recheck newly received locks or a cancelled destination.
+        let mut buf = [0; 4096];
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), main.recv_from(&mut buf))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

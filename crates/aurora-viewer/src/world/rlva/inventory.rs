@@ -935,7 +935,7 @@ impl World {
                                 .iter()
                                 .any(|(id, at)| *at == *i as u8 && self.rlva_can_remove(*id, source)),
                         })
-                        .map(|(_, n)| *n)
+                        .map(|(i, name)| self.avatar_lib.attach_names.get(&(i as u8)).map_or(*name, String::as_str))
                         .collect::<Vec<_>>()
                         .join(","),
                 );

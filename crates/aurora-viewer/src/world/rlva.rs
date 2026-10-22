@@ -43,6 +43,9 @@ pub struct Command {
 
 impl Command {
     pub fn parse(text: &str) -> Option<Self> {
+        if !text.contains('=') && !text.eq_ignore_ascii_case("clear") {
+            return None;
+        }
         let (left, value) = text.split_once('=').unwrap_or((text, ""));
         let (name, option) = left.split_once(':').unwrap_or((left, ""));
         if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphabetic() || b == b'_') {
@@ -603,6 +606,7 @@ impl Rlva {
             || chat.chat_type != ChatType::OwnerSay
             || chat.source_id.is_nil()
             || !chat.message.starts_with('@')
+            || chat.message.len() <= 3
         {
             return false;
         }
@@ -611,7 +615,10 @@ impl Rlva {
         if chat.message.len() > 4096 {
             return true;
         }
-        for text in chat.message[1..].split(',').take(256) {
+        // process_chat_from_simulator folds the complete OwnerSay command,
+        // including options/parameters, before RlvCommand parsing.
+        let message = chat.message[1..].to_ascii_lowercase();
+        for text in message.split(',').take(256) {
             if let Some(command) = Command::parse(text) {
                 let notify = matches!(command.param, Param::Add | Param::Remove | Param::Clear);
                 self.process(chat.source_id, command);

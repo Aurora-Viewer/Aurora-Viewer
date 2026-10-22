@@ -36,6 +36,11 @@ script authors; the command lists below describe this branch specifically.
   getsitid returns the root linkset. Initial state and failed requests do not
   manufacture transitions. Disabling clears pending actors and actions.
 - Teleports: tplm, tploc, tplocal and sittp, with named-region or global tpto.
+  Optional radian headings survive name resolution; global coordinates retain
+  double precision until their region origin is removed. Named lookups return
+  a request ticket through the common action guard before teleporting, so new
+  restrictions apply and superseded replies are ignored. Maturity deferrals
+  also retain the issuer. Disabling cancels deferred scripted teleports.
   tplure/tprequest exceptions and accepttp/accepttprequest auto-acceptance
   retain maturity checks and recheck consent when an invitation is answered.
   standtp records the pre-sit location and returns only after a successful
@@ -74,6 +79,8 @@ script authors; the command lists below describe this branch specifically.
   to zero distance. Offset restrictions also lock forced preset writes and
   native preference/shortcut changes. Reset and default-FOV forces use the
   reference's defaults; releasing the last FOV limit restores the user's value.
+  Active FOV commands use the reference's physical bounds adjusted for window
+  aspect; enabling RLVa without camera commands preserves the native view.
 - Vision: per-object setsphere blend, fixed/variable blur, chromatic
   aberration and pixelation; avatar/camera origins, distance/value extension
   and tweened local modifiers. At most six sphere effects run in order on
@@ -105,6 +112,7 @@ script authors; the command lists below describe this branch specifically.
   Command discovery includes strict restriction names and supported legacy
   environment components. `getoutfit` uses the historical protocol bit order;
   attachment name queries and forced removals use native point groups.
+  Attachment-name replies preserve the names and casing of the avatar library.
   Forced inventory operations obey every issuer's locks, including their own;
   detachme exempts its own item from nostrip, while attachment locks still apply.
   Deliberate correction to the reference's old numeric HUD mapping: the HUD
@@ -174,9 +182,9 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,335 workspace
+Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,341 workspace
 tests passed, zero failures and 27 ignored; scripts, formatting and Clippy
-are clean. This includes 55 RLVa logic/integration/shader tests, covering
+are clean. This includes 61 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
@@ -192,7 +200,11 @@ matches, active/inactive camera replies, focus defaults, preset mutations,
 command discovery, historical outfit order, attachment groups and own locks,
 group/name/role selection, asynchronous loading and precise restoration,
 confirmed seat/ground transitions, root-seat queries, sit/stand actors and
-legality, delayed-action cancellation and ordered clothing/bodypart notices.
+legality, delayed-action cancellation and ordered clothing/bodypart notices,
+aspect-dependent FOV bounds, OwnerSay case folding and malformed clear,
+attachment-name casing, double-precision destinations and teleport headings,
+deferred actors and one-use resolution tickets. An offline packet test proves
+that map resolution emits the ticket without sending a teleport itself.
 The additional Vulkan test
 `cargo test --workspace rlva_gpu --locked -- --ignored` checks five sphere
 modes, chained masks, reduced-scene upscaling and overlay alpha holes from

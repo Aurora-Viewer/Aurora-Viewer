@@ -83,6 +83,11 @@ Forced outfit transactions retain their issuer through the asynchronous COF
 reply and attachment sync. A later query waits until the preceding outfit
 transaction finishes. Inventory moves/copies compare lock sources, and
 renaming or removing a parent cannot invalidate explicit folder locks.
+`app/teleport_lookup.rs` retains the issuer, destination and orientation of
+named teleports behind a single request ticket. Map resolution only returns
+that ticket; the app sends the resolved teleport through the common guard.
+Superseded replies are ignored. Maturity deferrals also retain the issuer;
+disabling cancels delayed script teleports while preserving user requests.
 
 This does not yet provide full RLVa parity. [RLVa implementation status](docs/RLVA.md)
 lists the supported commands and remaining families; versionnum deliberately

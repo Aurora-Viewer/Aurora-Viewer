@@ -84,6 +84,7 @@ mod shape_editor;
 mod snapshot;
 mod social_menu_demo;
 mod task_notecards;
+mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
@@ -424,6 +425,7 @@ pub struct App {
     loading_target: f32,
     frame_count: u64,
     demo_rlva_frame: Option<u64>,
+    named_teleport: teleport_lookup::NamedTeleport,
     /// Refresh rate of the screen the window is on, followed while it runs.
     screen_rate: crate::screen_rate::ScreenRate,
     /// The window has the keyboard focus (background frame cap).
@@ -1012,6 +1014,7 @@ impl App {
             loading_target: 0.0,
             frame_count: 0,
             demo_rlva_frame: None,
+            named_teleport: Default::default(),
             screen_rate: Default::default(),
             focused: true,
             backdrop,
@@ -1216,6 +1219,10 @@ impl App {
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
         self.world.rlva.configure(self.settings.rlva_enabled);
+        if !self.settings.rlva_enabled {
+            self.named_teleport.cancel_scripts();
+            self.world.maturity.cancel_script_teleports();
+        }
         self.world.rlva_prepare_outfit(&mut cmd, actor);
         if let NetCommand::OfferTeleport { to, .. } = &mut cmd {
             self.world.rlva_filter_teleport_offer(to);
@@ -1271,6 +1278,7 @@ impl App {
         }
         // LLAgent::startTeleportRequest: a teleport waits while the maturity
         // preference is not in sync with the server (TELEPORT_PENDING)
+        self.named_teleport.observe(&cmd, actor);
         if !self.world.maturity.synced()
             && matches!(
                 cmd,
@@ -1282,7 +1290,7 @@ impl App {
             )
         {
             log::info!("teleport: waiting for the maturity preference");
-            self.world.maturity.hold(cmd);
+            self.world.maturity.hold(cmd, actor);
             return;
         }
         // AURORA_DEMO_EXPERIENCE: the simulator and the capabilities
@@ -2149,6 +2157,20 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if let NetEvent::TeleportRegionResolved { request, result } = ev {
+            if !self.settings.rlva_enabled {
+                self.named_teleport.cancel_scripts();
+            }
+            if let Some((actor, result)) = self.named_teleport.resolve(request, result) {
+                match result {
+                    Ok(command) => self.send_from(command, actor),
+                    Err(reason) => {
+                        self.world.apply(NetEvent::TeleportFailed { reason });
+                    }
+                }
+            }
+            return;
+        }
         if self.world.received_items_event(&ev) {
             return;
         }
@@ -2570,6 +2592,7 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.named_teleport = Default::default();
                 if !self.demo {
                     let root = self.world.inventory.root;
                     self.inventory_ui.load_received(
@@ -4463,8 +4486,10 @@ impl App {
             self.demo_tp_dest = Some(pos);
         } else {
             self.send(NetCommand::TeleportToRegion {
+                request: uuid::Uuid::new_v4(),
                 name: region,
                 position: pos,
+                look_at: Vec3::X,
             });
         }
     }
@@ -5978,8 +6003,11 @@ impl App {
         self.update_places();
         // the maturity preference's requests, and the teleport that waited
         // for it
-        for c in self.world.maturity.take_commands() {
-            self.send(c);
+        if !self.settings.rlva_enabled {
+            self.world.maturity.cancel_script_teleports();
+        }
+        for (actor, c) in self.world.maturity.take_commands() {
+            self.send_from(c, actor);
         }
         // Preferences › Privacy's account settings
         for c in self.world.user_info.take_commands() {
@@ -6437,6 +6465,7 @@ impl App {
             }
             let frame = crate::camera::FrameInput {
                 dt,
+                aspect: self.camera_aspect(),
                 now: Instant::now(),
                 steering: self.mouse_mode == MouseMode::Steer,
                 build_mode: self.build.open,

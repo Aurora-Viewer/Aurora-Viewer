@@ -151,6 +151,7 @@ pub struct FrameInput {
     /// Focus object belongs to the edit selection: follow it only on request.
     pub edit_tracking: Option<bool>,
     pub draw_distance: f32,
+    pub aspect: f32,
 }
 
 /// Our avatar this frame (render space).
@@ -1228,7 +1229,7 @@ impl Camera {
             self.update_unrestricted(world, s, f);
             return;
         }
-        let settings = world.rlva.camera_settings(s);
+        let settings = world.rlva.camera_settings(s, f.aspect);
         let no_mouselook =
             world.rlva.camera_value("setcam_mouselook").is_some() || world.rlva.camera_limit("setcam_avdistmin", 0.0, true) > 0.0;
         if self.mouselook() && no_mouselook {
@@ -1251,15 +1252,9 @@ impl Camera {
                 self.position = origin + direction * distance.clamp(min, max);
             }
         }
-        let min = world
-            .rlva
-            .camera_limit("setcam_fovmin", 0.1, true)
-            .clamp(0.1, std::f32::consts::PI - 0.1);
-        let max = world
-            .rlva
-            .camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false)
-            .clamp(min, std::f32::consts::PI - 0.1);
-        self.fov_y = self.fov_y.clamp(min, max);
+        if let Some((min, max)) = world.rlva.camera_fov_limits(f.aspect) {
+            self.fov_y = self.fov_y.clamp(min, max);
+        }
     }
 
     fn update_unrestricted(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
@@ -1924,6 +1919,7 @@ mod tests {
             build_mode: false,
             edit_tracking: None,
             draw_distance: 128.0,
+            aspect: 1.0,
         }
     }
 
