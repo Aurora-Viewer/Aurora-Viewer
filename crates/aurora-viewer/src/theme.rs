@@ -251,6 +251,8 @@ impl Theme {
         crate::ui::fonts::set_scale(ctx, self.font_scale.clamp(0.6, 2.0) * extra_font_scale.clamp(0.5, 2.0));
         ctx.set_theme(egui::ThemePreference::Dark);
         ctx.all_styles_mut(|s| *s = style.clone());
+        // every interface context goes through here
+        crate::ui::click_away_focus::install(ctx);
     }
 }
 
