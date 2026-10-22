@@ -298,6 +298,13 @@ dependency retains lookaround/backreference use cases of native Perl expressions
 
 ## Human grid validation required
 
+The maintainer requested integration on 2026-10-22 with RLVa disabled by
+default and live validation retained in #687. This is approval to merge the
+implementation, not evidence that every live comparison has passed. The
+separate tester kit provides 221 cases, eight LSL probes, read-only query
+and catalogue sweeps, textures and blank results. Keep unavailable cases and
+documented differences explicit until functional parity is certified.
+
 Before live scripts, inspect the offline viewer in both languages:
 
 1. Open Preferences > Protections. RLVa starts off; subordinate options are
@@ -335,10 +342,18 @@ one of two issuers, then global disable while a response is pending.
   reattachment across crossings, and relogin from a locked session. Verify
   disabling releases every restriction and cancels the next-login override.
 
-Keep these checks open in TASKS.md; do not close #687 or publish before human
-validation. No grid connection or credentials are needed for offline tests.
+Keep these checks open in TASKS.md and #687 after integration. No grid
+connection or credentials are needed for offline tests.
 
 ## Offline validation
+
+Final integration on 2026-10-22, rebased onto current main through #827:
+`scripts/check.ps1` passes with 4,442 workspace tests, zero failures and 27
+ignored, including 121 RLVa tests. Scripts, formatting and Clippy are clean;
+the explicit Vulkan pixel test also passes. The tester kit's four command-source
+hashes still match its original baseline after this rebase. Existing native
+captures identify their pre-rebase build; disabled/released fixtures were
+replayed without interrupting the human's normal-mode test viewer.
 
 `cargo test --workspace rlva` exercises parsing, enable/disable, multiple
 issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
