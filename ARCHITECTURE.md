@@ -37,11 +37,21 @@ Head/neck is separate. A collapsed Advanced bones section exposes the four
 spine joints; ALL/DEFORM and the legacy BODY operator remain available.
 Classification follows canonical aliases. This changes no rest matrices,
 parents, deform flags, animation, weights or export membership.
+`posing.py` adds optional non-deforming Root/COG and independent classic/Bento
+eye targets. A pose-space Child Of inverse preserves the original pelvis
+pose and SL parent/rest hierarchy. Root parents only Aurora helper bones;
+IK targets and eye targets follow it in either creation order. COG movement
+leaves active IK targets anchored relative to Root. Eye Damped Track constraints
+start disabled and bake the visible eye matrices when disabled again. Canonical
+aliases, shared armature copies and selection/mode restoration are supported;
+foreign constraints and reserved-name conflicts fail before mutation. Unlinked
+custom-shape datablocks never enter the scene or live capture. All helper
+poses remain local to Blender and never enter the live deform palette.
 `skinning.py` evaluates unposed donor copies and transfers world-space surface
 or nearest-vertex weights, or cleans existing weights; all targets are
 validated before publishing four normalized deform influences. `tools_ui.py`
 owns the rig/IK/skinning operators and translated sidebar sections. The Aurora
-parent panel selects Live / Skeleton / IK / Weights through a transient
+parent panel selects Live / Skeleton / Controls / Weights through a transient
 WindowManager enum; the panel draws only the selected category, avoiding stale
 child-panel polling when a category changes. Connection settings and starter
 creation are collapsed by default, also with transient UI state. Non-deform

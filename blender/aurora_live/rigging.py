@@ -7,7 +7,7 @@ PARTS = (
     ("BACK", "Back / torso"), ("HEAD", "Head / neck"), ("ARMS", "Arms"), ("LEGS", "Legs"), ("HANDS", "Bento fingers"),
     ("FACE", "Bento face / eyes"), ("WINGS", "Bento wings"), ("TAIL", "Bento tail"),
     ("HIND", "Bento hind limbs"), ("FITTED", "Fitted Mesh volumes"), ("IK", "IK controls"), ("EXTRA", "Other bones"),
-    ("SPINE", "Bento spine"),
+    ("SPINE", "Bento spine"), ("ROOT", "Root / COG controls"), ("LOOK", "Look-at targets"),
 )
 SPINE = frozenset({"mSpine1", "mSpine2", "mSpine3", "mSpine4"})
 LIMBS = {
@@ -40,7 +40,7 @@ def bones(rig):
 def part(bone):
     name = str(bone.get("aurora_joint", bone.name))
     if bone.get("aurora_control", False):
-        return "IK"
+        return bone.get("aurora_control_kind", "IK")
     if bone.get("sl_collision_volume", False) or name.isupper():
         return "FITTED"
     if name in SPINE:
@@ -211,6 +211,9 @@ def setup(context, rig):
                 if name in rig.data.edit_bones:
                     continue
                 bone = rig.data.edit_bones.new(name)
+                parent = rig.data.edit_bones.get("auroraPose.Root")
+                if parent and parent.get("aurora_control_kind") == "ROOT":
+                    bone.parent = parent
                 bone.matrix = end_matrix
                 bone.length = max(end_length, size)
                 bone.head = pole_position if pole else tip
@@ -308,6 +311,12 @@ def set_ik(context, rig, key, enabled):
 def select_control(context, rig, key, pole=False):
     if not ready(rig):
         raise ValueError("Create Aurora IK controls first")
+    select_named_control(context, rig, control_name(key, pole), "IK")
+
+
+def select_named_control(context, rig, name, part):
+    if name not in rig.data.bones or not rig.data.bones[name].get("aurora_control"):
+        raise ValueError("Create the pose control first")
     if context.object and context.object.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
     for obj in context.selected_objects:
@@ -315,10 +324,10 @@ def select_control(context, rig, key, pole=False):
     rig.hide_set(False)
     rig.select_set(True)
     context.view_layer.objects.active = rig
-    show(rig, "IK", True)
+    show(rig, part, True)
     for bone in rig.data.bones:
         _select(rig, bone, False)
-    bone = rig.data.bones[control_name(key, pole)]
+    bone = rig.data.bones[name]
     _select(rig, bone, True)
     rig.data.bones.active = bone
     bpy.ops.object.mode_set(mode="POSE")

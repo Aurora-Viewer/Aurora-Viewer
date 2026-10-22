@@ -35,10 +35,10 @@ The four navigation buttons keep the sidebar focused on one task:
   is collapsed by default and holds the port, capture interval and coordinates.
 - **Skeleton**: bone visibility and display options. Expand **Create an SL avatar**
   to create a starter rig and optional test T-shirt.
-- **IK**: independent hand/foot switches and target/pole selection.
+- **Controls**: hand/foot IK, root/COG controls and independent classic/Bento eye targets.
 - **Weights**: separate sections for automatic weights, donor transfer and cleanup.
 
-The **Avatar rig** selector is shared by Skeleton, IK and Weights. Navigation
+The **Avatar rig** selector is shared by Skeleton, Controls and Weights. Navigation
 belongs to the window manager, stays outside the scene's mesh/settings data,
 and defaults to Live on a fresh session.
 
@@ -77,8 +77,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.7.0.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.7.0-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.8.0.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.0-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -116,7 +116,7 @@ scale. Its proportions are the standard SL rest skeleton, independent of
 your current account's shape. The shirt is sample geometry for testing
 weights and live edits; fit it to your intended body before using it as
 clothing. It includes no avatar body mesh. Optional IK controls can be added
-through the **IK** category.
+through the **Controls** category.
 
 ## Skeleton visibility and hand/foot IK
 
@@ -176,7 +176,7 @@ streaming remain outside the live bridge's current scope.
 
 ### Hand/foot IK
 
-In **IK**, **Create IK controls** adds eight non-deforming target/pole bones
+In **Controls**, **Create IK controls** adds eight non-deforming target/pole bones
 and four independent two-bone IK chains. The 159 SL deformation bones retain
 their rest matrices and canonical joint names. The controls are optional,
 excluded from live export, and kept in an **Aurora IK** collection (layer 32
@@ -198,6 +198,66 @@ These controls support fitting and weight inspection in Blender. Aurora
 continues receiving the rest mesh and playing its own avatar animations;
 Blender IK poses and animation playback are not streamed. This is a focused
 set of SL rigging tools, not an Avastar import/export or animation replacement.
+
+## Root / COG and look-at controls
+
+Plug-in 0.8.0 adds optional pose controls under **Controls** (the former IK
+category). They work on existing simple SL rigs as well as the starter.
+Create them with the rig outside Edit Mode. Each creation supports Undo,
+preserves object selection and the previous mode, and is idempotent. A shared
+armature datablock is copied before controls are added. Conflicting bone names
+or existing constraints on driven joints are rejected before changing the rig.
+
+### What these helpers represent
+
+Avastar distinguishes its deform skeleton from animator controls. Its
+[animation manual](https://deliveries.avalab.org/docs/avastar/300/reference/usermanual/my-first-animation/)
+describes **Origin** as scene placement for an entire character, excluded
+from its exported animation, and **COG** as movement around the center of
+gravity, mapped to the SL pelvis by Avastar's animation exporter.
+The [Avastar Eye Rig manual](https://avalab.org/avastar/279/avastar-2/reference/advanced/rigging-eyes/)
+describes independent targets for the classic eyes (`mEyeLeft`/`mEyeRight`)
+and the alternate Bento eyes (`mFaceEyeAltLeft`/`mFaceEyeAltRight`). Moving a
+target rotates the corresponding eyes toward it. A nearby target makes them
+converge more strongly. These targets are editing handles, not new SL joints.
+
+### Use Aurora's root and COG
+
+Click **Add root / COG**. **Root** selects the global ring at the armature
+origin; move or rotate it to place the whole posed avatar in Blender. **COG**
+selects the diamond at the pelvis; it moves the body and rotates it around
+that pivot. Active hand/foot IK targets remain anchored relative to Root
+when COG moves. Root moves those targets with the character. Both creation
+orders (IK first or Root first) work. Existing look targets also follow Root.
+
+The new bones are `auroraPose.Root` and `auroraPose.COG`, both non-deforming.
+A pose constraint connects COG to the pelvis without changing any SL rest
+matrix or parent. The original pelvis pose/keyframes remain intact. These
+are Aurora helpers, not Avastar rig data or the viewer's runtime `mRoot`.
+
+### Use classic and Bento gaze
+
+Under **Look at**, create **Classic eyes +** and/or **Bento eyes +**. A rig
+without one of those complete pairs can still use the other. Each target
+starts ahead of the eyes at a distance derived from the rig's scale (about
+two metres on the standard starter). Focus starts **disabled**, preserving
+existing eye poses. Enable its checkbox and choose **Target** to enter Pose
+Mode and move the cross-shaped target. Classic and Bento controls are
+independent. Disabling focus retains the visible eye rotation for manual
+posing. The curved-arrow button recenters the target in front of the current
+head pose. The head itself does not automatically turn toward the target.
+
+**Skeleton → Root / COG controls** and **Look-at targets** show/hide these
+helpers independently of deform bones and IK controls. Selecting a hidden
+helper reveals its group. Custom shapes are unlinked helper datablocks,
+not scene meshes. No geometry is added to the synchronized-object list.
+
+All controls stay outside automatic weights, deform-weight transfer/cleanup
+and the live joint palette. The existing 159 SL bones, hierarchy and rest
+positions remain unchanged. These tools pose the character **in Blender**;
+Blender's current Root/COG/eye poses and their animation are not streamed or
+exported as SL animation by the live bridge. Aurora keeps animating the rest
+mesh itself. Only the supported SL bones should receive garment weights.
 
 ## Automatic weight painting
 
@@ -255,7 +315,7 @@ entries, and weight changes trigger a new capture.
 
 ## Live materials
 
-Plug-in **0.7.0 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.8.0 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value

@@ -35,9 +35,9 @@ assert hasattr(bpy.types.Scene, "aurora_live"), "extension was not enabled"
 installed = importlib.import_module(module)
 if extension:
     # Blender strips bl_info from extension modules; its manifest is authoritative.
-    assert 'version = "0.7.0"' in Path(installed.__file__).with_name("blender_manifest.toml").read_text()
+    assert 'version = "0.8.0"' in Path(installed.__file__).with_name("blender_manifest.toml").read_text()
 else:
-    assert installed.bl_info["version"] == (0, 7, 0)
+    assert installed.bl_info["version"] == (0, 8, 0)
 assert bpy.ops.aurora.create_sl_rig(with_tshirt=True) == {"FINISHED"}
 shirt = bpy.context.object
 assert len(shirt.find_armature().data.bones) == 159
@@ -56,6 +56,13 @@ assert bpy.ops.aurora.switch_ik(limb="HAND_L", enabled=True) == {"FINISHED"}
 assert bpy.ops.aurora.switch_ik(limb="HAND_L", enabled=False) == {"FINISHED"}
 assert bpy.ops.aurora.bone_visibility(part="FACE", visible=True) == {"FINISHED"}
 assert bpy.ops.aurora.transfer_weights(clean=True) == {"FINISHED"}
+for kind in ("ROOT", "CLASSIC", "BENTO"):
+    assert bpy.ops.aurora.create_pose_controls(kind=kind) == {"FINISHED"}
+assert len(shirt.find_armature().data.bones) == 171
+for kind in ("CLASSIC", "BENTO"):
+    assert bpy.ops.aurora.switch_look_at(kind=kind, enabled=True) == {"FINISHED"}
+    assert bpy.ops.aurora.center_look_at(kind=kind) == {"FINISHED"}
+    assert bpy.ops.aurora.switch_look_at(kind=kind, enabled=False) == {"FINISHED"}
 result = bpy.ops.preferences.addon_disable(module=module)
 assert "FINISHED" in result and not hasattr(bpy.types.Scene, "aurora_live"), result
 print("AURORA_BLENDER_INSTALL_OK", flush=True)

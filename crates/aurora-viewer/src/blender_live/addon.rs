@@ -16,6 +16,7 @@ const FILES: &[(&str, &[u8])] = &[
     ("materials.py", include_bytes!("../../../../blender/aurora_live/materials.py")),
     ("tracking.py", include_bytes!("../../../../blender/aurora_live/tracking.py")),
     ("rigging.py", include_bytes!("../../../../blender/aurora_live/rigging.py")),
+    ("posing.py", include_bytes!("../../../../blender/aurora_live/posing.py")),
     ("skinning.py", include_bytes!("../../../../blender/aurora_live/skinning.py")),
     ("tools_ui.py", include_bytes!("../../../../blender/aurora_live/tools_ui.py")),
     (

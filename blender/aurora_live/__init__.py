@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 7, 0), "blender": (2, 93, 0),
+    "version": (0, 8, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -14,11 +14,11 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
-from . import compat, client, materials, weights, starter, exporter, tracking, rigging, skinning, tools_ui
+from . import compat, client, materials, weights, starter, exporter, tracking, rigging, skinning, posing, tools_ui
 if _reloading:
     # Blender reloads the package during an in-place extension upgrade. Reload
     # dependencies first so the old exporter/client cannot survive that upgrade.
-    for _module in (compat, client, materials, weights, starter, exporter, tracking, rigging, skinning, tools_ui):
+    for _module in (compat, client, materials, weights, starter, exporter, tracking, rigging, skinning, posing, tools_ui):
         importlib.reload(_module)
 Client = client.Client
 
@@ -388,6 +388,31 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Select the target meshes.": "Sélectionnez les maillages cibles.",
     "The source stays unchanged.": "Le donneur est préservé.",
     "Back / torso": "Dos / torse", "Head / neck": "Tête / cou", "Bento spine": "Colonne Bento",
+    "Controls": "Contrôles", "Hand/foot IK, root/COG and eye targets": "IK des mains/pieds, Root/COG et cibles du regard",
+    "Root / COG": "Root / COG", "Root": "Root", "COG": "COG", "Add root / COG": "Ajouter Root / COG",
+    "Look at": "Regard", "Classic eyes": "Yeux classiques", "Bento eyes": "Yeux Bento",
+    "Classic": "Classiques", "Bento": "Bento",
+    "Root / COG controls": "Contrôles Root / COG", "Look-at targets": "Cibles du regard",
+    "Create pose controls": "Créer les contrôles de pose", "Select pose control": "Sélectionner un contrôle de pose",
+    "Add non-deforming root/COG controls or an eye target without changing SL rest joints":
+        "Ajouter des contrôles Root/COG ou une cible du regard sans modifier les os SL au repos",
+    "Enable / disable eye focus": "Activer / désactiver le regard",
+    "Follow the eye target; disabling keeps the current eye pose for manual rotation":
+        "Suivre la cible ; la désactivation conserve la pose des yeux pour les orienter manuellement",
+    "Center eye target": "Recentrer la cible du regard",
+    "Place the eye target ahead of the current head pose": "Placer la cible devant la tête dans sa pose actuelle",
+    "Control poses stay in Blender.": "Les poses restent dans Blender.",
+    "This rig is missing the required SL joints": "Ce squelette ne possède pas les articulations SL nécessaires",
+    "Leave Edit Mode before creating pose controls": "Quittez le mode Édition avant de créer les contrôles de pose",
+    "Pose control names are already used; keep the existing rig unchanged":
+        "Les noms des contrôles sont déjà utilisés ; le squelette existant est préservé",
+    "These joints already have constraints; use a simple SL rig for Aurora pose controls":
+        "Ces os ont déjà des contraintes ; utilisez un squelette SL simple pour les contrôles Aurora",
+    "Create the eye target first": "Créez d’abord la cible du regard",
+    "The eye pair has no common forward direction": "Les deux yeux n’ont pas de direction commune vers l’avant",
+    "Use Pose Position and leave Edit Mode to change eye focus":
+        "Utilisez la position de pose et quittez le mode Édition pour modifier le regard",
+    "Create the pose control first": "Créez d’abord le contrôle de pose",
     "Advanced bones": "Os avancés", "Folded SL spine joints": "Articulations SL repliées",
     "No Bento spine bones in this rig": "Ce rig n’a pas d’os de colonne Bento",
     "Show or hide bones without changing the rig or its weights":

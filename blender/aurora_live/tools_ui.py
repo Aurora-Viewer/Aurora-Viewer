@@ -2,14 +2,14 @@
 import bpy
 from bpy.app.translations import pgettext_iface as tr
 from bpy.props import BoolProperty, EnumProperty
-from . import rigging, skinning
+from . import rigging, skinning, posing
 
 on_weights_changed = None
 
 TABS = (
     ("LIVE", "Live", "Connect and manage synchronized meshes", "LINKED", 0),
     ("RIG", "Skeleton", "Create an SL avatar and show or hide bone parts", "ARMATURE_DATA", 1),
-    ("IK", "IK", "Control hands and feet with inverse kinematics", "CON_KINEMATIC", 2),
+    ("IK", "Controls", "Hand/foot IK, root/COG and eye targets", "CON_KINEMATIC", 2),
     ("WEIGHTS", "Weights", "Calculate, transfer and normalize mesh weights", "WPAINT_HLT", 3),
 )
 
@@ -36,7 +36,7 @@ class AURORA_OT_bones(bpy.types.Operator):
         ("FACE", "Bento face / eyes", 4), ("WINGS", "Bento wings", 5), ("TAIL", "Bento tail", 6),
         ("HIND", "Bento hind limbs", 7), ("FITTED", "Fitted Mesh volumes", 8), ("IK", "IK controls", 9),
         ("EXTRA", "Other bones", 10), ("ALL", "All bones", 11), ("DEFORM", "Deform bones", 12),
-        ("SPINE", "Bento spine", 15),
+        ("SPINE", "Bento spine", 15), ("ROOT", "Root / COG controls", 16), ("LOOK", "Look-at targets", 17),
     )])
     visible: BoolProperty(default=True)
 
@@ -91,6 +91,75 @@ class AURORA_OT_ik_select(bpy.types.Operator):
     def execute(self, context):
         try:
             rigging.select_control(context, rigging.resolve(context), self.limb, self.pole)
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, tr(str(error)))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class AURORA_OT_pose_setup(bpy.types.Operator):
+    bl_idname = "aurora.create_pose_controls"
+    bl_label = "Create pose controls"
+    bl_description = "Add non-deforming root/COG controls or an eye target without changing SL rest joints"
+    bl_options = {"REGISTER", "UNDO"}
+    kind: EnumProperty(items=[("ROOT", "Root / COG", "")] + [(k, v[0], "") for k, v in posing.EYES.items()])
+
+    def execute(self, context):
+        try:
+            rig = rigging.resolve(context)
+            if self.kind == "ROOT":
+                posing.setup_root(context, rig)
+            else:
+                posing.setup_look(context, rig, self.kind)
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, tr(str(error)))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class AURORA_OT_pose_select(bpy.types.Operator):
+    bl_idname = "aurora.select_pose_control"
+    bl_label = "Select pose control"
+    bl_options = {"REGISTER", "UNDO"}
+    kind: EnumProperty(items=[("ROOT", "Root", ""), ("COG", "COG", "")] + [(k, v[0], "") for k, v in posing.EYES.items()])
+
+    def execute(self, context):
+        try:
+            name = {"ROOT": posing.ROOT, "COG": posing.COG}.get(self.kind, posing.target(self.kind))
+            rigging.select_named_control(context, rigging.resolve(context), name, "ROOT" if self.kind in {"ROOT", "COG"} else "LOOK")
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, tr(str(error)))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class AURORA_OT_look_switch(bpy.types.Operator):
+    bl_idname = "aurora.switch_look_at"
+    bl_label = "Enable / disable eye focus"
+    bl_description = "Follow the eye target; disabling keeps the current eye pose for manual rotation"
+    bl_options = {"REGISTER", "UNDO"}
+    kind: EnumProperty(items=[(k, v[0], "") for k, v in posing.EYES.items()])
+    enabled: BoolProperty(default=True)
+
+    def execute(self, context):
+        try:
+            posing.set_look(context, rigging.resolve(context), self.kind, self.enabled)
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, tr(str(error)))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
+class AURORA_OT_look_center(bpy.types.Operator):
+    bl_idname = "aurora.center_look_at"
+    bl_label = "Center eye target"
+    bl_description = "Place the eye target ahead of the current head pose"
+    bl_options = {"REGISTER", "UNDO"}
+    kind: EnumProperty(items=[(k, v[0], "") for k, v in posing.EYES.items()])
+
+    def execute(self, context):
+        try:
+            posing.reset_look(context, rigging.resolve(context), self.kind)
         except (ValueError, RuntimeError) as error:
             self.report({"ERROR"}, tr(str(error)))
             return {"CANCELLED"}
@@ -183,7 +252,32 @@ def draw_ik(layout, context):
                 for pole, text in ((False, "Target"), (True, "Pole")):
                     op = row.operator("aurora.select_ik", text=text)
                     op.limb, op.pole = key, pole
-    layout.label(text="IK poses stay in Blender.", icon="INFO")
+    box = layout.box()
+    box.label(text="Root / COG")
+    if not posing.root_ready(rig):
+        box.operator("aurora.create_pose_controls", text="Add root / COG", icon="ADD").kind = "ROOT"
+    else:
+        row = box.row(align=True)
+        row.operator("aurora.select_pose_control", text="Root").kind = "ROOT"
+        row.operator("aurora.select_pose_control", text="COG").kind = "COG"
+    box = layout.box()
+    box.label(text="Look at")
+    for key, (label, *_names) in posing.EYES.items():
+        try:
+            posing.joints(rig, posing.EYES[key][1:])
+        except ValueError:
+            continue
+        if not posing.look_ready(rig, key):
+            box.operator("aurora.create_pose_controls", text=tr(label) + " +", translate=False, icon="ADD").kind = key
+        else:
+            row = box.row(align=True)
+            enabled = posing.look_enabled(rig, key)
+            op = row.operator("aurora.switch_look_at", text="Classic" if key == "CLASSIC" else "Bento", depress=enabled,
+                              icon="CHECKBOX_HLT" if enabled else "CHECKBOX_DEHLT")
+            op.kind, op.enabled = key, not enabled
+            row.operator("aurora.select_pose_control", text="Target").kind = key
+            row.operator("aurora.center_look_at", text="", icon="LOOP_BACK").kind = key
+    layout.label(text="Control poses stay in Blender.", icon="INFO")
     layout.label(text="Aurora animates the rest mesh.")
 
 
@@ -210,4 +304,5 @@ def draw_clean(layout, context):
     layout.operator("aurora.transfer_weights", text="Normalize to 4 weights", icon="BRUSH_DATA").clean = True
 
 
-CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_switch, AURORA_OT_ik_select, AURORA_OT_transfer)
+CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_switch, AURORA_OT_ik_select,
+           AURORA_OT_pose_setup, AURORA_OT_pose_select, AURORA_OT_look_switch, AURORA_OT_look_center, AURORA_OT_transfer)
