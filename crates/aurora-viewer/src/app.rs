@@ -2194,7 +2194,7 @@ impl App {
             }
             if let Some((actor, result)) = self.named_teleport.resolve(request, result) {
                 match result {
-                    Ok(command) => self.send_from(command, actor),
+                    Ok(command) => self.send_deferred_teleport(command, actor),
                     Err(reason) => {
                         self.world.apply(NetEvent::TeleportFailed { reason });
                     }
@@ -5192,6 +5192,19 @@ impl App {
         }
     }
 
+    /// A named lookup or maturity response can arrive after a new lock.
+    /// Finish the matching user's progress/history through the normal failure
+    /// path when that delayed action is refused; scripts retain their actor.
+    fn send_deferred_teleport(&mut self, command: NetCommand, actor: uuid::Uuid) {
+        if actor.is_nil() && !self.user_teleport_allowed(&command) {
+            self.world.apply(NetEvent::TeleportFailed {
+                reason: aurora_i18n::tr!("rlva-blocked").into(),
+            });
+        } else {
+            self.send_from(command, actor);
+        }
+    }
+
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
         self.drop_clicks();
         self.stop_autopilot(true);
@@ -6072,7 +6085,18 @@ impl App {
             self.world.maturity.cancel_script_teleports();
         }
         for (actor, c) in self.world.maturity.take_commands() {
-            self.send_from(c, actor);
+            if matches!(
+                c,
+                NetCommand::TeleportTo { .. }
+                    | NetCommand::TeleportToRegion { .. }
+                    | NetCommand::TeleportHome
+                    | NetCommand::TeleportLandmark(_)
+                    | NetCommand::AcceptLure { .. }
+            ) {
+                self.send_deferred_teleport(c, actor);
+            } else {
+                self.send_from(c, actor);
+            }
         }
         // Preferences › Privacy's account settings
         for c in self.world.user_info.take_commands() {
@@ -6581,7 +6605,7 @@ impl App {
             }
             // send_agent_update: Alt or Ctrl turns script clicks into releases
             c.alt_or_ctrl = self.alt || self.ctrl;
-            if self.chat_ui.local_typing() {
+            if self.chat_ui.local_typing() && self.world.rlva.can_send_typing_start() {
                 c.state |= aurora_net::AGENT_STATE_TYPING;
             }
             // diagnostic: vertical controls sent to the simulator
@@ -9267,6 +9291,10 @@ impl App {
     /// drawn (`ChatUi::local_typing_update`).
     fn update_local_typing(&mut self) {
         self.chat_ui.type_during_emote = self.settings.type_during_emote;
+        if !self.world.rlva.can_send_typing_start() {
+            self.stop_local_typing();
+            return;
+        }
         // AURORA_DEMO_TYPING: we type from our arrival on, no key needed
         if self.demo && crate::demo::typing_scenario() && matches!(self.screen, Screen::World) {
             if self.chat_ui.hold_local_typing(Instant::now()) {
@@ -9284,6 +9312,9 @@ impl App {
     /// notice on channel 0 for those in range. AGENT_STATE_TYPING follows
     /// in the agent updates (`ChatUi::local_typing`).
     fn send_local_typing(&mut self, typing: bool) {
+        if typing && !self.world.rlva.can_send_typing_start() {
+            return;
+        }
         log::info!("nearby chat: typing {}", if typing { "started" } else { "stopped" });
         if !typing || self.settings.play_typing_anim {
             self.send(NetCommand::AgentAnimation {
@@ -12327,6 +12358,18 @@ impl App {
                 self.dev_toolbox_window(&ctx, &p, renderer);
                 let region = self.world.region_name();
                 let available = self.world.main_has_cap("SimConsoleAsync");
+                let rlva_actions = self.options_ui.rlva_tools.show(&ctx, &p, &self.world);
+                if rlva_actions.closed {
+                    self.world.rlva.close_console();
+                }
+                if rlva_actions.clear_log {
+                    self.world.rlva.diagnostics.entries.clear();
+                }
+                if let Some(input) = rlva_actions.input {
+                    self.world.rlva_configure(self.settings.rlva_enabled);
+                    self.world.rlva.preferences.clone_from(&self.settings.rlva);
+                    self.world.rlva_console_input(&input);
+                }
                 ui::sim_console::show(
                     &ctx,
                     &p,

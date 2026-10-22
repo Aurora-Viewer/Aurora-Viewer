@@ -17,7 +17,7 @@ The reserved glyph uses the surrounding text's metrics, preserving the
 sentence baseline and line height. Unknown commands use a localized readable
 fallback; their actual URI stays available through the copy-link menu.
 
-RLVa is an experimental, explicit opt-in (`Settings::rlva_enabled`, false by
+RLVa is an explicit opt-in (`Settings::rlva_enabled`, false by
 default), exposed in Preferences > Protections with the session's active
 restrictions. `world/rlva.rs` owns parsing, object-scoped rules, strict
 exceptions, protocol replies and garbage collection. Its `policy.rs` checks
@@ -141,6 +141,16 @@ Native teleport entry points preflight the common RLVa action guard before
 starting progress UI or demo transitions, including chat shortcuts, history,
 landmarks, map actions and invitation acceptance. History cancels a rejected
 pending move without changing its cursor. Network sends still recheck policy.
+Named lookup and maturity callbacks also preflight delayed user teleports;
+late refusals enter the ordinary failure path to release progress/history.
+`diagnostics.rs` owns bounded session feedback and the console issuer. Only
+explicit console input can enable channel-zero local replies, and closing
+cleans that issuer alone. `ui/rlva.rs` uses the shared native Floater for
+restrictions, locks, live visual modifiers and console output. Received-command
+logging is opt-in. Typing permission gates animation, chat and AgentUpdate;
+strict attachment replacement is checked before COF edits and again by the
+watchdog once the actual point is known. Experimental command discovery and
+acceptance share one catalogue; already-active restrictions remain removable.
 [RLVa validation status](docs/RLVA.md) lists the implemented families and the
 human grid checks required before publication.
 

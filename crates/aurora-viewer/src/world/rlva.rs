@@ -16,6 +16,7 @@ mod chat;
 mod collection;
 mod controllers;
 mod debug;
+pub mod diagnostics;
 mod editing;
 pub mod effects;
 pub mod environment;
@@ -437,6 +438,7 @@ pub struct Rlva {
     pub controllers: controllers::Controllers,
     pub relative: relative::RelativeWear,
     pub version: version::Version,
+    pub diagnostics: diagnostics::Diagnostics,
     pub im: im_queries::Queries,
     rules: BTreeMap<Uuid, BTreeSet<Rule>>,
     pub pending: Vec<(Uuid, Command)>,
@@ -545,6 +547,7 @@ impl Rlva {
         self.wardrobe = Default::default();
         self.visuals = Default::default();
         self.watchdog = Default::default();
+        self.diagnostics = Default::default();
         self.recovery.clear();
         self.clear_environment();
         self.pseudo_sex = None;
@@ -650,27 +653,34 @@ impl Rlva {
         for text in message.split(',').take(256) {
             if let Some(command) = Command::parse(text) {
                 let notify = matches!(command.param, Param::Add | Param::Remove | Param::Clear);
-                self.process(chat.source_id, command);
+                let outcome = self.process(chat.source_id, command);
+                self.trace(chat.source_id, text, outcome);
                 if notify {
                     self.notify(text);
                 }
+            } else if !text.is_empty() {
+                self.trace(chat.source_id, text, diagnostics::Outcome::Rejected);
             }
         }
         true
     }
 
-    fn process(&mut self, source: Uuid, c: Command) {
+    fn process(&mut self, source: Uuid, c: Command) -> diagnostics::Outcome {
+        use diagnostics::Outcome;
         if !self.controllers.accepts(source, c.param)
             || (c.behaviour == "setenv" && matches!(c.param, Param::Add | Param::Remove) && !self.preferences.allow_environment_locks)
+            || (!self.preferences.command_available(&c.behaviour) && !matches!(c.param, Param::Remove | Param::Clear))
         {
-            return;
+            return Outcome::Rejected;
         }
         if effects::MODIFIERS.contains(&c.behaviour.as_str()) {
             if c.param == Param::Force && !c.strict && self.rules.get(&source).is_some_and(|r| !r.is_empty()) {
                 self.visuals.command(source, &c, std::time::Instant::now());
+                return Outcome::Processed;
             }
-            return;
+            return Outcome::Rejected;
         }
+        let mut outcome = Outcome::Processed;
         let was_environment_locked = self.has("setenv");
         let was_fov_locked = self.has("setcam_fovmin") || self.has("setcam_fovmax");
         match c.param {
@@ -680,24 +690,27 @@ impl Rlva {
                     && self.visuals.sphere_order.len() >= 6
                     && !self.visuals.sphere_order.contains(&source)
                 {
-                    return;
+                    return Outcome::Rejected;
                 }
                 if c.param == Param::Add
                     && matches!(c.behaviour.as_str(), "setcam" | "setenv" | "setdebug")
                     && self.has_except(&c.behaviour, source)
                 {
-                    return;
+                    return Outcome::Rejected;
                 }
                 if !RESTRICTIONS.contains(&c.behaviour.as_str()) || (c.strict && !supports_strict(&c.behaviour)) || !valid_option(&c) {
-                    return;
+                    return Outcome::Rejected;
                 }
                 let rule = Rule::from(&c);
                 let changed = if c.param == Param::Add {
                     if self.rules.len() >= 1024 && !self.rules.contains_key(&source) {
-                        return;
+                        return Outcome::Rejected;
                     }
                     let rules = self.rules.entry(source).or_default();
-                    rules.len() < 256 && rules.insert(rule)
+                    if rules.len() >= 256 && !rules.contains(&rule) {
+                        return Outcome::Rejected;
+                    }
+                    rules.insert(rule)
                 } else {
                     self.rules.get_mut(&source).is_some_and(|rules| rules.remove(&rule))
                 };
@@ -706,14 +719,22 @@ impl Rlva {
                 }
                 if changed {
                     self.revision = self.revision.wrapping_add(1);
+                } else {
+                    outcome = if c.param == Param::Add {
+                        Outcome::Duplicate
+                    } else {
+                        Outcome::Unset
+                    };
                 }
             }
             Param::Clear => {
+                outcome = Outcome::Unset;
                 if let Some(rules) = self.rules.get_mut(&source) {
                     let old = rules.len();
                     rules.retain(|r| !rule_text(r).contains(&c.option));
                     if rules.len() != old {
                         self.revision = self.revision.wrapping_add(1);
+                        outcome = Outcome::Processed;
                     }
                 }
                 if self.rules.get(&source).is_some_and(BTreeSet::is_empty) {
@@ -725,11 +746,11 @@ impl Rlva {
                     && (FORCES.contains(&c.behaviour.as_str()) || environment::supports(&c.behaviour, true))
                     && self.pending.len() < 256 =>
             {
-                self.pending.push((source, c))
+                self.pending.push((source, c));
+                outcome = Outcome::Queued;
             }
             Param::Reply(channel)
-                if channel > 0
-                    && channel != i32::MAX
+                if ((channel > 0 && channel != i32::MAX) || (channel == 0 && self.diagnostics.console_source == Some(source)))
                     && !c.strict
                     && (QUERIES.contains(&c.behaviour.as_str())
                         || environment::supports(&c.behaviour, false)
@@ -739,16 +760,19 @@ impl Rlva {
                     "version" | "versionnew" | "versionnum" => self.version.query(source, &c),
                     "getstatus" => Some(self.status(Some(source), &c.option)),
                     "getstatusall" => Some(self.status(None, &c.option)),
-                    "getcommand" => Some(command_list(&c.option)),
+                    "getcommand" => Some(command_list_with(&c.option, &self.preferences)),
                     _ => None,
                 };
                 if let Some(text) = reply {
                     self.reply(channel, text);
                 } else if self.pending.len() < 256 {
                     self.pending.push((source, c));
+                    outcome = Outcome::Queued;
+                } else {
+                    outcome = Outcome::Rejected;
                 }
             }
-            _ => {}
+            _ => outcome = Outcome::Rejected,
         }
         if was_environment_locked && !self.has("setenv") {
             self.clear_environment();
@@ -763,9 +787,14 @@ impl Rlva {
                 .is_some_and(|rs| rs.iter().any(|r| r.behaviour == name && r.option.is_empty()));
             self.visuals.activate(source, name, active);
         }
+        outcome
     }
 
     pub fn reply(&mut self, channel: i32, message: String) {
+        if self.enabled && channel == 0 && self.diagnostics.console_source.is_some() {
+            self.diagnostics.push_reply(message);
+            return;
+        }
         if self.enabled && channel > 0 && channel != i32::MAX && self.out.len() < 256 {
             self.out.push(NetCommand::ChatReply { channel, message });
         }
@@ -892,7 +921,12 @@ fn rule_text(r: &Rule) -> String {
     .restriction()
 }
 
+#[cfg(test)]
 fn command_list(option: &str) -> String {
+    command_list_with(option, &preferences::Preferences::default())
+}
+
+fn command_list_with(option: &str, preferences: &preferences::Preferences) -> String {
     let mut parts = option.splitn(3, ';');
     let filter = parts.next().unwrap_or_default();
     let kind = parts.next().unwrap_or("any");
@@ -900,11 +934,15 @@ fn command_list(option: &str) -> String {
     let mut names = BTreeSet::new();
     for (name, list) in [("add", RESTRICTIONS), ("force", FORCES), ("reply", QUERIES)] {
         if kind.is_empty() || kind == "any" || kind == name {
-            names.extend(list.iter().filter(|n| n.contains(filter)).map(|n| (*n).to_owned()));
+            names.extend(
+                list.iter()
+                    .filter(|n| n.contains(filter) && preferences.command_available(n))
+                    .map(|n| (*n).to_owned()),
+            );
             if name == "add" {
                 names.extend(
                     list.iter()
-                        .filter(|n| supports_strict(n))
+                        .filter(|n| supports_strict(n) && preferences.command_available(n))
                         .map(|n| format!("{n}_sec"))
                         .filter(|n| n.contains(filter)),
                 );

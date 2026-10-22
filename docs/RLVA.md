@@ -35,6 +35,9 @@ script authors; the command lists below describe this branch specifically.
   outgoing text. Directed object chat and owned worn attachments are exempt
   from receive restrictions. Redirection uses a single bounded shout reply by
   default; optional splitting uses word boundaries and UTF-8-safe packets.
+  Redirected typing is hidden by default across chat, animation and the
+  AgentUpdate state flag. The native option can enable all three; stop
+  messages remain allowed and adding a restriction stops active typing.
 - IM: sendim/to, recvim/from, startim/to; share and sendgesture.
   Distance exclusion ranges are intersected across issuers, including the
   unbounded/off-region case; specific recipient blocks still win.
@@ -77,6 +80,8 @@ script authors; the command lists below describe this branch specifically.
   UI, moving a history cursor or simulating an offline transition. Chat home
   shortcuts, maps, favourites, landmarks and invitation acceptance use this
   path; network sends retain their final policy check.
+  Refusals after a named lookup or a maturity response use the normal
+  teleport-failure path, cancelling pending progress and history state.
   tplure/tprequest exceptions and accepttp/accepttprequest auto-acceptance
   retain maturity checks and recheck consent when an invitation is answered.
   standtp records the pre-sit location and returns only after a successful
@@ -227,6 +232,25 @@ script authors; the command lists below describe this branch specifically.
   AvatarSex preserves the exact accepted boolean text in its reply; `default`
   is not a pseudo boolean. Disabling clears that session-only value.
 
+Preferences also expose the reference's default-on experimental command set
+and unlocked-only attachment replacement. Disabling the experimental set
+filters discovery and new commands; removal/clear stays available for existing
+locks. This applies immediately instead of requiring the reference's restart.
+Strict replacement rejects a target point containing locked attachments,
+including when the real point becomes known only after attachment. The default
+retains locked predecessors while replacing unlocked ones.
+
+Preferences > Protections > RLVa tools opens the native inspector and console.
+Restrictions and inventory locks show their controller, support filtering and
+copying, and retain exception rows. Modifiers show camera values and live
+sphere/overlay samples. The console executes through the ordinary World command
+path with the avatar as its separate issuer. Channel zero answers stay local,
+including delayed queries; objects cannot use that channel. Closing the tools
+releases only the console's locks, modifiers and queued work. Command history
+is bounded and never persisted. Optional received-command logging is off by
+default and can omit duplicate/unset feedback; queued commands are labelled
+as queued rather than claiming that a simulator has completed them.
+
 `getcommand` advertises the handlers actually present. `version` retains the
 legacy RestrainedLife prefix; `versionnew` uses RestrainedLove. `versionnum`
 returns `3040300`, or `2092800` for a matching worn creator/name compatibility
@@ -238,6 +262,24 @@ is bounded. The MIT-licensed [fancy-regex](https://github.com/fancy-regex/fancy-
 dependency retains lookaround/backreference use cases of native Perl expressions.
 
 ## Human grid validation required
+
+Before live scripts, inspect the offline viewer in both languages:
+
+1. Open Preferences > Protections. RLVa starts off; subordinate options are
+   disabled. Enable it, open RLVa tools and select Console.
+2. Submit `@version=0,fly=n,getstatusall=0`. The local reply shows RLV 3.4.3,
+   Fly is blocked, and the restriction appears with the console issuer.
+3. Close the tools. Fly is released. Reopen them and repeat with an external
+   demo controller active: its restrictions must remain after closing.
+4. Disable RLVa with active restrictions. Camera, visuals, movement, chat and
+   inventory return to ordinary behaviour, the active list clears, and the
+   next-login override is cancelled. Re-enabling restores no old object locks.
+
+For live validation the human logs in, using a disposable controller and a
+test outfit. Compare the same commands and preferences in the reference and
+Aurora, retaining issuer UUIDs and response channels when reporting a mismatch.
+Test both successful replies and malformed/empty options, release/clear from
+one of two issuers, then global disable while a response is pending.
 
 - Live-script validation of location and identity restrictions across the
   implemented UI paths, including delayed name resolutions, exceptions and

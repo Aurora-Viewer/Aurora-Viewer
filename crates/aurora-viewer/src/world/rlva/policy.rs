@@ -136,6 +136,7 @@ impl World {
         }
         let blocked = |name| r.has_except(name, actor);
         match command {
+            NetCommand::AgentAnimation { anim, start: true } if *anim == super::super::radar::ANIM_AGENT_TYPE => r.can_send_typing_start(),
             NetCommand::CreateInventoryItem {
                 kind: aurora_net::inventory::operations::NewItem::Landmark,
                 ..
@@ -282,6 +283,12 @@ impl World {
                         item.point
                     };
                     self.rlva_can_add(item.item_id, item.point, actor)
+                        && (item.add
+                            || r.preferences.replace_unlocked
+                            || actor == super::watchdog::ACTOR
+                            || !worn
+                                .iter()
+                                .any(|(old, point)| *old != item.item_id && at != 0 && *point == at && !self.rlva_can_remove(*old, actor)))
                         && (actor == super::watchdog::ACTOR
                             || worn
                                 .get(&item.item_id)

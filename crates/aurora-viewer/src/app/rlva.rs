@@ -255,6 +255,31 @@ impl App {
                 });
                 self.camera.change_to_default(&mut self.world.agent, &self.settings.camera);
                 format!("@notify:123=n,sit:{id}=force")
+            } else if scenario == "tools" || scenario == "tools-closed" {
+                self.panels.settings = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                self.options_ui.rlva_tools.open = true;
+                self.options_ui.rlva_tools.tab = 3;
+                self.settings.rlva.debug_commands = true;
+                "@jump=n,detach=n,fly=n,fly=n,fly=y".to_owned()
+            } else if scenario == "named-blocked" {
+                let request = Uuid::from_u128(0x726c76616e616d65);
+                self.request_user_teleport(
+                    NetCommand::TeleportToRegion {
+                        request,
+                        name: "Aurora Deferred Demo".into(),
+                        position: Vec3::new(128.0, 128.0, 30.0),
+                        look_at: Vec3::X,
+                    },
+                    "Aurora Deferred Demo".into(),
+                    true,
+                );
+                "@tploc=n".to_owned()
+            } else if scenario == "maturity-blocked" {
+                self.world.maturity.request(2, 0);
+                self.request_user_teleport(NetCommand::TeleportHome, aurora_i18n::tr!("common-home").into(), false);
+                "@tplm=n".to_owned()
             } else if scenario == "chat-home" {
                 self.settings.chat_commands.enabled = true;
                 self.settings.chat_commands.teleport_home = "tph".into();
@@ -378,6 +403,55 @@ impl App {
                 "RLVa home shortcut demo: handled={handled}, requested={}, pending_ui={}",
                 self.world.teleporting,
                 self.tp_dest.is_some()
+            );
+        }
+        if matches!(mode.as_str(), "tools" | "tools-closed") && self.frame_count == 740 {
+            self.world.rlva_console_input("@fly=n,fly=n,fly=y,fly=n,version=0,getstatusall=0");
+        }
+        if mode == "named-blocked" && self.frame_count == 740 {
+            let (x, y) = self.world.main_region.map(aurora_net::handle_to_origin).unwrap_or((0, 0));
+            self.on_app_event(NetEvent::TeleportRegionResolved {
+                request: Uuid::from_u128(0x726c76616e616d65),
+                result: Ok(aurora_net::origin_to_handle(x.saturating_add(4096), y.saturating_add(4096))),
+            });
+        }
+        if mode == "maturity-blocked" && self.frame_count == 740 {
+            self.world.apply(NetEvent::MaturityPreference(Some(2)));
+        }
+        if matches!(mode.as_str(), "named-blocked" | "maturity-blocked") && self.frame_count == 810 {
+            log::info!(
+                "RLVa deferred teleport demo: mode={mode}, requested={}, pending_ui={}, failed={}",
+                self.world.teleporting,
+                self.tp_dest.is_some(),
+                self.world.tp_failed
+            );
+        }
+        if mode == "tools-closed" && self.frame_count == 810 {
+            self.world.rlva.close_console();
+            self.options_ui.rlva_tools.open = false;
+            log::info!(
+                "RLVa console demo: closed, fly={}, other_jump={}",
+                self.world.rlva.has("fly"),
+                self.world.rlva.has("jump")
+            );
+        }
+        if mode == "tools" && self.frame_count == 810 {
+            log::info!(
+                "RLVa console demo: entries={}, replies={}, network_replies={}",
+                self.world.rlva.diagnostics.entries.len(),
+                self.world
+                    .rlva
+                    .diagnostics
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.outcome == crate::world::rlva::diagnostics::Outcome::Reply)
+                    .count(),
+                self.world
+                    .rlva
+                    .out
+                    .iter()
+                    .filter(|command| matches!(command, NetCommand::ChatReply { channel: 0, .. }))
+                    .count()
             );
         }
         if mode.starts_with("version") && self.frame_count == 740 {

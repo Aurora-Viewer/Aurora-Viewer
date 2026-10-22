@@ -325,6 +325,13 @@ fn rlva_attachment_replacement_preserves_locked_cof_links_but_explicit_removal_i
         },
     };
     assert!(!w.rlva_allows_command(&cmd, Uuid::nil()));
+    w.rlva.preferences.replace_unlocked = false;
+    w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
+    assert!(
+        !w.rlva_allows_command(&cmd, Uuid::nil()),
+        "strict replacement cannot discard the locked predecessor"
+    );
+    w.rlva.preferences.replace_unlocked = true;
     w.rlva_prepare_outfit(&mut cmd, Uuid::nil());
     assert!(w.rlva_allows_command(&cmd, Uuid::nil()));
     w.rlva_prepare_outfit(&mut cmd, Uuid::nil());

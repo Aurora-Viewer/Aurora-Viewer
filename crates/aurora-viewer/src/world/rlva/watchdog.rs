@@ -28,6 +28,7 @@ pub struct Wear {
 
 #[derive(Default)]
 pub struct Watchdog {
+    pub deny_locked_replacement: bool,
     pub known: BTreeMap<Uuid, Attachment>,
     pub sources: BTreeMap<Uuid, Uuid>,
     pub pending: BTreeMap<Uuid, Reattach>,
@@ -142,7 +143,16 @@ impl Watchdog {
             let allowed = !point_pending
                 && wear.as_ref().map_or_else(
                     || add_allowed.get(&item).copied().unwrap_or(true),
-                    |w| w.allowed.contains(&attachment.point),
+                    |w| {
+                        w.allowed.contains(&attachment.point)
+                            && !(self.deny_locked_replacement
+                                && w.replace
+                                && w.previous.iter().any(|(old_item, old)| {
+                                    *old_item != item
+                                        && old.point == attachment.point
+                                        && (locked_removed.contains(old_item) || w.preserve.contains(old_item))
+                                }))
+                    },
                 );
             if allowed
                 && let Some(wear) = &wear
@@ -290,6 +300,7 @@ impl super::super::World {
             .map(|(item, attachment)| (*item, self.rlva_can_add(*item, attachment.point, Uuid::nil())))
             .collect();
         let inventory = &self.inventory.items;
+        self.rlva.watchdog.deny_locked_replacement = !self.rlva.preferences.replace_unlocked;
         let notices = self
             .rlva
             .watchdog
@@ -412,6 +423,27 @@ mod tests {
         let mut current = previous;
         current.insert(item, attachment(11));
         current.insert(concurrent, attachment(14));
+        let mut strict = Watchdog {
+            deny_locked_replacement: true,
+            ..Default::default()
+        };
+        strict.observe(watchdog.known.clone(), &BTreeSet::from([locked]), &BTreeMap::new(), |_| true, now);
+        strict.wears.insert(
+            item,
+            Wear {
+                replace: true,
+                preserve: BTreeSet::from([nostrip]),
+                allowed: BTreeSet::from([5]),
+                previous: watchdog.known.clone(),
+                at: now,
+            },
+        );
+        strict.observe(current.clone(), &BTreeSet::from([locked]), &BTreeMap::new(), |_| true, now);
+        assert_eq!(
+            strict.rejected,
+            BTreeSet::from([item]),
+            "strict replacement rejects only the arriving item after its real point is known"
+        );
         watchdog.observe(current, &BTreeSet::from([locked]), &BTreeMap::new(), |_| true, now);
         assert_eq!(watchdog.rejected, BTreeSet::from([unlocked]));
         assert!(watchdog.pending.is_empty());

@@ -15,9 +15,45 @@ pub fn page(cx: &mut Cx) {
         cx.keywords("RLVa RLV RestrainedLove")
             .toggle(tr!("rlva-enable"), tr!("rlva-enable-hint"), &field!(rlva_enabled));
         cx.note(tr!("rlva-session-hint"));
+        cx.keywords("RLVa RLV console locks modifiers").row_with(
+            tr!("rlva-tools-title"),
+            tr!("rlva-tools-hint"),
+            &Nothing,
+            |ui, _, state, _| {
+                if ui.button(tr!("rlva-tools-open")).clicked() {
+                    state.rlva_tools.open = true;
+                }
+                false
+            },
+        );
         cx.greyed(!cx.s.rlva_enabled);
         cx.toggle(tr!("rlva-ooc"), tr!("rlva-ooc-hint"), &field!(rlva.allow_ooc));
         cx.toggle(tr!("rlva-ellipsis"), tr!("rlva-ellipsis-hint"), &field!(rlva.show_ellipsis));
+        cx.toggle(
+            tr!("rlva-redirect-typing"),
+            tr!("rlva-redirect-typing-hint"),
+            &field!(rlva.show_redirect_typing),
+        );
+        cx.toggle(
+            tr!("rlva-replace-unlocked"),
+            tr!("rlva-replace-unlocked-hint"),
+            &field!(rlva.replace_unlocked),
+        );
+        cx.toggle(
+            tr!("rlva-experimental"),
+            tr!("rlva-experimental-hint"),
+            &field!(rlva.experimental_commands),
+        );
+        cx.toggle(
+            tr!("rlva-debug-commands"),
+            tr!("rlva-debug-commands-hint"),
+            &field!(rlva.debug_commands),
+        );
+        cx.toggle(
+            tr!("rlva-debug-hide"),
+            tr!("rlva-debug-hide-hint"),
+            &field!(rlva.debug_hide_unset_duplicate),
+        );
         cx.toggle(
             tr!("rlva-split-redirect"),
             tr!("rlva-split-redirect-hint"),

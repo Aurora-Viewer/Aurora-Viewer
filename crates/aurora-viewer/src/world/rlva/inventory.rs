@@ -745,7 +745,7 @@ impl World {
                         continue;
                     }
                     if replace_item
-                        && it.asset_type != 6
+                        && (it.asset_type != 6 || !self.rlva.preferences.replace_unlocked)
                         && current
                             .iter()
                             .filter(|l| l.target != item)
@@ -891,7 +891,7 @@ impl World {
     /// replacement keeps locked attachments and removes unlocked predecessors.
     /// Clothing and explicit removal still use the ordinary lock checks.
     pub fn rlva_prepare_outfit(&self, command: &mut aurora_net::NetCommand, actor: Uuid) {
-        if !self.rlva.enabled() || actor == super::watchdog::ACTOR {
+        if !self.rlva.enabled() || !self.rlva.preferences.replace_unlocked || actor == super::watchdog::ACTOR {
             return;
         }
         let aurora_net::NetCommand::UpdateOutfit { change, .. } = command else {

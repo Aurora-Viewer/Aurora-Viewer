@@ -5,6 +5,10 @@ use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetCommand};
 use std::collections::BTreeSet;
 use uuid::Uuid;
 impl Rlva {
+    /// RlvActions::canSendTypingStart: gates animation, agent state and chat.
+    pub fn can_send_typing_start(&self) -> bool {
+        !self.enabled || !self.has_options("redirchat") || self.preferences.show_redirect_typing
+    }
     pub fn receive_chat(&self, chat: &mut ChatMessage, own: Uuid) -> bool {
         if !self.enabled
             || chat.source_id == own
@@ -62,7 +66,7 @@ impl Rlva {
             };
         }
         if matches!(kind, ChatType::StartTyping | ChatType::StopTyping) {
-            return if kind == ChatType::StartTyping && self.has_options("redirchat") {
+            return if kind == ChatType::StartTyping && !self.can_send_typing_start() {
                 Vec::new()
             } else {
                 vec![make(message.to_owned(), channel, kind)]
@@ -281,6 +285,24 @@ mod tests {
     #[test]
     fn rlva_chat_redirection_uses_protocol_packets_and_splits_only_when_requested() {
         let mut r = restricted("@redirchat:123=n,sendchat=n");
+        assert!(!r.can_send_typing_start());
+        assert!(r.outgoing_chat("", 0, ChatType::StartTyping).is_empty());
+        assert!(matches!(
+            &r.outgoing_chat("", 0, ChatType::StopTyping)[..],
+            [NetCommand::Chat {
+                chat_type: ChatType::StopTyping,
+                ..
+            }]
+        ));
+        r.preferences.show_redirect_typing = true;
+        assert!(r.can_send_typing_start());
+        assert!(matches!(
+            &r.outgoing_chat("", 0, ChatType::StartTyping)[..],
+            [NetCommand::Chat {
+                chat_type: ChatType::StartTyping,
+                ..
+            }]
+        ));
         assert!(
             matches!(&r.outgoing_chat("...", 0, ChatType::Normal)[..], [NetCommand::ChatReply { channel: 123, message }] if message == "..."),
             "redirect eligibility is the filter result, not string inequality"

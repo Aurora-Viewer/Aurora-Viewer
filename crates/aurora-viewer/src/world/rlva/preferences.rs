@@ -1,4 +1,4 @@
-//! User choices from the Legacy Viewer's RLVa inventory settings. Actual
+//! User choices from the Legacy Viewer's RLVa settings. Actual
 //! settings.xml defaults take precedence over fallback values in helpers.
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,11 @@ pub struct Preferences {
     pub allow_ooc: bool,
     pub show_ellipsis: bool,
     pub split_redirect_chat: bool,
+    pub show_redirect_typing: bool,
+    pub replace_unlocked: bool,
+    pub experimental_commands: bool,
+    pub debug_commands: bool,
+    pub debug_hide_unset_duplicate: bool,
     pub compatibility_list: String,
     pub legacy_naming: bool,
     pub shared_wear: bool,
@@ -39,6 +44,11 @@ impl Default for Preferences {
             allow_ooc: true,
             show_ellipsis: true,
             split_redirect_chat: false,
+            show_redirect_typing: false,
+            replace_unlocked: true,
+            experimental_commands: true,
+            debug_commands: false,
+            debug_hide_unset_duplicate: false,
             compatibility_list: String::new(),
             legacy_naming: true,
             shared_wear: true,
@@ -52,6 +62,10 @@ impl Default for Preferences {
 }
 
 impl Preferences {
+    /// RlvBehaviourDictionary::addEntry's experimental feature gate.
+    pub(super) fn command_available(&self, name: &str) -> bool {
+        self.experimental_commands || !EXPERIMENTAL.contains(&name)
+    }
     pub(super) fn replace(&self, name: &str, replace: bool) -> bool {
         let prefix = if replace {
             &self.wear_add_prefix
@@ -66,6 +80,38 @@ impl Preferences {
     }
 }
 
+const EXPERIMENTAL: &[&str] = &[
+    "allowidle",
+    "viewtransparent",
+    "viewwireframe",
+    "sendchannel_except",
+    "sendgesture",
+    "shownearby",
+    "showself",
+    "showselfhead",
+    "tplocal",
+    "setcam_avdistmin",
+    "setcam_avdistmax",
+    "setcam_origindistmin",
+    "setcam_origindistmax",
+    "setcam_focus",
+    "setcam_fov",
+    "setcam_mode",
+    "getaddattachnames",
+    "getaddoutfitnames",
+    "getattachnames",
+    "getcam_avdist",
+    "getcam_avdistmin",
+    "getcam_avdistmax",
+    "getcam_fov",
+    "getcam_fovmin",
+    "getcam_fovmax",
+    "getcam_textures",
+    "getoutfitnames",
+    "getremattachnames",
+    "getremoutfitnames",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +122,8 @@ mod tests {
         assert!(!settings.rlva_enabled);
         assert!(settings.rlva.allow_ooc && settings.rlva.show_ellipsis);
         assert!(!settings.rlva.split_redirect_chat && settings.rlva.compatibility_list.is_empty());
+        assert!(!settings.rlva.show_redirect_typing && settings.rlva.replace_unlocked && settings.rlva.experimental_commands);
+        assert!(!settings.rlva.debug_commands && !settings.rlva.debug_hide_unset_duplicate);
         assert_eq!(settings.rlva.blocked_experiences, "bfe25fb4-222c-11e5-85a2-fa4c4ccaa202");
         assert_eq!(settings.rlva, Preferences::default());
         let preferences: Preferences = serde_json::from_str(r#"{"shared_wear":false}"#).unwrap();

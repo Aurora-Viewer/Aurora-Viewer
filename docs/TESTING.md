@@ -2804,6 +2804,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `chat-home` enables the native `tph` shortcut, applies tplm and invokes the
   actual chat-command route. Its log must report `handled=true,
   requested=false, pending_ui=false`: no teleport or progress UI starts.
+  `tools` opens the native RLVa console and exercises local version/status
+  queries, duplicate feedback and a console-owned fly lock alongside another
+  issuer's jump lock. At frame 810 its log reports two local replies and no
+  channel-zero network reply. `tools-closed` closes the console at frame 810
+  and reports `fly=false, other_jump=true`. Capture after that frame in EN/FR.
+  `named-blocked` starts a named lookup, adds tploc and then resolves a distant
+  destination; `maturity-blocked` holds a home teleport for a maturity response
+  and adds tplm before releasing it. Both exercise the real deferred application
+  routes and log `requested=false, pending_ui=false, failed=true` at frame 810.
   `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
   `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
   mode to the same scene. `overlay` uses the demo's transparent-hole texture
