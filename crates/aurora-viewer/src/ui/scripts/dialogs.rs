@@ -12,6 +12,12 @@ use crate::{
 use egui::{Id, RichText, Vec2};
 
 #[derive(Default)]
+pub(super) struct Panels {
+    pub preferences: Preferences,
+    pub search: Search,
+}
+
+#[derive(Default)]
 pub(super) struct Search {
     pub open: bool,
     pub query: String,
@@ -19,12 +25,93 @@ pub(super) struct Search {
     pub insensitive: bool,
     pub up: bool,
     pub focus: bool,
+    pub owner: Option<Id>,
     status: String,
 }
 
 impl Search {
-    pub fn begin(&mut self, ctx: &egui::Context, id: Id, source: &str) {
-        if !self.open {
+    pub const WINDOW: &str = "script_search";
+    const SIZE: Vec2 = Vec2::new(360.0, 185.0);
+    const INLINE_FIELD_WIDTH: f32 = 140.0;
+    const INLINE_BUTTON_PADDING: f32 = 4.0;
+
+    pub fn inline_width(ui: &egui::Ui) -> f32 {
+        let checkbox_width = |label: &str| {
+            ui.painter()
+                .layout_no_wrap(label.into(), egui::TextStyle::Button.resolve(ui.style()), ui.visuals().text_color())
+                .size()
+                .x
+                + ui.spacing().icon_width
+                + ui.spacing().icon_spacing
+        };
+        let first_row = Self::INLINE_FIELD_WIDTH
+            + 8.0
+            // Reserve a small result label beside the options.
+            + 20.0
+            + 3.0 * ui.spacing().item_spacing.x
+            + checkbox_width(aurora_i18n::tr!("script-search-insensitive"))
+            + checkbox_width(aurora_i18n::tr!("script-search-up"));
+        let actions = [
+            aurora_i18n::tr!("script-search-find"),
+            aurora_i18n::tr!("script-search-replace"),
+            aurora_i18n::tr!("script-search-replace-all"),
+        ];
+        let second_row = Self::INLINE_FIELD_WIDTH
+            + 8.0
+            + 3.0 * ui.spacing().item_spacing.x
+            + actions
+                .into_iter()
+                .map(|label| {
+                    ui.painter()
+                        .layout_no_wrap(label.into(), egui::FontId::proportional(12.0), ui.visuals().text_color())
+                        .size()
+                        .x
+                        + 2.0 * Self::INLINE_BUTTON_PADDING
+                })
+                .sum::<f32>();
+        first_row.max(second_row).max(440.0)
+    }
+
+    pub fn inline_min_height(ui: &egui::Ui) -> f32 {
+        2.0 * (ui.text_style_height(&egui::TextStyle::Body) + 4.0)
+            .max(ui.text_style_height(&egui::TextStyle::Button))
+            .max(20.0)
+            + ui.spacing().item_spacing.y
+    }
+
+    pub fn owns(&self, id: Id) -> bool {
+        self.open && self.owner == Some(id)
+    }
+
+    pub fn focused(ctx: &egui::Context) -> bool {
+        let window = Id::new(Self::WINDOW);
+        ctx.memory(|m| m.has_focus(window.with("query")) || m.has_focus(window.with("replacement")))
+    }
+
+    pub fn placement(ctx: &egui::Context, parent: egui::Rect, content_top: f32, prefer_left: bool) -> (egui::Pos2, bool) {
+        let room = crate::ui::layout::work_area(ctx);
+        let size = ctx.memory(|m| m.area_rect(Id::new(Self::WINDOW))).map_or(Self::SIZE, |r| r.size());
+        let fits = |x| x >= room.left() && x + size.x <= room.right();
+        let right = parent.right();
+        let left = parent.left() - size.x;
+        let sides = if prefer_left { [left, right] } else { [right, left] };
+        let (x, y, overlap) = if let Some(x) = sides.into_iter().find(|&x| fits(x)) {
+            (x, parent.top(), false)
+        } else {
+            (parent.right() - size.x, content_top, true)
+        };
+        (
+            egui::pos2(
+                x.clamp(room.left(), (room.right() - size.x).max(room.left())),
+                y.clamp(room.top(), (room.bottom() - size.y).max(room.top())),
+            ),
+            overlap,
+        )
+    }
+
+    // LLFloaterSearchReplace::show rebinds one shared search to its editor.
+    pub fn begin(&mut self, ctx: &egui::Context, owner: Id, id: Id, source: &str) {
+        if self.owner.is_none() {
             self.insensitive = true;
         }
         let selection = editing::bytes(source, editing::cursor(ctx, id));
@@ -33,54 +120,140 @@ impl Search {
         }
         self.open = true;
         self.focus = true;
+        self.owner = Some(owner);
+        self.status.clear();
+        crate::ui::widgets::expand_floater(ctx, Self::WINDOW);
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, id: Id, source: &mut String, editable: bool) {
+    pub fn show(&mut self, ctx: &egui::Context, p: &Palette, id: Id, source: &mut String, editable: bool, pos: egui::Pos2) {
         if !self.open {
             return;
         }
+        let window = Id::new(Self::WINDOW);
+        // Adopt the narrower default once, retaining later manual resizes.
+        let compact = ctx.data_mut(|d| {
+            let key = window.with("compact_width_v1");
+            let done = d.get_persisted::<bool>(key).unwrap_or(false);
+            d.insert_persisted(key, true);
+            !done
+        });
+        if compact {
+            let height = ctx.memory(|m| m.area_rect(window)).map_or(Self::SIZE.y, |r| r.height());
+            crate::ui::widgets::place_floater(ctx, Self::WINDOW, pos, Vec2::new(Self::SIZE.x, height));
+        }
+        crate::ui::widgets::move_floater(ctx, Self::WINDOW, pos);
+        if self.focus {
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, window));
+        }
         let mut open = true;
-        Floater::new(
-            &format!("{id:?}_search"),
-            aurora_i18n::tr!("script-search-title"),
-            ctx.content_rect().center() + Vec2::new(120.0, -160.0),
-            Vec2::new(420.0, 185.0),
-        )
-        .show(ctx, p, &mut open, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(aurora_i18n::tr!("script-search-query"));
-                let response = ui.add(egui::TextEdit::singleline(&mut self.query).desired_width(280.0));
-                if std::mem::take(&mut self.focus) {
-                    response.request_focus();
-                }
-                if response.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
-                    self.find(ctx, id, source);
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label(aurora_i18n::tr!("script-search-replacement"));
-                ui.add_enabled(editable, egui::TextEdit::singleline(&mut self.replacement).desired_width(280.0));
-            });
-            ui.horizontal(|ui| {
-                crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
-                crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
-            });
-            ui.horizontal(|ui| {
-                if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
-                    self.find(ctx, id, source);
-                }
-                ui.add_enabled_ui(editable && !self.query.is_empty(), |ui| {
-                    if flat_button(ui, p, aurora_i18n::tr!("script-search-replace")).clicked() {
-                        self.replace(ctx, id, source);
-                    }
-                    if flat_button(ui, p, aurora_i18n::tr!("script-search-replace-all")).clicked() {
-                        self.replace_all(ctx, id, source);
-                    }
-                });
-            });
-            ui.label(RichText::new(&self.status).color(p.muted));
+        Floater::new(Self::WINDOW, aurora_i18n::tr!("script-search-title"), pos, Self::SIZE).show(ctx, p, &mut open, |ui| {
+            self.controls(ui, p, id, source, editable, false);
         });
         self.open = open;
+    }
+
+    pub fn controls(&mut self, ui: &mut egui::Ui, p: &Palette, id: Id, source: &mut String, editable: bool, inline: bool) {
+        let ctx = ui.ctx().clone();
+        if let Some(owner) = self.owner {
+            super::focus::claim(&ctx, ui.layer_id(), owner);
+        }
+        let window = Id::new(Self::WINDOW);
+        if inline {
+            self.inline_controls(ui, p, id, source, editable);
+            return;
+        }
+        ui.horizontal(|ui| {
+            ui.label(aurora_i18n::tr!("script-search-query"));
+            self.query_field(ui, id, source, 220.0);
+        });
+        ui.horizontal(|ui| {
+            ui.label(aurora_i18n::tr!("script-search-replacement"));
+            ui.add_enabled(
+                editable,
+                egui::TextEdit::singleline(&mut self.replacement)
+                    .id(window.with("replacement"))
+                    .desired_width(220.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
+            crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
+        });
+        ui.horizontal(|ui| {
+            if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
+                self.find(&ctx, id, source);
+            }
+            ui.add_enabled_ui(editable && !self.query.is_empty(), |ui| {
+                if flat_button(ui, p, aurora_i18n::tr!("script-search-replace")).clicked() {
+                    self.replace(&ctx, id, source);
+                }
+                if flat_button(ui, p, aurora_i18n::tr!("script-search-replace-all")).clicked() {
+                    self.replace_all(&ctx, id, source);
+                }
+            });
+        });
+        ui.label(RichText::new(&self.status).color(p.muted));
+    }
+
+    fn query_field(&mut self, ui: &mut egui::Ui, id: Id, source: &str, width: f32) {
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.query)
+                    .id(Id::new(Self::WINDOW).with("query"))
+                    .hint_text(aurora_i18n::tr!("script-search-query"))
+                    .desired_width(width),
+            )
+            .on_hover_text(aurora_i18n::tr!("script-search-query"));
+        if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
+            editing::select(ui.ctx(), response.id, 0..self.query.chars().count(), true);
+        }
+        if (response.has_focus() || response.lost_focus()) && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+            self.find(ui.ctx(), id, source);
+            response.request_focus();
+        }
+    }
+
+    fn inline_controls(&mut self, ui: &mut egui::Ui, p: &Palette, id: Id, source: &mut String, editable: bool) {
+        let ctx = ui.ctx().clone();
+        let row_height = (ui.max_rect().height() - ui.spacing().item_spacing.y) / 2.0;
+        // Two toolbar rows share the existing menu/toolbar height. Result
+        // feedback stays beside the options, including its full hover text.
+        ui.spacing_mut().interact_size.y = row_height;
+        ui.spacing_mut().button_padding.y = 1.0;
+        ui.spacing_mut().button_padding.x = Self::INLINE_BUTTON_PADDING;
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        ui.horizontal(|ui| {
+            ui.set_min_height(row_height);
+            self.query_field(ui, id, source, Self::INLINE_FIELD_WIDTH);
+            crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
+            crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
+            if !self.status.is_empty() {
+                ui.add(egui::Label::new(RichText::new(&self.status).small().color(p.muted)).truncate())
+                    .on_hover_text(&self.status);
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.set_min_height(row_height);
+            ui.add_enabled(
+                editable,
+                egui::TextEdit::singleline(&mut self.replacement)
+                    .id(Id::new(Self::WINDOW).with("replacement"))
+                    .hint_text(aurora_i18n::tr!("script-search-replacement"))
+                    .desired_width(Self::INLINE_FIELD_WIDTH),
+            )
+            .on_hover_text(aurora_i18n::tr!("script-search-replacement"));
+            if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
+                self.find(&ctx, id, source);
+            }
+            ui.add_enabled_ui(editable && !self.query.is_empty(), |ui| {
+                if flat_button(ui, p, aurora_i18n::tr!("script-search-replace")).clicked() {
+                    self.replace(&ctx, id, source);
+                }
+                if flat_button(ui, p, aurora_i18n::tr!("script-search-replace-all")).clicked() {
+                    self.replace_all(&ctx, id, source);
+                }
+            });
+        });
     }
 
     pub fn find(&mut self, ctx: &egui::Context, id: Id, source: &str) {
@@ -174,6 +347,8 @@ impl Preferences {
                     });
                     crate::ui::widgets::divider(ui, p);
                     crate::ui::widgets::switch_labeled(ui, p, &mut settings.word_wrap, aurora_i18n::tr!("script-preferences-word-wrap"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.search_prefer_left, aurora_i18n::tr!("script-preferences-search-left"));
+                    crate::ui::widgets::switch_labeled(ui, p, &mut settings.search_inline, aurora_i18n::tr!("script-preferences-search-inline"));
                     crate::ui::widgets::switch_labeled(ui, p, &mut settings.convert_tabs, aurora_i18n::tr!("script-preferences-convert-tabs"));
                     crate::ui::widgets::switch_labeled(ui, p, &mut settings.preprocessor, aurora_i18n::tr!("script-preferences-preprocessor"));
                     ui.add_enabled_ui(settings.preprocessor, |ui| {

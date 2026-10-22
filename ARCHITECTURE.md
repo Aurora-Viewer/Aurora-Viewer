@@ -601,6 +601,34 @@ disabled.
 clickable diagnostics. `editing.rs` shares the native cursor and history
 between the commands and typing; `dialogs.rs` carries search/replace, the
 preferences and the keyword help.
+`Editors` owns one search/replace panel shared by all scripts, following
+`LLFloaterSearchReplace::show`. Opening search rebinds its editor, retaining
+the query, replacement and options. It is drawn once after all editors have
+handled commands. The compact floating panel tries the owner's right side,
+then its left (reversed by the saved left-side preference), within the work
+area; minimizing or closing its owner hides it. If neither side fits, its
+top follows the measured body start, preserving the title controls, and a
+dependent sublayer keeps it directly above its owner. Unrelated windows can
+still cover both. A second saved preference embeds the same controls in the
+header's right column when the measured toolbar and search both fit. Its
+two compact rows share the normal menu/toolbar height, without a close
+button; the text Find / Replace / Replace all buttons share the second row,
+while status feedback truncates beside the options with full hover text.
+The width accounts for translated option labels. The
+header reserves a child UI; the shared panel renders it after all commands,
+preserving field IDs, focus and options across changes of width or owner.
+Script floaters opt into the shared partial-outside policy even with edge
+stops enabled: dragging can cross the sides/bottom while retaining the
+standard reachable title grip. Other floaters keep the global edge policy.
+Opening an editor focuses character zero once its source is ready; only the
+latest explicit opening may take focus after an asynchronous load.
+`ui/scripts/focus.rs` tracks activation from clicks anywhere in the editor,
+its search and its popup menus, independently of text-field focus. Ctrl+F
+is dispatched once after editor commands and uses that active document;
+clicking another window or the world releases it. `ui/find_shortcut.rs`
+uses the same activation before allowing the viewer's global Search action.
+An explicit search focus request selects the whole query in either layout;
+ordinary frames, layout transitions and Enter keep the query's current caret.
 `settings.rs` keeps the editor's colours and options in the common settings.
 `reference.rs` exposes the signatures and descriptions of the Firestorm
 catalogue embedded in `assets/lsl/reference.json`.

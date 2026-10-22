@@ -14437,7 +14437,7 @@ impl ApplicationHandler for App {
                         && !crate::keybinds::is_text_edit_key(code)
                         && self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some();
                     // Ctrl+F belongs to the window with its own find when the
-                    // keyboard is in it (script editor, conversation), or the
+                    // script editor is active, the keyboard is in a conversation, or the
                     // pointer over a conversation with the keyboard nowhere:
                     // the viewer's shortcut on these keys ("Search")
                     // only runs otherwise. The rule: ui::find_shortcut::owner.

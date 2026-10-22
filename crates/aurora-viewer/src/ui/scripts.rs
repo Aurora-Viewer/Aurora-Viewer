@@ -15,6 +15,7 @@ mod dialogs;
 mod editing;
 mod experiences;
 mod files;
+mod focus;
 mod folding;
 mod indent;
 mod preprocessor;
@@ -22,9 +23,9 @@ mod reference;
 pub mod settings;
 mod syntax;
 mod view;
+pub use focus::editor_focused;
 pub(crate) use indent::edit_scoped as edit_code;
 pub(crate) use syntax::highlight as highlight_lsl;
-pub use view::editor_focused;
 
 pub enum Action {
     Debug,
@@ -153,7 +154,7 @@ impl Editor {
 #[derive(Default)]
 pub struct Editors {
     pub documents: Vec<Editor>,
-    preferences: dialogs::Preferences,
+    panels: dialogs::Panels,
     debug: debug::Debug,
     includes: std::collections::HashMap<Uuid, PendingInclude>,
     pub agent: Uuid,
@@ -355,13 +356,25 @@ impl Editors {
         let id = format!("script_editor_{}_{}", target.object, target.item);
         let text_id = egui::Id::new((&id, "source_text"));
         match mode {
-            "search" => {
-                e.tools.search.begin(ctx, text_id, &e.source);
-                e.tools.search.query = "llSay".into();
-                e.tools.search.replacement = "llOwnerSay".into();
-                e.tools.search.find(ctx, text_id, &e.source);
+            "search" | "search-left" | "search-inline" | "search-overlay" | "search-outside" => {
+                settings.search_prefer_left = mode == "search-left";
+                settings.search_inline = mode == "search-inline";
+                let geometry = match mode {
+                    "search-left" => Some((egui::pos2(450.0, 130.0), Vec2::new(660.0, 650.0))),
+                    "search-inline" => Some((egui::pos2(170.0, 130.0), Vec2::new(800.0, 700.0))),
+                    "search-overlay" => Some((egui::pos2(140.0, 130.0), Vec2::new(1300.0, 700.0))),
+                    "search-outside" => Some((egui::pos2(-380.0, 130.0), Vec2::new(660.0, 650.0))),
+                    _ => None,
+                };
+                if let Some((pos, size)) = geometry {
+                    super::widgets::place_floater(ctx, &id, pos, size);
+                }
+                self.panels.search.begin(ctx, text_id, text_id, &e.source);
+                self.panels.search.query = "llSay".into();
+                self.panels.search.replacement = "llOwnerSay".into();
+                self.panels.search.find(ctx, text_id, &e.source);
             }
-            "preferences" | "word-wrap-preferences" => self.preferences.open = true,
+            "preferences" | "word-wrap-preferences" => self.panels.preferences.open = true,
             "help" => {
                 e.tools.help.open = true;
                 e.tools.help.visit("llSay");
@@ -421,8 +434,12 @@ impl Editors {
     }
 
     pub fn open(&mut self, target: ScriptTarget, name: String, can_read: bool, can_edit: bool) -> Option<Uuid> {
+        for editor in &mut self.documents {
+            editor.tools.focus_start = false;
+        }
         if let Some(editor) = self.documents.iter_mut().find(|e| e.target == target) {
             editor.raise = true;
+            editor.tools.focus_start = true;
             return None;
         }
         let request = can_read.then(Uuid::new_v4);
@@ -455,7 +472,7 @@ impl Editors {
             close_after_save: false,
             closed: false,
             raise: true,
-            tools: view::Tools::default(),
+            tools: view::Tools::opening(),
             recompile_allowed: false,
             processor_settings: settings::ScriptSettings::default(),
             processor_environment: preprocessor::Environment::default(),
@@ -600,7 +617,7 @@ impl Editors {
     ) -> Vec<Action> {
         let colors_before = color_prefs.clone();
         let mut actions = Vec::new();
-        if self.preferences.show(ctx, p, settings) {
+        if self.panels.preferences.show(ctx, p, settings) {
             actions.push(Action::SettingsChanged);
         }
         for e in &mut self.documents {
@@ -670,11 +687,15 @@ impl Editors {
                 }
             }
             if std::mem::take(&mut e.raise) {
-                ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(&id)));
-                ctx.data_mut(|data| data.insert_persisted(egui::Id::new((&id, "minimized")), false));
+                super::widgets::expand_floater(ctx, &id);
             }
             let mut open = true;
             let title = format!("{}{}", e.name, if e.dirty() { " *" } else { "" });
+            focus::claim(
+                ctx,
+                egui::LayerId::new(egui::Order::Middle, egui::Id::new(&id)),
+                egui::Id::new((&id, "source_text")),
+            );
             Floater::new(
                 &id,
                 title,
@@ -682,6 +703,7 @@ impl Editors {
                 Vec2::new(660.0, 520.0),
             )
             .cascade(super::widgets::CascadeGroup::Script)
+            .allow_partial_outside()
             .show(ctx, p, &mut open, |ui| {
                 view::body(
                     ui,
@@ -689,7 +711,7 @@ impl Editors {
                     e,
                     egui::Id::new((&id, "source_text")),
                     settings,
-                    &mut self.preferences,
+                    &mut self.panels,
                     &mut actions,
                 );
             });
@@ -699,7 +721,7 @@ impl Editors {
                 e,
                 egui::Id::new((&id, "source_text")),
                 settings,
-                &mut self.preferences,
+                &mut self.panels,
                 &mut actions,
             );
             let source_id = egui::Id::new((&id, "source_text"));
@@ -765,6 +787,33 @@ impl Editors {
             }
         }
         self.documents.retain(|e| !e.closed);
+        focus::find(ctx, &mut self.documents, &mut self.panels.search);
+        // Draw the singleton after every editor has handled its commands. A
+        // search opened in a later document must not also draw on the old one.
+        let search = &mut self.panels.search;
+        let mut bound = false;
+        for e in &mut self.documents {
+            let window = format!("script_editor_{}_{}", e.target.object, e.target.item);
+            let id = egui::Id::new((&window, "source_text"));
+            if search.owns(id) {
+                bound = true;
+                let minimized = ctx
+                    .data_mut(|d| d.get_persisted::<bool>(egui::Id::new((&window, "minimized"))))
+                    .unwrap_or(false);
+                if !minimized && let Some(parent) = ctx.memory(|m| m.area_rect(egui::Id::new(&window))) {
+                    view::search(ctx, p, e, id, search, (egui::Id::new(&window), parent), settings.search_prefer_left);
+                }
+                break;
+            }
+        }
+        if !bound {
+            search.open = false;
+        }
+        // An owner can change while a later editor handles Ctrl+F. Drop its
+        // unused reserved UI within this pass, without drawing another search.
+        for e in &mut self.documents {
+            e.tools.search_slot = None;
+        }
         if *color_prefs != colors_before {
             actions.push(Action::SettingsChanged);
         }
@@ -775,6 +824,672 @@ impl Editors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn window(target: ScriptTarget) -> String {
+        format!("script_editor_{}_{}", target.object, target.item)
+    }
+
+    fn source_id(target: ScriptTarget) -> egui::Id {
+        egui::Id::new((window(target), "source_text"))
+    }
+
+    fn frame(ctx: &egui::Context, editors: &mut Editors, events: Vec<egui::Event>) -> egui::FullOutput {
+        frame_settings(ctx, editors, &mut settings::ScriptSettings::default(), events)
+    }
+
+    fn frame_settings(
+        ctx: &egui::Context,
+        editors: &mut Editors,
+        settings: &mut settings::ScriptSettings,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        frame_settings_extra(ctx, editors, settings, events, |_, _| {})
+    }
+
+    fn frame_settings_extra(
+        ctx: &egui::Context,
+        editors: &mut Editors,
+        settings: &mut settings::ScriptSettings,
+        events: Vec<egui::Event>,
+        mut extra: impl FnMut(&egui::Context, &crate::theme::Palette),
+    ) -> egui::FullOutput {
+        let theme = crate::theme::Theme::default();
+        theme.apply(ctx, 1.0);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                focused: true,
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::super::layout::frame(ui.ctx(), &theme.palette(), false);
+                editors.show(
+                    ui.ctx(),
+                    &theme.palette(),
+                    settings,
+                    &mut super::super::color_picker::Preferences::default(),
+                );
+                extra(ui.ctx(), &theme.palette());
+            },
+        );
+        // These headless frames inspect shapes and responses without a renderer.
+        output.textures_delta.clear();
+        output
+    }
+
+    fn settle(ctx: &egui::Context, editors: &mut Editors) {
+        for _ in 0..3 {
+            frame(ctx, editors, vec![]).textures_delta.clear();
+        }
+    }
+
+    fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    fn click_label(ctx: &egui::Context, editors: &mut Editors, label: &str) {
+        click_label_settings(ctx, editors, &mut settings::ScriptSettings::default(), label);
+    }
+
+    fn click_label_settings(ctx: &egui::Context, editors: &mut Editors, settings: &mut settings::ScriptSettings, label: &str) {
+        let output = frame_settings(ctx, editors, settings, vec![]);
+        let pos = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Text(t) if t.galley.job.text == label => Some(t.pos + t.galley.size() * 0.5),
+                _ => None,
+            })
+            .expect("visible button");
+        for pressed in [true, false] {
+            frame_settings(
+                ctx,
+                editors,
+                settings,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+    }
+
+    #[test]
+    fn opening_scripts_focuses_character_zero_and_late_loads_do_not_steal_focus() {
+        for object in [Uuid::nil(), Uuid::from_u128(22)] {
+            let ctx = egui::Context::default();
+            let mut editors = Editors::default();
+            let first = ScriptTarget {
+                object,
+                item: Uuid::from_u128(1),
+            };
+            let second = ScriptTarget {
+                object,
+                item: Uuid::from_u128(2),
+            };
+            let pending = editors.open(first, "First".into(), true, true).unwrap();
+            settle(&ctx, &mut editors);
+            let load = editors.open(second, "Second".into(), true, true).unwrap();
+            editors.loaded(load, second, Ok("é source".into()));
+            settle(&ctx, &mut editors);
+            assert!(ctx.memory(|m| m.has_focus(source_id(second))));
+            assert_eq!(editing::cursor(&ctx, source_id(second)).as_sorted_char_range(), 0.into()..0.into());
+            frame(&ctx, &mut editors, vec![egui::Event::Text("//".into())]);
+            assert_eq!(editors.documents[1].source, "//é source");
+            editors.loaded(pending, first, Ok("late source".into()));
+            settle(&ctx, &mut editors);
+            assert!(ctx.memory(|m| m.has_focus(source_id(second))));
+
+            editing::select(&ctx, source_id(first), 3..7, false);
+            ctx.data_mut(|d| d.insert_persisted(egui::Id::new((window(first), "minimized")), true));
+            settle(&ctx, &mut editors);
+            editors.open(first, "First".into(), true, true);
+            settle(&ctx, &mut editors);
+            assert!(!super::super::widgets::floater_minimized(&ctx, &window(first)));
+            assert!(ctx.memory(|m| m.has_focus(source_id(first))));
+            assert_eq!(editing::cursor(&ctx, source_id(first)).as_sorted_char_range(), 0.into()..0.into());
+            assert_eq!(editors.documents[0].source, "late source");
+        }
+    }
+
+    #[test]
+    fn script_search_reuses_its_window_and_options_and_finds_in_the_new_owner() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let first = target(1);
+        let second = ScriptTarget {
+            object: Uuid::from_u128(22),
+            item: Uuid::from_u128(2),
+        };
+        for target in [first, second] {
+            let load = editors.open(target, "Search owner".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("first needle\nsecond needle".into()));
+        }
+        settle(&ctx, &mut editors);
+        editors.open(first, "Search owner".into(), true, true);
+        settle(&ctx, &mut editors);
+        frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+        settle(&ctx, &mut editors);
+        assert!(editors.panels.search.owns(source_id(first)));
+        editors.panels.search.query = "needle".into();
+        editors.panels.search.replacement = "replacement".into();
+        editors.panels.search.insensitive = false;
+        editors.panels.search.up = true;
+        // Rebind the still-open search, then reopen it after closing/minimizing.
+        for closed in [false, true] {
+            if closed {
+                editors.panels.search.open = false;
+                ctx.data_mut(|d| d.insert_persisted(egui::Id::new((dialogs::Search::WINDOW, "minimized")), true));
+            }
+            editors.open(second, "Search owner".into(), true, true);
+            settle(&ctx, &mut editors);
+            frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            settle(&ctx, &mut editors);
+            assert!(editors.panels.search.owns(source_id(second)));
+            assert!(!editors.panels.search.owns(source_id(first)));
+            assert_eq!(editors.panels.search.query, "needle");
+            assert_eq!(editors.panels.search.replacement, "replacement");
+            assert!(!editors.panels.search.insensitive);
+            assert!(editors.panels.search.up);
+            assert!(!super::super::widgets::floater_minimized(&ctx, dialogs::Search::WINDOW));
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::new(dialogs::Search::WINDOW).with("query"))));
+            let output = frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            assert!(editor_focused(&ctx));
+            assert_eq!(
+                output
+                    .shapes
+                    .iter()
+                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
+                    .count(),
+                1
+            );
+            frame(&ctx, &mut editors, vec![key(egui::Key::Enter, egui::Modifiers::NONE)]);
+            assert_eq!(
+                editing::cursor(&ctx, source_id(second)).as_sorted_char_range(),
+                20.into()..26.into()
+            );
+            assert!(editing::cursor(&ctx, source_id(first)).is_empty());
+        }
+        click_label(&ctx, &mut editors, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[0].source, "first needle\nsecond needle");
+        assert_eq!(editors.documents[1].source, "first replacement\nsecond replacement");
+        editors.documents[1].can_edit = false;
+        editors.panels.search.query = "replacement".into();
+        editors.panels.search.replacement = "blocked".into();
+        click_label(&ctx, &mut editors, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[1].source, "first replacement\nsecond replacement");
+        editors.documents[1].can_edit = true;
+        editors.documents[1].tools.processed = true;
+        editors.documents[1].tools.processed_source = "replacement".into();
+        click_label(&ctx, &mut editors, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[1].tools.processed_source, "replacement");
+        assert_eq!(editors.documents[1].source, "first replacement\nsecond replacement");
+    }
+
+    #[test]
+    fn ctrl_f_selects_the_whole_existing_query_in_floating_and_inline_search() {
+        for inline in [false, true] {
+            let ctx = egui::Context::default();
+            let mut editors = Editors::default();
+            let target = target(1);
+            let load = editors.open(target, "Select search query".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("source".into()));
+            let mut settings = settings::ScriptSettings {
+                search_inline: inline,
+                ..Default::default()
+            };
+            super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 100.0), Vec2::new(900.0, 650.0));
+            for _ in 0..4 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            for _ in 0..3 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            let search_id = egui::Id::new(dialogs::Search::WINDOW);
+            let query_id = search_id.with("query");
+            let replacement_id = search_id.with("replacement");
+            assert!(ctx.memory(|m| m.has_focus(query_id)));
+            assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 0.into()..0.into());
+            assert_eq!(
+                ctx.read_response(query_id).unwrap().layer_id.id == egui::Id::new(window(target)),
+                inline
+            );
+
+            for field in [source_id(target), query_id, replacement_id] {
+                editors.panels.search.query = "étoile 🌟".into();
+                editors.panels.search.replacement = "replacement".into();
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+                let at = if field == source_id(target) { 0 } else { 2 };
+                editing::select(&ctx, field, at..at, true);
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+                frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+                for _ in 0..3 {
+                    frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+                }
+                assert!(ctx.memory(|m| m.has_focus(query_id)));
+                assert_eq!(editors.panels.search.query, "étoile 🌟");
+                assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 0.into()..8.into());
+                frame_settings(&ctx, &mut editors, &mut settings, vec![egui::Event::Text("new".into())]);
+                assert_eq!(editors.panels.search.query, "new");
+                assert_eq!(editors.panels.search.replacement, "replacement");
+                assert_eq!(editors.documents[0].source, "source");
+            }
+            // Finding with Enter must not reset a manually placed query caret.
+            editing::select(&ctx, query_id, 1..1, true);
+            frame_settings(
+                &ctx,
+                &mut editors,
+                &mut settings,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 1.into()..1.into());
+        }
+    }
+
+    #[test]
+    fn script_search_tries_both_sides_then_overlays_its_owner_and_hides_with_it() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let target = target(1);
+        let load = editors.open(target, "Anchored".into(), true, true).unwrap();
+        editors.loaded(load, target, Ok("source".into()));
+        settle(&ctx, &mut editors);
+        frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+        for (pos, size) in [
+            (egui::pos2(100.0, 70.0), Vec2::new(660.0, 520.0)),
+            (egui::pos2(430.0, 190.0), Vec2::new(660.0, 520.0)),
+            (egui::pos2(260.0, 120.0), Vec2::new(900.0, 650.0)),
+            (egui::pos2(850.0, 120.0), Vec2::new(660.0, 520.0)),
+        ] {
+            super::super::widgets::place_floater(&ctx, &window(target), pos, size);
+            settle(&ctx, &mut editors);
+            let parent = ctx.memory(|m| m.area_rect(egui::Id::new(window(target)))).unwrap();
+            let search = ctx.memory(|m| m.area_rect(egui::Id::new(dialogs::Search::WINDOW))).unwrap();
+            assert!(search.width() < 420.0, "compact default: {search:?}");
+            let expected = if parent.right() + search.width() <= 1600.0 {
+                parent.right_top()
+            } else if parent.left() >= search.width() {
+                egui::pos2(parent.left() - search.width(), parent.top())
+            } else {
+                egui::pos2(parent.right() - search.width(), editors.documents[0].tools.body_top)
+            };
+            assert!((search.left_top() - expected).length() < 1.5, "{parent:?} / {search:?}");
+        }
+        ctx.data_mut(|d| d.insert_persisted(egui::Id::new((window(target), "minimized")), true));
+        settle(&ctx, &mut editors);
+        let output = frame(&ctx, &mut editors, vec![]);
+        assert!(
+            !output
+                .shapes
+                .iter()
+                .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
+        );
+        editors.open(target, "Anchored".into(), true, true);
+        settle(&ctx, &mut editors);
+        assert!(editors.panels.search.open);
+        editors.demo_close_clean(target);
+        settle(&ctx, &mut editors);
+        assert!(!editors.panels.search.open);
+    }
+
+    #[test]
+    fn search_moves_between_left_floating_and_inline_without_losing_fields_or_focus() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let target = target(1);
+        let load = editors.open(target, "Responsive search".into(), true, true).unwrap();
+        editors.loaded(load, target, Ok("needle needle".into()));
+        let mut settings = settings::ScriptSettings {
+            search_prefer_left: true,
+            search_inline: true,
+            ..Default::default()
+        };
+        let parent_id = egui::Id::new(window(target));
+        let search_id = egui::Id::new(dialogs::Search::WINDOW);
+        let query_id = search_id.with("query");
+        super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(470.0, 120.0), Vec2::new(660.0, 650.0));
+        for _ in 0..4 {
+            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+        }
+        frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+        editors.panels.search.query = "needle".into();
+        editors.panels.search.replacement = "thread".into();
+        editors.panels.search.insensitive = false;
+        editors.panels.search.up = true;
+        for _ in 0..4 {
+            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+        }
+        let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
+        let search = ctx.memory(|m| m.area_rect(search_id)).unwrap();
+        assert!((search.right() - parent.left()).abs() < 1.5, "{parent:?} / {search:?}");
+        assert_eq!(ctx.read_response(query_id).unwrap().layer_id.id, search_id);
+        editing::select(&ctx, query_id, 2..2, true);
+        for width in [840.0, 1250.0, 660.0, 840.0] {
+            super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 120.0), Vec2::new(width, 650.0));
+            settings.search_inline = false;
+            for _ in 0..4 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            let source_before = ctx.read_response(source_id(target)).unwrap().rect;
+            settings.search_inline = true;
+            for _ in 0..4 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            let output = frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            let query = ctx.read_response(query_id).unwrap();
+            assert_eq!(query.layer_id.id, if width > 800.0 { parent_id } else { search_id });
+            if width > 800.0 {
+                let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
+                let source_after = ctx.read_response(source_id(target)).unwrap().rect;
+                assert!(parent.contains_rect(query.rect) && query.rect.left() > parent.left() + parent.width() / 3.0);
+                assert!(ctx.read_response(source_id(target)).unwrap().rect.top() > query.rect.bottom());
+                assert!(
+                    (source_after.top() - source_before.top()).abs() < 1.5,
+                    "inline changed header height: {source_before:?} / {source_after:?}"
+                );
+                assert!((source_after.height() - source_before.height()).abs() < 1.5);
+                let replacement = ctx.read_response(search_id.with("replacement")).unwrap().rect;
+                assert!(replacement.top() > query.rect.bottom() && replacement.bottom() < source_after.top());
+                assert!(
+                    !output
+                        .shapes
+                        .iter()
+                        .any(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-title")))
+                );
+            }
+            assert_eq!(editing::cursor(&ctx, query_id).primary.index.0, 2);
+            assert!(ctx.memory(|m| m.has_focus(query_id)));
+            assert_eq!(editors.panels.search.query, "needle");
+            assert_eq!(editors.panels.search.replacement, "thread");
+            assert!(!editors.panels.search.insensitive && editors.panels.search.up);
+            assert_eq!(
+                output
+                    .shapes
+                    .iter()
+                    .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-query")))
+                    .count(),
+                if width > 800.0 { 1 } else { 2 } // Text Find button; floating mode also has a query label.
+            );
+            if width > 800.0 {
+                let label_pos = |label| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|s| match &s.shape {
+                            egui::Shape::Text(t) if t.galley.job.text == label => Some(t.pos),
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                let find = label_pos(aurora_i18n::tr!("script-search-find"));
+                let replace = label_pos(aurora_i18n::tr!("script-search-replace"));
+                assert!(
+                    find.x < replace.x && (find.y - replace.y).abs() < 1.5,
+                    "Find before Replace on the same row"
+                );
+            }
+        }
+        editing::select(&ctx, source_id(target), 0..0, false);
+        click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-find"));
+        assert_eq!(editing::cursor(&ctx, source_id(target)).as_sorted_char_range(), 7.into()..13.into());
+        editors.panels.search.query = "missing".into();
+        editors.panels.search.find(&ctx, source_id(target), &editors.documents[0].source);
+        let source_before_status = ctx.read_response(source_id(target)).unwrap().rect;
+        for _ in 0..4 {
+            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+        }
+        assert_eq!(
+            ctx.read_response(source_id(target)).unwrap().rect,
+            source_before_status,
+            "status must stay within the two toolbar rows"
+        );
+        editors.panels.search.query = "needle".into();
+        click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[0].source, "thread thread");
+        editors.documents[0].can_edit = false;
+        editors.panels.search.query = "thread".into();
+        editors.panels.search.replacement = "blocked".into();
+        click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-replace-all"));
+        assert_eq!(editors.documents[0].source, "thread thread");
+    }
+
+    #[test]
+    fn overlapping_search_stays_above_its_owner_without_covering_unrelated_windows() {
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let first = target(1);
+        let second = target(2);
+        for target in [first, second] {
+            let load = editors.open(target, "Layer ordering".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("source".into()));
+        }
+        settle(&ctx, &mut editors);
+        super::super::widgets::place_floater(&ctx, &window(first), egui::pos2(260.0, 120.0), Vec2::new(1100.0, 650.0));
+        editors.panels.search.begin(&ctx, source_id(first), source_id(first), "source");
+        settle(&ctx, &mut editors);
+        let owner = egui::LayerId::new(egui::Order::Middle, egui::Id::new(window(first)));
+        let other = egui::LayerId::new(egui::Order::Middle, egui::Id::new(window(second)));
+        let search = egui::LayerId::new(egui::Order::Middle, egui::Id::new(dialogs::Search::WINDOW));
+        for top in [owner, other] {
+            ctx.move_to_top(top);
+            settle(&ctx, &mut editors);
+            let layers = ctx.memory(|m| m.layer_ids().collect::<Vec<_>>());
+            let at = |layer| layers.iter().position(|&l| l == layer).unwrap();
+            assert!(at(search) > at(owner));
+            if top == other {
+                assert!(at(other) > at(search));
+            }
+        }
+    }
+
+    #[test]
+    fn dragging_scripts_can_cross_closed_edges_but_keeps_the_title_reachable() {
+        for delta in [
+            egui::vec2(-2000.0, 0.0),
+            egui::vec2(2000.0, 0.0),
+            egui::vec2(0.0, 2000.0),
+            egui::vec2(0.0, -2000.0),
+        ] {
+            let ctx = egui::Context::default();
+            let mut editors = Editors::default();
+            let target = target(1);
+            let load = editors.open(target, "Reachable".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("source".into()));
+            settle(&ctx, &mut editors);
+            let id = egui::Id::new(window(target));
+            let start = ctx.read_response(id.with("title_double_click")).unwrap().rect.center();
+            frame(&ctx, &mut editors, vec![egui::Event::PointerMoved(start)]);
+            frame(
+                &ctx,
+                &mut editors,
+                vec![egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            let end = start + delta;
+            frame(&ctx, &mut editors, vec![egui::Event::PointerMoved(end)]);
+            frame(
+                &ctx,
+                &mut editors,
+                vec![egui::Event::PointerButton {
+                    pos: end,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+            );
+            settle(&ctx, &mut editors);
+            let rect = ctx.memory(|m| m.area_rect(id)).unwrap();
+            let room = super::super::layout::move_area(&ctx);
+            let visible = rect.intersect(room);
+            assert!(visible.width() >= super::super::layout::TITLE_GRIP - 1.5, "{delta:?}: {rect:?}");
+            assert!(visible.height() >= super::super::layout::TITLE_BAR_H - 1.5, "{delta:?}: {rect:?}");
+            if delta.x < 0.0 {
+                assert!(rect.left() < room.left());
+            }
+            if delta.x > 0.0 {
+                assert!(rect.right() > room.right());
+            }
+            if delta.y > 0.0 {
+                assert!(rect.bottom() > room.bottom());
+            }
+            assert!(rect.top() >= room.top());
+            assert_eq!(
+                super::super::layout::edges_for(&ctx, egui::Id::new("ordinary_window")),
+                super::super::layout::Edges::default()
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_f_follows_script_window_activation_without_needing_source_field_focus() {
+        fn show(ctx: &egui::Context, editors: &mut Editors, events: Vec<egui::Event>) -> egui::FullOutput {
+            frame_settings_extra(ctx, editors, &mut settings::ScriptSettings::default(), events, |ctx, p| {
+                let mut other = String::from("Another window");
+                super::super::widgets::Floater::new("script_shortcut_other", "Other", egui::pos2(1200.0, 720.0), Vec2::new(260.0, 200.0))
+                    .show(ctx, p, &mut true, |ui| {
+                        ui.add(egui::TextEdit::singleline(&mut other).id(egui::Id::new("script_shortcut_other_field")));
+                    });
+            })
+        }
+        fn click(ctx: &egui::Context, editors: &mut Editors, pos: egui::Pos2) {
+            show(ctx, editors, vec![egui::Event::PointerMoved(pos)]);
+            for pressed in [true, false] {
+                show(
+                    ctx,
+                    editors,
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let first = target(1);
+        let second = target(2);
+        for (target, x) in [(first, 50.0), (second, 780.0)] {
+            let load = editors.open(target, "Activation".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("source".into()));
+            super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(x, 100.0), Vec2::new(660.0, 520.0));
+        }
+        for _ in 0..4 {
+            show(&ctx, &mut editors, vec![]);
+        }
+        for (target, area) in [
+            (first, "title"),
+            (second, "header"),
+            (first, "control"),
+            (second, "footer"),
+            (first, "menu"),
+        ] {
+            editors.panels.search.open = false;
+            for _ in 0..2 {
+                show(&ctx, &mut editors, vec![]);
+            }
+            let parent = ctx.memory(|m| m.area_rect(egui::Id::new(window(target)))).unwrap();
+            let editor = editors.documents.iter().find(|e| e.target == target).unwrap();
+            let pos = match area {
+                "title" => ctx
+                    .read_response(egui::Id::new(window(target)).with("title_double_click"))
+                    .unwrap()
+                    .rect
+                    .center(),
+                "header" => egui::pos2(parent.right() - 25.0, editor.tools.body_top + 8.0),
+                "footer" => egui::pos2(parent.center().x, parent.bottom() - 25.0),
+                _ => {
+                    let label = if area == "menu" {
+                        aurora_i18n::tr!("script-menu-file")
+                    } else {
+                        "Mono"
+                    };
+                    show(&ctx, &mut editors, vec![])
+                        .shapes
+                        .iter()
+                        .find_map(|s| match &s.shape {
+                            egui::Shape::Text(t) if t.galley.job.text == label && parent.contains(t.pos) => {
+                                Some(t.pos + t.galley.size() * 0.5)
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                }
+            };
+            click(&ctx, &mut editors, pos);
+            assert!(
+                super::super::find_shortcut::window_takes_it(&ctx),
+                "{area}: app must yield Ctrl+F to the script"
+            );
+            // Hovering another window does not move activation there.
+            show(&ctx, &mut editors, vec![egui::Event::PointerMoved(egui::pos2(1330.0, 800.0))]);
+            assert!(
+                super::super::find_shortcut::window_takes_it(&ctx),
+                "{area}: pointer hover must not steal it"
+            );
+            show(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            for _ in 0..3 {
+                show(&ctx, &mut editors, vec![]);
+            }
+            assert!(
+                editors.panels.search.owns(source_id(target)),
+                "{area}: find must bind the clicked script"
+            );
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::new(dialogs::Search::WINDOW).with("query"))));
+        }
+        for outside in [
+            ctx.read_response(egui::Id::new("script_shortcut_other").with("title_double_click"))
+                .unwrap()
+                .rect
+                .center(),
+            ctx.read_response(egui::Id::new("script_shortcut_other_field"))
+                .unwrap()
+                .rect
+                .center(),
+            egui::pos2(1560.0, 950.0),
+        ] {
+            editors.panels.search.open = false;
+            for _ in 0..2 {
+                show(&ctx, &mut editors, vec![]);
+            }
+            let title = ctx
+                .read_response(egui::Id::new(window(first)).with("title_double_click"))
+                .unwrap()
+                .rect
+                .center();
+            click(&ctx, &mut editors, title);
+            assert!(super::super::find_shortcut::window_takes_it(&ctx));
+            click(&ctx, &mut editors, outside);
+            assert!(
+                !super::super::find_shortcut::window_takes_it(&ctx),
+                "outside click must release script Ctrl+F"
+            );
+            show(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            assert!(!editors.panels.search.open);
+        }
+        editors.documents.clear();
+        show(&ctx, &mut editors, vec![]);
+        assert!(!super::super::find_shortcut::window_takes_it(&ctx));
+    }
 
     fn target(n: u128) -> ScriptTarget {
         ScriptTarget {
