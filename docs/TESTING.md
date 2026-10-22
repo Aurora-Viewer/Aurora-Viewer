@@ -986,11 +986,18 @@ when the editor is wide enough. Resize wide/narrow with this enabled:
 query, replacement, options and field focus must survive the transition.
 The integrated search has two compact rows beside the menus/toolbar and
 no close button. The source must start at the same height with or without
-search, including after a failed search or replacement status. Hover a
+search, including after a failed search or replacement status. Its second
+row has text buttons in this order: Find, Replace, Replace all. Hover a
 truncated status to read it in full.
 Drag scripts across the sides and bottom with global edge stops enabled:
 they may extend outside, but a usable title grip must always remain.
 Opening either script focuses its text before character zero.
+Click a script's title, header background, Mono control or footer, then
+press Ctrl+F: the shared search must bind that script even without a caret
+in its source. Merely hovering another window must not redirect it. Clicking
+another window or the world must release Ctrl+F to the viewer's normal
+shortcut routing. Repeat between inventory/object editors and from a script
+menu or the Insert popup.
 For native captures at 1600 × 1000, `search-left`, `search-inline`,
 `search-overlay` and `search-outside` seed these four placements with the
 same find/replace values; `preferences` opens the options. Scroll below the

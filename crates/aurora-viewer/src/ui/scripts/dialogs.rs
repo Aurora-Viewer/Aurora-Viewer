@@ -43,13 +43,32 @@ impl Search {
                 + ui.spacing().icon_width
                 + ui.spacing().icon_spacing
         };
-        (Self::INLINE_FIELD_WIDTH
+        let first_row = Self::INLINE_FIELD_WIDTH
             + 8.0
+            // Reserve a small result label beside the options.
             + 20.0
             + 3.0 * ui.spacing().item_spacing.x
             + checkbox_width(aurora_i18n::tr!("script-search-insensitive"))
-            + checkbox_width(aurora_i18n::tr!("script-search-up")))
-        .max(440.0)
+            + checkbox_width(aurora_i18n::tr!("script-search-up"));
+        let actions = [
+            aurora_i18n::tr!("script-search-find"),
+            aurora_i18n::tr!("script-search-replace"),
+            aurora_i18n::tr!("script-search-replace-all"),
+        ];
+        let second_row = Self::INLINE_FIELD_WIDTH
+            + 8.0
+            + 3.0 * ui.spacing().item_spacing.x
+            + actions
+                .into_iter()
+                .map(|label| {
+                    ui.painter()
+                        .layout_no_wrap(label.into(), egui::FontId::proportional(12.0), ui.visuals().text_color())
+                        .size()
+                        .x
+                        + 2.0 * ui.spacing().button_padding.x
+                })
+                .sum::<f32>();
+        first_row.max(second_row).max(440.0)
     }
 
     pub fn inline_min_height(ui: &egui::Ui) -> f32 {
@@ -134,10 +153,10 @@ impl Search {
 
     pub fn controls(&mut self, ui: &mut egui::Ui, p: &Palette, id: Id, source: &mut String, editable: bool, inline: bool) {
         let ctx = ui.ctx().clone();
-        let window = Id::new(Self::WINDOW);
-        if Self::focused(&ctx) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
-            self.focus = true;
+        if let Some(owner) = self.owner {
+            super::focus::claim(&ctx, ui.layer_id(), owner);
         }
+        let window = Id::new(Self::WINDOW);
         if inline {
             self.inline_controls(ui, p, id, source, editable);
             return;
@@ -197,18 +216,19 @@ impl Search {
         let ctx = ui.ctx().clone();
         let row_height = (ui.max_rect().height() - ui.spacing().item_spacing.y) / 2.0;
         // Two toolbar rows share the existing menu/toolbar height. Result
-        // feedback stays on the second row, including its full hover text.
+        // feedback stays beside the options, including its full hover text.
         ui.spacing_mut().interact_size.y = row_height;
         ui.spacing_mut().button_padding.y = 1.0;
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
         ui.horizontal(|ui| {
             ui.set_min_height(row_height);
             self.query_field(ui, id, source, Self::INLINE_FIELD_WIDTH);
-            if icon_button(ui, p, "search-filled", aurora_i18n::tr!("script-search-find"), true) {
-                self.find(&ctx, id, source);
-            }
             crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
             crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
+            if !self.status.is_empty() {
+                ui.add(egui::Label::new(RichText::new(&self.status).small().color(p.muted)).truncate())
+                    .on_hover_text(&self.status);
+            }
         });
         ui.horizontal(|ui| {
             ui.set_min_height(row_height);
@@ -220,6 +240,9 @@ impl Search {
                     .desired_width(Self::INLINE_FIELD_WIDTH),
             )
             .on_hover_text(aurora_i18n::tr!("script-search-replacement"));
+            if flat_button(ui, p, aurora_i18n::tr!("script-search-find")).clicked() {
+                self.find(&ctx, id, source);
+            }
             ui.add_enabled_ui(editable && !self.query.is_empty(), |ui| {
                 if flat_button(ui, p, aurora_i18n::tr!("script-search-replace")).clicked() {
                     self.replace(&ctx, id, source);
@@ -228,10 +251,6 @@ impl Search {
                     self.replace_all(&ctx, id, source);
                 }
             });
-            if !self.status.is_empty() {
-                ui.add(egui::Label::new(RichText::new(&self.status).small().color(p.muted)).truncate())
-                    .on_hover_text(&self.status);
-            }
         });
     }
 

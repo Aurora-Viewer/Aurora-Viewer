@@ -15,6 +15,7 @@ mod dialogs;
 mod editing;
 mod experiences;
 mod files;
+mod focus;
 mod folding;
 mod indent;
 mod preprocessor;
@@ -22,9 +23,9 @@ mod reference;
 pub mod settings;
 mod syntax;
 mod view;
+pub use focus::editor_focused;
 pub(crate) use indent::edit_scoped as edit_code;
 pub(crate) use syntax::highlight as highlight_lsl;
-pub use view::editor_focused;
 
 pub enum Action {
     Debug,
@@ -690,6 +691,11 @@ impl Editors {
             }
             let mut open = true;
             let title = format!("{}{}", e.name, if e.dirty() { " *" } else { "" });
+            focus::claim(
+                ctx,
+                egui::LayerId::new(egui::Order::Middle, egui::Id::new(&id)),
+                egui::Id::new((&id, "source_text")),
+            );
             Floater::new(
                 &id,
                 title,
@@ -781,6 +787,7 @@ impl Editors {
             }
         }
         self.documents.retain(|e| !e.closed);
+        focus::find(ctx, &mut self.documents, &mut self.panels.search);
         // Draw the singleton after every editor has handled its commands. A
         // search opened in a later document must not also draw on the old one.
         let search = &mut self.panels.search;
@@ -836,6 +843,16 @@ mod tests {
         settings: &mut settings::ScriptSettings,
         events: Vec<egui::Event>,
     ) -> egui::FullOutput {
+        frame_settings_extra(ctx, editors, settings, events, |_, _| {})
+    }
+
+    fn frame_settings_extra(
+        ctx: &egui::Context,
+        editors: &mut Editors,
+        settings: &mut settings::ScriptSettings,
+        events: Vec<egui::Event>,
+        mut extra: impl FnMut(&egui::Context, &crate::theme::Palette),
+    ) -> egui::FullOutput {
         let theme = crate::theme::Theme::default();
         theme.apply(ctx, 1.0);
         ctx.run_ui(
@@ -853,6 +870,7 @@ mod tests {
                     settings,
                     &mut super::super::color_picker::Preferences::default(),
                 );
+                extra(ui.ctx(), &theme.palette());
             },
         )
     }
@@ -1139,9 +1157,30 @@ mod tests {
                     .iter()
                     .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-query")))
                     .count(),
-                if width > 800.0 { 0 } else { 2 } // Floating query label and Find button; compact fields use hints.
+                if width > 800.0 { 1 } else { 2 } // Text Find button; floating mode also has a query label.
             );
+            if width > 800.0 {
+                let label_pos = |label| {
+                    output
+                        .shapes
+                        .iter()
+                        .find_map(|s| match &s.shape {
+                            egui::Shape::Text(t) if t.galley.job.text == label => Some(t.pos),
+                            _ => None,
+                        })
+                        .unwrap()
+                };
+                let find = label_pos(aurora_i18n::tr!("script-search-find"));
+                let replace = label_pos(aurora_i18n::tr!("script-search-replace"));
+                assert!(
+                    find.x < replace.x && (find.y - replace.y).abs() < 1.5,
+                    "Find before Replace on the same row"
+                );
+            }
         }
+        editing::select(&ctx, source_id(target), 0..0, false);
+        click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-find"));
+        assert_eq!(editing::cursor(&ctx, source_id(target)).as_sorted_char_range(), 7.into()..13.into());
         editors.panels.search.query = "missing".into();
         editors.panels.search.find(&ctx, source_id(target), &editors.documents[0].source);
         let source_before_status = ctx.read_response(source_id(target)).unwrap().rect;
@@ -1252,6 +1291,139 @@ mod tests {
                 super::super::layout::Edges::default()
             );
         }
+    }
+
+    #[test]
+    fn ctrl_f_follows_script_window_activation_without_needing_source_field_focus() {
+        fn show(ctx: &egui::Context, editors: &mut Editors, events: Vec<egui::Event>) -> egui::FullOutput {
+            frame_settings_extra(ctx, editors, &mut settings::ScriptSettings::default(), events, |ctx, p| {
+                let mut other = String::from("Another window");
+                super::super::widgets::Floater::new("script_shortcut_other", "Other", egui::pos2(1200.0, 720.0), Vec2::new(260.0, 200.0))
+                    .show(ctx, p, &mut true, |ui| {
+                        ui.add(egui::TextEdit::singleline(&mut other).id(egui::Id::new("script_shortcut_other_field")));
+                    });
+            })
+        }
+        fn click(ctx: &egui::Context, editors: &mut Editors, pos: egui::Pos2) {
+            show(ctx, editors, vec![egui::Event::PointerMoved(pos)]);
+            for pressed in [true, false] {
+                show(
+                    ctx,
+                    editors,
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+        }
+        let ctx = egui::Context::default();
+        let mut editors = Editors::default();
+        let first = target(1);
+        let second = target(2);
+        for (target, x) in [(first, 50.0), (second, 780.0)] {
+            let load = editors.open(target, "Activation".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("source".into()));
+            super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(x, 100.0), Vec2::new(660.0, 520.0));
+        }
+        for _ in 0..4 {
+            show(&ctx, &mut editors, vec![]);
+        }
+        for (target, area) in [
+            (first, "title"),
+            (second, "header"),
+            (first, "control"),
+            (second, "footer"),
+            (first, "menu"),
+        ] {
+            editors.panels.search.open = false;
+            for _ in 0..2 {
+                show(&ctx, &mut editors, vec![]);
+            }
+            let parent = ctx.memory(|m| m.area_rect(egui::Id::new(window(target)))).unwrap();
+            let editor = editors.documents.iter().find(|e| e.target == target).unwrap();
+            let pos = match area {
+                "title" => ctx
+                    .read_response(egui::Id::new(window(target)).with("title_double_click"))
+                    .unwrap()
+                    .rect
+                    .center(),
+                "header" => egui::pos2(parent.right() - 25.0, editor.tools.body_top + 8.0),
+                "footer" => egui::pos2(parent.center().x, parent.bottom() - 25.0),
+                _ => {
+                    let label = if area == "menu" {
+                        aurora_i18n::tr!("script-menu-file")
+                    } else {
+                        "Mono"
+                    };
+                    show(&ctx, &mut editors, vec![])
+                        .shapes
+                        .iter()
+                        .find_map(|s| match &s.shape {
+                            egui::Shape::Text(t) if t.galley.job.text == label && parent.contains(t.pos) => {
+                                Some(t.pos + t.galley.size() * 0.5)
+                            }
+                            _ => None,
+                        })
+                        .unwrap()
+                }
+            };
+            click(&ctx, &mut editors, pos);
+            assert!(
+                super::super::find_shortcut::window_takes_it(&ctx),
+                "{area}: app must yield Ctrl+F to the script"
+            );
+            // Hovering another window does not move activation there.
+            show(&ctx, &mut editors, vec![egui::Event::PointerMoved(egui::pos2(1330.0, 800.0))]);
+            assert!(
+                super::super::find_shortcut::window_takes_it(&ctx),
+                "{area}: pointer hover must not steal it"
+            );
+            show(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            for _ in 0..3 {
+                show(&ctx, &mut editors, vec![]);
+            }
+            assert!(
+                editors.panels.search.owns(source_id(target)),
+                "{area}: find must bind the clicked script"
+            );
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::new(dialogs::Search::WINDOW).with("query"))));
+        }
+        for outside in [
+            ctx.read_response(egui::Id::new("script_shortcut_other").with("title_double_click"))
+                .unwrap()
+                .rect
+                .center(),
+            ctx.read_response(egui::Id::new("script_shortcut_other_field"))
+                .unwrap()
+                .rect
+                .center(),
+            egui::pos2(1560.0, 950.0),
+        ] {
+            editors.panels.search.open = false;
+            for _ in 0..2 {
+                show(&ctx, &mut editors, vec![]);
+            }
+            let title = ctx
+                .read_response(egui::Id::new(window(first)).with("title_double_click"))
+                .unwrap()
+                .rect
+                .center();
+            click(&ctx, &mut editors, title);
+            assert!(super::super::find_shortcut::window_takes_it(&ctx));
+            click(&ctx, &mut editors, outside);
+            assert!(
+                !super::super::find_shortcut::window_takes_it(&ctx),
+                "outside click must release script Ctrl+F"
+            );
+            show(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            assert!(!editors.panels.search.open);
+        }
+        editors.documents.clear();
+        show(&ctx, &mut editors, vec![]);
+        assert!(!super::super::find_shortcut::window_takes_it(&ctx));
     }
 
     fn target(n: u128) -> ScriptTarget {

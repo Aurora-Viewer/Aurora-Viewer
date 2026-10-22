@@ -7,14 +7,14 @@
 //! - "Search", the accelerator of Firestorm's menu (menu_viewer.xml),
 //!   a shortcut of the viewer (`keybinds::Action::Search` by default).
 //!
-//! One rule decides, [`owner`]: the window whose field has the keyboard
-//! wins (script editor, find window); with the keyboard nowhere, the find
-//! window under the pointer; else the viewer's shortcut. It is asked from
+//! One rule decides, [`owner`]: an active script editor owns its shortcut
+//! across its fields, controls and menus. Otherwise the find window whose
+//! field has the keyboard wins; with the keyboard nowhere, the find window
+//! under the pointer; else the viewer's shortcut. It is asked from
 //! both ends with the same egui state: by a find window while it is drawn
 //! ([`take`]), and by the app before it runs the viewer's shortcut bound to
-//! these keys ([`window_takes_it`]). The script editor reads its keys while
-//! its text has the keyboard (`scripts/view.rs`), which is the first case of
-//! the rule.
+//! these keys ([`window_takes_it`]). `scripts/focus.rs` tracks script
+//! activation and dispatches the key after all editor commands have run.
 
 use egui::{Id, LayerId};
 
@@ -23,7 +23,7 @@ use egui::{Id, LayerId};
 pub enum Keyboard {
     /// In no field.
     Nowhere,
-    /// In the text of a script editor.
+    /// In the active script editor, including its controls and popup menus.
     ScriptEditor,
     /// In a field of a window that has a find bar: the layer of that window.
     FindWindow(LayerId),
@@ -91,13 +91,16 @@ fn claim(ctx: &egui::Context, layer: LayerId, fields: &[Id]) {
 /// Who gets Ctrl+F now: the rule on where the keyboard and the pointer are.
 pub fn current_owner(ctx: &egui::Context) -> Owner {
     let claims = claims(ctx);
-    let keyboard = match ctx.memory(|m| m.focused()) {
-        None => Keyboard::Nowhere,
-        Some(field) => match claims.iter().find(|claim| claim.fields.contains(&field)) {
-            Some(claim) => Keyboard::FindWindow(claim.layer),
-            None if super::scripts::editor_focused(ctx) => Keyboard::ScriptEditor,
-            None => Keyboard::Elsewhere,
-        },
+    let keyboard = if super::scripts::editor_focused(ctx) {
+        Keyboard::ScriptEditor
+    } else {
+        match ctx.memory(|m| m.focused()) {
+            None => Keyboard::Nowhere,
+            Some(field) => match claims.iter().find(|claim| claim.fields.contains(&field)) {
+                Some(claim) => Keyboard::FindWindow(claim.layer),
+                None => Keyboard::Elsewhere,
+            },
+        }
     };
     let pointer = ctx
         .pointer_latest_pos()

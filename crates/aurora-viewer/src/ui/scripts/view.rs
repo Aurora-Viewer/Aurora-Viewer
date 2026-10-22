@@ -90,21 +90,6 @@ enum Command {
     ExpandAll,
 }
 
-fn focus_frame_id() -> Id {
-    Id::new("script_editor_focus_frame")
-}
-
-/// A script editor had the keyboard on the last frame drawn: its own
-/// shortcuts (Ctrl+F to find in the script) go before the viewer's on the
-/// same keys, as a floater's accelerators do in Firestorm.
-pub fn editor_focused(ctx: &egui::Context) -> bool {
-    let now = ctx.cumulative_frame_nr();
-    Search::focused(ctx)
-        || ctx
-            .data(|d| d.get_temp::<u64>(focus_frame_id()))
-            .is_some_and(|frame| frame + 1 >= now)
-}
-
 fn visible_id(id: Id, processed: bool) -> Id {
     if processed { id.with("processed") } else { id }
 }
@@ -313,6 +298,7 @@ fn header(
     let mut chosen = None;
     egui::MenuBar::new().ui(ui, |ui| {
         ui.menu_button(aurora_i18n::tr!("script-menu-file"), |ui| {
+            super::focus::claim(&ctx, ui.layer_id(), id);
             for (command, icon, label) in [
                 (Command::Save, "device-floppy-filled", aurora_i18n::tr!("common-save")),
                 (Command::Revert, "restore", aurora_i18n::tr!("script-menu-revert")),
@@ -331,6 +317,7 @@ fn header(
             edit_menu(ui, p, e, id, &mut chosen);
         });
         ui.menu_button(aurora_i18n::tr!("script-menu-help"), |ui| {
+            super::focus::claim(&ctx, ui.layer_id(), id);
             for (command, icon, label) in [
                 (Command::Help, "help-circle-filled", aurora_i18n::tr!("script-menu-help")),
                 (Command::Keyword, "book-filled", aurora_i18n::tr!("script-help-keyword")),
@@ -382,12 +369,8 @@ fn header(
         run(command, e, &ctx, id, settings, prefs, actions);
     }
     if ctx.memory(|m| m.has_focus(visible_id(id, e.tools.processed))) {
-        // read outside the closure: the context is locked inside it
-        let frame = ctx.cumulative_frame_nr();
-        ctx.data_mut(|d| d.insert_temp(focus_frame_id(), frame));
         for (key, command) in [
             (egui::Key::S, Command::Save),
-            (egui::Key::F, Command::Find),
             (egui::Key::G, Command::Goto),
             (egui::Key::O, Command::Open),
         ] {
@@ -480,6 +463,7 @@ fn footer(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, actions: &mut 
 }
 
 fn edit_menu(ui: &mut egui::Ui, p: &Palette, e: &Editor, id: Id, chosen: &mut Option<Command>) {
+    super::focus::claim(ui.ctx(), ui.layer_id(), id);
     for (command, icon, label) in [
         (Command::Undo, "arrow-back-up", aurora_i18n::tr!("script-edit-undo")),
         (Command::Redo, "arrow-forward-up", aurora_i18n::tr!("script-edit-redo")),
@@ -522,8 +506,6 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
     if e.loaded && !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut e.tools.focus_start) {
         editing::select(ui.ctx(), id, 0..0, true);
         e.tools.scroll_to_cursor = true;
-        let frame = ui.ctx().cumulative_frame_nr();
-        ui.ctx().data_mut(|d| d.insert_temp(focus_frame_id(), frame));
     }
     e.folding
         .sync(if e.tools.processed { &e.tools.processed_source } else { &e.source });
@@ -691,6 +673,7 @@ fn insertion(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id) {
                 .height(280.0)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show_ui(ui, |ui| {
+                    super::focus::claim(ui.ctx(), ui.layer_id(), id);
                     let field = ui.add(
                         egui::TextEdit::singleline(&mut e.tools.insert_filter)
                             .id(id.with("insert_filter"))
