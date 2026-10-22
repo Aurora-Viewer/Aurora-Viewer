@@ -54,20 +54,30 @@ fn restore(ctx: &egui::Context, saved: &str) -> Result<(), String> {
 }
 
 pub fn save(ctx: &egui::Context) {
+    if let Some(text) = text(ctx) {
+        let p = path();
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        // write then rename: never leave a half-written file
+        let _ = crate::atomic_file::write(&p, text.as_bytes());
+    }
+}
+
+/// The layout as `ui_layout.ron` holds it (and a settings backup).
+pub fn text(ctx: &egui::Context) -> Option<String> {
     let room = move_area(ctx);
     windows(ctx, |w| w.refresh_anchors(room));
     let mem = ctx.memory(|m| m.clone());
-    match ron::to_string(&mem) {
-        Ok(text) => {
-            let p = path();
-            if let Some(dir) = p.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            // write then rename: never leave a half-written file
-            let _ = crate::atomic_file::write(&p, text.as_bytes());
-        }
-        Err(e) => log::warn!("ui layout not saved: {e}"),
-    }
+    ron::to_string(&mem).inspect_err(|e| log::warn!("ui layout not saved: {e}")).ok()
+}
+
+/// Takes a layout from a settings backup, at once and for the next
+/// launches.
+pub fn apply(ctx: &egui::Context, saved: &str) -> Result<(), String> {
+    restore(ctx, saved)?;
+    save(ctx);
+    Ok(())
 }
 
 /// Forget the saved layout ("Reset everything").

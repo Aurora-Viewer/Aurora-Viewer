@@ -2020,6 +2020,30 @@ ui-options-slurl-links = Second Life links
 ui-options-slurl-links-open = Open secondlife:// links in Aurora
 ui-options-slurl-links-open-help = A place or profile link of a web page opens in this viewer: the place becomes the start location before login, its details once in the world.
 ui-options-slurl-links-other = These links currently open in { $program }.
+ui-options-backup = Backup
+ui-options-backup-save = Back up the settings
+ui-options-backup-save-help = Saves the preferences, the colours, the shortcuts, the bars, the windows' layout, the skin and each account's preference files (contact sets, voice volumes, blocked assets…) to one file, to put them back after a reset or on another PC. Nothing of the login goes in it.
+ui-options-backup-save-button = Back up…
+ui-options-backup-restore = Restore the settings
+ui-options-backup-restore-help = Reads a backup file and puts back the parts you choose, at once. This PC keeps its login, window size, folders and audio devices.
+ui-options-backup-restore-button = Restore…
+ui-options-backup-file-type = Aurora settings backup
+ui-options-backup-saved = Settings backed up to { $path }.
+ui-options-backup-save-failed = The backup could not be written.
+ui-options-backup-not-a-backup = This file is not a backup of Aurora's settings.
+ui-options-backup-restore-title = Restore the settings?
+ui-options-backup-restore-from = Backup of { $date }, Aurora { $version }. The parts ticked replace the current ones.
+ui-options-backup-part-settings = Preferences, with the colours, shortcuts and bars
+ui-options-backup-part-layout = Windows' layout
+ui-options-backup-part-skin = Skin (theme and layout files)
+ui-options-backup-part-accounts = { $count ->
+    [one] Preference files of { $count } account
+   *[other] Preference files of { $count } accounts
+    }
+ui-options-backup-account-kept = The account logged in keeps its own files: restore from the login screen to put them back too.
+ui-options-backup-restore-confirm = Restore
+ui-options-backup-restored = Settings restored from the backup.
+ui-options-backup-restore-failed = Some files of the backup could not be written.
 common-distance = Distance
 common-draw-distance = Draw distance
 app-chat-commands-draw-distance-set-to-m = { "Draw distance set to " }{ $value0 }{ " m." }

@@ -3333,6 +3333,10 @@ failure. Grid validation and any paid upload are performed by the human.
     captures; each opened block has its own darker face.
   - `reset`: the page reset at once, with its Undo at the bottom; the chat
     says it was reset once the Undo is gone (8 s) or the window closed.
+  - `restore` (with `system`): the confirmation of a settings restore, for
+    a backup of the demo's own profile (preferences, windows' layout, skin,
+    accounts' files when they exist); "Restore" puts them back as a real
+    backup file would, and the chat says so.
   - the rows of the former filters, lit a moment and scrolled to:
     `0:tonemap` (Graphics › Image › Tone mapping), `0:occlusion` (Light ›
     Indirect light, its cog opened), `0:bloom`, `name-tags`, `attention`

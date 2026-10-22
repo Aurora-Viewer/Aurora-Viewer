@@ -265,6 +265,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "external-link",
     "eye",
     "file-description",
+    "file-download",
     "file-info",
     "file-music",
     "file-text",

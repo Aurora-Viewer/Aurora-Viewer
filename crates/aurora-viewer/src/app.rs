@@ -78,6 +78,7 @@ mod report_abuse;
 mod reset_skeleton;
 mod script_clicks;
 mod scripts;
+mod settings_backup;
 mod shape_editor;
 mod snapshot;
 mod social_menu_demo;
@@ -693,6 +694,8 @@ pub struct App {
     neighbours_refused: bool,
     /// The cache and transcript folders being chosen (app/folders.rs).
     folders: folders::Folders,
+    /// The settings backup being written or read (app/settings_backup.rs).
+    settings_backup: settings_backup::Job,
     /// AURORA_CAPTURE: file, frames to capture (several: one file each,
     /// `<name>-<frame>.png`), quit after the last one.
     capture: Option<(Vec<(u64, std::path::PathBuf)>, bool)>,
@@ -1174,6 +1177,7 @@ impl App {
             auto_away: false,
             neighbours_refused: false,
             folders: Default::default(),
+            settings_backup: Default::default(),
             capture: std::env::var_os("AURORA_CAPTURE").map(|p| {
                 let frames = std::env::var("AURORA_CAPTURE_FRAMES").unwrap_or_default();
                 (
@@ -10078,6 +10082,7 @@ impl App {
         self.options_ui.chat_log_dir = self.world.chat_log.dir().map(std::path::Path::to_path_buf);
         self.options_ui.chat_log_custom = !self.settings.chat_log_location.is_empty();
         self.poll_folder_pick();
+        self.poll_settings_backup();
         if let Some(done) = self.world.chat_log.take_relocated() {
             self.options_ui.chat_log_status = match done {
                 Ok(count) => aurora_i18n::tr!("ui-options-chat-logs-moved", count = count),
@@ -10197,6 +10202,16 @@ impl App {
         }
         if let Some((folder, choice)) = res.folder {
             self.choose_folder(folder, choice);
+        }
+        if res.back_up {
+            self.back_up_settings(ctx);
+        }
+        if res.pick_backup {
+            self.pick_settings_backup();
+        }
+        if let Some(restored) = res.restored.take() {
+            // a new egui memory drops the fonts waiting for the next pass
+            res.font_changed |= self.restore_settings(ctx, restored);
         }
         a.settings_changed = res.changed || std::mem::take(&mut self.folders.settings_changed);
         a.ui_scale_changed = res.ui_scale_changed;
@@ -12443,6 +12458,14 @@ impl ApplicationHandler for App {
                 }
                 if value.split(':').nth(1) == Some("animations-sync") {
                     self.settings.synchronize_animations = true;
+                }
+                // the confirmation of a restore, for a backup of the demo's
+                // own profile
+                if value.split(':').nth(1) == Some("restore") {
+                    let mut backup = crate::settings::backup::Backup::new(&self.settings, ui::layout::text(&self.egui_ctx));
+                    backup.read_files(&crate::settings::config_dir());
+                    let logged_in = self.world.login.as_ref().map(|l| l.agent_id);
+                    self.options_ui.restore = Some(ui::options::backup::Pending::new(backup, logged_in));
                 }
                 ui::options::demo(&mut self.options_ui, &value);
             }
