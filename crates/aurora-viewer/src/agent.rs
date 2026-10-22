@@ -38,6 +38,10 @@ pub struct MoveInput {
     pub nudge_lr: bool,
     /// Seconds the turn key has been held (LLFloaterMove::getYawRate).
     pub turn_held: f32,
+    /// Native joystick angular rates (radians/second), already filtered.
+    pub joystick_yaw: f32,
+    pub joystick_pitch: f32,
+    pub joystick_mouselook_yaw: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -573,6 +577,8 @@ impl AgentState {
 
     /// Advance smoothing and turning.
     pub fn update(&mut self, input: &MoveInput, mouselook: bool, dt: f32, camera_distance: f32) {
+        self.yaw += input.joystick_yaw * dt.clamp(0.0, 0.2);
+        self.pitch = (self.pitch + input.joystick_pitch * dt.clamp(0.0, 0.2)).clamp(-1.55, 1.55);
         if !mouselook && input.turn_left != input.turn_right {
             let step = TURN_RATE * yaw_rate(input.turn_held) * dt;
             self.yaw += if input.turn_left { step } else { -step };
@@ -644,6 +650,18 @@ impl AgentState {
     /// Control flags for this frame.
     pub fn control_flags(&self, input: &MoveInput, mouselook: bool) -> u32 {
         let mut f = 0;
+        if input.joystick_yaw > 0.0 && (!mouselook || input.joystick_mouselook_yaw) {
+            f |= control::YAW_POS;
+        }
+        if input.joystick_yaw < 0.0 && (!mouselook || input.joystick_mouselook_yaw) {
+            f |= control::YAW_NEG;
+        }
+        if input.joystick_pitch > 0.0 {
+            f |= control::PITCH_POS;
+        }
+        if input.joystick_pitch < 0.0 {
+            f |= control::PITCH_NEG;
+        }
         // a held key always sends FAST_* (LLAgent::moveAt / moveLeft /
         // moveUp); running is SetAlwaysRun
         if input.forward {
@@ -708,8 +726,7 @@ impl AgentState {
 
     pub fn controls(&self, input: &MoveInput, cam: &crate::camera::Camera, far: f32) -> AgentControls {
         let at = cam.forward();
-        let up = Vec3::Z;
-        let left = up.cross(at).normalize_or(Vec3::Y);
+        let left = cam.view_up().cross(at).normalize_or(Vec3::Y);
         let cam_up = at.cross(left).normalize_or(Vec3::Z);
         AgentControls {
             control_flags: self.control_flags(input, cam.mouselook()),

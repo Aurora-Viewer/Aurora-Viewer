@@ -368,6 +368,8 @@ pub struct Settings {
     pub build: crate::build::BuildSettings,
     /// Camera (Firestorm "Move & View › View").
     pub camera: crate::camera::CameraSettings,
+    /// LLViewerJoystick: device, axis mapping and separate avatar/flycam tuning.
+    pub joystick: crate::joystick::Settings,
     /// Ground foot geometry after wearing/detaching a body attachment.
     pub auto_hover_height: bool,
     /// Fixed adjustment added to each automatic grounding estimate (metres).
@@ -1300,6 +1302,7 @@ impl Default for Settings {
             dev_toolbox: None,
             build: Default::default(),
             camera: Default::default(),
+            joystick: Default::default(),
             auto_hover_height: false,
             auto_hover_offset: 0.0,
             hover_height_accounts: None,

@@ -303,6 +303,8 @@ pub struct OptionsUi {
     pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
     pub rlva_camera_preset_locked: bool,
     pub rlva_camera_fov_locked: bool,
+    pub joystick: crate::joystick::Snapshot,
+    pub flycam_active: bool,
     pub anti_spam_blocks: Vec<(crate::world::anti_spam::Queue, uuid::Uuid, String)>,
     pub anti_spam_version: u64,
     /// The page shown and its tab.
@@ -487,6 +489,7 @@ impl OptionsUi {
 
 #[derive(Default)]
 pub struct OptionsResult {
+    pub toggle_flycam: bool,
     pub reset_anti_spam: bool,
     pub unblock_anti_spam: Option<(crate::world::anti_spam::Queue, uuid::Uuid)>,
     /// Settings that need the general application path (rendering, network,

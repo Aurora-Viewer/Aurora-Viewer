@@ -293,6 +293,8 @@ pub enum Action {
     SitGround,
     Mouselook,
     ResetCamera,
+    /// LLViewerJoystick::toggleFlycam (menu_viewer.xml, Alt+Shift+F).
+    Flycam,
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
     /// Controls).
     CameraControls,
@@ -412,6 +414,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::Mouselook, aurora_i18n::tr!("common-mouselook")),
                     (Action::ResetCamera, aurora_i18n::tr!("keybinds-return-to-avatar")),
+                    (Action::Flycam, aurora_i18n::tr!("joystick-flycam")),
                     (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
                     (Action::CamOrbitCw, aurora_i18n::tr!("keybinds-orbit-clockwise")),
                     (Action::CamOrbitCcw, aurora_i18n::tr!("keybinds-orbit-counterclockwise")),
@@ -595,6 +598,7 @@ impl KeyBindings {
             (Action::SitGround, [kalt(K::KeyS, false, true), None]),
             (Action::Mouselook, [k(K::KeyM), None]),
             (Action::ResetCamera, [k(K::Escape), None]),
+            (Action::Flycam, [kalt(K::KeyF, false, true), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
             (Action::CamOrbitCw, [kalt(K::ArrowLeft, false, false), None]),
             (Action::CamOrbitCcw, [kalt(K::ArrowRight, false, false), None]),

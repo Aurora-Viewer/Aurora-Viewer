@@ -9,6 +9,7 @@ use aurora_net::{NetCommand, control};
 
 impl App {
     pub(super) fn controls_window(&mut self, ctx: &egui::Context, p: &Palette) {
+        self.joystick_status(ctx, p);
         self.controls_demo();
         let flight = self.snapshots.ui.free;
         let view = View {

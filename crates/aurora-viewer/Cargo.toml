@@ -28,6 +28,11 @@ egui-winit = "0.37.0"
 emojis = "0.9.0"
 env_logger = "0.11.11"
 glam = "0.34.1"
+# Native raw joystick axes (including unmapped flight sticks), MIT / Apache-2.0.
+gilrs-core = "0.6.8"
+# SpaceMouse HID reports, independently of gamepad mappings; MIT wrapper,
+# bundled HIDAPI under BSD-3-Clause.
+hidapi = "2.6.7"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "bmp", "tga", "gif", "webp"] }
 log = "0.4.34"
 # photos written row by row with their progress (the PNG encoder of image,

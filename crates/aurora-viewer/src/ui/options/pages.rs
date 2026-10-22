@@ -12,6 +12,7 @@ pub mod confirmations;
 pub mod controls;
 pub mod graphics;
 pub mod inventory;
+pub mod joystick;
 pub mod layout;
 pub mod media;
 pub mod network;
@@ -45,6 +46,7 @@ pub fn tabs(page: Page) -> Vec<&'static str> {
             aurora_i18n::tr!("common-behavior"),
             aurora_i18n::tr!("common-mouselook"),
         ],
+        Page::Controls => vec![aurora_i18n::tr!("ui-options-page-controls"), aurora_i18n::tr!("joystick-title")],
         Page::Avatars => vec![
             aurora_i18n::tr!("ui-options-tab-name-tags"),
             aurora_i18n::tr!("ui-options-names"),
@@ -96,7 +98,13 @@ pub fn draw(cx: &mut Cx, page: Page, tab: usize) {
         Page::Accessibility => accessibility::page(cx),
         Page::Confirmations => confirmations::page(cx),
         Page::Inventory => inventory::page(cx),
-        Page::Controls => controls::page(cx),
+        Page::Controls => {
+            if tab == 0 {
+                controls::page(cx)
+            } else {
+                joystick::page(cx)
+            }
+        }
         Page::Shortcuts => shortcuts::page(cx, tab),
         Page::Commands => commands::page(cx),
         Page::System => system::page(cx),
