@@ -5256,7 +5256,8 @@ What the inventory must show with these scenarios:
   the starting frame to let the plugin load; also works with
   `AURORA_DEMO_HUDS=media`.
 - **Media plugins.** The media scenarios need Aurora's media plugins pack
-  (SLPlugin, CEF, LibVLC). A viewer that finds no plugins downloads it once
+  (SLPlugin, CEF, LibVLC; on Linux GStreamer instead of LibVLC, from the
+  system). A viewer that finds no plugins downloads it once
   from the Aurora release `media-plugins-<n>` into
   `%LOCALAPPDATA%\Aurora\AuroraViewer\data\media-plugins\<n>`, in demo mode
   too; every later run and every worktree reuses it. The media wait for it
@@ -5273,6 +5274,7 @@ What the inventory must show with these scenarios:
 - **`AURORA_MEDIA_PACK_FEED`**: to try a pack before it is published (the
   artifact of a "Media plugins" workflow run). The viewer asks
   `<feed origin>/download/media-plugins-<n>/Aurora-Media-Plugins-<n>-windows-x64.zip`
+  (`-linux-x64.zip` on Linux)
   instead of the GitHub release; only a loopback address is accepted, and
   the archive must still have the size and the SHA-256 written in
   `crates/aurora-updater/src/media_pack.rs`. A pack installed that way is

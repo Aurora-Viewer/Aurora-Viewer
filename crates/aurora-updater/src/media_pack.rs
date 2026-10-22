@@ -1,9 +1,10 @@
-//! The media plugins (SLPlugin, CEF, LibVLC) are published as a pack of their
-//! own, once per version of those binaries and not inside every viewer
-//! package: they weigh more than the viewer and seldom change. A viewer is
-//! built for one pack, named here with its size and SHA-256, and installs it
-//! in the user's data folder: nothing downloaded is kept unless it is that
-//! exact archive, and a folder only gets its final name once complete.
+//! The media plugins (SLPlugin, CEF, LibVLC or GStreamer) are published as a
+//! pack of their own, once per version of those binaries and not inside every
+//! viewer package: they weigh more than the viewer and seldom change. A
+//! viewer is built for one pack of its system, named here with its size and
+//! SHA-256, and installs it in the user's data folder: nothing downloaded is
+//! kept unless it is that exact archive, and a folder only gets its final
+//! name once complete.
 
 use crate::{
     Cancel, Failure, Progress,
@@ -27,21 +28,40 @@ pub struct Pack {
 
 /// The pack this viewer uses, built by the "Media plugins" workflow
 /// (.github/workflows/media-plugins.yml) and published under the tag
-/// `media-plugins-<version>`.
+/// `media-plugins-<version>`, one archive per system.
+#[cfg(not(target_os = "linux"))]
 pub const PACK: Pack = Pack {
     version: "1",
     size: 252_643_186,
     sha256: "eb2c9c70bcf87df6d987ad38efca83e38a6f2d934fdbc1d00fceb1d20ea1c93e",
 };
+#[cfg(target_os = "linux")]
+pub const PACK: Pack = Pack {
+    version: "2",
+    size: 206_114_621,
+    sha256: "11a41a1e6c6250bbc9875b3fdf2d3609f1dd1740707d9ee805eb245803bea687",
+};
+
+/// The system part of the archive's name.
+const SYSTEM: &str = if cfg!(target_os = "linux") { "linux-x64" } else { "windows-x64" };
 
 const MANIFEST: &str = "aurora-media-plugins.json";
 /// Written next to the manifest once the archive is extracted: the SHA-256 of
 /// that archive. A pack rebuilt under the same version is installed again.
 const ORIGIN: &str = "archive.sha256";
+#[cfg(not(target_os = "linux"))]
 const REQUIRED: [&str; 3] = [
     "llplugin/SLPlugin.exe",
     "llplugin/media_plugin_cef.dll",
     "llplugin/media_plugin_libvlc.dll",
+];
+/// Video through the system's GStreamer, as in the Legacy Viewer: no
+/// LibVLC plugin is built for Linux.
+#[cfg(target_os = "linux")]
+const REQUIRED: [&str; 3] = [
+    "llplugin/SLPlugin",
+    "llplugin/libmedia_plugin_cef.so",
+    "llplugin/libmedia_plugin_gstreamer.so",
 ];
 
 #[derive(serde::Deserialize)]
@@ -55,7 +75,7 @@ impl Pack {
         format!("media-plugins-{}", self.version)
     }
     fn folder(&self) -> String {
-        format!("Aurora-Media-Plugins-{}-windows-x64", self.version)
+        format!("Aurora-Media-Plugins-{}-{SYSTEM}", self.version)
     }
     fn complete(&self, dir: &Path) -> bool {
         fs::read(dir.join(MANIFEST))

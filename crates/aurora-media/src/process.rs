@@ -78,6 +78,20 @@ impl PluginProcess {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
+        // Linux: CEF's host process (dullahan_host, started by CEF with this
+        // environment) has no rpath that finds libcef.so next to it; the
+        // Legacy Viewer's wrapper.sh sets LD_LIBRARY_PATH on its lib folder
+        // the same way.
+        #[cfg(target_os = "linux")]
+        if let Some(dir) = launcher.parent() {
+            let mut paths = vec![dir.to_path_buf()];
+            if let Some(old) = std::env::var_os("LD_LIBRARY_PATH") {
+                paths.extend(std::env::split_paths(&old));
+            }
+            if let Ok(joined) = std::env::join_paths(paths) {
+                cmd.env("LD_LIBRARY_PATH", joined);
+            }
+        }
         let child = cmd.spawn()?;
         log::info!(
             "media: launched {} (port {port}) for {}",
@@ -382,7 +396,15 @@ impl Drop for PluginProcess {
     }
 }
 
-/// Where SLPlugin and the media plugin DLLs live.
+/// File names of the launcher: `SLPlugin.exe` on Windows, `SLPlugin`
+/// elsewhere.
+const LAUNCHERS: &[&str] = if cfg!(windows) {
+    &["SLPlugin.exe", "slplugin.exe"]
+} else {
+    &["SLPlugin"]
+};
+
+/// Where SLPlugin and the media plugin libraries live.
 #[derive(Debug, Clone)]
 pub struct PluginPaths {
     pub launcher: PathBuf,
@@ -390,7 +412,9 @@ pub struct PluginPaths {
 }
 
 impl PluginPaths {
-    /// Path of a plugin DLL (`media_plugin_cef`, `media_plugin_libvlc`).
+    /// Path of a plugin library (`media_plugin_cef`, `media_plugin_libvlc`,
+    /// `media_plugin_gstreamer`): `<name>.dll` on Windows, `lib<name>.so`
+    /// elsewhere.
     pub fn plugin_file(&self, basename: &str) -> PathBuf {
         let file = if cfg!(windows) {
             format!("{basename}.dll")
@@ -411,7 +435,7 @@ impl PluginPaths {
         if !plugin_dir.is_dir() {
             return None;
         }
-        for exe in ["SLPlugin.exe", "slplugin.exe"] {
+        for exe in LAUNCHERS {
             for base in [dir, plugin_dir.as_path()] {
                 let launcher = base.join(exe);
                 if launcher.is_file() {
@@ -443,7 +467,7 @@ mod tests {
     fn folder(root: &Path, name: &str, launcher_inside: bool) -> PathBuf {
         let dir = root.join(name);
         std::fs::create_dir_all(dir.join("llplugin")).expect("fixture");
-        let launcher = if launcher_inside { dir.join("llplugin") } else { dir.clone() }.join("SLPlugin.exe");
+        let launcher = if launcher_inside { dir.join("llplugin") } else { dir.clone() }.join(LAUNCHERS[0]);
         std::fs::write(launcher, b"").expect("fixture");
         dir
     }
@@ -458,14 +482,18 @@ mod tests {
         std::fs::create_dir_all(&empty).expect("fixture");
 
         let found = PluginPaths::discover(Some(&chosen), Some(&pack)).expect("chosen folder");
-        assert_eq!(found.launcher, chosen.join("SLPlugin.exe"));
+        assert_eq!(found.launcher, chosen.join(LAUNCHERS[0]));
         // a folder without plugins falls through to the pack
         let found = PluginPaths::discover(Some(&empty), Some(&pack)).expect("pack");
-        assert_eq!(found.launcher, pack.join("llplugin").join("SLPlugin.exe"));
+        assert_eq!(found.launcher, pack.join("llplugin").join(LAUNCHERS[0]));
         assert_eq!(found.plugin_dir, pack.join("llplugin"));
         assert_eq!(
             found.plugin_file("media_plugin_cef"),
-            pack.join("llplugin").join("media_plugin_cef.dll")
+            pack.join("llplugin").join(if cfg!(windows) {
+                "media_plugin_cef.dll"
+            } else {
+                "libmedia_plugin_cef.so"
+            })
         );
         // no pack: nothing, even on a PC where another viewer is installed
         assert!(PluginPaths::discover(Some(&empty), None).is_none());

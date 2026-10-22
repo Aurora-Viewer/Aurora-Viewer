@@ -1,10 +1,11 @@
 //! Aurora Viewer media plugin host.
 //!
 //! Second Life viewers render web pages and videos in separate processes:
-//! `SLPlugin` loads a media plugin DLL (`media_plugin_cef` for the web through
-//! Dullahan / CEF, `media_plugin_libvlc` for video and audio streams) and
-//! talks to the viewer through LLSD XML messages on a loopback TCP socket;
-//! pixels arrive in a shared memory segment. This crate is the viewer side
+//! `SLPlugin` loads a media plugin library (`media_plugin_cef` for the web
+//! through Dullahan / CEF, `media_plugin_libvlc` for video and audio streams,
+//! `media_plugin_gstreamer` instead on Linux) and talks to the viewer through
+//! LLSD XML messages on a loopback TCP socket; pixels arrive in a shared
+//! memory segment. This crate is the viewer side
 //! of that protocol, so the very same plugins as Firestorm's are used:
 //!
 //! * [`process::PluginProcess`]: LLPluginProcessParent (launch, handshake,
@@ -25,7 +26,7 @@ mod shm;
 
 pub use media::{
     BrowserSettings, Cookie, Frame, KeyEvent, MediaEvent, MediaPlugin, MediaStatus, Modifiers, MouseEvent, Priority, Rect,
-    mime_from_scheme, next_power_of_2, plugin_for_mime,
+    TIME_MEDIA_PLUGIN, mime_from_scheme, next_power_of_2, plugin_for_mime,
 };
 pub use message::PluginMessage;
 pub use process::{PluginPaths, PluginProcess, ProcState};
