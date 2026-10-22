@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+pub mod backup;
 mod hover_height;
 
 /// How the Conversations window looks (Preferences › Aurora): Aurora's

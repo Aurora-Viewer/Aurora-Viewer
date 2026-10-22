@@ -2020,6 +2020,30 @@ ui-options-slurl-links = Liens Second Life
 ui-options-slurl-links-open = Ouvrir les liens secondlife:// dans Aurora
 ui-options-slurl-links-open-help = Un lien de lieu ou de profil d'une page web s'ouvre dans ce viewer : le lieu devient le point de départ avant la connexion, sa fiche une fois dans le monde.
 ui-options-slurl-links-other = Ces liens s'ouvrent actuellement dans { $program }.
+ui-options-backup = Sauvegarde
+ui-options-backup-save = Sauvegarder les réglages
+ui-options-backup-save-help = Enregistre les préférences, les couleurs, les raccourcis, les barres, la disposition des fenêtres, le skin et les fichiers de préférences de chaque compte (groupes de contacts, volumes des voix, assets bloqués…) dans un seul fichier, pour les remettre après une réinitialisation ou sur un autre PC. Rien de la connexion n'y figure.
+ui-options-backup-save-button = Sauvegarder…
+ui-options-backup-restore = Restaurer les réglages
+ui-options-backup-restore-help = Lit un fichier de sauvegarde et remet aussitôt les parties choisies. Ce PC garde sa connexion, la taille de sa fenêtre, ses dossiers et ses périphériques audio.
+ui-options-backup-restore-button = Restaurer…
+ui-options-backup-file-type = Sauvegarde des réglages d'Aurora
+ui-options-backup-saved = Réglages sauvegardés dans { $path }.
+ui-options-backup-save-failed = La sauvegarde n'a pas pu être écrite.
+ui-options-backup-not-a-backup = Ce fichier n'est pas une sauvegarde des réglages d'Aurora.
+ui-options-backup-restore-title = Restaurer les réglages ?
+ui-options-backup-restore-from = Sauvegarde du { $date }, Aurora { $version }. Les parties cochées remplacent les actuelles.
+ui-options-backup-part-settings = Préférences, avec les couleurs, les raccourcis et les barres
+ui-options-backup-part-layout = Disposition des fenêtres
+ui-options-backup-part-skin = Skin (fichiers de thème et de disposition)
+ui-options-backup-part-accounts = { $count ->
+    [one] Fichiers de préférences de { $count } compte
+   *[other] Fichiers de préférences de { $count } comptes
+    }
+ui-options-backup-account-kept = Le compte connecté garde ses propres fichiers : restaurez depuis l'écran de connexion pour les remettre aussi.
+ui-options-backup-restore-confirm = Restaurer
+ui-options-backup-restored = Réglages restaurés depuis la sauvegarde.
+ui-options-backup-restore-failed = Certains fichiers de la sauvegarde n'ont pas pu être écrits.
 common-distance = Distance
 common-draw-distance = Distance d'affichage
 app-chat-commands-draw-distance-set-to-m = { "Distance d'affichage réglée à " }{ $value0 }{ " m." }

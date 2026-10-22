@@ -746,3 +746,60 @@ fn the_demo_opens_the_page_asked() {
     demo(&mut st, "7:voice");
     assert_eq!((st.page, st.tab), (Page::Sound, 2));
 }
+
+/// The confirmation of a restore, with `untick` clicked first, then its
+/// "Restore" button: the settings in the end, and what the app is asked.
+fn confirm_restore(s: &mut Settings, untick: Option<&str>) -> Option<backup::Restored> {
+    use crate::settings::backup::Backup;
+    let mut other = Settings::default();
+    other.draw_distance = 300.0;
+    other.window_width = 640;
+    let backup = Backup::parse(&Backup::new(&other, Some("layout".into())).to_bytes().unwrap()).unwrap();
+    let mut st = OptionsUi {
+        restore: Some(backup::Pending::new(backup, None)),
+        ..Default::default()
+    };
+    let mut r = OptionsResult::default();
+    let p = crate::theme::Theme::default().palette();
+    let mut frames = Frames::new();
+    let mut frame = |s: &mut Settings, st: &mut OptionsUi, r: &mut OptionsResult, events| {
+        frames.run(events, |ui| backup::restore_modal(ui.ctx(), &p, s, st, r, true))
+    };
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frame(s, &mut st, &mut r, Vec::new());
+    }
+    for label in untick.into_iter().chain([aurora_i18n::tr!("ui-options-backup-restore-confirm")]) {
+        let at = texts
+            .iter()
+            .find(|t| t.source == label)
+            .unwrap_or_else(|| panic!("{label} is painted"))
+            .rect
+            .center();
+        for events in click(at) {
+            texts = frame(s, &mut st, &mut r, events);
+        }
+    }
+    assert!(st.restore.is_none(), "the confirmation closes");
+    r.restored
+}
+
+#[test]
+fn a_restore_confirmed_takes_the_backup_and_keeps_this_pc() {
+    let mut s = Settings {
+        window_width: 1234,
+        ..Default::default()
+    };
+    let restored = confirm_restore(&mut s, None).expect("the app is asked for the rest");
+    assert_eq!(s.draw_distance, 300.0);
+    assert_eq!(s.window_width, 1234, "this PC's window");
+    assert!(restored.parts.settings && restored.parts.layout);
+}
+
+#[test]
+fn a_part_unticked_is_not_restored() {
+    let mut s = Settings::default();
+    let restored = confirm_restore(&mut s, Some(aurora_i18n::tr!("ui-options-backup-part-settings"))).expect("the layout is");
+    assert_eq!(s.draw_distance, Settings::default().draw_distance);
+    assert!(!restored.parts.settings && restored.parts.layout);
+}

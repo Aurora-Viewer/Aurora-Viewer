@@ -4,6 +4,7 @@
 //! Every setting is a row of `cx::Cx`: one declaration draws it, finds it,
 //! marks it when it differs from its default and resets it.
 
+pub mod backup;
 pub(crate) mod cx;
 mod pages;
 mod scale;
@@ -383,6 +384,11 @@ pub struct OptionsUi {
     /// "Erase this account's history?" confirmation open.
     confirm_erase_logs: bool,
     pub restart_voice: bool,
+    /// A settings backup read, waiting for the confirmation of its restore
+    /// (set by the app), and what the last backup and restore did.
+    pub restore: Option<backup::Pending>,
+    pub backup_status: String,
+    pub restore_status: String,
 }
 
 impl OptionsUi {
@@ -503,6 +509,12 @@ pub struct OptionsResult {
     pub account: Option<crate::world::user_info::Change>,
     /// Open the Dev Toolbox (Network and cache › Logs and tools).
     pub open_dev_toolbox: bool,
+    /// Back up the settings to a file the user chooses.
+    pub back_up: bool,
+    /// Choose a backup to restore (then `restore_modal` confirms it).
+    pub pick_backup: bool,
+    /// A restore confirmed: the app puts back what is not the settings.
+    pub restored: Option<backup::Restored>,
 }
 
 /// A folder the user can choose (Preferences › Network and cache, Chat).
@@ -929,6 +941,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
         st.finish_undo(&mut r);
     }
     erase_logs_modal(ctx, p, st, &mut r, *open);
+    backup::restore_modal(ctx, p, s, st, &mut r, *open);
     st.defaults = Some(d);
     r
 }
