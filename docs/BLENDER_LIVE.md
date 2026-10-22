@@ -190,6 +190,9 @@ Add `--starter` to use the generated 159-bone rig and weighted T-shirt
 instead of the sphere, including its actual inverse binds and weight palette.
 Add `--pbr` to recalculate its automatic weights, send base/normal/ORM/emission
 maps and stream repeated image edits through the renderer.
+Add `--save-blend <absolute-path.blend>` with `--pbr` to save the prepared
+rig, weighted T-shirt and packed test images before connecting. The saved file
+can be opened normally and connected through the Aurora sidebar.
 
 ## Wire protocol v1
 
