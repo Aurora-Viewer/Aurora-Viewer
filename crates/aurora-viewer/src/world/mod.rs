@@ -3008,14 +3008,16 @@ impl World {
     }
 
     fn on_chat(&mut self, c: ChatMessage) {
+        let controller_allowed = self.rlva_controller_chat_allowed(c.source_id);
         if c.source_type == aurora_net::ChatSourceType::Object
             && c.chat_type == aurora_net::ChatType::OwnerSay
             && c.message.starts_with('@')
+            && controller_allowed
         {
             self.rlva_bind_controller(c.source_id);
             self.rlva_prepare_version(c.source_id, &c.message);
         }
-        if self.rlva.receive(&c) {
+        if controller_allowed && self.rlva.receive(&c) {
             self.eep.rlva_locked = self.rlva.has("setenv");
             let environment_owner = self.rlva.rules_for("setenv", Uuid::nil()).next().map(|(id, _)| id);
             if self.eep.rlva_locked
@@ -3105,7 +3107,7 @@ impl World {
         });
     }
 
-    fn on_im(&mut self, im: InstantMessage) {
+    fn on_im(&mut self, mut im: InstantMessage) {
         if self.im_blocked(&im) {
             return;
         }
@@ -3120,11 +3122,7 @@ impl World {
         if self.rlva_im_query(&im) {
             return;
         }
-        if matches!(im.dialog, 0 | 17 | 41 | 42)
-            && !self.rlva_allows_im("recvim", if im.dialog == 17 { im.session_id } else { im.from_agent_id })
-        {
-            return;
-        }
+        let rlva_filter = self.rlva_receive_im(&mut im);
         // IM_TYPING_START / STOP (llimprocessing.cpp: processIMTypingStart /
         // Stop): "is typing" in their conversation, never a line
         if matches!(im.dialog, IM_TYPING_START | IM_TYPING_STOP) {
@@ -3182,7 +3180,9 @@ impl World {
                 origin: Origin::Live,
             };
             self.conversation_push(im.from_agent_id, line, true);
-            self.send_autoresponse(&im, autoresponse);
+            if rlva_filter != rlva::communication::Received::Masked {
+                self.send_autoresponse(&im, autoresponse);
+            }
             return;
         }
         // dialog 19 = MessageFromObject
@@ -3917,6 +3917,7 @@ impl World {
 
     /// Record an IM we sent.
     pub fn own_im(&mut self, to: Uuid, text: &str) {
+        let text = self.rlva_outgoing_im_text(to, false, text).into_owned();
         let me = self
             .login
             .as_ref()
@@ -3926,7 +3927,7 @@ impl World {
         let line = ChatLine {
             time: SystemTime::now(),
             from: me,
-            text: text.to_owned(),
+            text,
             kind: ChatKind::Own,
             source: Uuid::nil(),
             origin: Origin::Live,

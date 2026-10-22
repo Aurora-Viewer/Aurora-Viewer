@@ -20,11 +20,18 @@ fallback; their actual URI stays available through the copy-link menu.
 RLVa is an explicit opt-in (`Settings::rlva_enabled`, false by
 default), exposed in Preferences > Protections with the session's active
 restrictions. `world/rlva.rs` owns parsing, object-scoped rules, strict
-exceptions, protocol replies and garbage collection. Its `policy.rs` checks
+exceptions, protocol replies and garbage collection. The shared exception
+checker requires secure issuers by default and all issuers under permissive=n;
+non-strict behaviours keep permissive exceptions. Channel exclusions reuse
+that checker and require the native general restriction. Its `policy.rs` checks
 the common action boundary; `inventory.rs` resolves #RLV paths and validates
 COF deltas, attachment/layer locks and scripted nostrip. `camera.rs` supplies
 temporary camera settings and exclusive ownership. `events.rs` handles
-permission/teleport consent, command notifications and stand returns;
+permission/teleport consent, command notifications and stand returns.
+Script attachment permission requires an actual addable point. Auto-accept
+uses simulator ownership flags and distinguishes worn objects without relying
+on inventory availability. A removal-locked worn HUD keeps ordinary HUD
+visibility enabled and disables wireframe, including temporary HUDs.
 `editing.rs` checks linksets and material/media writes. `environment.rs`
 keeps scripted sky, water and day cycles separate from saved local choices.
 `sitting.rs` records actors only at accepted native sends, observes confirmed
@@ -108,6 +115,14 @@ mute/friends-only checks and before IM receive restrictions. Listing uses the
 native notification consent path, with an explicit remembered preference.
 `aurora-net/im_reply.rs` encodes bounded busy/normal responses independently
 of user IM locks; disabling drops pending responses and permission questions.
+`rlva/communication.rs` implements native IM substitution and busy replies,
+offline/staff exemptions, conference participant send checks and the existing
+session exemption for startim. Resident, group and conference creation share
+that predicate before changing sessions or calls. Initial group invitations
+check the group UUID; conference invitations censor the initiating sender.
+Existing multi-agent session traffic follows the separate native receive path.
+Teleport text obeys receive/location privacy; forced acceptance overrides
+status rejection while preserving lock checks and do-not-disturb replies.
 `rlva/rename.rs` observes confirmed new attachment arrivals in legacy shared-wear
 mode. It appends a point name or creates/reuses a folded point folder, waits
 for metadata confirmation, bounds retries and preserves later manual renames.
@@ -126,6 +141,10 @@ and checks child prims at the common action boundary. Unresolved names expire
 after five minutes; resolved blocks last until detach or global disable.
 The network's `session/experience_events.rs` handles native UDP/HTTP generic
 messages, retaining the experience invoice and attachment name.
+The OwnerSay source gate separately uses the packet's attachment state and
+AttachItemID marker for temporary attachments of any origin, even without
+inventory or experience metadata. With the option off these remain ordinary
+OwnerSay chat; existing restrictions are not retroactively removed.
 
 `chat.rs` follows native OOC/ellipsis choices and exempts directed object chat
 and owned worn attachments. Redirection uses one bounded protocol reply by

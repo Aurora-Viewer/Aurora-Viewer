@@ -4,6 +4,21 @@ use super::super::{World, objects::ObjKey};
 use uuid::Uuid;
 
 impl World {
+    /// RlvAttachmentLocks::hasLockedHUD / RlvActions::canViewWireframe:
+    /// actual worn HUDs count, including temporary and folder-locked ones.
+    pub fn rlva_has_locked_hud(&self) -> bool {
+        self.rlva.inventory_locked()
+            && self.rlva_worn_attachment_points().into_iter().any(|(item, point)| {
+                self.avatar_lib.attach_points.get(&point).is_some_and(|point| point.hud)
+                    && (!self.rlva_attachment_remove_at(item, point, Uuid::nil())
+                        || self
+                            .inventory
+                            .items
+                            .get(&item)
+                            .is_some_and(|item| !self.rlva_folder_allowed(item.parent, false, Uuid::nil())))
+            })
+    }
+
     /// Resolve only a real linkset worn by this agent, including child prims.
     pub(crate) fn rlva_own_attachment_root(&self, source: Uuid) -> Option<Uuid> {
         let mut index = self.objects.index_of_uuid(&source)?;

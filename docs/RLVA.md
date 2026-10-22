@@ -23,6 +23,9 @@ script authors; the command lists below describe this branch specifically.
 - OwnerSay parsing, comma-separated commands, n/y and add/rem, clear with a
   filter, per-object idempotent restrictions, numeric reply channels,
   strict communication exceptions and periodic issuer garbage collection.
+  Secure exceptions require each secure issuer's agreement; permissive=n
+  extends agreement to all issuers. Behaviours without a strict form keep
+  permissive exceptions, as in the native exception checker.
   Protocol replies use a dedicated one-packet send path, including empty
   replies and UTF-8 truncation at 1023 bytes, without user chat splitting.
 - Chat: sendchat, emote, recvchat/from, recvemote/from, chatwhisper/normal/shout,
@@ -35,12 +38,27 @@ script authors; the command lists below describe this branch specifically.
   outgoing text. Directed object chat and owned worn attachments are exempt
   from receive restrictions. Redirection uses a single bounded shout reply by
   default; optional splitting uses word boundaries and UTF-8-safe packets.
+  Channel exceptions accept positive channels. sendchannel_except entries
+  require its general restriction and use the same native secure-agreement
+  check as positive exceptions.
   Redirected typing is hidden by default across chat, animation and the
   AgentUpdate state flag. The native option can enable all three; stop
   messages remain allowed and adding a restriction stops active typing.
 - IM: sendim/to, recvim/from, startim/to; share and sendgesture.
   Distance exclusion ranges are intersected across issuers, including the
   unbounded/off-region case; specific recipient blocks still win.
+  Blocked online resident IMs show a replacement line and return a busy reply
+  with the incoming session UUID. Offline and Linden messages retain their
+  text; blocked/staff messages never disclose a personal automatic response.
+  Forbidden outgoing text is replaced both locally and on the wire. Group
+  sends check the group UUID; conference sends check every other participant.
+  Initial group invitations check their group UUID and conference invitations
+  censor their sender. Existing multi-agent session traffic follows the
+  reference's separate receive path. New resident/group/conference sessions
+  and calls obey startim before changing existing state; open sessions remain
+  available, including sessions still initializing.
+  Context menus, Contacts, People and notification reopening check before
+  creating a session, so a rejected target cannot acquire that exemption.
 - Online private IM queries: exact @version, @stopim, @list and @except,
   filtered by mute, spam and friends-only policy before recvim. Listing
   restrictions or exceptions requires a native permission question by default;
@@ -57,6 +75,10 @@ script authors; the command lists below describe this branch specifically.
   The check covers child prims and deferred actions, keeps clear/removal
   available, and retires a block on confirmed detach or global disable.
   An unresolved attachment name expires after five minutes.
+  Independently of experience origin, the temporary-source gate uses the
+  source packet's attachment state and AttachItemID marker. With the option
+  off, these OwnerSay messages are ordinary chat: no command, query or clear
+  is interpreted. This does not retroactively remove accepted restrictions.
 - Movement: fly, jump, unsit, sit, alwaysrun and temprun;
   forced fly, setrot, sit, sitground and unsit.
   A forced ground sit leaves an object seat, waits for the confirmed stand,
@@ -84,10 +106,19 @@ script authors; the command lists below describe this branch specifically.
   teleport-failure path, cancelling pending progress and history state.
   tplure/tprequest exceptions and accepttp/accepttprequest auto-acceptance
   retain maturity checks and recheck consent when an invitation is answered.
+  Forced acceptance overrides teleport/status rejection; do-not-disturb
+  responses are still sent on acceptance or an RLVa refusal. Blocked offers
+  and requests use busy replies, without manufacturing a user decline.
+  Invitation text is masked under recvim or showloc as appropriate.
   standtp records the pre-sit location and returns only after a successful
   forced sit followed by a stand.
 - Actions: buy, pay, rez; linkset touchall/world/attach/attachself/attachother,
   touchhud/this, interact and fartouch.
+  Vendor payments obey buy; resident payments obey pay. Fartouch includes
+  the exact distance boundary; sitting/teleport distances remain exclusive.
+  A worn removal-locked HUD cannot be hidden through the HUD switch and
+  prevents wireframe rendering. Add-only locks do not impose that condition.
+  Transparency highlighting also obeys edit and showloc.
 - Inventory: detach, addattach/remattach, addoutfit/remoutfit,
   sharedwear/unwear, unsharedwear/unwear. COF changes are checked as deltas;
   native detach and attach messages are checked too. Scripted removal honors
@@ -217,6 +248,10 @@ script authors; the command lists below describe this branch specifically.
 - Script questions: acceptpermission handles only the reference's eligible
   control/attachment permissions; caution permissions and experiences keep
   their dialogs. addattach/tploc filter the corresponding permission bits.
+  Attachment permission checks every actual point, including point-specific
+  addattach/detach locks. Automatic attachment permission uses the simulator's
+  ownership flag and requires a rezzed object; missing inventory metadata
+  never turns a worn attachment into a rezzed object.
   notify reports restriction commands, including rejected/duplicate commands;
   clothing/bodypart notifications follow complete confirmed COF changes,
   after the initial loaded baseline, with all removals before additions.
@@ -287,6 +322,9 @@ one of two issuers, then global disable while a response is pending.
 - Environment/debug replies, wearable/attachment/sit
   notifications and permission entry points. Ground-sit and clothing handlers require live
   validation with delayed simulator responses and intervening restrictions.
+- Resident/group/conference IM restrictions, online/offline and Linden
+  receive cases, secure/normal issuers, temporary controllers without an
+  experience, and automatic teleport acceptance with status rejection.
 - Linked/folded-folder behavior and delayed callbacks; shared inventory gifts, experience-origin controller approval and
   attachment recovery across crossings.
 - Media/touch interactions and surface-distance checks; edit,
@@ -307,9 +345,9 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-22, including merged PRs #805, #807, #809, #810, #812 and #814: `scripts/check.ps1` passes with 4,373 workspace
+Validation on 2026-10-22, including merged PRs #805, #807, #809, #810, #812 and #814: `scripts/check.ps1` passes with 4,415 workspace
 tests passed, zero failures and 27 ignored; scripts, formatting and Clippy
-are clean. This includes 79 RLVa logic/integration/shader tests, covering
+are clean. This includes 121 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
@@ -343,13 +381,23 @@ Rename tests cover baseline/new arrivals, preserving later manual names,
 no-modify folder creation and confirmed moves, bounded failures, reattachment
 and global-disable cancellation. The native French `rename` capture and log
 confirm `Modifiable bracelet (chest)` and the `.(skull)` destination.
+Communication and permission conformance additionally covers native busy
+session UUIDs, local/wire substitution, offline/staff/typing exemptions,
+group/conference recipients, existing sessions, startim before native session
+creation, status/automatic teleport acceptance, actual attachment points and
+simulator ownership flags. Secure/normal issuer combinations, channel
+exclusion activation, vendor/resident payment guards, exact touch boundaries
+and locked HUD visibility are checked too. Native FR/EN `communication`
+captures and logs show the replacement messages and a blocked new session;
+the EN `temporary` and FR `hud-lock` captures/logs confirm their source gate,
+HUD visibility and filled rendering.
 The additional Vulkan test
 `cargo test --workspace rlva_gpu --locked -- --ignored` checks five sphere
 modes, chained masks, reduced-scene upscaling and overlay alpha holes from
 real GPU pixels without egui. It passes, including the extended upscale
 and overlay-composition case.
-The automated checks do not
-validate the unfinished command families or live-grid behavior.
+These checks cover the implemented scenarios; they do not certify live-grid
+parity with real controllers and simulator timing.
 
 Initial native preference validation (`4e22e952`): the dev viewer builds
 successfully. Inspected offline captures

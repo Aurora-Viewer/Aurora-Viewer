@@ -1240,7 +1240,8 @@ impl App {
         if let NetCommand::OfferTeleport { to, .. } = &mut cmd {
             self.world.rlva_filter_teleport_offer(to);
         }
-        if !self.world.rlva_allows_command(&cmd, actor) {
+        let im_placeholder = actor.is_nil() && self.world.rlva_prepare_outgoing_im(&mut cmd);
+        if !im_placeholder && !self.world.rlva_allows_command(&cmd, actor) {
             self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
             return;
         }
@@ -3935,6 +3936,9 @@ impl App {
                     self.world.notifications.restore(&e);
                 }
                 Follow::Conversation(session) => {
+                    if !self.world.rlva_start_ims(&[session]) {
+                        return;
+                    }
                     if !self.world.social.ims.iter().any(|s| s.other == session) {
                         self.world.social.session_mut(session);
                     }
@@ -5313,9 +5317,15 @@ impl App {
     /// LLFloater::setFocus → focusFirstItem). Openings that come from calls
     /// set `focus_im` alone and leave the keyboard where it is.
     pub(super) fn open_conversation_to_type(&mut self, id: uuid::Uuid) {
-        if !self.world.rlva_allows_im("startim", id) && !self.world.social.ims.iter().any(|im| im.other == id) {
-            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+        if !self.world.rlva_start_ims(&[id]) {
             return;
+        }
+        // Create only after checking startim: pre-creating the session would
+        // incorrectly qualify every target for the open-session exemption.
+        if !self.world.is_group_session(&id) && !self.world.groups.is_member(&id) {
+            self.world.social.session_mut(id);
+            self.world.met(id);
+            self.world.ui_sounds.push(UiSound::StartIm);
         }
         self.world.social.focus_im = Some(id);
         self.chat_ui.conv_focus_request = true;
@@ -5721,8 +5731,6 @@ impl App {
                 _ => {}
             },
             ContactsAction::Im(id) => {
-                self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.social.session_mut(id);
                 self.open_conversation_to_type(id);
             }
             ContactsAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
@@ -6702,7 +6710,13 @@ impl App {
                 self.settings.debug.show_alpha_rigged = alpha.unwrap_or(false);
             }
             let debug_alpha = match self.settings.debug {
-                d if d.show_alpha && !self.world.rlva.has("viewtransparent") => Some(d.show_alpha_rigged),
+                d if d.show_alpha
+                    && !self.world.rlva.has("viewtransparent")
+                    && !self.world.rlva.has("edit")
+                    && !self.world.rlva.has("showloc") =>
+                {
+                    Some(d.show_alpha_rigged)
+                }
                 _ => None,
             };
             self.scene.set_debug_alpha(&mut self.world, debug_alpha);
@@ -7402,7 +7416,7 @@ impl App {
             water: env.water,
             mirror,
             probes,
-            wireframe: self.settings.debug.wireframe && !self.world.rlva.has("viewwireframe"),
+            wireframe: self.settings.debug.wireframe && !self.world.rlva.has("viewwireframe") && !self.world.rlva_has_locked_hud(),
             debug_glow: self.settings.debug.glow_view,
             blend_late_discard: self.frame_profile.blend_late_discard(),
             all_lights: self.frame_profile.all_lights(),
@@ -9462,6 +9476,10 @@ impl App {
                 self.egui_ctx.request_repaint();
             }
             BarAction::ShowHuds(visible) => {
+                if !visible && self.world.rlva_has_locked_hud() {
+                    self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+                    return;
+                }
                 if self.hud_drag.is_some() {
                     self.on_left_release();
                 }
@@ -11596,10 +11614,6 @@ impl App {
                 for pa in people.into_iter().chain(contacts_people) {
                     match pa {
                         ui::people::PeopleAction::OpenIm(id) => {
-                            // LLAvatarActions::startIM: they join the recent people
-                            self.world.met(id);
-                            self.world.ui_sounds.push(UiSound::StartIm);
-                            self.world.social.session_mut(id);
                             self.open_conversation_to_type(id);
                         }
                         ui::people::PeopleAction::OfferTeleport(id) => a.offer_tp.push(id),

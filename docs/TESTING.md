@@ -2813,6 +2813,20 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   destination; `maturity-blocked` holds a home teleport for a maturity response
   and adds tplm before releasing it. Both exercise the real deferred application
   routes and log `requested=false, pending_ui=false, failed=true` at frame 810.
+  `communication` applies receive/send/start IM restrictions, receives an
+  ordinary message and sends a reply through the native action boundary.
+  Capture after frame 800: the conversation contains localized replacement
+  text for both messages. It also attempts a new IM through the actual
+  context-menu action before receiving the message; that must not create
+  an exempt session. The log reports `new_session_blocked=true`, `local_placeholders=true` and
+  `existing_session_allowed=true`. `temporary` disables temporary controllers
+  and delivers OwnerSay from an attachment with the native temporary marker,
+  without experience or inventory metadata. Its raw command remains nearby
+  chat; the log reports `option_off_jump=false, source_allowed=false`.
+  `hud-lock` seeds a temporary HUD with a point removal lock while requesting
+  hidden HUDs and wireframe rendering. Capture after frame 810: the HUD is
+  visible, the world stays filled and the log reports `locked=true,
+  shown=true, wireframe=false`.
   `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
   `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
   mode to the same scene. `overlay` uses the demo's transparent-hole texture

@@ -327,9 +327,6 @@ impl App {
             CtxAction::ToggleFly => self.toggle_fly(),
             CtxAction::ResetCamera => self.reset_camera_view(),
             CtxAction::Im(id) => {
-                // UISndStartIM (LLAvatarActions::startIM)
-                self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.social.session_mut(id);
                 self.open_conversation_to_type(id);
             }
             CtxAction::Call(id) => {

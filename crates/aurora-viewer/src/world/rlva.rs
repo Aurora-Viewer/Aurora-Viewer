@@ -14,6 +14,7 @@ const VERSION: &str = version::VERSION_NEW;
 pub mod camera;
 mod chat;
 mod collection;
+pub(super) mod communication;
 mod controllers;
 mod debug;
 pub mod diagnostics;
@@ -423,7 +424,7 @@ fn valid_option(c: &Command) -> bool {
         | "accepttprequest" | "tplure" | "tprequest" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
         "showhovertext" => Uuid::parse_str(&c.option).is_ok(),
         "recvchatfrom" | "recvemotefrom" | "recvimfrom" | "sendimto" | "startimto" => Uuid::parse_str(&c.option).is_ok(),
-        "sendchannel" | "sendchannel_except" => c.option.is_empty() || c.option.parse::<i32>().is_ok_and(|v| v != 0),
+        "sendchannel" | "sendchannel_except" => c.option.is_empty() || c.option.parse::<i32>().is_ok_and(|v| v > 0),
         "redirchat" | "rediremote" => c.option.parse::<i32>().is_ok_and(|v| v > 0 && v != i32::MAX),
         _ => c.option.is_empty(),
     }
@@ -833,29 +834,43 @@ impl Rlva {
                 .any(|(id, rules)| *id != actor && rules.iter().any(|r| canonical(&r.behaviour) == canonical(behaviour) && r.general()))
     }
 
-    /// A normal exception is shared. Under _sec (or @permissive=n), every
-    /// object imposing that restriction must grant the exception itself.
+    /// RlvHandler::isException: secure exceptions require the secure issuers;
+    /// permissive=n expands that set to all issuers. Non-strict behaviours
+    /// always share their exceptions, even under permissive=n.
     pub fn allows(&self, behaviour: &str, target: &str) -> bool {
+        !self.enabled || !self.has(behaviour) || self.is_exception(behaviour, target)
+    }
+
+    fn is_exception(&self, behaviour: &str, target: &str) -> bool {
         if !self.enabled {
-            return true;
+            return false;
         }
-        let strict = self.has("permissive")
-            || self
-                .rules
-                .values()
-                .any(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.general() && r.strict));
         let exception = |rs: &BTreeSet<Rule>| rs.iter().any(|r| r.behaviour == behaviour && r.option.eq_ignore_ascii_case(target));
-        let restricting: Vec<_> = self
-            .rules
-            .values()
-            .filter(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.general()))
-            .collect();
-        restricting.is_empty()
-            || if strict {
-                restricting.into_iter().all(exception)
-            } else {
-                self.rules.values().any(exception)
-            }
+        if !self.rules.values().any(exception) {
+            return false;
+        }
+        let all_issuers = self.has("permissive");
+        let strict = self.has(behaviour)
+            && supports_strict(behaviour)
+            && (all_issuers
+                || self
+                    .rules
+                    .values()
+                    .any(|rs| rs.iter().any(|r| r.behaviour == behaviour && r.general() && r.strict)));
+        if strict {
+            // Native object selection checks empty-option restrictions.
+            // A range is reference-counted but supplies no required object
+            // here; at least one actual matching exception is still needed.
+            self.rules
+                .values()
+                .filter(|rs| {
+                    rs.iter()
+                        .any(|r| r.behaviour == behaviour && r.option.is_empty() && (all_issuers || r.strict))
+                })
+                .all(exception)
+        } else {
+            true
+        }
     }
 
     pub fn targets(&self, behaviour: &str, target: &str) -> bool {
@@ -907,7 +922,8 @@ impl Rlva {
     }
 
     pub fn allows_channel(&self, channel: i32) -> bool {
-        self.allows("sendchannel", &channel.to_string()) && !self.targets("sendchannel_except", &channel.to_string())
+        self.allows("sendchannel", &channel.to_string())
+            && (!self.has("sendchannel_except") || !self.is_exception("sendchannel_except", &channel.to_string()))
     }
 }
 

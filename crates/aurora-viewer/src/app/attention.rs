@@ -206,6 +206,9 @@ impl App {
             }
             match open {
                 Some(Open::Conversation(session)) => {
+                    if !self.world.rlva_can_start_im(session) {
+                        continue;
+                    }
                     self.world.social.session_mut(session);
                     self.world.social.focus_im = Some(session);
                     crate::ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);

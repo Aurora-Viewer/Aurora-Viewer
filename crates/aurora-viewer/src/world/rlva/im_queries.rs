@@ -251,7 +251,24 @@ mod tests {
         assert_eq!(world.social.ims.len(), sessions);
         for (text, offline) in [("@VERSION", false), ("@version", true), ("@fly=n", false)] {
             query(&mut world, text, offline);
-            assert!(world.rlva.out.is_empty());
+            if offline {
+                assert!(world.rlva.out.is_empty());
+                assert!(
+                    world
+                        .social
+                        .ims
+                        .iter()
+                        .find(|session| session.other == PERSON)
+                        .unwrap()
+                        .lines
+                        .back()
+                        .unwrap()
+                        .text
+                        .contains(text)
+                );
+            } else {
+                assert!(matches!(world.rlva.out.pop(), Some(NetCommand::SendImDialog { dialog: 20, .. })));
+            }
         }
         assert!(!world.rlva.has("fly"), "an IM cannot issue restrictions");
         world.rlva.configure(false);

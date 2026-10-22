@@ -73,6 +73,20 @@ impl Controllers {
 }
 
 impl World {
+    /// process_chat_from_simulator + LLViewerObject::isTempAttachment:
+    /// wire attachment state and AttachItemID identify temporary prims,
+    /// independently of experience origin or a loaded inventory/avatar tree.
+    pub(crate) fn rlva_controller_chat_allowed(&self, source: Uuid) -> bool {
+        self.rlva.preferences.temporary_controllers
+            || self
+                .objects
+                .index_of_uuid(&source)
+                .and_then(|index| self.objects.get(index))
+                .is_none_or(|object| {
+                    object.attachment_point() == 0 || object.full_id.is_nil() || object.attachment_item_id() != Some(object.full_id)
+                })
+    }
+
     pub(crate) fn rlva_demo_experience(&mut self, maturity: u8, classify: bool) {
         let root = Uuid::from_u128(0x726c766165787072);
         if classify {
@@ -370,6 +384,34 @@ mod tests {
                 location: None,
             }],
         }]
+    }
+
+    #[test]
+    fn rlva_temporary_chat_gate_uses_native_metadata_without_an_experience_or_inventory_lookup() {
+        let mut world = fixture();
+        let source = attachment(&mut world, true);
+        say(&mut world, source, "@fly=n");
+        assert!(world.rlva.has("fly"));
+        world.rlva.preferences.temporary_controllers = false;
+        let rows = world.chat.len();
+        say(&mut world, source, "@jump=n,version=123,clear");
+        assert!(!world.rlva.has("jump") && world.rlva.has("fly"));
+        assert!(
+            world.rlva.out.is_empty(),
+            "disallowed temporary OwnerSay is ordinary chat, without protocol replies"
+        );
+        assert_eq!(world.chat.len(), rows + 1);
+        assert_eq!(world.chat.back().unwrap().text, "@jump=n,version=123,clear");
+        world.rlva.preferences.temporary_controllers = true;
+        say(&mut world, source, "@clear");
+        assert!(!world.rlva.has("fly"));
+        world.rlva.preferences.temporary_controllers = false;
+        attachment(&mut world, false);
+        say(&mut world, source, "@jump=n");
+        assert!(world.rlva.has("jump"), "ordinary inventory attachments are unaffected");
+        let unknown = Uuid::from_u128(1001);
+        say(&mut world, unknown, "@sendchat=n");
+        assert!(world.rlva.has("sendchat"), "unresolved sources retain native acceptance");
     }
 
     #[test]

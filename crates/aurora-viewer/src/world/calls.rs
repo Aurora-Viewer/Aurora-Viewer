@@ -385,6 +385,9 @@ impl World {
         if self.call_of(&target).is_some() {
             return;
         }
+        if !self.rlva_start_ims(&[target]) {
+            return;
+        }
         self.end_call();
         let (session, kind, name) = if self.groups.is_member(&target) {
             let name = self.groups.group(&target).map(|g| g.name.clone()).unwrap_or_default();
@@ -439,6 +442,9 @@ impl World {
     /// with the session's real id (autoStartCallOnStartup).
     pub fn start_conference(&mut self, residents: Vec<Uuid>) {
         let agents = self.conference_agents(residents);
+        if !self.rlva_start_ims(&agents) {
+            return;
+        }
         match agents.len() {
             0 => return,
             1 => return self.start_call(agents[0]),
@@ -467,6 +473,9 @@ impl World {
     /// an ordinary conversation (startIM).
     pub fn start_text_conference(&mut self, residents: Vec<Uuid>) {
         let agents = self.conference_agents(residents);
+        if !self.rlva_start_ims(&agents) {
+            return;
+        }
         match agents.len() {
             0 => {}
             1 => {
@@ -583,6 +592,11 @@ impl World {
     /// (its call with it) and a conference starts with the resident and the
     /// new ones, a voice conference if a call was in progress.
     pub fn convert_to_conference(&mut self, other: Uuid, added: Vec<Uuid>) {
+        // A rejected conversion must leave the existing conversation and
+        // its call intact (LLAvatarActions::startConference/startAdhocCall).
+        if !self.rlva_start_ims(&added) || !self.rlva_start_ims(&[other]) {
+            return;
+        }
         let voice = self.call_of(&other).is_some();
         self.conversation_closed(&other);
         let mut residents = vec![other];

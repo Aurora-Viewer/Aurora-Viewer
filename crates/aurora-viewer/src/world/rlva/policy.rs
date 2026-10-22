@@ -106,7 +106,7 @@ impl World {
                 && !position
                     .filter(|p| p.is_finite())
                     .or_else(|| crate::scene::Scene::object_transform_unshifted(self, index, std::time::Instant::now()).map(|(p, _, _)| p))
-                    .is_some_and(|p| p.distance(self.agent.position) < max)
+                    .is_some_and(|p| p.distance(self.agent.position) <= max)
             {
                 return false;
             }
@@ -171,11 +171,8 @@ impl World {
             NetCommand::PreviewTaskNotecard { .. } => !r.has("viewnote"),
             NetCommand::LoadScript { .. } => !r.has("viewscript"),
             NetCommand::SendIm { to, .. } => self.rlva_allows_im("sendim", *to),
-            NetCommand::SendImDialog {
-                to,
-                dialog: 0 | 17 | 41 | 42,
-                ..
-            } => self.rlva_allows_im("sendim", *to),
+            NetCommand::SendImDialog { to, dialog: 0, .. } => self.rlva_allows_im("sendim", *to),
+            NetCommand::SendImDialog { to, dialog: 17, .. } => self.rlva_can_send_session(*to),
             NetCommand::SendImDialog { to, dialog: 4, .. } => r.allows("share", &to.to_string()),
             NetCommand::ActivateGroup(group) => {
                 !blocked("setgroup") || (actor == super::groups::ACTOR && r.has("setgroup") && r.groups.restore_allowed(*group))
@@ -246,7 +243,8 @@ impl World {
             }
             NetCommand::SetAlwaysRun(true) => !blocked("alwaysrun"),
             NetCommand::BuyObject { .. } => !blocked("buy"),
-            NetCommand::PayObject { .. } | NetCommand::PayResident { .. } => !blocked("pay"),
+            NetCommand::PayObject { .. } => !blocked("buy"),
+            NetCommand::PayResident { .. } => !blocked("pay"),
             NetCommand::Build(
                 aurora_net::build::BuildCmd::Add(_)
                 | aurora_net::build::BuildCmd::RezInventory(_)

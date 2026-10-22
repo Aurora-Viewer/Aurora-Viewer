@@ -5,6 +5,116 @@ const B: Uuid = Uuid::from_u128(2);
 const TARGET: Uuid = Uuid::from_u128(3);
 
 #[test]
+fn rlva_channel_exclusions_require_their_general_restriction_and_use_native_secure_agreement() {
+    let mut r = enabled();
+    command(&mut r, A, "@sendchannel:-5=n,sendchannel_except:-6=n");
+    assert!(r.restrictions().is_empty(), "channel exceptions must be positive");
+    command(&mut r, A, "@sendchannel_except:123=n");
+    assert!(r.allows_channel(123), "an exception entry alone does not enable its restriction");
+    command(&mut r, A, "@sendchannel_except_sec=n");
+    assert!(!r.allows_channel(123));
+    command(&mut r, B, "@sendchannel_except=n");
+    assert!(
+        !r.allows_channel(123),
+        "the normal issuer need not repeat a secure issuer's exception"
+    );
+    command(&mut r, B, "@permissive=n");
+    assert!(
+        r.allows_channel(123),
+        "permissive=n requires both restricting issuers to list the blocked channel"
+    );
+    command(&mut r, B, "@sendchannel_except:123=n");
+    assert!(!r.allows_channel(123));
+    assert!(r.allows_channel(124));
+    command(&mut r, A, "@clear");
+    command(&mut r, B, "@clear");
+    assert!(r.allows_channel(123));
+}
+
+#[test]
+fn rlva_permissive_affects_only_behaviours_with_strict_exceptions() {
+    let mut r = enabled();
+    command(
+        &mut r,
+        A,
+        &format!("@edit=n,touchworld=n,edit:{TARGET}=n,touchworld:{TARGET}=n,sendim_sec=n,sendim:{TARGET}=n"),
+    );
+    command(&mut r, B, "@edit=n,touchworld=n,sendim_sec=n,permissive=n");
+    assert!(r.allows("edit", &TARGET.to_string()) && r.allows("touchworld", &TARGET.to_string()));
+    assert!(!r.allows_im("sendim", TARGET), "two secure issuers both need an exception");
+    command(&mut r, B, &format!("@sendim:{TARGET}=n"));
+    assert!(r.allows_im("sendim", TARGET));
+}
+
+#[test]
+fn rlva_vendor_payments_follow_buy_while_resident_payments_follow_pay() {
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    world.rlva_configure(true);
+    let object = NetCommand::PayObject {
+        handle: 1,
+        object: TARGET,
+        amount: 1,
+        description: String::new(),
+    };
+    let resident = NetCommand::PayResident {
+        to: TARGET,
+        group: false,
+        amount: 1,
+        message: String::new(),
+    };
+    command(&mut world.rlva, A, "@pay=n");
+    assert!(world.rlva_allows_command(&object, Uuid::nil()));
+    assert!(!world.rlva_allows_command(&resident, Uuid::nil()));
+    command(&mut world.rlva, A, "@pay=y,buy=n");
+    assert!(!world.rlva_allows_command(&object, Uuid::nil()));
+    assert!(world.rlva_allows_command(&resident, Uuid::nil()));
+}
+
+#[test]
+fn rlva_only_an_actual_remove_locked_hud_prevents_hiding_huds_and_using_wireframe() {
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva_configure(true);
+    let id = Uuid::from_u128(0x726c7661687564);
+    let point = *world.avatar_lib.attach_points.iter().find(|(_, p)| p.hud).unwrap().0;
+    let mut object = crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+        item_id: id,
+        owner_id: world.agent_id,
+        point,
+        add: true,
+        flags: 0,
+        group_mask: 0,
+        everyone_mask: 0,
+        next_owner_mask: 0,
+        name: String::new(),
+        desc: String::new(),
+    });
+    let handle = world.main_region.unwrap();
+    world.objects.upsert(handle, object.clone());
+    command(
+        &mut world.rlva,
+        A,
+        &format!("@addattach:{}=n,remattach:chest=n", inventory::POINTS[point as usize]),
+    );
+    assert!(
+        !world.rlva_has_locked_hud(),
+        "add locks and locks on unrelated points leave it removable"
+    );
+    command(&mut world.rlva, A, &format!("@remattach:{}=n", inventory::POINTS[point as usize]));
+    assert!(world.rlva_has_locked_hud());
+    command(&mut world.rlva, A, "@clear");
+    command(&mut world.rlva, id, "@detach=n");
+    assert!(world.rlva_has_locked_hud(), "temporary HUDs do not require inventory metadata");
+    object.state = 1_u8.rotate_right(4);
+    world.objects.upsert(handle, object);
+    assert!(!world.rlva_has_locked_hud(), "a locked ordinary attachment is not a HUD");
+    world.rlva_configure(false);
+    assert!(!world.rlva_has_locked_hud());
+}
+
+#[test]
 fn rlva_owner_say_folds_options_and_parameters_without_accepting_malformed_clear() {
     let mut r = enabled();
     assert!(!r.receive(&chat("@a")), "short non-command OwnerSay remains chat");
@@ -700,12 +810,21 @@ fn rlva_rules_are_idempotent_scoped_to_the_issuer_and_clear_filters() {
 }
 
 #[test]
-fn rlva_strict_exceptions_need_every_restricting_object() {
+fn rlva_strict_exceptions_require_secure_issuers_and_permissive_requires_all_issuers() {
     let mut r = enabled();
     command(&mut r, A, "@sendim_sec=n");
     command(&mut r, B, &format!("@sendim=n,sendim:{TARGET}=n"));
     assert!(!r.allows_im("sendim", TARGET));
     command(&mut r, A, &format!("@sendim:{TARGET}=n"));
+    assert!(r.allows_im("sendim", TARGET));
+    command(&mut r, B, &format!("@sendim:{TARGET}=y"));
+    assert!(
+        r.allows_im("sendim", TARGET),
+        "a non-secure issuer need not repeat a secure issuer's exception"
+    );
+    command(&mut r, B, "@permissive=n");
+    assert!(!r.allows_im("sendim", TARGET));
+    command(&mut r, B, &format!("@sendim:{TARGET}=n"));
     assert!(r.allows_im("sendim", TARGET));
     command(&mut r, B, &format!("@sendimto:{TARGET}=n"));
     assert!(!r.allows_im("sendim", TARGET));
@@ -1480,7 +1599,8 @@ fn rlva_render_aliases_release_without_mutating_saved_settings_and_touch_measure
         .map(|(_, o)| o.key)
         .unwrap();
     assert!(world.rlva_can_touch_at(key.region, key.local_id, Some(world.agent.position + glam::Vec3::X)));
-    assert!(!world.rlva_can_touch_at(key.region, key.local_id, Some(world.agent.position + glam::Vec3::X * 2.0)));
+    assert!(world.rlva_can_touch_at(key.region, key.local_id, Some(world.agent.position + glam::Vec3::X * 2.0)));
+    assert!(!world.rlva_can_touch_at(key.region, key.local_id, Some(world.agent.position + glam::Vec3::X * 2.01)));
     world.rlva.configure(false);
     assert!(world.rlva_can_touch_at(key.region, key.local_id, Some(world.agent.position + glam::Vec3::X * 100.0)));
 }

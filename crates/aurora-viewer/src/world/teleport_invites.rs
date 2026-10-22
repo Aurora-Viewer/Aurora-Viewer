@@ -199,13 +199,8 @@ impl World {
     /// IM_LURE_DECLINED (send_simple_im, as Firestorm sends them).
     fn on_lure(&mut self, im: &InstantMessage, from: &str, godlike: bool) {
         if !godlike && !self.rlva_can_accept_teleport(im.from_agent_id, false) {
-            self.teleport_invites.out.push(NetCommand::SendImDialog {
-                to: im.from_agent_id,
-                dialog: im::LURE_DECLINED,
-                id: im.session_id,
-                message: String::new(),
-                bucket: Vec::new(),
-            });
+            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), aurora_i18n::tr!("rlva-im-blocked-teleport-remote"));
+            self.rlva_teleport_dnd(im.from_agent_id);
             return;
         }
         let bucket = parse_lure_bucket(&im.binary_bucket);
@@ -228,7 +223,7 @@ impl World {
             });
             return;
         }
-        let message = im.message.replace('\r', "");
+        let message = self.rlva_teleport_message(&im.message, im.from_agent_id, godlike);
         let invite = self.teleport_invites.push(
             im.from_agent_id,
             InviteKind::Offer {
@@ -264,6 +259,7 @@ impl World {
         }
         self.set_invite_notification(invite, id);
         if rating == Rating::Allowed && self.rlva.auto_accept("accepttp", im.from_agent_id) {
+            self.rlva_teleport_dnd(im.from_agent_id);
             let commands = self.answer_teleport_invite(invite, true);
             self.teleport_invites.out.extend(commands);
         }
@@ -299,9 +295,11 @@ impl World {
     /// the same sound and log as an offer.
     pub(super) fn on_teleport_request(&mut self, im: &InstantMessage, from: &str) {
         if !self.rlva_can_accept_teleport(im.from_agent_id, true) {
+            self.rlva_busy_reply(im.from_agent_id, Uuid::nil(), aurora_i18n::tr!("rlva-im-blocked-teleport-remote"));
+            self.rlva_teleport_dnd(im.from_agent_id);
             return;
         }
-        let message = im.message.replace('\r', "");
+        let message = self.rlva_teleport_message(&im.message, im.from_agent_id, false);
         let invite = self
             .teleport_invites
             .push(im.from_agent_id, InviteKind::Request, message.clone(), Rating::Allowed);
@@ -324,6 +322,7 @@ impl World {
         );
         self.set_invite_notification(invite, id);
         if self.rlva.auto_accept("accepttprequest", im.from_agent_id) {
+            self.rlva_teleport_dnd(im.from_agent_id);
             let commands = self.answer_teleport_invite(invite, true);
             self.teleport_invites.out.extend(commands);
         }
@@ -467,7 +466,7 @@ impl World {
     /// as unread (addNotifPanelToIM). `text`: what the find bar looks in.
     pub(super) fn add_card(&mut self, im: &InstantMessage, kind: ChatKind, text: String) {
         let from = im.from_agent_id;
-        if !self.rlva_allows_im("startim", from) && !self.social.ims.iter().any(|im| im.other == from) {
+        if !self.rlva_can_start_im(from) {
             return;
         }
         if !im.from_name.is_empty() {

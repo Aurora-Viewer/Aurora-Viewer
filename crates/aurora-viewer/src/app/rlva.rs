@@ -155,10 +155,14 @@ impl App {
         if !invalid.is_empty() {
             self.build.deselect(&self.world, &invalid);
         }
-        if self.world.rlva.has("viewwireframe") {
+        let locked_hud = self.world.rlva_has_locked_hud();
+        if locked_hud {
+            self.settings.show_huds = true;
+        }
+        if self.world.rlva.has("viewwireframe") || locked_hud {
             self.settings.debug.wireframe = false;
         }
-        if self.world.rlva.has("viewtransparent") {
+        if self.world.rlva.has("viewtransparent") || self.world.rlva.has("edit") || self.world.rlva.has("showloc") {
             self.settings.debug.show_alpha = false;
         }
     }
@@ -221,6 +225,27 @@ impl App {
                 self.settings.rlva.auto_rename = true;
                 self.world.rlva_demo_naming_seed();
                 "@clear".to_owned()
+            } else if scenario == "hud-lock" {
+                self.panels.settings = false;
+                self.panels.inventory = false;
+                self.panels.chat = false;
+                self.settings.show_huds = false;
+                self.settings.debug.wireframe = true;
+                self.world.apply(NetEvent::ObjectUpdates {
+                    handle: self.world.main_region.unwrap_or_default(),
+                    objects: vec![crate::demo::hud::object(31, false)],
+                });
+                "@remattach:center 2=n".to_owned()
+            } else if scenario == "communication" || scenario == "temporary" {
+                self.panels.settings = false;
+                self.panels.inventory = false;
+                self.panels.chat = true;
+                self.chat_ui.selected = (scenario == "communication").then_some(crate::demo::DEMO_TESS);
+                if scenario == "communication" {
+                    "@recvim=n,sendim=n,startim=n".to_owned()
+                } else {
+                    "@clear".to_owned()
+                }
             } else if scenario == "im-query" {
                 self.panels.settings = false;
                 self.panels.inventory = false;
@@ -471,6 +496,81 @@ impl App {
                 binary_bucket: vec![],
                 timestamp: 0,
             }));
+        }
+        if mode == "communication" && self.frame_count == 740 {
+            let unopened = Uuid::from_u128(0x726c76616e6577696d);
+            self.on_ctx_action(ui::context::CtxAction::Im(unopened));
+            let new_session_blocked = !self.world.social.has_session(&unopened);
+            let from = crate::demo::DEMO_TESS;
+            self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
+                from_agent_id: from,
+                from_name: "Tess Example".into(),
+                to_agent_id: self.world.agent_id,
+                dialog: 0,
+                session_id: Uuid::from_u128(self.world.agent_id.as_u128() ^ from.as_u128()),
+                message: "Private demo message".into(),
+                offline: false,
+                from_group: false,
+                binary_bucket: vec![],
+                timestamp: 0,
+            }));
+            self.world.own_im(from, "Private demo reply");
+            self.send(NetCommand::SendIm {
+                to: from,
+                message: "Private demo reply".into(),
+            });
+            let blocked = self.world.social.ims.iter().find(|im| im.other == from).is_some_and(|im| {
+                im.lines.iter().rev().take(2).all(|line| {
+                    line.text == aurora_i18n::tr!("rlva-im-blocked-receive") || line.text == aurora_i18n::tr!("rlva-im-blocked-send")
+                })
+            });
+            log::info!(
+                "RLVa communication demo: new_session_blocked={new_session_blocked}, local_placeholders={blocked}, existing_session_allowed={}",
+                self.world.rlva_can_start_im(from)
+            );
+        }
+        if mode == "temporary" && self.frame_count == 740 {
+            self.settings.rlva.temporary_controllers = false;
+            self.world.rlva.preferences.temporary_controllers = false;
+            let source = Uuid::from_u128(0x726c766174656d70);
+            let object = crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+                item_id: source,
+                owner_id: self.world.agent_id,
+                point: 1,
+                add: true,
+                flags: 0,
+                group_mask: 0,
+                everyone_mask: 0,
+                next_owner_mask: 0,
+                name: String::new(),
+                desc: String::new(),
+            });
+            self.world.apply(NetEvent::ObjectUpdates {
+                handle: self.world.main_region.unwrap_or_default(),
+                objects: vec![object],
+            });
+            self.world.apply(NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: "Temporary controller".into(),
+                source_id: source,
+                owner_id: self.world.agent_id,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                position: Vec3::ZERO,
+                message: "@jump=n,version=123".into(),
+            }));
+            log::info!(
+                "RLVa temporary demo: option_off_jump={}, source_allowed={}",
+                self.world.rlva.has("jump"),
+                self.world.rlva_controller_chat_allowed(source)
+            );
+        }
+        if mode == "hud-lock" && self.frame_count == 810 {
+            log::info!(
+                "RLVa HUD demo: locked={}, shown={}, wireframe={}",
+                self.world.rlva_has_locked_hud(),
+                self.huds_shown(),
+                self.settings.debug.wireframe
+            );
         }
         if mode == "sitting" && self.frame_count == 810 {
             log::info!(

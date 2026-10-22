@@ -61,7 +61,12 @@ impl World {
         const ATTACH: i32 = 1 << 5;
         const TELEPORT: i32 = 1 << 12;
         let mut granted = requested;
-        if self.rlva.has("addattach") {
+        // RlvAttachmentLocks::canAttach asks whether *any* actual attachment
+        // point is addable, including point-specific addattach/detach locks.
+        if self.rlva.enabled()
+            && (self.objects.index_of_uuid(&self.agent_id).is_none()
+                || !self.avatar_lib.attach_points.keys().any(|point| self.rlva_point_addable(*point)))
+        {
             granted &= !ATTACH;
         }
         if self.rlva.has("tploc") {
@@ -72,7 +77,22 @@ impl World {
             && let Some(object) = self.objects.index_of_uuid(&task).and_then(|i| self.objects.get(i))
         {
             unanswered &= !TAKE_CONTROLS;
-            if object.owner_id == self.agent_id && self.rlva_attachment_item(task).is_none() {
+            let mut root = object;
+            for _ in 0..64 {
+                let Some(parent) = self.objects.parent_of(root).and_then(|index| self.objects.get(index)) else {
+                    break;
+                };
+                if parent.is_avatar() {
+                    break;
+                }
+                root = parent;
+            }
+            // permYouOwner uses the root's simulator ownership flag, not
+            // inventory metadata; temporary/unresolved attachments stay worn.
+            if root.update_flags & crate::ui::context::flags::OBJECT_YOU_OWNER != 0
+                && root.attachment_point() == 0
+                && object.attachment_point() == 0
+            {
                 unanswered &= !ATTACH;
             }
         }
@@ -80,5 +100,88 @@ impl World {
             granted,
             requested != 0 && unanswered == 0 && !super::super::experiences::caution(requested),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetEvent};
+
+    fn command(world: &mut World, message: String) {
+        world.apply(NetEvent::Chat(ChatMessage {
+            source_id: Uuid::from_u128(123),
+            from_name: "Controller".into(),
+            owner_id: world.agent_id,
+            source_type: ChatSourceType::Object,
+            chat_type: ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message,
+        }));
+    }
+
+    #[test]
+    fn rlva_permission_attach_requires_an_addable_point_and_auto_grants_only_an_owned_rezzed_object() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        world.rlva_configure(true);
+        command(&mut world, "@acceptpermission=n".into());
+        let task = Uuid::from_u128(789);
+        let mut object = crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+            item_id: task,
+            owner_id: world.agent_id,
+            point: 1,
+            add: true,
+            flags: 0,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: String::new(),
+            desc: String::new(),
+        });
+        let handle = world.main_region.unwrap();
+        world.objects.upsert(handle, object.clone());
+        assert_eq!(
+            world.rlva_script_permissions(task, 32),
+            (32, false),
+            "no inventory record does not make an attachment rezzed"
+        );
+        assert_eq!(world.rlva_script_permissions(task, 4), (4, true));
+        object.parent_id = 0;
+        object.state = 0;
+        object.owner_id = Uuid::nil();
+        world.objects.upsert(handle, object.clone());
+        assert_eq!(
+            world.rlva_script_permissions(task, 32),
+            (32, true),
+            "the simulator owner flag is sufficient"
+        );
+        object.update_flags &= !crate::ui::context::flags::OBJECT_YOU_OWNER;
+        object.owner_id = world.agent_id;
+        world.objects.upsert(handle, object);
+        assert_eq!(world.rlva_script_permissions(task, 32), (32, false));
+        let points: Vec<_> = world.avatar_lib.attach_points.keys().copied().collect();
+        for point in points {
+            let name = super::super::inventory::POINTS[point as usize];
+            command(
+                &mut world,
+                format!("@{}:{name}=n", if point % 2 == 0 { "addattach" } else { "detach" }),
+            );
+        }
+        assert_eq!(
+            world.rlva_script_permissions(task, 32),
+            (0, true),
+            "point-specific locks can cover every point"
+        );
+        command(&mut world, "@addattach:skull=y".into());
+        assert_eq!(
+            world.rlva_script_permissions(task, 32),
+            (32, false),
+            "one free point permits asking to attach"
+        );
+        world.rlva_configure(false);
+        assert_eq!(world.rlva_script_permissions(task, 32), (32, false));
     }
 }
