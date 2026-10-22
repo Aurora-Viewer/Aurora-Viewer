@@ -332,6 +332,7 @@ pub struct OptionsUi {
     /// Open every cog once counted (`AURORA_DEMO_OPTIONS=…:cogs`, captures).
     pub demo_open_cogs: bool,
     interface_scale: scale::ScaleSlider,
+    text_scale: scale::ScaleSlider,
     /// The account's content ceiling and the rating it wants, while logged
     /// in (set by the app).
     pub maturity: Option<aurora_net::search::AgentAccess>,
@@ -394,6 +395,7 @@ pub struct OptionsUi {
 impl OptionsUi {
     pub fn prepare_scale_input(&mut self, input: &egui::RawInput, pixels_per_point: f32, numeric_captured: bool) {
         self.interface_scale.prepare_input(input, pixels_per_point, numeric_captured);
+        self.text_scale.prepare_input(input, pixels_per_point, numeric_captured);
     }
 
     /// A HUD modifier on its own is captured on release, leaving time to
