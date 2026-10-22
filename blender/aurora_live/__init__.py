@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 1, 0), "blender": (2, 93, 0),
+    "version": (0, 2, 0), "blender": (4, 3, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -10,9 +10,10 @@ bl_info = {
 import time
 import bpy
 from bpy.app.handlers import persistent
-from bpy.props import EnumProperty, FloatProperty, IntProperty, PointerProperty
+from bpy.app.translations import pgettext_iface
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
 from .client import Client
-from . import exporter
+from . import exporter, starter
 
 _client = None
 _objects = []
@@ -109,12 +110,42 @@ def _settings_changed(_self, _context):
 
 
 class AURORA_PG_live(bpy.types.PropertyGroup):
+    starter_tshirt: BoolProperty(name="Add rigged test T-shirt", default=True,
+                                description="Create a weighted, editable T-shirt on the new SL skeleton")
     port: IntProperty(name="Aurora port", default=17655, min=1024, max=65535)
     interval: FloatProperty(name="Update interval", default=0.2, min=0.1, max=5.0, subtype="TIME", update=_settings_changed)
     forward: EnumProperty(name="Coordinates", items=[
         ("NATIVE", "SL / Z up", "Use the rig's existing SL coordinate axes"),
         ("NEGATIVE_Y", "Blender -Y forward", "Rotate Blender -Y to SL +X"),
     ], default="NATIVE", update=_settings_changed)
+
+
+class AURORA_OT_starter(bpy.types.Operator):
+    bl_idname = "aurora.create_sl_rig"
+    bl_label = "Create SL avatar rig"
+    bl_description = "Create the complete Bento and Fitted Mesh skeleton at the 3D cursor"
+    bl_options = {"REGISTER", "UNDO"}
+
+    with_tshirt: BoolProperty(name="Add rigged test T-shirt", default=True)
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == "OBJECT"
+
+    def execute(self, context):
+        global _objects, _dirty, _error, _last_capture
+        try:
+            _rig, shirt = starter.create(context, self.with_tshirt, context.scene.aurora_live.forward)
+        except (ValueError, RuntimeError, OSError) as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        if shirt and _client:
+            _objects = [shirt]
+            _dirty = True
+            _last_capture = 0.0
+            _error = ""
+        self.report({"INFO"}, pgettext_iface("Created 133 Bento bones and 26 Fitted Mesh bones"))
+        return {"FINISHED"}
 
 
 class AURORA_OT_connect(bpy.types.Operator):
@@ -178,6 +209,12 @@ class AURORA_PT_live(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         prefs = context.scene.aurora_live
+        box = layout.box()
+        box.label(text="SL avatar starter", icon="ARMATURE_DATA")
+        box.prop(prefs, "starter_tshirt")
+        box.operator("aurora.create_sl_rig", icon="ADD").with_tshirt = prefs.starter_tshirt
+        if context.mode != "OBJECT":
+            box.label(text="Switch to Object Mode to create a rig.", icon="INFO")
         row = layout.row()
         row.enabled = _client is None
         row.prop(prefs, "port")
@@ -201,9 +238,19 @@ class AURORA_PT_live(bpy.types.Panel):
         layout.label(text="Local preview · no asset upload")
 
 
-_classes = (AURORA_PG_live, AURORA_OT_connect, AURORA_OT_disconnect, AURORA_OT_selection, AURORA_OT_refresh, AURORA_PT_live)
+_classes = (AURORA_PG_live, AURORA_OT_starter, AURORA_OT_connect, AURORA_OT_disconnect,
+            AURORA_OT_selection, AURORA_OT_refresh, AURORA_PT_live)
 
 _translations = {"fr_FR": {("*", key): value for key, value in {
+    "SL avatar starter": "Avatar SL de départ",
+    "Create SL avatar rig": "Créer le squelette d’avatar SL",
+    "Create the complete Bento and Fitted Mesh skeleton at the 3D cursor":
+        "Créer le squelette Bento et Fitted Mesh complet au curseur 3D",
+    "Add rigged test T-shirt": "Ajouter un T-shirt de test riggé",
+    "Create a weighted, editable T-shirt on the new SL skeleton":
+        "Créer un T-shirt éditable et pondéré sur le nouveau squelette SL",
+    "Switch to Object Mode to create a rig.": "Passez en mode Objet pour créer un squelette.",
+    "Created 133 Bento bones and 26 Fitted Mesh bones": "133 os Bento et 26 os Fitted Mesh créés",
     "Aurora Live Mesh": "Maillage Aurora Live", "Connect to Aurora": "Connecter à Aurora",
     "Disconnect": "Déconnecter", "Use selected meshes": "Utiliser la sélection",
     "Send now": "Envoyer maintenant", "Aurora port": "Port Aurora", "Update interval": "Intervalle de mise à jour",

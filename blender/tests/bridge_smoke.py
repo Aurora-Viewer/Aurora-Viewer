@@ -15,31 +15,37 @@ import time
 import bpy
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from aurora_live import exporter
+from aurora_live import exporter, starter
 from aurora_live.client import Client, MAGIC
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=17655)
+parser.add_argument("--starter", action="store_true", help="Use the generated SL rig and test T-shirt")
 args = parser.parse_args(sys.argv[sys.argv.index("--")+1:] if "--" in sys.argv else [])
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
-data = bpy.data.armatures.new("Live smoke rig")
-rig = bpy.data.objects.new("Live smoke rig", data)
-bpy.context.collection.objects.link(rig)
-bpy.context.view_layer.objects.active = rig
-rig.select_set(True)
-bpy.ops.object.mode_set(mode="EDIT")
-bone = data.edit_bones.new("mChest")
-bone.head, bone.tail = (0,0,1), (0,0,1.3)
-bpy.ops.object.mode_set(mode="OBJECT")
-bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12, radius=0.3, location=(0,0,1))
-mesh = bpy.context.object
-mesh.name = "Blender live smoke shell"
-mesh.vertex_groups.new(name="mChest").add(list(range(len(mesh.data.vertices))), 1.0, "REPLACE")
-mesh.modifiers.new("Armature", "ARMATURE").object = rig
-material = bpy.data.materials.new("Live green")
-material.diffuse_color = (0.1,0.8,0.3,1.0)
-mesh.data.materials.append(material)
+if args.starter:
+    rig, mesh = starter.create(bpy.context)
+    print("AURORA_STARTER_RIG_BONES={} VERTICES={} QUADS={}".format(
+        len(rig.data.bones), len(mesh.data.vertices), len(mesh.data.polygons)), flush=True)
+else:
+    data = bpy.data.armatures.new("Live smoke rig")
+    rig = bpy.data.objects.new("Live smoke rig", data)
+    bpy.context.collection.objects.link(rig)
+    bpy.context.view_layer.objects.active = rig
+    rig.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bone = data.edit_bones.new("mChest")
+    bone.head, bone.tail = (0,0,1), (0,0,1.3)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=24, ring_count=12, radius=0.3, location=(0,0,1))
+    mesh = bpy.context.object
+    mesh.name = "Blender live smoke shell"
+    mesh.vertex_groups.new(name="mChest").add(list(range(len(mesh.data.vertices))), 1.0, "REPLACE")
+    mesh.modifiers.new("Armature", "ARMATURE").object = rig
+    material = bpy.data.materials.new("Live green")
+    material.diffuse_color = (0.1,0.8,0.3,1.0)
+    mesh.data.materials.append(material)
 bpy.context.view_layer.update()
 
 connection = None

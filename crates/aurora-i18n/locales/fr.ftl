@@ -10430,7 +10430,6 @@ build-material-base-tint = Teinte de base
 build-material-emissive-tint = Teinte émissive
 
 blender-live-title = Blender Live
-blender-live-older-blender = Blender 2.93–4.2 (ancien format de module)
 blender-live-save-addon = Enregistrer le plugin Blender…
 blender-live-addon-saved = Plugin enregistré. Installez ce ZIP dans les préférences de Blender.
 blender-live-addon-error = Impossible d’enregistrer le plugin : { $error }

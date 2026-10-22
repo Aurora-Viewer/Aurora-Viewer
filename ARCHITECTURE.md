@@ -11,10 +11,12 @@ simulator attachments. Normal GPU skinning supplies animations and avatar shape;
 existing draw objects retain their geometry while replacement meshes load.
 `scene/blender_live.rs` retires obsolete assets as soon as their geometry has
 no references or pending jobs. `blender/aurora_live/` is the Blender 4.3+
-extension (also packaged as a Blender 2.93+ add-on), with main-thread rest
-capture, a separate socket worker and a
+extension, with main-thread rest capture, a separate socket worker and a
 single latest-snapshot mailbox. `docs/BLENDER_LIVE.md` describes setup and
 wire limits; `blender/tests/` exercises real Blender capture and transport.
+`blender/aurora_live/starter.py` creates the full Bento/Fitted Mesh armature
+from the same packaged `avatar_skeleton.xml`, and optionally an editable
+quad T-shirt with normalized weights, UVs and an Armature modifier.
 
 Water exclusion faces use the viewer-local `WATER_EXCLUSION_TEXTURE` alpha-ramp
 UUID. `scene/textures.rs` resolves it without a network request; visually hidden

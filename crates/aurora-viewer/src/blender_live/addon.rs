@@ -10,6 +10,12 @@ const FILES: &[(&str, &[u8])] = &[
     ("__init__.py", include_bytes!("../../../../blender/aurora_live/__init__.py")),
     ("client.py", include_bytes!("../../../../blender/aurora_live/client.py")),
     ("exporter.py", include_bytes!("../../../../blender/aurora_live/exporter.py")),
+    ("starter.py", include_bytes!("../../../../blender/aurora_live/starter.py")),
+    (
+        "SKELETON-NOTICE.txt",
+        include_bytes!("../../../../blender/aurora_live/SKELETON-NOTICE.txt"),
+    ),
+    ("avatar_skeleton.xml", include_bytes!("../../assets/character/avatar_skeleton.xml")),
     (
         "blender_manifest.toml",
         include_bytes!("../../../../blender/aurora_live/blender_manifest.toml"),
@@ -17,16 +23,11 @@ const FILES: &[(&str, &[u8])] = &[
     ("LICENSE", include_bytes!("../../../../LICENSE")),
 ];
 
-fn archive(legacy: bool) -> Result<Vec<u8>, String> {
+fn archive() -> Result<Vec<u8>, String> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for (name, bytes) in FILES {
-        let name = if legacy {
-            format!("aurora_live/{name}")
-        } else {
-            (*name).to_owned()
-        };
-        writer.start_file(name, options).map_err(|error| error.to_string())?;
+        writer.start_file(*name, options).map_err(|error| error.to_string())?;
         writer.write_all(bytes).map_err(|error| error.to_string())?;
     }
     writer.finish().map(|cursor| cursor.into_inner()).map_err(|error| error.to_string())
@@ -34,7 +35,6 @@ fn archive(legacy: bool) -> Result<Vec<u8>, String> {
 
 #[derive(Default)]
 pub struct Addon {
-    pub legacy: bool,
     pub busy: bool,
     pub saved: bool,
     pub error: Option<String>,
@@ -61,22 +61,17 @@ impl Addon {
         self.error = None;
         let result = self.result.clone();
         let ctx = ctx.clone();
-        let legacy = self.legacy;
         jobs.execute(move || {
             let saved = (|| {
                 let Some(path) = rfd::FileDialog::new()
                     .set_title(aurora_i18n::tr!("blender-live-save-addon"))
-                    .set_file_name(if legacy {
-                        "aurora-live-mesh-legacy.zip"
-                    } else {
-                        "aurora-live-mesh.zip"
-                    })
+                    .set_file_name("aurora-live-mesh.zip")
                     .add_filter("ZIP", &["zip"])
                     .save_file()
                 else {
                     return Ok(false);
                 };
-                let bytes = archive(legacy)?;
+                let bytes = archive()?;
                 crate::atomic_file::write(&path, &bytes).map_err(|error| error.to_string())?;
                 Ok(true)
             })();
@@ -93,22 +88,15 @@ mod tests {
 
     #[test]
     fn blender_live_bundled_extension_contains_the_matching_sources_manifest_and_license() {
-        for legacy in [false, true] {
-            let bytes = archive(legacy).expect("archive");
-            let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("valid ZIP");
-            assert_eq!(zip.len(), FILES.len());
-            for (name, original) in FILES {
-                let name = if legacy {
-                    format!("aurora_live/{name}")
-                } else {
-                    (*name).to_owned()
-                };
-                let mut file = zip.by_name(&name).expect("entry");
-                assert!(file.enclosed_name().is_some());
-                let mut contents = Vec::new();
-                file.read_to_end(&mut contents).expect("source");
-                assert_eq!(contents.as_slice(), *original, "matching {name}");
-            }
+        let bytes = archive().expect("archive");
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("valid ZIP");
+        assert_eq!(zip.len(), FILES.len());
+        for (name, original) in FILES {
+            let mut file = zip.by_name(name).expect("entry");
+            assert!(file.enclosed_name().is_some());
+            let mut contents = Vec::new();
+            file.read_to_end(&mut contents).expect("source");
+            assert_eq!(contents.as_slice(), *original, "matching {name}");
         }
     }
 }

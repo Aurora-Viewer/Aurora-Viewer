@@ -9,14 +9,11 @@ inventory items or charge an upload fee.
 ## Install and connect
 
 1. In Aurora, open **Build → Blender Live** and click **Save Blender
-   plug-in…**. Choose where to save the ZIP. For Blender 2.93–4.2, first enable
-   **Blender 2.93–4.2 (older add-on format)**. The viewer bundles its matching
+   plug-in…**. Choose where to save the ZIP. The viewer bundles its matching
    plug-in; no source checkout or external Python installation is needed.
 2. In **Blender 4.3 or later**, open Preferences → Get Extensions → the
    top-right menu → Install from Disk, choose that ZIP, and enable it.
    Allow its network permission: it communicates with `127.0.0.1` only.
-   In **Blender 2.93–4.2**, use Preferences → Add-ons → Install with the older
-   add-on ZIP, then enable **Aurora Live Mesh**.
 3. In Aurora's **Blender Live** window, click **Enable preview**.
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
@@ -39,8 +36,36 @@ sends a change. Closing the window keeps the bridge active. The listener is
 off on each viewer launch, and changing accounts stops it.
 
 Developers can also build the same extension from the repository root:
-`python blender/package.py .scratch/aurora-live-mesh-0.1.0.zip`.
-Append `--legacy` for the Blender 2.93–4.2 add-on ZIP.
+`python blender/package.py .scratch/aurora-live-mesh-0.2.0.zip`.
+Blender 4.3 is the minimum supported version.
+
+## Create a rig and test T-shirt
+
+In Blender's 3D view, open the sidebar (`N`) → **Aurora**. Click
+**Create SL avatar rig** to add a new armature at the 3D cursor. Leave
+**Add rigged test T-shirt** enabled to create a garment with it, or disable
+the option for the armature alone. Use Object Mode to create a starter.
+The operator supports Undo and never replaces existing scene objects.
+
+The rig contains **all 133 Second Life Bento bones and 26 Fitted Mesh
+collision bones**, using the same `avatar_skeleton.xml` as Aurora. Original
+joint names, parents and rest positions are preserved. Bone collections
+separate the body, hands, face, wings, tail and other extensions. Body and
+hand collections are visible initially; enable the other collections in
+Armature Data Properties when needed. All 159 bones can deform meshes.
+
+The optional T-shirt has editable quad topology, open neck/hem/cuffs, a UV
+map, a fabric material, an Armature modifier and normalized vertex weights
+(up to four influences). It is selected when created: click **Connect to
+Aurora** to preview it. If already connected, creating a T-shirt switches
+the tracked mesh to the new shirt. Pose the armature to inspect its weights
+in Blender; Aurora still receives the rest mesh and uses its own animations.
+
+The starter respects the current **Coordinates** choice and scene unit
+scale. Its proportions are the standard SL rest skeleton, independent of
+your current account's shape. The shirt is sample geometry for testing
+weights and live edits; fit it to your intended body before using it as
+clothing. It includes no avatar body mesh or animation control/IK rig.
 
 ## Rig and coordinate conventions
 
@@ -93,6 +118,7 @@ The exporter tests use Blender itself without logging into a grid:
 
 ```powershell
 & '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_exporter.py
+& '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_starter.py
 python -m unittest discover -s blender/tests -p 'test_client.py' -v
 ```
 
@@ -104,6 +130,8 @@ With that offline viewer running, `blender/tests/bridge_smoke.py` (run with
 Blender's same background arguments) sends a real exported mesh, edits it,
 checks a rejected weight, clears it and restores a final green mesh. Pass
 `-- --port <port>` after the script path when using another local port.
+Add `--starter` to use the generated 159-bone rig and weighted T-shirt
+instead of the sphere, including its actual inverse binds and weight palette.
 
 ## Wire protocol v1
 
