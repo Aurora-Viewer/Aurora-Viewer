@@ -10428,3 +10428,41 @@ build-material-diffuse-tint = Teinte diffuse
 build-material-specular-tint = Teinte spéculaire
 build-material-base-tint = Teinte de base
 build-material-emissive-tint = Teinte émissive
+
+blender-live-title = Blender Live
+blender-live-older-blender = Blender 2.93–4.2 (ancien format de module)
+blender-live-save-addon = Enregistrer le plugin Blender…
+blender-live-addon-saved = Plugin enregistré. Installez ce ZIP dans les préférences de Blender.
+blender-live-addon-error = Impossible d’enregistrer le plugin : { $error }
+blender-live-invalid-size = Un état du maillage doit contenir au plus 64 Mio.
+blender-live-invalid-protocol = Protocole incompatible ou plus de 32 objets maillés.
+blender-live-invalid-name = Nom de maillage invalide.
+blender-live-invalid-joints = Un maillage doit avoir entre 1 et 110 articulations et autant de matrices de liaison inverses.
+blender-live-unknown-joint = Articulation d’avatar inconnue ou en double : { $joint }
+blender-live-invalid-bind = Matrice de liaison inverse invalide.
+blender-live-invalid-surfaces = Un maillage doit avoir entre 1 et 32 surfaces de matériau.
+blender-live-invalid-geometry = Le maillage dépasse la limite de géométrie.
+blender-live-invalid-color = Surface vide ou couleur de matériau invalide.
+blender-live-invalid-weights = Sommet sans poids, normale invalide ou indice d’articulation invalide.
+blender-live-invalid-revision = Les révisions doivent augmenter au cours d’une connexion.
+blender-live-description = Visualisez vos retouches Blender sur votre avatar animé.
+blender-live-port = Port
+blender-live-connected = Blender connecté
+blender-live-waiting = En attente de Blender…
+blender-live-stopped = Aperçu désactivé
+blender-live-start = Activer l’aperçu
+blender-live-stop = Arrêter et retirer
+blender-live-clear = Retirer les maillages
+blender-live-counts =
+    { $objects ->
+        [one] { $objects } objet
+       *[other] { $objects } objets
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-revision = Révision { $revision }
+blender-live-error = Aperçu : { $error }
+blender-live-no-avatar = Votre avatar n’est pas encore disponible. Renvoyez le maillage après son apparition.
+blender-live-instructions = Dans Blender, installez Aurora Live Mesh, sélectionnez vos maillages riggés, puis ouvrez le panneau latéral › Aurora › Connecter à Aurora.
+blender-live-local-only = Cet aperçu est visible uniquement par vous, sans téléversement. Fermer cette fenêtre le laisse actif ; Arrêter le retire.

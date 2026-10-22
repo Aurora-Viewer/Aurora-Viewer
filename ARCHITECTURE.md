@@ -1,5 +1,20 @@
 # Aurora Viewer architecture
 
+`blender_live/` owns the opt-in loopback Blender transport, bounded v1 rest-mesh
+snapshots and UI. The matching extension is bundled by `blender_live/addon.rs`
+and exported to ZIP on a worker, using the shared atomic file writer.
+A dedicated thread validates, normalizes and encodes the latest snapshot;
+`app/blender_live.rs` maintains render-only attachments under
+our avatar in `world::objects::PREVIEW_REGION`. These have no simulator identity
+or edit/touch target. Normal GPU skinning supplies animations and avatar shape;
+existing draw objects retain their geometry while replacement meshes load.
+`scene/blender_live.rs` retires obsolete assets as soon as their geometry has
+no references or pending jobs. `blender/aurora_live/` is the Blender 4.3+
+extension (also packaged as a Blender 2.93+ add-on), with main-thread rest
+capture, a separate socket worker and a
+single latest-snapshot mailbox. `docs/BLENDER_LIVE.md` describes setup and
+wire limits; `blender/tests/` exercises real Blender capture and transport.
+
 Water exclusion faces use the viewer-local `WATER_EXCLUSION_TEXTURE` alpha-ramp
 UUID. `scene/textures.rs` resolves it without a network request; visually hidden
 faces retain a dedicated GPU culling bin (and a CPU fallback list). Before scene

@@ -1717,6 +1717,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
+| `AURORA_DEMO_BLENDER_LIVE=1` | Local Blender bridge and a rigged shell on our demo avatar |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
@@ -1729,6 +1730,13 @@ To check with these scenarios:
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
 ### Details
+
+`AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell
+on our animated avatar, through the production protocol and GPU skinning.
+The listener accepts the Blender extension on port 17655. Check that live
+retouches replace the shell, invalid data preserves the previous geometry,
+and Stop removes all preview objects. The demo log reports `ready_skinned`
+objects using our avatar's skeleton. See [Blender Live](BLENDER_LIVE.md).
 
 `AURORA_DEMO_GROUNDING` places our avatar on a solid ramp (`slope`) or
 different-height steps (`steps`). `landing` starts with a synthetic standing-up

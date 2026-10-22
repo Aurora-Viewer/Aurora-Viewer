@@ -29,6 +29,7 @@ pub enum BarAction {
     ServerReleaseNotes,
     /// Same import chooser toggle as the configurable Import shortcut.
     Import,
+    BlenderLive,
     ShowHuds(bool),
     HudZoom(f32),
     #[default]
@@ -1097,6 +1098,9 @@ fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction) {
     menu::separator(ui, p);
     if menu::item(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu")) {
         *action = BarAction::Import;
+    }
+    if menu::item(ui, p, "cube-3d-sphere", aurora_i18n::tr!("blender-live-title")) {
+        *action = BarAction::BlenderLive;
     }
 }
 

@@ -9,6 +9,7 @@ mod ao;
 mod app;
 mod atomic_file;
 mod autopilot;
+mod blender_live;
 // Bug report form, disabled for now: "Report a bug" (login screen, top bar,
 // crash window) opens GitHub's issue chooser in the browser instead
 // (`links::NEW_ISSUE`). Its code stays in the tree, out of the build

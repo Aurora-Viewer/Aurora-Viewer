@@ -10432,3 +10432,41 @@ build-material-diffuse-tint = Diffuse tint
 build-material-specular-tint = Specular tint
 build-material-base-tint = Base tint
 build-material-emissive-tint = Emissive tint
+
+blender-live-title = Blender Live
+blender-live-older-blender = Blender 2.93–4.2 (older add-on format)
+blender-live-save-addon = Save Blender plug-in…
+blender-live-addon-saved = Plug-in saved. Install this ZIP in Blender’s preferences.
+blender-live-addon-error = Could not save the plug-in: { $error }
+blender-live-invalid-size = A snapshot must contain at most 64 MiB.
+blender-live-invalid-protocol = Unsupported protocol or more than 32 mesh objects.
+blender-live-invalid-name = Invalid mesh name.
+blender-live-invalid-joints = A mesh needs 1 to 110 joints and matching inverse binds.
+blender-live-unknown-joint = Unsupported or duplicate avatar joint: { $joint }
+blender-live-invalid-bind = Invalid inverse bind matrix.
+blender-live-invalid-surfaces = A mesh needs 1 to 32 material surfaces.
+blender-live-invalid-geometry = The snapshot exceeds the geometry budget.
+blender-live-invalid-color = Empty surface or invalid material color.
+blender-live-invalid-weights = Unweighted vertex, invalid normal or invalid joint index.
+blender-live-invalid-revision = Revisions must increase within a connection.
+blender-live-description = See your Blender mesh edits on your animated avatar.
+blender-live-port = Port
+blender-live-connected = Blender connected
+blender-live-waiting = Waiting for Blender…
+blender-live-stopped = Preview disabled
+blender-live-start = Enable preview
+blender-live-stop = Stop and remove
+blender-live-clear = Remove meshes
+blender-live-counts =
+    { $objects ->
+        [one] { $objects } object
+       *[other] { $objects } objects
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-live-revision = Revision { $revision }
+blender-live-error = Preview: { $error }
+blender-live-no-avatar = Your avatar is not available yet. Send again after it appears.
+blender-live-instructions = In Blender, install Aurora Live Mesh, select your rigged meshes, then open Sidebar › Aurora › Connect to Aurora.
+blender-live-local-only = Only you see this preview. No asset upload. Closing this window keeps it active; Stop removes it.
