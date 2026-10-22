@@ -208,7 +208,7 @@ class RigToolsTests(unittest.TestCase):
                 rigging.set_ik(bpy.context, self.rig, key, False)
                 self.assertPoseNear(solved, self.pose(key), 0.0001)
 
-    def test_widgets_have_distinct_solid_shapes_and_preserve_solver_pose_and_export(self):
+    def test_widgets_have_distinct_outlines_and_preserve_solver_pose_and_export(self):
         rigging.setup(bpy.context, self.rig)
         for key in rigging.LIMBS:
             rigging.set_ik(bpy.context, self.rig, key, True)
@@ -222,7 +222,7 @@ class RigToolsTests(unittest.TestCase):
         for key in rigging.LIMBS:
             for pole in (False, True):
                 bone = self.rig.pose.bones[rigging.control_name(key, pole)]
-                self.assertTrue(bone.custom_shape.data.polygons)
+                self.assertGreater(len(bone.custom_shape.data.edges), 24)
                 self.assertFalse(bone.custom_shape.users_collection)
                 self.assertFalse(bone.use_custom_shape_bone_size)
                 styles.add(bone.custom_shape["aurora_ik_shape"].split(":")[0][:-1])

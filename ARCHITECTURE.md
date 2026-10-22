@@ -31,9 +31,11 @@ optional independent hand/foot IK target/pole controls, preserving SL rest
 bones. Pose selection and visibility use `PoseBone` in Blender 5 and `Bone`
 in older APIs; Edit Mode visibility stays on `EditBone`. In Blender 5,
 `Bone.hide` affects Edit Mode only, so pose display must not read that flag.
-`handles.py` builds cached, unlinked custom-shape meshes with tubular surfaces
-for IK hands, feet, elbows and knees. Feet use the SL foot direction transformed
-back to bone space, keeping their rest soles horizontal. Blue/orange side
+`handles.py` builds cached, unlinked custom-shape meshes with continuous edge
+outlines for IK hands, feet, elbows and knees: rounded frames/platforms and
+simple diamond/circle poles, without decorative cages or 3D lettering.
+Feet use the SL foot direction transformed back to bone space, keeping their
+rest soles horizontal. Teal/coral side
 colors use pose-bone color overrides in 4.0+ and separate pose groups earlier.
 A per-object size property updates only widgets. Registration/load migration
 fills missing or older Aurora shapes while retaining authored custom widgets;

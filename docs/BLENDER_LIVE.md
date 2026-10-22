@@ -77,8 +77,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.8.1.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.1-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.8.2.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.2-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -184,12 +184,14 @@ in Blender 2.93–3.x). Creating controls again is idempotent. Use a simple,
 editable SL armature; limbs already constrained by another rigging tool are
 rejected before adding controls.
 
-Plug-in 0.8.1 gives IK controls substantial, selectable custom shapes:
-hand cuffs with a palm/thumb and direction arrow, foot soles with ankle rings,
-elbow diamonds and knee rings. Tubular surfaces stay visible from different
-angles and provide actual selectable geometry. Left controls are cyan/blue;
-right controls are orange. L/R marks supplement the colors. Shape size follows
-limb proportions, independent of the tiny underlying helper bone's length.
+Plug-in 0.8.2 gives IK controls clean, continuous custom-shape outlines:
+rounded hand frames, slim foot platforms with a heel arc, rounded elbow
+diamonds and knee circles with small center marks. Left controls are teal;
+right controls are coral, with brighter selection states. Decorative cages,
+arrows and 3D lettering have been removed. Blender 4.2+ uses a three-pixel
+native wire width; earlier versions use Blender's native custom-shape lines.
+Shape size follows limb proportions, independent of the tiny underlying
+helper bone's length. All eight outlines remain directly selectable.
 
 In **Controls**, adjust **Handle size** (0.4–3 times normal) for the current
 rig. **In front** keeps handles visible through the garment. The refresh icon
@@ -338,7 +340,7 @@ entries, and weight changes trigger a new capture.
 
 ## Live materials
 
-Plug-in **0.8.1 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.8.2 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value

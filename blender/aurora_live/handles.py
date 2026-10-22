@@ -1,4 +1,4 @@
-"""Selectable IK widgets: solid tubular strokes, native bone colors, no scene meshes.
+"""Selectable IK widgets: clean continuous outlines, native colors, no scene meshes.
 
 Custom-shape transforms and color compatibility follow Blender's bone display
 manual and 4.0 Bone Collections & Colors upgrade notes. Shapes live in local
@@ -9,106 +9,71 @@ import bpy
 from mathutils import Matrix, Vector
 
 COLORS = {
-    "L": ((0.12, 0.65, 0.95), (0.4, 0.85, 1), (0.72, 0.97, 1)),
-    "R": ((1, 0.4, 0.1), (1, 0.66, 0.28), (1, 0.9, 0.64)),
+    "L": ((0.18, 0.68, 0.78), (0.38, 0.86, 0.92), (0.78, 1, 1)),
+    "R": ((0.96, 0.43, 0.30), (1, 0.67, 0.50), (1, 0.9, 0.76)),
 }
 
 
 class _Mesh:
     def __init__(self):
-        self.vertices, self.faces = [], []
+        self.vertices, self.edges = [], []
 
-    def stroke(self, points, radius=0.055, closed=False):
-        points = [Vector(p) for p in points]
-        start, sides = len(self.vertices), 8
-        for index, point in enumerate(points):
-            before = points[(index - 1) % len(points)] if closed or index else point
-            after = points[(index + 1) % len(points)] if closed or index + 1 < len(points) else point
-            tangent = (after - before).normalized()
-            ref = Vector((0, 0, 1)) if abs(tangent.z) < 0.9 else Vector((1, 0, 0))
-            x = tangent.cross(ref).normalized()
-            y = tangent.cross(x).normalized()
-            for side in range(sides):
-                angle = side * math.tau / sides
-                self.vertices.append(point + radius * (math.cos(angle) * x + math.sin(angle) * y))
-        for index in range(len(points) if closed else len(points) - 1):
-            a = start + index * sides
-            b = start + ((index + 1) % len(points)) * sides
-            for side in range(sides):
-                next_side = (side + 1) % sides
-                self.faces.append((a + side, a + next_side, b + next_side, b + side))
-        if not closed:
-            self.faces += [tuple(start + i for i in reversed(range(sides))),
-                           tuple(start + (len(points) - 1) * sides + i for i in range(sides))]
+    def stroke(self, points, closed=False):
+        start = len(self.vertices)
+        self.vertices.extend(Vector(p) for p in points)
+        self.edges.extend((start + i, start + i + 1) for i in range(len(points) - 1))
+        if closed:
+            self.edges.append((len(self.vertices) - 1, start))
 
     def ring(self, plane, radius=1, offset=0):
         points = []
-        for index in range(32):
-            angle = index * math.tau / 32
+        for index in range(64):
+            angle = index * math.tau / 64
             a, b = radius * math.cos(angle), radius * math.sin(angle)
             points.append((a, b, offset) if plane == "XY" else (a, offset, b) if plane == "XZ" else (offset, a, b))
         self.stroke(points, closed=True)
 
-    def letter(self, side, y=0.3, z=0.12):
-        paths = [[(-0.2, 0.35), (-0.2, -0.25), (0.2, -0.25)]] if side == "L" else [
-            [(-0.2, -0.25), (-0.2, 0.35), (0.15, 0.35), (0.23, 0.2), (0.15, 0.05), (-0.2, 0.05)],
-            [(0, 0.05), (0.25, -0.25)],
-        ]
-        for points in paths:
-            self.stroke([(x, t + y, z) for x, t in points], radius=0.045)
+    def rounded(self, width, height, radius, plane, center=(0, 0, 0), angle=0):
+        points = []
+        for x, y, first in ((width/2-radius, height/2-radius, 0), (-width/2+radius, height/2-radius, 90),
+                            (-width/2+radius, -height/2+radius, 180), (width/2-radius, -height/2+radius, 270)):
+            for step in range(13):
+                t = math.radians(first + step * 90 / 12)
+                a, b = x + radius * math.cos(t), y + radius * math.sin(t)
+                a, b = a * math.cos(angle) - b * math.sin(angle), a * math.sin(angle) + b * math.cos(angle)
+                point = Vector((a, b, 0) if plane == "XY" else (a, 0, b) if plane == "XZ" else (0, a, b))
+                points.append(point + Vector(center))
+        self.stroke(points, closed=True)
 
 
 def _geometry(style, side):
     mesh = _Mesh()
-    flip = 1 if side == "L" else -1
     if style == "HAND":
-        # A wrist cuff remains visible edge-on; the palm/thumb and arrow
-        # distinguish the hand and indicate its forward direction.
-        for y in (-0.2, 0.12):
-            points = [(0.7 * math.cos(i * math.tau / 32), y, 0.48 * math.sin(i * math.tau / 32)) for i in range(32)]
-            mesh.stroke(points, closed=True)
-        for x in (-0.7, 0.7):
-            mesh.stroke([(x, -0.2, 0), (x, 0.12, 0)])
-        palm = [(-0.55, 0), (0.55, 0), (0.62, 0.8), (0.45, 1.4), (-0.35, 1.4),
-                (-0.55, 0.85), (-0.95, 0.6), (-0.95, 0.25), (-0.6, 0.35)]
-        mesh.stroke([(flip * x, y, 0) for x, y in palm], closed=True)
-        mesh.stroke([(0, 1.4, 0), (0, 1.8, 0)])
-        mesh.stroke([(-0.2, 1.6, 0), (0, 1.8, 0), (0.2, 1.6, 0)])
-        mesh.letter(side, y=0.65, z=0.12)
+        mesh.rounded(1.8, 1.3, 0.28, "YZ", center=(0, 0.3, 0))
+        mesh.stroke([(0, 1.02, -0.18), (0, 1.02, 0.18)])
     elif style == "FOOT":
-        sole = [(-0.4, -0.6), (0.4, -0.6), (0.55, -0.3), (0.57, 0.85),
-                (0.35, 1.35), (-0.25, 1.42), (-0.6, 1.1), (-0.55, 0.2)]
-        for z in (-0.45, -0.15):
-            mesh.stroke([(flip * x * 0.65, y, z) for x, y in sole], closed=True)
-        for index in (0, 1, 3, 5):
-            x, y = sole[index]
-            mesh.stroke([(flip * x * 0.65, y, -0.45), (flip * x * 0.65, y, -0.15)])
-        mesh.ring("XY", radius=0.37, offset=0.15)
-        mesh.letter(side, y=0.55, z=-0.08)
+        mesh.rounded(0.82, 1.9, 0.28, "XY", center=(0, 0.35, -0.32))
+        mesh.stroke([(0.32 * math.cos(i * math.pi / 24), -0.35, -0.32 + 0.44 * math.sin(i * math.pi / 24))
+                     for i in range(25)])
     elif style == "ELBOW":
-        points = [(0.9, 0, 0), (0, 0.9, 0), (-0.9, 0, 0), (0, -0.9, 0)]
-        mesh.stroke(points, closed=True)
-        for tip in ((0, 0, 0.9), (0, 0, -0.9)):
-            for point in points:
-                mesh.stroke([point, tip])
-        mesh.letter(side, z=1)
+        mesh.rounded(1.3, 1.3, 0.18, "YZ", angle=math.pi/4)
+        mesh.stroke([(0, -0.12, 0), (0, 0.12, 0)])
+        mesh.stroke([(0, 0, -0.12), (0, 0, 0.12)])
     else:
-        for plane in ("XY", "XZ", "YZ"):
-            mesh.ring(plane)
-        mesh.letter(side, z=1.1)
+        mesh.ring("XZ", radius=0.9)
+        mesh.stroke([(-0.12, 0, 0), (0.12, 0, 0)])
+        mesh.stroke([(0, 0, -0.12), (0, 0, 0.12)])
     return mesh
 
 
 def _shape(style, side, frame):
-    signature = style + side + ":2:" + repr(tuple(round(value, 5) for row in frame for value in row))
+    signature = style + side + ":3:" + repr(tuple(round(value, 5) for row in frame for value in row))
     obj = next((obj for obj in bpy.data.objects if obj.get("aurora_ik_shape") == signature), None)
     if obj is None:
         geometry = _geometry(style, side)
         mesh = bpy.data.meshes.new("_AuroraIKShape." + style + "." + side)
-        mesh.from_pydata([frame @ p for p in geometry.vertices], [], geometry.faces)
+        mesh.from_pydata([frame @ p for p in geometry.vertices], geometry.edges, [])
         mesh.update()
-        for face in mesh.polygons:
-            face.use_smooth = True
         obj = bpy.data.objects.new(mesh.name, mesh)
         obj["aurora_ik_shape"] = signature
         # Referenced by PoseBone.custom_shape, never linked to a scene.
@@ -156,9 +121,9 @@ def apply(rig, replace=False):
                 bone.custom_shape_scale_xyz = (size,) * 3
             else:
                 bone.custom_shape_scale = size
-            bone.bone.show_wire = False
+            bone.bone.show_wire = True
             if hasattr(bone, "custom_shape_wire_width"):
-                bone.custom_shape_wire_width = 2
+                bone.custom_shape_wire_width = 3
             if hasattr(bone, "color"):
                 bone.color.palette = "CUSTOM"
                 colors = bone.color.custom
