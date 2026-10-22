@@ -100,6 +100,12 @@ fn far_first_key(distance_sq: f32, index: usize) -> u64 {
 }
 
 impl ParticleManager {
+    /// LLViewerObject::isParticleSource excludes expired emitters even
+    /// while their last particles are fading and their PSBlock is retained.
+    pub fn beacon_source(&self, id: &Uuid) -> bool {
+        self.sources.get(id).is_some_and(|s| !s.cloud && s.ps.is_emitting())
+    }
+
     /// Clouds around the avatars still loading; the others stop emitting.
     pub fn sync_clouds(&mut self, avatars: &[Uuid]) {
         for (id, s) in self.sources.iter_mut() {
@@ -388,6 +394,44 @@ fn quad_hit(origin: Vec3, dir: Vec3, right: Vec3, up: Vec3, pos: Vec3, size: gla
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn particle_beacons_exclude_clouds_and_expired_sources_with_live_particles() {
+        let id = Uuid::from_u128(682);
+        let mut manager = ParticleManager::default();
+        manager.sources.insert(
+            id,
+            Source {
+                ps: ParticleSource::new(
+                    ps::PartSysData {
+                        pattern: ps::LL_PART_SRC_PATTERN_DROP,
+                        burst_part_count: 1,
+                        burst_rate: 100.0,
+                        ..Default::default()
+                    },
+                    1,
+                ),
+                texture: Uuid::nil(),
+                slot: 0,
+                cloud: false,
+            },
+        );
+        let mut budget = 1;
+        manager
+            .sources
+            .get_mut(&id)
+            .unwrap()
+            .ps
+            .update_with_wind(0.0, &SourceContext::default(), &mut budget, |_| Vec3::ZERO);
+        assert!(manager.beacon_source(&id));
+        manager.sources.get_mut(&id).unwrap().cloud = true;
+        assert!(!manager.beacon_source(&id));
+        let source = manager.sources.get_mut(&id).unwrap();
+        source.cloud = false;
+        source.ps.stop();
+        assert!(!source.ps.particles().is_empty(), "the last particles still fade");
+        assert!(!manager.beacon_source(&id));
+    }
 
     #[test]
     fn particle_wind_uses_live_region_grids_after_the_emitter_stops() {

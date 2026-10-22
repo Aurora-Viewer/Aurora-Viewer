@@ -51,6 +51,7 @@ pub mod still_check;
 mod sync_check;
 mod sync_plan;
 mod sync_slow;
+mod world_overlays;
 pub use sync_plan::LodInfo;
 pub mod sync_sets;
 pub mod tangents;
@@ -840,6 +841,9 @@ pub struct Scene {
     complexity_rules: u64,
     /// Debug "Show transparency": Some(rigged faces too).
     debug_alpha: Option<bool>,
+    beacon_highlights: HashSet<usize>,
+    pub beacon_markers: Vec<(Vec3, crate::world::beacons::Kind)>,
+    land_overlays: world_overlays::LandOverlays,
     /// Dev Toolbox R3: every face tinted by the pass it is drawn in.
     pass_view: bool,
     /// Culling view of the last lists (debug overlay).
@@ -1319,6 +1323,9 @@ impl Scene {
             selection_faces: HashMap::new(),
             selection_changed: None,
             debug_alpha: None,
+            beacon_highlights: HashSet::new(),
+            beacon_markers: Vec::new(),
+            land_overlays: Default::default(),
             pass_view: false,
             last_cull: None,
             impostors: Default::default(),
@@ -1880,6 +1887,7 @@ impl Scene {
         }
         self.water.clear(renderer);
         self.banlines.clear(renderer);
+        self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
         // (our avatar is a first appearance again at the next login)
         self.loading = Default::default();
@@ -3214,7 +3222,11 @@ impl Scene {
             // a glTF material ignores the texture entry's color: its own base
             // color alpha decides, in `classify`
             let invisible = tf.color[3] < 0.004 && mat_id.is_none();
-            if invisible && self.debug_alpha.is_none() && !self.pass_view && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0
+            if invisible
+                && self.debug_alpha.is_none()
+                && !self.pass_view
+                && !self.beacon_highlights.contains(&idx)
+                && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0
             {
                 // fully transparent face: LL registers it as PASS_ALPHA_INVISIBLE,
                 // never drawn, and its glow is not drawn either
@@ -3794,7 +3806,7 @@ impl Scene {
         let dd = self.draw_distance;
         let shadow_dist = dd.min(256.0);
         // terrain
-        for r in self.regions.values() {
+        for (&handle, r) in &self.regions {
             for c in r.chunks.values() {
                 if (c.center - view.eye).length() - c.radius > dd * 1.5 {
                     continue;
@@ -3821,6 +3833,9 @@ impl Scene {
                 }
                 if view.sphere_visible(c.center, c.radius) {
                     self.lists.terrain.push(cmd);
+                    for record in self.land_overlays.records(handle) {
+                        self.lists.land_overlay.push(DrawCmd { record, ..cmd });
+                    }
                 }
             }
         }
@@ -3970,6 +3985,7 @@ impl Scene {
                         || debug
                         || selection.contains_key(&i)
                         || self.selection_faces.contains_key(&i)
+                        || self.beacon_highlights.contains(&i)
                         || (capturing && self.gpu.get(i).is_some_and(|g| captured(g, i)))
                     {
                         visit.push((i, usage));
@@ -3981,7 +3997,13 @@ impl Scene {
                         continue;
                     }
                     let usage = usage_due(i);
-                    if usage || g.special || debug || selection.contains_key(&i) || self.selection_faces.contains_key(&i) || captured(g, i)
+                    if usage
+                        || g.special
+                        || debug
+                        || selection.contains_key(&i)
+                        || self.selection_faces.contains_key(&i)
+                        || self.beacon_highlights.contains(&i)
+                        || captured(g, i)
                     {
                         visit.push((i, usage));
                     }
@@ -4127,7 +4149,9 @@ impl Scene {
                 // debug "Show transparency" (renderDebugAlpha): blended,
                 // masked and invisible faces in red, material masks in blue;
                 // rigged faces only when asked (Firestorm sShowDebugAlphaRigged)
-                if let Some(rigged_too) = debug_alpha.filter(|_| in_view)
+                if in_view && self.beacon_highlights.contains(&idx) {
+                    l.debug_red.push(cmd);
+                } else if let Some(rigged_too) = debug_alpha.filter(|_| in_view)
                     && (rigged_too || !(g.rigged || g.is_avatar))
                 {
                     let material = f.pbr_alpha.is_some() || f.legacy_alpha.is_some();

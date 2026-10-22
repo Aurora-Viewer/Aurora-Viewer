@@ -341,6 +341,10 @@ pub enum Action {
     HudDrag,
     /// "Show transparency" (Firestorm Ctrl+Alt+T).
     ShowTransparency,
+    Beacons,
+    PropertyLines,
+    LandOwners,
+    HideParticles,
     /// Aurora's Dev Toolbox window (Ctrl+Alt+D).
     DevToolbox,
     /// "Force appearance update (rebake)" (Firestorm Ctrl+Alt+R).
@@ -480,6 +484,10 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                 vec![
                     (Action::DevToolbox, aurora_i18n::tr!("dev-toolbox-title")),
                     (Action::ShowTransparency, aurora_i18n::tr!("common-show-transparency")),
+                    (Action::Beacons, aurora_i18n::tr!("beacons-title")),
+                    (Action::PropertyLines, aurora_i18n::tr!("world-property-lines")),
+                    (Action::LandOwners, aurora_i18n::tr!("world-land-owners")),
+                    (Action::HideParticles, aurora_i18n::tr!("world-hide-particles")),
                 ],
             ),
         ]
@@ -660,6 +668,54 @@ impl KeyBindings {
             // menu_viewer.xml: Show Tips, shortcut="control|shift|T"
             (Action::HoverTips, [kmod(K::KeyT, true, true), None]),
             (Action::Import, [kmod(K::KeyU, true, false), None]),
+            (
+                Action::Beacons,
+                [
+                    Some(Binding {
+                        input: Input::key(K::KeyN),
+                        ctrl: true,
+                        alt: true,
+                        shift: true,
+                    }),
+                    None,
+                ],
+            ),
+            (
+                Action::PropertyLines,
+                [
+                    Some(Binding {
+                        input: Input::key(K::KeyP),
+                        ctrl: true,
+                        alt: true,
+                        shift: true,
+                    }),
+                    None,
+                ],
+            ),
+            (
+                Action::LandOwners,
+                [
+                    Some(Binding {
+                        input: Input::key(K::KeyO),
+                        ctrl: true,
+                        alt: true,
+                        shift: false,
+                    }),
+                    None,
+                ],
+            ),
+            (
+                Action::HideParticles,
+                [
+                    Some(Binding {
+                        input: Input::key(K::Equal),
+                        ctrl: true,
+                        alt: true,
+                        shift: true,
+                    }),
+                    None,
+                ],
+            ),
             // Aurora's direct HUD gesture must leave Alt to Firestorm's camera (#266).
             (Action::HudDrag, [k(K::ControlLeft), None]),
             (
@@ -1524,6 +1580,14 @@ mod tests {
             (Action::Preferences, (true, false, false), [K::KeyP; 4]),
             (Action::Import, (true, false, false), [K::KeyU; 4]),
             (Action::ShowTransparency, (true, false, true), [K::KeyT; 4]),
+            (Action::Beacons, (true, true, true), [K::KeyN; 4]),
+            (Action::PropertyLines, (true, true, true), [K::KeyP; 4]),
+            (Action::LandOwners, (true, false, true), [K::KeyO; 4]),
+            (
+                Action::HideParticles,
+                (true, true, true),
+                [K::Equal, K::Equal, K::Slash, K::BracketRight],
+            ),
             (Action::DevToolbox, (true, false, true), [K::KeyD; 4]),
             (Action::Rebake, (true, false, true), [K::KeyR; 4]),
             (Action::StopAnimations, (false, true, true), [K::KeyA, K::KeyQ, K::KeyQ, K::KeyA]),

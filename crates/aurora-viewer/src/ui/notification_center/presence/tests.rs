@@ -177,6 +177,8 @@ fn status(classic: bool) -> StatusInfo<'static> {
         interface_keys: String::new(),
         health: Default::default(),
         hover_tips: Default::default(),
+        world_overlays: Default::default(),
+        show_transparency: false,
     }
 }
 

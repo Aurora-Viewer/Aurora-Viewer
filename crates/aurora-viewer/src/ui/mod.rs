@@ -11,6 +11,7 @@ pub mod blacklist;
 pub mod bumps;
 // Bug report form (disabled, see main.rs):
 // pub mod bug_report;
+pub mod beacons;
 pub mod buy_currency;
 pub mod buy_land;
 pub mod call_invite;
@@ -68,6 +69,7 @@ pub mod notifications;
 pub(crate) mod numeric_drag;
 pub mod object_actions;
 pub mod options;
+pub mod owned_land;
 pub mod parcel_icons;
 pub mod pay;
 pub mod people;
@@ -125,6 +127,8 @@ pub struct Panels {
     pub minimap: bool,
     /// World map (Ctrl+M).
     pub world_map: bool,
+    pub beacons: bool,
+    pub owned_land: bool,
     pub settings: bool,
     /// Local time of day: 0 shared (region EEP), 1 sunrise, 2 noon, 3 sunset, 4 midnight.
     pub time_of_day: u8,
@@ -180,6 +184,8 @@ impl Panels {
             people: settings.show_people,
             minimap: settings.show_minimap,
             world_map: false,
+            beacons: false,
+            owned_land: false,
             settings: false,
             time_of_day: settings.time_of_day,
             environment: false,

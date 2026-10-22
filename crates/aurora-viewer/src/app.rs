@@ -3243,6 +3243,19 @@ impl App {
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
             Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
+            Action::Beacons => ui::widgets::toggle_floater(&self.egui_ctx, ui::beacons::WINDOW, &mut self.panels.beacons),
+            Action::PropertyLines => {
+                self.settings.world_overlays.property_lines = !self.settings.world_overlays.property_lines;
+                self.settings.save();
+            }
+            Action::LandOwners => {
+                self.settings.world_overlays.land_owners = !self.settings.world_overlays.land_owners;
+                self.settings.save();
+            }
+            Action::HideParticles => {
+                self.settings.world_overlays.hide_particles = !self.settings.world_overlays.hide_particles;
+                self.settings.save();
+            }
             Action::ShowTransparency => {
                 let d = &mut self.settings.debug;
                 d.show_alpha = !d.show_alpha;
@@ -4805,6 +4818,28 @@ impl App {
         self.demo_script_steps();
         self.world_click_demo_steps();
         self.object_menu_demo_steps();
+        if self.frame_count == 400
+            && let Ok(mode) = std::env::var("AURORA_DEMO_BEACONS")
+        {
+            if let Some(handle) = self.world.main_region {
+                let local_ids = self
+                    .world
+                    .objects
+                    .iter()
+                    .filter(|(_, o)| o.key.region == handle && !o.is_avatar())
+                    .map(|(_, o)| o.key.local_id)
+                    .collect();
+                self.world.apply(NetEvent::ObjectsKilled { handle, local_ids });
+            }
+            self.world.apply(crate::demo::beacons::events());
+            if mode == "parcels" {
+                for event in crate::demo::beacons::overlay_events() {
+                    self.world.apply(event);
+                }
+            }
+            let (eye, target) = crate::demo::beacons::view(&mode);
+            self.camera.set_view(eye, target, &mut self.world.agent, &self.settings.camera);
+        }
         // AURORA_DEMO_MATERIAL_ARRIVALS: a material nobody uses arrives
         if let Some((id, m)) = crate::demo::material_arrival_due() {
             self.scene.legacy_mats.insert(id, m);
@@ -6957,6 +6992,7 @@ impl App {
                     self.egui_ctx.pixels_per_point(),
                 );
             }
+            self.scene.update_beacons(&mut self.world, &self.settings.beacons, &cull);
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -7064,6 +7100,9 @@ impl App {
                 .banlines
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
             self.frame_profile.lap(Lap::Extras);
+            let overlays = self.settings.world_overlays;
+            self.scene
+                .update_land_overlays(&mut gfx.renderer, &self.world, overlays, &self.palette);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
             let huds_shown = self.huds_shown();
             self.scene.build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown);
@@ -7356,6 +7395,9 @@ impl App {
                 &mut scene.parts,
             );
             self.scene.lists.particles = out;
+            if self.settings.world_overlays.hide_particles {
+                self.scene.lists.particles.clear();
+            }
             t_part = Instant::now();
         }
         let (lights, spot_shadows) = if in_world {
@@ -9617,6 +9659,15 @@ impl App {
             BarAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             BarAction::ResetCamera => self.reset_camera_view(),
             BarAction::BanLines(v) => self.settings.maps.ban_lines = v,
+            BarAction::WorldOverlays(overlays) => {
+                self.settings.world_overlays = overlays;
+                self.settings.save();
+            }
+            BarAction::ShowTransparency => self.settings.debug.show_alpha = !self.settings.debug.show_alpha,
+            BarAction::OwnedLand => {
+                ui::widgets::open_floater(&self.egui_ctx, ui::owned_land::WINDOW, &mut self.panels.owned_land);
+                self.world.group_money.request_owned_land();
+            }
             BarAction::SharedEnvironment => self.world.eep.clear_local(),
             BarAction::NewEnvironment(kind) => match kind {
                 crate::world::env_select::SettingsKind::Day => self.open_new_day_editor(),
@@ -10851,6 +10902,7 @@ impl App {
                     projector,
                     [self.settings.sun_beacon, self.settings.moon_beacon],
                 );
+                ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
@@ -10895,6 +10947,8 @@ impl App {
                     show_huds: self.settings.show_huds,
                     hud_zoom: self.world.hud_zoom,
                     ban_lines: self.settings.maps.ban_lines,
+                    world_overlays: self.settings.world_overlays,
+                    show_transparency: self.settings.debug.show_alpha,
                     region: if self.world.rlva.has("showloc") {
                         aurora_i18n::tr!("rlva-hidden-region")
                     } else {
@@ -11274,9 +11328,11 @@ impl App {
                         zoom_fraction: self.camera.zoom_fraction(),
                         demo: self.demo,
                     };
+                    self.settings.build.show_parcel_owners = self.settings.world_overlays.land_owners;
                     if crate::build::ui::show(&ctx, &p, &mut self.build, &mut self.world, &mut self.settings.build, mods, &mut env) {
                         self.settings.save();
                     }
+                    self.settings.world_overlays.land_owners = self.settings.build.show_parcel_owners;
                 }
                 ui::debug_overlay::draw(
                     &ctx,
@@ -12133,6 +12189,10 @@ impl App {
                 }
                 self.blacklist_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
+                ui::beacons::show(&ctx, &p, &mut self.panels.beacons, &mut self.settings);
+                if ui::owned_land::show(&ctx, &p, &mut self.world, &mut self.panels.owned_land) {
+                    ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map);
+                }
                 a.currency = self.buy_currency_ui.show(&ctx, &p, &self.world);
                 a.currency.extend(self.show_buy_land(&ctx, &p));
                 // links and names clicked anywhere (LLAgentHandler)
@@ -13121,6 +13181,39 @@ impl ApplicationHandler for App {
                     &self.settings.camera,
                 );
                 self.camera.snap();
+            }
+            if let Ok(mode) = std::env::var("AURORA_DEMO_BEACONS") {
+                self.world.apply(crate::demo::beacons::events());
+                let (id, clip) = crate::demo::chime();
+                self.scene.sounds.insert(id, clip);
+                self.panels.people = false;
+                self.panels.minimap = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                self.panels.ao = false;
+                self.panels.beacons = mode != "parcels" && mode != "owned";
+                self.settings.beacons = crate::world::beacons::Beacons {
+                    lines: !matches!(mode.as_str(), "off" | "highlights" | "parcels" | "owned"),
+                    highlights: !matches!(mode.as_str(), "off" | "lines" | "parcels" | "owned"),
+                    scripted: true,
+                    physical: true,
+                    sound: true,
+                    particles: true,
+                    media: true,
+                    ..Default::default()
+                };
+                self.settings.world_overlays.property_lines = mode == "parcels";
+                self.settings.world_overlays.land_owners = mode == "parcels";
+                self.settings.world_overlays.hide_particles = mode == "hidden-particles";
+                if mode == "parcels" {
+                    for event in crate::demo::beacons::overlay_events() {
+                        self.world.apply(event);
+                    }
+                }
+                if mode == "owned" {
+                    self.panels.owned_land = true;
+                    self.world.group_money.request_owned_land();
+                }
             }
             // AURORA_DEMO_CAM="yaw,pitch,distance" (radians, meters) for captures
             if let Ok(v) = std::env::var("AURORA_DEMO_CAM") {

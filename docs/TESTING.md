@@ -687,6 +687,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_WORLD_CLICKS=<mode>` | Camera transparency, name-plate clicks, scripted attachments and the left button's script clicks |
 | `AURORA_DEMO_DIALOG=<mode>` | llDialog menu |
 | `AURORA_DEMO_BUILD="<script>"` | Script of the build tools |
+| `AURORA_DEMO_BEACONS=1` | Object beacons and World overlays |
 | `AURORA_DEMO_REPLACE_PRIM=1\|script` | Replacement board, script-only case |
 | `AURORA_DEMO_BUILD_FRAME=<n>` | Start frame of the build script |
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus and camera following while editing |
@@ -703,6 +704,9 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
+
+**Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
+
 
 ### Details
 

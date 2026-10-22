@@ -1,5 +1,16 @@
 # Aurora Viewer architecture
 
+`world/beacons.rs` keeps the saved source filters and property-lines switch,
+and the session's ownership and particle visibility switches.
+`scene/world_overlays.rs` collects object beacons in parallel and retains only
+their changed invisible-face records. `ui/beacons.rs` draws the long axes and
+depth-tested short guides through the shared world-label GPU pass. Parcel
+ownership and boundaries reuse the terrain geometry and one small cached
+ParcelOverlay texture per region (`fs_land_overlay`); terrain updates and
+origin changes therefore use the same geometry and transforms as the ground.
+`ui/owned_land.rs` uses the existing PlacesQuery/PlacesReply path with a null
+query UUID and DFQ_AGENT_OWNED, separate from group holdings and totals.
+
 Object particles sample the containing region's `WindGrid` at each live
 particle's render-space position through `scene/particles.rs` and
 `aurora_prim::particles::ParticleSource::update_with_wind`. Only `LL_PART_WIND_MASK`

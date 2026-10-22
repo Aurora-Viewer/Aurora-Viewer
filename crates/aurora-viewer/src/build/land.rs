@@ -429,47 +429,6 @@ impl LandTool {
     }
 }
 
-/// "Show owners" (ShowParcelOwners, LLViewerParcelOverlay
-/// colours): the 4 m parcel cells around the camera tinted by ownership
-/// (green yours, cyan group, red others, yellow for sale, purple auction,
-/// grey public), drawn on the ground.
-pub fn draw_owners(p: &mut Painter3d, world: &World) {
-    const RANGE: f32 = 64.0;
-    let eye = p.cam.eye;
-    for (h, (cx, cy, data)) in &world.map.overlays {
-        let Some(off) = world.region_offset(*h) else { continue };
-        for j in 0..*cy {
-            for i in 0..*cx {
-                let (x, y) = (off.x + i as f32 * PARCEL_GRID, off.y + j as f32 * PARCEL_GRID);
-                if (x + 2.0 - eye.x).abs() > RANGE || (y + 2.0 - eye.y).abs() > RANGE {
-                    continue;
-                }
-                let Some(b) = data.get((j * cx + i) as usize) else { continue };
-                let color = match b & 0x07 {
-                    3 => rgba(0.0, 0.8, 0.0, 0.3),
-                    2 => rgba(0.0, 0.8, 0.8, 0.3),
-                    1 => rgba(0.85, 0.0, 0.0, 0.3),
-                    4 => rgba(0.9, 0.9, 0.0, 0.3),
-                    5 => rgba(0.65, 0.25, 0.85, 0.3),
-                    _ => rgba(0.55, 0.55, 0.55, 0.3),
-                };
-                let z = |dx: f32, dy: f32| world.ground_height(Vec3::new(x + dx, y + dy, 0.0)).unwrap_or(0.0) + 0.05;
-                let g = PARCEL_GRID;
-                p.quad(
-                    [
-                        Vec3::new(x, y, z(0.0, 0.0)),
-                        Vec3::new(x + g, y, z(g, 0.0)),
-                        Vec3::new(x + g, y + g, z(g, g)),
-                        Vec3::new(x, y + g, z(0.0, g)),
-                    ],
-                    color,
-                );
-            }
-        }
-    }
-    p.flush();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

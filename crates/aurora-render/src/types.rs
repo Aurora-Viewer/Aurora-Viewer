@@ -394,6 +394,8 @@ pub struct DrawLists {
     /// `debug_blue`, blended ones to `debug_red`.
     pub debug_green: Vec<DrawCmd>,
     pub debug_yellow: Vec<DrawCmd>,
+    /// Parcel ownership and property lines, on existing terrain geometry.
+    pub land_overlay: Vec<DrawCmd>,
     /// Build tools: wireframe of the selected mesh / sculpted objects
     /// (LLSelectMgr::renderOneSilhouette draws meshes as wireframes), root
     /// in yellow, other prims of the linkset in blue.
@@ -482,6 +484,7 @@ impl DrawLists {
         self.debug_blue.clone_from(&src.debug_blue);
         self.debug_green.clone_from(&src.debug_green);
         self.debug_yellow.clone_from(&src.debug_yellow);
+        self.land_overlay.clone_from(&src.land_overlay);
         self.select_root.clone_from(&src.select_root);
         self.select_child.clone_from(&src.select_child);
         self.select_faces.clone_from(&src.select_faces);
@@ -519,6 +522,7 @@ impl DrawLists {
         self.debug_blue.clear();
         self.debug_green.clear();
         self.debug_yellow.clear();
+        self.land_overlay.clear();
         self.select_root.clear();
         self.select_child.clear();
         self.select_faces.clear();

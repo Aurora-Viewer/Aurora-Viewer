@@ -386,6 +386,22 @@ fn diffuse_uv(st: vec2<f32>, rec: DrawRecord, clock: vec2<u32>) -> vec2<f32> {
     return te_uv(st, rec);
 }
 
+// LLViewerParcelOverlay: ownership stays on the terrain; property lines
+// also sit at the water surface. Reuse the terrain vertices and depth.
+@vertex
+fn vs_land_overlay(in: VsIn) -> VsOut {
+    let rec = records[in.instance];
+    var out: VsOut;
+    out.world_pos = (rec.model * vec4<f32>(in.pos, 1.0)).xyz;
+    out.record = in.instance;
+    if (rec.params.x > 0.5) {
+        out.world_pos.z = max(out.world_pos.z, rec.params.y);
+    }
+    out.world_pos.z += 0.025;
+    out.clip = frame.eye_view_proj * vec4<f32>(out.world_pos - frame.eye.xyz, 1.0);
+    return out;
+}
+
 @vertex
 fn vs_main(in: VsIn) -> VsOut {
     let rec = records[in.instance];
@@ -1280,6 +1296,38 @@ override debug_a: f32 = 0.35;
 @fragment
 fn fs_debug_flat(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(debug_r, debug_g, debug_b, debug_a);
+}
+
+// One texel per 4 m ParcelOverlay cell. Explicit LOD and texel centres
+// preserve ownership and the west/south boundary flags at any distance.
+fn parcel_cell(rec: DrawRecord, cell: vec2<f32>) -> vec4<f32> {
+    let clamped = clamp(cell, vec2<f32>(0.0), rec.uv_st.xy - vec2<f32>(1.0));
+    return sample_tex_level(rec.tex.x, (clamped + vec2<f32>(0.5)) / rec.uv_st.xy, 0.0);
+}
+
+@fragment
+fn fs_land_overlay(in: VsOut) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    let local = (in.world_pos.xy - rec.model[3].xy) / 4.0;
+    let width = max(vec2<f32>(0.0625 / 4.0), fwidth(local) * 0.6);
+    let cell = min(floor(local), rec.uv_st.xy - vec2<f32>(1.0));
+    let sample = parcel_cell(rec, cell);
+    let byte = u32(round(sample.a * 255.0));
+    if (rec.params.x < 0.5) {
+        return vec4<f32>(sample.rgb, 0.3);
+    }
+    let owner = byte & 7u;
+    if (owner == 0u || owner > 5u) { discard; }
+    let within = local - cell;
+    let east = u32(round(parcel_cell(rec, cell + vec2<f32>(1.0, 0.0)).a * 255.0));
+    let north = u32(round(parcel_cell(rec, cell + vec2<f32>(0.0, 1.0)).a * 255.0));
+    // LINE_WIDTH = 0.0625 m, on the inside of each parcel's boundary.
+    let west_line = (byte & 64u) != 0u && within.x < width.x;
+    let south_line = (byte & 128u) != 0u && within.y < width.y;
+    let east_line = ((east & 64u) != 0u || cell.x >= rec.uv_st.x - 1.0) && within.x > 1.0 - width.x;
+    let north_line = ((north & 128u) != 0u || cell.y >= rec.uv_st.y - 1.0) && within.y > 1.0 - width.y;
+    if (!(west_line || south_line || east_line || north_line)) { discard; }
+    return vec4<f32>(sample.rgb, 0.9);
 }
 
 // Selection is a separate coverage mask, never an interior grid. Keep

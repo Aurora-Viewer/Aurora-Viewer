@@ -15,6 +15,8 @@ use uuid::Uuid;
 /// DFQ_GROUP_OWNED (llqueryflags.h): the parcels owned by the group of the
 /// query id.
 pub const DFQ_GROUP_OWNED: u32 = 1 << 8;
+/// DFQ_AGENT_OWNED, LLFloaterLandHoldings::onOpen.
+pub const DFQ_AGENT_OWNED: u32 = 1 << 6;
 /// LLParcel::C_ANY: no category filter.
 const CATEGORY_ANY: i8 = -1;
 
@@ -88,6 +90,16 @@ struct Block {
 /// is its BillableArea when it is alone, else the sum of the parcels'),
 /// the parcels follow.
 fn group_land(group: Uuid, transaction: Uuid, blocks: Vec<Block>) -> GroupLandReply {
+    if group.is_nil() {
+        // A null query id identifies the agent's own holdings, not group
+        // totals. A nil owner is the server's empty-list sentinel.
+        return GroupLandReply {
+            group,
+            transaction,
+            totals: None,
+            parcels: blocks.into_iter().filter(|b| !b.owner.is_nil()).map(|b| b.parcel).collect(),
+        };
+    }
     let mut totals = None;
     let mut parcels: Vec<GroupParcel> = Vec::new();
     let mut blocks = blocks.into_iter();
@@ -121,7 +133,7 @@ pub fn places_query(agent: Uuid, session: Uuid, group: Uuid, transaction: Uuid) 
     m.agent_data.query_id = group;
     m.transaction_data.transaction_id = transaction;
     m.query_data.query_text = str_field("");
-    m.query_data.query_flags = DFQ_GROUP_OWNED;
+    m.query_data.query_flags = if group.is_nil() { DFQ_AGENT_OWNED } else { DFQ_GROUP_OWNED };
     m.query_data.category = CATEGORY_ANY;
     m.query_data.sim_name = str_field("");
     m
@@ -423,11 +435,30 @@ mod tests {
     }
 
     #[test]
+    fn owned_land_uses_the_agent_query_and_never_group_totals() {
+        let query = places_query(Uuid::from_u128(1), Uuid::from_u128(2), Uuid::nil(), Uuid::from_u128(3));
+        assert_eq!(query.agent_data.query_id, Uuid::nil());
+        assert_eq!(query.query_data.query_flags, DFQ_AGENT_OWNED);
+        assert_eq!(query.query_data.category, -1);
+        let mut reply = msgs::PlacesReply {
+            query_data: vec![block(1, "Home", 512, 512), block(1, "Workshop", 1024, 2048)],
+            ..Default::default()
+        };
+        let (_, result) = places_reply(&reply);
+        assert_eq!(result.totals, None);
+        assert_eq!(result.parcels.len(), 2);
+        assert_eq!(result.parcels[0].name, "Home");
+        reply.query_data = vec![block(0, "", 0, 0)];
+        assert!(places_reply(&reply).1.parcels.is_empty());
+    }
+
+    #[test]
     fn a_group_without_parcels_reads_its_land_in_use_from_the_totals_block() {
         let mut m = msgs::PlacesReply {
             query_data: vec![block(0, "", 1024, 2048)],
             ..Default::default()
         };
+        m.agent_data.query_id = Uuid::from_u128(7);
         let (_, r) = places_reply(&m);
         assert_eq!(
             r.totals,
