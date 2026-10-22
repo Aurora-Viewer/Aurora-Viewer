@@ -36,6 +36,7 @@ $pages = @(
     @{ Section = 'Contributing'; Page = 'Translating'; Title = 'Translating the viewer'; Source = 'docs/TRANSLATING.md' }
     @{ Section = 'Contributing'; Page = 'Branding'; Title = 'Branding and interface'; Source = 'docs/BRANDING.md' }
     @{ Section = 'Technical'; Page = 'Architecture'; Title = 'Architecture'; Source = 'ARCHITECTURE.md' }
+    @{ Section = 'Technical'; Page = 'RLVa'; Title = 'RLVa implementation status'; Source = 'docs/RLVA.md' }
     @{ Section = 'Technical'; Page = 'Licences'; Title = 'Licences and notices'; Source = 'NOTICE.md' }
 )
 # kept in the repository only: linked from the sidebar

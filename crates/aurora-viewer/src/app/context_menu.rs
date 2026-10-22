@@ -327,9 +327,6 @@ impl App {
             CtxAction::ToggleFly => self.toggle_fly(),
             CtxAction::ResetCamera => self.reset_camera_view(),
             CtxAction::Im(id) => {
-                // UISndStartIM (LLAvatarActions::startIM)
-                self.world.ui_sounds.push(UiSound::StartIm);
-                self.world.social.session_mut(id);
                 self.open_conversation_to_type(id);
             }
             CtxAction::Call(id) => {
@@ -505,9 +502,10 @@ impl App {
             CtxAction::AnswerTeleport { invite, accept } => {
                 for c in self.world.answer_teleport_invite(invite, accept) {
                     if matches!(c, NetCommand::AcceptLure { .. }) {
-                        self.begin_teleport(String::new(), false);
+                        self.request_user_teleport(c, String::new(), false);
+                    } else {
+                        self.send(c);
                     }
-                    self.send(c);
                 }
             }
             CtxAction::AnswerInventoryOffer { offer, keep } => {
@@ -515,7 +513,11 @@ impl App {
                     self.send(c);
                 }
             }
-            CtxAction::OfferTeleport(id) => self.contacts_ui.ask_teleport_offer(vec![id], &self.world.region_name()),
+            CtxAction::OfferTeleport(id) => {
+                if self.world.rlva_can_offer_teleport(id) {
+                    self.contacts_ui.ask_teleport_offer(vec![id], &self.world.rlva_region_label());
+                }
+            }
             CtxAction::OpenPeople(tab) => {
                 self.panels.people = true;
                 self.panels.people_tab = tab;
@@ -581,7 +583,10 @@ impl App {
                     self.show_conversations();
                 }
             }
-            CtxAction::OfferTeleports(ids) => self.contacts_ui.ask_teleport_offer(ids, &self.world.region_name()),
+            CtxAction::OfferTeleports(ids) => {
+                let ids = ids.into_iter().filter(|id| self.world.rlva_can_offer_teleport(*id)).collect();
+                self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_region_label());
+            }
             CtxAction::RequestTeleport(id) => self.contacts_ui.ask_teleport_request(id, self.world.status.cfg.reject_teleports),
             CtxAction::ActivateGroup(id) => self.send(NetCommand::ActivateGroup(id)),
             CtxAction::PinGroup(id) => self.world.groups.toggle_favorite(id),

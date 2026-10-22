@@ -134,7 +134,7 @@ impl World {
             return Some(names::conference_invited(&name, SystemTime::now(), session));
         }
         // LLAvatarName::getUserName, without " Resident" (UseLegacyIMLogNames)
-        let legacy = match self.social.avatar_names.get(session) {
+        let legacy = match self.social.avatar_names.raw(session) {
             Some(n) if !n.legacy_first.is_empty() => {
                 if n.legacy_last.is_empty() || n.legacy_last == "Resident" {
                     n.legacy_first.clone()
@@ -221,7 +221,10 @@ impl World {
             _ => "",
         };
         let text = format::encode_mentions(&line.text, |id| self.social.name_of(&id));
-        (from, format!("{verb}{text}"))
+        (
+            self.rlva_filter_text(&from).into_owned(),
+            self.rlva_filter_text(&format!("{verb}{text}")).into_owned(),
+        )
     }
 
     /// A line enters a conversation: written to its transcript (new lines,

@@ -209,7 +209,9 @@ impl World {
         if !own_object {
             self.notifications.link_name(id, owner, target);
         }
-        self.received_items.offer(im, id);
+        if !self.rlva_inventory_offer(im, id) {
+            self.received_items.offer(im, id);
+        }
     }
 
     /// LLPostponedOfferNotification resolves avatar/group names asynchronously.

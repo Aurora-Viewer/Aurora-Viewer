@@ -298,7 +298,7 @@ impl ParticleManager {
                 s.update(dt, &ctx, &mut budget, world);
             }
             // texture changes
-            let tex = s.ps.texture();
+            let tex = world.rlva.camera_texture().unwrap_or_else(|| s.ps.texture());
             if tex != s.texture {
                 textures.release(&s.texture);
                 s.slot = textures.acquire(renderer, tex, TexSource::Asset);

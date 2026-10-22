@@ -596,6 +596,12 @@ pub enum NetEvent {
     TeleportFinished {
         handle: RegionHandle,
     },
+    /// A named destination lookup completed. The viewer rechecks the pending
+    /// action before issuing TeleportTo; resolving a name never teleports.
+    TeleportRegionResolved {
+        request: Uuid,
+        result: Result<RegionHandle, String>,
+    },
     /// The answer to `SetMaturityPreference`: the preference the server
     /// kept, or None when the request failed.
     MaturityPreference(Option<u8>),
@@ -755,6 +761,11 @@ pub enum NetEvent {
     /// GetExperienceInfo: the details of the experiences asked for (unknown
     /// ones when they could not be read).
     ExperienceInfo(Vec<crate::experience::ExperienceDetails>),
+    /// ExperienceEvent's permission-4 event, with the experience in its invoice.
+    ExperienceAttachment {
+        experience: Uuid,
+        object_name: String,
+    },
     /// GroupExperiences: the experiences a group owns (empty on a failure).
     GroupExperiences {
         group: Uuid,
@@ -996,6 +1007,11 @@ pub enum NetEvent {
         folders: Vec<crate::inventory::InvFolder>,
         items: Vec<crate::inventory::InvItem>,
     },
+    /// Delivery identity follows InventoryUpdated, so observers see its headers.
+    InventoryDelivery {
+        transaction: Uuid,
+        folders: Vec<Uuid>,
+    },
     InventoryMoved {
         id: Uuid,
         parent: Uuid,
@@ -1105,6 +1121,8 @@ pub enum NetEvent {
         item: Uuid,
         result: Result<crate::inventory::InvItem, String>,
     },
+    /// SaveAssetIntoInventory confirms that a detached object's asset is saved.
+    AttachmentAssetSaved(Uuid),
     OutfitUpdated {
         request: Uuid,
         result: Result<Vec<crate::inventory::FolderContents>, String>,
@@ -1372,6 +1390,19 @@ pub enum NetCommand {
         message: String,
         channel: i32,
         chat_type: ChatType,
+    },
+    /// One bounded script-protocol answer, including an empty answer.
+    /// Unlike user chat this must never be split or redirected.
+    ChatReply {
+        message: String,
+        channel: i32,
+    },
+    /// A protocol IM response, after query/consent checks rather than user IM policy.
+    ImReply {
+        to: Uuid,
+        message: String,
+        busy: bool,
+        offline: bool,
     },
     RequestObjects {
         handle: RegionHandle,
@@ -1780,8 +1811,10 @@ pub enum NetCommand {
     CancelRegionRestart,
     /// Teleport to a region by name (map lookup), position in the region.
     TeleportToRegion {
+        request: Uuid,
         name: String,
         position: Vec3,
+        look_at: Vec3,
     },
     /// World map regions in a block of grid coordinates (region units,
     /// inclusive); `null_sims` asks for empty slots too (MAP_SIM_RETURN_NULL_SIMS).
@@ -2006,6 +2039,11 @@ pub enum NetCommand {
         change: crate::outfits::categories::Mutation,
     },
     DetachAttachments(Vec<Uuid>),
+    /// Detach an attachment without an inventory item, in its simulator.
+    DetachObject {
+        handle: RegionHandle,
+        local_id: u32,
+    },
     SetInventoryFavorite {
         item: Uuid,
         favorite: bool,

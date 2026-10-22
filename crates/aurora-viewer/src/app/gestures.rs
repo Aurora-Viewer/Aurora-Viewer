@@ -247,6 +247,9 @@ impl App {
     }
 
     pub(super) fn gesture_play(&mut self, id: Uuid, key: Option<u8>) {
+        if self.world.rlva.has("sendgesture") {
+            return;
+        }
         if let Some(definition) = self.gesture_state.manager.entries.get(&id).map(|e| e.definition.clone()) {
             self.gesture_preview(id, definition, key);
         } else {

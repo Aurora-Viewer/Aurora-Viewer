@@ -42,7 +42,7 @@ fn identity(world: &World, st: &ChatUi) -> Identity {
     match st.selected {
         None => Identity {
             title: aurora_i18n::tr!("common-nearby-chat").to_owned(),
-            subtitle: Some(world.region_name()).filter(|r| !r.is_empty()),
+            subtitle: Some(world.rlva_region_label()).filter(|r| !r.is_empty()),
             avatar: None,
             icon: Some("message-filled"),
         },

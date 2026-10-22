@@ -970,6 +970,7 @@ mod tests {
 
     fn status(stretch: bool, bug: bool) -> StatusInfo<'static> {
         StatusInfo {
+            location_hidden: false,
             show_bug_report: bug,
             show_huds: true,
             hud_zoom: 1.0,

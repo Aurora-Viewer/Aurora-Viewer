@@ -46,6 +46,14 @@ impl App {
     }
 
     fn control_action(&mut self, action: ControlAction) {
+        if self.world.rlva.camera_preset_locked(uuid::Uuid::nil())
+            && matches!(
+                action,
+                ControlAction::Preset(_) | ControlAction::UseShot(_) | ControlAction::SaveShot(_)
+            )
+        {
+            return;
+        }
         match action {
             ControlAction::FreeSpeed(speed) => self.snapshots.ui.free.speed = speed,
             ControlAction::FreeCollisions(on) => self.snapshots.ui.free.no_collisions = on,

@@ -2670,6 +2670,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
+| `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
@@ -2768,6 +2769,93 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
 
 ### Details
+
+- **`AURORA_DEMO_RLVA`**: `enabled` opens Preferences > Protections and
+  applies synthetic object restrictions at frame 700. `disabled` delivers
+  the same commands while the global opt-in stays off; `released` enables
+  them, then switches RLVa off at frame 760. Capture after frame 800 in EN
+  and FR: verify the switch, the active list and the empty released list.
+  This scenario never saves the opt-in to the normal viewer's preferences.
+  `im-query` applies fly/IM restrictions and delivers an online synthetic
+  `@list` request at frame 740. The native permission card offers sharing
+  once, remembering consent, or declining. Capture after frame 800 in EN/FR.
+  `rename` turns shared wear off and enables automatic attachment naming.
+  Two new shared objects arrive at frame 740. By frame 810 the log reports
+  `Modifiable bracelet (chest)` and the no-modify object's `.(skull)` folder.
+  `shared-offer` opens the ordinary confirmation for a synthetic scripted
+  `#RLV/~Demo/Cuffs` folder gift. `shared-offer-accepted` accepts it at frame
+  740 and delivers the matching inventory transaction; by frame 810 the log
+  must report `path=~Demo/Cuffs`. The native offer and shared-gift preference
+  use the same EN/FR controls as real offers. No grid is contacted.
+  `experience` attaches a synthetic General-rated experience controller,
+  applies fly/jump locks and identifies it through attachment resources at
+  frame 740. By frame 810 the log reports `blocked=true, fly=false, jump=false`.
+  `experience-allowed` uses a Moderate rating: `blocked=false, fly=true,
+  jump=true`. `experience-released` also disables RLVa at frame 760, clearing
+  the controller block and all restrictions. Capture after frame 810 to
+  inspect the rating, temporary-controller and blocked-list controls in EN/FR.
+  `chat` shows synthetic OOC, restricted ordinary/emote and directed-object
+  messages in nearby chat. The log reports `ooc=true, direct=true,
+  filtered_rows=2`; `chat-silent` disables ellipses and reports zero filtered
+  rows while OOC and directed chat remain visible. `version` logs legacy/new
+  handshakes with numeric `3040300` and implementation `2040213` at frame 740.
+  `version-compat` seeds an owned attachment matching a creator compatibility
+  entry and logs numeric `2092800`, retaining the same implementation number.
+  `chat-home` enables the native `tph` shortcut, applies tplm and invokes the
+  actual chat-command route. Its log must report `handled=true,
+  requested=false, pending_ui=false`: no teleport or progress UI starts.
+  `tools` opens the native RLVa console and exercises local version/status
+  queries, duplicate feedback and a console-owned fly lock alongside another
+  issuer's jump lock. At frame 810 its log reports two local replies and no
+  channel-zero network reply. `tools-closed` closes the console at frame 810
+  and reports `fly=false, other_jump=true`. Capture after that frame in EN/FR.
+  `named-blocked` starts a named lookup, adds tploc and then resolves a distant
+  destination; `maturity-blocked` holds a home teleport for a maturity response
+  and adds tplm before releasing it. Both exercise the real deferred application
+  routes and log `requested=false, pending_ui=false, failed=true` at frame 810.
+  `communication` applies receive/send/start IM restrictions, receives an
+  ordinary message and sends a reply through the native action boundary.
+  Capture after frame 800: the conversation contains localized replacement
+  text for both messages. It also attempts a new IM through the actual
+  context-menu action before receiving the message; that must not create
+  an exempt session. The log reports `new_session_blocked=true`, `local_placeholders=true` and
+  `existing_session_allowed=true`. `temporary` disables temporary controllers
+  and delivers OwnerSay from an attachment with the native temporary marker,
+  without experience or inventory metadata. Its raw command remains nearby
+  chat; the log reports `option_off_jump=false, source_allowed=false`.
+  `hud-lock` seeds a temporary HUD with a point removal lock while requesting
+  hidden HUDs and wireframe rendering. Capture after frame 810: the HUD is
+  visible, the world stays filled and the log reports `locked=true,
+  shown=true, wireframe=false`.
+  `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
+  `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
+  mode to the same scene. `overlay` uses the demo's transparent-hole texture
+  with scripted opacity and touch blocking: world clicks through holes
+  remain available, opaque texels block them, and HUD/UI clicks stay usable.
+  Capture after frame 800; compare the same scene with `disabled` and close
+  Preferences for the unobstructed baseline. These modes never contact a grid.
+  Vision modes close Conversations and use the same fixed camera framing
+  around the avatar so its body and attachments remain visible.
+  `baseline` shows the unobstructed scene directly. `textures`, `silhouette`,
+  `self` and `head` exercise forced world textures, distant avatar silhouettes
+  and own-avatar visibility. `resolution` sets the real 3D resolution divisor
+  to 12: the scene becomes coarse while text, HUDs and controls stay sharp.
+  Compare it with `baseline` and `resolution-released`; check scene clicks
+  still address their visible surfaces. Append `-released` to an effect mode to disable
+  RLVa at frame 760 and verify restoration in the same run.
+  `privacy` hides nearby identities and the current place in Conversations
+  and the top bar; `privacy-except` permits one visible speaker through a
+  strict name exception. `privacy-released` restores names and location.
+  `nearby` opens People with an empty Nearby tab under shownearby. Inventory
+  is closed in these scenarios so the conversation and list remain visible.
+  `camera-focus` focuses a posed avatar's head at a scripted distance and
+  direction with FOV limits. `camera-prefs` opens Camera preferences under
+  an exclusive camera lock: preset, offset, distance and viewing-angle
+  controls must be disabled while unrelated options remain editable.
+  `sitting` sends a forced object sit at frame 700, then sitground at 740.
+  The native demo simulator must confirm the stand before the ground sit.
+  At frame 810 its log reports `ground_sit=true, object_seated=false`;
+  capture after frame 850 to inspect the final ground-sitting pose.
 
 - **`AURORA_DEMO_PERF`**: `compact` opens the compact view (frame rate and
   its graph); `full` the resource monitor on its overview; `network` the

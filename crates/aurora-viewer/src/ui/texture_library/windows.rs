@@ -133,6 +133,14 @@ impl LibraryUi {
         }
     }
     pub fn open_preview(&mut self, ctx: &egui::Context, world: &World, id: Uuid) {
+        if world
+            .inventory
+            .items
+            .get(&id)
+            .is_some_and(|it| !world.inventory.can_preview(it.asset_type))
+        {
+            return;
+        }
         if self.agent != world.agent_id {
             self.reset();
             self.agent = world.agent_id;
@@ -189,6 +197,9 @@ impl LibraryUi {
         let Some(item) = catalogue::resource(&world.inventory, window.id).cloned() else {
             return false;
         };
+        if !world.inventory.can_preview(item.asset_type) {
+            return true;
+        }
         let material = item.asset_type == 57;
         let asset = catalogue::asset(&item);
         let path = super::super::inventory::inventory_path(&world.inventory, item.parent);

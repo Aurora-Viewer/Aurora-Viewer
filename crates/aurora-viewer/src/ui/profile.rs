@@ -345,7 +345,7 @@ impl ProfileUi {
     /// LLAvatarActions::showProfile: one window per avatar, raised if open;
     /// each opening reloads the data (LLPanelProfile::updateData).
     pub fn open(&mut self, world: &mut World, id: Uuid) {
-        if id.is_nil() {
+        if id.is_nil() || !world.rlva_can_name(id) {
             return;
         }
         world.profiles.refresh(id);
@@ -419,6 +419,9 @@ impl ProfileUi {
         let screen = ctx.content_rect();
         let mut pick_picture: Option<(PictureSlot, Uuid)> = None;
         for (i, w) in self.windows.iter_mut().enumerate() {
+            if !world.rlva_can_name(w.id) {
+                continue;
+            }
             if !classic {
                 let profile = world.profiles.get(&w.id);
                 if let Some(pr) = profile {
@@ -1608,7 +1611,7 @@ fn picks_tab(
         });
         ui.horizontal(|ui| {
             let creating = w.pick_edit.as_ref().is_some_and(|(e, _)| e.id.is_nil());
-            let can_add = pr.picks.len() < picks_limit(world) && !creating;
+            let can_add = pr.picks.len() < picks_limit(world) && !creating && !world.rlva.has("showloc");
             if ui
                 .add_enabled(can_add, egui::Button::new(aurora_i18n::tr!("ui-profile-new")))
                 .clicked()
@@ -1682,6 +1685,9 @@ fn picks_tab(
 
 /// A new pick at our position (LLPanelProfilePick::setAvatarId, null pick).
 fn new_pick(world: &World) -> PickEdit {
+    if world.rlva.has("showloc") {
+        return PickEdit::default();
+    }
     let region = world.region_name();
     let (parcel_name, desc, snapshot) = match &world.parcel {
         Some(pa) => (pa.name.clone(), pa.desc.clone(), pa.snapshot_id),
@@ -1819,7 +1825,7 @@ fn pick_detail(
         _ => String::new(),
     };
     inset(ui, p, width, 22.0, |ui| {
-        ui.add(egui::Label::new(RichText::new(location).size(12.0).color(p.muted)).truncate());
+        ui.add(egui::Label::new(RichText::new(world.rlva_filter_text(&location)).size(12.0).color(p.muted)).truncate());
     });
     ui.add_space(4.0);
     ui.horizontal_wrapped(|ui| {
@@ -1836,7 +1842,14 @@ fn pick_detail(
         {
             actions.push(ProfileAction::Teleport(pos));
         }
-        if own && ui.button(aurora_i18n::tr!("ui-profile-set-location")).clicked() {
+        if own
+            && ui
+                .add_enabled(
+                    !world.rlva.has("showloc"),
+                    egui::Button::new(aurora_i18n::tr!("ui-profile-set-location")),
+                )
+                .clicked()
+        {
             // onClickSetLocation: our position, parcel and region now
             let here = new_pick(world);
             if let Some((e, _)) = w.pick_edit.as_mut() {
@@ -1993,7 +2006,7 @@ fn classified_detail(
     row(
         ui,
         aurora_i18n::tr!("ui-profile-location"),
-        &location_text(&[&info.parcel_name, &info.sim_name], info.pos_global),
+        &world.rlva_filter_text(&location_text(&[&info.parcel_name, &info.sim_name], info.pos_global)),
     );
     row(
         ui,

@@ -2062,7 +2062,12 @@ fn dialogs(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut Contact
     let notice = matches!(d, Dialog::RejectingTeleports);
     // where an offer leads: our region, with its rating badge
     let here = matches!(d, Dialog::OfferTeleport { .. })
-        .then(|| world.main().and_then(|r| r.info.as_ref()).map(|i| (i.name.clone(), i.sim_access)))
+        .then(|| {
+            world
+                .main()
+                .and_then(|r| r.info.as_ref())
+                .map(|i| (world.rlva_region_label(), i.sim_access))
+        })
         .flatten();
     let mut done: Option<bool> = None;
     let modal = crate::ui::widgets::Modal::new(egui::Id::new("contacts_dialog")).show(ctx, |ui| {

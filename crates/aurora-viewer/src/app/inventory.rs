@@ -220,6 +220,12 @@ impl App {
     }
 
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
+        if let InvAction::Share { resident, .. } = &action
+            && !self.world.rlva.allows("share", &resident.to_string())
+        {
+            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            return;
+        }
         match action {
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::Edit(mut change) => {
@@ -310,6 +316,15 @@ impl App {
             InvAction::WearCopy { item, replace } => self.wear_copy(item, replace),
             InvAction::EditEnvironment(id) => self.env_editor_load(id),
             InvAction::Preview(id) => {
+                if self
+                    .world
+                    .inventory
+                    .items
+                    .get(&id)
+                    .is_some_and(|it| !self.world.inventory.can_preview(it.asset_type))
+                {
+                    return;
+                }
                 if crate::ui::texture_library::catalogue::resource(&self.world.inventory, id).is_some() {
                     self.texture_library.open_preview(&self.egui_ctx, &self.world, id);
                     return;
@@ -649,6 +664,48 @@ impl App {
     }
 
     pub(super) fn apply_appearance_action(&mut self, action: crate::world::appearance::Action) {
+        self.apply_appearance_action_from(action, Uuid::nil());
+    }
+
+    pub(super) fn apply_appearance_action_from(&mut self, action: crate::world::appearance::Action, actor: Uuid) {
+        use crate::world::appearance::Action;
+        // Temporary attachments have no COF link. Use ObjectDetach directly,
+        // retaining the issuer through the same native policy as other wears.
+        let action = match action {
+            Action::Remove(item) if self.world.rlva_temporary_attachment(item).is_some() => {
+                if let Some(key) = self.world.rlva_temporary_attachment(item) {
+                    self.send_from(
+                        NetCommand::DetachObject {
+                            handle: key.region,
+                            local_id: key.local_id,
+                        },
+                        actor,
+                    );
+                }
+                return;
+            }
+            Action::RemoveItems(items) => {
+                let mut regular = Vec::new();
+                for item in items {
+                    if let Some(key) = self.world.rlva_temporary_attachment(item) {
+                        self.send_from(
+                            NetCommand::DetachObject {
+                                handle: key.region,
+                                local_id: key.local_id,
+                            },
+                            actor,
+                        );
+                    } else {
+                        regular.push(item);
+                    }
+                }
+                if regular.is_empty() {
+                    return;
+                }
+                Action::RemoveItems(regular)
+            }
+            other => other,
+        };
         if let crate::world::appearance::Action::ShowOriginal(id) = action {
             ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             self.inventory_ui.show_original(&self.world.inventory, id);
@@ -691,9 +748,16 @@ impl App {
             Ok((change, sync)) => {
                 let request = uuid::Uuid::new_v4();
                 self.appearance_ui.pending = Some((request, sync));
+                self.appearance_ui.pending_actor = actor;
                 self.appearance_ui.attachments = attachments;
                 self.appearance_ui.message.clear();
-                self.send(NetCommand::UpdateOutfit { request, change });
+                let mut command = NetCommand::UpdateOutfit { request, change };
+                self.world.rlva_prepare_outfit(&mut command, actor);
+                if !self.world.rlva_allows_command(&command, actor) {
+                    self.appearance_ui.pending = None;
+                    self.appearance_ui.attachments.clear();
+                }
+                self.send_from(command, actor);
             }
             Err(reason) => {
                 self.inventory_ui.message.clone_from(&reason);
