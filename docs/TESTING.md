@@ -989,7 +989,8 @@ they may extend outside, but a usable title grip must always remain.
 Opening either script focuses its text before character zero.
 For native captures at 1600 × 1000, `search-left`, `search-inline`,
 `search-overlay` and `search-outside` seed these four placements with the
-same find/replace values; `preferences` shows the switches.
+same find/replace values; `preferences` opens the options. Scroll below the
+colour preview to see both switches.
 `preprocessor` and `object-preprocessor` save a script using an include from
 the inventory, a macro, an extended list and a `switch`, then reopen it: the
 original text must be kept. `processed` shows the result sent to the
