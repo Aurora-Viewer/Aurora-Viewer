@@ -27,6 +27,13 @@ temporary camera settings and exclusive ownership. `events.rs` handles
 permission/teleport consent, command notifications and stand returns;
 `editing.rs` checks linksets and material/media writes. `environment.rs`
 keeps scripted sky, water and day cycles separate from saved local choices.
+`sitting.rs` records actors only at accepted native sends, observes confirmed
+seat transitions and retains the previous parent for stand notifications.
+A forced ground sit leaves an object seat first, then rechecks the action
+after standing; disabling or a stand-return teleport cancels the delayed sit.
+`wardrobe.rs` compares complete COF clothing/bodypart snapshots only when
+inventory generation changes. It skips the initial baseline and incomplete
+fetches, then emits all wearable removals before additions.
 `groups.rs` resolves forced group/role changes through native membership and
 role data, retains the actor across asynchronous replies and applies the
 reference's 60-second throttle and single early change for the lock owner.

@@ -19,7 +19,9 @@ mod groups;
 mod inventory;
 mod policy;
 pub mod privacy;
+mod sitting;
 mod temporary;
+mod wardrobe;
 pub mod watchdog;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,7 +240,6 @@ pub const RESTRICTIONS: &[&str] = &[
     "showminimap",
     "showworldmap",
     "sit",
-    "sitground",
     "standtp",
     "startim",
     "startimto",
@@ -420,6 +421,8 @@ pub struct Rlva {
     pub viewer: Vec<(Uuid, Command)>,
     pub camera_values: BTreeMap<String, String>,
     pub groups: groups::Groups,
+    pub sitting: sitting::Sitting,
+    pub wardrobe: wardrobe::Wardrobe,
     pub visuals: effects::Visuals,
     pub watchdog: watchdog::Watchdog,
     pub recovery: Vec<NetCommand>,
@@ -508,6 +511,8 @@ impl Rlva {
         self.viewer.clear();
         self.camera_values.clear();
         self.groups = Default::default();
+        self.sitting = Default::default();
+        self.wardrobe = Default::default();
         self.visuals = Default::default();
         self.watchdog = Default::default();
         self.recovery.clear();

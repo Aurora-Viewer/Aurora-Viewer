@@ -423,6 +423,7 @@ pub struct App {
     loading_frac: f32,
     loading_target: f32,
     frame_count: u64,
+    demo_rlva_frame: Option<u64>,
     /// Refresh rate of the screen the window is on, followed while it runs.
     screen_rate: crate::screen_rate::ScreenRate,
     /// The window has the keyboard focus (background frame cap).
@@ -1010,6 +1011,7 @@ impl App {
             loading_frac: 0.0,
             loading_target: 0.0,
             frame_count: 0,
+            demo_rlva_frame: None,
             screen_rate: Default::default(),
             focused: true,
             backdrop,
@@ -1226,6 +1228,7 @@ impl App {
             self.world.group_data.title_sent(*group, *role);
         }
         self.world.rlva_note_attachment_command(&cmd, actor, Instant::now());
+        self.world.rlva.note_sit_command(&cmd, actor);
         if self.world.rlva.enabled()
             && let NetCommand::RezAttachments(items) = &mut cmd
         {
@@ -6499,7 +6502,7 @@ impl App {
             if self.world.rlva.has("unsit") {
                 c.control_flags &= !control::STAND_UP;
             }
-            if self.world.rlva.has("sitground") {
+            if self.world.rlva.has("sit") || (self.world.agent.is_sitting() && self.world.rlva.has("unsit")) {
                 c.control_flags &= !control::SIT_ON_GROUND;
             }
             if !self.world.agent.flying && self.world.rlva.has("jump") {

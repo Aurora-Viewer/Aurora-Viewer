@@ -26,8 +26,15 @@ script authors; the command lists below describe this branch specifically.
 - IM: sendim/to, recvim/from, startim/to; share and sendgesture.
   Distance exclusion ranges are intersected across issuers, including the
   unbounded/off-region case; specific recipient blocks still win.
-- Movement: fly, jump, unsit, sit, sitground, alwaysrun and temprun;
+- Movement: fly, jump, unsit, sit, alwaysrun and temprun;
   forced fly, setrot, sit, sitground and unsit.
+  A forced ground sit leaves an object seat, waits for the confirmed stand,
+  then rechecks the delayed action; a stand-return teleport takes precedence.
+  A nil sit UUID aliases ground sit. Native ground sitting obeys sit, while
+  forced object sitting still obeys every sit/unsit lock and only bypasses
+  distance. Sit/stand notifications use the accepted actor and actual parent;
+  getsitid returns the root linkset. Initial state and failed requests do not
+  manufacture transitions. Disabling clears pending actors and actions.
 - Teleports: tplm, tploc, tplocal and sittp, with named-region or global tpto.
   tplure/tprequest exceptions and accepttp/accepttprequest auto-acceptance
   retain maturity checks and recheck consent when an invitation is answered.
@@ -121,6 +128,9 @@ script authors; the command lists below describe this branch specifically.
   control/attachment permissions; caution permissions and experiences keep
   their dialogs. addattach/tploc filter the corresponding permission bits.
   notify reports restriction commands, including rejected/duplicate commands;
+  clothing/bodypart notifications follow complete confirmed COF changes,
+  after the initial loaded baseline, with all removals before additions.
+  An inventory-generation guard avoids rebuilding the snapshot each frame.
   allowidle uses the reference's thirty-minute automatic-away interval.
 - Debug extensions: session-local AvatarSex pseudo-value, aspect ratio and
   existing renderer/environment capability reads, respecting setdebug
@@ -141,9 +151,8 @@ than asserting a complete RLV specification version.
   opening an already-visible window while a restriction changes.
 - Complete environment/debug conformance, wearable/attachment/sit
   notifications and permission entry-point validation.
-  Ground-sit transitions from an object seat, nil-UUID sit aliases, actor
-  tracking for sit/stand notifications and clothing-change notifications
-  still need their native asynchronous handlers.
+  The new native ground-sit and clothing-notification handlers require live
+  validation with delayed simulator responses and intervening restrictions.
 - Complete linked/folded-folder conformance, optional shared inventory offers
   and legacy rename-on-wear settings, queue timeout
   behavior and live confirmation of attachment recovery across crossings.
@@ -165,9 +174,9 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,330 workspace
+Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,335 workspace
 tests passed, zero failures and 27 ignored; scripts, formatting and Clippy
-are clean. This includes 50 RLVa logic/integration/shader tests, covering
+are clean. This includes 55 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
@@ -181,7 +190,9 @@ strict exceptions, location history, landmark/pick/classified writes, mixed
 teleport-offer recipients, restricted native name menus, longest Unicode/URL
 matches, active/inactive camera replies, focus defaults, preset mutations,
 command discovery, historical outfit order, attachment groups and own locks,
-group/name/role selection, asynchronous loading and precise restoration.
+group/name/role selection, asynchronous loading and precise restoration,
+confirmed seat/ground transitions, root-seat queries, sit/stand actors and
+legality, delayed-action cancellation and ordered clothing/bodypart notices.
 The additional Vulkan test
 `cargo test --workspace rlva_gpu --locked -- --ignored` checks five sphere
 modes, chained masks, reduced-scene upscaling and overlay alpha holes from
@@ -213,6 +224,9 @@ empty. Inspected `camera-focus` (EN), `camera-prefs` (FR), `head` (FR),
 restricted preference fields are disabled, own head/body visibility follows
 the commands and the distant other avatar becomes a dark silhouette.
 These are offline native checks, without human grid acceptance.
+The `sitting` FR capture and its native demo log confirm one object sit,
+one stand and then `ground_sit=true, object_seated=false`. Fixture actions
+are delivered once per rendered frame, even when native updates repeat.
 
 `AURORA_DEMO_RLVA=enabled|disabled|released` opens the native preference page
 and delivers synthetic object commands through `World::apply`. Capture after

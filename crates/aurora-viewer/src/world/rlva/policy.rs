@@ -214,9 +214,14 @@ impl World {
             }
             NetCommand::RequestSit { target, offset, .. } => {
                 let limit = r.distance_limit("sittp", 1.5, actor).min(r.distance_limit("fartouch", 1.5, actor));
-                !blocked("sit")
+                !r.has("sit")
+                    && self
+                        .objects
+                        .index_of_uuid(target)
+                        .and_then(|i| self.objects.get(i))
+                        .is_some_and(|o| o.pcode == aurora_prim::params::LL_PCODE_VOLUME)
                     && !(self.agent.is_sitting() && r.has("standtp"))
-                    && !(self.agent.is_sitting() && blocked("unsit"))
+                    && !(self.agent.is_sitting() && r.has("unsit"))
                     && (!actor.is_nil()
                         || !limit.is_finite()
                         || self
@@ -226,7 +231,8 @@ impl World {
                             .is_some_and(|(pos, rot, _)| (pos + rot * *offset).distance(self.agent.position) < limit))
             }
             NetCommand::OneShotControl(flags) => {
-                (flags & control::STAND_UP == 0 || !blocked("unsit")) && (flags & control::SIT_ON_GROUND == 0 || !blocked("sitground"))
+                (flags & control::STAND_UP == 0 || !blocked("unsit"))
+                    && (flags & control::SIT_ON_GROUND == 0 || (!blocked("sit") && !(self.agent.is_sitting() && blocked("unsit"))))
             }
             NetCommand::SetAlwaysRun(true) => !blocked("alwaysrun"),
             NetCommand::BuyObject { .. } => !blocked("buy"),
@@ -350,15 +356,7 @@ impl World {
                             .map_or("none", |g| g.name.as_str())
                             .to_owned(),
                     ),
-                    "getsitid" if c.option.is_empty() => Some(
-                        self.objects
-                            .index_of_uuid(&self.agent_id)
-                            .and_then(|i| self.objects.get(i))
-                            .and_then(|o| self.objects.parent_of(o))
-                            .and_then(|i| self.objects.get(i))
-                            .map_or(Uuid::nil(), |o| o.full_id)
-                            .to_string(),
-                    ),
+                    "getsitid" if c.option.is_empty() => Some(self.rlva_sit_id().to_string()),
                     name if super::QUERIES.contains(&name) => self.rlva_inventory_query(&c, source),
                     _ => Some(String::new()),
                 };
@@ -402,17 +400,21 @@ impl World {
                 continue;
             }
             let command = match c.behaviour.as_str() {
-                "unsit" if c.option.is_empty() => Some(NetCommand::OneShotControl(control::STAND_UP)),
-                "sitground" if c.option.is_empty() => Some(NetCommand::OneShotControl(control::SIT_ON_GROUND)),
-                "sit" => Uuid::parse_str(&c.option)
-                    .ok()
-                    .and_then(|id| self.objects.index_of_uuid(&id))
-                    .and_then(|i| self.objects.get(i))
-                    .map(|o| NetCommand::RequestSit {
-                        handle: o.key.region,
-                        target: o.full_id,
-                        offset: Vec3::ZERO,
-                    }),
+                "unsit" if c.option.is_empty() && self.agent.is_sitting() => Some(NetCommand::OneShotControl(control::STAND_UP)),
+                "sitground" if c.option.is_empty() => self.rlva_force_ground_sit(source),
+                "sit" => match Uuid::parse_str(&c.option) {
+                    Ok(id) if id.is_nil() => self.rlva_force_ground_sit(source),
+                    Ok(id) => self
+                        .objects
+                        .index_of_uuid(&id)
+                        .and_then(|i| self.objects.get(i))
+                        .map(|o| NetCommand::RequestSit {
+                            handle: o.key.region,
+                            target: o.full_id,
+                            offset: Vec3::ZERO,
+                        }),
+                    Err(_) => None,
+                },
                 "setrot" => {
                     if let Ok(angle) = c.option.parse::<f32>()
                         && angle.is_finite()

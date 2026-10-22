@@ -35,6 +35,7 @@ impl App {
             self.world.rlva.self_detach = None;
         }
         self.world.rlva_watchdog_tick(Instant::now());
+        self.world.rlva_wardrobe_tick();
         for command in std::mem::take(&mut self.world.rlva.recovery) {
             self.send_from(command, crate::world::rlva::watchdog::ACTOR);
         }
@@ -45,6 +46,9 @@ impl App {
             self.world.rlva.self_detach = None;
         }
         self.world.rlva_update_stand();
+        for (actor, command) in self.world.rlva_sitting_tick() {
+            self.send_from(command, actor);
+        }
         for (actor, command) in self.world.rlva_group_tick() {
             self.send_from(command, actor);
         }
@@ -115,6 +119,12 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_RLVA") else {
             return;
         };
+        // Native updates may run twice before the next rendered frame.
+        // A fixture's force action must be delivered only once per frame.
+        if self.demo_rlva_frame == Some(self.frame_count) {
+            return;
+        }
+        self.demo_rlva_frame = Some(self.frame_count);
         if self.frame_count == 360 {
             self.settings.rlva_enabled = false;
             self.panels.settings = true;
@@ -155,6 +165,35 @@ impl App {
                     "@setcam_focus:{};4;0/-1/0=force,setcam_fovmin:0.6=n,setcam_fovmax:0.9=n",
                     crate::demo::DEMO_LOUP
                 )
+            } else if scenario == "sitting" {
+                self.panels.settings = false;
+                self.panels.chat = false;
+                self.panels.inventory = false;
+                let id = Uuid::from_u128(0x726c766173656174);
+                let mut seat = crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+                    item_id: id,
+                    owner_id: self.world.agent_id,
+                    point: 1,
+                    add: true,
+                    flags: 0,
+                    group_mask: 0,
+                    everyone_mask: 0,
+                    next_owner_mask: 0,
+                    name: String::new(),
+                    desc: String::new(),
+                });
+                seat.local_id = 160000;
+                seat.parent_id = 0;
+                seat.state = 0;
+                seat.name_values.clear();
+                seat.position = self.world.agent.position + Vec3::new(2.0, 0.0, -0.6);
+                seat.scale = Vec3::new(0.7, 0.7, 0.4);
+                self.world.apply(NetEvent::ObjectUpdates {
+                    handle: self.world.main_region.unwrap_or_default(),
+                    objects: vec![seat],
+                });
+                self.camera.change_to_default(&mut self.world.agent, &self.settings.camera);
+                format!("@notify:123=n,sit:{id}=force")
             } else if scenario.starts_with("privacy") || scenario == "nearby" {
                 self.panels.settings = false;
                 self.panels.inventory = false;
@@ -207,16 +246,7 @@ impl App {
             } else {
                 "@fly=n,jump=n,unsit=n,sendchat=n,pay=n".to_owned()
             };
-            let event = aurora_net::ChatMessage {
-                from_name: "RLVa demo object".to_owned(),
-                source_id: Uuid::from_u128(0x726c7661),
-                owner_id: self.world.agent_id,
-                source_type: aurora_net::ChatSourceType::Object,
-                chat_type: aurora_net::ChatType::OwnerSay,
-                position: Vec3::ZERO,
-                message,
-            };
-            self.world.apply(NetEvent::Chat(event));
+            self.rlva_demo_message(message);
             log::info!(
                 "RLVa demo: mode={mode}, enabled={}, fly={}, jump={}, unsit={}, sendchat={}",
                 self.world.rlva.enabled(),
@@ -224,6 +254,16 @@ impl App {
                 self.world.rlva.has("jump"),
                 self.world.rlva.has("unsit"),
                 self.world.rlva.has("sendchat")
+            );
+        }
+        if mode == "sitting" && self.frame_count == 740 {
+            self.rlva_demo_message("@sitground=force".to_owned());
+        }
+        if mode == "sitting" && self.frame_count == 810 {
+            log::info!(
+                "RLVa demo: ground_sit={}, object_seated={}",
+                self.world.agent.ground_sit,
+                self.world.agent.seated
             );
         }
         if (mode == "released" || mode.ends_with("-released")) && self.frame_count == 760 {
@@ -234,6 +274,18 @@ impl App {
                 !self.world.rlva.has("fly") && !self.world.rlva.has("sendchat")
             );
         }
+    }
+
+    fn rlva_demo_message(&mut self, message: String) {
+        self.world.apply(NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "RLVa demo object".to_owned(),
+            source_id: Uuid::from_u128(0x726c7661),
+            owner_id: self.world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: Vec3::ZERO,
+            message,
+        }));
     }
 
     fn send_rlva(&mut self, command: NetCommand, actor: Uuid) {

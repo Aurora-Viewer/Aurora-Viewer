@@ -2801,6 +2801,10 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   direction with FOV limits. `camera-prefs` opens Camera preferences under
   an exclusive camera lock: preset, offset, distance and viewing-angle
   controls must be disabled while unrelated options remain editable.
+  `sitting` sends a forced object sit at frame 700, then sitground at 740.
+  The native demo simulator must confirm the stand before the ground sit.
+  At frame 810 its log reports `ground_sit=true, object_seated=false`;
+  capture after frame 850 to inspect the final ground-sitting pose.
 
 - **`AURORA_DEMO_PERF`**: `compact` opens the compact view (frame rate and
   its graph); `full` the resource monitor on its overview; `network` the
