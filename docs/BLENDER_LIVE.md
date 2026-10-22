@@ -11,7 +11,7 @@ inventory items or charge an upload fee.
 1. In Aurora, open **Build → Blender Live**, choose your Blender version,
    and click **Save Blender plug-in…**. Choose where to save the ZIP. The
    viewer bundles both matching formats; no source checkout or external
-   Python installation is needed.
+Python installation is needed.
 2. Install the ZIP that matches your Blender version:
    - **Blender 4.2 or later:** choose the **extension** package in Aurora.
      In Blender, open Preferences → Get Extensions → the top-right menu →
@@ -24,10 +24,23 @@ inventory items or charge an upload fee.
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
 4. In Blender, select the rigged mesh objects, open the 3D view sidebar
-   (`N`) → **Aurora**, click **Add selected meshes**, then **Connect to Aurora**.
+   (`N`) → **Aurora** → **Live**, click **Add selected meshes**, then **Connect to Aurora**.
 5. Edit your mesh. The default capture interval is **0.2 seconds**; larger
    meshes can take longer to capture and prepare. Aurora supplies the
    animation and avatar shape, independently of Blender's current pose.
+
+The four navigation buttons keep the sidebar focused on one task:
+
+- **Live**: connection and the synchronized-object list. **Connection settings**
+  is collapsed by default and holds the port, capture interval and coordinates.
+- **Skeleton**: bone visibility and display options. Expand **Create an SL avatar**
+  to create a starter rig and optional test T-shirt.
+- **IK**: independent hand/foot switches and target/pole selection.
+- **Weights**: separate sections for automatic weights, donor transfer and cleanup.
+
+The **Avatar rig** selector is shared by Skeleton, IK and Weights. Navigation
+belongs to the window manager, stays outside the scene's mesh/settings data,
+and defaults to Live on a fresh session.
 
 The **Synchronized objects** list is saved with each scene in the `.blend`
 file. **Add selected meshes** appends mesh objects without duplicates, keeping
@@ -64,8 +77,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.6.0.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.6.0-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.6.1.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.6.1-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -73,7 +86,8 @@ ZIP contains an `aurora_live/` directory with `bl_info` and targets 2.93–4.1.
 
 ## Create a rig and test T-shirt
 
-In Blender's 3D view, open the sidebar (`N`) → **Aurora**. Click
+In Blender's 3D view, open the sidebar (`N`) → **Aurora** → **Skeleton**,
+then expand **Create an SL avatar**. Click
 **Create SL avatar rig** to add a new armature at the 3D cursor. Leave
 **Add rigged test T-shirt** enabled to create a garment with it, or disable
 the option for the armature alone. Use Object Mode to create a starter.
@@ -102,12 +116,12 @@ scale. Its proportions are the standard SL rest skeleton, independent of
 your current account's shape. The shirt is sample geometry for testing
 weights and live edits; fit it to your intended body before using it as
 clothing. It includes no avatar body mesh. Optional IK controls can be added
-through the **Skeleton / Bento / IK** section.
+through the **IK** category.
 
 ## Skeleton visibility and hand/foot IK
 
-Choose **Avatar rig** in **Skeleton / Bento / IK**, or leave it empty to use
-the active armature or the active mesh's rig. **Visible parts** shows separate
+Choose **Avatar rig** in **Skeleton**, or leave it empty to use
+the active armature or the active mesh's rig. The category shows separate
 toggles for the body, arms, legs, Bento fingers, face/eyes, wings, tail, hind
 limbs, Fitted Mesh volumes and IK controls. **Show all / Hide all** affect
 every bone. Enabling a part also reveals its containing collections/layers,
@@ -115,7 +129,7 @@ without revealing unrelated hidden parts. These controls work in Edit Mode
 too. **In front**, **Names**, and Blender's rest/pose switch help inspect the
 skeleton. Visibility changes display only; they do not disable deformation.
 
-**Create hand / foot IK controls** adds eight non-deforming target/pole bones
+In **IK**, **Create IK controls** adds eight non-deforming target/pole bones
 and four independent two-bone IK chains. The 159 SL deformation bones retain
 their rest matrices and canonical joint names. The controls are optional,
 excluded from live export, and kept in an **Aurora IK** collection (layer 32
@@ -140,10 +154,10 @@ set of SL rigging tools, not an Avastar import/export or animation replacement.
 
 ## Automatic weight painting
 
-Select your mesh objects and choose **Avatar rig** in **Skeleton / Bento / IK**.
+Select your mesh objects and choose **Avatar rig** in **Weights**.
 The starter selects its newly created rig automatically. Leaving the field
 empty uses each mesh's existing armature, or the single selected armature.
-In **Weights / transfer**, click **Recalculate automatic weights** in Object
+Under **Automatic weights**, click **Recalculate weights** in Object
 Mode or Weight Paint mode.
 This replaces the selected meshes' bone weights using Blender's native heat
 solver, keeps the strongest four influences and normalizes them. Undo restores
@@ -166,9 +180,9 @@ objects with at most one Armature modifier.
 
 ## Transfer and normalize weights
 
-In **Weights / transfer**, choose a **Weight source** mesh, then select the
+In **Weights → Weight transfer**, choose a **Weight source** mesh, then select the
 target meshes. The donor can remain selected; it is excluded from targets.
-**Transfer weights from source** replaces only target bone groups, binds the
+**Transfer weights** replaces only target bone groups, binds the
 targets to **Avatar rig** (or their existing/donor rig), keeps the strongest
 four weights and normalizes them. **Nearest surface** interpolates weights
 on the closest donor triangle; **Nearest vertex** copies the closest donor
@@ -185,7 +199,7 @@ a locked target bone group, or an exceeded distance rejects the entire
 selected batch before publishing any weight changes. Unlock target bone
 groups deliberately before replacing them.
 
-**Normalize / limit to four weights** cleans selected meshes' existing deform
+**Weight cleanup → Normalize to 4 weights** cleans selected meshes' existing deform
 weights without a donor. Both operations support Undo and preserve non-bone
 mask groups, UVs, shape keys, placement, selection and Weight Paint mode.
 Shared target mesh data becomes independent. The donor stays unchanged.
@@ -194,7 +208,7 @@ entries, and weight changes trigger a new capture.
 
 ## Live materials
 
-Plug-in **0.6.0 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.6.1 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value

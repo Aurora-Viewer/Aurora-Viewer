@@ -32,7 +32,11 @@ bones. Pose selection uses `PoseBone` in Blender 5 and `Bone` in older APIs.
 `skinning.py` evaluates unposed donor copies and transfers world-space surface
 or nearest-vertex weights, or cleans existing weights; all targets are
 validated before publishing four normalized deform influences. `tools_ui.py`
-owns the rig/IK/skinning operators and translated sidebar sections. Non-deform
+owns the rig/IK/skinning operators and translated sidebar sections. The Aurora
+parent panel selects Live / Skeleton / IK / Weights through a transient
+WindowManager enum; the panel draws only the selected category, avoiding stale
+child-panel polling when a category changes. Connection settings and starter
+creation are collapsed by default, also with transient UI state. Non-deform
 controls never enter the live joint palette; Blender poses stay local.
 `tracking.py` owns the scene's persistent synchronization list, native UIList,
 add-selection and remove operators. Enabled object pointers drive capture and

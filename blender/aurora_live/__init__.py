@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 6, 0), "blender": (2, 93, 0),
+    "version": (0, 6, 1), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -259,7 +259,7 @@ class AURORA_OT_refresh(bpy.types.Operator):
 
 
 class AURORA_PT_live(bpy.types.Panel):
-    bl_label = "Aurora Live Mesh"
+    bl_label = "Aurora"
     bl_idname = "AURORA_PT_live"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -267,41 +267,77 @@ class AURORA_PT_live(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        prefs = context.scene.aurora_live
-        box = layout.box()
-        box.label(text="SL avatar starter", icon="ARMATURE_DATA")
-        box.prop(prefs, "starter_tshirt")
-        box.operator("aurora.create_sl_rig", icon="ADD").with_tshirt = prefs.starter_tshirt
-        if context.mode != "OBJECT":
-            box.label(text="Switch to Object Mode to create a rig.", icon="INFO")
-        row = layout.row()
-        row.enabled = _client is None
-        row.prop(prefs, "port")
-        layout.prop(prefs, "interval")
-        layout.prop(prefs, "forward")
-        box = layout.box()
-        box.label(text="Synchronized objects", icon="OUTLINER_OB_MESH")
-        box.operator("aurora.live_selection", icon="ADD")
-        if prefs.objects:
-            box.template_list("AURORA_UL_sync_objects", "", prefs, "objects", prefs, "object_index", rows=4, maxrows=8)
-            box.label(text=pgettext_iface("{enabled} / {total} enabled").format(
-                enabled=len(tracking.active(context.scene)), total=len(prefs.objects)), translate=False)
+        for values in (("LIVE", "RIG"), ("IK", "WEIGHTS")):
+            row = layout.row(align=True)
+            row.scale_y = 1.15
+            for value in values:
+                row.prop_enum(context.window_manager, "aurora_live_tab", value)
+        if tools_ui.tab(context) != "LIVE":
+            layout.label(text="Avatar rig", icon="ARMATURE_DATA")
+            layout.prop(context.scene.aurora_live, "rig", text="")
+        layout.separator(factor=0.5)
+        current = tools_ui.tab(context)
+        if current == "LIVE":
+            _draw_live(layout, context)
+            settings = tools_ui.foldout(layout, context.window_manager, "aurora_live_show_connection", "Connection settings")
+            if settings:
+                _draw_connection(settings, context)
+        elif current == "RIG":
+            tools_ui.draw_rig(layout, context)
+            starter_box = tools_ui.foldout(layout, context.window_manager, "aurora_live_show_starter", "Create an SL avatar")
+            if starter_box:
+                _draw_starter(starter_box, context)
+        elif current == "IK":
+            tools_ui.draw_ik(layout, context)
         else:
-            box.label(text="Add selected meshes to start syncing.")
-        if _client:
-            status, _supported = _client.state()
-            layout.label(text=pgettext_iface(status), translate=False)
-            layout.operator("aurora.live_disconnect", icon="UNLINKED")
-            layout.operator("aurora.live_refresh", icon="FILE_REFRESH")
-        else:
-            layout.operator("aurora.live_connect", icon="LINKED")
-        if _error:
-            box = layout.box()
-            box.alert = True
-            box.label(text=_error, icon="ERROR", translate=False)
-        layout.label(text="Enable Blender Live in Aurora first.")
-        layout.label(text="Local preview · no asset upload")
+            for title, draw in (("Automatic weights", tools_ui.draw_automatic),
+                                ("Weight transfer", tools_ui.draw_transfer), ("Weight cleanup", tools_ui.draw_clean)):
+                box = layout.box()
+                box.label(text=title)
+                draw(box, context)
 
+
+def _draw_live(layout, context):
+    prefs = context.scene.aurora_live
+    if _client:
+        status, _supported = _client.state()
+        layout.label(text=pgettext_iface(status), translate=False)
+        layout.operator("aurora.live_disconnect", icon="UNLINKED")
+        layout.operator("aurora.live_refresh", icon="FILE_REFRESH")
+    else:
+        layout.operator("aurora.live_connect", icon="LINKED")
+    layout.label(text="Synchronized objects", icon="OUTLINER_OB_MESH")
+    layout.operator("aurora.live_selection", icon="ADD")
+    if prefs.objects:
+        layout.template_list("AURORA_UL_sync_objects", "", prefs, "objects", prefs, "object_index", rows=4, maxrows=8)
+        layout.label(text=pgettext_iface("{enabled} / {total} enabled").format(
+            enabled=len(tracking.active(context.scene)), total=len(prefs.objects)), translate=False)
+    else:
+        layout.label(text="Add selected meshes to start syncing.")
+    if _error:
+        box = layout.box()
+        box.alert = True
+        box.label(text=_error, icon="ERROR", translate=False)
+    layout.label(text="Enable Blender Live in Aurora first.")
+    layout.label(text="Local preview · no asset upload")
+
+
+def _draw_connection(layout, context):
+    prefs = context.scene.aurora_live
+    row = layout.row()
+    row.enabled = _client is None
+    row.prop(prefs, "port")
+    layout.prop(prefs, "interval")
+    layout.prop(prefs, "forward")
+
+
+def _draw_starter(layout, context):
+    prefs = context.scene.aurora_live
+    layout.prop(prefs, "starter_tshirt")
+    layout.prop(prefs, "forward")
+    layout.operator("aurora.create_sl_rig", icon="ADD").with_tshirt = prefs.starter_tshirt
+    if context.mode != "OBJECT":
+        layout.label(text="Switch to Object Mode to create a rig.", icon="INFO")
 
 _classes = tracking.CLASSES + (AURORA_PG_live, AURORA_OT_starter, AURORA_OT_weights, AURORA_OT_connect,
                              AURORA_OT_disconnect, AURORA_OT_refresh, AURORA_PT_live) + tools_ui.CLASSES
@@ -337,6 +373,20 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
         "Les images de rugosité et de métal doivent partager la même transformation UV",
     "Add an active UV map to use live image textures": "Ajoutez une carte UV active pour utiliser les textures image live",
     "Avatar rig": "Squelette d’avatar", "Auto-weight bones": "Os à pondérer",
+    "Section": "Catégorie", "Live": "Live", "Skeleton": "Squelette", "Weights": "Poids",
+    "Connect and manage synchronized meshes": "Connexion et gestion des maillages synchronisés",
+    "Create an SL avatar and show or hide bone parts": "Création d’un avatar SL et affichage des parties du squelette",
+    "Control hands and feet with inverse kinematics": "Contrôle des mains et des pieds en cinématique inverse",
+    "Calculate, transfer and normalize mesh weights": "Calcul, transfert et normalisation des poids du maillage",
+    "Live preview": "Aperçu live", "Connection settings": "Réglages de connexion",
+    "Create an SL avatar": "Créer un avatar SL", "Bone visibility": "Visibilité des os",
+    "Create IK controls": "Créer les contrôles IK", "Hands": "Mains", "Feet": "Pieds",
+    "Left": "Gauche", "Right": "Droite", "Automatic weights": "Poids automatiques",
+    "Recalculate weights": "Recalculer les poids", "Weight transfer": "Transfert de poids",
+    "Transfer weights": "Transférer les poids", "Weight cleanup": "Nettoyage des poids",
+    "Normalize to 4 weights": "Normaliser à 4 poids",
+    "Select the target meshes.": "Sélectionnez les maillages cibles.",
+    "The source stays unchanged.": "Le donneur est préservé.",
     "SL body": "Corps SL", "All deform bones": "Tous les os de déformation",
     "Recalculate automatic weights": "Recalculer les poids automatiques",
     "Replace bone weights using Blender's automatic heat solver; Undo restores the previous rig":
@@ -439,6 +489,9 @@ def register():
     for cls in _classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.aurora_live = PointerProperty(type=AURORA_PG_live)
+    bpy.types.WindowManager.aurora_live_tab = EnumProperty(name="Section", items=tools_ui.TABS, default="LIVE", options={"SKIP_SAVE"})
+    bpy.types.WindowManager.aurora_live_show_connection = BoolProperty(default=False, options={"SKIP_SAVE"})
+    bpy.types.WindowManager.aurora_live_show_starter = BoolProperty(default=False, options={"SKIP_SAVE"})
     bpy.app.handlers.depsgraph_update_post.append(_changed)
     bpy.app.handlers.load_pre.append(_load_pre)
 
@@ -453,5 +506,8 @@ def unregister():
             handlers.remove(callback)
     if hasattr(bpy.types.Scene, "aurora_live"):
         del bpy.types.Scene.aurora_live
+    for name in ("aurora_live_tab", "aurora_live_show_connection", "aurora_live_show_starter"):
+        if hasattr(bpy.types.WindowManager, name):
+            delattr(bpy.types.WindowManager, name)
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)

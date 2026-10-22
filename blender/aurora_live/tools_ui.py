@@ -6,6 +6,23 @@ from . import rigging, skinning
 
 on_weights_changed = None
 
+TABS = (
+    ("LIVE", "Live", "Connect and manage synchronized meshes", "LINKED", 0),
+    ("RIG", "Skeleton", "Create an SL avatar and show or hide bone parts", "ARMATURE_DATA", 1),
+    ("IK", "IK", "Control hands and feet with inverse kinematics", "CON_KINEMATIC", 2),
+    ("WEIGHTS", "Weights", "Calculate, transfer and normalize mesh weights", "WPAINT_HLT", 3),
+)
+
+
+def tab(context):
+    return getattr(context.window_manager, "aurora_live_tab", "LIVE")
+
+
+def foldout(layout, manager, property_name, title):
+    opened = getattr(manager, property_name)
+    layout.prop(manager, property_name, text=title, icon="TRIA_DOWN" if opened else "TRIA_RIGHT", emboss=False)
+    return layout.box() if opened else None
+
 
 class AURORA_OT_bones(bpy.types.Operator):
     bl_idname = "aurora.bone_visibility"
@@ -98,82 +115,78 @@ class AURORA_OT_transfer(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class AURORA_PT_rig(bpy.types.Panel):
-    bl_label = "Skeleton / Bento / IK"
-    bl_idname = "AURORA_PT_rig"
-    bl_parent_id = "AURORA_PT_live"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Aurora"
+def draw_rig(layout, context):
+    try:
+        rig = rigging.resolve(context)
+    except ValueError:
+        layout.label(text="Choose an avatar rig first", icon="INFO")
+        return
+    row = layout.row(align=True)
+    row.prop(rig, "show_in_front", text="In front")
+    row.prop(rig.data, "show_names", text="Names")
+    layout.prop(rig.data, "pose_position", expand=True)
+    row = layout.row(align=True)
+    for enabled, label in ((True, "Show all"), (False, "Hide all")):
+        op = row.operator("aurora.bone_visibility", text=label)
+        op.part, op.visible = "ALL", enabled
+    for key, label in rigging.PARTS:
+        count = sum(rigging.part(bone) == key for bone in rigging.bones(rig))
+        if not count:
+            continue
+        enabled = rigging.part_visible(rig, key)
+        op = layout.operator("aurora.bone_visibility", text=tr(label) + " (" + str(count) + ")",
+                          translate=False, icon="HIDE_OFF" if enabled else "HIDE_ON", depress=enabled)
+        op.part, op.visible = key, not enabled
 
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(context.scene.aurora_live, "rig")
-        try:
-            rig = rigging.resolve(context)
-        except ValueError:
-            layout.label(text="Choose an avatar rig first", icon="INFO")
-            return
-        row = layout.row(align=True)
-        row.prop(rig, "show_in_front", text="In front")
-        row.prop(rig.data, "show_names", text="Names")
-        layout.prop(rig.data, "pose_position", expand=True)
-        box = layout.box()
-        box.label(text="Visible parts")
-        row = box.row(align=True)
-        for enabled, label in ((True, "Show all"), (False, "Hide all")):
-            op = row.operator("aurora.bone_visibility", text=label)
-            op.part, op.visible = "ALL", enabled
-        for key, label in rigging.PARTS:
-            count = sum(rigging.part(bone) == key for bone in rigging.bones(rig))
-            if not count:
-                continue
-            enabled = rigging.part_visible(rig, key)
-            op = box.operator("aurora.bone_visibility", text=tr(label) + " (" + str(count) + ")",
-                              translate=False, icon="HIDE_OFF" if enabled else "HIDE_ON", depress=enabled)
-            op.part, op.visible = key, not enabled
-        box = layout.box()
-        box.label(text="Hand / foot IK", icon="CON_KINEMATIC")
-        if not rigging.ready(rig):
-            box.operator("aurora.create_ik")
-        else:
-            for key, (label, *_names) in rigging.LIMBS.items():
+
+def draw_ik(layout, context):
+    try:
+        rig = rigging.resolve(context)
+    except ValueError:
+        layout.label(text="Choose an avatar rig first", icon="INFO")
+        return
+    if not rigging.ready(rig):
+        layout.operator("aurora.create_ik", text="Create IK controls", icon="ADD")
+    else:
+        for prefix, label in (("HAND", "Hands"), ("FOOT", "Feet")):
+            box = layout.box()
+            box.label(text=label)
+            for side, label in (("L", "Left"), ("R", "Right")):
+                key = prefix + "_" + side
                 enabled = rigging.constraint(rig, key).influence > 0.5
-                split = box.split(factor=0.60, align=True)
+                split = box.split(factor=0.50, align=True)
                 op = split.operator("aurora.switch_ik", text=label, depress=enabled,
-                                  icon="CHECKBOX_HLT" if enabled else "CHECKBOX_DEHLT")
+                                    icon="CHECKBOX_HLT" if enabled else "CHECKBOX_DEHLT")
                 op.limb, op.enabled = key, not enabled
                 row = split.row(align=True)
                 for pole, text in ((False, "Target"), (True, "Pole")):
                     op = row.operator("aurora.select_ik", text=text)
                     op.limb, op.pole = key, pole
-        box.label(text="IK poses stay in Blender.", icon="INFO")
-        box.label(text="Aurora animates the rest mesh.")
+    layout.label(text="IK poses stay in Blender.", icon="INFO")
+    layout.label(text="Aurora animates the rest mesh.")
 
 
-class AURORA_PT_skin(bpy.types.Panel):
-    bl_label = "Weights / transfer"
-    bl_idname = "AURORA_PT_skin"
-    bl_parent_id = "AURORA_PT_live"
-    bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Aurora"
-
-    def draw(self, context):
-        layout = self.layout
-        prefs = context.scene.aurora_live
-        layout.prop(prefs, "weight_scope")
-        layout.operator("aurora.auto_weights", icon="MOD_ARMATURE")
-        box = layout.box()
-        box.label(text="Weight source")
-        box.prop(prefs, "weight_source", text="")
-        box.prop(prefs, "transfer_method")
-        box.label(text="Max distance (0 = unlimited)")
-        box.prop(prefs, "transfer_distance", text="")
-        box.operator("aurora.transfer_weights", icon="MOD_DATA_TRANSFER")
-        box.label(text="Select target meshes; the source stays unchanged.")
-        layout.operator("aurora.transfer_weights", text="Normalize / limit to four weights", icon="BRUSH_DATA").clean = True
+def draw_automatic(layout, context):
+    prefs = context.scene.aurora_live
+    layout.prop(prefs, "weight_scope", text="")
+    layout.operator("aurora.auto_weights", text="Recalculate weights", icon="MOD_ARMATURE")
 
 
-CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_switch, AURORA_OT_ik_select,
-           AURORA_OT_transfer, AURORA_PT_rig, AURORA_PT_skin)
+def draw_transfer(layout, context):
+    prefs = context.scene.aurora_live
+    layout.label(text="Weight source")
+    layout.prop(prefs, "weight_source", text="")
+    layout.label(text="Weight mapping")
+    layout.prop(prefs, "transfer_method", text="")
+    layout.label(text="Max distance (0 = unlimited)")
+    layout.prop(prefs, "transfer_distance", text="")
+    layout.operator("aurora.transfer_weights", text="Transfer weights", icon="MOD_DATA_TRANSFER")
+    layout.label(text="Select the target meshes.", icon="INFO")
+    layout.label(text="The source stays unchanged.")
+
+
+def draw_clean(layout, context):
+    layout.operator("aurora.transfer_weights", text="Normalize to 4 weights", icon="BRUSH_DATA").clean = True
+
+
+CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_switch, AURORA_OT_ik_select, AURORA_OT_transfer)
