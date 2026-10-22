@@ -857,7 +857,11 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
         aurora_i18n::tr!("ui-context-buy-this-land"),
         CtxAction::BuyLand(point),
     );
-    ui.item("ticket-filled", aurora_i18n::tr!("ui-context-buy-access"), CtxAction::BuyPass(point));
+    ui.item(
+        "ticket-filled",
+        aurora_i18n::tr!("ui-context-buy-access"),
+        CtxAction::BuyPass(point),
+    );
     ui.separator();
     ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);
     ui.item("mountain-filled", aurora_i18n::tr!("ui-context-edit-land"), CtxAction::EditTerrain);

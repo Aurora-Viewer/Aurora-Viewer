@@ -928,7 +928,11 @@ mod tests {
         // owner
         let v = view(leased(me), me, Vec::new());
         assert!(can_change_picture(&v));
-        assert_eq!(pass_refusal(v.parcel.as_deref().unwrap(), me, false), Some(NoPass::Own), "no pass for one's own land");
+        assert_eq!(
+            pass_refusal(v.parcel.as_deref().unwrap(), me, false),
+            Some(NoPass::Own),
+            "no pass for one's own land"
+        );
         // officer of the owning group with GP_LAND_CHANGE_IDENTITY
         let v = view(leased(group), me, vec![member(powers::LAND_CHANGE_IDENTITY)]);
         assert!(can_change_picture(&v));
