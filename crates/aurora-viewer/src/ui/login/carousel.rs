@@ -47,30 +47,22 @@ fn snapshot(ctx: &Context, layer: LayerId, rect: Rect, action: Rect) -> derez::S
 
 /// The card's grid and start menus; `slurl` is the login screen's start
 /// SLURL, shown by every card's start menu.
-pub(super) fn controls(ui: &mut egui::Ui, account: &mut Account, slurl: &mut Option<crate::slurl::Location>) -> bool {
+pub(super) fn controls(
+    ui: &mut egui::Ui,
+    account: &mut Account,
+    slurl: &mut Option<crate::slurl::Location>,
+    grids: &[crate::grids::Grid],
+) -> bool {
     let previous = (account.uri.clone(), account.start_location.clone(), account.start_region.clone());
-    let mut grid = crate::login_accounts::grid(&account.uri);
     let label_size = Vec2::new(
         (ui.text_style_height(&egui::TextStyle::Body) * 3.2).max(44.0),
         ui.spacing().interact_size.y.max(24.0),
     );
     ui.horizontal(|ui| {
         ui.add_sized(label_size, egui::Label::new(aurora_i18n::tr!("ui-login-grid")));
-        egui::ComboBox::from_id_salt("accounts_grid")
-            .width(ui.available_width())
-            .truncate()
-            .selected_text(match grid {
-                GridChoice::SecondLife => "Second Life",
-                GridChoice::SecondLifeBeta => "Aditi",
-                GridChoice::Custom => aurora_i18n::tr!("ui-login-other-grid"),
-            })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut grid, GridChoice::SecondLife, "Second Life");
-                ui.selectable_value(&mut grid, GridChoice::SecondLifeBeta, "Aditi");
-                ui.selectable_value(&mut grid, GridChoice::Custom, aurora_i18n::tr!("ui-login-other-grid"));
-            });
+        crate::ui::grids::selector(ui, grids, &mut account.uri);
     });
-    match grid {
+    match crate::login_accounts::grid(&account.uri) {
         GridChoice::SecondLife => account.uri = aurora_net::login::SL_MAIN_GRID.into(),
         GridChoice::SecondLifeBeta => account.uri = aurora_net::login::SL_BETA_GRID.into(),
         GridChoice::Custom => {
@@ -458,7 +450,7 @@ pub fn show(
                                                         inner_width,
                                                     ));
                                                     ui.add_space(6.0);
-                                                    if controls(ui, &mut account, &mut form.start_slurl) {
+                                                    if controls(ui, &mut account, &mut form.start_slurl, &settings.grids) {
                                                         edited = Some((index, previous, account.clone()));
                                                     }
                                                     ui.add_space(8.0);
@@ -939,7 +931,7 @@ mod tests {
                         // Larger text exercises the same overflow as a longer
                         // translation, without changing the process-wide locale.
                         ui.style_mut().text_styles.get_mut(&egui::TextStyle::Button).unwrap().size = 24.0;
-                        controls(ui, &mut account, &mut None);
+                        controls(ui, &mut account, &mut None, &[]);
                         width = ui.min_rect().width();
                     });
                 },

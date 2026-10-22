@@ -479,7 +479,7 @@ fn place_link(
     place: crate::slurl::PlaceLink,
     size: f32,
 ) {
-    if super::widgets::region_badge(ui, p, ratings, &place.location.region, size).is_some() {
+    if place.location.grid.is_none() && super::widgets::region_badge(ui, p, ratings, &place.location.region, size).is_some() {
         ui.add_space(3.0);
     }
     let k = super::colors::get();
@@ -505,9 +505,9 @@ fn place_link(
         super::context::request(
             ui.ctx(),
             if place.teleport {
-                CtxAction::TeleportToPlace(l.region, l.pos)
+                CtxAction::TeleportToPlace(l.target(), l.pos)
             } else {
-                CtxAction::ShowPlaceInfo(l.region, l.pos)
+                CtxAction::ShowPlaceInfo(l.target(), l.pos)
             },
         );
     }
@@ -728,7 +728,9 @@ fn line_job(
         };
         let badge = match &link {
             Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
-            Some(Link::Place(_, place)) => world.map.ratings.get(&place.location.region).map(LinkBadge::Rating),
+            Some(Link::Place(_, place)) if place.location.grid.is_none() => {
+                world.map.ratings.get(&place.location.region).map(LinkBadge::Rating)
+            }
             _ => None,
         };
         if let Some(badge) = badge {
@@ -954,7 +956,9 @@ fn segments(text: &str) -> Vec<Seg<'_>> {
 /// (indra/llui/llurlregistry.cpp): the one that starts first, so the `[` of
 /// a link with its own text wins over the address inside it.
 fn next_link(text: &str) -> Option<(usize, usize, Seg<'_>)> {
-    let schemes = ["https://", "http://", "secondlife://"].iter().filter_map(|p| text.find(p));
+    let schemes = ["https://", "http://", "secondlife://", "hop://", "x-grid-location-info://"]
+        .iter()
+        .filter_map(|p| text.find(p));
     let bare = schemes.chain(web_start(text)).min();
     let labelled = text
         .match_indices('[')
@@ -1031,7 +1035,7 @@ fn web_start(text: &str) -> Option<usize> {
 /// destination.
 fn labelled(text: &str) -> Option<(usize, Seg<'_>)> {
     let body = text.strip_prefix('[')?;
-    let known = ["https://", "http://", "secondlife://"]
+    let known = ["https://", "http://", "secondlife://", "hop://", "x-grid-location-info://"]
         .iter()
         .any(|s| body.get(..s.len()).is_some_and(|p| p.eq_ignore_ascii_case(s)));
     let url_end = body.find(char::is_whitespace)?;
@@ -1081,7 +1085,10 @@ fn link_seg(link: &str) -> Seg<'_> {
         Seg::Place(link, place)
     } else if let Some(app) = crate::slapp::parse(link) {
         Seg::App(link, app)
-    } else if link.starts_with("secondlife://") {
+    } else if ["secondlife://", "hop://", "x-grid-location-info://"]
+        .iter()
+        .any(|prefix| link.starts_with(prefix))
+    {
         Seg::Slurl(link)
     } else {
         Seg::Url(link)
@@ -1144,7 +1151,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
         let l = &place.location;
         let teleport = |ui: &mut egui::Ui| {
             if super::menu::item(ui, p, "location-filled", aurora_i18n::tr!("ui-chat-teleport-to-this-location")) {
-                super::context::request(ui.ctx(), CtxAction::TeleportToPlace(l.region.clone(), l.pos));
+                super::context::request(ui.ctx(), CtxAction::TeleportToPlace(l.target(), l.pos));
             }
         };
         let map_label = if place.teleport {
@@ -1154,7 +1161,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
         };
         let map = |ui: &mut egui::Ui| {
             if super::menu::item(ui, p, "map", map_label) {
-                super::context::request(ui.ctx(), CtxAction::ShowPlace(l.region.clone(), l.pos));
+                super::context::request(ui.ctx(), CtxAction::ShowPlace(l.target(), l.pos));
             }
         };
         if place.teleport {
@@ -1168,7 +1175,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
                 "info-circle-filled",
                 aurora_i18n::tr!("ui-chat-show-information-about-this-place"),
             ) {
-                super::context::request(ui.ctx(), CtxAction::ShowPlaceInfo(l.region.clone(), l.pos));
+                super::context::request(ui.ctx(), CtxAction::ShowPlaceInfo(l.target(), l.pos));
             }
             super::menu::separator(ui, p);
             map(ui);
@@ -2913,7 +2920,9 @@ fn line_extras(
         }
     }
     for (_, link) in &line_links {
-        if let Link::Place(_, place) = link {
+        if let Link::Place(_, place) = link
+            && place.location.grid.is_none()
+        {
             super::widgets::region_rating(ui.ctx(), &world.map.ratings, &place.location.region);
         }
     }
@@ -3085,9 +3094,9 @@ fn bubble_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize, rect: 
                         super::context::request(
                             ui.ctx(),
                             if place.teleport {
-                                CtxAction::TeleportToPlace(l.region.clone(), l.pos)
+                                CtxAction::TeleportToPlace(l.target(), l.pos)
                             } else {
-                                CtxAction::ShowPlaceInfo(l.region.clone(), l.pos)
+                                CtxAction::ShowPlaceInfo(l.target(), l.pos)
                             },
                         );
                     }
@@ -3237,6 +3246,31 @@ mod tests {
         assert_eq!(super::super::widgets::take_wanted_regions(&ctx), vec!["Pinède".to_owned()]);
         // taken: nothing left until the next frame draws them again
         assert!(super::super::widgets::take_wanted_regions(&ctx).is_empty());
+    }
+
+    #[test]
+    fn hypergrid_links_are_native_places_in_chat_and_labelled_text() {
+        for text in [
+            "See hop://grid.example:8002/Region/12/34/56 here",
+            "See [x-grid-location-info://grid.example:8002/region/Region/12/34/56 My place] here",
+        ] {
+            let parts = segments(text);
+            let place = parts
+                .iter()
+                .find_map(|part| match part {
+                    Seg::Place(_, place) => Some(place),
+                    _ => None,
+                })
+                .expect("native place");
+            assert_eq!(place.location.grid.as_deref(), Some("grid.example:8002"));
+            assert_eq!(place.location.region, "Region");
+            assert_eq!(place.location.pos, glam::Vec3::new(12.0, 34.0, 56.0));
+            assert_eq!(place.location.target(), "hop://grid.example:8002/Region");
+            assert!(
+                !parts.iter().any(|part| matches!(part, Seg::Url(_))),
+                "no external browser dispatch"
+            );
+        }
     }
 
     #[test]

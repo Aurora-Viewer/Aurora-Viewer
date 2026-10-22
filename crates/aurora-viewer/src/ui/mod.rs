@@ -36,6 +36,7 @@ pub mod find_shortcut;
 pub mod fonts;
 pub mod friend_prompt;
 pub mod gestures;
+pub mod grids;
 pub mod group_profile;
 pub mod hover_height;
 pub mod hover_tips;

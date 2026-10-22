@@ -51,6 +51,18 @@ pub(super) fn apply_grid(settings: &mut Settings) {
             settings.grid = crate::settings::GridChoice::Custom;
             settings.custom_login_uri = uri.clone();
         }
+        Some(crate::cli::Grid::Named(name)) => {
+            if let Some(grid) = settings
+                .grids
+                .iter()
+                .find(|grid| grid.name.eq_ignore_ascii_case(name) || grid.nickname.eq_ignore_ascii_case(name))
+            {
+                settings.custom_login_uri = grid.login.clone();
+                settings.grid = crate::settings::GridChoice::Custom;
+            } else {
+                eprintln!("{}", aurora_i18n::tr!("cli-unknown-grid", grid = name.clone()));
+            }
+        }
         None => {}
     }
 }
@@ -88,6 +100,17 @@ impl App {
         match request {
             Request::Place(location) if matches!(self.screen, Screen::Login) && !self.login_form.busy => {
                 log::info!("startup links: login start location set");
+                if let Some(authority) = &location.grid {
+                    let grid = self.settings.grids.iter().find(|grid| {
+                        crate::grids::authority(&grid.service).as_ref() == Some(authority)
+                            || crate::grids::authority(&grid.login).as_ref() == Some(authority)
+                            || crate::grids::authority(&grid.gatekeeper).as_ref() == Some(authority)
+                    });
+                    self.settings.custom_login_uri = grid
+                        .map(|grid| grid.login.clone())
+                        .unwrap_or_else(|| format!("http://{authority}/"));
+                    self.settings.grid = crate::settings::GridChoice::Custom;
+                }
                 self.login_form.start_slurl = Some(location);
             }
             request if matches!(self.screen, Screen::World) => self.run_external(request),
@@ -103,7 +126,7 @@ impl App {
         match request {
             Request::Place(l) => {
                 log::info!("startup links: place details");
-                self.on_ctx_action(CtxAction::ShowPlaceInfo(l.region, l.pos));
+                self.on_ctx_action(CtxAction::ShowPlaceInfo(l.target(), l.pos));
             }
             Request::Profile(_) | Request::App(_) => {
                 if self.external.throttle.allow(Instant::now()) {

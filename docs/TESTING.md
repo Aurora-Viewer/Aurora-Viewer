@@ -2713,6 +2713,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
+| `AURORA_DEMO_GRIDS=1` | Opens the grid manager with synthetic metadata |
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
@@ -2898,6 +2899,12 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   The native demo simulator must confirm the stand before the ground sit.
   At frame 810 its log reports `ground_sit=true, object_seated=false`;
   capture after frame 850 to inspect the final ground-sitting pose.
+- **`AURORA_DEMO_GRIDS=1`** opens the grid manager with synthetic metadata
+  without contacting a grid. Inspect the list and scroll through the
+  login/gatekeeper/web fields; add, edit and remove entries. Saved grids
+  appear in both login layouts and account editors. Outside demo, catalogue
+  editing requires logout. Human validation covers real login, the grid's
+  search/welcome/help pages, same-grid hops and cross-grid Hypergrid travel.
 
 - **`AURORA_DEMO_PERF`**: `compact` opens the compact view (frame rate and
   its graph); `full` the resource monitor on its overview; `network` the

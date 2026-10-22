@@ -14,6 +14,16 @@ use glam::Vec3;
 pub struct Location {
     pub region: String,
     pub pos: Vec3,
+    /// Explicit grid authority of a hop / x-grid-location-info link.
+    pub grid: Option<String>,
+}
+
+impl Location {
+    pub fn target(&self) -> String {
+        self.grid
+            .as_ref()
+            .map_or_else(|| self.region.clone(), |grid| crate::grids::target(grid, &self.region))
+    }
 }
 
 /// `http://maps.secondlife.com/secondlife/Region%20Name/x/y/z`.
@@ -27,7 +37,7 @@ pub fn make(region: &str, pos: Vec3) -> String {
     )
 }
 
-fn encode(s: &str) -> String {
+pub fn encode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
@@ -85,6 +95,9 @@ pub fn parse(input: &str) -> Option<Location> {
         return None;
     }
     let lower = s.to_lowercase();
+    if lower.starts_with("hop://") || lower.starts_with("x-grid-location-info://") {
+        return parse_hypergrid(s);
+    }
     // strip the known URL prefixes down to "Region/x/y/z"
     let mut rest: Option<&str> = None;
     for prefix in [
@@ -114,7 +127,7 @@ pub fn parse(input: &str) -> Option<Location> {
             return None;
         }
         let pos = coords(&parts[1..parts.len().min(4)]).unwrap_or(Vec3::new(128.0, 128.0, 0.0));
-        return Some(Location { region, pos });
+        return Some(Location { region, pos, grid: None });
     }
     // "Region (x, y, z)" as shown in the bar (optionally "Parcel, Region (...) - Maturity")
     if let (Some(open), Some(close)) = (s.rfind('('), s.rfind(')'))
@@ -128,6 +141,7 @@ pub fn parse(input: &str) -> Option<Location> {
                 return Some(Location {
                     region: region.to_owned(),
                     pos,
+                    grid: None,
                 });
             }
         }
@@ -138,7 +152,7 @@ pub fn parse(input: &str) -> Option<Location> {
         if let Some(pos) = coords(&parts[1..parts.len().min(4)]) {
             let region = decode(parts[0]).trim().to_owned();
             if !region.is_empty() {
-                return Some(Location { region, pos });
+                return Some(Location { region, pos, grid: None });
             }
         }
     }
@@ -150,12 +164,55 @@ pub fn parse(input: &str) -> Option<Location> {
         return Some(Location {
             region: parts[0].trim().to_owned(),
             pos,
+            grid: None,
         });
     }
     // bare region name: its center, on the ground
     Some(Location {
         region: s.to_owned(),
         pos: Vec3::new(128.0, 128.0, 0.0),
+        grid: None,
+    })
+}
+
+/// LLSLURL's OpenSim schemes. Keep the authority separate until the app
+/// resolves it against the current grid and its known gatekeepers.
+pub fn parse_hypergrid(input: &str) -> Option<Location> {
+    let url = reqwest::Url::parse(input.trim()).ok()?;
+    if !matches!(url.scheme(), "hop" | "x-grid-location-info") || !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
+    let host = url.host_str()?;
+    let address = match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    };
+    let grid = crate::grids::authority(&address)?;
+    let path = url.path().trim_matches('/');
+    let path = if url.scheme() == "x-grid-location-info" {
+        path.strip_prefix("region/")
+            .or_else(|| path.strip_prefix("secondlife/"))
+            .unwrap_or(path)
+    } else {
+        path
+    };
+    let parts: Vec<_> = path.split('/').collect();
+    if parts.len() > 4 {
+        return None;
+    }
+    let decoded = decode(&parts.first()?.replace('+', "%2B"));
+    if decoded.chars().any(char::is_control) {
+        return None;
+    }
+    let region = decoded.trim().to_owned();
+    if region.is_empty() || region.contains(['/', '\\']) || region.chars().any(char::is_control) {
+        return None;
+    }
+    let pos = coords(&parts[1..])?;
+    Some(Location {
+        region,
+        pos,
+        grid: Some(grid),
     })
 }
 
@@ -177,6 +234,22 @@ pub struct PlaceLink {
 /// (`secondlife:///app/teleport/...`), indra/llui/llurlentry.cpp.
 pub fn place_link(url: &str) -> Option<PlaceLink> {
     let lower = url.to_ascii_lowercase();
+    if lower.starts_with("hop://") || lower.starts_with("x-grid-location-info://") {
+        let location = parse_hypergrid(url)?;
+        let label = format!(
+            "{} ({:.0},{:.0},{:.0}) — {}",
+            location.region,
+            location.pos.x,
+            location.pos.y,
+            location.pos.z,
+            location.grid.as_deref().unwrap_or_default()
+        );
+        return Some(PlaceLink {
+            location,
+            label,
+            teleport: false,
+        });
+    }
     let after = |prefix: &str| lower.starts_with(prefix).then(|| &url[prefix.len()..]);
     // (rest, teleport link, minimum number of coordinates)
     let (rest, teleport, min) = if let Some(r) = [
@@ -216,6 +289,7 @@ pub fn place_link(url: &str) -> Option<PlaceLink> {
         location: Location {
             region,
             pos: coords(nums).unwrap_or(Vec3::new(128.0, 128.0, 0.0)),
+            grid: None,
         },
         label,
         teleport,
@@ -225,6 +299,35 @@ pub fn place_link(url: &str) -> Option<PlaceLink> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hypergrid_links_keep_the_grid_in_every_target() {
+        for scheme in ["hop", "x-grid-location-info"] {
+            let url = format!("{scheme}://grid.example:8002/Aurora%20D%C3%A9mo/12/34/56");
+            let location = parse(&url).expect("Hypergrid location");
+            assert_eq!(location.region, "Aurora Démo");
+            assert_eq!(location.grid.as_deref(), Some("grid.example:8002"));
+            assert_eq!(location.pos, Vec3::new(12.0, 34.0, 56.0));
+            let target = parse_hypergrid(&location.target()).expect("context target");
+            assert_eq!(target.region, location.region);
+            assert_eq!(target.grid, location.grid);
+            let place = place_link(&url).expect("clickable place");
+            assert!(place.label.contains("grid.example:8002"));
+            assert!(!place.teleport);
+        }
+        assert_eq!(parse_hypergrid("hop://grid.example/A+B").expect("plus is literal").region, "A+B");
+        assert!(parse_hypergrid("hop://[::1]:9000/Test/1/2/3").is_some());
+        for invalid in [
+            "hop:///Region",
+            "hop://user:secret@grid.example/Region",
+            "hop://grid.example/Region/NaN/1/2",
+            "hop://grid.example/Region/1/2/3/4",
+            "hop://grid.example/%0ARegion",
+            "hop://grid.example/%2FRegion",
+        ] {
+            assert!(parse_hypergrid(invalid).is_none(), "{invalid}");
+        }
+    }
 
     #[test]
     fn place_links() {

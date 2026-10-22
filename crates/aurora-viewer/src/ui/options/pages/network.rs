@@ -11,6 +11,14 @@ use egui::{RichText, Vec2};
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
+    cx.group(tr!("grids-list"), |cx| {
+        cx.row(tr!("grids-manage"), tr!("grids-description"), &Nothing, |ui, _| {
+            if ui.button(tr!("grids-manage")).clicked() {
+                crate::ui::grids::request_open(ui.ctx());
+            }
+            false
+        });
+    });
     cx.group(tr!("ui-options-network"), |cx| {
         // (the step of the Legacy Viewer's slider, panel_preferences_setup.xml,
         // which stops at 3,000; ours goes up to what asks the most)

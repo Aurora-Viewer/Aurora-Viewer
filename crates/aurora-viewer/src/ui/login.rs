@@ -581,22 +581,12 @@ pub fn show(
                     // grid and start location side by side
                     ui.columns(2, |cols| {
                         caption(&mut cols[0], p, aurora_i18n::tr!("ui-login-grid"));
-                        egui::ComboBox::from_id_salt("grid")
-                            .width(cols[0].available_width())
-                            .selected_text(match settings.grid {
-                                GridChoice::SecondLife => "Second Life",
-                                GridChoice::SecondLifeBeta => aurora_i18n::tr!("ui-login-aditi-beta"),
-                                GridChoice::Custom => aurora_i18n::tr!("ui-login-other-grid"),
-                            })
-                            .show_ui(&mut cols[0], |ui| {
-                                ui.selectable_value(&mut settings.grid, GridChoice::SecondLife, "Second Life");
-                                ui.selectable_value(
-                                    &mut settings.grid,
-                                    GridChoice::SecondLifeBeta,
-                                    aurora_i18n::tr!("status-second-life-beta-aditi"),
-                                );
-                                ui.selectable_value(&mut settings.grid, GridChoice::Custom, aurora_i18n::tr!("ui-login-other-grid"));
-                            });
+                        let mut uri = settings.login_uri();
+                        super::grids::selector(&mut cols[0], &settings.grids, &mut uri);
+                        settings.grid = crate::login_accounts::grid(&uri);
+                        if settings.grid == GridChoice::Custom && !uri.is_empty() {
+                            settings.custom_login_uri = uri;
+                        }
                         caption(&mut cols[1], p, aurora_i18n::tr!("ui-login-start"));
                         let width = cols[1].available_width();
                         start_menu(

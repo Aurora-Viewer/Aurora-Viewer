@@ -223,7 +223,7 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
                 if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map"), place.is_some())
                     && let Some(l) = &place
                 {
-                    request(&ctx, CtxAction::ShowPlace(l.location.region.clone(), l.location.pos));
+                    request(&ctx, CtxAction::ShowPlace(l.location.target(), l.location.pos));
                 }
                 if menu::item_if(
                     ui,
@@ -233,7 +233,7 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
                     place.is_some(),
                 ) && let Some(l) = place
                 {
-                    request(&ctx, CtxAction::TeleportToPlace(l.location.region, l.location.pos));
+                    request(&ctx, CtxAction::TeleportToPlace(l.location.target(), l.location.pos));
                 }
                 copy_label(ui, aurora_i18n::tr!("ui-chat-applink-copy-object-name"));
             }

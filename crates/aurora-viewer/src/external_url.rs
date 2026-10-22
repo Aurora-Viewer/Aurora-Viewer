@@ -75,6 +75,8 @@ pub fn classify(url: &str) -> Request {
     }
     let place = [
         "secondlife://",
+        "hop://",
+        "x-grid-location-info://",
         "http://maps.secondlife.com/secondlife/",
         "https://maps.secondlife.com/secondlife/",
         "http://slurl.com/secondlife/",
@@ -128,6 +130,17 @@ mod tests {
         match classify(url) {
             Request::Place(l) => (l.region, [l.pos.x as i32, l.pos.y as i32, l.pos.z as i32]),
             other => panic!("{url}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hypergrid_external_link_opens_details_without_teleporting() {
+        for scheme in ["hop", "x-grid-location-info"] {
+            let Request::Place(location) = classify(&format!("{scheme}://grid.example:8002/Region/12/34/56")) else {
+                panic!("place");
+            };
+            assert_eq!(location.grid.as_deref(), Some("grid.example:8002"));
+            assert_eq!(location.pos, Vec3::new(12.0, 34.0, 56.0));
         }
     }
 
@@ -197,6 +210,7 @@ mod tests {
     #[test]
     fn label() {
         let l = Location {
+            grid: None,
             region: "Ahern".into(),
             pos: Vec3::new(12.4, 34.6, 56.0),
         };

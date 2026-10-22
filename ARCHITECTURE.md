@@ -248,8 +248,16 @@ better, but the engine is designed for Vulkan and the modern GPU, without
 taking over the techniques inherited from OpenGL (see
 [AGENTS.md](AGENTS.md#2-reference-behaviour-firestorm)).
 
-**Out of scope for now:** OpenSim grids, support for platforms other than
-Windows for the releases (the code stays portable).
+Grid management and Hypergrid navigation are implemented in `grids.rs` and
+`ui/grids.rs` (#659). The saved catalogue contains discovery/login services,
+gatekeepers and grid web pages; explicit `get_grid_info` requests run on the
+network runtime with bounded responses. `slurl::Location` keeps a link's grid
+until the app resolves it into the current simulator's `gatekeeper:region`
+map-name request. Built-in SL grids reject Hypergrid destinations. OpenSim
+grid validation is still pending; this does not imply full OpenSim parity.
+
+**Out of scope for now:** support for platforms other than Windows for the
+releases (the code stays portable).
 
 The build mesh inspector (`build/ui/mesh.rs`) reads the actual cached LOD
 geometry through `scene/mesh_inspection.rs`. It retains only the inspected

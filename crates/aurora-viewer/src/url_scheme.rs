@@ -31,7 +31,7 @@ mod win {
         RegSetKeyValueW,
     };
 
-    const USER_CLASS: &str = r"Software\Classes\secondlife";
+    const SCHEMES: [&str; 3] = ["secondlife", "hop", "x-grid-location-info"];
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -120,9 +120,9 @@ mod win {
         }
     }
 
-    pub fn handler() -> Handler {
+    fn handler_for(scheme: &str) -> Handler {
         // the merged view: the user's class, else the machine's
-        let Some(exe) = read(HKEY_CLASSES_ROOT, r"secondlife\shell\open\command", None).and_then(|c| command_exe(&c)) else {
+        let Some(exe) = read(HKEY_CLASSES_ROOT, &format!(r"{scheme}\shell\open\command"), None).and_then(|c| command_exe(&c)) else {
             return Handler::None;
         };
         match std::env::current_exe() {
@@ -134,54 +134,77 @@ mod win {
         }
     }
 
+    pub fn handler() -> Handler {
+        SCHEMES
+            .iter()
+            .map(|scheme| handler_for(scheme))
+            .find(|handler| *handler != Handler::This)
+            .unwrap_or(Handler::This)
+    }
+
     pub fn register() -> Result<(), String> {
+        for scheme in SCHEMES {
+            register_scheme(scheme)?;
+        }
+        Ok(())
+    }
+
+    fn register_scheme(scheme: &str) -> Result<(), String> {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let exe = exe.display().to_string();
-        write(USER_CLASS, None, "URL:Second Life")?;
-        write(USER_CLASS, Some("URL Protocol"), "")?;
-        write(&format!(r"{USER_CLASS}\DefaultIcon"), None, &format!("\"{exe}\",0"))?;
-        write(&format!(r"{USER_CLASS}\shell\open"), Some("FriendlyAppName"), "Aurora Viewer")?;
-        write(
-            &format!(r"{USER_CLASS}\shell\open\command"),
-            None,
-            &format!("\"{exe}\" -url \"%1\""),
-        )?;
-        log::info!("secondlife links: registered for this user");
+        let class = format!(r"Software\Classes\{scheme}");
+        write(&class, None, "URL:Virtual World")?;
+        write(&class, Some("URL Protocol"), "")?;
+        write(&format!(r"{class}\DefaultIcon"), None, &format!("\"{exe}\",0"))?;
+        write(&format!(r"{class}\shell\open"), Some("FriendlyAppName"), "Aurora Viewer")?;
+        write(&format!(r"{class}\shell\open\command"), None, &format!("\"{exe}\" -url \"%1\""))?;
+        log::info!("{scheme} links: registered for this user");
         Ok(())
     }
 
     /// Removes the user's class when it is this viewer's: a machine-wide
     /// handler (an installed viewer) takes the links again.
     pub fn unregister() -> Result<(), String> {
-        let ours = read(HKEY_CURRENT_USER, &format!(r"{USER_CLASS}\shell\open\command"), None)
+        for scheme in SCHEMES {
+            unregister_scheme(scheme)?;
+        }
+        Ok(())
+    }
+
+    fn unregister_scheme(scheme: &str) -> Result<(), String> {
+        let class = format!(r"Software\Classes\{scheme}");
+        let ours = read(HKEY_CURRENT_USER, &format!(r"{class}\shell\open\command"), None)
             .and_then(|c| command_exe(&c))
             .zip(std::env::current_exe().ok())
             .is_some_and(|(exe, this)| same_file(&exe, &this));
         if !ours {
             return Ok(());
         }
-        let key = wide(USER_CLASS);
+        let key = wide(&class);
         // SAFETY: a NUL-terminated string alive for the call.
         let status = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, key.as_ptr()) };
         if status == ERROR_SUCCESS {
-            log::info!("secondlife links: unregistered");
+            log::info!("{scheme} links: unregistered");
             Ok(())
         } else {
-            Err(format!("{USER_CLASS}: error {status}"))
+            Err(format!("{class}: error {status}"))
         }
     }
 
     /// A user class left pointing at an Aurora executable that no longer
     /// exists (the folder moved) is pointed at this one.
     pub fn repair() {
-        let Some(exe) = read(HKEY_CURRENT_USER, &format!(r"{USER_CLASS}\shell\open\command"), None).and_then(|c| command_exe(&c)) else {
-            return;
-        };
-        let aurora = exe.file_name().is_some_and(|n| n.eq_ignore_ascii_case("aurora-viewer.exe"));
-        if aurora && !exe.exists() {
-            log::info!("secondlife links: the registered viewer moved");
-            if let Err(e) = register() {
-                log::warn!("secondlife links: {e}");
+        for scheme in SCHEMES {
+            let class = format!(r"Software\Classes\{scheme}");
+            let Some(exe) = read(HKEY_CURRENT_USER, &format!(r"{class}\shell\open\command"), None).and_then(|c| command_exe(&c)) else {
+                continue;
+            };
+            let aurora = exe.file_name().is_some_and(|n| n.eq_ignore_ascii_case("aurora-viewer.exe"));
+            if aurora && !exe.exists() {
+                log::info!("{scheme} links: the registered viewer moved");
+                if let Err(e) = register_scheme(scheme) {
+                    log::warn!("{scheme} links: {e}");
+                }
             }
         }
     }
