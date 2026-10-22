@@ -51,7 +51,7 @@ pub(super) fn source(ui: &egui::Ui, r: &egui::Response, id: Uuid, folder: bool, 
         st.anchor = Some(id);
     }
     st.selected = Some(id);
-    ui.memory_mut(|m| m.request_focus(super::clipboard::focus_id(st)));
+    super::clipboard::request_focus(ui, st);
     let ids = st.selected_ids(id);
     if ids.len() > 1 {
         r.dnd_set_drag_payload(SelectionDrag(ids));

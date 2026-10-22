@@ -394,6 +394,14 @@ window's open folders (the main window's with the UI layout). Searches,
 filters and the other tabs use the flattened result tree of
 `ui/inventory/view.rs`, drawn the same way.
 
+`ui/inventory/keyboard.rs` handles Up/Down and Shift+Up/Down on the focused
+inventory list, following `LLFolderView::handleKeyHere`. It uses the current
+cached displayed order in both layouts, searches and folder windows; Shift
+grows or shrinks sibling selections, skipping open folders' descendants.
+Navigation runs before viewport layout so virtualized rows remain in sight.
+Its shared clipboard focus survives a discarded sizing pass for one frame,
+without reclaiming another field, an outside click, Tab, Escape or a modal.
+
 `ui/inventory/drag.rs` snapshots the full Ctrl/Shift selection at drag start
 and moves it through `world/inventory/actions.rs::move_selection`. A separate
 batch payload prevents single-item world, attachment and editor targets from

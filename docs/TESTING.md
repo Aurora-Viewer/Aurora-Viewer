@@ -2741,7 +2741,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
-| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows and search selection; `aurora…` modes show Aurora's window at each width |
+| `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, windows, keyboard and search selection; `aurora…` modes show Aurora's window at each width |
 | `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
@@ -4728,6 +4728,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   unavailable), a text field (the Delete key edits the text) and a folder
   window. A selection entirely in the Trash asks for confirmation
   before permanent deletion.
+- `keyboard`, `aurora-keyboard`, `aurora-keyboard-wide`: click the demo
+  object at frame 650, extend its selection with Shift+Down twice, then
+  shrink it with Shift+Up at frame 710. Capture at 690 (three selected rows)
+  and 720 (two), in the Legacy, compact Aurora and wide Aurora layouts.
+  The log reports the selection count and visibility at both capture points.
+  Manually check held arrows, direction reversal, open-folder boundaries,
+  filtered lists, folder windows and arrow editing in search/rename fields.
 - `clipboard`: expanded inventory to test Ctrl+C / Ctrl+X / Ctrl+V on
   items, folders and multiple selections. Choose the destination
   folder (or one of its items) before pasting. The search and
