@@ -248,6 +248,8 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
     for i in 0..3u128 {
         list.push_presence(Uuid::from_u128(100 + i), format!("Friend {i} is online."), true);
     }
+    // the bars' panels: their ids salt the id of the ui they are shown in
+    let mut root = Id::NULL;
     for frame in 0..8 {
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
@@ -255,6 +257,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
             ..Default::default()
         };
         let mut out = ctx.run_ui(input, |ui| {
+            root = ui.scope_id();
             bars::top_bars(
                 ui,
                 &p,
@@ -326,7 +329,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
     let visible = |layer: LayerId| ctx.memory(|m| m.areas().visible_last_frame(&layer).then(|| m.area_rect(layer.id)).flatten());
     let mut bars: Vec<Rect> = ["nav_bar", "bottom_bar"]
         .into_iter()
-        .filter_map(|id| egui::containers::panel::PanelState::load(&ctx, Id::unique(id)))
+        .filter_map(|id| egui::containers::panel::PanelState::load(&ctx, root.with(id)))
         .map(|s| s.outer_rect)
         .collect();
     for name in ["menu", "bug", "place", "account", "system", "bell", "chat", "dock"] {

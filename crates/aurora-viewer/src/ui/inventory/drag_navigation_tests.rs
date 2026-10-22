@@ -29,9 +29,8 @@ fn viewport(f: &Fixture, editor: Uuid) -> (egui::Rect, egui::Id) {
         .expect("scroll viewport")
 }
 fn offset(f: &Fixture, editor: Uuid) -> f32 {
-    egui::scroll_area::State::load(&f.ctx, viewport(f, editor).1)
+    crate::ui::widgets::scroll_offset::next(&f.ctx, viewport(f, editor).1)
         .expect("scroll state")
-        .unclamped_offset()
         .y
 }
 

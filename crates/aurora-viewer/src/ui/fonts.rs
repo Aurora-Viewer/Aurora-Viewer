@@ -860,7 +860,7 @@ mod tests {
         }
     }
 
-    /// Known defect of egui 0.36.2 (emilk/egui#8576), whatever the fonts: a
+    /// Known defect of egui 0.36.2 and 0.37.0 (emilk/egui#8576), whatever the fonts: a
     /// run that starts with a right-to-left letter and holds n characters
     /// comes back from shaping as 2n - 1 glyphs (its cluster offsets
     /// decrease, and `layout_shaped_run` then pads the first cluster with
@@ -884,7 +884,8 @@ mod tests {
         assert_eq!(glyphs("ب"), 1);
         assert_eq!(glyphs("dب"), 2, "a run that starts left to right");
         assert_eq!(glyphs("بب"), 3, "egui#8576 is fixed: see this test's comment");
-        assert_eq!(glyphs("a אבג b"), 9, "egui#8576 is fixed: see this test's comment");
+        // egui 0.37.0 draws this one right (7 glyphs; 9 with 0.36.2), not the Arabic above
+        assert_eq!(glyphs("a אבג b"), 7);
     }
 
     /// What the cursor code needs: one glyph per character in every row.

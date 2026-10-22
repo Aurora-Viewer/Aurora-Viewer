@@ -321,7 +321,7 @@ mod tests {
                 ctx.run_ui(
                     egui::RawInput {
                         events: enter
-                            .then(|| egui::Event::Key {
+                            .then_some(egui::Event::Key {
                                 key: egui::Key::Enter,
                                 physical_key: None,
                                 pressed: true,

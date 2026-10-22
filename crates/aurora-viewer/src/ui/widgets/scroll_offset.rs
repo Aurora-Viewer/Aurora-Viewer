@@ -16,13 +16,22 @@ pub fn set(ctx: &Context, area: Id, offset: Vec2) {
     ctx.data_mut(|d| d.insert_temp(pending_id(area), offset));
 }
 
+/// Where the scroll area `area` is shown next: the offset `set` gave it, else
+/// the one of its state.
+#[cfg(test)]
+pub fn next(ctx: &Context, area: Id) -> Option<Vec2> {
+    let pending = ctx.data(|d| d.get_temp::<Vec2>(pending_id(area)));
+    pending.or_else(|| egui::scroll_area::State::load(ctx, area).map(|s| s.unclamped_offset()))
+}
+
 /// `area` with the id salt `salt`, at the offset `set` gave it since its last
 /// show in `ui`, if any.
 pub fn show(ui: &Ui, area: ScrollArea, salt: impl AsIdSalt) -> ScrollArea {
     let salt = IdSalt::new(salt);
-    // the id egui gives a scroll area: `ScrollArea::show` makes it from its salt
-    let id = ui.make_persistent_id(salt);
     let area = area.id_salt(salt);
+    // the id egui gives the area: `id_salt` hashes the salt again, then
+    // `ScrollArea::show` salts the ui's id with it
+    let id = ui.make_persistent_id(IdSalt::new(salt));
     match ui.ctx().data_mut(|d| d.remove_temp::<Vec2>(pending_id(id))) {
         Some(offset) => area.scroll_offset(offset),
         None => area,
