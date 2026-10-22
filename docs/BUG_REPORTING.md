@@ -17,6 +17,20 @@ contains raw addresses, panic messages, paths or log lines; the
 `<!-- aurora-crash v1 -->` marker at its top is for the repository's crash
 triage.
 
+### Crash symbols
+
+Each Windows release carries `Aurora-Viewer-vX.Y.Z-windows-x64-symbols.zip`:
+the Breakpad symbol file of the exe, made by `dump_syms` from the release
+build's PDB (line tables only) and stored as
+`aurora_viewer.pdb/<debug id>/aurora_viewer.sym`. The debug id is the
+`id=` of the `aurora_viewer` line in a report's modules: the file of the
+version that crashed turns each `aurora_viewer+0xoffset` into a function
+and a source line. A pull request that changes the Release workflow keeps
+the file of its dry run as the run's artifact. The PDB itself is not
+published. To resolve a stack by hand, unzip the file and look up, for
+`offset - 1` (a return address follows its call), the `FUNC` record that
+contains it and the line record under it.
+
 The issue templates are in `.github/ISSUE_TEMPLATE/`; they set the issue
 type (Bug or Feature); the area labels (`chat`, `ui`, `avatar`…) are added
 during triage. The disabled form below

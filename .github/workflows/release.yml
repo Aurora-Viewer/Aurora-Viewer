@@ -2,10 +2,11 @@ name: Release
 
 # A version tag (SemVer: v0.2.0, v0.2.1…) pushed by a human builds the
 # viewer and publishes the release with notes grouped by PR label: the
-# Windows zip (the one the updater installs), then the Linux archive.
-# A pull request that changes these release files gets a dry run of the
-# Linux job (the version Git describes, archive kept as the run's artifact,
-# nothing published): no agent can try the Linux build on its PC.
+# Windows zip (the one the updater installs) and its crash symbols, then the
+# Linux archive. A pull request that changes these release files gets a dry
+# run of both jobs (the version Git describes, the symbols and the Linux
+# archive kept as the run's artifacts, nothing published): no agent can try
+# the Linux build on its PC, and the symbols need the release build.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+*']
@@ -20,8 +21,9 @@ permissions:
 
 jobs:
   windows:
-    if: github.event_name == 'push'
     runs-on: windows-latest
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || 'dry-run' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -29,17 +31,41 @@ jobs:
       - name: Rust stable
         run: rustup update stable
       - uses: Swatinem/rust-cache@v2
+      # the version comes from the tag; a dry run keeps the one Git describes
+      # (aurora-version refuses a tag that is not the checked-out commit's)
       - name: Build
-        env:
-          AURORA_VERSION_TAG: ${{ github.ref_name }}
-        run: cargo build --release --locked -p aurora-viewer
-      - name: Verify compiled version
-        shell: pwsh
-        run: ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer.exe -Tag "${{ github.ref_name }}"
-      - name: Package
         shell: pwsh
         run: |
-          $v = "${{ github.ref_name }}"
+          if ($env:GITHUB_EVENT_NAME -eq 'push') { $env:AURORA_VERSION_TAG = $env:TAG }
+          cargo build --release --locked -p aurora-viewer
+      - name: Verify compiled version
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer.exe -Tag $env:TAG
+      # Breakpad symbols of the exe for the crash reports (docs/BUG_REPORTING.md):
+      # the release profile's line-tables-only PDB, read through the path the
+      # exe records, stored as <file>.pdb/<debug id>/<file>.sym, the layout
+      # symbolizers look up. The PDB itself is not published.
+      - name: Install dump_syms
+        run: cargo install dump_syms --locked --version 2.3.9
+      - name: Symbols
+        shell: pwsh
+        run: |
+          dump_syms target/release/aurora-viewer.exe --store symbols
+          if ($LASTEXITCODE -ne 0) { throw 'dump_syms failed' }
+          $zip = "Aurora-Viewer-$env:TAG-windows-x64-symbols.zip"
+          & 7z a -tzip -mx=9 $zip ./symbols/* | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw '7z failed' }
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $zip" | Set-Content -LiteralPath "$zip.sha256" -Encoding utf8NoBOM
+          Get-ChildItem symbols -Recurse -File | ForEach-Object { "$($_.FullName.Substring((Resolve-Path symbols).Path.Length + 1)) $([math]::Round($_.Length / 1MB)) MB" }
+          "zip $([math]::Round((Get-Item $zip).Length / 1MB)) MB"
+          "SYMBOLS=$zip" >> $env:GITHUB_ENV
+      - name: Package
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          $v = $env:TAG
           $dir = "Aurora-Viewer-$v-windows-x64"
           ./scripts/package.ps1 -Exe target/release/aurora-viewer.exe -Out $dir
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
@@ -48,14 +74,24 @@ jobs:
           ./scripts/write-update-policy.ps1 -Tag $v
           "ZIP=$dir.zip" >> $env:GITHUB_ENV
       - name: Publish
+        if: github.event_name == 'push'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $v = "${{ github.ref_name }}"
-          $ghArgs = @($v, $env:ZIP, "$($env:ZIP).sha256", 'aurora-update-policy.json', '--title', "Aurora Viewer $v", '--generate-notes', '--verify-tag')
+          $v = $env:TAG
+          $ghArgs = @($v, $env:ZIP, "$($env:ZIP).sha256", $env:SYMBOLS, "$($env:SYMBOLS).sha256", 'aurora-update-policy.json', '--title', "Aurora Viewer $v", '--generate-notes', '--verify-tag')
           if ($v -match '-') { $ghArgs += '--prerelease' }   # v0.3.0-beta.1
           gh release create @ghArgs
+      - name: Dry-run symbols
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: symbols-windows-dry-run
+          path: |
+            ${{ env.SYMBOLS }}
+            ${{ env.SYMBOLS }}.sha256
+          compression-level: 0
 
   # The Linux archive joins the release once it is published: a Linux build
   # that fails leaves the Windows release in place and the run red (re-run
@@ -64,7 +100,7 @@ jobs:
   # Fedora, Ubuntu 24.04 and later) run it.
   linux:
     needs: windows
-    if: ${{ !cancelled() && (needs.windows.result == 'success' || (github.event_name == 'pull_request' && needs.windows.result == 'skipped')) }}
+    if: ${{ !cancelled() && (needs.windows.result == 'success' || github.event_name == 'pull_request') }}
     runs-on: ubuntu-24.04
     env:
       TAG: ${{ github.event_name == 'push' && github.ref_name || 'dry-run' }}

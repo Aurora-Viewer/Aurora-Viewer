@@ -31,6 +31,9 @@ The Release workflow publishes together:
 - `aurora-update-policy.json`: `schema: 1`, `version: X.Y.Z`,
   `minimum_supported_version`, `cache_invalidation_before` and
   `settings_reset_before`: `null` or a stable SemVer version ≤ X.Y.Z;
+- `Aurora-Viewer-vX.Y.Z-windows-x64-symbols.zip` and its `.zip.sha256`: the
+  exe's crash symbols ([crash reports](BUG_REPORTING.md#crash-symbols)),
+  never downloaded by the viewer, which looks for the package's exact name;
 - then `Aurora-Viewer-vX.Y.Z-linux-x64.tar.gz` and its `.tar.gz.sha256`,
   built on Ubuntu 24.04 by a second job once the release exists: a failed
   Linux build leaves the Windows release published.
