@@ -165,6 +165,76 @@ fn a_missing_selected_source_never_falls_back_to_a_different_firestorm_set() {
 }
 
 #[test]
+fn alchemy_sets_migrate_from_their_root_folder_without_changing_it() {
+    let owner = Uuid::from_u128(1);
+    let mut inv = Inventory::default();
+    let selected = demo::seed_alchemy_migration(&mut inv, owner);
+    let mut native = Catalog::default();
+    native.refresh(&mut inv);
+    let alchemy = inventory::child(&inv, inv.root, inventory::ALCHEMY_FOLDER).expect("Alchemy root");
+    let untouched = snapshot(&inv, alchemy);
+    let mut migration = Migration::default();
+    migration.refresh(&mut inv, true);
+    assert!(migration.source.sets.iter().all(|s| s.name != "Alchemy Dance Set"));
+    migration.set_alchemy(true);
+    assert!(
+        !migration.ready() && migration.selected.is_nil(),
+        "switching viewers drops the old choice"
+    );
+    migration.refresh(&mut inv, true);
+    assert_eq!(migration.source.root, Some(alchemy));
+    let [old] = migration.source.sets.as_slice() else {
+        panic!("one Alchemy set");
+    };
+    let old = old.clone();
+    assert_eq!((migration.selected, migration.name.as_str()), (old.id, "Alchemy Dance Set"));
+    assert!(old.default && old.states.contains_key(&State::Standing));
+    assert!(
+        old.states
+            .keys()
+            .all(|s| !s.swimming() || State::LEGACY_VIEWER_SWIMMING.contains(s)),
+        "only the four AOSet swim slots are read"
+    );
+    let (plan, id) = migration.plan(&inv, &native).expect("explicit plan");
+    assert!(inventory::editable(&inv, &plan, &Default::default()));
+    let reply = actions::demo_mutate(&mut inv, owner, plan).expect("acknowledgement");
+    let id = reply.created.get(&id).copied().unwrap_or(id);
+    native.invalidate();
+    native.refresh(&mut inv);
+    let new = native.sets.iter().find(|s| s.id == id).expect("new set");
+    assert_eq!(new.name, "Alchemy Dance Set");
+    assert!(!new.default, "the native default is not replaced");
+    assert!(native.sets.iter().any(|s| s.id == selected && s.default));
+    assert!(new.swimming_ready());
+    for (state, config) in &old.states {
+        assert_eq!(new.states[state].cycle, config.cycle);
+        assert_eq!(
+            new.states[state]
+                .steps
+                .iter()
+                .flat_map(|s| &s.members)
+                .map(|a| a.original)
+                .collect::<Vec<_>>(),
+            config.steps.iter().flat_map(|s| &s.members).map(|a| a.original).collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(snapshot(&inv, alchemy), untouched);
+}
+
+#[test]
+fn ao_edits_never_write_under_the_alchemy_root() {
+    let owner = Uuid::from_u128(1);
+    let mut inv = Inventory::default();
+    demo::seed_alchemy_migration(&mut inv, owner);
+    let mut alchemy = Catalog::default();
+    alchemy.refresh_source(&mut inv, inventory::Source::Alchemy);
+    let mut set = alchemy.sets[0].clone();
+    set.name = "Written into Alchemy".into();
+    let (change, _) = inventory::create(&inv, &alchemy, &set).expect("plan");
+    assert!(!inventory::editable(&inv, &change, &Default::default()));
+}
+
+#[test]
 fn unresolved_source_originals_block_manual_copy_until_fetched() {
     for state in [State::Standing, State::SwimmingForward] {
         let (mut inv, native, mut migration, _, _) = fixture();

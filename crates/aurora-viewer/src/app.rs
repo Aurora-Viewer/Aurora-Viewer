@@ -13464,6 +13464,8 @@ impl ApplicationHandler for App {
                     crate::ao::demo::seed_folder_names(&mut self.world.inventory, self.world.agent_id)
                 } else if mode == "firestorm-wait" {
                     crate::ao::demo::seed_firestorm_wait(&mut self.world.inventory, self.world.agent_id)
+                } else if mode.starts_with("migrate-alchemy") {
+                    crate::ao::demo::seed_alchemy_migration(&mut self.world.inventory, self.world.agent_id)
                 } else if mode.starts_with("migrate") {
                     crate::ao::demo::seed_migration(&mut self.world.inventory, self.world.agent_id)
                 } else if mode == "firestorm" {

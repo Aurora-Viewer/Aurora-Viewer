@@ -51,9 +51,11 @@ impl App {
                         .open_folders([Some(inv.root), brand, bridge].into_iter().flatten());
                     crate::ui::widgets::place_floater(&self.egui_ctx, "ao", egui::pos2(90.0, 80.0), egui::vec2(600.0, 710.0));
                 }
-                Some("migrate" | "migrate-done" | "migrate-swim") => {
+                Some(mode @ ("migrate" | "migrate-done" | "migrate-swim" | "migrate-alchemy" | "migrate-alchemy-done")) => {
                     self.panels.ao = true;
-                    self.ao_ui.migration = Some(Default::default());
+                    let mut migration = crate::ao::migration::Migration::default();
+                    migration.set_alchemy(mode.starts_with("migrate-alchemy"));
+                    self.ao_ui.migration = Some(migration);
                 }
                 Some("movement" | "swim-missing") => self.open_movement(),
                 Some("movement-rebound") => {
@@ -184,9 +186,20 @@ impl App {
         if let Some(migration) = self.ao_ui.migration.as_mut() {
             migration.refresh(&mut self.world.inventory, writable);
         }
-        if self.demo && matches!(self.ao_demo.as_deref(), Some("migrate-done" | "migrate-swim")) && self.frame_count == 720 {
+        if self.demo
+            && matches!(
+                self.ao_demo.as_deref(),
+                Some("migrate-done" | "migrate-swim" | "migrate-alchemy-done")
+            )
+            && self.frame_count == 720
+        {
             if let Some(migration) = self.ao_ui.migration.as_mut()
-                && let Some(id) = migration.source.sets.iter().find(|s| s.name == "Firestorm Walk Set").map(|s| s.id)
+                && let Some(id) = migration
+                    .source
+                    .sets
+                    .iter()
+                    .find(|s| ["Firestorm Walk Set", "Alchemy Dance Set"].contains(&s.name.as_str()))
+                    .map(|s| s.id)
             {
                 migration.select(id);
             }
