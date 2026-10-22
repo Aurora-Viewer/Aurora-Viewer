@@ -6,6 +6,7 @@ use super::*;
 use crate::inventory::{InvFolder, InvItem, folder_from_llsd, item_from_llsd};
 
 struct Update {
+    transaction: Uuid,
     items: Vec<(u32, InvItem)>,
     folders: Vec<InvFolder>,
 }
@@ -42,7 +43,11 @@ fn parse(agent: Uuid, method: &[u8], parameter: &[u8], expected: Uuid) -> Option
                 f
             })
             .collect();
-        Ok(Update { items, folders })
+        Ok(Update {
+            transaction: document["transaction_id"].as_uuid(),
+            items,
+            folders,
+        })
     })())
 }
 
@@ -117,7 +122,11 @@ fn parse_template(event: &EqEvent, expected: Uuid) -> Result<Update, ()> {
             ..Default::default()
         })
         .collect();
-    Ok(Update { items, folders })
+    Ok(Update {
+        transaction: b["AgentData"].at(0)["TransactionID"].as_uuid(),
+        items,
+        folders,
+    })
 }
 
 impl Session<'_> {
@@ -173,6 +182,7 @@ impl Session<'_> {
             }
             items.push(item);
         }
+        let folders = update.folders.iter().map(|folder| folder.id).collect();
         emit(
             self.sh,
             NetEvent::InventoryUpdated {
@@ -180,6 +190,15 @@ impl Session<'_> {
                 items,
             },
         );
+        if !update.transaction.is_nil() {
+            emit(
+                self.sh,
+                NetEvent::InventoryDelivery {
+                    transaction: update.transaction,
+                    folders,
+                },
+            );
+        }
         for item in created {
             emit(self.sh, NetEvent::InventoryCreated(item));
         }
@@ -192,7 +211,7 @@ mod tests {
     use aurora_llsd::llsd_map;
 
     fn event(agent: Uuid) -> EqEvent {
-        let document = llsd_map! { "item_data" => Llsd::Array(vec![llsd_map! {
+        let document = llsd_map! { "transaction_id" => Uuid::from_u128(202), "item_data" => Llsd::Array(vec![llsd_map! {
             "agent_id" => agent, "callback_id" => 41,
             "item_id" => Uuid::from_u128(103), "parent_id" => Uuid::from_u128(100),
             "name" => "Copied item", "type" => 6,
@@ -210,7 +229,8 @@ mod tests {
     }
 
     fn template_event(agent: Uuid, name: &str) -> EqEvent {
-        let mut body = llsd_map! { "AgentData" => Llsd::Array(vec![llsd_map! { "AgentID" => agent }]) };
+        let mut body =
+            llsd_map! { "AgentData" => Llsd::Array(vec![llsd_map! { "AgentID" => agent, "TransactionID" => Uuid::from_u128(202) }]) };
         let block = if name == "BulkUpdateInventory" {
             "ItemData"
         } else {
@@ -239,6 +259,7 @@ mod tests {
                 .expect("supported direct HTTP update")
                 .expect("valid");
             assert_eq!(update.items[0].0, 41);
+            assert_eq!(update.transaction, Uuid::from_u128(202));
             assert_eq!(update.items[0].1.parent, Uuid::from_u128(100));
             assert_eq!(update.items[0].1.name, "Copied item");
             assert_eq!(update.items[0].1.owner_mask, 0x7fffffff);
@@ -255,6 +276,7 @@ mod tests {
         let agent = Uuid::from_u128(2);
         let update = parse_eq(&event(agent), agent).expect("supported event").expect("valid update");
         assert_eq!(update.items.len(), 1);
+        assert_eq!(update.transaction, Uuid::from_u128(202));
         let (callback, item) = &update.items[0];
         assert_eq!(*callback, 41);
         assert_eq!(item.id, Uuid::from_u128(103));
@@ -411,16 +433,26 @@ mod tests {
             session.on_eq_event(response);
             let result = tokio::time::timeout(Duration::from_secs(5), async {
                 let mut updated = false;
+                let mut delivered = false;
+                let mut completion = None;
                 loop {
                     while let Ok((_, event)) = received.try_recv() {
                         if let NetEvent::InventoryUpdated { ref items, .. } = event {
                             updated |= items.iter().any(|item| item.id == Uuid::from_u128(103));
                         }
+                        if let NetEvent::InventoryDelivery { transaction, .. } = event {
+                            assert!(updated, "delivery observers see the updated inventory model");
+                            assert_eq!(transaction, Uuid::from_u128(202));
+                            delivered = true;
+                        }
                         if let NetEvent::InventoryEdited { request: done, result } = event {
                             assert!(updated, "server items are visible before completion");
                             assert_eq!(done, request);
-                            return result;
+                            completion = Some(result);
                         }
+                    }
+                    if delivered && let Some(result) = completion.take() {
+                        return result;
                     }
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }

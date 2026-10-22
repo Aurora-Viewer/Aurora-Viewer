@@ -16,6 +16,11 @@ pub fn page(cx: &mut Cx) {
             .toggle(tr!("rlva-enable"), tr!("rlva-enable-hint"), &field!(rlva_enabled));
         cx.note(tr!("rlva-session-hint"));
         cx.greyed(!cx.s.rlva_enabled);
+        cx.toggle(
+            tr!("rlva-shared-offers"),
+            tr!("rlva-shared-offers-hint"),
+            &field!(rlva.allow_shared_offers),
+        );
         cx.toggle(tr!("rlva-im-queries"), tr!("rlva-im-queries-hint"), &field!(rlva.im_queries));
         cx.toggle(
             tr!("rlva-im-auto-share"),

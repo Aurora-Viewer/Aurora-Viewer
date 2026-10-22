@@ -4357,7 +4357,7 @@ impl Session<'_> {
                         item
                     })
                     .collect();
-                let folders = m
+                let folders: Vec<_> = m
                     .folder_data
                     .iter()
                     .filter(|f| !f.folder_id.is_nil())
@@ -4370,7 +4370,17 @@ impl Session<'_> {
                         ..Default::default()
                     })
                     .collect();
+                let delivered = folders.iter().map(|folder: &crate::inventory::InvFolder| folder.id).collect();
                 emit(self.sh, NetEvent::InventoryUpdated { folders, items });
+                if !m.agent_data.transaction_id.is_nil() {
+                    emit(
+                        self.sh,
+                        NetEvent::InventoryDelivery {
+                            transaction: m.agent_data.transaction_id,
+                            folders: delivered,
+                        },
+                    );
+                }
                 for item in created {
                     emit(self.sh, NetEvent::InventoryCreated(item));
                 }

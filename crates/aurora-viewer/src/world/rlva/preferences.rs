@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub struct Preferences {
     pub im_queries: bool,
     pub im_queries_auto_share: bool,
+    pub allow_shared_offers: bool,
     pub legacy_naming: bool,
     pub shared_wear: bool,
     pub auto_rename: bool,
@@ -21,6 +22,7 @@ impl Default for Preferences {
         Self {
             im_queries: true,
             im_queries_auto_share: false,
+            allow_shared_offers: true,
             legacy_naming: true,
             shared_wear: true,
             auto_rename: true,

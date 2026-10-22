@@ -113,7 +113,13 @@ pub(super) fn collect(inv: &Inventory, base: Uuid, all: bool, attach: bool, repl
             result.missing.push(frame.id);
             continue;
         }
-        for child in folder.children.iter().rev().filter_map(|id| inv.folders.get(id)) {
+        for child in folder
+            .children
+            .iter()
+            .rev()
+            .filter(|_| !frame.folded)
+            .filter_map(|id| inv.folders.get(id))
+        {
             let folded = naming::folded(&child.info.name, prefs.legacy_naming);
             if folded {
                 if !crate::world::appearance::loaded(inv, child.info.id) {
@@ -151,7 +157,11 @@ pub(super) fn collect(inv: &Inventory, base: Uuid, all: bool, attach: bool, repl
                 if frame.linked || actions::under(inv, offered.asset_id, base) {
                     continue;
                 }
-                if inv.folders.get(&offered.asset_id).is_some_and(|f| f.info.type_default == 47) {
+                if inv
+                    .folders
+                    .get(&offered.asset_id)
+                    .is_some_and(|f| f.info.type_default == 47 || f.info.name.is_empty() || f.info.name.starts_with('.'))
+                {
                     continue;
                 }
                 stack.push(Frame {
@@ -308,6 +318,10 @@ mod tests {
         let folded_shirt = item(&mut inv, 104, fold, "Shirt", 5);
         item(&mut inv, 105, fold, "Gesture", 21);
         item(&mut inv, 106, fold, "Shirt nostrip", 5);
+        let nested = folder(&mut inv, 20, fold, "Nested");
+        item(&mut inv, 110, nested, "Nested shirt", 5);
+        let nested_fold = folder(&mut inv, 21, fold, ".(skull)");
+        item(&mut inv, 111, nested_fold, "Nested object", 6);
         let prefs = Preferences::default();
         let result = collect(&inv, base, true, true, true, &prefs);
         assert_eq!(result.items.len(), 5);
@@ -367,6 +381,9 @@ mod tests {
         inv.folders.get_mut(&target).unwrap().info.type_default = 47;
         assert!(collect(&inv, base, true, true, true, &Preferences::default()).items.is_empty());
         inv.folders.get_mut(&target).unwrap().info.type_default = -1;
+        inv.folders.get_mut(&target).unwrap().info.name = ".hidden".into();
+        assert!(collect(&inv, base, true, true, true, &Preferences::default()).items.is_empty());
+        inv.folders.get_mut(&target).unwrap().info.name = "External".into();
         inv.folders.get_mut(&target).unwrap().state = FetchState::Unknown;
         assert_eq!(collect(&inv, base, true, true, true, &Preferences::default()).missing, [target]);
     }
@@ -399,6 +416,18 @@ mod tests {
         assert!(query("findfolder=123").is_empty());
         assert!(query("findfolder:&&=123").is_empty());
         assert!(query("getinvworn:Outfit=123").starts_with("|30"));
+        folder(&mut world.inventory, 12, base, "Slash/name");
+        let dot = folder(&mut world.inventory, 13, base, ".");
+        folder(&mut world.inventory, 14, dot, "..");
+        let mut query = |text| world.rlva_inventory_query(&Command::parse(text).unwrap(), Uuid::nil()).unwrap();
+        assert!(!query("getinv:Outfit=123").contains("Slash/name"));
+        assert!(query("getinvworn:Outfit=123").contains("Slash/name|00"));
+        assert_eq!(query("getinv:Outfit/.=123"), "");
+        assert_eq!(
+            query("getinvworn:Outfit/./..=123"),
+            "|00",
+            "dot names are literal inventory children"
+        );
         let plan = crate::world::appearance::Action::WearItem {
             item: gesture,
             replace: false,

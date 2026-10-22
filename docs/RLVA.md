@@ -83,6 +83,16 @@ script authors; the command lists below describe this branch specifically.
   exempt the requesting issuer without allowing a forced removal through its
   own lock. Body parts remain visible. getinv excludes folded folders and
   findfolder chooses the deepest matching path in native traversal order.
+  Folded folders contribute their own items without recursively collecting
+  nested folders. Linked hidden folders are excluded; dot folder names are
+  literal inventory children. Worn queries retain slash-containing names.
+  Accepted folder gifts prefixed `#RLV/~` can file into a shared path (on by
+  default while RLVa is enabled). Scripted deliveries match their transaction;
+  paths contain at most four components including `#RLV`. Root/intermediate
+  creation, movement and renaming wait for confirmed metadata and only the
+  exact pending filing operation bypasses folder locks. Scripted accept,
+  decline and completed shared-path notifications follow native behavior.
+  Disabling cancels filing and restores ordinary filing for unanswered gifts.
   With unnamed shared wear off, automatic naming observes new confirmed
   arrivals: modifiable objects receive a lowercase point suffix, while
   no-modify objects use a created or existing folded point folder. It waits

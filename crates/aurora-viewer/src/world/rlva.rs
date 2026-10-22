@@ -22,6 +22,7 @@ mod groups;
 mod im_queries;
 mod inventory;
 mod naming;
+pub mod offers;
 mod policy;
 pub mod preferences;
 pub mod privacy;
@@ -426,6 +427,7 @@ pub struct Rlva {
     enabled: bool,
     pub preferences: preferences::Preferences,
     pub rename: rename::RenameOnWear,
+    pub offers: offers::Offers,
     pub im: im_queries::Queries,
     rules: BTreeMap<Uuid, BTreeSet<Rule>>,
     pub pending: Vec<(Uuid, Command)>,
@@ -519,6 +521,7 @@ impl Rlva {
         self.enabled = enabled;
         self.rules.clear();
         self.rename = Default::default();
+        self.offers = Default::default();
         self.im = Default::default();
         self.pending.clear();
         self.out.clear();

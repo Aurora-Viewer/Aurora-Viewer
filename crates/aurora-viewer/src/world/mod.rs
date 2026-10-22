@@ -2881,6 +2881,12 @@ impl World {
                 self.inventory.server_updated(folders, items);
                 None
             }
+            NetEvent::InventoryDelivery { transaction, folders } => {
+                if self.rlva.enabled() {
+                    self.rlva.offers.delivered(transaction, &folders, &self.inventory);
+                }
+                None
+            }
             NetEvent::InventoryMoved { id, parent, folder } => {
                 if folder {
                     if let Some(f) = self.inventory.folders.get(&id) {
@@ -3267,7 +3273,9 @@ impl World {
                     },
                 );
                 self.on_inventory_offer_card(im, &from, asset_type, entry);
-                self.received_items.offer(im, entry);
+                if !self.rlva_inventory_offer(im, entry) {
+                    self.received_items.offer(im, entry);
+                }
             }
             // FSShowJoinedGroupInvitations (FIRE-20385): an invitation to a
             // group we are already in is dropped unless asked for
@@ -3626,6 +3634,7 @@ impl World {
             |t| folders.iter().find(|(ft, _)| *ft == t).map(|(_, f)| *f).unwrap_or(root),
             calling,
         );
+        self.rlva_shared_offer_answer(id, &mut out.0);
         self.received_items.answer(id, &mut out.0);
         if let Some((asset_type, object)) = discard {
             self.discard_offer(asset_type, object);

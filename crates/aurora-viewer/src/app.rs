@@ -1218,11 +1218,14 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
-        self.world.rlva.configure(self.settings.rlva_enabled);
+        self.world.rlva_configure(self.settings.rlva_enabled);
         self.world.rlva.preferences.clone_from(&self.settings.rlva);
         if !self.settings.rlva_enabled {
             self.named_teleport.cancel_scripts();
             self.world.maturity.cancel_script_teleports();
+            if !actor.is_nil() {
+                return;
+            }
         }
         self.world.rlva_prepare_outfit(&mut cmd, actor);
         if let NetCommand::OfferTeleport { to, .. } = &mut cmd {
@@ -2158,7 +2161,7 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
-        if self.world.rlva_rename_event(&ev, Instant::now()) {
+        if self.world.rlva_offer_event(&ev) || self.world.rlva_rename_event(&ev, Instant::now()) {
             if let NetEvent::InventoryEdited { request, .. } = ev {
                 self.world_edits.remove(&request);
             }

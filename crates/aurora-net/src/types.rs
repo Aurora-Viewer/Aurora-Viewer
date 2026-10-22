@@ -1002,6 +1002,11 @@ pub enum NetEvent {
         folders: Vec<crate::inventory::InvFolder>,
         items: Vec<crate::inventory::InvItem>,
     },
+    /// Delivery identity follows InventoryUpdated, so observers see its headers.
+    InventoryDelivery {
+        transaction: Uuid,
+        folders: Vec<Uuid>,
+    },
     InventoryMoved {
         id: Uuid,
         parent: Uuid,

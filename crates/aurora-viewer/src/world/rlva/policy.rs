@@ -148,7 +148,13 @@ impl World {
                 .classifieds
                 .get(&classified.id)
                 .is_some_and(|old| old.pos_global == classified.pos_global),
-            NetCommand::EditInventory { change, .. } => self.rlva_inventory_mutation_allowed(change, actor),
+            NetCommand::EditInventory { request, change } => {
+                if actor == super::offers::ACTOR {
+                    r.offers.permits(*request, change)
+                } else {
+                    self.rlva_inventory_mutation_allowed(change, actor)
+                }
+            }
             NetCommand::CopyInventoryItems(copies) => copies
                 .iter()
                 .all(|copy| self.rlva_inventory_move_allowed(copy.item, copy.parent, actor)),

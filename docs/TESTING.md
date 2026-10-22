@@ -2782,6 +2782,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `rename` turns shared wear off and enables automatic attachment naming.
   Two new shared objects arrive at frame 740. By frame 810 the log reports
   `Modifiable bracelet (chest)` and the no-modify object's `.(skull)` folder.
+  `shared-offer` opens the ordinary confirmation for a synthetic scripted
+  `#RLV/~Demo/Cuffs` folder gift. `shared-offer-accepted` accepts it at frame
+  740 and delivers the matching inventory transaction; by frame 810 the log
+  must report `path=~Demo/Cuffs`. The native offer and shared-gift preference
+  use the same EN/FR controls as real offers. No grid is contacted.
   `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
   `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
   mode to the same scene. `overlay` uses the demo's transparent-hole texture

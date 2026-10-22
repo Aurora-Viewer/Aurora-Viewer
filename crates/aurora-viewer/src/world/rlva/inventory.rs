@@ -183,7 +183,7 @@ pub fn force_kind(name: &str) -> Option<&'static str> {
     })
 }
 
-fn path(inv: &Inventory, mut id: Uuid) -> Option<String> {
+pub(super) fn path(inv: &Inventory, mut id: Uuid) -> Option<String> {
     let root = shared_root(inv)?;
     let mut names = Vec::new();
     let mut seen = HashSet::new();
@@ -205,9 +205,6 @@ fn resolve(inv: &Inventory, name: &str) -> Option<Uuid> {
         return Some(id);
     }
     for component in name.split('/').filter(|v| !v.is_empty()) {
-        if component == "." || component == ".." {
-            return None;
-        }
         let f = inv.folders.get(&id)?;
         id = *f
             .children
@@ -1122,7 +1119,12 @@ impl World {
             .children
             .iter()
             .filter_map(|id| self.inventory.folders.get(id))
-            .filter(|f| visible(&f.info.name) && !folded(&f.info.name, self.rlva.preferences.legacy_naming))
+            .filter(|f| {
+                !f.info.name.is_empty()
+                    && !f.info.name.starts_with('.')
+                    && (c.behaviour == "getinvworn" || !f.info.name.contains('/'))
+                    && !folded(&f.info.name, self.rlva.preferences.legacy_naming)
+            })
             .collect();
         if c.behaviour == "getinv" {
             return Some(children.iter().map(|f| f.info.name.as_str()).collect::<Vec<_>>().join(","));

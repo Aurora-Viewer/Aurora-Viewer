@@ -104,6 +104,12 @@ mode. It appends a point name or creates/reuses a folded point folder, waits
 for metadata confirmation, bounds retries and preserves later manual renames.
 Disabling cancels its work; already-sent inventory replies still update the
 ordinary inventory model without restarting the naming workflow.
+`rlva/offers.rs` keeps native acceptance separate from shared-gift filing.
+UDP and HTTP inventory deliveries retain their transaction after applying
+their folder headers. Only the matching accepted gift may create its path,
+move and rename; every step waits for confirmed inventory metadata. Its
+internal actor authorizes exactly the pending mutation. Disabling cancels
+filing and restores ordinary filing for unanswered notifications.
 
 This does not yet provide full RLVa parity. [RLVa implementation status](docs/RLVA.md)
 lists the supported commands and remaining families; versionnum deliberately

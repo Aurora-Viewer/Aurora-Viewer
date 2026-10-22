@@ -30,7 +30,7 @@ impl App {
                 self.settings.save();
             }
         }
-        self.world.rlva.configure(self.settings.rlva_enabled);
+        self.world.rlva_configure(self.settings.rlva_enabled);
         self.world.rlva.preferences.clone_from(&self.settings.rlva);
         if !self.settings.rlva_enabled || !self.settings.rlva.im_queries {
             self.world
@@ -66,6 +66,12 @@ impl App {
             self.world.rlva.self_detach = None;
         }
         self.world.rlva_watchdog_tick(Instant::now());
+        if let Some(command) = self.world.rlva_offer_tick(Instant::now()) {
+            if let NetCommand::EditInventory { request, .. } = &command {
+                self.world_edits.insert(*request);
+            }
+            self.send_from(command, crate::world::rlva::offers::ACTOR);
+        }
         if let Some(command) = self.world.rlva_rename_tick(Instant::now()) {
             if let NetCommand::EditInventory { request, .. } = &command {
                 self.world_edits.insert(*request);
@@ -170,7 +176,7 @@ impl App {
         }
         if self.frame_count == 700 {
             self.settings.rlva_enabled = mode != "disabled";
-            self.world.rlva.configure(self.settings.rlva_enabled);
+            self.world.rlva_configure(self.settings.rlva_enabled);
             let scenario = mode.strip_suffix("-released").unwrap_or(&mode);
             if scenario == "baseline"
                 || scenario.starts_with("sphere-")
@@ -241,6 +247,9 @@ impl App {
                 });
                 self.camera.change_to_default(&mut self.world.agent, &self.settings.camera);
                 format!("@notify:123=n,sit:{id}=force")
+            } else if scenario.starts_with("shared-offer") {
+                self.world.rlva_demo_shared_offer(false);
+                "@notify:123;inv_offer=n".to_owned()
             } else if scenario.starts_with("privacy") || scenario == "nearby" {
                 self.panels.settings = false;
                 self.panels.inventory = false;
@@ -312,6 +321,19 @@ impl App {
         if mode == "rename" && self.frame_count == 810 {
             self.world.rlva_demo_naming_report();
         }
+        if mode == "shared-offer-accepted" && self.frame_count == 740 {
+            let id = self.world.notifications.list.iter().find(|notification| matches!(notification.data, crate::world::notifications::Data::Inventory { tx, .. } if tx == Uuid::from_u128(0x726c76616f66667478))).map(|notification| notification.id);
+            if let Some(id) = id {
+                let (commands, _) = self.world.respond_notification(id, crate::world::notifications::Response::Accept);
+                for command in commands {
+                    self.send(command);
+                }
+                self.world.rlva_demo_shared_offer(true);
+            }
+        }
+        if mode == "shared-offer-accepted" && self.frame_count == 810 {
+            self.world.rlva_demo_shared_offer_report();
+        }
         if mode == "im-query" && self.frame_count == 740 {
             self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {
                 from_agent_id: crate::demo::DEMO_TESS,
@@ -335,7 +357,7 @@ impl App {
         }
         if (mode == "released" || mode.ends_with("-released")) && self.frame_count == 760 {
             self.settings.rlva_enabled = false;
-            self.world.rlva.configure(false);
+            self.world.rlva_configure(false);
             log::info!(
                 "RLVa demo: disabled, all restrictions released={}",
                 !self.world.rlva.has("fly") && !self.world.rlva.has("sendchat")
@@ -474,7 +496,8 @@ impl App {
                             format!("{:.3}", rect.width() / rect.height().max(1.0))
                         }
                         "getdebug_renderresolutiondivisor" => self.world.rlva.resolution_divisor.unwrap_or(1).to_string(),
-                        "getdebug_windlightuseatmosshaders" | "getdebug_restrainedloveforbidgivetorlv" => "1".to_owned(),
+                        "getdebug_windlightuseatmosshaders" => "1".to_owned(),
+                        "getdebug_restrainedloveforbidgivetorlv" => u8::from(!self.settings.rlva.allow_shared_offers).to_string(),
                         "getdebug_restrainedlovenosetenv" => "0".to_owned(),
                         _ => String::new(),
                     };
