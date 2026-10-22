@@ -499,7 +499,7 @@ Legend: ✅ done (and verified on Agni when it depends on the grid) · 🟡 done
 
   - Query selection follow-up (human feedback): an explicit find focus request selects the entire query in floating and integrated search. Rendered coverage passes for Ctrl+F from the source, query and replacement fields, Unicode selection, typing over the selection and preserving a manually placed caret on Enter; existing resize coverage remains green. Full `scripts/check.ps1` green: 4,288 passed, zero failures, 26 ignored; formatting, scripts and Clippy clean. Dev build `d526c690`; native FR floating/inline captures inspected with the entire query visibly selected, original layout preserved, both exit 0 and HUD 60.0 fps at the 60 fps cap; stdout/stderr and demo logs empty. Human accepted the offline preview and explicitly authorized merge on 2026-10-22. Both left-side priority and header integration already default to off, including older settings without these fields; the settings regression confirms those defaults.
 
-  - Merge-queue test follow-up: CI assertions exposed unapplied texture deltas in seven new headless UI regressions. Clear them in the shared frame helper, as the existing renderer-free tests do. Runtime behavior and human validation are unchanged; follow-up checks in progress.
+  - Merge-queue test follow-up: CI assertions exposed unapplied texture deltas in seven new headless UI regressions. Clear them in the shared frame helper, as the existing renderer-free tests do. Runtime behavior and human validation are unchanged; follow-up verification uses the full local checks and mandatory merge-queue CI assertions.
 
 ## Priority
 
