@@ -1183,7 +1183,7 @@ mod tests {
         let p = theme.palette();
         let ctx = egui::Context::default();
         theme.apply(&ctx, 1.0);
-        let output = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 800.0))),
                 ..Default::default()
@@ -1192,6 +1192,8 @@ mod tests {
                 avatar_list_menu(ui, &p, &world, id, AvatarList::Name);
             },
         );
+        // This headless fixture inspects shapes without a texture consumer.
+        output.textures_delta.clear();
         fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {
             match shape {
                 egui::Shape::Text(t) => texts.push(t.galley.text().to_owned()),
