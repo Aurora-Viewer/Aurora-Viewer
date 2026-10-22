@@ -855,7 +855,7 @@ mod tests {
     ) -> egui::FullOutput {
         let theme = crate::theme::Theme::default();
         theme.apply(ctx, 1.0);
-        ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
                 focused: true,
@@ -872,7 +872,10 @@ mod tests {
                 );
                 extra(ui.ctx(), &theme.palette());
             },
-        )
+        );
+        // These headless frames inspect shapes and responses without a renderer.
+        output.textures_delta.clear();
+        output
     }
 
     fn settle(ctx: &egui::Context, editors: &mut Editors) {
