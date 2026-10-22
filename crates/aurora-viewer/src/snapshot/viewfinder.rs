@@ -228,6 +228,9 @@ const FAIL_AT: f32 = 0.41;
 const FAIL_BLINK: f32 = 1.5;
 /// The scale and the distance under the AF point stay after a lock.
 const RECENT: f32 = 2.1;
+/// How far from the locked distance (a share of it) the subject under the
+/// AF point is still the one held.
+const HOLD: f32 = 0.05;
 
 /// The autofocus of the viewfinder: in AF-S a click (or the shutter
 /// half-pressed) starts a hunt that ends locked on the subject, or failed
@@ -342,6 +345,20 @@ impl Autofocus {
     pub fn manual(&mut self, distance: f32) {
         self.distance = distance.clamp(MIN_FOCUS, FAR);
         self.phase = Phase::Manual;
+    }
+
+    /// Locked, and `target` (m) is the subject it holds: within a few
+    /// percent of its distance, what a small move of the camera or the
+    /// subject leaves.
+    pub fn holds(&self, target: f32) -> bool {
+        self.phase == Phase::Lock && target.is_finite() && (target.clamp(MIN_FOCUS, FAR) - self.distance).abs() <= self.distance * HOLD
+    }
+
+    /// The lock kept by a new press: the scale and the distance show again.
+    pub fn confirm(&mut self, now: f64) {
+        if self.phase == Phase::Lock {
+            self.recent_until = now + f64::from(RECENT);
+        }
     }
 
     /// Back to waiting, the lens where it is.
@@ -708,6 +725,29 @@ mod tests {
         af.idle();
         af.follow(2.0, t + 0.1);
         assert!((af.distance() - 6.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn a_lock_holds_the_same_subject_only() {
+        let mut af = Autofocus::default();
+        af.manual(20.0);
+        // not locked: a press always focuses
+        assert!(!af.holds(20.0));
+        af.hunt(4.0, 0.0);
+        assert!(!af.holds(4.0), "still hunting");
+        run(&mut af, 0.0, 1.0);
+        // the same subject, a step closer or farther: held
+        assert!(af.holds(4.0) && af.holds(3.85) && af.holds(4.15));
+        // something else under the point: a new hunt
+        assert!(!af.holds(3.5) && !af.holds(6.0) && !af.holds(f32::NAN));
+        // the press kept the lock: the distance shows again
+        assert!(!af.recent(5.0));
+        af.confirm(5.0);
+        assert!(af.recent(6.0));
+        // the sky stays the sky
+        af.hunt(FAR, 10.0);
+        run(&mut af, 10.0, 11.0);
+        assert!(af.holds(FAR) && af.holds(FAR * 2.0));
     }
 
     #[test]

@@ -52,6 +52,9 @@ pub struct Viewfinder {
     pub subject: Option<uuid::Uuid>,
     /// The depth under the AF point asked of the renderer.
     pub pick: Option<u64>,
+    /// That depth was asked by the shutter with the lens locked: the same
+    /// subject under the point keeps the lock.
+    pub recheck: bool,
     /// The first hint was put away (a focus or a photo).
     pub hinted: bool,
     /// When the shutter's blackout started.
