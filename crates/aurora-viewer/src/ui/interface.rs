@@ -159,7 +159,7 @@ impl Interface {
 /// edge to bring it back".
 pub fn hint(ctx: &egui::Context, p: &Palette, binding: Option<&crate::keybinds::Binding>) {
     let screen = ctx.content_rect();
-    let id = Id::new("interface_hidden_hint");
+    let id = Id::unique("interface_hidden_hint");
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, id));
     let font = FontId::proportional(12.0);
     let hidden = painter.layout_no_wrap(aurora_i18n::tr!("ui-bars-interface-hidden").to_owned(), font.clone(), p.muted);
@@ -221,7 +221,7 @@ pub fn hint(ctx: &egui::Context, p: &Palette, binding: Option<&crate::keybinds::
 pub fn confirm(ctx: &egui::Context, p: &Palette, keys: &str, again: &mut bool) -> Option<bool> {
     let mut answer = None;
     let width = (ctx.content_rect().width() - 80.0).clamp(240.0, 400.0);
-    let response = super::widgets::Modal::new(Id::new("confirm_hide_interface")).show(ctx, |ui| {
+    let response = super::widgets::Modal::new(Id::unique("confirm_hide_interface")).show(ctx, |ui| {
         ui.set_width(width);
         ui.spacing_mut().item_spacing = Vec2::new(8.0, 10.0);
         ui.horizontal(|ui| {

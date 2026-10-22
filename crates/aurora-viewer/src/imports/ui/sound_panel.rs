@@ -32,7 +32,7 @@ pub(super) fn show(
     widgets::surface(ui, p, |ui| {
         let (rect, response) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 104.0), egui::Sense::click_and_drag());
         ui.ctx()
-            .data_mut(|data| data.insert_temp(egui::Id::new(("sound_waveform", id)), rect));
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("sound_waveform", id)), rect));
         let start = rect.left() + rect.width() * editor.options.start / duration;
         let end = rect.left() + rect.width() * editor.options.end.unwrap_or(duration) / duration;
         let playhead = elapsed.map(|elapsed| editor.options.start + elapsed);
@@ -81,7 +81,7 @@ pub(super) fn show(
         if let Some(cursor) = cursor {
             ui.painter().vline(cursor, rect.y_range(), egui::Stroke::new(1.5, p.ink));
         }
-        let handle = egui::Id::new(("sound_crop_handle", id));
+        let handle = egui::Id::unique(("sound_crop_handle", id));
         if (response.clicked() || response.dragged())
             && let Some(pointer) = response.interact_pointer_pos()
         {

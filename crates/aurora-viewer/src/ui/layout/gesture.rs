@@ -406,11 +406,11 @@ mod tests {
         }
 
         fn rect(&self, id: &str) -> Rect {
-            self.ctx.memory(|m| m.area_rect(Id::new(id))).expect("the window was shown")
+            self.ctx.memory(|m| m.area_rect(Id::unique(id))).expect("the window was shown")
         }
 
         fn linked(&self, a: &str, b: &str) -> bool {
-            let link = snap::link(Id::new(a).value(), Id::new(b).value());
+            let link = snap::link(Id::unique(a).value(), Id::unique(b).value());
             windows(&self.ctx, |w| w.links.contains(&link))
         }
 
@@ -501,26 +501,26 @@ mod tests {
     fn a_completed_move_replaces_the_anchor_and_keeps_its_offset_on_viewer_resize() {
         let mut s = Session::new();
         s.idle(3);
-        let saved = windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor);
+        let saved = windows(&s.ctx, |w| w.placed[&Id::unique(A).value()].anchor);
         let at = s.hold_at(A, Pos2::new(650.0, 80.0));
         assert_eq!(
-            windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor),
+            windows(&s.ctx, |w| w.placed[&Id::unique(A).value()].anchor),
             saved,
             "choose only on release"
         );
         s.release(at);
         let rect = s.rect(A);
         assert_eq!(rect.min, Pos2::new(650.0, 80.0), "invisible anchoring does not snap the window");
-        let anchor = windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor.expect("released"));
+        let anchor = windows(&s.ctx, |w| w.placed[&Id::unique(A).value()].anchor.expect("released"));
         assert_eq!(anchor.point, egui::Align2::CENTER_TOP);
         s.screen = Vec2::new(1920.0, 1080.0);
         s.idle(3);
         assert_eq!(s.rect(A), rect.translate(Vec2::new(160.0, 0.0)));
-        assert_eq!(windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor), Some(anchor));
+        assert_eq!(windows(&s.ctx, |w| w.placed[&Id::unique(A).value()].anchor), Some(anchor));
         // A later move can select a different side midpoint.
         s.drop_at(A, Pos2::new(810.0, 800.0));
         let rect = s.rect(A);
-        let anchor = windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor.expect("released again"));
+        let anchor = windows(&s.ctx, |w| w.placed[&Id::unique(A).value()].anchor.expect("released again"));
         assert_eq!(anchor.point, egui::Align2::CENTER_BOTTOM);
         s.screen = Vec2::new(2240.0, 1200.0);
         s.idle(3);
@@ -696,7 +696,7 @@ mod tests {
 
         let mut s = Session::new();
         s.glue();
-        s.ctx.data_mut(|d| d.insert_persisted(Id::new((B, "minimized")), true));
+        s.ctx.data_mut(|d| d.insert_persisted(Id::unique((B, "minimized")), true));
         s.idle(3);
         assert!(!s.linked(A, B));
     }
@@ -734,7 +734,7 @@ mod tests {
         let (a, b) = (s.rect(A), s.rect(B));
         assert_eq!(b.right(), 1600.0 - GAP);
         assert_eq!(
-            windows(&s.ctx, |w| w.placed[&Id::new(A).value()].anchor.expect("group anchor").point),
+            windows(&s.ctx, |w| w.placed[&Id::unique(A).value()].anchor.expect("group anchor").point),
             egui::Align2::RIGHT_CENTER
         );
         s.screen = Vec2::new(1920.0, 1000.0);

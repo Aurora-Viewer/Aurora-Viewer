@@ -235,7 +235,7 @@ fn interface_sounds(cx: &mut Cx) {
             cx.wide().keywords(&words.join(" ")).row(label, hint, &f, |ui, s| {
                 let mut ch = false;
                 let mode = get(s);
-                egui::ComboBox::from_id_salt(ui.id().with("mode"))
+                egui::ComboBox::from_id_salt(ui.scope_id().with("mode"))
                     .width(SLIDER_W + 90.0)
                     .selected_text(mode.label())
                     .show_ui(ui, |ui| {

@@ -630,7 +630,7 @@ impl LibraryUi {
         };
         let response = widgets::action_button(ui, p, "chevron-down", &label, ActionKind::Flat, Vec2::new(158.0, 20.0));
         ui.ctx()
-            .data_mut(|d| d.insert_temp(egui::Id::new("library_type_selector"), response.rect.center()));
+            .data_mut(|d| d.insert_temp(egui::Id::unique("library_type_selector"), response.rect.center()));
         let menu_open = super::menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
             if super::menu::item(ui, p, "check", aurora_i18n::tr!("texture-library-types-all")) {
                 self.types = None;
@@ -655,7 +655,7 @@ impl LibraryUi {
             }
         });
         ui.ctx()
-            .data_mut(|d| d.insert_temp(egui::Id::new("library_type_menu_open"), menu_open));
+            .data_mut(|d| d.insert_temp(egui::Id::unique("library_type_menu_open"), menu_open));
         if scope_button(
             ui,
             p,
@@ -706,7 +706,7 @@ impl LibraryUi {
                     None
                 };
                 let response = if let Some(model) = model {
-                    aurora_render::preview::paint_swatch(ui, ui.id().with("material"), model, previews::view(p), Vec2::splat(size))
+                    aurora_render::preview::paint_swatch(ui, ui.scope_id().with("material"), model, previews::view(p), Vec2::splat(size))
                 } else {
                     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click_and_drag());
                     let image = entry.image();
@@ -743,8 +743,8 @@ impl LibraryUi {
                 }
                 if first {
                     ui.ctx().data_mut(|d| {
-                        d.insert_temp(egui::Id::new("texture_library_first_card"), response.rect.center());
-                        d.insert_temp(egui::Id::new("texture_library_first_item"), entry.id);
+                        d.insert_temp(egui::Id::unique("texture_library_first_card"), response.rect.center());
+                        d.insert_temp(egui::Id::unique("texture_library_first_item"), entry.id);
                     });
                 }
                 response.dnd_set_drag_payload(InvDrag(entry.id));

@@ -121,12 +121,12 @@ impl Editor {
                             for shape in crate::imports::preview::MaterialShape::ALL {
                                 let response = ui.selectable_value(&mut self.shape, shape, shape.label());
                                 ui.ctx().data_mut(|data| {
-                                    data.insert_temp(egui::Id::new(("resource_material_shape", item.id, shape)), response.rect)
+                                    data.insert_temp(egui::Id::unique(("resource_material_shape", item.id, shape)), response.rect)
                                 });
                             }
                         });
                     ui.ctx().data_mut(|data| {
-                        data.insert_temp(egui::Id::new(("resource_material_shape_choice", item.id)), choice.response.rect)
+                        data.insert_temp(egui::Id::unique(("resource_material_shape_choice", item.id)), choice.response.rect)
                     });
                     if widgets::icon_button(ui, p, "refresh", aurora_i18n::tr!("import-preview-reset-view"), true) {
                         view.reset_camera();
@@ -137,13 +137,13 @@ impl Editor {
                     ui.add_space(((ui.available_width() - side) * 0.5).max(0.0));
                     view.background = previews::view(p).background;
                     let response = if let Some(model) = model {
-                        aurora_render::preview::paint(ui, ui.id().with(item.id), model, view, Vec2::splat(side))
+                        aurora_render::preview::paint(ui, ui.scope_id().with(item.id), model, view, Vec2::splat(side))
                     } else {
                         widgets::picture(ui, p, None, Vec2::splat(side), "cube-3d-sphere", "")
                     }
                     .on_hover_text(aurora_i18n::tr!("import-preview-gestures"));
                     ui.ctx()
-                        .data_mut(|data| data.insert_temp(egui::Id::new(("resource_material_scene", item.id)), response.rect));
+                        .data_mut(|data| data.insert_temp(egui::Id::unique(("resource_material_scene", item.id)), response.rect));
                 });
                 ui.horizontal_wrapped(|ui| {
                     let label = aurora_i18n::tr!("texture-library-material-drag");
@@ -160,7 +160,7 @@ impl Editor {
                         .on_hover_text(aurora_i18n::tr!("texture-library-material-drag-hint"));
                     drag.dnd_set_drag_payload(InvDrag(item.id));
                     ui.ctx()
-                        .data_mut(|data| data.insert_temp(egui::Id::new(("resource_material_handle", item.id)), drag.rect));
+                        .data_mut(|data| data.insert_temp(egui::Id::unique(("resource_material_handle", item.id)), drag.rect));
                 });
                 ui.add_enabled_ui(editable && self.saving.is_none(), |ui| {
                     for slot in [0, 2, 3, 1] {
@@ -184,7 +184,7 @@ impl Editor {
             });
         ui.ctx().data_mut(|data| {
             data.insert_temp(
-                egui::Id::new(("resource_material_viewport", item.id)),
+                egui::Id::unique(("resource_material_viewport", item.id)),
                 (output.inner_rect, output.content_size),
             )
         });
@@ -241,7 +241,7 @@ impl Editor {
                 egui::Button::new(aurora_i18n::tr!("common-save")),
             );
             ui.ctx()
-                .data_mut(|d| d.insert_temp(egui::Id::new(("resource_material_save", item.id)), save.rect));
+                .data_mut(|d| d.insert_temp(egui::Id::unique(("resource_material_save", item.id)), save.rect));
             if save.clicked() {
                 actions.push(Action::SaveMaterial {
                     item: item.id,
@@ -295,7 +295,7 @@ impl Editor {
             let response = widgets::picture(ui, p, texture, Vec2::splat(side), "photo-filled", "");
             ui.ctx().data_mut(|data| {
                 data.insert_temp(
-                    egui::Id::new(("resource_material_map", item.id, slot)),
+                    egui::Id::unique(("resource_material_map", item.id, slot)),
                     (map, texture.map(egui::TextureHandle::id), response.rect),
                 )
             });

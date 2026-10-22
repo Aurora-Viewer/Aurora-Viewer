@@ -326,19 +326,19 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
     let visible = |layer: LayerId| ctx.memory(|m| m.areas().visible_last_frame(&layer).then(|| m.area_rect(layer.id)).flatten());
     let mut bars: Vec<Rect> = ["nav_bar", "bottom_bar"]
         .into_iter()
-        .filter_map(|id| egui::containers::panel::PanelState::load(&ctx, Id::new(id)))
+        .filter_map(|id| egui::containers::panel::PanelState::load(&ctx, Id::unique(id)))
         .map(|s| s.outer_rect)
         .collect();
     for name in ["menu", "bug", "place", "account", "system", "bell", "chat", "dock"] {
-        bars.extend(visible(LayerId::new(egui::Order::Middle, Id::new(("bars_island", name)))));
+        bars.extend(visible(LayerId::new(egui::Order::Middle, Id::unique(("bars_island", name)))));
     }
     Frame {
         bars,
-        chat: visible(LayerId::new(egui::Order::Background, Id::new("chat_toasts"))),
-        toasts: visible(LayerId::new(egui::Order::Foreground, Id::new("notification_presence"))),
-        system: visible(LayerId::new(egui::Order::Middle, Id::new(("bars_island", "system")))),
-        bell: visible(LayerId::new(egui::Order::Middle, Id::new(("bars_island", "bell")))),
-        panel: visible(LayerId::new(egui::Order::Foreground, Id::new("notification_center"))),
+        chat: visible(LayerId::new(egui::Order::Background, Id::unique("chat_toasts"))),
+        toasts: visible(LayerId::new(egui::Order::Foreground, Id::unique("notification_presence"))),
+        system: visible(LayerId::new(egui::Order::Middle, Id::unique(("bars_island", "system")))),
+        bell: visible(LayerId::new(egui::Order::Middle, Id::unique(("bars_island", "bell")))),
+        panel: visible(LayerId::new(egui::Order::Foreground, Id::unique("notification_center"))),
     }
 }
 
@@ -454,7 +454,7 @@ impl Clicks {
         for _ in 0..3 {
             self.frame(at, Vec::new());
         }
-        let layer = LayerId::new(egui::Order::Foreground, Id::new("notification_presence"));
+        let layer = LayerId::new(egui::Order::Foreground, Id::unique("notification_presence"));
         self.ctx
             .memory(|m| m.areas().visible_last_frame(&layer).then(|| m.area_rect(layer.id)).flatten())
     }

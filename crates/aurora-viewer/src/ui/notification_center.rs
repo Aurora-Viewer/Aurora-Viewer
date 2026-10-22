@@ -359,7 +359,7 @@ pub fn show(
     nui.center.inner_width = inner;
     let pos = egui::pos2(x, bell.bottom() + 6.0);
     let unroll = ctx.animate_bool_with_time_and_easing(
-        egui::Id::new("notification_center_unroll"),
+        egui::Id::unique("notification_center_unroll"),
         nui.open || !nui.center.peek.is_empty(),
         UNROLL,
         egui::emath::easing::cubic_out,
@@ -376,7 +376,7 @@ pub fn show(
     let height = Some(nui.center.unrolled_height)
         .filter(|h| *h > 1.0)
         .unwrap_or(screen.height() * 0.5);
-    let area = egui::Area::new(egui::Id::new("notification_center"))
+    let area = egui::Area::new(egui::Id::unique("notification_center"))
         .fade_in(false)
         .order(egui::Order::Foreground)
         .fixed_pos(pos)
@@ -403,7 +403,7 @@ pub fn show(
     }
     // the rolled-out cards wait while the pointer is on them: say so beside
     if hovered && !nui.open && !nui.center.peek.is_empty() {
-        egui::Area::new(egui::Id::new("notification_center_paused"))
+        egui::Area::new(egui::Id::unique("notification_center_paused"))
             .fade_in(false)
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::RIGHT_TOP)
@@ -726,7 +726,7 @@ fn center_card(
 /// The nearby chat lines over the chat bar (`ui::chat::toasts`), when
 /// they show: the friends' toasts stack above them.
 fn chat_lines(ctx: &egui::Context) -> Option<Rect> {
-    let layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("chat_toasts"));
+    let layer = egui::LayerId::new(egui::Order::Background, egui::Id::unique("chat_toasts"));
     ctx.memory(|m| m.areas().is_visible(&layer).then(|| m.area_rect(layer.id)).flatten())
 }
 
@@ -767,7 +767,7 @@ fn presence_toasts(
     let Some(min) = rects.iter().flatten().map(|r| r.min).reduce(|a, b| a.min(b)) else {
         return;
     };
-    egui::Area::new(egui::Id::new("notification_presence"))
+    egui::Area::new(egui::Id::unique("notification_presence"))
         .fade_in(false)
         .order(egui::Order::Foreground)
         .fixed_pos(min)
@@ -817,7 +817,7 @@ fn presence_toasts(
                 if !measured {
                     continue;
                 }
-                let click = ui.interact(frame, egui::Id::new(("notification_presence", id)), egui::Sense::click());
+                let click = ui.interact(frame, egui::Id::unique(("notification_presence", id)), egui::Sense::click());
                 if name_hover.is_some() {
                     let click = click
                         .on_hover_cursor(egui::CursorIcon::PointingHand)

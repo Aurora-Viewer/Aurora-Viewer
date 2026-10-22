@@ -166,11 +166,11 @@ fn cells(row: Rect) -> Vec<(Column, Rect)> {
 
 impl BlacklistUi {
     fn header(&mut self, ui: &mut egui::Ui, p: &Palette) {
-        let width = widgets::header_width(ui, ui.id().with("blacklist_rows"));
+        let width = widgets::header_width(ui, ui.scope_id().with("blacklist_rows"));
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
         for (column, cell) in cells(rect.with_max_x(rect.left() + width)) {
-            let resp = ui.interact(cell, ui.id().with(("blacklist_header", column as u8)), Sense::click());
+            let resp = ui.interact(cell, ui.scope_id().with(("blacklist_header", column as u8)), Sense::click());
             let sorted = self.sort.filter(|(c, _)| *c == column);
             let color = if sorted.is_some() || resp.hovered() { p.ink } else { p.muted };
             let room = cell.width() - if sorted.is_some() { 22.0 } else { 12.0 };
@@ -301,7 +301,7 @@ impl BlacklistUi {
                             });
                         }
                     });
-                    widgets::remember_scroll_bar(ui, ui.id().with("blacklist_rows"), &out);
+                    widgets::remember_scroll_bar(ui, ui.scope_id().with("blacklist_rows"), &out);
                 },
             );
             ui.add_space(6.0);

@@ -139,7 +139,7 @@ pub(super) fn link(ui: &mut Ui, action: Action, text: &str, size: f32, color: Co
         },
     );
     let (origin, galley, response) = egui::Label::new(job).sense(egui::Sense::click()).layout_in_ui(ui);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Link, ui.is_enabled(), text));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, ui.is_enabled(), text));
     if ui.is_rect_visible(response.rect) {
         let underline = if response.hovered() || response.has_focus() {
             egui::Stroke::new(1.0, color)

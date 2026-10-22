@@ -877,7 +877,7 @@ fn blocked_tab(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut PeopleUi,
     });
     ui.add_space(4.0);
     let entries = world.mutes.entries();
-    let list = ui.id().with("blocked_list");
+    let list = ui.scope_id().with("blocked_list");
     let w = widgets::header_width(ui, list);
     let title = aurora_i18n::tr!("ui-people-name", value0 = format!("{}", entries.len()));
     widgets::header_row(ui, p, &[(&title, w - 160.0), (aurora_i18n::tr!("common-type"), 70.0), ("", 90.0)]);

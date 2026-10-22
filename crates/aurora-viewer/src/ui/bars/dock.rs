@@ -180,7 +180,7 @@ pub fn bottom(
 
     area(&ctx, p, "dock", geo.dock, |ui| {
         // the dock's background: its right-click menu and the drop target
-        let target = ui.interact(geo.dock, Id::new("toolbar_background"), Sense::click());
+        let target = ui.interact(geo.dock, Id::unique("toolbar_background"), Sense::click());
         toolbar.context(&target, p, row.bar, style, None, row.locked);
         let inner = geo.dock.shrink2(Vec2::new(PAD, V_PAD));
         let mut child = ui.new_child(
@@ -206,7 +206,7 @@ pub fn bottom(
         if cfg!(test)
             && let Some(speak) = buttons.iter().position(|b| b.command == "speak").and_then(|i| rects.get(i))
         {
-            ctx.data_mut(|d| d.insert_temp(Id::new("dock_speak_rect"), *speak));
+            ctx.data_mut(|d| d.insert_temp(Id::unique("dock_speak_rect"), *speak));
         }
         // a button dropped a little past either end still lands in the dock;
         // the marker spans the buttons' row less 2 px at each end, the
@@ -215,7 +215,7 @@ pub fn bottom(
         // A wider toolbar must not cover the chat's resize handle with a
         // hover-only drop target on the dock's higher layer.
         drop_rect.min.x = drop_rect.min.x.max(geo.chat.right() + AFTER_CHAT);
-        let drop = ui.interact(drop_rect, Id::new("dock_drop"), Sense::hover());
+        let drop = ui.interact(drop_rect, Id::unique("dock_drop"), Sense::hover());
         toolbar.drop_bar(&drop, row.bar, &rects, p, row.locked);
     });
     (out, action, screen.bottom() - geo.reserved(), committed)
@@ -253,7 +253,7 @@ fn chat_island(
         Pos2::new(field.right() - FIELD_PAD - EMOJI_ICON / 2.0, field.center().y),
         Vec2::splat(EMOJI_ICON),
     );
-    let smile_resp = ui.interact(smile.expand(4.0), Id::new("chat_island_emoji"), Sense::click());
+    let smile_resp = ui.interact(smile.expand(4.0), Id::unique("chat_island_emoji"), Sense::click());
     let hot = smile_resp.hovered() || chat.bar_emoji_open;
     paint_icon(ui, icons, "mood-smile-filled", smile, EMOJI_ICON, slot_ink(p, hot, true));
     if smile_resp.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
@@ -282,7 +282,7 @@ fn chat_island(
             .text_color(p.ink)
             .hint_text(hint)
             .desired_width(text.width())
-            .vertical_align(egui::Align::Center)
+            .align(egui::Align2::LEFT_CENTER)
     });
     if chat.bar_emoji_open {
         emoji_picker(ui, p, icons, chat, emoji, smile, Pos2::new(field.right(), island.top() - 6.0));
@@ -295,7 +295,7 @@ fn chat_island(
         Pos2::new(island.right() - 4.0, island.top() + 6.0),
         Pos2::new(island.right() + 2.0, island.bottom() - 6.0),
     );
-    let h = ui.interact(handle, Id::new("chat_island_width"), Sense::click_and_drag());
+    let h = ui.interact(handle, Id::unique("chat_island_width"), Sense::click_and_drag());
     if h.hovered() || h.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
@@ -332,7 +332,7 @@ fn emoji_picker(
     };
     let mut close = false;
     let mut escape = false;
-    let shown = egui::Area::new(Id::new("chat_island_emoji_picker"))
+    let shown = egui::Area::new(Id::unique("chat_island_emoji_picker"))
         .fade_in(false)
         .order(egui::Order::Foreground)
         .pivot(egui::Align2::RIGHT_BOTTOM)
@@ -382,7 +382,7 @@ fn conversations_button(
             Some(id) => chat.selected == Some(id),
             None => chat.selected.is_none() && !chat.contacts,
         };
-    let resp = ui.interact(button, Id::new("chat_island_open"), Sense::click());
+    let resp = ui.interact(button, Id::unique("chat_island_open"), Sense::click());
     slot_face(ui, p, button, resp.hovered(), shown);
     // its flash while the window is closed (`ButtonFlash`)
     if row.flash > 0.0 && !panels.chat {
@@ -517,7 +517,7 @@ mod tests {
         bench.frame(vec![]);
         let speak = bench
             .ctx
-            .data(|d| d.get_temp::<Rect>(Id::new("dock_speak_rect")))
+            .data(|d| d.get_temp::<Rect>(Id::unique("dock_speak_rect")))
             .expect("the dock's Speak button");
         let layout = crate::ui::skin::Layout::default();
         let docked = super::DockLayout::default().of(&layout).toolbar.len();
@@ -724,7 +724,7 @@ mod tests {
         let buttons = crate::ui::skin::Layout::default().toolbar.len();
         let g = geometry(screen(1536.0), 0.0, buttons, true);
         let from = Pos2::new(g.chat.right() - 1.0, g.chat.center().y);
-        let target = bench.ctx.read_response(Id::new("dock_drop")).expect("the toolbar drop target");
+        let target = bench.ctx.read_response(Id::unique("dock_drop")).expect("the toolbar drop target");
         assert!(
             !target.rect.contains(from),
             "the toolbar target must leave the chat handle interactive"

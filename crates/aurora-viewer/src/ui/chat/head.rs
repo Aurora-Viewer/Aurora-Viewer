@@ -119,7 +119,7 @@ pub(super) fn show(
             if status != presence::Status::Unknown {
                 presence::paint_dot(ui.painter(), p, pic, status, p.panel);
             }
-            let r = ui.interact(pic, ui.id().with("head_pic"), egui::Sense::click());
+            let r = ui.interact(pic, ui.scope_id().with("head_pic"), egui::Sense::click());
             super::name_menu(&r, p, world, a);
             if r.on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(status.label())
@@ -239,7 +239,7 @@ pub(super) fn show(
         {
             // the head comes back, the keyboard goes to the message field
             search.find = None;
-            ui.ctx().memory_mut(|m| m.request_focus(egui::Id::new(("conv_input", selected))));
+            ui.ctx().memory_mut(|m| m.request_focus(egui::Id::unique(("conv_input", selected))));
         }
         return;
     }
@@ -271,7 +271,7 @@ pub(super) fn show(
         );
     }
     let names = egui::Rect::from_x_y_ranges(text_left..=text_right, rect.y_range());
-    let r = ui.interact(names, ui.id().with("head_names"), egui::Sense::click());
+    let r = ui.interact(names, ui.scope_id().with("head_names"), egui::Sense::click());
     if let Some(a) = who.avatar {
         super::name_menu(&r, p, world, a);
         let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);

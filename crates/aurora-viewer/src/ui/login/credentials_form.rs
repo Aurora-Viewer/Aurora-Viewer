@@ -207,7 +207,7 @@ pub fn dialog(
     let adding = form.adding;
     let mut submitted = false;
     let mut cancelled = false;
-    let response = widgets::Modal::new(Id::new("account_login_dialog"))
+    let response = widgets::Modal::new(Id::unique("account_login_dialog"))
         .login_surface(p)
         .show(ctx, |ui| {
             ui.set_width(if adding { 340.0 } else { 320.0 });

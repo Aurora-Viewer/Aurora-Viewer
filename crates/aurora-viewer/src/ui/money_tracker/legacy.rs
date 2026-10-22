@@ -147,7 +147,11 @@ impl MoneyTrackerUi {
             aurora_i18n::tr!("money-tracker-legacy-amount"),
         ];
         for ((column, cell), title) in cells(rect).into_iter().zip(titles) {
-            let resp = ui.interact(cell, ui.id().with(("money-tracker-legacy-head", column as u8)), Sense::click());
+            let resp = ui.interact(
+                cell,
+                ui.scope_id().with(("money-tracker-legacy-head", column as u8)),
+                Sense::click(),
+            );
             let sorted = self.legacy_sort.0 == column;
             let color = if sorted || resp.hovered() { p.ink } else { p.muted };
             let left = egui::pos2(cell.left() + 4.0, cell.center().y);

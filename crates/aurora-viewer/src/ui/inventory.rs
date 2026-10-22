@@ -1064,7 +1064,7 @@ fn search_scroll(
         let pitch = row_height + ui.spacing().item_spacing.y;
         scroll = scroll.vertical_scroll_offset((index as f32 * pitch - height / 2.0).max(0.0));
     }
-    let mut out = if total == 0 {
+    let out = if total == 0 {
         scroll.show(ui, |ui| {
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-inventory-no-results-in-the-loaded-folders"))
@@ -1079,7 +1079,7 @@ fn search_scroll(
             ui.set_min_width(st.result_width);
         })
     };
-    drag::navigation::scroll(ui, &mut out, st.ui_id);
+    drag::navigation::scroll(ui, &out, st.ui_id);
     out
 }
 
@@ -1694,7 +1694,7 @@ pub fn show(
         let mut menu_open = true;
         super::menu::popup_at(
             ctx,
-            egui::Id::new("inventory_demo_menu"),
+            egui::Id::unique("inventory_demo_menu"),
             screen.center() - egui::vec2(200.0, 330.0),
             &mut menu_open,
             p,
@@ -1935,7 +1935,7 @@ mod tests {
                         });
                     },
                 ));
-                ctx.memory(|memory| memory.area_rect(egui::Id::new("narrow_inventory")).unwrap())
+                ctx.memory(|memory| memory.area_rect(egui::Id::unique("narrow_inventory")).unwrap())
             };
             let mut rect = run(vec![]);
             for _ in 0..8 {
@@ -2032,17 +2032,18 @@ mod tests {
         };
         let first = run();
         assert!(first.content_size.x > first.inner_rect.width() * 2.0);
-        let mut state = first.state;
-        state.offset = egui::vec2(100_000.0, 100_000.0);
-        state.store(&ctx, first.id);
+        crate::ui::widgets::scroll_offset::set(&ctx, first.id, egui::vec2(100_000.0, 100_000.0));
         let _ = run();
         let last = run();
-        assert!(last.state.offset.x > 200.0, "the end of the long label is reachable");
+        assert!(last.state.unclamped_offset().x > 200.0, "the end of the long label is reachable");
         assert!(
             (last.content_size.x - first.content_size.x).abs() < 1.0,
             "the horizontal range survives virtual scrolling"
         );
-        assert!(last.state.offset.y > 10_000.0, "the last results are reachable vertically");
+        assert!(
+            last.state.unclamped_offset().y > 10_000.0,
+            "the last results are reachable vertically"
+        );
     }
 
     #[test]
@@ -2094,7 +2095,7 @@ mod tests {
                         scroll.content_size,
                         scroll.inner_rect
                     );
-                    horizontal_offset = scroll.state.offset.x;
+                    horizontal_offset = scroll.state.unclamped_offset().x;
                 },
             ));
             assert!(
@@ -2175,7 +2176,7 @@ mod tests {
                         "the complete tree stays available at every window width"
                     );
                 }
-                let size = ctx.memory(|memory| memory.area_rect(egui::Id::new("inventory")).unwrap().size());
+                let size = ctx.memory(|memory| memory.area_rect(egui::Id::unique("inventory")).unwrap().size());
                 if frame == 8 {
                     assert!(
                         size.x <= window_size.x + 1.0 && size.y <= window_size.y + 1.0,
@@ -2357,7 +2358,7 @@ mod tests {
                     let field = frame(&mut st, vec![]);
                     assert!(st.visible.contains(&id(target)), "search exposes the target");
                     let row = ctx
-                        .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_drag_row", st.ui_id, id(target)))))
+                        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_drag_row", st.ui_id, id(target)))))
                         .expect("target row");
                     frame(&mut st, pointer(row.center(), true));
                     frame(&mut st, pointer(row.center(), false));
@@ -2498,6 +2499,7 @@ mod tests {
                         unit: egui::MouseWheelUnit::Point,
                         delta: egui::vec2(0.0, -600.0),
                         phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Unknown,
                         modifiers: egui::Modifiers::NONE,
                     },
                 ],
@@ -3168,7 +3170,7 @@ mod tests {
                     },
                     &mut actions,
                 );
-                ui.add(egui::TextEdit::singleline(&mut String::new()).id(egui::Id::new("other_field")));
+                ui.add(egui::TextEdit::singleline(&mut String::new()).id(egui::Id::unique("other_field")));
             },
         ));
         actions
@@ -3233,7 +3235,7 @@ mod tests {
         st.begin_rename(&inv, Uuid::from_u128(8100));
         rename_frame(&ctx, &inv, &mut st, Vec::new());
         rename_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("Nouveau nom".into())]);
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("other_field")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("other_field")));
         let actions = rename_frame(&ctx, &inv, &mut st, Vec::new());
         assert!(st.rename.is_none());
         assert!(matches!(&actions[..], [InvAction::Edit(change)] if matches!(&change.operations[..],
@@ -3496,7 +3498,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    egui::Area::new(egui::Id::new("drop_test_window"))
+                    egui::Area::new(egui::Id::unique("drop_test_window"))
                         .fixed_pos(egui::pos2(50.0, 50.0))
                         .show(ui.ctx(), |ui| {
                             ui.set_min_size(egui::vec2(200.0, 200.0));

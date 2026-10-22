@@ -216,7 +216,7 @@ fn texture_library_header_switch_and_toolbar_restore_keep_the_active_state() {
     for _ in 0..8 {
         show(vec![], &mut ui, &mut prefs, &mut open);
     }
-    let rect = ctx.memory(|m| m.area_rect(egui::Id::new(VERTICAL))).expect("vertical window");
+    let rect = ctx.memory(|m| m.area_rect(egui::Id::unique(VERTICAL))).expect("vertical window");
     let switch = egui::pos2(rect.right() - 63.0, rect.top() + 18.0);
     for pressed in [true, false] {
         show(
@@ -245,7 +245,9 @@ fn texture_library_header_switch_and_toolbar_restore_keep_the_active_state() {
     assert_eq!(ui.search, "Stone");
     assert_eq!(ui.kind, Kind::Material);
     assert_eq!(ui.folder, Some(Uuid::from_u128(71)));
-    let rect = ctx.memory(|m| m.area_rect(egui::Id::new(HORIZONTAL))).expect("horizontal window");
+    let rect = ctx
+        .memory(|m| m.area_rect(egui::Id::unique(HORIZONTAL)))
+        .expect("horizontal window");
     let minimize = egui::pos2(rect.right() - 41.0, rect.top() + 18.0);
     for pressed in [true, false] {
         show(
@@ -355,7 +357,7 @@ fn texture_library_cards_apply_on_click_and_keep_dragging_separate_in_both_layou
                 frame(Vec::new(), &mut ui);
             }
             let source = ctx
-                .data(|data| data.get_temp::<egui::Pos2>(egui::Id::new("texture_library_first_card")))
+                .data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique("texture_library_first_card")))
                 .expect("resource card");
             let button = |pos, pressed| {
                 vec![
@@ -467,7 +469,7 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
         // few frames, whatever the load of the machine
         let ready = (0..10).any(|_| {
             frame(Vec::new(), &mut library);
-            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", item))))
+            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("resource_material_scene", item))))
                 .is_some()
         });
         assert!(ready, "material preview not shown");
@@ -475,13 +477,13 @@ fn texture_library_material_preview_keeps_orbit_and_drag_handle_independent() {
             frame(Vec::new(), &mut library);
         }
         let rect = |key| {
-            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new((key, item))))
+            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique((key, item))))
                 .expect("preview control")
         };
         let image = rect("resource_material_scene");
         let handle = rect("resource_material_handle");
         let window = ctx
-            .memory(|m| m.area_rect(egui::Id::new(preview_window_id(item))))
+            .memory(|m| m.area_rect(egui::Id::unique(preview_window_id(item))))
             .expect("preview floater");
         assert!(window.contains_rect(handle), "the handle must fit the compact preview");
         assert!(!image.intersects(handle), "the orbit surface and handle must not overlap");
@@ -614,7 +616,7 @@ fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
     let ready = (0..10).any(|_| {
         frame(Vec::new(), &mut resources, &mut world);
         items[2..].iter().all(|item| {
-            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", *item))))
+            ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("resource_material_scene", *item))))
                 .is_some()
         })
     });
@@ -625,7 +627,7 @@ fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
     assert_eq!(resources.windows.len(), 4);
     for item in items {
         let window = ctx
-            .memory(|m| m.area_rect(egui::Id::new(preview_window_id(item))))
+            .memory(|m| m.area_rect(egui::Id::unique(preview_window_id(item))))
             .expect("independent preview");
         let key = if item == items[0] || item == items[1] {
             "resource_texture_preview"
@@ -633,7 +635,7 @@ fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
             "resource_material_scene"
         };
         let content = ctx
-            .data(|d| d.get_temp::<egui::Rect>(egui::Id::new((key, item))))
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique((key, item))))
             .expect("visible preview content");
         assert!(window.contains_rect(content), "{window:?} {content:?}");
     }
@@ -649,7 +651,7 @@ fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
         ]
     };
     let canvas = ctx
-        .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", items[2]))))
+        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("resource_material_scene", items[2]))))
         .expect("material scene");
     let initial = resources.windows[2].view;
     let other = resources.windows[3].view;
@@ -668,7 +670,7 @@ fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
     assert_eq!(resources.windows.len(), 4, "a link focuses the same item window");
     assert!(resources.windows[2].view == camera, "reopening preserves the camera");
     let id = preview_window_id(items[2]);
-    let window = ctx.memory(|m| m.area_rect(egui::Id::new(&id))).expect("preview");
+    let window = ctx.memory(|m| m.area_rect(egui::Id::unique(&id))).expect("preview");
     let minimize = egui::pos2(window.right() - 40.0, window.top() + 19.0);
     frame(button(minimize, true), &mut resources, &mut world);
     frame(button(minimize, false), &mut resources, &mut world);
@@ -681,7 +683,7 @@ fn resource_previews_coexist_keep_their_cameras_and_close_independently() {
     assert!(!widgets::floater_minimized(&ctx, &id));
     assert!(resources.windows[2].view == camera);
     let last = ctx
-        .memory(|m| m.area_rect(egui::Id::new(preview_window_id(items[3]))))
+        .memory(|m| m.area_rect(egui::Id::unique(preview_window_id(items[3]))))
         .expect("last preview");
     let close = egui::pos2(last.right() - 18.0, last.top() + 19.0);
     frame(button(close, true), &mut resources, &mut world);
@@ -766,10 +768,10 @@ fn library_multiple_type_selector_toggles_closed() {
         draw(Vec::new());
     }
     let point = ctx
-        .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("library_type_selector")))
+        .data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique("library_type_selector")))
         .unwrap();
     let open = || {
-        ctx.data(|d| d.get_temp::<bool>(egui::Id::new("library_type_menu_open")))
+        ctx.data(|d| d.get_temp::<bool>(egui::Id::unique("library_type_menu_open")))
             .unwrap_or(false)
     };
     for expected in [true, false] {

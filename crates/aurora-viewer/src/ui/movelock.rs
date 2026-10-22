@@ -84,7 +84,7 @@ impl MoveLockUi {
     }
     pub fn indicator(&mut self, ctx: &egui::Context, p: &Palette, label: &str, status: &str) {
         let room = super::layout::work_area(ctx);
-        egui::Area::new(egui::Id::new("movelock_indicator"))
+        egui::Area::new(egui::Id::unique("movelock_indicator"))
             .default_pos(egui::pos2(room.left() + 12.0, room.bottom() - 40.0))
             .default_size(egui::Vec2::ZERO)
             .movable(true)
@@ -105,7 +105,7 @@ impl MoveLockUi {
 
 #[cfg(test)]
 fn remember(ctx: &egui::Context, index: usize, rect: egui::Rect) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(("movelock_control", index)), rect));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("movelock_control", index)), rect));
 }
 
 #[cfg(test)]
@@ -116,7 +116,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut panel = MoveLockUi::default();
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0));
-        let id = egui::Id::new("movelock_indicator");
+        let id = egui::Id::unique("movelock_indicator");
         let frame = |ctx: &egui::Context, panel: &mut MoveLockUi, screen, events| {
             let mut output = ctx.run_ui(
                 egui::RawInput {
@@ -216,7 +216,7 @@ mod tests {
         for index in [0usize, 1, 2, 4, 3] {
             let before = prefs;
             let rect = ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("movelock_control", index))))
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("movelock_control", index))))
                 .expect("control rectangle");
             let pos = rect.center();
             let click = |pressed| egui::Event::PointerButton {

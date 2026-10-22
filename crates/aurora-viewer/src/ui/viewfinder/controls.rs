@@ -310,7 +310,7 @@ impl Viewfinder {
         out: &mut Vec<Out>,
     ) {
         let dial = self.dial;
-        egui::Area::new(Id::new("vf_ring"))
+        egui::Area::new(Id::unique("vf_ring"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::CENTER_BOTTOM)
@@ -361,7 +361,7 @@ impl Viewfinder {
 
     /// The AF mode and area as choices, at the start of the bottom bar.
     pub(super) fn af_choices(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &Settings, at: Pos2, out: &mut Vec<Out>) {
-        egui::Area::new(Id::new("vf_af_choices"))
+        egui::Area::new(Id::unique("vf_af_choices"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::LEFT_CENTER)
@@ -435,7 +435,7 @@ impl Viewfinder {
             ),
         };
         let mut pad = Pad::default();
-        egui::Area::new(Id::new("vf_pad"))
+        egui::Area::new(Id::unique("vf_pad"))
             .order(Order::Foreground)
             .fade_in(false)
             .pivot(Align2::LEFT_BOTTOM)
@@ -561,7 +561,7 @@ impl Viewfinder {
             return;
         };
         let left = ((end - now).max(0.0)).ceil() as i32;
-        egui::Area::new(Id::new("vf_countdown"))
+        egui::Area::new(Id::unique("vf_countdown"))
             .order(Order::Foreground)
             .fade_in(false)
             .interactable(false)
@@ -724,7 +724,7 @@ fn segmented(ui: &mut egui::Ui, p: &Palette, items: &[(&str, bool, &str)], width
     for (i, (text, on, tip)) in items.iter().enumerate() {
         let w = if width.is_some() { even } else { widths[i] };
         let r = Rect::from_min_size(Pos2::new(x, inner.top()), Vec2::new(w, inner.height()));
-        let resp = ui.interact(r, ui.id().with(("vf_seg", i, *text)), Sense::click());
+        let resp = ui.interact(r, ui.scope_id().with(("vf_seg", i, *text)), Sense::click());
         if *on {
             ui.painter().rect_filled(r, radius, p.ink.gamma_multiply(0.16));
         } else if resp.hovered() {
@@ -752,7 +752,7 @@ fn label(ui: &mut egui::Ui, p: &Palette, text: &str) {
 fn step_button(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str) -> bool {
     let (cell, _) = ui.allocate_exact_size(Vec2::new(32.0, RULER.y), Sense::hover());
     let rect = Rect::from_center_size(cell.center(), Vec2::splat(32.0));
-    let resp = ui.interact(rect, ui.id().with(("vf_step", name)), Sense::click());
+    let resp = ui.interact(rect, ui.scope_id().with(("vf_step", name)), Sense::click());
     paint_step(ui, p, rect, name, resp.hovered());
     if resp.clicked() {
         resp.surrender_focus();
@@ -801,9 +801,9 @@ fn stick(ui: &mut egui::Ui, p: &Palette, id: &str, puck_icon: &str, arrows: bool
     }
     let shown = Vec2::new(
         ui.ctx()
-            .animate_value_with_time(Id::new(id).with("x"), v.x, if resp.dragged() { 0.0 } else { 0.18 }),
+            .animate_value_with_time(Id::unique(id).with("x"), v.x, if resp.dragged() { 0.0 } else { 0.18 }),
         ui.ctx()
-            .animate_value_with_time(Id::new(id).with("y"), v.y, if resp.dragged() { 0.0 } else { 0.18 }),
+            .animate_value_with_time(Id::unique(id).with("y"), v.y, if resp.dragged() { 0.0 } else { 0.18 }),
     );
     let alpha = if enabled { 1.0 } else { 0.35 };
     let painter = ui.painter();
@@ -850,7 +850,7 @@ fn rocker(ui: &mut egui::Ui, p: &Palette, tip: &str) -> f32 {
     }
     let shown = ui
         .ctx()
-        .animate_value_with_time(Id::new("vf_rocker"), v, if resp.dragged() { 0.0 } else { 0.18 });
+        .animate_value_with_time(Id::unique("vf_rocker"), v, if resp.dragged() { 0.0 } else { 0.18 });
     let painter = ui.painter();
     let c = rect.center();
     let track = Rect::from_center_size(c, Vec2::new(4.0, rect.height()));

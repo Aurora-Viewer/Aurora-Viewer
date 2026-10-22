@@ -930,7 +930,7 @@ mod tests {
                         ..Default::default()
                     },
                     |ui| {
-                        rect = paint(ui, egui::Id::new("gesture"), model.clone(), view, egui::vec2(200.0, 200.0)).rect;
+                        rect = paint(ui, egui::Id::unique("gesture"), model.clone(), view, egui::vec2(200.0, 200.0)).rect;
                     },
                 );
                 output.textures_delta.clear();

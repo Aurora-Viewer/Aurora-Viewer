@@ -240,7 +240,7 @@ pub(super) fn scroll(
     tree_spacing(ui);
     // The explorer's list opens no folder: nothing of it to keep.
     if st.ui_id.is_nil() && !st.aurora.is_some_and(|frame| frame.explorer) {
-        st.plain.persist(ui.ctx(), egui::Id::new("inventory_open_folders"));
+        st.plain.persist(ui.ctx(), egui::Id::unique("inventory_open_folders"));
     }
     st.view.prepare(inv, prefs.sort_for(st.tab));
     if let Some(open) = st.expand_all.take() {
@@ -276,7 +276,7 @@ pub(super) fn scroll(
         area = area.vertical_scroll_offset(offset);
     }
     let total = st.plain.rows.len();
-    let mut out = area.show_viewport(ui, |ui, viewport| {
+    let out = area.show_viewport(ui, |ui, viewport| {
         ui.set_height((pitch * total as f32 - ui.spacing().item_spacing.y).max(0.0));
         ui.set_min_width(st.plain.width);
         let origin = ui.max_rect().min;
@@ -309,8 +309,8 @@ pub(super) fn scroll(
         guides(ui, &st.plain, range, origin, pitch, height_of_row);
         ui.set_min_width(st.plain.width);
     });
-    st.plain_scroll = out.state.offset.y;
-    drag::navigation::scroll(ui, &mut out, st.ui_id);
+    st.plain_scroll = out.state.unclamped_offset().y;
+    drag::navigation::scroll(ui, &out, st.ui_id);
     out
 }
 
@@ -568,7 +568,7 @@ mod tests {
     #[test]
     fn the_open_folders_survive_a_new_session_through_the_layout() {
         let ctx = egui::Context::default();
-        let key = egui::Id::new("test_open_folders");
+        let key = egui::Id::unique("test_open_folders");
         let mut tree = PlainTree::default();
         tree.persist(&ctx, key);
         tree.set_open(id(10), true);

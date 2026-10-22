@@ -262,12 +262,15 @@ fn toolbar_catalogue_wraps_without_widening_the_floater() {
     for _ in 0..4 {
         bench.frame(vec![]);
     }
-    let window = bench.ctx.memory(|m| m.area_rect(egui::Id::new("toolbar_editor"))).expect("editor");
+    let window = bench
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::unique("toolbar_editor")))
+        .expect("editor");
     assert!(window.width() <= 900.0 - 16.0, "catalogue width: {window:?}");
     for button in catalogue(&layout()) {
         let rect = bench
             .ctx
-            .data(|d| d.get_temp::<Rect>(egui::Id::new(("toolbar_catalogue", button.command))))
+            .data(|d| d.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", button.command))))
             .expect("catalogue button");
         assert!(
             rect.left() >= window.left() && rect.right() <= window.right(),
@@ -361,7 +364,7 @@ impl Bench {
         self.frame(vec![]);
         self.frame(vec![]);
         self.ctx
-            .data(|d| d.get_temp::<Rect>(egui::Id::new(("toolbar_catalogue", command))))
+            .data(|d| d.get_temp::<Rect>(egui::Id::unique(("toolbar_catalogue", command))))
             .expect("catalogue tile")
     }
 
@@ -494,7 +497,7 @@ fn toolbar_catalogue_click_and_real_drop_into_empty_bar_add_single_buttons_in(is
     let source = bench.tile("friends");
     let target = bench
         .ctx
-        .read_response(egui::Id::new("toolbar_background"))
+        .read_response(egui::Id::unique("toolbar_background"))
         .expect("empty bar")
         .rect
         .center();
@@ -536,7 +539,7 @@ fn toolbar_empty_background_opens_editor_and_locked_buttons_stay_in_place_in(isl
     bench.frame(vec![]);
     let background = bench
         .ctx
-        .read_response(egui::Id::new("toolbar_background"))
+        .read_response(egui::Id::unique("toolbar_background"))
         .expect("empty background")
         .rect
         .center();
@@ -824,7 +827,10 @@ fn toolbar_drop_anywhere_on_the_window_removes_the_button() {
         bench.state.open = true;
         bench.frame(vec![]);
         bench.frame(vec![]);
-        let window = bench.ctx.memory(|m| m.area_rect(egui::Id::new("toolbar_editor"))).expect("editor");
+        let window = bench
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("toolbar_editor")))
+            .expect("editor");
         let from = bench.pos("people");
         let to = egui::pos2(window.center().x, window.bottom() - 12.0);
         bench.pointer(from, true, false);

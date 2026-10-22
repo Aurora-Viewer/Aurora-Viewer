@@ -636,7 +636,7 @@ fn tab_button(
             ui.painter().galley(pos, g, count_ink);
         }
     }
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, label));
     match why {
         None => resp.on_hover_cursor(egui::CursorIcon::PointingHand),
         Some(why) => resp.on_hover_text(why),
@@ -766,7 +766,7 @@ fn admin_tab(ui: &mut egui::Ui, p: &Palette, selected: bool) -> egui::Response {
     }
     let at = crate::ui::widgets::row_text_origin(ui.painter(), &galley, rect.left() + 32.0, rect.center().y);
     ui.painter().galley(at, galley, p.amber);
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 

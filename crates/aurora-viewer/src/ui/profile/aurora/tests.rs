@@ -463,7 +463,7 @@ impl PhotoFixture {
 
     fn image_rect(&self) -> Rect {
         self.ctx
-            .data(|data| data.get_temp(egui::Id::new(("profile_photo_preview", self.id))))
+            .data(|data| data.get_temp(egui::Id::unique(("profile_photo_preview", self.id))))
             .expect("preview image")
     }
 }

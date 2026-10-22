@@ -52,7 +52,7 @@ pub(super) fn button(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut I
         ui.scope(|ui| super::super::widgets::icon_button(ui, p, "trash-filled", aurora_i18n::tr!("inventory-delete-shortcut"), enabled));
     if cfg!(test) || demo_mode().is_some() {
         ui.ctx()
-            .data_mut(|data| data.insert_temp(egui::Id::new(("inventory_delete_button", st.ui_id)), button.response.rect));
+            .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_delete_button", st.ui_id)), button.response.rect));
     }
     if button.inner {
         request(inv, st, prefs, facts);
@@ -89,9 +89,11 @@ pub fn demo_events(ctx: &egui::Context, frame: u64, st: &InventoryUi) -> Vec<egu
         }];
     }
     let pos = match frame {
-        650 | 651 => ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_row", st.ui_id, Uuid::from_u128(8001))))),
+        650 | 651 => {
+            ctx.data(|data| data.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", st.ui_id, Uuid::from_u128(8001)))))
+        }
         680 | 681 if mode == "delete-button" => ctx
-            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("inventory_delete_button", st.ui_id))))
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("inventory_delete_button", st.ui_id))))
             .map(|rect| rect.center()),
         _ => None,
     };

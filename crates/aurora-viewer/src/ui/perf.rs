@@ -287,7 +287,7 @@ pub struct PerfView<'a> {
 /// The full view (the resource monitor) rather than the compact one;
 /// persisted with the UI layout (ui_layout.ron), the full view by default.
 fn full_id() -> egui::Id {
-    egui::Id::new(("perf", "monitor"))
+    egui::Id::unique(("perf", "monitor"))
 }
 
 pub fn set_full(ctx: &egui::Context, full: bool) {
@@ -304,7 +304,7 @@ pub fn is_full(ctx: &egui::Context) -> bool {
 /// The full view for this opening only (`show_network`): the saved choice
 /// of the window's button stays.
 fn full_once_id() -> egui::Id {
-    egui::Id::new(("perf", "full-once"))
+    egui::Id::unique(("perf", "full-once"))
 }
 
 /// The window on the monitor's Network section, from the bars (the system
@@ -318,22 +318,22 @@ pub fn show_network(ctx: &egui::Context) {
 /// A placement under the system island asked (`place_under`), for the
 /// next frame the window is open.
 fn place_id() -> egui::Id {
-    egui::Id::new(("perf", "place-under"))
+    egui::Id::unique(("perf", "place-under"))
 }
 
 /// The system island of this opening (`island`).
 fn island_id() -> egui::Id {
-    egui::Id::new(("perf", "island"))
+    egui::Id::unique(("perf", "island"))
 }
 
 /// The window was shown last frame.
 fn shown_id() -> egui::Id {
-    egui::Id::new(("perf", "shown"))
+    egui::Id::unique(("perf", "shown"))
 }
 
 /// Where the full view stood and its size when last shown (persisted).
 fn monitor_rect_id() -> egui::Id {
-    egui::Id::new(("perf", "monitor-rect"))
+    egui::Id::unique(("perf", "monitor-rect"))
 }
 
 /// Performance opened from the system island of Aurora's bars (its frame
@@ -381,7 +381,7 @@ fn place(ctx: &egui::Context, work: Rect, full: bool, open: bool) {
         }
     });
     let stands = || {
-        egui::AreaState::load(ctx, egui::Id::new("perf"))
+        egui::AreaState::load(ctx, egui::Id::unique("perf"))
             .filter(|s| s.size.is_some())
             .map(|s| s.left_top_pos())
     };
@@ -402,7 +402,7 @@ fn place(ctx: &egui::Context, work: Rect, full: bool, open: bool) {
     }
     if was_shown && was_full {
         // the full view as it stands, remembered for its next opening
-        if let Some(s) = egui::AreaState::load(ctx, egui::Id::new("perf")).filter(|s| s.size.is_some()) {
+        if let Some(s) = egui::AreaState::load(ctx, egui::Id::unique("perf")).filter(|s| s.size.is_some()) {
             ctx.data_mut(|d| d.insert_persisted(monitor_rect_id(), s.rect()));
         }
         return;

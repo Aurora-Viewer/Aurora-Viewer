@@ -20,7 +20,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 |ui, s| {
                     let names = crate::ui::bars::time_of_day();
                     let mut changed = false;
-                    egui::ComboBox::from_id_salt(ui.id().with("tod"))
+                    egui::ComboBox::from_id_salt(ui.scope_id().with("tod"))
                         .width(COMBO_W)
                         .selected_text(names[s.time_of_day.min(crate::world::env::TIME_OF_DAY_PRESETS) as usize])
                         .show_ui(ui, |ui| {

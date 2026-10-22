@@ -74,7 +74,7 @@ impl Fixture {
             },
         );
         output.textures_delta.clear();
-        self.ctx.memory(|m| m.area_rect(egui::Id::new("collapse_fixture")).unwrap())
+        self.ctx.memory(|m| m.area_rect(egui::Id::unique("collapse_fixture")).unwrap())
     }
 
     fn button(&mut self, pos: egui::Pos2, pressed: bool) {
@@ -97,7 +97,7 @@ impl Fixture {
 
     fn title(&self) -> egui::Pos2 {
         self.ctx
-            .read_response(egui::Id::new("collapse_fixture").with("title_double_click"))
+            .read_response(egui::Id::unique("collapse_fixture").with("title_double_click"))
             .unwrap()
             .rect
             .center()

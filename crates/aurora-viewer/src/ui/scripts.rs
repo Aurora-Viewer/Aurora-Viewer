@@ -283,7 +283,7 @@ impl Editors {
             let Some(start) = e.source.find("integer count") else { return };
             let Some(end) = e.source.find("string greet") else { return };
             let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            let id = egui::Id::new((&id, "source_text"));
+            let id = egui::Id::unique((&id, "source_text"));
             editing::select(ctx, id, e.source[..start].chars().count()..e.source[..end].chars().count(), true);
             if outdent {
                 editing::selection_command(ctx, id, &mut e.source, editing::SelectionCommand::Indent);
@@ -313,7 +313,7 @@ impl Editors {
         }
         if frame == 350 && mode == "insert-filter" {
             let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            let id = egui::Id::new((&id, "source_text")).with("insert_filter");
+            let id = egui::Id::unique((&id, "source_text")).with("insert_filter");
             if let Some(field) = ctx.read_response(id) {
                 return vec![
                     egui::Event::PointerMoved(field.rect.center_bottom() + Vec2::new(0.0, 90.0)),
@@ -322,6 +322,7 @@ impl Editors {
                         delta: Vec2::new(0.0, -240.0),
                         modifiers: egui::Modifiers::NONE,
                         phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Unknown,
                     },
                 ];
             }
@@ -354,7 +355,7 @@ impl Editors {
             return;
         };
         let id = format!("script_editor_{}_{}", target.object, target.item);
-        let text_id = egui::Id::new((&id, "source_text"));
+        let text_id = egui::Id::unique((&id, "source_text"));
         match mode {
             "search" | "search-left" | "search-inline" | "search-overlay" | "search-outside" => {
                 settings.search_prefer_left = mode == "search-left";
@@ -397,7 +398,7 @@ impl Editors {
         if let Some(e) = self.documents.first_mut() {
             e.tools.processed = true;
             let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            let id = egui::Id::new((&id, "source_text")).with("processed");
+            let id = egui::Id::unique((&id, "source_text")).with("processed");
             let at = e
                 .tools
                 .processed_source
@@ -413,7 +414,7 @@ impl Editors {
     fn focus_source(e: &Editor, ctx: &egui::Context, byte: usize) {
         let cursor = egui::text::CCursor::new(e.source[..byte].chars().count());
         let id = format!("script_editor_{}_{}", e.target.object, e.target.item);
-        let text_id = egui::Id::new((&id, "source_text"));
+        let text_id = egui::Id::unique((&id, "source_text"));
         if let Some(mut state) = egui::TextEdit::load_state(ctx, text_id) {
             state.cursor.set_char_range(Some(egui::text::CCursorRange::one(cursor)));
             state.store(ctx, text_id);
@@ -584,7 +585,7 @@ impl Editors {
         else {
             return;
         };
-        let id = egui::Id::new((&format!("script_editor_{}_{}", target.object, target.item), "source_text"));
+        let id = egui::Id::unique((&format!("script_editor_{}_{}", target.object, target.item), "source_text"));
         let [a, b] = editing::cursor(ctx, id).sorted_cursors();
         if !editing::replace(ctx, id, &mut e.source, a.index.0..b.index.0, text) {
             e.status = aurora_i18n::tr!("script-source-too-large").into();
@@ -693,8 +694,8 @@ impl Editors {
             let title = format!("{}{}", e.name, if e.dirty() { " *" } else { "" });
             focus::claim(
                 ctx,
-                egui::LayerId::new(egui::Order::Middle, egui::Id::new(&id)),
-                egui::Id::new((&id, "source_text")),
+                egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&id)),
+                egui::Id::unique((&id, "source_text")),
             );
             Floater::new(
                 &id,
@@ -709,7 +710,7 @@ impl Editors {
                     ui,
                     p,
                     e,
-                    egui::Id::new((&id, "source_text")),
+                    egui::Id::unique((&id, "source_text")),
                     settings,
                     &mut self.panels,
                     &mut actions,
@@ -719,14 +720,14 @@ impl Editors {
                 ctx,
                 p,
                 e,
-                egui::Id::new((&id, "source_text")),
+                egui::Id::unique((&id, "source_text")),
                 settings,
                 &mut self.panels,
                 &mut actions,
             );
-            let source_id = egui::Id::new((&id, "source_text"));
+            let source_id = egui::Id::unique((&id, "source_text"));
             if let Some(literal) = e.colors.clicked.take() {
-                e.colors.open(&mut e.source, ctx, source_id, egui::Id::new(&id), literal);
+                e.colors.open(&mut e.source, ctx, source_id, egui::Id::unique(&id), literal);
             }
             e.colors.show(
                 ctx,
@@ -794,14 +795,22 @@ impl Editors {
         let mut bound = false;
         for e in &mut self.documents {
             let window = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            let id = egui::Id::new((&window, "source_text"));
+            let id = egui::Id::unique((&window, "source_text"));
             if search.owns(id) {
                 bound = true;
                 let minimized = ctx
-                    .data_mut(|d| d.get_persisted::<bool>(egui::Id::new((&window, "minimized"))))
+                    .data_mut(|d| d.get_persisted::<bool>(egui::Id::unique((&window, "minimized"))))
                     .unwrap_or(false);
-                if !minimized && let Some(parent) = ctx.memory(|m| m.area_rect(egui::Id::new(&window))) {
-                    view::search(ctx, p, e, id, search, (egui::Id::new(&window), parent), settings.search_prefer_left);
+                if !minimized && let Some(parent) = ctx.memory(|m| m.area_rect(egui::Id::unique(&window))) {
+                    view::search(
+                        ctx,
+                        p,
+                        e,
+                        id,
+                        search,
+                        (egui::Id::unique(&window), parent),
+                        settings.search_prefer_left,
+                    );
                 }
                 break;
             }
@@ -830,7 +839,7 @@ mod tests {
     }
 
     fn source_id(target: ScriptTarget) -> egui::Id {
-        egui::Id::new((window(target), "source_text"))
+        egui::Id::unique((window(target), "source_text"))
     }
 
     fn frame(ctx: &egui::Context, editors: &mut Editors, events: Vec<egui::Event>) -> egui::FullOutput {
@@ -953,7 +962,7 @@ mod tests {
             assert!(ctx.memory(|m| m.has_focus(source_id(second))));
 
             editing::select(&ctx, source_id(first), 3..7, false);
-            ctx.data_mut(|d| d.insert_persisted(egui::Id::new((window(first), "minimized")), true));
+            ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((window(first), "minimized")), true));
             settle(&ctx, &mut editors);
             editors.open(first, "First".into(), true, true);
             settle(&ctx, &mut editors);
@@ -991,7 +1000,7 @@ mod tests {
         for closed in [false, true] {
             if closed {
                 editors.panels.search.open = false;
-                ctx.data_mut(|d| d.insert_persisted(egui::Id::new((dialogs::Search::WINDOW, "minimized")), true));
+                ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((dialogs::Search::WINDOW, "minimized")), true));
             }
             editors.open(second, "Search owner".into(), true, true);
             settle(&ctx, &mut editors);
@@ -1004,7 +1013,7 @@ mod tests {
             assert!(!editors.panels.search.insensitive);
             assert!(editors.panels.search.up);
             assert!(!super::super::widgets::floater_minimized(&ctx, dialogs::Search::WINDOW));
-            assert!(ctx.memory(|m| m.has_focus(egui::Id::new(dialogs::Search::WINDOW).with("query"))));
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
             let output = frame(&ctx, &mut editors, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
             assert!(editor_focused(&ctx));
             assert_eq!(
@@ -1058,13 +1067,13 @@ mod tests {
             for _ in 0..3 {
                 frame_settings(&ctx, &mut editors, &mut settings, vec![]);
             }
-            let search_id = egui::Id::new(dialogs::Search::WINDOW);
+            let search_id = egui::Id::unique(dialogs::Search::WINDOW);
             let query_id = search_id.with("query");
             let replacement_id = search_id.with("replacement");
             assert!(ctx.memory(|m| m.has_focus(query_id)));
             assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 0.into()..0.into());
             assert_eq!(
-                ctx.read_response(query_id).unwrap().layer_id.id == egui::Id::new(window(target)),
+                ctx.read_response(query_id).unwrap().layer_id.id == egui::Id::unique(window(target)),
                 inline
             );
 
@@ -1117,8 +1126,8 @@ mod tests {
         ] {
             super::super::widgets::place_floater(&ctx, &window(target), pos, size);
             settle(&ctx, &mut editors);
-            let parent = ctx.memory(|m| m.area_rect(egui::Id::new(window(target)))).unwrap();
-            let search = ctx.memory(|m| m.area_rect(egui::Id::new(dialogs::Search::WINDOW))).unwrap();
+            let parent = ctx.memory(|m| m.area_rect(egui::Id::unique(window(target)))).unwrap();
+            let search = ctx.memory(|m| m.area_rect(egui::Id::unique(dialogs::Search::WINDOW))).unwrap();
             assert!(search.width() < 420.0, "compact default: {search:?}");
             let expected = if parent.right() + search.width() <= 1600.0 {
                 parent.right_top()
@@ -1129,7 +1138,7 @@ mod tests {
             };
             assert!((search.left_top() - expected).length() < 1.5, "{parent:?} / {search:?}");
         }
-        ctx.data_mut(|d| d.insert_persisted(egui::Id::new((window(target), "minimized")), true));
+        ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((window(target), "minimized")), true));
         settle(&ctx, &mut editors);
         let output = frame(&ctx, &mut editors, vec![]);
         assert!(
@@ -1158,8 +1167,8 @@ mod tests {
             search_inline: true,
             ..Default::default()
         };
-        let parent_id = egui::Id::new(window(target));
-        let search_id = egui::Id::new(dialogs::Search::WINDOW);
+        let parent_id = egui::Id::unique(window(target));
+        let search_id = egui::Id::unique(dialogs::Search::WINDOW);
         let query_id = search_id.with("query");
         super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(470.0, 120.0), Vec2::new(660.0, 650.0));
         for _ in 0..4 {
@@ -1281,9 +1290,9 @@ mod tests {
         super::super::widgets::place_floater(&ctx, &window(first), egui::pos2(260.0, 120.0), Vec2::new(1100.0, 650.0));
         editors.panels.search.begin(&ctx, source_id(first), source_id(first), "source");
         settle(&ctx, &mut editors);
-        let owner = egui::LayerId::new(egui::Order::Middle, egui::Id::new(window(first)));
-        let other = egui::LayerId::new(egui::Order::Middle, egui::Id::new(window(second)));
-        let search = egui::LayerId::new(egui::Order::Middle, egui::Id::new(dialogs::Search::WINDOW));
+        let owner = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(window(first)));
+        let other = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(window(second)));
+        let search = egui::LayerId::new(egui::Order::Middle, egui::Id::unique(dialogs::Search::WINDOW));
         for top in [owner, other] {
             ctx.move_to_top(top);
             settle(&ctx, &mut editors);
@@ -1310,7 +1319,7 @@ mod tests {
             let load = editors.open(target, "Reachable".into(), true, true).unwrap();
             editors.loaded(load, target, Ok("source".into()));
             settle(&ctx, &mut editors);
-            let id = egui::Id::new(window(target));
+            let id = egui::Id::unique(window(target));
             let start = ctx.read_response(id.with("title_double_click")).unwrap().rect.center();
             frame(&ctx, &mut editors, vec![egui::Event::PointerMoved(start)]);
             frame(
@@ -1352,7 +1361,7 @@ mod tests {
             }
             assert!(rect.top() >= room.top());
             assert_eq!(
-                super::super::layout::edges_for(&ctx, egui::Id::new("ordinary_window")),
+                super::super::layout::edges_for(&ctx, egui::Id::unique("ordinary_window")),
                 super::super::layout::Edges::default()
             );
         }
@@ -1365,7 +1374,7 @@ mod tests {
                 let mut other = String::from("Another window");
                 super::super::widgets::Floater::new("script_shortcut_other", "Other", egui::pos2(1200.0, 720.0), Vec2::new(260.0, 200.0))
                     .show(ctx, p, &mut true, |ui| {
-                        ui.add(egui::TextEdit::singleline(&mut other).id(egui::Id::new("script_shortcut_other_field")));
+                        ui.add(egui::TextEdit::singleline(&mut other).id(egui::Id::unique("script_shortcut_other_field")));
                     });
             })
         }
@@ -1407,11 +1416,11 @@ mod tests {
             for _ in 0..2 {
                 show(&ctx, &mut editors, vec![]);
             }
-            let parent = ctx.memory(|m| m.area_rect(egui::Id::new(window(target)))).unwrap();
+            let parent = ctx.memory(|m| m.area_rect(egui::Id::unique(window(target)))).unwrap();
             let editor = editors.documents.iter().find(|e| e.target == target).unwrap();
             let pos = match area {
                 "title" => ctx
-                    .read_response(egui::Id::new(window(target)).with("title_double_click"))
+                    .read_response(egui::Id::unique(window(target)).with("title_double_click"))
                     .unwrap()
                     .rect
                     .center(),
@@ -1454,14 +1463,14 @@ mod tests {
                 editors.panels.search.owns(source_id(target)),
                 "{area}: find must bind the clicked script"
             );
-            assert!(ctx.memory(|m| m.has_focus(egui::Id::new(dialogs::Search::WINDOW).with("query"))));
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::unique(dialogs::Search::WINDOW).with("query"))));
         }
         for outside in [
-            ctx.read_response(egui::Id::new("script_shortcut_other").with("title_double_click"))
+            ctx.read_response(egui::Id::unique("script_shortcut_other").with("title_double_click"))
                 .unwrap()
                 .rect
                 .center(),
-            ctx.read_response(egui::Id::new("script_shortcut_other_field"))
+            ctx.read_response(egui::Id::unique("script_shortcut_other_field"))
                 .unwrap()
                 .rect
                 .center(),
@@ -1472,7 +1481,7 @@ mod tests {
                 show(&ctx, &mut editors, vec![]);
             }
             let title = ctx
-                .read_response(egui::Id::new(window(first)).with("title_double_click"))
+                .read_response(egui::Id::unique(window(first)).with("title_double_click"))
                 .unwrap()
                 .rect
                 .center();
@@ -1760,7 +1769,7 @@ mod tests {
             .iter()
             .map(|t| {
                 ctx.memory(|m| {
-                    m.area_rect(egui::Id::new(format!("script_editor_{}_{}", t.object, t.item)))
+                    m.area_rect(egui::Id::unique(format!("script_editor_{}_{}", t.object, t.item)))
                         .expect("script window")
                 })
             })

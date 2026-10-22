@@ -72,11 +72,11 @@ mod tests {
                 end_world_labels(&ctx);
                 // a bar of the background layer, a panel laid on the world and a window
                 egui::Panel::top("bar").show(ui, |ui| fill(ui, Color32::GREEN));
-                egui::Area::new(egui::Id::new("toast"))
+                egui::Area::new(egui::Id::unique("toast"))
                     .order(egui::Order::Background)
                     .fade_in(false)
                     .show(&ctx, |ui| fill(ui, Color32::BLUE));
-                egui::Area::new(egui::Id::new("window"))
+                egui::Area::new(egui::Id::unique("window"))
                     .order(egui::Order::Middle)
                     .fade_in(false)
                     .show(&ctx, |ui| fill(ui, Color32::YELLOW));
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn the_modal_blur_boundary_stays_after_the_marker() {
         let ctx = egui::Context::default();
-        let modal = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("modal"));
+        let modal = egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("modal"));
         let mut output = ctx.run_ui(Default::default(), |_| {
             crate::blurred_backdrop(&ctx, modal);
             ctx.layer_painter(modal).rect_filled(square(40.0), 0.0, Color32::GREEN);

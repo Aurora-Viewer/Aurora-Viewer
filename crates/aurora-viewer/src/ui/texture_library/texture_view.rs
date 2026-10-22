@@ -367,10 +367,10 @@ pub(super) fn picture(
                     .paint_at(ui, rect);
                 image_rect = Some(rect);
                 if let Some(item) = drag_item {
-                    let response = ui.interact(rect, ui.id().with("image_drag"), egui::Sense::click_and_drag());
+                    let response = ui.interact(rect, ui.scope_id().with("image_drag"), egui::Sense::click_and_drag());
                     response.dnd_set_drag_payload(InvDrag(item));
                     ui.ctx()
-                        .data_mut(|data| data.insert_temp(egui::Id::new(("resource_texture_preview", item)), response.rect));
+                        .data_mut(|data| data.insert_temp(egui::Id::unique(("resource_texture_preview", item)), response.rect));
                     response.on_hover_text(aurora_i18n::tr!("texture-library-drag-hint"));
                 }
             };

@@ -48,7 +48,7 @@ impl ExitPrompt {
         if !self.open {
             return None;
         }
-        let id = Id::new("viewer_exit");
+        let id = Id::unique("viewer_exit");
         aurora_render::blurred_backdrop(ctx, egui::Modal::default_area(id).layer());
         let busy = self.pending.is_some();
         let mut action = None;

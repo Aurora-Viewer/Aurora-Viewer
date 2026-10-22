@@ -24,7 +24,7 @@ pub fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
     }
     let pass = ctx.cumulative_pass_nr();
     Some(ctx.data_mut(|data| {
-        data.get_temp::<(u64, egui::CursorIcon)>(egui::Id::new("task_inventory_drag_cursor"))
+        data.get_temp::<(u64, egui::CursorIcon)>(egui::Id::unique("task_inventory_drag_cursor"))
             .filter(|(at, _)| *at == pass)
             .map_or(egui::CursorIcon::NotAllowed, |(_, cursor)| cursor)
     }))
@@ -33,7 +33,7 @@ pub fn cursor(ctx: &egui::Context) -> Option<egui::CursorIcon> {
 fn target_cursor(ctx: &egui::Context, cursor: egui::CursorIcon) -> bool {
     let pass = ctx.cumulative_pass_nr();
     ctx.data_mut(|data| {
-        let id = egui::Id::new("task_inventory_drag_cursor");
+        let id = egui::Id::unique("task_inventory_drag_cursor");
         if data.get_temp::<(u64, egui::CursorIcon)>(id).is_none_or(|(at, _)| at != pass) {
             data.insert_temp(id, (pass, cursor));
             true
@@ -109,7 +109,7 @@ pub fn target(
 pub fn confirm(ctx: &egui::Context, p: &Palette, pending: &mut Option<PendingTransfer>) -> Option<InvAction> {
     let transfer = pending.as_mut()?;
     let mut answer = None;
-    super::super::widgets::Modal::new(egui::Id::new("task_inventory_transfer")).show(ctx, |ui| {
+    super::super::widgets::Modal::new(egui::Id::unique("task_inventory_transfer")).show(ctx, |ui| {
         ui.set_max_width(380.0);
         ui.label(
             RichText::new(aurora_i18n::tr!("task-transfer-title"))

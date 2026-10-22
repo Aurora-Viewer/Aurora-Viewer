@@ -258,7 +258,7 @@ impl App {
                 Action::Files => self.imports.choose_files(&self.scene.jobs, ctx, self.settings.imports.texture()),
                 Action::Zoom(id, slot) => {
                     self.imports.preview_zoom = Some((id, slot));
-                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("import_large_preview")));
+                    ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("import_large_preview")));
                 }
                 Action::LargeMap(id, slot) => self.imports.request_large_map(id, slot, &self.scene.jobs, ctx),
                 Action::Start => {

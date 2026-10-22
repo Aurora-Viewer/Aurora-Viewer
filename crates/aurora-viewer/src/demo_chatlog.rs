@@ -203,6 +203,7 @@ pub fn input_events(frame: u64) -> Vec<egui::Event> {
                 unit: egui::MouseWheelUnit::Point,
                 delta: egui::vec2(0.0, 150.0),
                 phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
                 modifiers: egui::Modifiers::NONE,
             },
         ],

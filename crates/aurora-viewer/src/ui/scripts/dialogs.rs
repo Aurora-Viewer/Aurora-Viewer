@@ -84,13 +84,15 @@ impl Search {
     }
 
     pub fn focused(ctx: &egui::Context) -> bool {
-        let window = Id::new(Self::WINDOW);
+        let window = Id::unique(Self::WINDOW);
         ctx.memory(|m| m.has_focus(window.with("query")) || m.has_focus(window.with("replacement")))
     }
 
     pub fn placement(ctx: &egui::Context, parent: egui::Rect, content_top: f32, prefer_left: bool) -> (egui::Pos2, bool) {
         let room = crate::ui::layout::work_area(ctx);
-        let size = ctx.memory(|m| m.area_rect(Id::new(Self::WINDOW))).map_or(Self::SIZE, |r| r.size());
+        let size = ctx
+            .memory(|m| m.area_rect(Id::unique(Self::WINDOW)))
+            .map_or(Self::SIZE, |r| r.size());
         let fits = |x| x >= room.left() && x + size.x <= room.right();
         let right = parent.right();
         let left = parent.left() - size.x;
@@ -129,7 +131,7 @@ impl Search {
         if !self.open {
             return;
         }
-        let window = Id::new(Self::WINDOW);
+        let window = Id::unique(Self::WINDOW);
         // Adopt the narrower default once, retaining later manual resizes.
         let compact = ctx.data_mut(|d| {
             let key = window.with("compact_width_v1");
@@ -157,7 +159,7 @@ impl Search {
         if let Some(owner) = self.owner {
             super::focus::claim(&ctx, ui.layer_id(), owner);
         }
-        let window = Id::new(Self::WINDOW);
+        let window = Id::unique(Self::WINDOW);
         if inline {
             self.inline_controls(ui, p, id, source, editable);
             return;
@@ -199,7 +201,7 @@ impl Search {
         let response = ui
             .add(
                 egui::TextEdit::singleline(&mut self.query)
-                    .id(Id::new(Self::WINDOW).with("query"))
+                    .id(Id::unique(Self::WINDOW).with("query"))
                     .hint_text(aurora_i18n::tr!("script-search-query"))
                     .desired_width(width),
             )
@@ -237,7 +239,7 @@ impl Search {
             ui.add_enabled(
                 editable,
                 egui::TextEdit::singleline(&mut self.replacement)
-                    .id(Id::new(Self::WINDOW).with("replacement"))
+                    .id(Id::unique(Self::WINDOW).with("replacement"))
                     .hint_text(aurora_i18n::tr!("script-search-replacement"))
                     .desired_width(Self::INLINE_FIELD_WIDTH),
             )
@@ -478,7 +480,7 @@ mod tests {
     #[test]
     fn replace_all_is_one_undoable_unicode_edit_and_search_wraps_in_both_directions() {
         let ctx = egui::Context::default();
-        let id = Id::new("search_test");
+        let id = Id::unique("search_test");
         let mut source = "Été été ÉTÉ".to_owned();
         let mut search = Search {
             query: "été".into(),

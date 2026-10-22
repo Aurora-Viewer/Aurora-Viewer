@@ -197,7 +197,7 @@ const SCALE_ID: &str = "aurora-font-scale";
 
 /// Combined skin and preference scale, also used by inline emoji pictures.
 pub fn scale(ctx: &egui::Context) -> f32 {
-    ctx.data(|data| data.get_temp(egui::Id::new(SCALE_ID))).unwrap_or(1.0)
+    ctx.data(|data| data.get_temp(egui::Id::unique(SCALE_ID))).unwrap_or(1.0)
 }
 
 /// Scale the font faces, including explicit FontIds and rich text sizes.
@@ -208,8 +208,8 @@ pub fn set_scale(ctx: &egui::Context, scale: f32) {
         return;
     }
     let definitions = ctx.data_mut(|data| {
-        data.insert_temp(egui::Id::new(SCALE_ID), scale);
-        data.get_temp::<Arc<egui::FontDefinitions>>(egui::Id::new(DEFINITIONS_ID))
+        data.insert_temp(egui::Id::unique(SCALE_ID), scale);
+        data.get_temp::<Arc<egui::FontDefinitions>>(egui::Id::unique(DEFINITIONS_ID))
     });
     install(ctx, definitions.as_deref().cloned().unwrap_or_default());
 }
@@ -218,10 +218,10 @@ pub fn set_scale(ctx: &egui::Context, scale: f32) {
 /// late system fallbacks or a font change inherit the current preference.
 fn install(ctx: &egui::Context, definitions: egui::FontDefinitions) {
     let heavier =
-        definitions.font_data.contains_key(SEMIBOLD) || definitions.font_data.get(MAIN).is_some_and(|face| has_weight_axis(&face.font));
+        definitions.font_data.contains_key(SEMIBOLD) || definitions.font_data.get(MAIN).is_some_and(|face| has_weight_axis(face.bytes()));
     ctx.data_mut(|data| {
-        data.insert_temp(egui::Id::new(DEFINITIONS_ID), Arc::new(definitions.clone()));
-        data.insert_temp(egui::Id::new(SEMIBOLD_ID), heavier);
+        data.insert_temp(egui::Id::unique(DEFINITIONS_ID), Arc::new(definitions.clone()));
+        data.insert_temp(egui::Id::unique(SEMIBOLD_ID), heavier);
     });
     let scale = scale(ctx);
     let mut scaled = definitions;
@@ -260,7 +260,7 @@ fn definitions_for(choice: &str, system: &[fallback::SystemFace]) -> egui::FontD
     let mut defs = definitions(regular, system);
     if let Some(semibold) = semibold {
         let mut face = egui::FontData::from_static(semibold);
-        face.tweak.y_offset_factor = optical_center_offset(&face.font);
+        face.tweak.y_offset_factor = optical_center_offset(face.bytes());
         defs.font_data.insert(SEMIBOLD.into(), Arc::new(face));
         if let Some(f) = defs.families.get_mut(&semibold_family()) {
             f.insert(0, SEMIBOLD.into());
@@ -300,7 +300,7 @@ pub fn semibold_format(family: &egui::FontFamily, size: f32, color: egui::Color3
 /// embedded font or a variable system font; a static system font draws its
 /// semi-bold texts with its regular face.
 pub fn has_semibold(ctx: &egui::Context) -> bool {
-    ctx.data(|data| data.get_temp(egui::Id::new(SEMIBOLD_ID))).unwrap_or(false)
+    ctx.data(|data| data.get_temp(egui::Id::unique(SEMIBOLD_ID))).unwrap_or(false)
 }
 
 fn has_weight_axis(font: &[u8]) -> bool {
@@ -313,9 +313,9 @@ fn has_weight_axis(font: &[u8]) -> bool {
 /// font has fullwidth Latin glyphs with uneven feet; prefer text faces,
 /// as LLFontRegistry::createFont does (indra/newview/fonts/fonts.xml).
 fn definitions(mut primary: egui::FontData, system: &[fallback::SystemFace]) -> egui::FontDefinitions {
-    primary.tweak.y_offset_factor = optical_center_offset(&primary.font);
+    primary.tweak.y_offset_factor = optical_center_offset(primary.bytes());
     let shift = primary.tweak.y_offset_factor;
-    let row = ttf_parser::Face::parse(&primary.font, 0)
+    let row = ttf_parser::Face::parse(primary.bytes(), 0)
         .ok()
         .and_then(|face| fallback::RowMetrics::of(&face));
     let mut defs = egui::FontDefinitions::default();
@@ -349,7 +349,7 @@ fn embedded_has(c: char) -> bool {
     let defs = egui::FontDefinitions::default();
     let fallbacks = defs.families.get(&egui::FontFamily::Proportional).into_iter().flatten();
     BUILTINS.iter().any(|b| has(b.regular) || has(b.semibold))
-        || fallbacks.filter_map(|name| defs.font_data.get(name)).any(|d| has(&d.font))
+        || fallbacks.filter_map(|name| defs.font_data.get(name)).any(|d| has(d.bytes()))
 }
 
 #[cfg(test)]
@@ -520,8 +520,8 @@ mod tests {
     /// family that draws it.
     fn faces_drawing(defs: egui::FontDefinitions, family: egui::FontFamily, text: &str) -> Vec<(char, Option<String>)> {
         let mut fonts = egui::epaint::Fonts::new(Default::default(), defs);
-        let mut font = fonts.fonts.font(&family);
-        let known = font.characters();
+        let mut fonts = fonts.with_pixels_per_point(1.0);
+        let known = fonts.characters(&family);
         text.chars()
             .filter(|c| !c.is_whitespace())
             .map(|c| (c, known.get(&c).and_then(|faces| faces.first().cloned())))
@@ -534,8 +534,8 @@ mod tests {
     /// holds egui's replacement square: the emoji.)
     fn drawable(defs: egui::FontDefinitions, family: egui::FontFamily, text: &str) -> Vec<(char, bool)> {
         let mut fonts = egui::epaint::Fonts::new(Default::default(), defs);
-        let mut font = fonts.fonts.font(&family);
-        let known = font.characters();
+        let mut fonts = fonts.with_pixels_per_point(1.0);
+        let known = fonts.characters(&family);
         text.chars().map(|c| (c, known.contains_key(&c))).collect()
     }
 
@@ -722,7 +722,7 @@ mod tests {
 
     #[test]
     fn each_builtin_font_has_its_own_semibold_face() {
-        let face = |defs: &egui::FontDefinitions, name: &str| defs.font_data.get(name).map(|d| d.font.to_vec());
+        let face = |defs: &egui::FontDefinitions, name: &str| defs.font_data.get(name).map(|d| d.bytes().to_vec());
         for choice in ["", INTER, NOTO, ROBOTO, "system:Z:\\no such font.ttf", "Retired Font"] {
             let defs = definitions_for(choice, &[]);
             let b = builtin(choice).unwrap_or(&BUILTINS[0]);
@@ -753,10 +753,7 @@ mod tests {
         let defs = definitions_for(&format!("system:{}", font.path.display()), &[]);
         assert!(!defs.font_data.contains_key(SEMIBOLD));
         assert_eq!(defs.families[&semibold_family()][0], "aurora-main");
-        assert_eq!(
-            defs.font_data["aurora-main"].font.as_ref(),
-            std::fs::read(&font.path).expect("font file")
-        );
+        assert_eq!(defs.font_data["aurora-main"].bytes(), std::fs::read(&font.path).expect("font file"));
     }
 
     /// Typographic family name of an embedded face (name ID 16, else 1).
@@ -856,7 +853,7 @@ mod tests {
         let system = fallback::wait();
         for text in demo_text() {
             let defs = noto(system);
-            if std::panic::catch_unwind(|| select_and_edit(defs, &[text])).is_err() {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| select_and_edit(defs, &[text]))).is_err() {
                 let faces: Vec<&str> = system.iter().map(|f| f.key.as_str()).collect();
                 panic!("egui's cursor code panicked on {text:?} with the system faces {faces:?}");
             }
@@ -920,7 +917,7 @@ mod tests {
     fn previous_word_from_the_end_of_right_to_left_text() {
         use egui::{Event, Key, Modifiers};
         let ctx = egui::Context::default();
-        let id = egui::Id::new("edit");
+        let id = egui::Id::unique("edit");
         let mut text = "Aurora بღd".to_owned();
         let frame = |events: Vec<Event>, text: &mut String| {
             let input = egui::RawInput {
@@ -979,7 +976,7 @@ mod tests {
             let mut out = ctx.run_ui(input, |ui| {
                 for (i, (label, text)) in labels.iter().zip(edited.iter_mut()).enumerate() {
                     ui.put(label_rect(i), egui::Label::new(*label).wrap().selectable(true));
-                    ui.put(edit_rect(i), egui::TextEdit::multiline(text).id(egui::Id::new(("edit", i))));
+                    ui.put(edit_rect(i), egui::TextEdit::multiline(text).id(egui::Id::unique(("edit", i))));
                 }
             });
             out.textures_delta.clear();

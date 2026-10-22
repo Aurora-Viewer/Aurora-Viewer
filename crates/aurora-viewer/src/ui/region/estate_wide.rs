@@ -580,7 +580,7 @@ fn xp_row(ui: &mut egui::Ui, p: &Palette, name: &str, fixed: bool, removable: bo
         return false;
     }
     let x = egui::Rect::from_center_size(egui::pos2(rect.right() - 16.0, rect.center().y), Vec2::splat(20.0));
-    let xr = ui.interact(x, ui.id().with(("region_xp_remove", name, rect.top() as i32)), Sense::click());
+    let xr = ui.interact(x, ui.scope_id().with(("region_xp_remove", name, rect.top() as i32)), Sense::click());
     sheet::icon_at(ui, "x", x.center(), 14.0, if xr.hovered() { p.danger } else { p.muted });
     xr.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-remove"))
@@ -719,7 +719,7 @@ pub(super) fn dialogs(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &Vi
 
 fn show_dialog(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, world: &mut World, mut dialog: Dialog) -> Option<Dialog> {
     let mut answer: Option<bool> = None;
-    let modal = widgets::Modal::new(egui::Id::new("region_estate_wide")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("region_estate_wide")).show(ctx, |ui| {
         ui.set_width(420.0);
         match &mut dialog {
             Dialog::Environment { track, filter, selected } => {

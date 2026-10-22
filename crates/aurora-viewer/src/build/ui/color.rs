@@ -167,7 +167,7 @@ impl BuildTool {
             return;
         }
         let mixed = saved.iter().any(|s| s.original.rgb() != saved[0].original.rgb());
-        self.ui.color_picker.open_from(rgb, mixed, egui::Id::new(super::INSPECTOR_ID));
+        self.ui.color_picker.open_from(rgb, mixed, egui::Id::unique(super::INSPECTOR_ID));
         self.ui.color_edit = Some(Session {
             target,
             saved,

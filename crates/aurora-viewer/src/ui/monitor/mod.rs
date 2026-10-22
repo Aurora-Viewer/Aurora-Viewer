@@ -305,7 +305,7 @@ fn rail_ui(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, out: &mut Vec<Action
             egui::FontId::proportional(draw::SMALL),
             if on { p.muted } else { p.muted_dim },
         );
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, tab.label()));
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, tab.label()));
         if resp.clicked() {
             m.tab = tab;
         }
@@ -502,7 +502,7 @@ pub fn export_csv(s: &Snapshot) -> String {
 /// The demo's section (`AURORA_DEMO_PERF=monitor-<section>`) for the next
 /// frames the window draws.
 pub fn demo_tab(ctx: &egui::Context, tab: Tab) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new(("monitor", "demo-tab")), tab_index(tab)));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("monitor", "demo-tab")), tab_index(tab)));
 }
 
 fn tab_index(tab: Tab) -> usize {
@@ -511,7 +511,7 @@ fn tab_index(tab: Tab) -> usize {
 
 /// The section asked by [`demo_tab`] or `perf::show_network`, once.
 pub fn take_asked_tab(ctx: &egui::Context) -> Option<Tab> {
-    ctx.data_mut(|d| d.remove_temp::<usize>(egui::Id::new(("monitor", "demo-tab"))))
+    ctx.data_mut(|d| d.remove_temp::<usize>(egui::Id::unique(("monitor", "demo-tab"))))
         .and_then(|i| Tab::ALL.get(i).copied())
 }
 

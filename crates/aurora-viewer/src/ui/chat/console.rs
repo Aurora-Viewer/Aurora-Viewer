@@ -98,7 +98,7 @@ pub(super) fn cards(
     recent.reverse();
     let mut links: Vec<(egui::Rect, Link, Color32)> = Vec::new();
     let mut names: Vec<(egui::Rect, &ChatLine)> = Vec::new();
-    egui::Area::new(egui::Id::new("chat_toasts"))
+    egui::Area::new(egui::Id::unique("chat_toasts"))
         .anchor(
             egui::Align2::LEFT_BOTTOM,
             egui::vec2(8.0, -(ctx.content_rect().bottom() - bottom) - 6.0),
@@ -379,7 +379,7 @@ mod tests {
         };
         frame(Vec::new());
         frame(Vec::new());
-        let area = |k: usize| ctx.memory(|m| m.area_rect(egui::Id::new(("chat_toast_sender", k))));
+        let area = |k: usize| ctx.memory(|m| m.area_rect(egui::Id::unique(("chat_toast_sender", k))));
         let picture = area(0).expect("the picture is clickable");
         let name = area(1).expect("the name is clickable");
         // the notice has neither

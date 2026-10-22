@@ -374,7 +374,7 @@ impl BuyCurrencyUi {
                         egui::TextEdit::singleline(&mut self.text)
                             .desired_width(96.0)
                             .char_limit(10)
-                            .horizontal_align(egui::Align::RIGHT),
+                            .align(egui::Align2::RIGHT_TOP),
                     );
                     ui.label(RichText::new("L$").color(p.muted));
                     if field.changed() {
@@ -494,7 +494,7 @@ impl BuyCurrencyUi {
         let needs_password = quote.confirm == "password";
         let cost = quote.local_cost.clone().or_else(|| quote.usd_cents.map(usd)).unwrap_or_default();
         let mut answer = None;
-        let modal = Modal::new(egui::Id::new("buy_currency_confirm")).show(ctx, |ui| {
+        let modal = Modal::new(egui::Id::unique("buy_currency_confirm")).show(ctx, |ui| {
             ui.set_width(CONFIRM_WIDTH);
             ui.spacing_mut().item_spacing = Vec2::new(8.0, 10.0);
             ui.horizontal(|ui| {

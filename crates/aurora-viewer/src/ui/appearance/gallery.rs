@@ -235,7 +235,7 @@ pub(super) fn dialogs(
 ) {
     if let Some((id, mut name)) = st.gallery.rename.clone() {
         let mut close = false;
-        let response = crate::ui::widgets::Modal::new(egui::Id::new("outfit_rename")).show(ctx, |ui| {
+        let response = crate::ui::widgets::Modal::new(egui::Id::unique("outfit_rename")).show(ctx, |ui| {
             ui.set_width(340.0);
             ui.label(
                 RichText::new(aurora_i18n::tr!("ui-appearance-gallery-rename-your-outfit"))
@@ -276,7 +276,7 @@ pub(super) fn dialogs(
     if let Some((id, delete)) = st.gallery.confirm {
         let mut close = false;
         let name = world.inventory.folders.get(&id).map(|f| f.info.name.as_str()).unwrap_or("");
-        let response = crate::ui::widgets::Modal::new(egui::Id::new("outfit_confirm")).show(ctx, |ui| {
+        let response = crate::ui::widgets::Modal::new(egui::Id::unique("outfit_confirm")).show(ctx, |ui| {
             ui.set_width(350.0);
             ui.label(
                 RichText::new(if delete {

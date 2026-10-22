@@ -608,7 +608,7 @@ fn the_name_colors_wait_for_their_switch() {
     let d = Settings::default();
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
     assert!(!s.colors.relation_names && !s.classic_name_tags);
-    let id = egui::Id::new((
+    let id = egui::Id::unique((
         "preferences-row",
         Page::Avatars,
         aurora_i18n::tr!("ui-options-name-tag-color"),
@@ -651,7 +651,8 @@ fn preferences_keep_their_height_when_text_size_changes() {
                 },
             );
             output.textures_delta.clear();
-            ctx.memory(|memory| memory.area_rect(egui::Id::new(WINDOW))).expect("preferences")
+            ctx.memory(|memory| memory.area_rect(egui::Id::unique(WINDOW)))
+                .expect("preferences")
         };
         for _ in 0..12 {
             draw(&ctx, &mut state, &mut settings);

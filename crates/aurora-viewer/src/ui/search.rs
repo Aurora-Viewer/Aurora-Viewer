@@ -383,7 +383,7 @@ fn query_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32, foc
     let size = Vec2::new(width.max(80.0), ui.spacing().interact_size.y);
     let resp = ui.add_sized(
         size,
-        egui::TextEdit::singleline(text).hint_text(hint).vertical_align(egui::Align::Center),
+        egui::TextEdit::singleline(text).hint_text(hint).align(egui::Align2::LEFT_CENTER),
     );
     if std::mem::take(focus) {
         resp.request_focus();
@@ -869,7 +869,7 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
     let font = egui::FontId::proportional(12.0);
     // header
     // the columns over those of the rows, left of the list's scroll bar
-    let rows_list = ui.id().with(("search-rows", tab.index()));
+    let rows_list = ui.scope_id().with(("search-rows", tab.index()));
     let columns = widgets::header_width(ui, rows_list);
     let (head, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
     ui.painter().rect_filled(head, radius, p.field);
@@ -878,7 +878,7 @@ fn results(ui: &mut egui::Ui, c: &mut Ctx, list: &List, actions: &mut Vec<Search
         .chain(cols.iter().map(|c| c.0))
         .collect();
     for (index, (cell, title)) in cells(head).into_iter().zip(&titles).enumerate() {
-        let resp = ui.interact(cell, ui.id().with(("search-header", index)), Sense::click());
+        let resp = ui.interact(cell, ui.scope_id().with(("search-header", index)), Sense::click());
         let sorted = list.sort.filter(|s| s.0 == index);
         let color = if sorted.is_some() || resp.hovered() { p.ink } else { p.muted };
         let left = egui::pos2(cell.left() + if index == 0 { 26.0 } else { 6.0 }, cell.center().y);

@@ -816,7 +816,7 @@ fn group_picker(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, wo
     let groups = world.groups.sorted();
     let mut chosen = None;
     let mut close = false;
-    let modal = widgets::Modal::new(egui::Id::new("region_estate_group_picker")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("region_estate_group_picker")).show(ctx, |ui| {
         ui.set_width(320.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
@@ -959,7 +959,7 @@ fn ask(ctx: &egui::Context, p: &Palette, s: &mut RegionUi, v: &View, world: &mut
         _ => aurora_i18n::tr!("region-people-all-managed", owner = names(world, &v.owner).0),
     };
     let mut answer: Option<bool> = None;
-    let modal = widgets::Modal::new(egui::Id::new("region_estate_people_ask")).show(ctx, |ui| {
+    let modal = widgets::Modal::new(egui::Id::unique("region_estate_people_ask")).show(ctx, |ui| {
         ui.set_width(400.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;

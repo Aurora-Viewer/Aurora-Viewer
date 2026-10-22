@@ -327,7 +327,13 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
                                                         ambient: [0.42; 3],
                                                         ..Default::default()
                                                     };
-                                                    aurora_render::preview::paint_hint(ui, ui.id().with(max), model.clone(), view, size)
+                                                    aurora_render::preview::paint_hint(
+                                                        ui,
+                                                        ui.scope_id().with(max),
+                                                        model.clone(),
+                                                        view,
+                                                        size,
+                                                    )
                                                 } else {
                                                     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
                                                     ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
@@ -426,7 +432,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
     if st.copy_name.is_some() {
         let mut confirmed = false;
         let mut cancel = false;
-        let response = widgets::Modal::new(egui::Id::new("shape_copy_name")).show(ctx, |ui| {
+        let response = widgets::Modal::new(egui::Id::unique("shape_copy_name")).show(ctx, |ui| {
             ui.set_width(350.0);
             ui.label(RichText::new(aurora_i18n::tr!("shape-save-as")).strong().size(17.0));
             if let Some(name) = &mut st.copy_name {
@@ -465,7 +471,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State)
         let mut discard = false;
         let mut cancel = false;
         let mut save = false;
-        let response = widgets::Modal::new(egui::Id::new("shape_unsaved")).show(ctx, |ui| {
+        let response = widgets::Modal::new(egui::Id::unique("shape_unsaved")).show(ctx, |ui| {
             ui.set_width(350.0);
             ui.label(RichText::new(aurora_i18n::tr!("shape-close-title")).strong().size(17.0));
             ui.label(aurora_i18n::tr!("shape-close-message"));
@@ -551,6 +557,7 @@ mod tests {
             unit,
             delta: Vec2::new(0.0, value),
             phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
             modifiers: egui::Modifiers::NONE,
         };
         draw(
@@ -612,7 +619,7 @@ mod tests {
             for _ in 0..8 {
                 frame(&mut state);
             }
-            let initial = egui::AreaState::load(&ctx, egui::Id::new("shape_editor"))
+            let initial = egui::AreaState::load(&ctx, egui::Id::unique("shape_editor"))
                 .and_then(|s| s.size)
                 .expect("editor size");
             // Both save commands share the asynchronous pending state. Keep
@@ -623,7 +630,7 @@ mod tests {
                 state.message.clear();
                 for _ in 0..40 {
                     frame(&mut state);
-                    let size = egui::AreaState::load(&ctx, egui::Id::new("shape_editor"))
+                    let size = egui::AreaState::load(&ctx, egui::Id::unique("shape_editor"))
                         .and_then(|s| s.size)
                         .expect("editor size");
                     assert!((size - initial).length() < 0.5, "pending copy={copy}: {initial:?} -> {size:?}");
@@ -639,7 +646,7 @@ mod tests {
                 state.message = message;
                 for _ in 0..8 {
                     let output = frame(&mut state);
-                    let size = egui::AreaState::load(&ctx, egui::Id::new("shape_editor"))
+                    let size = egui::AreaState::load(&ctx, egui::Id::unique("shape_editor"))
                         .and_then(|s| s.size)
                         .expect("editor size");
                     assert!((size - initial).length() < 0.5, "feedback: {initial:?} -> {size:?}");

@@ -397,7 +397,7 @@ fn preview_colors_fields(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences
             let mut srgba = color32(stored.unwrap_or_else(|| palette_color(default))).to_srgba_unmultiplied();
             let response = widgets::color_button(ui, p, ("import_preview_color", label), &mut srgba, true);
             ui.ctx()
-                .data_mut(|data| data.insert_temp(egui::Id::new(("import_preview_swatch", label)), (response.id, response.rect)));
+                .data_mut(|data| data.insert_temp(egui::Id::unique(("import_preview_swatch", label)), (response.id, response.rect)));
             if response.changed() {
                 *stored = Some(srgba.map(|v| f32::from(v) / 255.0));
             }
@@ -415,11 +415,11 @@ fn preview_colors_fields(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences
 }
 
 fn preview_colors_button(ui: &mut egui::Ui, p: &Palette, id: Uuid, prefs: &mut Preferences) {
-    let key = egui::Id::new(("import_preview_colors_open", id));
+    let key = egui::Id::unique(("import_preview_colors_open", id));
     let position = ui.next_widget_position();
     ui.ctx().data_mut(|data| {
         data.insert_temp(
-            egui::Id::new(("import_preview_palette", id)),
+            egui::Id::unique(("import_preview_palette", id)),
             egui::Rect::from_min_size(position, Vec2::splat(20.0)),
         )
     });
@@ -442,7 +442,7 @@ fn preview_colors_button(ui: &mut egui::Ui, p: &Palette, id: Uuid, prefs: &mut P
         });
         if open {
             ui.ctx()
-                .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new("import_preview_colors")));
+                .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("import_preview_colors")));
         }
     }
     ui.ctx().data_mut(|data| data.insert_temp(key, open));
@@ -539,7 +539,7 @@ fn texture(
         if let Some(model) = model {
             aurora_render::preview::paint(
                 ui,
-                egui::Id::new(("texture_preview", id)),
+                egui::Id::unique(("texture_preview", id)),
                 model.clone(),
                 view,
                 Vec2::new(ui.available_width(), 260.0),

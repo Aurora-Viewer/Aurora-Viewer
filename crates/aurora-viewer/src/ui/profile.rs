@@ -34,11 +34,11 @@ use uuid::Uuid;
 /// Ask to open a profile from anywhere in the interface (names and agent
 /// links in text); the app reads it once per frame (LLAgentHandler).
 pub fn request_open(ctx: &egui::Context, id: Uuid) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("aurora_open_profile"), id));
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique("aurora_open_profile"), id));
 }
 
 pub fn take_open_request(ctx: &egui::Context) -> Option<Uuid> {
-    ctx.data_mut(|d| d.remove_temp::<Uuid>(egui::Id::new("aurora_open_profile")))
+    ctx.data_mut(|d| d.remove_temp::<Uuid>(egui::Id::unique("aurora_open_profile")))
 }
 
 pub enum ProfileAction {
@@ -325,7 +325,7 @@ impl ProfileUi {
                 scene.textures.note_usage_fixed(&asset, 16384.0);
                 16384.0
             } else {
-                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("profile_photo_preview", window.id))))
+                ctx.data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("profile_photo_preview", window.id))))
                     .map_or(520.0, |rect| rect.size().max_elem())
                     * ctx.pixels_per_point()
             };
@@ -632,7 +632,7 @@ fn photo_window(
                 .flatten()
         });
         if let Some(rect) = texture_view::show_image(ui, p, image, photo.view.dimensions, &mut photo.view.display, None) {
-            ctx.data_mut(|data| data.insert_temp(egui::Id::new(("profile_photo_preview", window.id)), rect));
+            ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("profile_photo_preview", window.id)), rect));
         }
     });
     if !open {
@@ -1168,7 +1168,7 @@ fn second_life_tab(
                 own && !w.about_preview,
                 Vec2::new(field_w, info_h),
                 65_000,
-                egui::Id::new(("sl_about", id)),
+                egui::Id::unique(("sl_about", id)),
             );
         } else {
             inset(ui, p, field_w, info_h, |ui| loading(ui, p));
@@ -2118,7 +2118,7 @@ fn first_life_tab(
         c.own && !w.fl_preview,
         Vec2::new(width, h),
         65_000,
-        egui::Id::new(("fl_about", w.id)),
+        egui::Id::unique(("fl_about", w.id)),
     );
     if c.own {
         ui.add_space(4.0);

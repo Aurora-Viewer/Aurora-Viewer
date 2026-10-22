@@ -21,7 +21,7 @@ struct State {
 }
 
 fn state_id() -> Id {
-    Id::new("script_editor_activation")
+    Id::unique("script_editor_activation")
 }
 
 /// Register the editor, its find controls, or one of its popup menus.
@@ -73,7 +73,7 @@ pub(super) fn find(ctx: &egui::Context, editors: &mut [Editor], search: &mut Sea
         .iter()
         .map(|e| {
             let window = format!("script_editor_{}_{}", e.target.object, e.target.item);
-            let owner = Id::new((&window, "source_text"));
+            let owner = Id::unique((&window, "source_text"));
             (window, owner)
         })
         .collect();

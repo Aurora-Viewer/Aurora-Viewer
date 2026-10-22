@@ -253,7 +253,7 @@ mod tests {
             let anchor = output.galley.pos_from_cursor(CCursor::new(end));
             assert!(anchor.top() > output.galley.rows[0].pos.y + 30.0, "header must wrap");
             expected_y = output.galley_pos.y + anchor.top();
-            state.draw(ui, &p, Id::new("wrapped_fold"), &output, 0.0);
+            state.draw(ui, &p, Id::unique("wrapped_fold"), &output, 0.0);
         });
         let label = output
             .shapes

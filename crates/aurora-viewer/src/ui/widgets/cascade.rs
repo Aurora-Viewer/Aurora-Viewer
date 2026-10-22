@@ -39,7 +39,7 @@ impl Group {
     }
 
     fn saved_id(self) -> Id {
-        Id::new(("inventory_cascade_rect", self))
+        Id::unique(("inventory_cascade_rect", self))
     }
 }
 
@@ -63,7 +63,7 @@ struct Window {
 struct Windows(Vec<Window>);
 
 fn registry_id() -> Id {
-    Id::new("inventory_cascade_windows")
+    Id::unique("inventory_cascade_windows")
 }
 
 pub(super) struct Opening {

@@ -188,7 +188,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                             if mode == "mesh-colors"
                                 && let Some(entry) = loaded.first()
                             {
-                                wake.data_mut(|data| data.insert_temp(egui::Id::new(("import_preview_colors_open", entry.id)), true));
+                                wake.data_mut(|data| data.insert_temp(egui::Id::unique(("import_preview_colors_open", entry.id)), true));
                             }
                             if mode == "sound-split" {
                                 for entry in &mut loaded {
@@ -227,7 +227,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                 if let Some(entry) = loaded.first() {
                                     wake.data_mut(|data| {
                                         data.insert_temp(
-                                            egui::Id::new("import_demo_zoom"),
+                                            egui::Id::unique("import_demo_zoom"),
                                             (entry.id, (mode == "material-texture-zoom").then_some(0usize)),
                                         );
                                     });
@@ -294,7 +294,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                         "mesh-journal" => 4,
                                         _ => 3,
                                     };
-                                    wake.data_mut(|d| d.insert_temp(egui::Id::new(("mesh_section", entry.id)), section));
+                                    wake.data_mut(|d| d.insert_temp(egui::Id::unique(("mesh_section", entry.id)), section));
                                 }
                             }
                             entries.append(&mut loaded);

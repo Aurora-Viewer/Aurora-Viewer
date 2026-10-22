@@ -28,7 +28,7 @@ impl Fixture {
             s.interaction.selectable_labels = false;
         });
         if matches!(kind, Kind::Minimized) {
-            ctx.data_mut(|d| d.insert_persisted(egui::Id::new((WINDOW, "minimized")), true));
+            ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((WINDOW, "minimized")), true));
         }
         let mut fixture = Self {
             ctx,
@@ -86,7 +86,7 @@ impl Fixture {
             },
         );
         output.textures_delta.clear();
-        self.ctx.memory(|m| m.area_rect(egui::Id::new(WINDOW)).unwrap())
+        self.ctx.memory(|m| m.area_rect(egui::Id::unique(WINDOW)).unwrap())
     }
 
     fn button(&mut self, pos: egui::Pos2, pressed: bool) -> egui::Rect {
@@ -132,7 +132,7 @@ fn window_background_and_title_wait_for_motion_then_follow_the_full_drag() {
                 before.center()
             } else {
                 f.ctx
-                    .read_response(egui::Id::new(WINDOW).with("title_double_click"))
+                    .read_response(egui::Id::unique(WINDOW).with("title_double_click"))
                     .unwrap()
                     .rect
                     .center()

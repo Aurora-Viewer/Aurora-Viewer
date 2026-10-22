@@ -380,7 +380,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, st: &mut RestartUi, v: &View<'_>) 
     };
     // the mockup's still states leave the first step at rest
     let breathing = if v.frozen && level == Level::Calm { None } else { breathing };
-    let area = egui::Area::new(Id::new("region_restart_alert"))
+    let area = egui::Area::new(Id::unique("region_restart_alert"))
         .order(egui::Order::Foreground)
         .fade_in(false)
         .pivot(Align2::CENTER_TOP)
@@ -501,7 +501,7 @@ fn pill_view(ui: &mut egui::Ui, p: &Palette, a: &Restart, lv: Color32, breathing
     let glow = paint_border(ui.painter(), rect, radius, lv, breathing);
     ui.painter().set(glow_slot, Shape::Vec(glow));
     let click = ui
-        .interact(rect, Id::new("region_restart_pill"), Sense::click())
+        .interact(rect, Id::unique("region_restart_pill"), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("region-restart-show"));
     if click.clicked() {
@@ -850,7 +850,7 @@ fn manager_row(ui: &mut egui::Ui, p: &Palette, st: &mut RestartUi, inner: f32, o
 /// (Firestorm's button sends it at once).
 fn confirm_cancel(ctx: &egui::Context, p: &Palette, st: &mut RestartUi, a: &Restart, out: &mut Vec<Action>) {
     let mut close = false;
-    let response = widgets::Modal::new(Id::new("region_restart_cancel")).show(ctx, |ui| {
+    let response = widgets::Modal::new(Id::unique("region_restart_cancel")).show(ctx, |ui| {
         ui.set_width(340.0);
         ui.label(
             egui::RichText::new(aurora_i18n::tr!("region-restart-cancel-confirm-title"))

@@ -1837,7 +1837,7 @@ impl BuildTool {
         if !self.open && !self.menu_selection && world.land.highlight.is_empty() {
             return;
         }
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("build_overlay")));
+        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("build_overlay")));
         let cam = self.cam;
         let mut p = draw::Painter3d::new(painter, &cam, *pal);
         let now = Instant::now();

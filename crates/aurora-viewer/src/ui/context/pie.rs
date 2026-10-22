@@ -236,7 +236,7 @@ fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: 
         center.y - radius - 8.0 - HEIGHT
     };
     let x = (center.x - WIDTH * 0.5).clamp(screen.left(), (screen.right() - WIDTH).max(screen.left()));
-    egui::Area::new(egui::Id::new("world_pie_voice"))
+    egui::Area::new(egui::Id::unique("world_pie_voice"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(x, y))
         .movable(false)
@@ -286,7 +286,7 @@ pub(super) fn show(
     let mut primary_released = false;
     let mut secondary_released = false;
     let panel = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
-    egui::Area::new(egui::Id::new("world_pie_menu"))
+    egui::Area::new(egui::Id::unique("world_pie_menu"))
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min)
         .movable(false)

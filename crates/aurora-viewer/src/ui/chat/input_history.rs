@@ -102,7 +102,7 @@ mod tests {
     #[test]
     fn recall_walks_both_ways_and_restores_the_unsent_draft() {
         let mut history = History::default();
-        let field = egui::Id::new("field");
+        let field = egui::Id::unique("field");
         history.record(field, "first");
         history.record(field, "/42 café 🙂");
         let mut text = "unfinished draft".to_owned();
@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn empty_sends_and_consecutive_duplicates_are_skipped_without_a_count_limit() {
         let mut history = History::default();
-        let field = egui::Id::new("field");
+        let field = egui::Id::unique("field");
         history.record(field, " \n\t");
         let mut text = String::new();
         assert!(!history.step(field, &mut text, true));
@@ -150,7 +150,7 @@ mod tests {
     fn shared_entries_keep_each_local_fields_draft_and_browsing() {
         let mut history = History::default();
         let bar = super::super::bar_input_id();
-        let window = egui::Id::new(("conv_input", None::<uuid::Uuid>));
+        let window = egui::Id::unique(("conv_input", None::<uuid::Uuid>));
         history.record(bar, "from the bar");
         history.record(window, "from the window");
         let mut bar_text = "bar draft".to_owned();

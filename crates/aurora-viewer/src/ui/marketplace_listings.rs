@@ -824,7 +824,7 @@ impl ListingsUi {
                 Confirm::Associate { .. } => aurora_i18n::tr!("marketplace-confirm-unlist"),
             };
             let mut answer = None;
-            Modal::new(egui::Id::new("marketplace_listings_confirm")).show(ctx, |ui| {
+            Modal::new(egui::Id::unique("marketplace_listings_confirm")).show(ctx, |ui| {
                 ui.set_max_width(380.0);
                 ui.label(
                     RichText::new(aurora_i18n::tr!("marketplace-listings-title"))
@@ -878,7 +878,7 @@ impl ListingsUi {
         }
         let Some((folder, mut text)) = self.associate.take() else { return };
         let mut answer = None;
-        Modal::new(egui::Id::new("marketplace_associate_listing")).show(ctx, |ui| {
+        Modal::new(egui::Id::unique("marketplace_associate_listing")).show(ctx, |ui| {
             ui.set_max_width(340.0);
             ui.label(
                 RichText::new(aurora_i18n::tr!("marketplace-associate-title"))

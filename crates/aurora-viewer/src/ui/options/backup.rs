@@ -46,7 +46,7 @@ pub(super) fn restore_modal(ctx: &egui::Context, p: &Palette, s: &mut Settings, 
     let held = pending.backup.parts();
     let mut confirmed = false;
     let mut cancelled = false;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new("options_restore_settings")).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique("options_restore_settings")).show(ctx, |ui| {
         use crate::ui::widgets::{ActionKind, action_button, checkbox, primary_button_sized};
         use aurora_i18n::tr;
         ui.set_width(400.0);

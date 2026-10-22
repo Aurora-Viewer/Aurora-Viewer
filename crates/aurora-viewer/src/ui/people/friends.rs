@@ -448,7 +448,7 @@ fn granted(ui: &mut egui::Ui, c: &mut Ctx, f: &Friend, slot: Rect) -> bool {
             CELL,
         );
         let on = f.rights_given & bit != 0;
-        let resp = ui.interact(cell, ui.id().with(("people-right", f.id, i)), Sense::click());
+        let resp = ui.interact(cell, ui.scope_id().with(("people-right", f.id, i)), Sense::click());
         let face = if on {
             Some(p.violet.gamma_multiply(if resp.hovered() { 0.5 } else { 0.32 }))
         } else {
@@ -488,7 +488,7 @@ fn received(ui: &mut egui::Ui, p: &crate::theme::Palette, f: &Friend, slot: Rect
         );
         let on = f.rights_has & bit != 0;
         super::radar::icon(ui, icon, cell, 12.0, if on { p.teal } else { p.muted_dim.gamma_multiply(0.7) });
-        ui.interact(cell, ui.id().with(("people-received", f.id, i)), Sense::hover())
+        ui.interact(cell, ui.scope_id().with(("people-received", f.id, i)), Sense::hover())
             .on_hover_text(aurora_i18n::text(tip));
     }
 }

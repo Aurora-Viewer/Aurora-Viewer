@@ -184,7 +184,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
     if st.copy_name.is_some() {
         let mut confirmed = false;
         let mut cancel = false;
-        let response = widgets::Modal::new(egui::Id::new("physics_copy_name")).show(ctx, |ui| {
+        let response = widgets::Modal::new(egui::Id::unique("physics_copy_name")).show(ctx, |ui| {
             ui.set_width(350.0);
             ui.label(RichText::new(aurora_i18n::tr!("physics-save-as")).strong().size(17.0));
             if let Some(name) = &mut st.copy_name {
@@ -223,7 +223,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut State,
         let mut discard = false;
         let mut cancel = false;
         let mut save = false;
-        let response = widgets::Modal::new(egui::Id::new("physics_unsaved")).show(ctx, |ui| {
+        let response = widgets::Modal::new(egui::Id::unique("physics_unsaved")).show(ctx, |ui| {
             ui.set_width(350.0);
             ui.label(RichText::new(aurora_i18n::tr!("physics-close-title")).strong().size(17.0));
             ui.label(aurora_i18n::tr!("shape-close-message"));

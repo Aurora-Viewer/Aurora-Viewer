@@ -69,7 +69,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
     // LLPanelPrimMediaControls: navigation needs perms_control
     let can_control = m.entry.as_ref().is_none_or(|e| e.perms_control != 0);
     let mut close = false;
-    egui::Area::new(egui::Id::new("media_controls"))
+    egui::Area::new(egui::Id::unique("media_controls"))
         .order(egui::Order::Foreground)
         .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, top + 6.0))
         .show(ctx, |ui| {

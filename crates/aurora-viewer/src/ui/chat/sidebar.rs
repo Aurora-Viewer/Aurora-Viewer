@@ -75,12 +75,12 @@ pub(super) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, 
 /// The id of a control of the workspace by its name ("panel-mic",
 /// "head-call"…): the same every frame, for the tests to reach it.
 pub(super) fn control_id(name: &str) -> egui::Id {
-    egui::Id::new(("conv_control", name))
+    egui::Id::unique(("conv_control", name))
 }
 
 /// The id of the column's search field.
 pub(super) fn search_id() -> egui::Id {
-    egui::Id::new("conv_column_search")
+    egui::Id::unique("conv_column_search")
 }
 
 /// The search field of the column (the mockup's `.search`): a filled
@@ -167,7 +167,7 @@ pub(super) enum Pinned {
 
 /// The id of an entry of the column (its close button: `.with("close")`).
 pub(super) fn entry_id(entry: Pinned) -> egui::Id {
-    egui::Id::new(("conversation_entry", entry))
+    egui::Id::unique(("conversation_entry", entry))
 }
 
 /// The picture of an entry.
@@ -426,7 +426,7 @@ pub(super) fn show(
                             in_call: false,
                             flash: 0.0,
                         };
-                        if entry(ui, p, &e, rail, egui::Id::new(("conversation_start", id))).resp.clicked() {
+                        if entry(ui, p, &e, rail, egui::Id::unique(("conversation_start", id))).resp.clicked() {
                             st.side_filter.clear();
                             actions.push(ConvAction::OpenIm(id));
                         }
@@ -444,7 +444,7 @@ pub(super) fn show(
                     in_call: false,
                     flash: 0.0,
                 };
-                if entry(ui, p, &e, rail, egui::Id::new("conversation_find")).resp.clicked() {
+                if entry(ui, p, &e, rail, egui::Id::unique("conversation_find")).resp.clicked() {
                     st.start_picker(super::Start::Im);
                 }
             }
@@ -876,7 +876,7 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
             st.select_tab(Some(conversation));
         }
         let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-        let resp = ui.interact(rect, egui::Id::new(("conv_control", "panel-hang-up")), egui::Sense::click());
+        let resp = ui.interact(rect, egui::Id::unique(("conv_control", "panel-hang-up")), egui::Sense::click());
         ui.painter().rect_filled(
             rect,
             ui.visuals().widgets.inactive.corner_radius,

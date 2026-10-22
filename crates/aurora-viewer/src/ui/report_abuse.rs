@@ -419,7 +419,7 @@ impl ReportAbuseUi {
                 continue;
             };
             let mut ok = false;
-            let modal = widgets::Modal::new(egui::Id::new(id)).show(ctx, |ui| {
+            let modal = widgets::Modal::new(egui::Id::unique(id)).show(ctx, |ui| {
                 ui.set_max_width(420.0);
                 ui.label(
                     RichText::new(aurora_i18n::tr!("report-abuse-title"))

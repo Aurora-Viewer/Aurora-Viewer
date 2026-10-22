@@ -83,7 +83,7 @@ impl App {
         if mode.starts_with("types") {
             if let Some(point) = self
                 .egui_ctx
-                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("library_type_selector")))
+                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique("library_type_selector")))
             {
                 match self.frame_count {
                     650 => raw.events.extend([egui::Event::PointerMoved(point), button(point, true)]),
@@ -101,10 +101,10 @@ impl App {
             };
             if let Some(rect) = self
                 .egui_ctx
-                .memory(|m| m.area_rect(egui::Id::new(library::preview_window_id(item))))
+                .memory(|m| m.area_rect(egui::Id::unique(library::preview_window_id(item))))
             {
                 let source = rect.right_bottom() - egui::Vec2::splat(2.0);
-                let origin_key = egui::Id::new(("library_demo_resize_origin", item));
+                let origin_key = egui::Id::unique(("library_demo_resize_origin", item));
                 if self.frame_count == start {
                     self.egui_ctx.data_mut(|d| d.insert_temp(origin_key, source));
                     raw.events.push(egui::Event::PointerMoved(source));
@@ -124,11 +124,11 @@ impl App {
         if mode.starts_with("material-preview") {
             let item = self
                 .egui_ctx
-                .data(|d| d.get_temp::<Uuid>(egui::Id::new("texture_library_first_item")))
+                .data(|d| d.get_temp::<Uuid>(egui::Id::unique("texture_library_first_item")))
                 .unwrap_or_default();
             if let Some(source) = self
                 .egui_ctx
-                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("texture_library_first_card")))
+                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique("texture_library_first_card")))
             {
                 match self.frame_count {
                     650 | 662 => raw.events.extend([egui::Event::PointerMoved(source), button(source, true)]),
@@ -139,7 +139,7 @@ impl App {
             if mode != "material-preview"
                 && let Some(rect) = self
                     .egui_ctx
-                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_scene", item))))
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("resource_material_scene", item))))
             {
                 let source = rect.center();
                 let rotated = source + egui::vec2(45.0, 18.0);
@@ -153,7 +153,7 @@ impl App {
             if mode == "material-preview-drag"
                 && let Some(rect) = self
                     .egui_ctx
-                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_material_handle", item))))
+                    .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("resource_material_handle", item))))
             {
                 let source = rect.center();
                 let target = egui::pos2(480.0, 430.0);
@@ -183,10 +183,10 @@ impl App {
         };
         let source = if inventory {
             self.egui_ctx
-                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new(("clipboard_demo_row", self.inventory_ui.ui_id, item))))
+                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique(("clipboard_demo_row", self.inventory_ui.ui_id, item))))
         } else {
             self.egui_ctx
-                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::new("texture_library_first_card")))
+                .data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique("texture_library_first_card")))
         };
         if let Some(source) = source {
             if matches!(mode.as_str(), "apply" | "apply-pbr") {
@@ -207,7 +207,7 @@ impl App {
         }
         let source = if mode == "preview-drag" {
             self.egui_ctx
-                .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("resource_texture_preview", item))))
+                .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("resource_texture_preview", item))))
                 .map(|r| r.center())
         } else {
             source

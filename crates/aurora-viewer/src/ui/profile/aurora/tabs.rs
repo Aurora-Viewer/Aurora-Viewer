@@ -1650,7 +1650,7 @@ fn photo_menu(ui: &mut egui::Ui, env: &mut Env, rect: Rect, image: Uuid) {
     let p = env.p;
     let c = rect.right_bottom() - Vec2::splat(22.0);
     let r = Rect::from_center_size(c, Vec2::splat(30.0));
-    let resp = ui.interact(r, ui.id().with("first-life-camera"), Sense::click());
+    let resp = ui.interact(r, ui.scope_id().with("first-life-camera"), Sense::click());
     ui.painter()
         .circle_filled(c, 15.0, if resp.hovered() { p.violet_light } else { p.violet });
     paint_icon(ui, "camera-filled", c, 15.0, p.on_accent);

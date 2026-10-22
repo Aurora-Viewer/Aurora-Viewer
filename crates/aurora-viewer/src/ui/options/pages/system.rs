@@ -20,7 +20,7 @@ pub fn page(cx: &mut Cx) {
                         .map_or_else(|| aurora_i18n::text_in("en", "language-name"), |(_, name)| name)
                 };
                 let mut changed = false;
-                egui::ComboBox::from_id_salt(ui.id().with("ui-language"))
+                egui::ComboBox::from_id_salt(ui.scope_id().with("ui-language"))
                     .width(COMBO_W)
                     .selected_text(selected)
                     .show_ui(ui, |ui| {

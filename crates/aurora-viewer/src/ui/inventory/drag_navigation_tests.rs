@@ -25,13 +25,13 @@ fn long_list(f: &mut Fixture, parent: u128) {
 }
 fn viewport(f: &Fixture, editor: Uuid) -> (egui::Rect, egui::Id) {
     f.ctx
-        .data(|d| d.get_temp(egui::Id::new(("inventory_drag_viewport", editor))))
+        .data(|d| d.get_temp(egui::Id::unique(("inventory_drag_viewport", editor))))
         .expect("scroll viewport")
 }
 fn offset(f: &Fixture, editor: Uuid) -> f32 {
     egui::scroll_area::State::load(&f.ctx, viewport(f, editor).1)
         .expect("scroll state")
-        .offset
+        .unclamped_offset()
         .y
 }
 

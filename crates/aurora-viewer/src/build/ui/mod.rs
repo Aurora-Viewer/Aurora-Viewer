@@ -270,7 +270,7 @@ pub fn show(
         tool.ui.contents_selection = Default::default();
     }
     let screen = ctx.content_rect();
-    let demo_picker = egui::Id::new("demo_color_picker_opened");
+    let demo_picker = egui::Id::unique("demo_color_picker_opened");
     let picker_mode = crate::ui::color_picker::demo::mode();
     if env.demo
         && matches!(picker_mode, Some("left" | "follow" | "link" | "toggle" | "dock"))
@@ -306,7 +306,7 @@ pub fn show(
     floater.header_status = compact::object_status(tool, world, p);
     floater.min_size = Vec2::new(344.0, 420.0);
     if !s.expanded {
-        if let Some(size) = ctx.data(|d| d.get_temp::<Vec2>(egui::Id::new(INSPECTOR_ID).with("sections_expanded_size"))) {
+        if let Some(size) = ctx.data(|d| d.get_temp::<Vec2>(egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size"))) {
             floater.default_size.x = size.x;
         }
         floater = floater.auto_height();
@@ -314,9 +314,9 @@ pub fn show(
     floater.show(ctx, p, &mut open, |ui| compact::body(ui, p, tool, world, s, mods, env));
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if toggle_sections {
-        let size_id = egui::Id::new(INSPECTOR_ID).with("sections_expanded_size");
+        let size_id = egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size");
         if s.expanded {
-            if let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::new(INSPECTOR_ID))) {
+            if let Some(rect) = ctx.memory(|m| m.area_rect(egui::Id::unique(INSPECTOR_ID))) {
                 ctx.data_mut(|d| d.insert_temp(size_id, rect.size()));
             }
         } else if let Some(size) = ctx.data(|d| d.get_temp::<Vec2>(size_id)) {

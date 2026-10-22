@@ -280,7 +280,7 @@ pub(super) fn handles_of(ctx: &Context, p: &Palette, response: &egui::Response, 
                 egui::InteractOptions { move_to_top: true },
             )
             .on_hover_cursor(edge.cursor());
-        response.widget_info(|| egui::WidgetInfo::new(egui::WidgetType::ResizeHandle));
+        response.widget_info(|| egui::WidgetInfo::new(egui::Role::Splitter));
         if response.dragged() {
             ctx.set_cursor_icon(edge.cursor());
         }
@@ -411,7 +411,7 @@ mod tests {
                 },
             );
             output.textures_delta.clear();
-            self.ctx.memory(|memory| memory.area_rect(Id::new("resize_fixture")).unwrap())
+            self.ctx.memory(|memory| memory.area_rect(Id::unique("resize_fixture")).unwrap())
         }
 
         fn press(&mut self, pos: egui::Pos2) {
@@ -536,7 +536,7 @@ mod tests {
                         "outside egui's tolerance, the world must remain interactive"
                     );
                     fixture.press(grip);
-                    assert_eq!(fixture.ctx.dragged_id(), Some(edge.id(Id::new("resize_fixture"))));
+                    assert_eq!(fixture.ctx.dragged_id(), Some(edge.id(Id::unique("resize_fixture"))));
                     let target = grip + outward * 60.0;
                     let resized = fixture.show(vec![egui::Event::PointerMoved(target)]);
                     assert_ne!(resized, rect, "the tolerance margin must actually resize the window");

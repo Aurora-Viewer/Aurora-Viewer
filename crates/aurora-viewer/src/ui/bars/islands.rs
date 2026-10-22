@@ -47,7 +47,7 @@ pub fn work_area(screen: Rect, bottom: f32) -> Rect {
 /// The bottom of the favourites' row under the islands, when it is shown
 /// (`top` this frame): the windows' work area starts 8 px under it.
 pub fn favorites_row_bottom(ctx: &egui::Context) -> Option<f32> {
-    ctx.data(|d| d.get_temp::<f32>(Id::new("bars_favorites_row_bottom")))
+    ctx.data(|d| d.get_temp::<f32>(Id::unique("bars_favorites_row_bottom")))
 }
 
 /// The rectangle of an island between `left` and `right` on the row.
@@ -245,13 +245,13 @@ pub fn top(
     area(&ctx, p, "account", acc_rect, |ui| account(ui, p, st, acc_rect, &mut action));
     area(&ctx, p, "menu", menu_rect, |ui| {
         // a right click on the island or its buttons: show the bug button
-        let back = ui.interact(menu_rect, Id::new("bars_island_menu_back"), Sense::click());
+        let back = ui.interact(menu_rect, Id::unique("bars_island_menu_back"), Sense::click());
         menu_options(&back, p, st, &mut action);
         let wolf = Rect::from_min_size(
             Pos2::new(menu_rect.left() + PAD, menu_rect.center().y - SLOT / 2.0),
             Vec2::splat(SLOT),
         );
-        let resp = ui.interact(wolf, Id::new("bars_island_menu"), Sense::click());
+        let resp = ui.interact(wolf, Id::unique("bars_island_menu"), Sense::click());
         menu_options(&resp, p, st, &mut action);
         let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
         slot_face(ui, p, wolf, resp.hovered() || open, false);
@@ -270,10 +270,10 @@ pub fn top(
     if let Some(bug_rect) = bug_rect {
         area(&ctx, p, "bug", bug_rect, |ui| {
             // its right click hides it, as the wolf's does
-            let back = ui.interact(bug_rect, Id::new("bars_island_bug_back"), Sense::click());
+            let back = ui.interact(bug_rect, Id::unique("bars_island_bug_back"), Sense::click());
             menu_options(&back, p, st, &mut action);
             let bug = Rect::from_center_size(bug_rect.center(), Vec2::splat(SLOT));
-            let resp = icon_slot(ui, p, icons, bug, Id::new("bars_island_bug"), "bug-filled", true);
+            let resp = icon_slot(ui, p, icons, bug, Id::unique("bars_island_bug"), "bug-filled", true);
             menu_options(&resp, p, st, &mut action);
             if resp.on_hover_text(aurora_i18n::tr!("bug-title")).clicked() {
                 action = BarAction::ReportBug;
@@ -287,7 +287,7 @@ pub fn top(
     });
     // the favourites' row (F2) under the place island: the windows stay
     // under it too
-    let row_id = Id::new("bars_favorites_row_bottom");
+    let row_id = Id::unique("bars_favorites_row_bottom");
     if st.favorites.access == crate::settings::FavoritesAccess::Row {
         let (row, a) = super::favorites::row(&ctx, p, icons, st.favorites, place_rect);
         if let Some(a) = a {
@@ -316,7 +316,7 @@ fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mu
 pub(super) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     // (the windows keep their title clear of it: `layout::clear_of_islands`)
     crate::ui::layout::island_drawn(ctx, rect);
-    egui::Area::new(Id::new(("bars_island", name)))
+    egui::Area::new(Id::unique(("bars_island", name)))
         .order(egui::Order::Middle)
         .fixed_pos(rect.min)
         .constrain(false)
@@ -359,8 +359,8 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
     // the picture and its status: one target; the balance: another
     let status_rect = Rect::from_min_max(rect.min, Pos2::new(disc.right() + 3.0, rect.bottom()));
     let money_rect = Rect::from_min_max(Pos2::new(status_rect.right(), rect.top()), rect.max);
-    let status = ui.interact(status_rect, Id::new("bars_island_status"), Sense::click());
-    let money = ui.interact(money_rect, Id::new("bars_island_balance"), Sense::click());
+    let status = ui.interact(status_rect, Id::unique("bars_island_status"), Sense::click());
+    let money = ui.interact(money_rect, Id::unique("bars_island_balance"), Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&status));
     slot_face(ui, p, rect, status.hovered() || money.hovered() || open, false);
     crate::ui::widgets::avatar_disc(ui, p, disc, st.own_pic, st.own_name, false);
@@ -500,7 +500,7 @@ fn system(
     const SIZE: f32 = READOUT;
     let top = island.center().y - SLOT / 2.0;
     // under the readouts, for the right click
-    let back = ui.interact(island, Id::new("bars_island_system_back"), Sense::click());
+    let back = ui.interact(island, Id::unique("bars_island_system_back"), Sense::click());
     let texts = readouts(st);
     let mut audio_action = crate::ui::audio::AudioAction::None;
     let mut readouts_zone = Rect::NOTHING;
@@ -516,7 +516,7 @@ fn system(
                     p,
                     icons,
                     rect,
-                    Id::new("bars_island_time"),
+                    Id::unique("bars_island_time"),
                     "clock-filled",
                     text(ui, texts.0.clone(), SIZE, p.muted),
                     p.muted,
@@ -529,7 +529,7 @@ fn system(
                     p,
                     icons,
                     rect,
-                    Id::new("bars_island_ping"),
+                    Id::unique("bars_island_ping"),
                     "antenna-bars-5",
                     text(ui, texts.1.clone(), SIZE, p.muted),
                     p.muted,
@@ -543,7 +543,7 @@ fn system(
                     p,
                     icons,
                     rect,
-                    Id::new("bars_island_fps"),
+                    Id::unique("bars_island_fps"),
                     "gauge-filled",
                     text(ui, texts.2.clone(), SIZE, color),
                     color,
@@ -582,7 +582,7 @@ fn system(
     menu::context_menu_also(&back, p, on_button, |ui| system_menu(ui, p, panels, st, island, action));
     // the demo cannot right-click: the same menu where the pointer would be
     if super::demo::get().open == Some(super::demo::Open::System) && ctx.cumulative_frame_nr() >= 300 {
-        let id = Id::new("bars_system_demo_menu");
+        let id = Id::unique("bars_system_demo_menu");
         let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(true);
         // under the island at its right end, as the mockup draws it
         let at = Pos2::new(island.right() - 270.0, island.bottom() + MARGIN);
@@ -612,7 +612,7 @@ fn system(
 /// Network section. Firestorm draws two instant gauges (bandwidth, losses):
 /// the curve tells the same over a minute.
 fn traffic(ui: &mut egui::Ui, p: &Palette, icons: &Icons, st: &StatusInfo, rect: Rect) -> egui::Response {
-    let resp = ui.interact(rect, Id::new("bars_island_net"), Sense::click());
+    let resp = ui.interact(rect, Id::unique("bars_island_net"), Sense::click());
     let hot = resp.hovered();
     slot_face(ui, p, rect, hot, false);
     let icon_rect = Rect::from_center_size(
@@ -757,7 +757,7 @@ fn system_tip(
     hovered: bool,
     action: &mut BarAction,
 ) {
-    let id = Id::new("bars_system_tip");
+    let id = Id::unique("bars_system_tip");
     let (open_id, since_id) = (id.with("open"), id.with("since"));
     let now = ctx.input(|i| i.time);
     let was_open = ctx.data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
@@ -1062,7 +1062,7 @@ mod tests {
         }
         let c = ctx.clone();
         let rect = move |name: &str| {
-            c.memory(|m| m.area_rect(Id::new(("bars_island", name))))
+            c.memory(|m| m.area_rect(Id::unique(("bars_island", name))))
                 .unwrap_or_else(|| panic!("no {name} island"))
         };
         (ctx, rect, shapes)
@@ -1220,7 +1220,7 @@ mod tests {
                 assert_eq!(ppp, zoom);
                 let case = format!("{font} at {zoom}");
                 let island = ctx
-                    .memory(|m| m.area_rect(Id::new(("bars_island", "place"))))
+                    .memory(|m| m.area_rect(Id::unique(("bars_island", "place"))))
                     .expect("the place island");
                 let centre = island.center().y * ppp;
                 let badge = shapes
@@ -1304,7 +1304,7 @@ mod tests {
     }
 
     fn system_rect(ctx: &egui::Context) -> Rect {
-        ctx.memory(|m| m.area_rect(Id::new(("bars_island", "system"))))
+        ctx.memory(|m| m.area_rect(Id::unique(("bars_island", "system"))))
             .expect("the system island")
     }
 
@@ -1338,8 +1338,8 @@ mod tests {
         frame_at(&ctx, &st, 0.3, vec![]);
         let (system, account, bell) = (
             system_rect(&ctx),
-            ctx.memory(|m| m.area_rect(Id::new(("bars_island", "account")))).unwrap(),
-            ctx.memory(|m| m.area_rect(Id::new(("bars_island", "bell")))).unwrap(),
+            ctx.memory(|m| m.area_rect(Id::unique(("bars_island", "account")))).unwrap(),
+            ctx.memory(|m| m.area_rect(Id::unique(("bars_island", "bell")))).unwrap(),
         );
         assert_eq!(system.width(), full - fps_w + readout_width(NET_W));
         assert_eq!((system.left() - account.right(), bell.left() - system.right()), (MARGIN, MARGIN));
@@ -1378,9 +1378,9 @@ mod tests {
         frame_at(&ctx, &st, 0.0, vec![]);
         frame_at(&ctx, &st, 0.1, vec![]);
         let system = system_rect(&ctx);
-        let tip = || ctx.memory(|m| m.area_rect(Id::new("bars_system_tip")));
+        let tip = || ctx.memory(|m| m.area_rect(Id::unique("bars_system_tip")));
         let open = || {
-            ctx.data(|d| d.get_temp::<bool>(Id::new("bars_system_tip").with("open")))
+            ctx.data(|d| d.get_temp::<bool>(Id::unique("bars_system_tip").with("open")))
                 .unwrap_or(false)
         };
         let clock = Pos2::new(system.left() + PAD + 20.0, system.center().y);
@@ -1432,7 +1432,7 @@ mod tests {
             frame_at(&ctx, &st, 0.0, vec![]);
             frame_at(&ctx, &st, 0.1, vec![]);
             let place = ctx
-                .memory(|m| m.area_rect(Id::new(("bars_island", "place"))))
+                .memory(|m| m.area_rect(Id::unique(("bars_island", "place"))))
                 .expect("the place island");
             // back, forward, then home
             let home = Pos2::new(place.left() + PAD + 2.0 * (SLOT + GAP) + SLOT / 2.0, place.center().y);
@@ -1538,7 +1538,7 @@ mod tests {
     }
 
     fn perf_rect(ctx: &egui::Context) -> Rect {
-        ctx.memory(|m| m.area_rect(Id::new("perf"))).expect("the Performance window")
+        ctx.memory(|m| m.area_rect(Id::unique("perf"))).expect("the Performance window")
     }
 
     /// Performance opened from the system island: its full view (the
@@ -1655,7 +1655,7 @@ mod tests {
         frame(&ctx, &mut open);
         let island = system_rect(&ctx);
         let compact_w = crate::ui::perf::COMPACT_W + crate::ui::perf::SIDES;
-        let saved = |ctx: &egui::Context| ctx.data_mut(|d| d.get_persisted::<bool>(Id::new(("perf", "monitor"))));
+        let saved = |ctx: &egui::Context| ctx.data_mut(|d| d.get_persisted::<bool>(Id::unique(("perf", "monitor"))));
         // nothing chosen: the full view
         assert!(crate::ui::perf::is_full(&ctx), "the full view by default");
         // the compact view chosen, then a network opening: full, this time

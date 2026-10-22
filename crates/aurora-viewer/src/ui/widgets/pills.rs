@@ -107,7 +107,7 @@ fn tab(
             ui.painter().galley(pos, g, count_ink);
         }
     }
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, enabled, selected, label));
     if enabled {
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {

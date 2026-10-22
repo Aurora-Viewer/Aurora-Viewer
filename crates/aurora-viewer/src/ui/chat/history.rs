@@ -59,7 +59,7 @@ pub enum HistoryAction {
 }
 
 fn field_id() -> egui::Id {
-    egui::Id::new("chat_history_find_field")
+    egui::Id::unique("chat_history_find_field")
 }
 
 impl HistoryUi {
@@ -414,8 +414,7 @@ impl HistoryUi {
         let wash = find::wash(p);
         let (lines, clock, view, selection) = (&self.lines, self.clock, &mut self.view, &mut self.selection);
         // a page opens at its end, the most recent of its messages
-        let area = egui::ScrollArea::vertical()
-            .id_salt(("chat_history", self.page))
+        let area = crate::ui::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("chat_history", self.page))
             .stick_to_bottom(true)
             .auto_shrink([false, false])
             .max_height(height)
@@ -459,9 +458,8 @@ impl HistoryUi {
             shift
         });
         if out.inner != 0.0 {
-            let mut state = out.state;
-            state.offset.y += out.inner;
-            state.store(ui.ctx(), out.id);
+            let offset = out.state.unclamped_offset() + egui::vec2(0.0, out.inner);
+            crate::ui::widgets::scroll_offset::set(ui.ctx(), out.id, offset);
         }
         super::line_menu::show(ui, menu, p, |ui, target| {
             if let Some(avatar) = target.sender {

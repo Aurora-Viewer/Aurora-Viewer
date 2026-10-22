@@ -79,7 +79,7 @@ fn font(cx: &mut Cx) {
                     .find(|f| s.font == format!("system:{}", f.path.display()))
                     .map_or_else(|| tr!("ui-options-no-system-font").to_owned(), |f| f.name.clone());
                 let mut changed = false;
-                egui::ComboBox::from_id_salt(ui.id().with("system-font"))
+                egui::ComboBox::from_id_salt(ui.scope_id().with("system-font"))
                     .width(COMBO_W)
                     .selected_text(shown)
                     .truncate()

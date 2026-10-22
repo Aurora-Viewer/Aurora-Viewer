@@ -169,7 +169,7 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
     }
     // the cross at the right, the names between
     let cross = Rect::from_center_size(Pos2::new(rect.right() - 10.0, rect.center().y), Vec2::splat(20.0));
-    let resp = ui.interact(cross, ui.id().with(("people-sheet-close", id)), Sense::click());
+    let resp = ui.interact(cross, ui.scope_id().with(("people-sheet-close", id)), Sense::click());
     if resp.hovered() {
         ui.painter()
             .rect_filled(cross, ui.visuals().widgets.inactive.corner_radius, p.raised);

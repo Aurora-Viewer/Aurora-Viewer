@@ -107,7 +107,7 @@ pub(crate) fn default_work_area(screen: Rect) -> Rect {
 }
 
 fn work_area_id() -> Id {
-    Id::new("layout_work_area")
+    Id::unique("layout_work_area")
 }
 
 /// The room left by the bars this frame: call it once they are drawn,
@@ -135,7 +135,7 @@ pub(crate) fn work_area(ctx: &egui::Context) -> Rect {
 }
 
 fn move_area_id() -> Id {
-    Id::new("layout_move_area")
+    Id::unique("layout_move_area")
 }
 
 /// Where the windows can be moved this frame: with the islands the whole
@@ -188,7 +188,7 @@ impl Edges {
 }
 
 fn edges_id() -> Id {
-    Id::new("layout_window_edges")
+    Id::unique("layout_window_edges")
 }
 
 /// The edges that stop the windows this frame (the user's settings): call
@@ -243,7 +243,7 @@ pub(crate) fn keep_title_in(area: Rect, pos: Pos2, size: Vec2, edges: Edges) -> 
 }
 
 fn islands_id() -> Id {
-    Id::new("layout_bar_islands")
+    Id::unique("layout_bar_islands")
 }
 
 /// An island of the bars was drawn this frame at `rect` (`bars::islands`):
@@ -468,7 +468,7 @@ impl Windows {
 }
 
 fn windows<R>(ctx: &egui::Context, read: impl FnOnce(&mut Windows) -> R) -> R {
-    ctx.data_mut(|d| read(d.get_persisted_mut_or_default::<Windows>(Id::new("window_layout"))))
+    ctx.data_mut(|d| read(d.get_persisted_mut_or_default::<Windows>(Id::unique("window_layout"))))
 }
 
 /// One window of the layout for one frame: ask for it before the window is
@@ -712,9 +712,9 @@ mod tests {
                 };
                 floater(LEFT, Pos2::new(8.0, 56.0));
                 floater(CORNER, Pos2::new(972.0, 480.0));
-                let slot = slot(ctx, Id::new(MAP));
+                let slot = slot(ctx, Id::unique(MAP));
                 let mut map = egui::Window::new("Map")
-                    .id(Id::new(MAP))
+                    .id(Id::unique(MAP))
                     .title_bar(false)
                     .default_pos([1064.0, 56.0])
                     .default_size([200.0, 200.0]);
@@ -735,7 +735,7 @@ mod tests {
         }
 
         fn rect(&self, id: &str) -> Rect {
-            self.ctx.memory(|m| m.area_rect(Id::new(id))).expect("the window was shown")
+            self.ctx.memory(|m| m.area_rect(Id::unique(id))).expect("the window was shown")
         }
 
         /// (left gap, top gap, right gap, bottom gap) of a window.
@@ -783,7 +783,7 @@ mod tests {
             (CORNER, egui::Align2::RIGHT_BOTTOM),
             (MAP, egui::Align2::RIGHT_TOP),
         ] {
-            let placed = windows(&s.ctx, |w| w.placed[&Id::new(id).value()]);
+            let placed = windows(&s.ctx, |w| w.placed[&Id::unique(id).value()]);
             assert_eq!(placed.anchor.expect("initialized at measured opening").point, point);
             assert_eq!(placed.room, Some(move_area(&s.ctx)));
         }
@@ -838,7 +838,9 @@ mod tests {
         s.frames(3, 1600.0, 900.0);
         let rect = s.rect(CORNER);
         assert_eq!(rect.min, Pos2::new(900.0, 70.0));
-        let anchor = windows(&s.ctx, |w| w.placed[&Id::new(CORNER).value()].anchor.expect("explicit placement"));
+        let anchor = windows(&s.ctx, |w| {
+            w.placed[&Id::unique(CORNER).value()].anchor.expect("explicit placement")
+        });
         assert_eq!(anchor.point, egui::Align2::CENTER_TOP);
         s.frames(3, 640.0, 480.0);
         assert_ne!(
@@ -846,7 +848,7 @@ mod tests {
             anchor.position(move_area(&s.ctx), rect.size()),
             "temporarily clamped"
         );
-        assert_eq!(windows(&s.ctx, |w| w.placed[&Id::new(CORNER).value()].anchor), Some(anchor));
+        assert_eq!(windows(&s.ctx, |w| w.placed[&Id::unique(CORNER).value()].anchor), Some(anchor));
         s.frames(3, 1600.0, 900.0);
         assert_eq!(s.rect(CORNER), rect, "the original offset was retained");
     }
@@ -923,7 +925,7 @@ mod tests {
         s.frames(3, 1600.0, 900.0);
         let before = windows(&s.ctx, |w| w.placed.clone());
         assert_eq!(before.len(), 3);
-        assert_eq!(before[&Id::new(MAP).value()].screen, screen(1600.0, 900.0));
+        assert_eq!(before[&Id::unique(MAP).value()].screen, screen(1600.0, 900.0));
         s.frames(2, 0.0, 0.0);
         s.frames(2, 160.0, 28.0);
         assert_eq!(windows(&s.ctx, |w| w.placed.clone()), before);
@@ -982,7 +984,7 @@ mod tests {
                     });
             });
             output.textures_delta.clear();
-            ctx.memory(|m| m.area_rect(Id::new(CORNER))).expect("shown")
+            ctx.memory(|m| m.area_rect(Id::unique(CORNER))).expect("shown")
         };
         let first = egui::Context::default();
         let mut rect = Rect::NOTHING;
@@ -1000,7 +1002,7 @@ mod tests {
             }
             assert_eq!(rect.size(), Vec2::new(300.0, 252.0), "{width} x {height}");
             assert_eq!(rect.right_bottom(), Pos2::new(width - 8.0, height - 38.0), "{width} x {height}");
-            let recorded = windows(&next, |w| w.placed[&Id::new(CORNER).value()]);
+            let recorded = windows(&next, |w| w.placed[&Id::unique(CORNER).value()]);
             assert_eq!((recorded.rect, recorded.screen), (rect, screen(width, height)));
         }
     }
@@ -1034,7 +1036,7 @@ mod tests {
         frame(1600.0, false);
         frame(1600.0, true);
         frame(1600.0, true);
-        let rect = ctx.memory(|m| m.area_rect(Id::new(CORNER))).expect("shown");
+        let rect = ctx.memory(|m| m.area_rect(Id::unique(CORNER))).expect("shown");
         assert_eq!(1600.0 - rect.right(), 8.0, "{rect:?}");
     }
 
@@ -1044,12 +1046,12 @@ mod tests {
         let run = |ctx: &egui::Context| {
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
                 egui::Window::new("t")
-                    .id(egui::Id::new("floater_t"))
+                    .id(egui::Id::unique("floater_t"))
                     .default_pos([123.0, 45.0])
                     .show(ui.ctx(), |ui| {
                         ui.label("x");
                     });
-                ui.ctx().data_mut(|d| d.insert_persisted(egui::Id::new("min"), true));
+                ui.ctx().data_mut(|d| d.insert_persisted(egui::Id::unique("min"), true));
             });
             out.textures_delta.clear();
         };
@@ -1058,8 +1060,8 @@ mod tests {
         let back: egui::Memory = ron::from_str(&text).expect("deserialize");
         let ctx2 = egui::Context::default();
         ctx2.memory_mut(|m| *m = back);
-        assert_eq!(ctx2.data_mut(|d| d.get_persisted::<bool>(egui::Id::new("min"))), Some(true));
-        let rect = ctx2.memory(|m| m.area_rect(egui::Id::new("floater_t")));
+        assert_eq!(ctx2.data_mut(|d| d.get_persisted::<bool>(egui::Id::unique("min"))), Some(true));
+        let rect = ctx2.memory(|m| m.area_rect(egui::Id::unique("floater_t")));
         assert!(rect.is_some_and(|r| (r.min.x - 123.0).abs() < 1.0), "{rect:?}");
     }
 

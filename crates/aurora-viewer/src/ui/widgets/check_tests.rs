@@ -182,7 +182,7 @@ fn radio_keeps_the_contract_of_the_stock_one() {
     // announced as a radio button with its label, for the click sound and
     // the screen readers
     let info = infos.first().expect("a click is announced");
-    assert_eq!(info.typ, egui::WidgetType::RadioButton);
+    assert_eq!(info.role, egui::Role::RadioButton);
     assert_eq!(info.label.as_deref(), Some("Three"));
     // the mark of the first one; clicking the selected choice changes nothing
     let mark = rects[0].left_center() + Vec2::new(6.0, 0.0);

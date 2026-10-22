@@ -342,7 +342,7 @@ fn table<T: SceneRow>(
                     }
                     let btn = r[figures.len() + 2];
                     let b = egui::Rect::from_center_size(pos2((btn.0 + btn.1) / 2.0, cy), vec2(24.0, 24.0));
-                    let br = ui.interact(b, ui.id().with(("monitor-inspect", row.name(), cy as i32)), Sense::click());
+                    let br = ui.interact(b, ui.scope_id().with(("monitor-inspect", row.name(), cy as i32)), Sense::click());
                     if br.hovered() {
                         ui.painter().rect_filled(b, widgets::inner_radius(ui.visuals()), p.raised);
                     }

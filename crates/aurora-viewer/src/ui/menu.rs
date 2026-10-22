@@ -48,7 +48,7 @@ struct RowTrack {
 }
 
 fn rows_id() -> Id {
-    Id::new("aurora_menu_rows")
+    Id::unique("aurora_menu_rows")
 }
 
 /// Menu style: the popup and sub-menu frames (`Frame::menu`) are built
@@ -156,7 +156,7 @@ pub fn context_menu_at(ui: &Ui, id: Id, pos: egui::Pos2, p: &Palette, body: impl
 /// resized and menus with external state.
 pub(crate) fn dismiss_on_window_change(ctx: &egui::Context) -> bool {
     let changed = ctx
-        .data(|d| d.get_temp::<u64>(Id::new("menus_native_window_change")))
+        .data(|d| d.get_temp::<u64>(Id::unique("menus_native_window_change")))
         .is_some_and(|frame| ctx.cumulative_frame_nr() <= frame);
     if !changed && !super::widgets::window_dragging(ctx) {
         return false;
@@ -169,7 +169,7 @@ pub(crate) fn dismiss_on_window_change(ctx: &egui::Context) -> bool {
 /// the next frame and all its layout passes, including externally owned menus.
 pub(crate) fn window_geometry_changed(ctx: &egui::Context) {
     let through = ctx.cumulative_frame_nr() + 1;
-    ctx.data_mut(|d| d.insert_temp(Id::new("menus_native_window_change"), through));
+    ctx.data_mut(|d| d.insert_temp(Id::unique("menus_native_window_change"), through));
     Popup::close_all(ctx);
 }
 
@@ -696,7 +696,7 @@ pub fn voice_volume(ui: &mut Ui, p: &Palette, v: VoiceVolume) -> Option<VoiceEdi
 /// egui temp data: where the voice row of the menu in `layer` was drawn,
 /// and in which frame.
 fn keep_open_id(layer: LayerId) -> Id {
-    Id::new("aurora_menu_keep_open").with(layer.id)
+    Id::unique("aurora_menu_keep_open").with(layer.id)
 }
 
 /// A click this frame lands on the voice row the menu `popup` drew last
@@ -850,7 +850,7 @@ mod tests {
                         if response.secondary_clicked() {
                             *open = true;
                             if *kind == 1 {
-                                Popup::open_id(ui.ctx(), Id::new("anchored_menu"));
+                                Popup::open_id(ui.ctx(), Id::unique("anchored_menu"));
                             }
                             *world = Some(crate::ui::context::ContextMenu {
                                 pos: target.center(),
@@ -862,13 +862,13 @@ mod tests {
                         }
                         match *kind {
                             1 => {
-                                context_menu_at(ui, Id::new("anchored_menu"), target.center(), &p, |ui| {
+                                context_menu_at(ui, Id::unique("anchored_menu"), target.center(), &p, |ui| {
                                     *shown = true;
                                     item(ui, &p, "copy", "Menu action");
                                 });
                             }
                             2 => {
-                                popup_at(ui.ctx(), Id::new("bool_menu"), target.center(), open, &p, |ui| {
+                                popup_at(ui.ctx(), Id::unique("bool_menu"), target.center(), open, &p, |ui| {
                                     *shown = true;
                                     item(ui, &p, "copy", "Menu action");
                                 });
@@ -885,7 +885,7 @@ mod tests {
             });
             self.frames
                 .ctx
-                .memory(|m| m.area_rect(Id::new("resize_other")).expect("other window"))
+                .memory(|m| m.area_rect(Id::unique("resize_other")).expect("other window"))
         }
     }
 
@@ -938,7 +938,7 @@ mod tests {
                     } else {
                         h.frames
                             .ctx
-                            .read_response(Id::new("resize_other").with("title_double_click"))
+                            .read_response(Id::unique("resize_other").with("title_double_click"))
                             .expect("other window title")
                             .rect
                             .center()

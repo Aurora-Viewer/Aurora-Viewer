@@ -135,7 +135,7 @@ pub(super) fn show(
                     ui.label(aurora_i18n::tr!("notecard-copy-confirm", name = item.item.name.as_str()));
                     ui.horizontal(|ui| {
                         let button = flat_button(ui, p, aurora_i18n::tr!("notecard-copy-inventory"));
-                        ctx.data_mut(|data| data.insert_temp(egui::Id::new(("notecard_copy_confirm", st.ui_id)), button.rect));
+                        ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("notecard_copy_confirm", st.ui_id)), button.rect));
                         if button.clicked() {
                             actions.push(InvAction::Embedded {
                                 editor: st.ui_id,
@@ -459,7 +459,7 @@ fn share(
         .collect();
     let mut give = false;
     let mut cancel = false;
-    let modal = crate::ui::widgets::Modal::new(egui::Id::new(("inventory_share", ui_id))).show(ctx, |ui| {
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique(("inventory_share", ui_id))).show(ctx, |ui| {
         ui.set_width(360.0);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(36.0), egui::Sense::hover());
@@ -555,7 +555,7 @@ fn share(
             ui.add_enabled_ui(!given.is_empty(), |ui| {
                 let primary =
                     crate::ui::widgets::primary_button_sized(ui, p, aurora_i18n::tr!("ui-inventory-dialogs-give"), Vec2::new(96.0, 28.0));
-                ctx.data_mut(|d| d.insert_temp(egui::Id::new(("inventory_share_give", ui_id)), primary.rect));
+                ctx.data_mut(|d| d.insert_temp(egui::Id::unique(("inventory_share_give", ui_id)), primary.rect));
                 give = !given.is_empty() && (primary.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)));
             });
             cancel = crate::ui::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("common-cancel"), Vec2::new(96.0, 28.0)).clicked();
@@ -639,7 +639,7 @@ pub(super) fn preview(
     {
         super::embedded::clipboard(
             ctx,
-            egui::Id::new(("inventory_document_text", st.ui_id, id)),
+            egui::Id::unique(("inventory_document_text", st.ui_id, id)),
             source,
             text,
             editable,
@@ -674,7 +674,7 @@ pub(super) fn preview(
                 if drag_inventory.items.get(&id).is_some_and(|item| item.asset_type == 0) {
                     response.dnd_set_drag_payload(InvDrag(id));
                 }
-                ctx.data_mut(|data| data.insert_temp(egui::Id::new(("inventory_texture_preview", st.ui_id, id)), response.rect));
+                ctx.data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_texture_preview", st.ui_id, id)), response.rect));
             } else {
                 ui.label(aurora_i18n::tr!("ui-inventory-dialogs-loading-image"));
             }
@@ -720,7 +720,7 @@ pub(super) fn preview(
             if it.asset_type == 7 && view.choose(ui, p) {
                 st.notecard_view = Some(view);
                 prefs.notecard_view = view;
-                let editor = egui::Id::new(("inventory_document_text", st.ui_id, id));
+                let editor = egui::Id::unique(("inventory_document_text", st.ui_id, id));
                 ctx.memory_mut(|m| {
                     m.request_focus(if view == super::markdown::View::Markdown {
                         editor.with("markdown")
@@ -767,7 +767,7 @@ pub(super) fn preview(
                             ui,
                             p,
                             icons,
-                            egui::Id::new(("inventory_document_text", st.ui_id, id)),
+                            egui::Id::unique(("inventory_document_text", st.ui_id, id)),
                             text,
                             st.preview_source.as_mut(),
                             editable && !st.save_pending && !matches!(st.dialog, Some(EditDialog::Discard(_))),
@@ -785,7 +785,7 @@ pub(super) fn preview(
                                 if it.asset_type == 10 {
                                     // beside the scroll bar's strip, when it shows
                                     let size = Vec2::new(ui.available_width().min(editor_size.x), editor_size.y);
-                                    let editor_id = egui::Id::new(("inventory_document_text", st.ui_id, id));
+                                    let editor_id = egui::Id::unique(("inventory_document_text", st.ui_id, id));
                                     edited = super::embedded::editor(
                                         ui,
                                         p,
@@ -938,7 +938,7 @@ fn notecard_description(
         let response = ui.add_enabled(
             can_edit,
             egui::TextEdit::singleline(&mut description.text)
-                .id(egui::Id::new(("notecard_description", st.ui_id, it.id)))
+                .id(egui::Id::unique(("notecard_description", st.ui_id, it.id)))
                 .interactive(can_edit)
                 .char_limit(127)
                 .desired_width(ui.available_width()),
@@ -1214,7 +1214,7 @@ mod tests {
             let (output, _) = document_frame(&ctx, &inv, &mut st, vec![]);
             label_center(&output, aurora_i18n::tr!("common-description"));
             label_center(&output, "Original description");
-            let field = egui::Id::new(("notecard_description", st.ui_id, item));
+            let field = egui::Id::unique(("notecard_description", st.ui_id, item));
             ctx.memory_mut(|memory| memory.request_focus(field));
             document_frame(&ctx, &inv, &mut st, vec![]);
             document_frame(&ctx, &inv, &mut st, vec![egui::Event::Text(" revised".into())]);
@@ -1273,7 +1273,7 @@ mod tests {
             for _ in 0..5 {
                 document_frame_with_preferences(&ctx, &inv, &mut st, &mut prefs, vec![]);
             }
-            let field = egui::Id::new(("notecard_description", st.ui_id, item));
+            let field = egui::Id::unique(("notecard_description", st.ui_id, item));
             ctx.memory_mut(|memory| memory.request_focus(field));
             document_frame_with_preferences(&ctx, &inv, &mut st, &mut prefs, vec![egui::Event::Text(" changed".into())]);
             let changed = st.preview_description.as_ref().expect("description").text != "Visible description";
@@ -1295,7 +1295,7 @@ mod tests {
             document_frame(&ctx, &inv, &mut st, vec![]);
         }
         let rect = ctx
-            .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::new(("notecard_copy_confirm", st.ui_id))))
+            .data_mut(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("notecard_copy_confirm", st.ui_id))))
             .expect("copy button");
         let event = |pressed| egui::Event::PointerButton {
             pos: rect.center(),
@@ -1339,7 +1339,7 @@ mod tests {
         for _ in 0..5 {
             document_frame(&ctx, &inv, &mut st, Vec::new());
         }
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("note")))));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("note")))));
         let key = |key| egui::Event::Key {
             key,
             physical_key: None,
@@ -1468,7 +1468,7 @@ mod tests {
             for _ in 0..5 {
                 document_frame(&ctx, &inv, &mut st, vec![]);
             }
-            let raw_editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+            let raw_editor = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("item")));
             ctx.memory_mut(|m| m.request_focus(raw_editor));
             document_frame(
                 &ctx,
@@ -1494,7 +1494,7 @@ mod tests {
             let pos = label_center(&output, label);
             click_document(&ctx, &inv, &mut st, pos);
             assert_eq!(st.notecard_view, Some(view));
-            let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+            let editor = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("item")));
             let editor = if view == View::Markdown { editor.with("markdown") } else { editor };
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             loop {
@@ -1588,7 +1588,7 @@ mod tests {
             st.load_document(7, true, &Ok(crate::world::inventory::demo::note_asset(true)));
             st.notecard_view = Some(view);
             let original = st.preview_text.clone();
-            let preview = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item"))).with("markdown");
+            let preview = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("item"))).with("markdown");
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             loop {
                 document_frame(&ctx, &inv, &mut st, vec![]);
@@ -1618,7 +1618,7 @@ mod tests {
         let original = "Prose \"{ Été 🐺\n\n```lsl\ndefault\n{\n    state_entry()\n    {\n    }\n}\n```\n\u{100000}\n\u{100001}";
         st.load_document(7, true, &Ok(card.encode(original).expect("asset")));
         st.notecard_view = Some(NotecardView::Edit);
-        let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+        let editor = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("item")));
         for _ in 0..5 {
             document_frame(&ctx, &inv, &mut st, vec![]);
         }
@@ -1745,7 +1745,7 @@ mod tests {
             for _ in 0..5 {
                 document_frame(&ctx, &inv, &mut st, vec![]);
             }
-            let id = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+            let id = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("item")));
             let mut state = egui::TextEdit::load_state(&ctx, id).expect("editor");
             let caret = if matches!(&event, egui::Event::Key { key: egui::Key::K, .. }) {
                 before[..before.find("comment").expect("comment") + 3].chars().count()
@@ -1771,7 +1771,7 @@ mod tests {
         let original = "Été 🐺\n\u{100000}\n\u{100001}\n\u{100002}";
         st.load_document(7, true, &Ok(card.encode(original).expect("asset")));
         st.notecard_view = Some(super::super::markdown::View::Edit);
-        let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+        let editor = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("item")));
         for _ in 0..5 {
             document_frame(&ctx, &inv, &mut st, vec![]);
         }
@@ -1887,7 +1887,7 @@ mod tests {
                     text.push_str(&"\nMore text".repeat(100));
                 }
                 st.notecard_view = Some(super::super::markdown::View::Edit);
-                let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+                let editor = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("item")));
                 let panes = [editor, editor.with("markdown")];
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
                 while st.notecard_markdown.get(&ctx, text).is_none() {
@@ -1942,7 +1942,7 @@ mod tests {
         let (inv, mut st) = note_fixture();
         st.load_document(7, true, &Ok(b"# Before\n\nBody".to_vec()));
         st.notecard_view = Some(super::super::markdown::View::Edit);
-        let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+        let editor = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("item")));
         let preview = editor.with("markdown");
         let wait_for = |st: &mut InventoryUi, expected: &str| {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -2012,7 +2012,7 @@ mod tests {
             for _ in 0..8 {
                 document_frame(&ctx, &inv, &mut st, vec![]);
             }
-            let editor = egui::Id::new(("inventory_document_text", st.ui_id, st.preview.expect("item")));
+            let editor = egui::Id::unique(("inventory_document_text", st.ui_id, st.preview.expect("item")));
             ctx.memory_mut(|m| m.request_focus(if view == View::Markdown { editor.with("markdown") } else { editor }));
             let (_, actions) = document_frame(&ctx, &inv, &mut st, vec![egui::Event::Text("forbidden".into())]);
             assert!(actions.is_empty());
@@ -2244,7 +2244,7 @@ mod tests {
         )));
         // Give
         let give = ctx
-            .data(|d| d.get_temp::<egui::Rect>(egui::Id::new(("inventory_share_give", st.ui_id))))
+            .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("inventory_share_give", st.ui_id))))
             .expect("give button")
             .center();
         let button = |pressed| egui::Event::PointerButton {

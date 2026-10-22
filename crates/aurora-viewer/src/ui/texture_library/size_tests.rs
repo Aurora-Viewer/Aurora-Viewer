@@ -78,7 +78,7 @@ impl Fixture {
     }
     fn rect(&self, item: u128) -> egui::Rect {
         self.ctx
-            .memory(|m| m.area_rect(egui::Id::new(preview_window_id(Uuid::from_u128(item)))))
+            .memory(|m| m.area_rect(egui::Id::unique(preview_window_id(Uuid::from_u128(item)))))
             .expect("preview window")
     }
     fn open(&mut self, item: u128) {
@@ -88,7 +88,7 @@ impl Fixture {
     fn front(&mut self, item: u128) {
         let id = preview_window_id(Uuid::from_u128(item));
         widgets::move_floater(&self.ctx, &id, egui::pos2(20.0, 60.0));
-        self.ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::new(id)));
+        self.ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(id)));
         self.settle();
     }
     fn button(&mut self, pos: egui::Pos2, pressed: bool) {
@@ -231,7 +231,7 @@ fn texture_preview_grows_past_320_pixels_and_keeps_each_windows_display_options(
     f.open(110);
     let image = |f: &Fixture| {
         f.ctx
-            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("resource_texture_preview", Uuid::from_u128(110)))))
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("resource_texture_preview", Uuid::from_u128(110)))))
             .expect("image")
     };
     let before = image(&f).size();
@@ -322,7 +322,7 @@ fn material_maps_have_thumbnails_without_a_new_scene_upload_and_shapes_are_selec
         std::array::from_fn::<_, 4, _>(|slot| {
             f.ctx
                 .data(|data| {
-                    data.get_temp::<(Option<Uuid>, Option<egui::TextureId>, egui::Rect)>(egui::Id::new((
+                    data.get_temp::<(Option<Uuid>, Option<egui::TextureId>, egui::Rect)>(egui::Id::unique((
                         "resource_material_map",
                         Uuid::from_u128(113),
                         slot,
@@ -339,7 +339,7 @@ fn material_maps_have_thumbnails_without_a_new_scene_upload_and_shapes_are_selec
     for shape in [MaterialShape::Cube, MaterialShape::Aurora, MaterialShape::Sphere] {
         let choice = f
             .ctx
-            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("resource_material_shape_choice", Uuid::from_u128(113)))))
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("resource_material_shape_choice", Uuid::from_u128(113)))))
             .expect("shape selector")
             .center();
         f.button(choice, true);
@@ -347,7 +347,7 @@ fn material_maps_have_thumbnails_without_a_new_scene_upload_and_shapes_are_selec
         f.settle();
         let option = f
             .ctx
-            .data(|data| data.get_temp::<egui::Rect>(egui::Id::new(("resource_material_shape", Uuid::from_u128(113), shape))))
+            .data(|data| data.get_temp::<egui::Rect>(egui::Id::unique(("resource_material_shape", Uuid::from_u128(113), shape))))
             .expect("shape option")
             .center();
         f.button(option, true);
@@ -398,7 +398,7 @@ fn material_window_keeps_its_geometry_with_wrapped_settings_messages_and_late_ma
         }
         let viewport = f
             .ctx
-            .data(|data| data.get_temp::<(egui::Rect, Vec2)>(egui::Id::new(("resource_material_viewport", item))))
+            .data(|data| data.get_temp::<(egui::Rect, Vec2)>(egui::Id::unique(("resource_material_viewport", item))))
             .expect("scroll viewport");
         assert!(f.rect(113).contains_rect(viewport.0));
         assert!(viewport.1.y > viewport.0.height(), "settings stay scrollable");

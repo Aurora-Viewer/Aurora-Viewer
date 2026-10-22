@@ -572,7 +572,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                             menu::context_menu(&output.response, p, |ui| edit_menu(ui, p, e, base_id, &mut chosen));
                             if let Some(command) = chosen {
                                 // Context commands use the same dispatcher as the menus.
-                                ui.ctx().data_mut(|d| d.insert_temp(Id::new((base_id, "command")), command));
+                                ui.ctx().data_mut(|d| d.insert_temp(Id::unique((base_id, "command")), command));
                             }
                             let text = if e.tools.processed { &e.tools.processed_source } else { &e.source };
                             if ui
@@ -588,7 +588,7 @@ fn source(ui: &mut egui::Ui, p: &Palette, e: &mut Editor, id: Id, settings: &Scr
                                     || e.tools.history_cursor != output.cursor_range
                                     || ui
                                         .ctx()
-                                        .data_mut(|d| d.remove_temp::<bool>(Id::new((id, "history_dirty"))))
+                                        .data_mut(|d| d.remove_temp::<bool>(Id::unique((id, "history_dirty"))))
                                         .unwrap_or(false))
                             {
                                 let range = output.cursor_range.unwrap_or_default();
@@ -733,7 +733,7 @@ pub(super) fn dialogs(
     actions: &mut Vec<Action>,
 ) {
     poll_files(ctx, e, id, settings, actions);
-    if let Some(command) = ctx.data_mut(|d| d.remove_temp::<Command>(Id::new((id, "command")))) {
+    if let Some(command) = ctx.data_mut(|d| d.remove_temp::<Command>(Id::unique((id, "command")))) {
         run(command, e, ctx, id, settings, prefs, actions);
     }
     let original_id = id;
@@ -899,7 +899,7 @@ pub(super) fn search(
     let (pos, overlap) = Search::placement(ctx, parent, e.tools.body_top, prefer_left);
     if overlap {
         let owner = egui::LayerId::new(egui::Order::Middle, parent_id);
-        let child = egui::LayerId::new(egui::Order::Middle, Id::new(Search::WINDOW));
+        let child = egui::LayerId::new(egui::Order::Middle, Id::unique(Search::WINDOW));
         // Dependent ordering, as LLFloater::addDependentFloater: clicking
         // the script keeps its search above it without covering other windows.
         ctx.set_sublayer(owner, child);
@@ -1004,7 +1004,7 @@ mod tests {
             e.tools.focus_start = false;
             e.tools.processed = processed;
             e.tools.processed_source.clone_from(&original);
-            let id = Id::new("wrapping_source");
+            let id = Id::unique("wrapping_source");
             let text_id = visible_id(id, processed);
             editing::select(&ctx, text_id, 3..12, true);
             let selection = editing::cursor(&ctx, text_id);
@@ -1106,7 +1106,7 @@ mod tests {
                             },
                             |ui| {
                                 bounds = ui.available_rect_before_wrap();
-                                body(ui, &p, e, Id::new("resize_source"), &settings, &mut prefs, &mut vec![]);
+                                body(ui, &p, e, Id::unique("resize_source"), &settings, &mut prefs, &mut vec![]);
                                 bottom = ui.min_rect().bottom();
                             },
                         )
@@ -1131,7 +1131,7 @@ mod tests {
                         .max_by(|a, b| a.area().total_cmp(&b.area()))
                         .expect("editor background");
                     let gutter = rectangles.iter().find(|rect| (rect.width() - 56.0).abs() < 0.5).expect("gutter");
-                    let input = ctx.read_response(Id::new("resize_source")).expect("source input");
+                    let input = ctx.read_response(Id::unique("resize_source")).expect("source input");
                     assert!(
                         input.rect.height() >= gutter.height() - 0.5,
                         "clickable editor: {:?} / {editor:?}",
@@ -1163,7 +1163,7 @@ mod tests {
         editors.loaded(request, target, Ok("éあ original".into()));
         let e = &mut editors.documents[0];
         let ctx = egui::Context::default();
-        let id = Id::new("commands");
+        let id = Id::unique("commands");
         let settings = ScriptSettings::default();
         let mut prefs = Panels::default();
         let mut actions = vec![];

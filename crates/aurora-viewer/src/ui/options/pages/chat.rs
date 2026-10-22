@@ -232,7 +232,7 @@ fn notifications(cx: &mut Cx) {
                 |ui, s| {
                     let mut changed = false;
                     ui.add_enabled_ui(center, |ui| {
-                        egui::ComboBox::from_id_salt(ui.id().with("presence-position"))
+                        egui::ComboBox::from_id_salt(ui.scope_id().with("presence-position"))
                             .width(COMBO_W)
                             .selected_text(s.presence_position.label())
                             .show_ui(ui, |ui| {

@@ -209,7 +209,7 @@ fn selection_command_in(ctx: &egui::Context, id: Id, source: &mut String, comman
     undo.add_undo(&(after, source.clone()));
     state.set_undoer(undo);
     state.store(ctx, id);
-    ctx.data_mut(|d| d.insert_temp(Id::new((id, "history_dirty")), true));
+    ctx.data_mut(|d| d.insert_temp(Id::unique((id, "history_dirty")), true));
     ctx.memory_mut(|m| m.request_focus(id));
     true
 }
@@ -339,7 +339,7 @@ pub(super) fn replace(ctx: &egui::Context, id: Id, source: &mut String, range: R
     undo.add_undo(&(at, source.clone()));
     state.set_undoer(undo);
     state.store(ctx, id);
-    ctx.data_mut(|d| d.insert_temp(Id::new((id, "history_dirty")), true));
+    ctx.data_mut(|d| d.insert_temp(Id::unique((id, "history_dirty")), true));
     true
 }
 
@@ -356,7 +356,7 @@ pub(super) fn undo(ctx: &egui::Context, id: Id, source: &mut String, redo: bool)
     }
     state.set_undoer(undo);
     state.store(ctx, id);
-    ctx.data_mut(|d| d.insert_temp(Id::new((id, "history_dirty")), true));
+    ctx.data_mut(|d| d.insert_temp(Id::unique((id, "history_dirty")), true));
 }
 
 pub(super) fn position(source: &str, at: usize) -> (usize, usize) {
@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn multiline_indent_keeps_backward_selection_and_excludes_the_final_line_at_column_zero() {
         let ctx = egui::Context::default();
-        let id = Id::new("lines");
+        let id = Id::unique("lines");
         let original = "éあ\r\n  second\r\nthird";
         let mut source = original.to_owned();
         let end = original[..original.find("third").expect("third")].chars().count();
@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn outdent_handles_literal_tabs_short_indentation_and_unindented_code() {
         let ctx = egui::Context::default();
-        let id = Id::new("outdent");
+        let id = Id::unique("outdent");
         let mut source = "\tfirst\n  second\nthird\n".to_owned();
         let len = source.chars().count();
         select(&ctx, id, 0..len, false);
@@ -491,7 +491,7 @@ mod tests {
     #[test]
     fn line_comments_toggle_current_or_selected_lines_and_restore_spacing_exactly() {
         let ctx = egui::Context::default();
-        let id = Id::new("comments");
+        let id = Id::unique("comments");
         let original = "    éあ\r\n\t// existing\r\n\r\nlast";
         let mut source = original.to_owned();
         let end = original[..original.find("last").expect("last")].chars().count();
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn indented_block_comments_toggle_at_the_caret_and_keep_surrounding_whitespace() {
         let ctx = egui::Context::default();
-        let id = Id::new("indented_comment");
+        let id = Id::unique("indented_comment");
         let mut source = "    /* code */ tail".to_owned();
         select(&ctx, id, 8..8, false);
         assert!(selection_command(&ctx, id, &mut source, SelectionCommand::BlockComment));
@@ -526,7 +526,7 @@ mod tests {
     #[test]
     fn block_comment_wraps_selection_and_toggles_from_inside_without_nesting() {
         let ctx = egui::Context::default();
-        let id = Id::new("block");
+        let id = Id::unique("block");
         let original = "éあ\n  code;\nlast";
         let mut source = original.to_owned();
         select(&ctx, id, 0..10, false);
@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn command_edits_share_native_undo_and_redo_and_reject_oversized_input() {
         let ctx = egui::Context::default();
-        let id = Id::new("command_edit");
+        let id = Id::unique("command_edit");
         let mut source = "éあ start".to_owned();
         select(&ctx, id, 2..8, false);
         assert!(replace(&ctx, id, &mut source, 2..8, " finish"));
