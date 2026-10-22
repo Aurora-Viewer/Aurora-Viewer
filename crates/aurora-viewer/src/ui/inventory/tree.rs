@@ -105,6 +105,7 @@ pub fn search_field(
     clear_shown: bool,
     clear_tip: &str,
 ) -> (egui::Response, bool) {
+    let centre = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
     let field = ui.add_sized(
         [width, ui.spacing().interact_size.y],
         egui::TextEdit::singleline(text)
@@ -113,8 +114,7 @@ pub fn search_field(
             .margin(egui::Margin {
                 left: 5,
                 right: 28,
-                top: 0,
-                bottom: 0,
+                ..centre
             }),
     );
     if !clear_shown {

@@ -833,7 +833,10 @@ impl WorldMapUi {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.ov.query)
                         .id(id)
-                        .frame(egui::Frame::NONE)
+                        .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
+                            ui.ctx(),
+                            &egui::TextStyle::Body.resolve(ui.style()),
+                        )))
                         .hint_text(aurora_i18n::tr!("ui-worldmap-search-anything"))
                         .desired_width(w),
                 );

@@ -268,6 +268,7 @@ fn chat_island(
         Pos2::new(smile.left() - 6.0, field.bottom()),
     );
     let hint = RichText::new(aurora_i18n::tr!("common-nearby-chat")).size(12.5);
+    let centre = crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(12.5));
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(text)
@@ -276,8 +277,7 @@ fn chat_island(
     // egui paints a placeholder in the weak text colour, whatever its own
     child.visuals_mut().weak_text_color = Some(p.muted_dim);
     let out = crate::ui::chat::bar_input(&mut child, p, chat, gestures, emoji.as_deref_mut(), |edit| {
-        edit.frame(egui::Frame::NONE)
-            .margin(egui::Margin::ZERO)
+        edit.frame(egui::Frame::NONE.inner_margin(centre))
             .font(egui::FontId::proportional(12.5))
             .text_color(p.ink)
             .hint_text(hint)

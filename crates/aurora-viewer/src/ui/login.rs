@@ -151,8 +151,10 @@ fn field(
                     TextEdit::singleline(text)
                         .id(id)
                         .interactive(ui.is_enabled())
-                        .frame(egui::Frame::NONE)
-                        .margin(Margin::ZERO)
+                        .frame(
+                            egui::Frame::NONE
+                                .inner_margin(crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(14.0))),
+                        )
                         .password(hidden)
                         .hint_text(RichText::new(hint).color(p.muted_dim))
                         .font(egui::FontId::proportional(14.0))

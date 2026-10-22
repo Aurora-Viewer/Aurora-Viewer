@@ -14,6 +14,8 @@ mod check_tests;
 #[cfg(test)]
 mod collapse_tests;
 #[cfg(test)]
+mod field_centering_tests;
+#[cfg(test)]
 mod movement_tests;
 pub(crate) use cascade::Group as CascadeGroup;
 pub mod color;
@@ -2565,6 +2567,23 @@ pub fn row_text_origin(painter: &egui::Painter, galley: &egui::Galley, left: f32
 pub fn paint_row_text(painter: &egui::Painter, galley: std::sync::Arc<egui::Galley>, left: f32, center_y: f32, color: Color32) {
     let pos = row_text_origin(painter, &galley, left, center_y);
     painter.galley(pos, galley, color);
+}
+
+/// The margin that puts the capitals of a text field in `font` in the middle
+/// of the field (the human's choice of 2026-10-22): egui centres the text's
+/// row, whose room for descenders leaves the letters high (Inter at 13
+/// points: 1.1 points). What it adds above it takes below, so the field keeps
+/// its height. Every field gets it: the theme's (`theme::FieldSize`) and the
+/// bare ones laid on their own face (`pills::icon_field`…).
+pub fn field_text_margin(ctx: &egui::Context, font: &egui::FontId) -> egui::Margin {
+    let probe = ctx.fonts_mut(|f| f.layout_no_wrap("H".into(), font.clone(), Color32::PLACEHOLDER));
+    let ink = ink_rect(&probe);
+    let lower = ((probe.size().y - ink.bottom() - ink.top()) / 2.0).round().clamp(0.0, 4.0) as i8;
+    egui::Margin {
+        top: lower,
+        bottom: -lower,
+        ..egui::Margin::ZERO
+    }
 }
 
 const ROW_TAG_PAD: f32 = 6.0;

@@ -735,7 +735,10 @@ fn landmark_menu(ui: &mut egui::Ui, p: &Palette, st: &mut RestartUi, v: &View<'_
                 );
                 ui.add(
                     egui::TextEdit::singleline(&mut st.query)
-                        .frame(egui::Frame::NONE)
+                        .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
+                            ui.ctx(),
+                            &egui::TextStyle::Body.resolve(ui.style()),
+                        )))
                         .hint_text(aurora_i18n::tr!("region-restart-search"))
                         .desired_width(f32::INFINITY),
                 );

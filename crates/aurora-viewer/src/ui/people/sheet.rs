@@ -396,7 +396,10 @@ fn nickname_and_sets(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Peo
                 ui.set_width(field_w - 16.0);
                 ui.add(
                     egui::TextEdit::singleline(text)
-                        .frame(egui::Frame::NONE)
+                        .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
+                            ui.ctx(),
+                            &egui::TextStyle::Body.resolve(ui.style()),
+                        )))
                         .hint_text(aurora_i18n::tr!("people-sheet-nickname-hint"))
                         .desired_width(f32::INFINITY),
                 )

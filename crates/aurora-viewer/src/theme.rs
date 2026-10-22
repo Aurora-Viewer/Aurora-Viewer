@@ -260,14 +260,17 @@ impl Theme {
 /// The size of the text fields: egui 0.37 makes them as high as a button
 /// (`interact_size`, 26 points here) with a button's padding; they keep egui
 /// 0.36's, 4 × 2 points around their text (stroke included) and no minimum
-/// height, so no window grows. The rest is egui's look.
+/// height, so no window grows. Their capitals sit in the middle
+/// (`widgets::field_text_margin`). The rest is egui's look.
 struct FieldSize;
 
 impl egui::theme::StyleProvider<egui::widget_style::TextEditStyle> for FieldSize {
     fn style(&mut self, args: &egui::widget_style::StyleArgs<'_>) -> egui::widget_style::TextEditStyle {
         let mut field: egui::widget_style::TextEditStyle = egui::theme::StyleProvider::style(&mut egui::theme::DefaultStyle, args);
         let frame = &mut field.atom_layout.frame;
-        frame.inner_margin = frame.inner_margin - egui::Margin::from(args.style.spacing.button_padding) + egui::Margin::symmetric(4, 2);
+        let centre = crate::ui::widgets::field_text_margin(args.ctx, &field.atom_layout.text_style.font_id);
+        frame.inner_margin =
+            frame.inner_margin - egui::Margin::from(args.style.spacing.button_padding) + egui::Margin::symmetric(4, 2) + centre;
         field.atom_layout.min_size = egui::Vec2::ZERO;
         field
     }

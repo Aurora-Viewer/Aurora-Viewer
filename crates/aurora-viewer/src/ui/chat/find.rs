@@ -176,7 +176,10 @@ pub fn field(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, face: Color32, f:
     let edit = ui.add(
         egui::TextEdit::singleline(&mut f.text)
             .id(field_id())
-            .frame(egui::Frame::NONE)
+            .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
+                ui.ctx(),
+                &egui::TextStyle::Body.resolve(ui.style()),
+            )))
             .hint_text(aurora_i18n::tr!("ui-chat-find"))
             .desired_width(text_w),
     );
