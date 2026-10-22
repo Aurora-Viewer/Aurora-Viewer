@@ -146,7 +146,7 @@ function New-AuroraRelease($Repo) {
     $policy = Read-ReleaseMaintenance $policy
     if (-not $policy) { return }
     Show-Logo 'Confirmation of the release'
-    Write-Color "  $tag, on the latest main$(if ($pre) { ', as a pre-release' }): the Release workflow builds the viewer and publishes the zip with the notes." ink
+    Write-Color "  $tag, on the latest main$(if ($pre) { ', as a pre-release' }): the Release workflow builds the viewer and publishes the Windows zip with the notes, then adds the Linux archive." ink
     Write-Color "  Cache: $(if ($policy.cache_invalidation_before) { 'cleared for versions before ' + $policy.cache_invalidation_before } else { 'kept' })." ink
     Write-Color "  Settings: $(if ($policy.settings_reset_before) { 'reset for versions before ' + $policy.settings_reset_before } else { 'kept and migrated automatically if needed' })." ink
     if (-not (Read-YesNo "Create the release ${tag}?")) { return }
@@ -186,7 +186,14 @@ function New-AuroraRelease($Repo) {
             Write-Color "  Release published: $url" success
             if ($url -and (Read-YesNo 'Open it in the browser?')) { Start-Process $url }
         } else {
-            Write-Color "  The Release workflow failed: gh run view $id --log-failed (the tag $tag exists; delete it here to start again)." danger
+            $url = gh release view $tag -R $Repo.Slug --json url --jq .url 2>$null
+            if ($url) {
+                # the Windows release is out: only the Linux archive is missing
+                Write-Color "  Release published for Windows: $url" success
+                Write-Color "  The Linux build failed: gh run view $id --log-failed (a passing failure: gh run rerun $id --failed)." warn
+            } else {
+                Write-Color "  The Release workflow failed: gh run view $id --log-failed (the tag $tag exists; delete it here to start again)." danger
+            }
         }
     } else {
         Write-Color '  Release workflow not found yet: follow it on GitHub (Actions tab).' warn
