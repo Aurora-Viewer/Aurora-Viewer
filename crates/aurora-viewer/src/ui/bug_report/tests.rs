@@ -18,7 +18,6 @@ fn preserved_report_keeps_crashed_session_language_draft_and_privacy_choices() {
     );
     assert!(state.open);
     assert!(state.delivery == Delivery::Direct);
-    assert!(!state.include_logs);
     assert!(!state.include_image);
     assert!(!state.report.include_excerpt);
     assert_eq!(state.capture_requested, None);

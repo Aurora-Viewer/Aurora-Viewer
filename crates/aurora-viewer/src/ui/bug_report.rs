@@ -41,7 +41,6 @@ pub struct BugReportUi {
     tab: usize,
     include_ui: bool,
     include_image: bool,
-    include_logs: bool,
     image: Option<files::Attachment>,
     texture: Option<egui::TextureHandle>,
     diagnostics: Option<crossbeam_channel::Receiver<files::Diagnostics>>,
@@ -128,7 +127,7 @@ impl BugReportUi {
     }
 
     fn open_draft(&mut self, demo: bool) -> bool {
-        // Keep the sent report visible for its issue link and picture attachment,
+        // Keep the sent report visible for its issue link and saved picture,
         // then start a fresh draft when the user opens the form again.
         if self.github.complete() {
             self.new_report();
@@ -219,28 +218,22 @@ impl BugReportUi {
                             ctx.open_url(egui::OpenUrl::new_tab(draft.url));
                             // Opening a draft URL is not confirmation of publication.
                             self.browser_opened = true;
-                            if with_image {
-                                let path = saved.public_dir.clone();
-                                std::thread::spawn(move || {
-                                    let _ = files::open_directory(&path);
-                                });
-                            }
                         } else if delivery == Delivery::Direct {
-                            let image = self.image.as_ref().filter(|_| with_image).map(|image| image.png.clone());
-                            self.github
-                                .submit(report.title.clone(), report.markdown(), image, saved.logs.clone());
+                            self.github.submit(report.title.clone(), report.markdown());
                             self.notice = None;
+                        }
+                        // GitHub's API takes no attachment: the user drags the
+                        // saved picture into the issue themselves, both ways.
+                        if with_image && !self.demo && delivery != Delivery::Local {
+                            let path = saved.public_dir.clone();
+                            std::thread::spawn(move || {
+                                let _ = files::open_directory(&path);
+                            });
                         }
                     }
                     self.saved = Some(saved);
                 }
-                Err(_) => {
-                    self.error = Some(if self.include_logs {
-                        "bug-private-logs-error"
-                    } else {
-                        "bug-save-error"
-                    })
-                }
+                Err(_) => self.error = Some("bug-save-error"),
             }
         }
     }
@@ -372,19 +365,9 @@ impl BugReportUi {
                     });
                     ui.add_space(4.0);
                     section_header(ui, p, "send-filled", aurora_i18n::tr!("bug-send-heading"));
-                    ui.add_enabled_ui(
-                        !working && (self.github.created.is_none() || self.github.attachment_pending()),
-                        |ui| self.delivery_options(ui, p),
-                    );
+                    ui.add_enabled_ui(!working && self.github.created.is_none(), |ui| self.delivery_options(ui, p));
                     if self.include_image && self.image.is_some() {
-                        ui.label(
-                            RichText::new(aurora_i18n::text(if self.delivery == Delivery::Direct {
-                                "bug-auto-image"
-                            } else {
-                                "bug-manual-image"
-                            }))
-                            .color(p.amber),
-                        );
+                        ui.label(RichText::new(aurora_i18n::tr!("bug-manual-image")).color(p.amber));
                     }
                     ui.add_space(6.0);
                     if !self.report.ready() {
@@ -431,13 +414,6 @@ impl BugReportUi {
                             ui.spinner();
                         }
                     });
-                    if self.github.attachment_pending() {
-                        ui.label(RichText::new(aurora_i18n::tr!("bug-upload-partial")).color(p.amber));
-                        let (retry, ready) = (aurora_i18n::tr!("bug-upload-retry"), idle && self.github.connected());
-                        if action_button_if(ui, p, "refresh", retry, ActionKind::Flat, BUTTON, ready).clicked() {
-                            self.github.retry_attachments();
-                        }
-                    }
                     if let Some(key) = self.error {
                         ui.label(RichText::new(aurora_i18n::text(key)).color(p.danger));
                     }
@@ -547,11 +523,6 @@ impl BugReportUi {
                 ui.label(RichText::new(aurora_i18n::tr!("bug-no-secrets")).size(12.0).color(p.muted));
             }
             2 => {
-                ui.add_enabled_ui(self.delivery == Delivery::Direct, |ui| {
-                    super::widgets::checkbox(ui, p, &mut self.include_logs, aurora_i18n::tr!("bug-private-logs"));
-                });
-                ui.label(RichText::new(aurora_i18n::tr!("bug-private-logs-help")).size(12.0).color(p.amber));
-                ui.add_space(10.0);
                 ui.label(RichText::new(aurora_i18n::tr!("bug-fields-help")).size(12.0).color(p.muted));
                 for field in &mut self.report.fields {
                     super::widgets::checkbox(ui, p, &mut field.included, aurora_i18n::text(field.label));
@@ -650,7 +621,7 @@ impl BugReportUi {
         let mut mode = usize::from(self.delivery == Delivery::Browser);
         let modes = [
             (aurora_i18n::tr!("bug-direct-mode"), true),
-            (aurora_i18n::tr!("bug-browser-mode"), !self.include_logs),
+            (aurora_i18n::tr!("bug-browser-mode"), true),
         ];
         if super::widgets::tabs(ui, p, &mut mode, &modes) {
             self.delivery = if mode == 1 { Delivery::Browser } else { Delivery::Direct };
@@ -721,7 +692,6 @@ impl BugReportUi {
         let report = self.report.clone();
         let image = self.image.clone();
         let include_image = self.include_image;
-        let include_logs = self.include_logs;
         self.pending_delivery = Some((delivery, report.clone(), include_image && image.is_some()));
         self.notice = None;
         let demo = self.demo;
@@ -729,13 +699,7 @@ impl BugReportUi {
         let (tx, rx) = crossbeam_channel::bounded(1);
         self.save_job = Some(rx);
         std::thread::spawn(move || {
-            let result = files::save(&report, image.as_ref(), include_image, demo, session_dir.as_deref()).and_then(|mut saved| {
-                if include_logs && !demo {
-                    files::prepare_private_logs(&mut saved)?;
-                }
-                Ok(saved)
-            });
-            let _ = tx.send(result);
+            let _ = tx.send(files::save(&report, image.as_ref(), include_image, demo, session_dir.as_deref()));
         });
     }
 }

@@ -3686,14 +3686,9 @@ failure. Grid validation and any paid upload are performed by the human.
   at frames `650,850,1050` to compare. To test the language choice in
   Preferences, do not pass the `--language` argument.
   Human validation of real sending, without demo mode: authorise GitHub,
-  select an image and, in Data, explicitly check the private ZIP
-  (unchecked at the start), then send. The issue must show the image and the
-  link to the logs, with no content of the ZIP in the public text. Downloading
-  the ZIP must ask for GitHub and refuse an account without access to the
-  private repository `Aurora-Viewer/aurora-api`. An authorised developer must
-  be able to open it. After a failed upload of the files, closing and
-  reopening the window must keep the same issue and offer to finish its
-  upload, without creating a duplicate.
+  select an image, then send. The issue must hold the reviewed text only,
+  and the report's `public` folder must open so the picture can be dragged
+  into the issue.
 - **`AURORA_DEMO_LOGIN=cards|cards2|cards8|derez|mfa`**: synthetic account carousel with three, two or eight accounts and generated landscape thumbnails; `derez` starts the shortened fragment transition and holds synthetic connection progress inside the selected card, while `mfa` opens the two-factor challenge. No grid connection, saved-scene reads or credential-store access. Other card-mode clicks report that demo mode cannot connect. Cards keep their own grid/start selectors without password controls or a choice heading/count. Add account remains outside the carousel; arrows appear only above three accounts; smaller catalogues remain in a fixed row even in narrow windows. Check 800 × 733 and 1280 × 720 layouts, vertical scrolling at 800 × 560, and the 30-day checkbox in the MFA dialog.
 
 - **`AURORA_DEMO_LOGIN=connecting|first-connecting|add-connecting`**: synthetic waiting state in the selected card, inline first-account form, or Add form. Capture early and late frames (`AURORA_CAPTURE_FRAMES=20|40|90`) to check the brief animation, status/bar placement and persistent Aurora background. No black progress screen and no grid request. Confirm that inputs remain read-only while pending; a real error/MFA/terms challenge must restore the form, and successful authentication must switch to region loading.

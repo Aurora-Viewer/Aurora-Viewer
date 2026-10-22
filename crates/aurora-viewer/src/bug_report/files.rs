@@ -1,7 +1,7 @@
 //! Blocking diagnostics/image/file work. Called only by the report worker.
 
 use super::{Field, Report};
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 const MAX_IMAGE_FILE: u64 = 16 * 1024 * 1024;
@@ -169,7 +169,6 @@ fn prepare_image(img: image::DynamicImage) -> Result<Attachment, &'static str> {
 pub struct Saved {
     pub public_dir: PathBuf,
     pub private_log_saved: bool,
-    pub logs: Option<Vec<u8>>,
 }
 
 pub fn save(
@@ -229,53 +228,7 @@ fn save_in(
     Ok(Saved {
         public_dir: public,
         private_log_saved,
-        logs: None,
     })
-}
-
-pub fn prepare_private_logs(saved: &mut Saved) -> std::io::Result<()> {
-    let private = saved
-        .public_dir
-        .parent()
-        .ok_or_else(|| std::io::Error::other("missing report directory"))?
-        .join("private-do-not-upload");
-    if !saved.private_log_saved {
-        return Err(std::io::Error::other("missing session log"));
-    }
-    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .compression_level(Some(1));
-    let mut total = 0;
-    for name in [
-        "session.log",
-        "diagnostics.md",
-        "README.txt",
-        "panic.txt",
-        "native.txt",
-        "failure.txt",
-    ] {
-        let file = match std::fs::File::open(private.join(name)) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound && name.ends_with(".txt") && name != "README.txt" => continue,
-            Err(error) => return Err(error),
-        };
-        let mut bytes = Vec::new();
-        file.take(64 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-        total += bytes.len();
-        if total > 64 * 1024 * 1024 {
-            return Err(std::io::Error::other("session log too large"));
-        }
-        archive.start_file(name, options)?;
-        archive.write_all(&bytes)?;
-    }
-    let bytes = archive.finish()?.into_inner();
-    if bytes.len() > 16 * 1024 * 1024 {
-        return Err(std::io::Error::other("archive too large"));
-    }
-    std::fs::write(private.join("logs.zip"), &bytes)?;
-    saved.logs = Some(bytes);
-    Ok(())
 }
 
 pub fn open_directory(path: &Path) -> std::io::Result<()> {
@@ -316,21 +269,18 @@ mod tests {
             excerpt: diagnostics.excerpt,
             ..Default::default()
         };
-        let mut saved = save_in(&root, &report, None, false, Some(&session.join("session.log")), Some(&session)).unwrap();
+        let saved = save_in(&root, &report, None, false, Some(&session.join("session.log")), Some(&session)).unwrap();
         let public = std::fs::read_to_string(saved.public_dir.join("report.md")).unwrap();
         assert!(!public.contains("PRIVATE_"));
         assert!(!public.contains("Rust panic"));
-        prepare_private_logs(&mut saved).unwrap();
-        let mut archive = zip::ZipArchive::new(Cursor::new(saved.logs.as_ref().unwrap())).unwrap();
-        let mut trace = String::new();
-        archive.by_name("panic.txt").unwrap().read_to_string(&mut trace).unwrap();
-        assert!(trace.contains("PRIVATE_TRACE_PATH"));
-        trace.clear();
-        archive.by_name("native.txt").unwrap().read_to_string(&mut trace).unwrap();
-        assert!(trace.contains("PRIVATE_NATIVE"));
-        trace.clear();
-        archive.by_name("session.log").unwrap().read_to_string(&mut trace).unwrap();
-        assert!(trace.contains("PRIVATE_LOG_NAME"));
+        let private = saved.public_dir.parent().unwrap().join("private-do-not-upload");
+        for (name, marker) in [
+            ("panic.txt", "PRIVATE_TRACE_PATH"),
+            ("native.txt", "PRIVATE_NATIVE"),
+            ("session.log", "PRIVATE_LOG_NAME"),
+        ] {
+            assert!(std::fs::read_to_string(private.join(name)).unwrap().contains(marker));
+        }
         assert_eq!(std::fs::read_dir(&saved.public_dir).unwrap().count(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -347,7 +297,7 @@ mod tests {
         let log = root.join("input.log");
         std::fs::write(&log, b"PRIVATE_LOG").unwrap();
         let image = capture(1, 1, vec![255; 4]).unwrap();
-        let mut saved = save_in(&root, &report, Some(&image), false, Some(&log), None).unwrap();
+        let saved = save_in(&root, &report, Some(&image), false, Some(&log), None).unwrap();
         let public = std::fs::read_to_string(saved.public_dir.join("report.md")).unwrap();
         assert!(!public.contains("SECRET_LOCATION"));
         assert!(!public.contains("PRIVATE_LOG"));
@@ -357,15 +307,6 @@ mod tests {
             std::fs::read(saved.public_dir.parent().unwrap().join("private-do-not-upload/session.log")).unwrap(),
             b"PRIVATE_LOG"
         );
-        prepare_private_logs(&mut saved).unwrap();
-        let bytes = saved.logs.as_ref().unwrap();
-        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
-        assert_eq!(archive.len(), 3);
-        let mut private_text = String::new();
-        archive.by_name("session.log").unwrap().read_to_string(&mut private_text).unwrap();
-        assert_eq!(private_text, "PRIVATE_LOG");
-        assert_eq!(std::fs::read_dir(&saved.public_dir).unwrap().count(), 1);
-        assert!(!saved.public_dir.join("logs.zip").exists());
         // Only the freshly generated test directory is removed.
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -388,8 +329,7 @@ mod tests {
             title: "Example".into(),
             ..Default::default()
         };
-        let mut saved = save_in(&root, &report, None, false, Some(&session.join("session.log")), Some(&session)).unwrap();
-        prepare_private_logs(&mut saved).unwrap();
+        let saved = save_in(&root, &report, None, false, Some(&session.join("session.log")), Some(&session)).unwrap();
         let bundle = saved.public_dir.parent().unwrap().to_path_buf();
         fn files(dir: &Path, out: &mut Vec<PathBuf>) {
             for e in std::fs::read_dir(dir).unwrap().flatten() {
@@ -406,19 +346,10 @@ mod tests {
         for path in &written {
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
             assert!(
-                ["report.md", "diagnostics.md", "README.txt", "session.log", "logs.zip"].contains(&name.as_str()),
+                ["report.md", "diagnostics.md", "README.txt", "session.log"].contains(&name.as_str()),
                 "unexpected file in a report: {name}"
             );
             assert!(!String::from_utf8_lossy(&std::fs::read(path).unwrap()).contains("PRIVATE_CHAT_LINE"));
-        }
-        let mut archive = zip::ZipArchive::new(Cursor::new(saved.logs.as_ref().unwrap())).unwrap();
-        let names: Vec<String> = archive.file_names().map(|n| n.unwrap().into_owned()).collect();
-        assert!(!names.is_empty());
-        for name in names {
-            assert!(["session.log", "diagnostics.md", "README.txt"].contains(&name.as_str()), "{name}");
-            let mut text = String::new();
-            archive.by_name(&name).unwrap().read_to_string(&mut text).unwrap();
-            assert!(!text.contains("PRIVATE_CHAT_LINE"));
         }
         // where the transcripts really are: not under the logs, the crash
         // sessions or the saved reports
