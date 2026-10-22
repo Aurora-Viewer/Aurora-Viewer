@@ -22,7 +22,7 @@ pub(super) struct Tools {
     pub body_top: f32,
     pub search_slot: Option<egui::Ui>,
     header_width: f32,
-    search_height: f32,
+    header_height: f32,
     pub help: Help,
     pub insert_filter: String,
     pub insert_button: Option<egui::Rect>,
@@ -242,18 +242,20 @@ pub(super) fn body(
     e.tools.body_top = ui.cursor().top();
     e.tools.search_slot = None;
     let gap = ui.spacing().item_spacing.x;
+    let search_width = Search::inline_width(ui);
     let inline = settings.search_inline
         && prefs.search.owns(id)
         && e.tools.header_width > 0.0
-        && ui.available_width() >= e.tools.header_width + gap + Search::INLINE_WIDTH;
+        && e.tools.header_height >= Search::inline_min_height(ui)
+        && ui.available_width() >= e.tools.header_width + gap + search_width;
     if inline {
-        let left = ui.available_width() - gap - Search::INLINE_WIDTH;
+        let left = ui.available_width() - gap - search_width;
         ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(Vec2::new(left, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            let header = ui.allocate_ui_with_layout(Vec2::new(left, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                 header(ui, p, e, id, settings, prefs, actions);
             });
-            let height = e.tools.search_height.max(140.0);
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(Search::INLINE_WIDTH, height), egui::Sense::hover());
+            e.tools.header_height = header.response.rect.height();
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(search_width, e.tools.header_height), egui::Sense::hover());
             if !ui.is_sizing_pass() && ui.is_enabled() {
                 // Render the shared controls after all editor commands have
                 // selected their owner, using this editor's layer and style.
@@ -268,7 +270,8 @@ pub(super) fn body(
             }
         });
     } else {
-        header(ui, p, e, id, settings, prefs, actions);
+        let header = ui.scope(|ui| header(ui, p, e, id, settings, prefs, actions));
+        e.tools.header_height = header.response.rect.height();
     }
     if e.loaded && !e.can_edit {
         ui.label(RichText::new(aurora_i18n::tr!("script-read-only")).color(p.warn));
@@ -907,11 +910,6 @@ pub(super) fn search(
             editable,
             true,
         );
-        let height = ui.min_rect().height();
-        if (height - e.tools.search_height).abs() > 0.5 {
-            e.tools.search_height = height;
-            ctx.request_repaint();
-        }
         e.tools.scroll_to_cursor |= cursor != editing::cursor(ctx, id);
         return;
     }

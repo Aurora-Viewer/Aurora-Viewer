@@ -360,7 +360,7 @@ impl Editors {
                 settings.search_inline = mode == "search-inline";
                 let geometry = match mode {
                     "search-left" => Some((egui::pos2(450.0, 130.0), Vec2::new(660.0, 650.0))),
-                    "search-inline" => Some((egui::pos2(170.0, 130.0), Vec2::new(1250.0, 700.0))),
+                    "search-inline" => Some((egui::pos2(170.0, 130.0), Vec2::new(800.0, 700.0))),
                     "search-overlay" => Some((egui::pos2(140.0, 130.0), Vec2::new(1300.0, 700.0))),
                     "search-outside" => Some((egui::pos2(-380.0, 130.0), Vec2::new(660.0, 650.0))),
                     _ => None,
@@ -1095,18 +1095,32 @@ mod tests {
         assert!((search.right() - parent.left()).abs() < 1.5, "{parent:?} / {search:?}");
         assert_eq!(ctx.read_response(query_id).unwrap().layer_id.id, search_id);
         editing::select(&ctx, query_id, 2..2, true);
-        for width in [1250.0, 660.0, 1250.0] {
+        for width in [840.0, 1250.0, 660.0, 840.0] {
             super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 120.0), Vec2::new(width, 650.0));
+            settings.search_inline = false;
+            for _ in 0..4 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            let source_before = ctx.read_response(source_id(target)).unwrap().rect;
+            settings.search_inline = true;
             for _ in 0..4 {
                 frame_settings(&ctx, &mut editors, &mut settings, vec![]);
             }
             let output = frame_settings(&ctx, &mut editors, &mut settings, vec![]);
             let query = ctx.read_response(query_id).unwrap();
-            assert_eq!(query.layer_id.id, if width > 1000.0 { parent_id } else { search_id });
-            if width > 1000.0 {
+            assert_eq!(query.layer_id.id, if width > 800.0 { parent_id } else { search_id });
+            if width > 800.0 {
                 let parent = ctx.memory(|m| m.area_rect(parent_id)).unwrap();
-                assert!(parent.contains_rect(query.rect) && query.rect.left() > parent.center().x);
+                let source_after = ctx.read_response(source_id(target)).unwrap().rect;
+                assert!(parent.contains_rect(query.rect) && query.rect.left() > parent.left() + parent.width() / 3.0);
                 assert!(ctx.read_response(source_id(target)).unwrap().rect.top() > query.rect.bottom());
+                assert!(
+                    (source_after.top() - source_before.top()).abs() < 1.5,
+                    "inline changed header height: {source_before:?} / {source_after:?}"
+                );
+                assert!((source_after.height() - source_before.height()).abs() < 1.5);
+                let replacement = ctx.read_response(search_id.with("replacement")).unwrap().rect;
+                assert!(replacement.top() > query.rect.bottom() && replacement.bottom() < source_after.top());
                 assert!(
                     !output
                         .shapes
@@ -1125,9 +1139,21 @@ mod tests {
                     .iter()
                     .filter(|s| matches!(&s.shape, egui::Shape::Text(t) if t.galley.job.text == aurora_i18n::tr!("script-search-query")))
                     .count(),
-                2 // The query label and Find button share their text.
+                if width > 800.0 { 0 } else { 2 } // Floating query label and Find button; compact fields use hints.
             );
         }
+        editors.panels.search.query = "missing".into();
+        editors.panels.search.find(&ctx, source_id(target), &editors.documents[0].source);
+        let source_before_status = ctx.read_response(source_id(target)).unwrap().rect;
+        for _ in 0..4 {
+            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+        }
+        assert_eq!(
+            ctx.read_response(source_id(target)).unwrap().rect,
+            source_before_status,
+            "status must stay within the two toolbar rows"
+        );
+        editors.panels.search.query = "needle".into();
         click_label_settings(&ctx, &mut editors, &mut settings, aurora_i18n::tr!("script-search-replace-all"));
         assert_eq!(editors.documents[0].source, "thread thread");
         editors.documents[0].can_edit = false;

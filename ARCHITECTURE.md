@@ -602,7 +602,10 @@ area; minimizing or closing its owner hides it. If neither side fits, its
 top follows the measured body start, preserving the title controls, and a
 dependent sublayer keeps it directly above its owner. Unrelated windows can
 still cover both. A second saved preference embeds the same controls in the
-header's right column when the measured toolbar and search both fit. The
+header's right column when the measured toolbar and search both fit. Its
+two compact rows share the normal menu/toolbar height, without a close
+button; status feedback truncates on the second row with full hover text.
+The width accounts for translated option labels. The
 header reserves a child UI; the shared panel renders it after all commands,
 preserving field IDs, focus and options across changes of width or owner.
 Script floaters opt into the shared partial-outside policy even with edge

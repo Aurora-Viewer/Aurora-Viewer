@@ -984,6 +984,10 @@ is clicked; another editor can still cover both. Preferences offers two
 saved switches: prefer the left side, and embed search at the header's right
 when the editor is wide enough. Resize wide/narrow with this enabled:
 query, replacement, options and field focus must survive the transition.
+The integrated search has two compact rows beside the menus/toolbar and
+no close button. The source must start at the same height with or without
+search, including after a failed search or replacement status. Hover a
+truncated status to read it in full.
 Drag scripts across the sides and bottom with global edge stops enabled:
 they may extend outside, but a usable title grip must always remain.
 Opening either script focuses its text before character zero.

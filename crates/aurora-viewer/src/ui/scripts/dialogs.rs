@@ -32,7 +32,32 @@ pub(super) struct Search {
 impl Search {
     pub const WINDOW: &str = "script_search";
     const SIZE: Vec2 = Vec2::new(360.0, 185.0);
-    pub const INLINE_WIDTH: f32 = 360.0;
+    const INLINE_FIELD_WIDTH: f32 = 140.0;
+
+    pub fn inline_width(ui: &egui::Ui) -> f32 {
+        let checkbox_width = |label: &str| {
+            ui.painter()
+                .layout_no_wrap(label.into(), egui::TextStyle::Button.resolve(ui.style()), ui.visuals().text_color())
+                .size()
+                .x
+                + ui.spacing().icon_width
+                + ui.spacing().icon_spacing
+        };
+        (Self::INLINE_FIELD_WIDTH
+            + 8.0
+            + 20.0
+            + 3.0 * ui.spacing().item_spacing.x
+            + checkbox_width(aurora_i18n::tr!("script-search-insensitive"))
+            + checkbox_width(aurora_i18n::tr!("script-search-up")))
+        .max(440.0)
+    }
+
+    pub fn inline_min_height(ui: &egui::Ui) -> f32 {
+        2.0 * (ui.text_style_height(&egui::TextStyle::Body) + 4.0)
+            .max(ui.text_style_height(&egui::TextStyle::Button))
+            .max(20.0)
+            + ui.spacing().item_spacing.y
+    }
 
     pub fn owns(&self, id: Id) -> bool {
         self.open && self.owner == Some(id)
@@ -113,24 +138,13 @@ impl Search {
         if Self::focused(&ctx) && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
             self.focus = true;
         }
+        if inline {
+            self.inline_controls(ui, p, id, source, editable);
+            return;
+        }
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("script-search-query"));
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut self.query)
-                    .id(window.with("query"))
-                    .desired_width(220.0),
-            );
-            if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
-                response.request_focus();
-            }
-            if (response.has_focus() || response.lost_focus()) && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
-                self.find(&ctx, id, source);
-                response.request_focus();
-            }
-            if inline && icon_button(ui, p, "x", aurora_i18n::tr!("common-close"), true) {
-                self.open = false;
-                ctx.memory_mut(|m| m.request_focus(id));
-            }
+            self.query_field(ui, id, source, 220.0);
         });
         ui.horizontal(|ui| {
             ui.label(aurora_i18n::tr!("script-search-replacement"));
@@ -159,6 +173,66 @@ impl Search {
             });
         });
         ui.label(RichText::new(&self.status).color(p.muted));
+    }
+
+    fn query_field(&mut self, ui: &mut egui::Ui, id: Id, source: &str, width: f32) {
+        let response = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.query)
+                    .id(Id::new(Self::WINDOW).with("query"))
+                    .hint_text(aurora_i18n::tr!("script-search-query"))
+                    .desired_width(width),
+            )
+            .on_hover_text(aurora_i18n::tr!("script-search-query"));
+        if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
+            response.request_focus();
+        }
+        if (response.has_focus() || response.lost_focus()) && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+            self.find(ui.ctx(), id, source);
+            response.request_focus();
+        }
+    }
+
+    fn inline_controls(&mut self, ui: &mut egui::Ui, p: &Palette, id: Id, source: &mut String, editable: bool) {
+        let ctx = ui.ctx().clone();
+        let row_height = (ui.max_rect().height() - ui.spacing().item_spacing.y) / 2.0;
+        // Two toolbar rows share the existing menu/toolbar height. Result
+        // feedback stays on the second row, including its full hover text.
+        ui.spacing_mut().interact_size.y = row_height;
+        ui.spacing_mut().button_padding.y = 1.0;
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        ui.horizontal(|ui| {
+            ui.set_min_height(row_height);
+            self.query_field(ui, id, source, Self::INLINE_FIELD_WIDTH);
+            if icon_button(ui, p, "search-filled", aurora_i18n::tr!("script-search-find"), true) {
+                self.find(&ctx, id, source);
+            }
+            crate::ui::widgets::checkbox(ui, p, &mut self.insensitive, aurora_i18n::tr!("script-search-insensitive"));
+            crate::ui::widgets::checkbox(ui, p, &mut self.up, aurora_i18n::tr!("script-search-up"));
+        });
+        ui.horizontal(|ui| {
+            ui.set_min_height(row_height);
+            ui.add_enabled(
+                editable,
+                egui::TextEdit::singleline(&mut self.replacement)
+                    .id(Id::new(Self::WINDOW).with("replacement"))
+                    .hint_text(aurora_i18n::tr!("script-search-replacement"))
+                    .desired_width(Self::INLINE_FIELD_WIDTH),
+            )
+            .on_hover_text(aurora_i18n::tr!("script-search-replacement"));
+            ui.add_enabled_ui(editable && !self.query.is_empty(), |ui| {
+                if flat_button(ui, p, aurora_i18n::tr!("script-search-replace")).clicked() {
+                    self.replace(&ctx, id, source);
+                }
+                if flat_button(ui, p, aurora_i18n::tr!("script-search-replace-all")).clicked() {
+                    self.replace_all(&ctx, id, source);
+                }
+            });
+            if !self.status.is_empty() {
+                ui.add(egui::Label::new(RichText::new(&self.status).small().color(p.muted)).truncate())
+                    .on_hover_text(&self.status);
+            }
+        });
     }
 
     pub fn find(&mut self, ctx: &egui::Context, id: Id, source: &str) {
