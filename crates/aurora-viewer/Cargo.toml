@@ -63,8 +63,8 @@ serde_path_to_error = "0.1.20"
 bevy_mikktspace = "1.0.0"
 fancy-regex = "0.19.2"
 
-# remembered login password (Windows Credential Manager, macOS Keychain,
-# Secret Service on Linux)
+# remembered login password and the GitHub authorization of crash reports
+# (Windows Credential Manager, macOS Keychain, Secret Service on Linux)
 [dependencies.keyring]
 version = "4"
 

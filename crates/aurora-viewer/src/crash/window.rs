@@ -1,6 +1,7 @@
 //! Recovery UI uses the viewer's theme, fonts, Tabler icons and Fluent
 //! catalogues, but runs in a separate process with a CPU-only painter.
 
+use crate::settings::CrashReports;
 use crate::ui::{
     fonts,
     icons::Icons,
@@ -20,7 +21,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-pub fn show(dir: &Path, record: super::Record) -> anyhow::Result<()> {
+pub fn show(dir: &Path, record: super::Record, summary: super::summary::Summary) -> anyhow::Result<()> {
     let event_loop = EventLoop::new()?;
     let context = egui::Context::default();
     record.theme.apply(&context, record.font_scale);
@@ -30,6 +31,7 @@ pub fn show(dir: &Path, record: super::Record) -> anyhow::Result<()> {
     fonts::apply(&context, &record.font);
     let icons = Icons::load(&context, None);
     let trace = super::trace(dir);
+    let sending = Sending::new(dir, &record);
     let mut app = Recovery {
         dir: dir.to_owned(),
         record,
@@ -46,6 +48,8 @@ pub fn show(dir: &Path, record: super::Record) -> anyhow::Result<()> {
         frames: 0,
         copied: false,
         action_error: None,
+        summary,
+        sending,
         // Bug report form (disabled, see main.rs):
         // bug_report: Default::default(),
         reason: if dir.join("panic.txt").metadata().is_ok_and(|m| m.len() > 0) {
@@ -80,13 +84,99 @@ struct Recovery {
     copied: bool,
     action_error: Option<String>,
     reason: &'static str,
+    summary: super::summary::Summary,
+    sending: Sending,
     // Bug report form (disabled, see main.rs):
     // bug_report: crate::ui::bug_report::BugReportUi,
+}
+
+/// The report's way to GitHub: the Preferences choice of the crashed
+/// session, the preview the tester reads before publishing, and the issue
+/// once created (`sent.txt` keeps it, so a reopened window never sends twice).
+struct Sending {
+    mode: CrashReports,
+    github: super::github::Session,
+    preview: bool,
+    description: String,
+    sent: Option<u64>,
+    automatic: bool,
+    body_copied: bool,
+}
+
+impl Sending {
+    fn new(dir: &Path, record: &super::Record) -> Self {
+        let mut github = super::github::Session::new(record.demo);
+        let mut mode = record.crash_reports;
+        let mut preview = false;
+        let mut sent = super::read_limited(&dir.join("sent.txt"), 32)
+            .ok()
+            .and_then(|n| n.trim().parse().ok());
+        // `AURORA_DEMO_CRASH_SEND=ask|always|never[,connected][,preview][,authorize][,sent][,fail]`:
+        // the demo's simulated GitHub (docs/TESTING.md).
+        if record.demo
+            && let Ok(options) = std::env::var("AURORA_DEMO_CRASH_SEND")
+        {
+            for option in options.split(',') {
+                match option {
+                    "ask" => mode = CrashReports::Ask,
+                    "always" => mode = CrashReports::Always,
+                    "never" => mode = CrashReports::Never,
+                    "connected" => github.demo_authorize(),
+                    "preview" => preview = true,
+                    "authorize" => {
+                        preview = true;
+                        github.authorize();
+                    }
+                    "sent" => sent = Some(4242),
+                    _ => {}
+                }
+            }
+        }
+        Self {
+            mode,
+            github,
+            preview: preview && mode != CrashReports::Never,
+            description: String::new(),
+            sent,
+            automatic: false,
+            body_copied: false,
+        }
+    }
+}
+
+/// Always sends by itself only with an authorization already kept, once.
+fn sends_automatically(mode: CrashReports, connected: bool, sent: bool) -> bool {
+    mode == CrashReports::Always && connected && !sent
+}
+
+/// The tester's own words come first; HTML comments are neutralized so
+/// they cannot imitate the markers the triage reads.
+fn issue_body(report: &str, description: &str) -> String {
+    let description = description.trim();
+    if description.is_empty() {
+        return report.to_owned();
+    }
+    format!("### What happened\n\n{}\n\n{report}", description.replace("<!--", "&lt;!--"))
 }
 
 impl Recovery {
     fn content(&mut self, ui: &mut egui::Ui, event_loop: &ActiveEventLoop) {
         let p = self.record.theme.palette();
+        self.sending.github.poll();
+        if let Some(number) = self.sending.github.created
+            && self.sending.sent.is_none()
+        {
+            if let Err(error) = std::fs::write(self.dir.join("sent.txt"), number.to_string()) {
+                self.action_error = Some(error.to_string());
+            }
+            self.sending.sent = Some(number);
+            self.sending.preview = false;
+        }
+        if !self.sending.automatic && sends_automatically(self.sending.mode, self.sending.github.connected(), self.sending.sent.is_some()) {
+            self.sending.automatic = true;
+            let body = issue_body(&self.summary.body, "");
+            self.sending.github.send(self.summary.title.clone(), body);
+        }
         // Bug report form (disabled, see main.rs):
         // if self.bug_report.requested {
         //     self.open_report();
@@ -127,9 +217,13 @@ impl Recovery {
                             );
                             ui.label(RichText::new(self.reason).color(p.amber));
                         });
-                        ui.label(RichText::new(aurora_i18n::tr!("crash-local-only")).color(p.muted));
+                        self.status(ui, &p);
                     });
                 ui.add_space(18.0);
+                if self.sending.preview {
+                    self.preview(ui, &p);
+                    return;
+                }
                 ui.horizontal(|ui| {
                     if let Some(icon) = self.icons.get("code") {
                         ui.add(egui::Image::new(icon).fit_to_exact_size(Vec2::splat(17.0)).tint(p.violet_light));
@@ -199,19 +293,187 @@ impl Recovery {
                     if widgets::action_button(ui, &p, "x", aurora_i18n::tr!("crash-close"), ActionKind::Flat, big).clicked() {
                         event_loop.exit();
                     }
+                    // Never: the report stays on this PC, nothing to send.
+                    let sendable = self.sending.mode != CrashReports::Never && self.sending.sent.is_none() && !self.sending.github.sending;
                     let send = aurora_i18n::tr!("crash-send-report");
-                    if widgets::action_button(ui, &p, "send-filled", send, ActionKind::Primary, big).clicked() {
-                        // GitHub's issue chooser in the browser, like
-                        // "Report a bug" in the viewer.
-                        log::info!("crash report: opening the GitHub issue chooser");
-                        ui.ctx().open_url(egui::OpenUrl::new_tab(crate::links::NEW_ISSUE));
-                        // Bug report form (disabled, see main.rs):
-                        // self.open_report();
+                    if sendable && widgets::action_button(ui, &p, "send-filled", send, ActionKind::Primary, big).clicked() {
+                        self.open_preview();
                     }
                 });
             });
         // Bug report form (disabled, see main.rs):
         // self.bug_report.show(ui.ctx(), &p, &self.icons, false);
+    }
+
+    /// The second line of the session card: where the report stands.
+    fn status(&self, ui: &mut egui::Ui, p: &crate::theme::Palette) {
+        let github = &self.sending.github;
+        if let Some(number) = self.sending.sent {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(aurora_i18n::tr!("crash-sent", number = number.to_string())).color(p.ink));
+                let view = aurora_i18n::tr!("crash-view-issue");
+                if widgets::action_button(ui, p, "external-link-filled", view, ActionKind::Flat, Vec2::new(0.0, 24.0)).clicked() {
+                    ui.ctx()
+                        .open_url(egui::OpenUrl::new_tab(format!("{}/{number}", super::github::ISSUES)));
+                }
+            });
+        } else if github.sending {
+            ui.label(RichText::new(aurora_i18n::tr!("crash-sending")).color(p.muted));
+        } else if let (true, Some(failure)) = (self.sending.automatic, github.failure) {
+            ui.colored_label(p.danger, failure.message());
+        } else if self.sending.mode == CrashReports::Always && !github.connected() {
+            ui.label(RichText::new(aurora_i18n::tr!("crash-local-only")).color(p.muted));
+            ui.label(RichText::new(aurora_i18n::tr!("crash-auto-needs-github")).color(p.muted));
+        } else {
+            ui.label(RichText::new(aurora_i18n::tr!("crash-local-only")).color(p.muted));
+        }
+    }
+
+    fn open_preview(&mut self) {
+        self.sending.preview = true;
+        self.sending.body_copied = false;
+        // Room for the text the tester reads before publishing.
+        if let Some(window) = &self.window {
+            let scale = window.scale_factor();
+            let height = window
+                .current_monitor()
+                .map(|m| f64::from(m.size().height) / scale - 100.0)
+                .unwrap_or(760.0)
+                .clamp(500.0, 760.0);
+            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(840.0, height));
+        }
+    }
+
+    /// Exactly what the issue will contain, the tester's optional words,
+    /// then GitHub: connect once, publish.
+    fn preview(&mut self, ui: &mut egui::Ui, p: &crate::theme::Palette) {
+        let radius = ui.visuals().window_corner_radius;
+        let busy = self.sending.github.sending;
+        ui.label(
+            RichText::new(aurora_i18n::tr!("crash-preview-heading"))
+                .size(13.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(3.0);
+        ui.label(RichText::new(aurora_i18n::tr!("crash-preview-explanation")).color(p.muted));
+        ui.add_space(10.0);
+        ui.label(RichText::new(aurora_i18n::tr!("crash-description")).size(12.5).color(p.muted));
+        ui.add_space(3.0);
+        ui.add_enabled(
+            !busy,
+            egui::TextEdit::multiline(&mut self.sending.description)
+                .desired_rows(3)
+                .char_limit(2000)
+                .desired_width(f32::INFINITY),
+        );
+        ui.add_space(10.0);
+        let body = issue_body(&self.summary.body, &self.sending.description);
+        let height = (ui.available_height() - 104.0).max(120.0);
+        egui::Frame::new()
+            .fill(p.field)
+            .inner_margin(12.0)
+            .corner_radius(radius)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("crash-preview")
+                    .auto_shrink([false, false])
+                    .max_height(height)
+                    .min_scrolled_height(height)
+                    .show(ui, |ui| {
+                        ui.add(egui::Label::new(RichText::new(&body).monospace().size(12.0)).selectable(true));
+                    });
+            });
+        ui.add_space(8.0);
+        let github = &self.sending.github;
+        let small = Vec2::new(0.0, 26.0);
+        if let Some(code) = github.user_code.clone() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(aurora_i18n::tr!("crash-github-code")).color(p.muted));
+                ui.label(RichText::new(&code).monospace().size(18.0).strong().color(p.ink));
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "copy-filled",
+                    aurora_i18n::tr!("crash-github-copy-code"),
+                    ActionKind::Flat,
+                    small,
+                )
+                .clicked()
+                {
+                    ui.ctx().copy_text(code.clone());
+                }
+                let open = aurora_i18n::tr!("crash-github-open");
+                if widgets::action_button(ui, p, "external-link-filled", open, ActionKind::Flat, small).clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(super::github::VERIFY));
+                }
+            });
+        } else if github.authorizing() {
+            ui.label(RichText::new(aurora_i18n::tr!("crash-github-waiting")).color(p.muted));
+        } else if busy {
+            ui.label(RichText::new(aurora_i18n::tr!("crash-sending")).color(p.muted));
+        } else if let Some(failure) = github.failure {
+            ui.colored_label(p.danger, failure.message());
+        } else if self.sending.body_copied {
+            ui.label(RichText::new(aurora_i18n::tr!("crash-body-copied")).color(p.muted));
+        } else {
+            ui.label(RichText::new(aurora_i18n::tr!("crash-preview-private")).size(12.0).color(p.muted));
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let connected = self.sending.github.connected();
+            if connected
+                && !busy
+                && widgets::action_button(ui, p, "unlink", aurora_i18n::tr!("crash-github-forget"), ActionKind::Flat, small).clicked()
+            {
+                self.sending.github.forget();
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let big = Vec2::new(0.0, 32.0);
+                let back = aurora_i18n::tr!("crash-back");
+                if ui
+                    .add_enabled_ui(!busy, |ui| widgets::action_button(ui, p, "arrow-left", back, ActionKind::Flat, big))
+                    .inner
+                    .clicked()
+                {
+                    self.sending.github.cancel_authorization();
+                    self.sending.preview = false;
+                }
+                if connected {
+                    let publish = aurora_i18n::tr!("crash-publish");
+                    if ui
+                        .add_enabled_ui(!busy, |ui| {
+                            widgets::action_button(ui, p, "send-filled", publish, ActionKind::Primary, big)
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        self.sending.github.send(self.summary.title.clone(), body.clone());
+                    }
+                } else if self.sending.github.authorizing() {
+                    let cancel = aurora_i18n::tr!("crash-github-cancel");
+                    if widgets::action_button(ui, p, "x", cancel, ActionKind::Flat, big).clicked() {
+                        self.sending.github.cancel_authorization();
+                    }
+                } else {
+                    let connect = aurora_i18n::tr!("crash-github-connect");
+                    if widgets::action_button(ui, p, "brand-github-filled", connect, ActionKind::Primary, big).clicked() {
+                        self.sending.github.authorize();
+                    }
+                }
+                // The same text through the browser, for a tester who prefers
+                // not to authorize the app.
+                let browser = aurora_i18n::tr!("crash-open-browser");
+                if !busy && widgets::action_button(ui, p, "external-link-filled", browser, ActionKind::Flat, big).clicked() {
+                    let (url, with_body) = super::github::browser_url(&self.summary.title, &body);
+                    if !with_body {
+                        ui.ctx().copy_text(body.clone());
+                    }
+                    self.sending.body_copied = !with_body;
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                }
+            });
+        });
     }
 
     // Bug report form (disabled, see main.rs):
@@ -292,6 +554,9 @@ impl Recovery {
             .unwrap_or(Duration::MAX);
         self.next_repaint = if self.frames < 3 {
             Some(self.last_frame)
+        } else if self.sending.github.busy() {
+            // The GitHub worker answers on a channel, not with an event.
+            Some(self.last_frame + delay.min(Duration::from_millis(200)))
         } else {
             self.last_frame.checked_add(delay)
         };
@@ -343,6 +608,10 @@ impl ApplicationHandler for Recovery {
                 self.window = Some(window);
                 self.surface = Some(surface);
                 self.input = Some(input);
+                // Demo options that open on the preview.
+                if self.sending.preview {
+                    self.open_preview();
+                }
                 // Bug report form (disabled, see main.rs):
                 // if self.record.demo && std::env::var_os("AURORA_DEMO_BUG_REPORT").is_some() {
                 //     self.open_report();
@@ -393,5 +662,50 @@ impl ApplicationHandler for Recovery {
         } else {
             event_loop.set_control_flow(ControlFlow::Wait);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_always_with_a_kept_authorization_sends_by_itself_and_only_once() {
+        assert!(sends_automatically(CrashReports::Always, true, false));
+        for (mode, connected, sent) in [
+            (CrashReports::Always, false, false),
+            (CrashReports::Always, true, true),
+            (CrashReports::Ask, true, false),
+            (CrashReports::Never, true, false),
+        ] {
+            assert!(!sends_automatically(mode, connected, sent), "{mode:?} {connected} {sent}");
+        }
+    }
+
+    #[test]
+    fn the_testers_words_lead_the_issue_without_imitating_its_markers() {
+        let report = "<!-- aurora-crash v1 -->\n| Field | Value |";
+        assert_eq!(issue_body(report, "  \n "), report);
+        let body = issue_body(report, "I opened the map <!-- crash-signature: x -->");
+        assert!(body.starts_with("### What happened\n\nI opened the map &lt;!-- crash-signature: x -->\n\n"));
+        assert!(body.ends_with(report));
+        assert_eq!(body.matches("<!--").count(), 1);
+    }
+
+    #[test]
+    fn a_report_already_sent_is_not_offered_again() {
+        let dir = std::env::temp_dir().join(format!("aurora-crash-window-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let record: super::super::Record = serde_json::from_str(&format!(
+            r##"{{"schema":1,"pid":1,"process_started":0,"started_unix":0,"version":"0.8.0","profile":"release","language":"en","font":"Inter","font_scale":1,"theme":{},"log_path":"x.log","demo":false,"crash_reports":"Always"}}"##,
+            serde_json::to_string(&crate::theme::Theme::default()).unwrap()
+        ))
+        .unwrap();
+        assert_eq!(Sending::new(&dir, &record).sent, None);
+        std::fs::write(dir.join("sent.txt"), "812").unwrap();
+        let sending = Sending::new(&dir, &record);
+        assert_eq!((sending.sent, sending.mode), (Some(812), CrashReports::Always));
+        assert!(!sends_automatically(sending.mode, true, sending.sent.is_some()));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

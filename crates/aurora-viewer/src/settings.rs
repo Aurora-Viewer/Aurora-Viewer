@@ -190,6 +190,20 @@ impl PlateClick {
     ];
 }
 
+/// What the crash window does with a crash report (Preferences › Privacy).
+/// It becomes a public GitHub issue in the tester's name, hence Ask by
+/// default where the Legacy Viewer always sends to its own server
+/// (llcrashlogger.cpp, CrashSubmitBehavior).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CrashReports {
+    #[default]
+    Ask,
+    /// Published as soon as the window opens, once GitHub is authorized.
+    Always,
+    /// No sending from the window; the report stays on the PC.
+    Never,
+}
+
 /// The look of the world's hover tips (Preferences › Interface): a bubble
 /// next to the pointer, a card with the details and the actions (the
 /// default), or a fixed readout in a corner.
@@ -331,6 +345,7 @@ const FORMER_LOOK_AT_UNLIMITED: f32 = 64.0;
 pub struct Settings {
     pub update_mode: crate::updater::Mode,
     pub ignored_update: String,
+    pub crash_reports: CrashReports,
     /// Firestorm Language: default follows the OS.
     pub language: String,
     /// Firestorm LanguageIsPublic, exposed through llGetAgentLanguage.
@@ -1271,6 +1286,7 @@ impl Default for Settings {
         Settings {
             update_mode: crate::updater::Mode::Ask,
             ignored_update: String::new(),
+            crash_reports: CrashReports::Ask,
             language: "default".into(),
             language_is_public: true,
             show_bug_report: true,

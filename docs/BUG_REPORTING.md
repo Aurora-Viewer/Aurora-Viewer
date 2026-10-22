@@ -4,10 +4,40 @@
 the project's
 [GitHub issue forms](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/new/choose)
 in the browser. The tester needs a GitHub account, chooses the bug report
-template and fills it in on GitHub. After a crash, "Send a crash report" in
-the standalone window opens the same page; "Copy trace" and "Open report
-folder" give the technical details to paste or attach, after reviewing them
-(the full trace may contain personal paths).
+template and fills it in on GitHub. "Copy trace" and "Open report folder",
+in the crash window, give the full technical details, to review before
+sharing them (the full trace may contain personal paths).
+
+## Crash reports
+
+After a crash, "Send a crash report" in the standalone window shows the
+issue to publish: exactly `public-report.md` (below), preceded by what the
+tester writes in the optional "What were you doing?" field. "Connect to
+GitHub" starts the GitHub App's Device Flow (`crash/github.rs`): the tester
+enters the code shown on github.com, in their browser; the viewer never sees
+a password. "Publish on GitHub" then creates the issue in the tester's
+name, with no label (the crash triage below sets the type). "Open in the
+browser" opens a new issue with the same title and text instead (text in
+the clipboard when the link would be too long).
+
+The authorization is kept in the system credential store (Windows
+Credential Manager, entry "Aurora Viewer GitHub"), never in the settings,
+the reports or the logs: an expiring user token and its refresh token,
+refreshed without any client secret (allowed for the Device Flow) and
+replaced at each refresh. "Forget the GitHub connection", in the crash
+window or Preferences › Privacy, deletes it; the tester can also revoke the
+app on github.com. A revoked or expired authorization is forgotten at the
+next attempt. A creation is never retried automatically (a lost reply may
+mean the issue exists); `sent.txt`, in the session folder, keeps the issue
+number so a reopened window never sends twice. No server of our own and no
+file upload: nothing else leaves the PC.
+
+Preferences › Privacy › Crash reports chooses Ask (the default), Always or
+Never. Always publishes the report as soon as the crash window opens, once
+an authorization is kept (until then the window asks to send one report to
+connect). Never removes the send button: the report stays on the PC. The
+Legacy Viewer always sends by default, to its own server; here a report is
+a public issue in the tester's name, hence Ask.
 
 Each crash session folder also holds `public-report.md`: what an automatic
 crash report would publish (version, commit, crash kind, system, GPU, the
