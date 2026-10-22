@@ -17,6 +17,8 @@ use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, Stroke
 
 mod controls;
 pub use controls::{CamMode, Pad, roll_text};
+#[cfg(test)]
+mod message_tests;
 
 /// The value the mouse wheel drives (the underlined one of the bottom bar).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1722,7 +1724,9 @@ fn hint(ctx: &egui::Context, p: &Palette, screen: Rect, bottom: f32, pad_hint: b
         });
 }
 
-/// A line at the top (an error in its colour).
+/// A line at the top (an error in its colour). One line, never wrapped: the
+/// area keeps the size of the last message, and a longer one wrapped into
+/// it would stand as a column of syllables.
 fn message(ctx: &egui::Context, p: &Palette, screen: Rect, text: &str, error: bool) {
     egui::Area::new(Id::unique("vf_message"))
         .order(Order::Foreground)
@@ -1732,7 +1736,8 @@ fn message(ctx: &egui::Context, p: &Palette, screen: Rect, text: &str, error: bo
         .fixed_pos(Pos2::new(screen.center().x, screen.top() + 64.0))
         .show(ctx, |ui| {
             widgets::overlay(ui, p, egui::Margin::symmetric(16, 8), |ui| {
-                ui.label(egui::RichText::new(text).size(13.0).color(if error { p.danger } else { p.ink }));
+                let color = if error { p.danger } else { p.ink };
+                ui.add(egui::Label::new(egui::RichText::new(text).size(13.0).color(color)).extend());
             });
         });
 }
@@ -1795,8 +1800,9 @@ fn review(ctx: &egui::Context, p: &Palette, screen: Rect, f: &Frame, out: &mut V
                             Review::Profile => aurora_i18n::tr!("photo-profile-posted"),
                             Review::Email => aurora_i18n::tr!("photo-email-sent"),
                         };
-                        ui.label(egui::RichText::new(title).font(bold(ctx, 13.0)).color(p.ink));
-                        ui.label(egui::RichText::new(label).size(12.0).color(p.muted));
+                        // one line each, like the message at the top
+                        ui.add(egui::Label::new(egui::RichText::new(title).font(bold(ctx, 13.0)).color(p.ink)).extend());
+                        ui.add(egui::Label::new(egui::RichText::new(label).size(12.0).color(p.muted)).extend());
                         ui.horizontal(|ui| match kind {
                             Review::Disk(path) => {
                                 if widgets::flat_button(ui, p, aurora_i18n::tr!("photo-open")).clicked() {
