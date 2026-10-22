@@ -428,7 +428,8 @@ pub struct World {
     pub map: worldmap::WorldMap,
     /// Place details windows of place links (their parcel requests).
     pub place_details: place_details::PlaceDetails,
-    /// Parcel snapshots of the favourites without a thumbnail.
+    /// Parcel snapshots of the favourites and the Places rows without a
+    /// thumbnail.
     pub place_snapshots: place_snapshots::PlaceSnapshots,
     /// "Search": result lists and details of the directory search.
     pub search: search::Search,

@@ -280,6 +280,9 @@ pub struct PlacesUi {
     pub want_folders: HashSet<Uuid>,
     /// Map cells (region grid x, y) whose region names Aurora's rows wait for.
     pub want_cells: Vec<(i64, i64)>,
+    /// Parcel snapshots of Aurora's rows on screen without a thumbnail
+    /// (spot, global point, region id or nil), for `World::place_snapshots`.
+    pub want_snapshots: Vec<(crate::world::place_snapshots::Spot, glam::DVec3, Uuid)>,
     /// Aurora's look.
     pub aurora: aurora::AuroraState,
     /// Inventory changes asked from a menu, sent with the window's actions.
