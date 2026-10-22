@@ -24,15 +24,29 @@ inventory items or charge an upload fee.
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
 4. In Blender, select the rigged mesh objects, open the 3D view sidebar
-   (`N`) → **Aurora**, and click **Connect to Aurora**.
+   (`N`) → **Aurora**, click **Add selected meshes**, then **Connect to Aurora**.
 5. Edit your mesh. The default capture interval is **0.2 seconds**; larger
    meshes can take longer to capture and prepare. Aurora supplies the
    animation and avatar shape, independently of Blender's current pose.
 
-The selection is captured when you connect. **Use selected meshes** changes
-the tracked set; an empty selection removes the preview. **Send now** retries
-the current mesh after an error. Deleting a tracked object removes its preview
-at the next capture. Renaming does not lose the tracked object.
+The **Synchronized objects** list is saved with each scene in the `.blend`
+file. **Add selected meshes** appends mesh objects without duplicates, keeping
+existing entries and their enabled/paused state. You can prepare the list before
+connecting. If it is empty, **Connect to Aurora** adds the current mesh selection
+for convenience; an existing list is used independently of the current selection.
+
+Each row has a synchronization checkbox and a remove button. Unchecking an
+object removes it from the Aurora preview while retaining its list entry.
+Rechecking sends its latest geometry, weights and materials. The remove button
+removes the entry and its preview, preserving the Blender object. Disabling or
+removing every entry sends an empty preview. Add/remove support Undo/Redo.
+Renaming updates the displayed name and keeps the same object reference.
+Deleted objects are pruned at the next live tick or list operation.
+
+Disconnecting retains the list and pause flags. Loading another file stops the
+connection and restores that file's saved list. During a connection, switching
+scenes synchronizes the new scene's enabled entries. **Send now** retries the
+current enabled objects after an error.
 
 The add-on reconnects automatically when Aurora becomes available again,
 resending its latest snapshot. Disconnecting Blender leaves the last good
@@ -50,8 +64,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.4.0.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.4.0-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.5.0.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.5.0-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -78,9 +92,10 @@ meshes. Classic layer indices are recorded in the rig's
 The optional T-shirt has editable quad topology, open neck/hem/cuffs, a UV
 map, a fabric material, an Armature modifier and normalized vertex weights
 (up to four influences). It is selected when created: click **Connect to
-Aurora** to preview it. If already connected, creating a T-shirt switches
-the tracked mesh to the new shirt. Pose the armature to inspect its weights
-in Blender; Aurora still receives the rest mesh and uses its own animations.
+Aurora** to preview it. Creating a T-shirt adds it to the synchronization list,
+keeping existing entries, whether or not a connection is active. Pose the
+armature to inspect its weights in Blender; Aurora still receives the rest
+mesh and uses its own animations.
 
 The starter respects the current **Coordinates** choice and scene unit
 scale. Its proportions are the standard SL rest skeleton, independent of
@@ -97,7 +112,8 @@ Click **Recalculate automatic weights** in Object Mode or Weight Paint mode.
 This replaces the selected meshes' bone weights using Blender's native heat
 solver, keeps the strongest four influences and normalizes them. Undo restores
 the previous result. An existing Aurora connection immediately tracks these
-meshes and sends the updated weights.
+meshes and sends the updated weights. Existing list entries remain; paused
+objects keep their pause state.
 
 **SL body** uses enabled classic body deform bones, excluding overlapping
 Bento and collision bones. **All deform bones** includes enabled Bento/custom
@@ -114,7 +130,7 @@ objects with at most one Armature modifier.
 
 ## Live materials
 
-Plug-in **0.4.0 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.5.0 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value
@@ -171,7 +187,8 @@ position overrides are not applied to Aurora's skeleton.
 
 ## Current limits
 
-- 32 source objects, 600,000 exported corners, 64 MiB per snapshot.
+- 32 enabled source objects, 600,000 exported corners, 64 MiB per snapshot.
+  Paused entries remain in the list and do not count toward these limits.
 - 110 weighted joints per source object and 32 nonempty material surfaces.
   Large surfaces and more than eight faces are split into render objects.
 - Materials follow the supported PBR/image conventions above. Arbitrary
@@ -197,6 +214,7 @@ The exporter tests use Blender itself without logging into a grid:
 & '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_exporter.py
 & '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_starter.py
 & '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_materials_weights.py
+& '<Blender executable>' --background --factory-startup --python-exit-code 1 --python blender/tests/test_tracking.py
 python -m unittest discover -s blender/tests -p 'test_client.py' -v
 ```
 

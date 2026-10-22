@@ -30,6 +30,7 @@ class MaterialWeightTests(unittest.TestCase):
             bpy.ops.object.mode_set(mode="OBJECT")
         bpy.ops.object.select_all(action="SELECT")
         bpy.ops.object.delete(use_global=False)
+        bpy.context.scene.aurora_live.objects.clear()
         bpy.context.scene.unit_settings.scale_length = 1
         bpy.context.scene.cursor.location = (0, 0, 0)
         self.rig, self.mesh = starter.create(bpy.context)
@@ -147,7 +148,8 @@ class MaterialWeightTests(unittest.TestCase):
         submitted = []
         fake = SimpleNamespace(state=lambda: ("Connected", self.names), rest_axes=lambda: {},
                                submit=submitted.append, close=lambda: None)
-        with patch.object(aurora_live, "_client", fake), patch.object(aurora_live, "_objects", [self.mesh]):
+        aurora_live.tracking.add(bpy.context.scene, [self.mesh])
+        with patch.object(aurora_live, "_client", fake):
             aurora_live._last_capture = 0
             aurora_live._tick()
             self.shader.inputs["Metallic"].default_value = 0.9

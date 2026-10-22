@@ -25,7 +25,7 @@ for index, path in enumerate(paths):
         names = {bone.name for bone in shirt.find_armature().data.bones}
         assert "images" not in package.exporter.snapshot([shirt], names, 1)
     else:
-        assert 'version = "0.4.0"' in manifest
+        assert 'version = "0.5.0"' in manifest
         snapshot = package.exporter.snapshot([shirt], names, 2)
         assert "images" in snapshot and "material" in snapshot["meshes"][0]["faces"][0]
         assert hasattr(package, "materials") and hasattr(package, "weights")

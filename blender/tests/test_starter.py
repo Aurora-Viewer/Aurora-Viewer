@@ -29,6 +29,7 @@ class StarterTests(unittest.TestCase):
             bpy.ops.object.mode_set(mode="OBJECT")
         bpy.ops.object.select_all(action="SELECT")
         bpy.ops.object.delete(use_global=False)
+        bpy.context.scene.aurora_live.objects.clear()
         bpy.context.scene.unit_settings.scale_length = 1
         bpy.context.scene.cursor.location = (0, 0, 0)
         bpy.context.scene.aurora_live.forward = "NATIVE"
@@ -186,10 +187,9 @@ class StarterTests(unittest.TestCase):
 
     def test_creating_a_shirt_while_connected_tracks_it_without_opening_another_connection(self):
         with patch.object(aurora_live, "_client", object()), \
-                patch.object(aurora_live, "_objects", []), \
                 patch.object(aurora_live, "Client", side_effect=AssertionError("unexpected connection")):
             self.assertEqual(bpy.ops.aurora.create_sl_rig(with_tshirt=True), {"FINISHED"})
-            self.assertEqual(aurora_live._objects, [bpy.context.object])
+            self.assertEqual(aurora_live.tracking.active(bpy.context.scene), [bpy.context.object])
             self.assertTrue(aurora_live._dirty)
             self.assertEqual(aurora_live._last_capture, 0)
 

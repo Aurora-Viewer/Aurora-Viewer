@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 4, 0), "blender": (2, 93, 0),
+    "version": (0, 5, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -13,17 +13,17 @@ import time
 import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
-from . import compat, client, materials, weights, starter, exporter
+from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
+from . import compat, client, materials, weights, starter, exporter, tracking
 if _reloading:
     # Blender reloads the package during an in-place extension upgrade. Reload
     # dependencies first so the old exporter/client cannot survive that upgrade.
-    for _module in (compat, client, materials, weights, starter, exporter):
+    for _module in (compat, client, materials, weights, starter, exporter, tracking):
         importlib.reload(_module)
 Client = client.Client
 
 _client = None
-_objects = []
+_object_signature = ()
 _dirty = True
 _exporting = False
 _revision = 0
@@ -42,7 +42,7 @@ def _changed(_scene, depsgraph):
     if not _client or _exporting:
         return
     watched = set()
-    for obj in _objects:
+    for obj in tracking.active(bpy.context.scene):
         try:
             watched.update((obj, obj.data))
             armature = obj.find_armature()
@@ -69,11 +69,11 @@ def _load_pre(_unused):
 
 
 def _stop():
-    global _client, _objects, _error, _material_signature
+    global _client, _error, _material_signature, _object_signature
     if _client:
         _client.close()
     _client = None
-    _objects = []
+    _object_signature = ()
     _error = ""
     _material_signature = ()
     materials.invalidate()
@@ -82,22 +82,21 @@ def _stop():
 
 
 def _tick():
-    global _dirty, _revision, _last_capture, _exporting, _error, _objects, _material_signature
+    global _dirty, _revision, _last_capture, _exporting, _error, _material_signature, _object_signature
     if _client is None:
         return None
     status, supported = _client.state()
-    valid = []
-    for obj in _objects:
-        try:
-            if obj.name in bpy.data.objects:
-                valid.append(obj)
-        except ReferenceError:
-            pass
-    if len(valid) != len(_objects):
-        _objects = valid
-        _dirty = True
-    prefs = bpy.context.scene.aurora_live
-    signature = materials.signature(_objects)
+    scene = bpy.context.scene
+    tracking.prune(scene)
+    objects = tracking.active(scene)
+    prefs = scene.aurora_live
+    # Polling also sees Undo/Redo, scene switches and names changed while idle.
+    membership = (scene.as_pointer(), scene.unit_settings.scale_length, prefs.forward,
+                  tuple((obj.as_pointer(), obj.name) for obj in objects))
+    if membership != _object_signature:
+        _object_signature = membership
+        _request_capture()
+    signature = materials.signature(objects)
     if signature != _material_signature:
         _material_signature = signature
         _dirty = True
@@ -111,7 +110,7 @@ def _tick():
             if painting:
                 materials.invalidate()
             _revision += 1
-            value = exporter.snapshot(_objects, supported, _revision, prefs.forward, _client.rest_axes())
+            value = exporter.snapshot(objects, supported, _revision, prefs.forward, _client.rest_axes())
             _client.submit(value)
             _error = ""
         except (ValueError, RuntimeError, ReferenceError, OverflowError) as error:
@@ -132,7 +131,14 @@ def _settings_changed(_self, _context):
     _dirty = True
 
 
+def _request_capture():
+    global _dirty, _last_capture, _error
+    _dirty, _last_capture, _error = True, 0.0, ""
+
+
 class AURORA_PG_live(bpy.types.PropertyGroup):
+    objects: CollectionProperty(type=tracking.AURORA_PG_sync_object)
+    object_index: IntProperty(default=0, min=0)
     rig: PointerProperty(name="Avatar rig", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "ARMATURE")
     weight_scope: EnumProperty(name="Auto-weight bones", items=[
         ("BODY", "SL body", "Use the classic body bones; skip overlapping Bento and collision bones"),
@@ -161,18 +167,14 @@ class AURORA_OT_starter(bpy.types.Operator):
         return context.mode == "OBJECT"
 
     def execute(self, context):
-        global _objects, _dirty, _error, _last_capture
         try:
             _rig, shirt = starter.create(context, self.with_tshirt, context.scene.aurora_live.forward)
             context.scene.aurora_live.rig = _rig
         except (ValueError, RuntimeError, OSError) as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
-        if shirt and _client:
-            _objects = [shirt]
-            _dirty = True
-            _last_capture = 0.0
-            _error = ""
+        if shirt:
+            tracking.add(context.scene, [shirt])
         self.report({"INFO"}, pgettext_iface("Created 133 Bento bones and 26 Fitted Mesh bones"))
         return {"FINISHED"}
 
@@ -182,15 +184,15 @@ class AURORA_OT_connect(bpy.types.Operator):
     bl_label = "Connect to Aurora"
 
     def execute(self, context):
-        global _client, _objects, _dirty, _last_capture
-        selected = _selected()
-        if not selected:
+        global _client
+        tracking.prune(context.scene)
+        if not context.scene.aurora_live.objects:
+            tracking.add(context.scene, _selected())
+        if not context.scene.aurora_live.objects:
             self.report({"ERROR"}, "Select one or more rigged meshes first")
             return {"CANCELLED"}
         _stop()
-        _objects = selected
-        _dirty = True
-        _last_capture = 0.0
+        _request_capture()
         _client = Client(context.scene.aurora_live.port)
         bpy.app.timers.register(_tick, first_interval=0.1)
         return {"FINISHED"}
@@ -207,7 +209,6 @@ class AURORA_OT_weights(bpy.types.Operator):
         return context.mode in {"OBJECT", "PAINT_WEIGHT"} and any(obj.type == "MESH" for obj in context.selected_objects)
 
     def execute(self, context):
-        global _objects, _dirty, _error, _last_capture
         selected = _selected()
         prefs = context.scene.aurora_live
         try:
@@ -216,8 +217,8 @@ class AURORA_OT_weights(bpy.types.Operator):
             self.report({"ERROR"}, pgettext_iface(str(error)))
             return {"CANCELLED"}
         if _client:
-            _objects = selected
-            _dirty, _last_capture, _error = True, 0.0, ""
+            tracking.add(context.scene, selected)
+            _request_capture()
         self.report({"INFO"}, pgettext_iface("Automatic weights recalculated"))
         return {"FINISHED"}
 
@@ -228,18 +229,6 @@ class AURORA_OT_disconnect(bpy.types.Operator):
 
     def execute(self, _context):
         _stop()
-        return {"FINISHED"}
-
-
-class AURORA_OT_selection(bpy.types.Operator):
-    bl_idname = "aurora.live_selection"
-    bl_label = "Use selected meshes"
-
-    def execute(self, _context):
-        global _objects, _dirty, _error
-        _objects = _selected()
-        _dirty = True
-        _error = ""
         return {"FINISHED"}
 
 
@@ -280,14 +269,20 @@ class AURORA_PT_live(bpy.types.Panel):
         row.prop(prefs, "port")
         layout.prop(prefs, "interval")
         layout.prop(prefs, "forward")
+        box = layout.box()
+        box.label(text="Synchronized objects", icon="OUTLINER_OB_MESH")
+        box.operator("aurora.live_selection", icon="ADD")
+        if prefs.objects:
+            box.template_list("AURORA_UL_sync_objects", "", prefs, "objects", prefs, "object_index", rows=4, maxrows=8)
+            box.label(text=pgettext_iface("{enabled} / {total} enabled").format(
+                enabled=len(tracking.active(context.scene)), total=len(prefs.objects)), translate=False)
+        else:
+            box.label(text="Add selected meshes to start syncing.")
         if _client:
             status, _supported = _client.state()
             layout.label(text=pgettext_iface(status), translate=False)
             layout.operator("aurora.live_disconnect", icon="UNLINKED")
-            row = layout.row(align=True)
-            row.operator("aurora.live_selection")
-            row.operator("aurora.live_refresh", icon="FILE_REFRESH")
-            layout.label(text="{} tracked meshes".format(len(_objects)))
+            layout.operator("aurora.live_refresh", icon="FILE_REFRESH")
         else:
             layout.operator("aurora.live_connect", icon="LINKED")
         if _error:
@@ -298,8 +293,8 @@ class AURORA_PT_live(bpy.types.Panel):
         layout.label(text="Local preview · no asset upload")
 
 
-_classes = (AURORA_PG_live, AURORA_OT_starter, AURORA_OT_weights, AURORA_OT_connect, AURORA_OT_disconnect,
-            AURORA_OT_selection, AURORA_OT_refresh, AURORA_PT_live)
+_classes = tracking.CLASSES + (AURORA_PG_live, AURORA_OT_starter, AURORA_OT_weights, AURORA_OT_connect,
+                             AURORA_OT_disconnect, AURORA_OT_refresh, AURORA_PT_live)
 
 _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator") for key, value in {
     "Connecting to Aurora…": "Connexion à Aurora…", "Connected to Aurora": "Connecté à Aurora",
@@ -358,7 +353,17 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Switch to Object Mode to create a rig.": "Passez en mode Objet pour créer un squelette.",
     "Created 133 Bento bones and 26 Fitted Mesh bones": "133 os Bento et 26 os Fitted Mesh créés",
     "Aurora Live Mesh": "Maillage Aurora Live", "Connect to Aurora": "Connecter à Aurora",
-    "Disconnect": "Déconnecter", "Use selected meshes": "Utiliser la sélection",
+    "Disconnect": "Déconnecter", "Add selected meshes": "Ajouter la sélection",
+    "Add the current selection without replacing listed objects or enabling paused entries":
+        "Ajouter la sélection sans remplacer les objets listés ni réactiver les objets en pause",
+    "Synchronized objects": "Objets synchronisés", "Synchronize": "Synchroniser",
+    "Include this object in Aurora's live preview": "Inclure cet objet dans l’aperçu live Aurora",
+    "Remove from synchronization": "Retirer de la synchronisation",
+    "Remove this entry from Aurora's preview list; keep the Blender object":
+        "Retirer cette entrée de la liste d’aperçu Aurora ; conserver l’objet Blender",
+    "Missing object": "Objet manquant", "{enabled} / {total} enabled": "{enabled} / {total} actifs",
+    "Add selected meshes to start syncing.": "Ajoutez la sélection pour commencer.",
+    "Select one or more rigged meshes first": "Sélectionnez d’abord un ou plusieurs maillages riggés",
     "Send now": "Envoyer maintenant", "Aurora port": "Port Aurora", "Update interval": "Intervalle de mise à jour",
     "Coordinates": "Coordonnées", "SL / Z up": "SL / Z vertical", "Blender -Y forward": "Blender -Y vers l’avant",
     "Enable Blender Live in Aurora first.": "Activez d’abord Blender Live dans Aurora.",
@@ -367,6 +372,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
 
 
 def register():
+    tracking.on_change = _request_capture
     bpy.app.translations.register(__name__, _translations)
     for cls in _classes:
         bpy.utils.register_class(cls)
@@ -377,6 +383,7 @@ def register():
 
 def unregister():
     _stop()
+    tracking.on_change = None
     bpy.app.translations.unregister(__name__)
     for handlers, callback in ((bpy.app.handlers.depsgraph_update_post, _changed), (bpy.app.handlers.load_pre, _load_pre)):
         if callback in handlers:

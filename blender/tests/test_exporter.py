@@ -30,6 +30,7 @@ class ExporterTests(unittest.TestCase):
             bpy.ops.object.mode_set(mode="OBJECT")
         bpy.ops.object.select_all(action="SELECT")
         bpy.ops.object.delete(use_global=False)
+        bpy.context.scene.aurora_live.objects.clear()
         bpy.context.scene.unit_settings.scale_length = 1.0
         armature = bpy.data.armatures.new("Test rig")
         self.rig = bpy.data.objects.new("Test rig", armature)
@@ -167,7 +168,7 @@ class ExporterTests(unittest.TestCase):
     def test_live_handler_captures_edits_and_deletions_without_export_loop(self):
         captures = []
         aurora_live._client = SimpleNamespace(state=lambda: ("Connected", {"mPelvis"}), rest_axes=lambda: {}, submit=captures.append, close=lambda: None)
-        aurora_live._objects = [self.mesh]
+        aurora_live.tracking.add(bpy.context.scene, [self.mesh])
         aurora_live._dirty = True
         aurora_live._last_capture = 0.0
         try:

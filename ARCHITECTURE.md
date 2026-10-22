@@ -26,6 +26,10 @@ validates all selected objects, then publishes normalized four-bone weights
 without changing the source armature or non-bone groups. `materials.py`
 captures connected Principled PBR inputs, UV maps and bounded embedded images;
 node signatures and texture-paint ticks supplement dependency-graph updates.
+`tracking.py` owns the scene's persistent synchronization list, native UIList,
+add-selection and remove operators. Enabled object pointers drive capture and
+dependency watching; membership polling detects Undo/Redo and scene switches.
+Disconnecting stops the worker while leaving entries and pause flags intact.
 `blender_live/appearance.rs` validates image dimensions, bytes and PBR fields,
 builds mips and stages uploads on the socket worker. Image UUIDs derive from
 pixel content. Preview geometry owns material/image references: retirement
