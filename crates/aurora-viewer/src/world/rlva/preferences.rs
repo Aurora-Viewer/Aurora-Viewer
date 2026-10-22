@@ -9,6 +9,7 @@ pub struct Preferences {
     pub im_queries_auto_share: bool,
     pub legacy_naming: bool,
     pub shared_wear: bool,
+    pub auto_rename: bool,
     pub hide_locked_attachments: bool,
     pub hide_locked_layers: bool,
     pub wear_add_prefix: String,
@@ -22,6 +23,7 @@ impl Default for Preferences {
             im_queries_auto_share: false,
             legacy_naming: true,
             shared_wear: true,
+            auto_rename: true,
             hide_locked_attachments: false,
             hide_locked_layers: false,
             wear_add_prefix: "+".into(),
@@ -37,7 +39,7 @@ impl Preferences {
         } else {
             &self.wear_replace_prefix
         };
-        if !prefix.is_empty() && !prefix.starts_with('.') && name.starts_with(prefix) {
+        if !prefix.is_empty() && !(prefix.len() > 1 && prefix.starts_with('.')) && name.starts_with(prefix) {
             !replace
         } else {
             replace
@@ -70,5 +72,10 @@ mod tests {
         };
         assert!(prefs.replace("!Outfit", false));
         assert!(prefs.replace(".hidden", true), "hidden prefixes never alter wear mode");
+        let prefs = Preferences {
+            wear_add_prefix: ".".into(),
+            ..prefs
+        };
+        assert!(!prefs.replace(".explicit", true), "the reference accepts a single-dot prefix");
     }
 }

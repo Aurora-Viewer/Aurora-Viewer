@@ -25,6 +25,7 @@ mod naming;
 mod policy;
 pub mod preferences;
 pub mod privacy;
+mod rename;
 mod sitting;
 mod temporary;
 mod wardrobe;
@@ -424,6 +425,7 @@ fn valid_option(c: &Command) -> bool {
 pub struct Rlva {
     enabled: bool,
     pub preferences: preferences::Preferences,
+    pub rename: rename::RenameOnWear,
     pub im: im_queries::Queries,
     rules: BTreeMap<Uuid, BTreeSet<Rule>>,
     pub pending: Vec<(Uuid, Command)>,
@@ -516,6 +518,7 @@ impl Rlva {
         }
         self.enabled = enabled;
         self.rules.clear();
+        self.rename = Default::default();
         self.im = Default::default();
         self.pending.clear();
         self.out.clear();

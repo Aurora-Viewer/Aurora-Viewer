@@ -99,6 +99,11 @@ mute/friends-only checks and before IM receive restrictions. Listing uses the
 native notification consent path, with an explicit remembered preference.
 `aurora-net/im_reply.rs` encodes bounded busy/normal responses independently
 of user IM locks; disabling drops pending responses and permission questions.
+`rlva/rename.rs` observes confirmed new attachment arrivals in legacy shared-wear
+mode. It appends a point name or creates/reuses a folded point folder, waits
+for metadata confirmation, bounds retries and preserves later manual renames.
+Disabling cancels its work; already-sent inventory replies still update the
+ordinary inventory model without restarting the naming workflow.
 
 This does not yet provide full RLVa parity. [RLVa implementation status](docs/RLVA.md)
 lists the supported commands and remaining families; versionnum deliberately

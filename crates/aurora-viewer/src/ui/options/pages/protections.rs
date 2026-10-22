@@ -23,6 +23,9 @@ pub fn page(cx: &mut Cx) {
             &field!(rlva.im_queries_auto_share),
         );
         cx.toggle(tr!("rlva-shared-wear"), tr!("rlva-shared-wear-hint"), &field!(rlva.shared_wear));
+        cx.greyed(!cx.s.rlva_enabled || cx.s.rlva.shared_wear);
+        cx.toggle(tr!("rlva-auto-rename"), tr!("rlva-auto-rename-hint"), &field!(rlva.auto_rename));
+        cx.greyed(!cx.s.rlva_enabled);
         cx.toggle(
             tr!("rlva-legacy-naming"),
             tr!("rlva-legacy-naming-hint"),

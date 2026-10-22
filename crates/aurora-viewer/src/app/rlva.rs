@@ -66,6 +66,12 @@ impl App {
             self.world.rlva.self_detach = None;
         }
         self.world.rlva_watchdog_tick(Instant::now());
+        if let Some(command) = self.world.rlva_rename_tick(Instant::now()) {
+            if let NetCommand::EditInventory { request, .. } = &command {
+                self.world_edits.insert(*request);
+            }
+            self.send(command);
+        }
         self.world.rlva_wardrobe_tick();
         for command in std::mem::take(&mut self.world.rlva.recovery) {
             self.send_from(command, crate::world::rlva::watchdog::ACTOR);
@@ -196,6 +202,11 @@ impl App {
                     "@setcam_focus:{};4;0/-1/0=force,setcam_fovmin:0.6=n,setcam_fovmax:0.9=n",
                     crate::demo::DEMO_LOUP
                 )
+            } else if scenario == "rename" {
+                self.settings.rlva.shared_wear = false;
+                self.settings.rlva.auto_rename = true;
+                self.world.rlva_demo_naming_seed();
+                "@clear".to_owned()
             } else if scenario == "im-query" {
                 self.panels.settings = false;
                 self.panels.inventory = false;
@@ -294,6 +305,12 @@ impl App {
         }
         if mode == "sitting" && self.frame_count == 740 {
             self.rlva_demo_message("@sitground=force".to_owned());
+        }
+        if mode == "rename" && self.frame_count == 740 {
+            self.world.rlva_demo_naming_attach();
+        }
+        if mode == "rename" && self.frame_count == 810 {
+            self.world.rlva_demo_naming_report();
         }
         if mode == "im-query" && self.frame_count == 740 {
             self.world.apply(NetEvent::InstantMessage(aurora_net::InstantMessage {

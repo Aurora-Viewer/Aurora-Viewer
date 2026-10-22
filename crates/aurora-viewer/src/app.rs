@@ -2158,6 +2158,12 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if self.world.rlva_rename_event(&ev, Instant::now()) {
+            if let NetEvent::InventoryEdited { request, .. } = ev {
+                self.world_edits.remove(&request);
+            }
+            return;
+        }
         if let NetEvent::TeleportRegionResolved { request, result } = ev {
             if !self.settings.rlva_enabled {
                 self.named_teleport.cancel_scripts();
@@ -2366,6 +2372,7 @@ impl App {
                     Ok(reply) => {
                         self.world.inventory.remove(&reply.removed);
                         self.world.inventory.apply(reply.contents);
+                        self.world.inventory.created_folders(reply.folders);
                     }
                     Err(reason) => log::warn!("background inventory change not saved: {reason}"),
                 }

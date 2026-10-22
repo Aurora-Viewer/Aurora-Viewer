@@ -2779,6 +2779,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   `im-query` applies fly/IM restrictions and delivers an online synthetic
   `@list` request at frame 740. The native permission card offers sharing
   once, remembering consent, or declining. Capture after frame 800 in EN/FR.
+  `rename` turns shared wear off and enables automatic attachment naming.
+  Two new shared objects arrive at frame 740. By frame 810 the log reports
+  `Modifiable bracelet (chest)` and the no-modify object's `.(skull)` folder.
   `sphere-blend`, `sphere-blur`, `sphere-variable`, `sphere-chromatic` and
   `sphere-pixel` close Preferences at frame 700 and apply each GPU vision
   mode to the same scene. `overlay` uses the demo's transparent-hole texture

@@ -115,7 +115,7 @@ pub fn layer(name: &str) -> Option<u8> {
     LAYERS.iter().position(|l| l.eq_ignore_ascii_case(name)).map(|l| l as u8)
 }
 
-fn shared_root(inv: &Inventory) -> Option<Uuid> {
+pub(super) fn shared_root(inv: &Inventory) -> Option<Uuid> {
     // RlvInventory::getSharedRootID prefers the first populated #RLV root,
     // otherwise the last empty one, in native inventory child order.
     let candidates = inv.folders.get(&inv.root).map(|f| f.children.clone()).unwrap_or_else(|| {
@@ -266,7 +266,7 @@ impl World {
             .is_none_or(|(at, tries)| *tries < 3 || at.elapsed().as_secs() < 10)
     }
 
-    fn rlva_inventory_fetch_due(&mut self, id: Uuid) -> bool {
+    pub(super) fn rlva_inventory_fetch_due(&mut self, id: Uuid) -> bool {
         let now = std::time::Instant::now();
         let entry = self.rlva.inventory_fetches.entry(id).or_insert((now, 0));
         if entry.1 < 3 && (entry.1 == 0 || now.saturating_duration_since(entry.0).as_secs() >= 10) {

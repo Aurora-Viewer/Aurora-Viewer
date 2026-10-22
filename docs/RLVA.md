@@ -83,6 +83,12 @@ script authors; the command lists below describe this branch specifically.
   exempt the requesting issuer without allowing a forced removal through its
   own lock. Body parts remain visible. getinv excludes folded folders and
   findfolder chooses the deepest matching path in native traversal order.
+  With unnamed shared wear off, automatic naming observes new confirmed
+  arrivals: modifiable objects receive a lowercase point suffix, while
+  no-modify objects use a created or existing folded point folder. It waits
+  for metadata confirmation, bounds retries, ignores the login baseline and
+  does not repeatedly rename an already processed attachment. Disabling
+  cancels this workflow while late inventory replies still update the model.
   The attachment watchdog preserves locked COF links during replacement,
   adds before resolving an unknown point and removes only unlocked previous
   attachments. Lost locked inventory items are restored at their exact point
@@ -185,8 +191,8 @@ than asserting a complete RLV specification version.
   notifications and permission entry-point validation.
   The new native ground-sit and clothing-notification handlers require live
   validation with delayed simulator responses and intervening restrictions.
-- Complete linked/folded-folder conformance, optional shared inventory offers
-  and legacy rename-on-wear settings, queue timeout
+- Complete linked/folded-folder conformance, shared inventory offer filing,
+  experience-origin controller approval, queue timeout
   behavior and live confirmation of attachment recovery across crossings.
 - Every media/touch interaction path and surface-distance checks; all edit,
   inventory and document entry points must be audited against live scripts.
@@ -206,9 +212,9 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,356 workspace
+Validation on 2026-10-22, including merged PRs #805, #807, #809, #810, #812 and #814: `scripts/check.ps1` passes with 4,373 workspace
 tests passed, zero failures and 27 ignored; scripts, formatting and Clippy
-are clean. This includes 76 RLVa logic/integration/shader tests, covering
+are clean. This includes 79 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
@@ -238,6 +244,10 @@ IM-query tests cover consent, deduplicated questions, exception formatting,
 remembered permission, friends/block/receive filters, session closure,
 disable cancellation, Unicode splitting and encoded busy/normal IM fields.
 Native EN/FR captures show the real consent card while IM locks are active.
+Rename tests cover baseline/new arrivals, preserving later manual names,
+no-modify folder creation and confirmed moves, bounded failures, reattachment
+and global-disable cancellation. The native French `rename` capture and log
+confirm `Modifiable bracelet (chest)` and the `.(skull)` destination.
 The additional Vulkan test
 `cargo test --workspace rlva_gpu --locked -- --ignored` checks five sphere
 modes, chained masks, reduced-scene upscaling and overlay alpha holes from
