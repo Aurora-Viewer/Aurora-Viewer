@@ -1311,6 +1311,13 @@ impl Camera {
         if let Some((min, max)) = world.rlva.camera_fov_limits(f.aspect) {
             self.fov_y = self.fov_y.clamp(min, max);
         }
+        if let Some(flycam) = self.flycam.as_mut() {
+            // Keep the integrated pose and AgentUpdate frame at the view
+            // allowed by RLVa, including when the flight is toggled off.
+            flycam.position = self.position;
+            flycam.fov = self.fov_y;
+            self.target = self.position + flycam.forward();
+        }
     }
 
     fn update_unrestricted(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
@@ -2222,6 +2229,12 @@ mod tests {
         assert!(cam.position.distance(avatar) <= 2.001);
         let (min, max) = w.rlva.camera_fov_limits(f.aspect).expect("camera lens limits");
         assert!((min..=max).contains(&cam.fov_y));
+        let pose = cam.flycam.expect("flycam stays active within the limits");
+        assert_eq!(pose.position, cam.position);
+        assert_eq!(pose.fov, cam.fov_y);
+        let update = w.agent.controls(&crate::agent::MoveInput::default(), &cam, 128.0);
+        assert!(update.camera_at.distance(pose.forward()) < 1e-4);
+        assert!(update.camera_up.distance(pose.up()) < 1e-4);
     }
 
     #[test]

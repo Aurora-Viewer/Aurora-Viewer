@@ -25,7 +25,7 @@ impl App {
         let room = crate::ui::layout::work_area(ctx);
         let mut stop = false;
         let mut reset = false;
-        egui::Area::new(egui::Id::new("joystick-flycam-status"))
+        egui::Area::new(egui::Id::unique("joystick-flycam-status"))
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(room.center().x, room.top() + 12.0))
