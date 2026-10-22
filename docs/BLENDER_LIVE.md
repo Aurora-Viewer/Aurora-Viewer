@@ -230,6 +230,11 @@ Add `--starter` to use the generated 159-bone rig and weighted T-shirt
 instead of the sphere, including its actual inverse binds and weight palette.
 Add `--pbr` to recalculate its automatic weights, send base/normal/ORM/emission
 maps and stream repeated image edits through the renderer.
+`bridge_tracking.py` uses the real Blender client and list operators to add two
+objects, pause them individually/together, resume updated pixels, remove/re-add
+entries and reconnect without a selection. Use the same `-- --port <port>`
+arguments. Its optional `--save-blend <absolute-path.blend>` saves the final list
+with one active object, one paused object and a packed test image.
 Add `--save-blend <absolute-path.blend>` with `--pbr` to save the prepared
 rig, weighted T-shirt and packed test images before connecting. The saved file
 can be opened normally and connected through the Aurora sidebar.

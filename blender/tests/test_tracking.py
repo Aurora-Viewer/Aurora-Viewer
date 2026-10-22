@@ -1,5 +1,6 @@
 """Real Blender synchronization-list behavior, including save/load and Undo."""
 from pathlib import Path
+import base64
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -117,6 +118,28 @@ class TrackingTests(unittest.TestCase):
             self.assertEqual(bpy.context.scene.aurora_live.objects[0].object, self.shirt)
             bpy.ops.aurora.live_disconnect()
         self.assertEqual(len(self.closed), 2)
+
+    def test_resuming_recaptures_pixels_edited_while_the_object_was_paused(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        material = self.shirt.data.materials[0]
+        image = bpy.data.images.new("Paused paint", width=2, height=2)
+        image.pixels.foreach_set([1, 0, 0, 1] * 4)
+        image.update()
+        node = material.node_tree.nodes.new("ShaderNodeTexImage")
+        node.image = image
+        shader = next(n for n in material.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+        material.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
+        entry = bpy.context.scene.aurora_live.objects[0]
+        with patch.object(aurora_live, "_client", self.fake):
+            self.tick()
+            self.assertEqual(base64.b64decode(self.sent[-1]["images"][0]["rgba"])[:3], b"\xff\x00\x00")
+            entry.enabled = False
+            self.tick()
+            image.pixels.foreach_set([0, 1, 0, 1] * 4)
+            image.update()
+            entry.enabled = True
+            self.tick()
+            self.assertEqual(base64.b64decode(self.sent[-1]["images"][0]["rgba"])[:3], b"\x00\xff\x00")
 
     def test_connect_bootstraps_selection_only_when_the_list_is_empty(self):
         with patch.object(aurora_live, "Client", return_value=self.fake):

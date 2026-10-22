@@ -134,6 +134,8 @@ def _settings_changed(_self, _context):
 def _request_capture():
     global _dirty, _last_capture, _error
     _dirty, _last_capture, _error = True, 0.0, ""
+    # Images may have changed while their object was paused or disconnected.
+    materials.invalidate()
 
 
 class AURORA_PG_live(bpy.types.PropertyGroup):
