@@ -92,6 +92,7 @@ impl App {
         }
         if self.frame_count == 700 {
             self.alt = mode.starts_with("camera-");
+            self.ctrl = mode.ends_with("-ctrl");
             log::info!("demo world click: mode={mode}, cursor={:?}", self.cursor_pos);
             let over_ui = self.ui_takes_pointer();
             log::info!("demo world click UI: over_ui={over_ui}");
@@ -102,9 +103,14 @@ impl App {
         }
         if self.frame_count == 740 {
             self.alt = false;
+            self.ctrl = false;
+            let focus = self.camera.focus_point();
+            let target = focus
+                .and_then(|p| self.scene.pick_at(&self.world, p, Instant::now()))
+                .and_then(|idx| self.world.objects.get(idx))
+                .map(|o| o.key.local_id);
             log::info!(
-                "demo world click result: mode={mode}, focus={:?}, held={}, steer={}",
-                self.camera.focus_point(),
+                "demo world click result: mode={mode}, focus={focus:?}, target={target:?}, held={}, steer={}",
                 self.interactions.held.is_some(),
                 self.mouse_mode == MouseMode::Steer
             );
@@ -112,6 +118,7 @@ impl App {
     }
 
     fn world_click_fixture(&mut self, mode: &str) {
+        let mode = mode.strip_suffix("-ctrl").unwrap_or(mode);
         if mode.starts_with("mouselook-") {
             // a weapon took the mouselook button (llTakeControls, passed on)
             if mode == "mouselook-gun" {
@@ -271,7 +278,12 @@ impl App {
         let mut overlay = if mode == "plate-wall" {
             crate::demo::action_overlay(976, pos, rotation)
         } else {
-            crate::demo::alpha_click_overlay(if mode == "camera-glass" { "blend-half" } else { "blend-zero" }, pos, rotation)
+            let alpha = match mode {
+                "camera-glass" => "blend-half",
+                "camera-mask" => "mask-zero",
+                _ => "blend-zero",
+            };
+            crate::demo::alpha_click_overlay(alpha, pos, rotation)
         };
         if let NetEvent::ObjectUpdates { objects, .. } = &mut overlay {
             for o in objects {
@@ -287,5 +299,14 @@ impl App {
             }
         }
         self.world.apply(overlay);
+        if mode == "camera-occluded" {
+            let mut wall = crate::demo::action_overlay(977, pos + direction, rotation);
+            if let NetEvent::ObjectUpdates { objects, .. } = &mut wall {
+                for o in objects {
+                    o.scale = Vec3::new(0.12, 5.0, 5.0);
+                }
+            }
+            self.world.apply(wall);
+        }
     }
 }

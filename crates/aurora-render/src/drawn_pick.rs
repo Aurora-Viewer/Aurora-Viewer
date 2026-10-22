@@ -20,6 +20,8 @@
 //! texture texels only for the camera). Nothing is drawn nor allocated
 //! per frame when nobody asks: the cost is one pass over the visible
 //! geometry, vertex work only, in the frame of a click.
+//! The red/blue transparency overlays also enter the second pass with
+//! their full triangles, as displayed, even for camera picks.
 //!
 //! The neighbours give the geometric normal of the surface and the
 //! direction of its texture coordinates (the binormal of a touch) when
