@@ -6678,7 +6678,7 @@ impl App {
             return;
         };
         self.apply_local_imports(&mut gfx.renderer);
-        self.update_blender_live();
+        self.update_blender_live(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the

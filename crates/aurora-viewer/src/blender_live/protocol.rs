@@ -7,6 +7,9 @@ use glam::{Mat4, Vec3};
 use serde::Deserialize;
 use std::{collections::HashSet, sync::Arc};
 use uuid::Uuid;
+#[path = "appearance.rs"]
+mod appearance;
+pub use appearance::{Image, Material, PreparedImage, STAGING_BUSY};
 
 pub const VERSION: u32 = 1;
 pub const MAX_BYTES: usize = 64 * 1024 * 1024;
@@ -19,6 +22,8 @@ pub struct Snapshot {
     pub protocol: u32,
     pub revision: u64,
     pub meshes: Vec<Mesh>,
+    #[serde(default)]
+    pub images: Vec<Image>,
 }
 
 #[derive(Deserialize)]
@@ -35,6 +40,8 @@ pub struct Mesh {
 #[serde(deny_unknown_fields)]
 pub struct Surface {
     pub color: [f32; 4],
+    #[serde(default)]
+    pub material: Option<Material>,
     pub vertices: Vec<Corner>,
     pub indices: Vec<u32>,
 }
@@ -54,6 +61,7 @@ pub struct Prepared {
     pub revision: u64,
     pub meshes: Vec<PreparedMesh>,
     pub triangles: usize,
+    pub images: Vec<PreparedImage>,
 }
 
 #[derive(Clone)]
@@ -64,9 +72,19 @@ pub struct PreparedMesh {
     pub header: aurora_assets::MeshHeader,
     pub skin: Arc<aurora_assets::SkinInfo>,
     pub colors: Vec<[f32; 4]>,
+    pub materials: Vec<Option<(Uuid, aurora_assets::material::PbrMaterial)>>,
 }
 
 pub fn prepare(bytes: &[u8], supported: &HashSet<String>) -> Result<Prepared, String> {
+    prepare_staged(bytes, supported, None, &Default::default())
+}
+
+pub fn prepare_staged(
+    bytes: &[u8],
+    supported: &HashSet<String>,
+    pool: Option<&aurora_render::StagingPool>,
+    cache: &std::collections::HashMap<Uuid, PreparedImage>,
+) -> Result<Prepared, String> {
     if bytes.is_empty() || bytes.len() > MAX_BYTES {
         return Err(aurora_i18n::tr!("blender-live-invalid-size").into());
     }
@@ -74,6 +92,7 @@ pub fn prepare(bytes: &[u8], supported: &HashSet<String>) -> Result<Prepared, St
     if snapshot.protocol != VERSION || snapshot.meshes.len() > MAX_OBJECTS {
         return Err(aurora_i18n::tr!("blender-live-invalid-protocol").into());
     }
+    let images = appearance::images(snapshot.images, pool, cache)?;
     let mut total = 0usize;
     let mut total_indices = 0usize;
     let mut meshes = Vec::new();
@@ -109,6 +128,7 @@ pub fn prepare(bytes: &[u8], supported: &HashSet<String>) -> Result<Prepared, St
         }
         let mut faces = Vec::new();
         let mut colors = Vec::new();
+        let mut materials = Vec::new();
         for surface in mesh.faces {
             total = total.saturating_add(surface.vertices.len());
             total_indices = total_indices.saturating_add(surface.indices.len());
@@ -143,6 +163,7 @@ pub fn prepare(bytes: &[u8], supported: &HashSet<String>) -> Result<Prepared, St
             }
             let material = colors.len();
             colors.push(surface.color);
+            materials.push(surface.material.map(|value| value.prepare(surface.color, &images)).transpose()?);
             faces.extend(import_mesh::split_face(vertices, surface.indices, material).map_err(|e| e.to_string())?);
         }
         // Split materials and 16-bit vertex batches instead of truncating them.
@@ -164,6 +185,10 @@ pub fn prepare(bytes: &[u8], supported: &HashSet<String>) -> Result<Prepared, St
             model.normalize().map_err(|e| e.to_string())?;
             triangles += model.triangles();
             let colors = chunk.iter().map(|face| colors[face.material]).collect();
+            let materials = chunk
+                .iter()
+                .map(|face| materials[face.material].clone().map(|value| (Uuid::new_v4(), value)))
+                .collect();
             let data = encode::asset(
                 &[None, None, None, Some(model)],
                 None,
@@ -187,6 +212,7 @@ pub fn prepare(bytes: &[u8], supported: &HashSet<String>) -> Result<Prepared, St
                 header,
                 skin: Arc::new(skin),
                 colors,
+                materials,
             });
         }
     }
@@ -194,5 +220,6 @@ pub fn prepare(bytes: &[u8], supported: &HashSet<String>) -> Result<Prepared, St
         revision: snapshot.revision,
         meshes,
         triangles,
+        images,
     })
 }

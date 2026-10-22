@@ -10434,6 +10434,8 @@ build-material-base-tint = Base tint
 build-material-emissive-tint = Emissive tint
 
 blender-live-title = Blender Live
+blender-live-invalid-material = Invalid live material, image dimensions, pixel budget or texture reference.
+blender-live-material-busy = Preparing live material images; retrying automatically.
 blender-live-save-addon = Save Blender plug-in…
 blender-live-addon-saved = Plug-in saved. Install this ZIP in Blender’s preferences.
 blender-live-addon-error = Could not save the plug-in: { $error }

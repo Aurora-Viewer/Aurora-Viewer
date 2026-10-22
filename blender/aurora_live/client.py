@@ -77,6 +77,8 @@ class Client:
                         hello = self._line(reader)
                         if hello.get("protocol") != 1 or not hello.get("joints"):
                             raise ValueError("Incompatible Aurora protocol")
+                        if "pbr-materials" not in hello.get("features", []):
+                            raise ValueError("Update Aurora Viewer to use live PBR materials")
                         with self._lock:
                             self._rest_axes = hello.get("rest_axes", {})
                         self._set_status("Connected to Aurora", hello["joints"])
@@ -100,6 +102,9 @@ class Client:
                                     self._set_status("Connected · revision {}".format(sent))
                                 else:
                                     self._set_status("Aurora: " + str(reply.get("error", "Snapshot rejected")))
+                                    if reply.get("retry"):
+                                        sent = None
+                                        self._stop.wait(0.5)
                                 heartbeat = time.monotonic()
                             elif time.monotonic() - heartbeat > 2.0:
                                 connection.sendall(b"\0\0\0\0")

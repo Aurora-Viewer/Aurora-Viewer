@@ -2,18 +2,25 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 2, 0), "blender": (4, 3, 0),
+    "version": (0, 3, 0), "blender": (4, 3, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
 
+_reloading = "bpy" in globals()
+import importlib
 import time
 import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
-from .client import Client
-from . import exporter, starter
+from . import client, materials, weights, starter, exporter
+if _reloading:
+    # Blender reloads the package during an in-place extension upgrade. Reload
+    # dependencies first so the old exporter/client cannot survive that upgrade.
+    for _module in (client, materials, weights, starter, exporter):
+        importlib.reload(_module)
+Client = client.Client
 
 _client = None
 _objects = []
@@ -22,6 +29,7 @@ _exporting = False
 _revision = 0
 _last_capture = 0.0
 _error = ""
+_material_signature = ()
 
 
 def _selected():
@@ -44,11 +52,15 @@ def _changed(_scene, depsgraph):
                 if slot.material:
                     watched.add(slot.material)
                     if slot.material.node_tree:
-                        watched.add(slot.material.node_tree)
+                        for tree in materials.trees(slot.material):
+                            watched.add(tree)
+                            watched.update(node.image for node in tree.nodes if node.type == "TEX_IMAGE" and node.image)
         except ReferenceError:
             _dirty = True
     if any(update.id.original in watched for update in depsgraph.updates):
         _dirty = True
+        if any(isinstance(update.id.original, bpy.types.Image) for update in depsgraph.updates):
+            materials.invalidate()
 
 
 @persistent
@@ -57,18 +69,20 @@ def _load_pre(_unused):
 
 
 def _stop():
-    global _client, _objects, _error
+    global _client, _objects, _error, _material_signature
     if _client:
         _client.close()
     _client = None
     _objects = []
     _error = ""
+    _material_signature = ()
+    materials.invalidate()
     if bpy.app.timers.is_registered(_tick):
         bpy.app.timers.unregister(_tick)
 
 
 def _tick():
-    global _dirty, _revision, _last_capture, _exporting, _error, _objects
+    global _dirty, _revision, _last_capture, _exporting, _error, _objects, _material_signature
     if _client is None:
         return None
     status, supported = _client.state()
@@ -83,16 +97,25 @@ def _tick():
         _objects = valid
         _dirty = True
     prefs = bpy.context.scene.aurora_live
+    signature = materials.signature(_objects)
+    if signature != _material_signature:
+        _material_signature = signature
+        _dirty = True
+    painting = bpy.context.mode == "PAINT_TEXTURE"
+    if painting:
+        _dirty = True
     if supported and _dirty and time.monotonic() - _last_capture >= prefs.interval:
         _exporting = True
         _dirty = False
         try:
+            if painting:
+                materials.invalidate()
             _revision += 1
             value = exporter.snapshot(_objects, supported, _revision, prefs.forward, _client.rest_axes())
             _client.submit(value)
             _error = ""
         except (ValueError, RuntimeError, ReferenceError, OverflowError) as error:
-            _error = str(error)
+            _error = pgettext_iface(str(error))
         finally:
             _last_capture = time.monotonic()
             _exporting = False
@@ -110,6 +133,11 @@ def _settings_changed(_self, _context):
 
 
 class AURORA_PG_live(bpy.types.PropertyGroup):
+    rig: PointerProperty(name="Avatar rig", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "ARMATURE")
+    weight_scope: EnumProperty(name="Auto-weight bones", items=[
+        ("BODY", "SL body", "Use the classic body bones; skip overlapping Bento and collision bones"),
+        ("ALL", "All deform bones", "Include deform bones except collision volumes and overlapping Bento spine joints"),
+    ], default="BODY")
     starter_tshirt: BoolProperty(name="Add rigged test T-shirt", default=True,
                                 description="Create a weighted, editable T-shirt on the new SL skeleton")
     port: IntProperty(name="Aurora port", default=17655, min=1024, max=65535)
@@ -136,6 +164,7 @@ class AURORA_OT_starter(bpy.types.Operator):
         global _objects, _dirty, _error, _last_capture
         try:
             _rig, shirt = starter.create(context, self.with_tshirt, context.scene.aurora_live.forward)
+            context.scene.aurora_live.rig = _rig
         except (ValueError, RuntimeError, OSError) as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
@@ -167,6 +196,32 @@ class AURORA_OT_connect(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class AURORA_OT_weights(bpy.types.Operator):
+    bl_idname = "aurora.auto_weights"
+    bl_label = "Recalculate automatic weights"
+    bl_description = "Replace bone weights using Blender's automatic heat solver; Undo restores the previous rig"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode in {"OBJECT", "PAINT_WEIGHT"} and any(obj.type == "MESH" for obj in context.selected_objects)
+
+    def execute(self, context):
+        global _objects, _dirty, _error, _last_capture
+        selected = _selected()
+        prefs = context.scene.aurora_live
+        try:
+            weights.rebind(context, selected, prefs.rig, prefs.weight_scope)
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, pgettext_iface(str(error)))
+            return {"CANCELLED"}
+        if _client:
+            _objects = selected
+            _dirty, _last_capture, _error = True, 0.0, ""
+        self.report({"INFO"}, pgettext_iface("Automatic weights recalculated"))
+        return {"FINISHED"}
+
+
 class AURORA_OT_disconnect(bpy.types.Operator):
     bl_idname = "aurora.live_disconnect"
     bl_label = "Disconnect"
@@ -195,6 +250,7 @@ class AURORA_OT_refresh(bpy.types.Operator):
     def execute(self, _context):
         global _dirty, _last_capture
         _dirty = True
+        materials.invalidate()
         _last_capture = 0.0
         return {"FINISHED"}
 
@@ -215,6 +271,10 @@ class AURORA_PT_live(bpy.types.Panel):
         box.operator("aurora.create_sl_rig", icon="ADD").with_tshirt = prefs.starter_tshirt
         if context.mode != "OBJECT":
             box.label(text="Switch to Object Mode to create a rig.", icon="INFO")
+        box = layout.box()
+        box.prop(prefs, "rig")
+        box.prop(prefs, "weight_scope")
+        box.operator("aurora.auto_weights", icon="MOD_ARMATURE")
         row = layout.row()
         row.enabled = _client is None
         row.prop(prefs, "port")
@@ -222,7 +282,7 @@ class AURORA_PT_live(bpy.types.Panel):
         layout.prop(prefs, "forward")
         if _client:
             status, _supported = _client.state()
-            layout.label(text=status, translate=False)
+            layout.label(text=pgettext_iface(status), translate=False)
             layout.operator("aurora.live_disconnect", icon="UNLINKED")
             row = layout.row(align=True)
             row.operator("aurora.live_selection")
@@ -238,10 +298,56 @@ class AURORA_PT_live(bpy.types.Panel):
         layout.label(text="Local preview · no asset upload")
 
 
-_classes = (AURORA_PG_live, AURORA_OT_starter, AURORA_OT_connect, AURORA_OT_disconnect,
+_classes = (AURORA_PG_live, AURORA_OT_starter, AURORA_OT_weights, AURORA_OT_connect, AURORA_OT_disconnect,
             AURORA_OT_selection, AURORA_OT_refresh, AURORA_PT_live)
 
 _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator") for key, value in {
+    "Connecting to Aurora…": "Connexion à Aurora…", "Connected to Aurora": "Connecté à Aurora",
+    "Waiting for Aurora: Update Aurora Viewer to use live PBR materials":
+        "Mettez à jour Aurora Viewer pour utiliser les matériaux PBR live",
+    "Live materials use the mesh's active UV map": "Les matériaux live utilisent la carte UV active du maillage",
+    "Use UV coordinates for live image textures": "Utilisez les coordonnées UV pour les textures image live",
+    "Live UV mapping supports Z rotation only": "Le mapping UV live accepte uniquement la rotation autour de Z",
+    "Use a UV Image Texture, optionally through a Point Mapping node":
+        "Utilisez une texture image UV, éventuellement reliée à un nœud Mapping de type Point",
+    "Live normals need a tangent-space Normal Map with strength 1":
+        "Les normales live nécessitent une carte de normales en espace tangent, d’intensité 1",
+    "Bake procedural shaders to UV image textures for live materials":
+        "Convertissez les shaders procéduraux en textures image UV pour les matériaux live",
+    "Bake advanced Principled effects to textures for Second Life PBR":
+        "Convertissez les effets Principled avancés en textures pour le PBR Second Life",
+    "Live materials need flat, single-image UV textures": "Les matériaux live nécessitent des textures UV planes à image unique",
+    "Use Linear interpolation for live image textures": "Utilisez l’interpolation Linéaire pour les textures image live",
+    "Use sRGB, Linear Rec.709 or Non-Color image color spaces":
+        "Utilisez les espaces colorimétriques sRGB, Linéaire Rec.709 ou Non-couleur",
+    "Live source images must be loaded and at most 16 megapixels":
+        "Les images source live doivent être chargées et contenir au plus 16 mégapixels",
+    "Image pixels must be finite": "Les valeurs des pixels doivent être finies",
+    "Live materials exceed 16 images or 16 MiB of pixels; reduce image sizes":
+        "Les matériaux live dépassent 16 images ou 16 Mio de pixels ; réduisez les dimensions des images",
+    "Use a Principled BSDF surface for live PBR materials": "Utilisez une surface BSDF Principled pour les matériaux PBR live",
+    "Connect the base image's Alpha output directly to Principled Alpha":
+        "Reliez la sortie Alpha de l’image de couleur directement à l’entrée Alpha du BSDF Principled",
+    "Roughness and metallic images must share a UV transform":
+        "Les images de rugosité et de métal doivent partager la même transformation UV",
+    "Add an active UV map to use live image textures": "Ajoutez une carte UV active pour utiliser les textures image live",
+    "Avatar rig": "Squelette d’avatar", "Auto-weight bones": "Os à pondérer",
+    "SL body": "Corps SL", "All deform bones": "Tous les os de déformation",
+    "Recalculate automatic weights": "Recalculer les poids automatiques",
+    "Replace bone weights using Blender's automatic heat solver; Undo restores the previous rig":
+        "Remplacer les poids avec le calcul automatique de Blender ; Annuler restaure les poids précédents",
+    "Use the classic body bones; skip overlapping Bento and collision bones":
+        "Utiliser les os classiques du corps, sans les os Bento superposés ni les os de collision",
+    "Include deform bones except collision volumes and overlapping Bento spine joints":
+        "Inclure les os de déformation, sauf les volumes de collision et les os de colonne Bento superposés",
+    "Automatic weights recalculated": "Poids automatiques recalculés",
+    "No suitable deform bones in the chosen rig": "Aucun os de déformation adapté dans le squelette choisi",
+    "Select one or more meshes to recalculate their weights": "Sélectionnez les maillages à repondérer",
+    "Choose an avatar rig or select one armature with the meshes": "Choisissez un squelette d’avatar ou sélectionnez une armature avec les maillages",
+    "Use editable objects with at most one Armature modifier": "Utilisez des objets éditables avec au plus un modificateur Armature",
+    "The selected mesh has no vertices": "Le maillage sélectionné n’a aucun sommet",
+    "Automatic weights failed; the original weights were kept. Check the mesh topology.":
+        "Le calcul automatique a échoué ; les poids précédents sont conservés. Vérifiez la topologie du maillage.",
     "SL avatar starter": "Avatar SL de départ",
     "Create SL avatar rig": "Créer le squelette d’avatar SL",
     "Create the complete Bento and Fitted Mesh skeleton at the 3D cursor":

@@ -765,6 +765,8 @@ pub struct Scene {
     /// Geometries still being built or downloaded.
     geom_pending: usize,
     retired_preview_meshes: HashSet<Uuid>,
+    preview_appearances: HashMap<Uuid, blender_live::Appearance>,
+    preview_images: HashMap<Uuid, blender_live::ImageSlot>,
     /// Objects by base texture slot of their faces, as (slot, object):
     /// faces are classified when built, and when a slot changes alpha
     /// class only the faces using it are classified again.
@@ -1356,6 +1358,8 @@ impl Scene {
             geom_zero: VecDeque::new(),
             geom_pending: 0,
             retired_preview_meshes: HashSet::new(),
+            preview_appearances: HashMap::new(),
+            preview_images: HashMap::new(),
             slot_users: Default::default(),
             alpha_changes_tmp: Vec::new(),
             sync_budget: std::time::Duration::from_millis(1),

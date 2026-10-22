@@ -32,7 +32,7 @@ impl App {
 
     pub(super) fn show_blender_live(&mut self, ctx: &egui::Context, palette: &Palette) {
         if self.blender_live.show(ctx, palette) {
-            self.blender_live.start(self.blender_joints(), self.blender_rest_axes(), ctx);
+            self.blender_live.start_requested = true;
         }
         if std::mem::take(&mut self.blender_live.save_addon) {
             self.blender_live.addon.save(&self.scene.jobs, ctx);
@@ -53,7 +53,15 @@ impl App {
         self.scene.reset_skeleton(self.world.agent_id, false);
     }
 
-    pub(super) fn update_blender_live(&mut self) {
+    pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
+        if std::mem::take(&mut self.blender_live.start_requested) {
+            self.blender_live.start(
+                self.blender_joints(),
+                self.blender_rest_axes(),
+                &self.egui_ctx,
+                renderer.staging_pool(),
+            );
+        }
         if self.blender_live.owner.is_some_and(|owner| owner != self.world.agent_id) {
             self.blender_live.stop();
         }
@@ -71,8 +79,12 @@ impl App {
         {
             self.blender_live.demo_started = true;
             self.blender_live.open = true;
-            self.blender_live
-                .start(self.blender_joints(), self.blender_rest_axes(), &self.egui_ctx);
+            self.blender_live.start(
+                self.blender_joints(),
+                self.blender_rest_axes(),
+                &self.egui_ctx,
+                renderer.staging_pool(),
+            );
             match crate::blender_live::demo_fixture(&self.world.avatar_lib.rig) {
                 Ok(snapshot) => self.blender_live.snapshot = Some(snapshot),
                 Err(error) => self.blender_live.error = Some(error),
@@ -94,9 +106,10 @@ impl App {
             && (Some(snapshot.revision) != self.blender_live.revision || missing)
             && self.world.objects.index_of_uuid(&self.world.agent_id).is_some()
         {
-            self.install_blender_snapshot(snapshot.clone());
+            self.install_blender_snapshot(snapshot.clone(), renderer);
         }
         if self.demo && self.blender_live.demo_started && self.frame_count.is_multiple_of(120) {
+            let (appearances, images) = self.scene.preview_appearance_counts();
             let ready = self
                 .blender_live
                 .objects
@@ -113,14 +126,17 @@ impl App {
                 })
                 .count();
             log::info!(
-                "demo Blender live: revision={:?} objects={} ready_skinned={ready}",
+                "demo Blender live: revision={:?} objects={} ready_skinned={ready} appearances={appearances} images={images}",
                 self.blender_live.revision,
                 self.blender_live.objects.len()
             );
         }
     }
 
-    fn install_blender_snapshot(&mut self, snapshot: Prepared) {
+    fn install_blender_snapshot(&mut self, snapshot: Prepared, renderer: &mut aurora_render::Renderer) {
+        if !self.scene.install_preview_images(&snapshot.images, renderer) {
+            return;
+        }
         let Some(parent) = self
             .world
             .objects
@@ -144,14 +160,25 @@ impl App {
             }
         }
         for (index, mesh) in snapshot.meshes.into_iter().enumerate() {
+            self.scene.install_preview_materials(mesh.id, &mesh.materials);
+            let extra = ExtraParams {
+                render_materials: mesh
+                    .materials
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(face, value)| value.as_ref().map(|(id, _)| (face as u8, *id)))
+                    .collect(),
+                ..Default::default()
+            };
             self.scene.meshes.insert_local(mesh.id, mesh.data, mesh.header, Some(mesh.skin));
             self.blender_live.assets.push(mesh.id);
             let faces = mesh
                 .colors
                 .iter()
-                .map(|color| TextureFace {
+                .enumerate()
+                .map(|(face, color)| TextureFace {
                     texture: Uuid::nil(),
-                    color: *color,
+                    color: if mesh.materials[face].is_some() { [1.0; 4] } else { *color },
                     ..Default::default()
                 })
                 .collect();
@@ -172,6 +199,7 @@ impl App {
                 // Keep the draw object and its last good geometry while the
                 // replacement is staged; no disappearance between snapshots.
                 existing.volume = volume;
+                existing.extra = extra;
                 existing.te = Some(Arc::new(TextureEntry { faces }));
                 existing.shape_dirty = true;
                 existing.material_dirty = true;
@@ -198,7 +226,7 @@ impl App {
                 owner_id: Uuid::nil(),
                 volume,
                 texture_entry: Some(Arc::new(TextureEntry { faces })),
-                extra: ExtraParams::default(),
+                extra,
                 name_values: String::new(),
                 text: String::new(),
                 text_color: [0; 4],

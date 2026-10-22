@@ -17,6 +17,15 @@ wire limits; `blender/tests/` exercises real Blender capture and transport.
 `blender/aurora_live/starter.py` creates the full Bento/Fitted Mesh armature
 from the same packaged `avatar_skeleton.xml`, and optionally an editable
 quad T-shirt with normalized weights, UVs and an Armature modifier.
+`weights.py` solves automatic heat weights on disposable rest-pose copies,
+validates all selected objects, then publishes normalized four-bone weights
+without changing the source armature or non-bone groups. `materials.py`
+captures connected Principled PBR inputs, UV maps and bounded embedded images;
+node signatures and texture-paint ticks supplement dependency-graph updates.
+`blender_live/appearance.rs` validates image dimensions, bytes and PBR fields,
+builds mips and stages uploads on the socket worker. Image UUIDs derive from
+pixel content. Preview geometry owns material/image references: retirement
+waits for the last geometry reference before freeing materials and GPU slots.
 
 Water exclusion faces use the viewer-local `WATER_EXCLUSION_TEXTURE` alpha-ramp
 UUID. `scene/textures.rs` resolves it without a network request; visually hidden

@@ -15,12 +15,14 @@ import time
 import bpy
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from aurora_live import exporter, starter
+from aurora_live import exporter, starter, materials, weights
 from aurora_live.client import Client, MAGIC
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, default=17655)
 parser.add_argument("--starter", action="store_true", help="Use the generated SL rig and test T-shirt")
+parser.add_argument("--pbr", action="store_true", help="Exercise live image and PBR edits plus automatic weights")
+parser.add_argument("--save-blend", type=Path, help="Save a self-contained PBR test scene")
 args = parser.parse_args(sys.argv[sys.argv.index("--")+1:] if "--" in sys.argv else [])
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
@@ -47,6 +49,49 @@ else:
     material.diffuse_color = (0.1,0.8,0.3,1.0)
     mesh.data.materials.append(material)
 bpy.context.view_layer.update()
+if args.pbr:
+    weights.rebind(bpy.context, [mesh], rig)
+    material = mesh.data.materials[0]
+    material.use_nodes = True
+    nodes, links = material.node_tree.nodes, material.node_tree.links
+    shader = next(node for node in nodes if node.type == "BSDF_PRINCIPLED")
+    def image_node(name, color, data=False):
+        image = bpy.data.images.new(name, width=16, height=16, alpha=True)
+        image.colorspace_settings.name = "Non-Color" if data else "sRGB"
+        image.pixels.foreach_set(color * 256)
+        image.update()
+        node = nodes.new("ShaderNodeTexImage")
+        node.image = image
+        return node
+    painted = image_node("Live color paint", [0.1,0.7,0.3,1])
+    normal_image = image_node("Live normal", [0.5,0.5,1,1], True)
+    orm_image = image_node("Live ORM", [1,0.6,0.2,1], True)
+    normal = nodes.new("ShaderNodeNormalMap")
+    separate = nodes.new("ShaderNodeSeparateColor")
+    links.new(painted.outputs["Color"], shader.inputs["Base Color"])
+    links.new(painted.outputs["Color"], shader.inputs["Emission Color"])
+    shader.inputs["Emission Strength"].default_value = 0.02
+    links.new(normal_image.outputs["Color"], normal.inputs["Color"])
+    links.new(normal.outputs["Normal"], shader.inputs["Normal"])
+    links.new(orm_image.outputs["Color"], separate.inputs[0])
+    links.new(separate.outputs["Green"], shader.inputs["Roughness"])
+    links.new(separate.outputs["Blue"], shader.inputs["Metallic"])
+    materials.invalidate()
+    if args.save_blend:
+        for texture in (painted, normal_image, orm_image):
+            texture.image.pack()
+        from mathutils import Vector
+        for screen in bpy.data.screens:
+            for area in screen.areas:
+                if area.type == "VIEW_3D":
+                    space = area.spaces.active
+                    space.show_region_ui = True
+                    space.shading.type = "MATERIAL"
+                    space.region_3d.view_rotation = Vector((4,-1,1)).to_track_quat("Z", "Y")
+                    space.region_3d.view_location = (0,0,1)
+                    space.region_3d.view_distance = 3.3
+                    space.region_3d.view_perspective = "ORTHO"
+        bpy.ops.wm.save_as_mainfile(filepath=str(args.save_blend.resolve()))
 
 connection = None
 deadline = time.monotonic() + 45
@@ -88,5 +133,21 @@ with connection:
     send(invalid, False)
     send({"protocol":1,"revision":4,"meshes":[]})
     send(exporter.snapshot([mesh], supported, 5, rest_axes=hello.get("rest_axes")))
+    if args.pbr:
+        for revision in range(6, 13):
+            shader.inputs["Alpha"].default_value = 0.6 if revision in {8,9} else 1.0
+            pixels = []
+            for y in range(16):
+                for x in range(16):
+                    pixels.extend([0.05,0.8,0.25,1] if ((x//4 + y//4 + revision) % 2) else [0.08,0.12,0.5,1])
+            painted.image.pixels.foreach_set(pixels)
+            painted.image.update()
+            orm_image.image.pixels.foreach_set([1, 0.25 + (revision % 2) * 0.45, 0.15, 1] * 256)
+            orm_image.image.update()
+            materials.invalidate()
+            value = exporter.snapshot([mesh], supported, revision, rest_axes=hello.get("rest_axes"))
+            assert len(value["images"]) == 3, "base/emission share one image; normal and ORM are independent"
+            assert all(index is not None for index in value["meshes"][0]["faces"][0]["material"]["textures"])
+            send(value)
     reader.close()
 print("AURORA_BLENDER_BRIDGE_SMOKE_OK", flush=True)

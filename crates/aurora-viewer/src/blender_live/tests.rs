@@ -37,6 +37,59 @@ fn blender_live_round_trip_keeps_skin_and_materials() {
 }
 
 #[test]
+fn blender_live_embedded_pbr_keeps_factors_maps_transforms_and_content_identity() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let mut value = triangle();
+    value["images"] = serde_json::json!([{"width":2,"height":1,"rgba":STANDARD.encode([255,0,0,255,0,255,0,128])}]);
+    value["meshes"][0]["faces"][0]["material"] = serde_json::json!({
+        "metallic":0.7,"roughness":0.2,"emissive":[0.1,0.2,0.3],"double_sided":true,
+        "alpha_mode":"BLEND","textures":[0,null,null,0],
+        "transforms":[[0.1,0.2,2.0,3.0,0.4],[0,0,1,1,0],[0,0,1,1,0],[0,0,1,1,0]]
+    });
+    let first = prepare(&value).expect("PBR snapshot");
+    let second = prepare(&value).expect("repeated snapshot");
+    assert_eq!(
+        first.images[0].id, second.images[0].id,
+        "unchanged pixels reuse the local texture slot"
+    );
+    assert!(first.images[0].has_alpha);
+    let (_, material) = first.meshes[0].materials[0].as_ref().expect("PBR material");
+    assert_eq!(material.base_color_factor, [0.3, 0.2, 0.8, 1.0]);
+    assert_eq!(material.metallic_factor, 0.7);
+    assert_eq!(material.roughness_factor, 0.2);
+    assert_eq!(material.base_color_texture, Some(first.images[0].id));
+    assert_eq!(material.emissive_texture, material.base_color_texture);
+    assert_eq!(material.alpha_mode, aurora_assets::material::AlphaMode::Blend);
+    assert_eq!(material.transforms[0].scale, [2.0, 3.0]);
+    value["images"][0]["rgba"] = STANDARD.encode([0, 0, 255, 255, 255, 255, 0, 255]).into();
+    assert_ne!(first.images[0].id, prepare(&value).expect("painted image").images[0].id);
+}
+
+#[test]
+fn blender_live_rejects_invalid_materials_images_and_references() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let mut base = triangle();
+    base["images"] = serde_json::json!([{"width":1,"height":1,"rgba":STANDARD.encode([255;4])}]);
+    base["meshes"][0]["faces"][0]["material"] = serde_json::json!({
+        "metallic":0.0,"roughness":0.5,"emissive":[0,0,0],"double_sided":true,"alpha_mode":"OPAQUE","textures":[0,null,null,null]
+    });
+    for case in 0..8 {
+        let mut value = base.clone();
+        match case {
+            0 => value["images"][0]["width"] = 1025.into(),
+            1 => value["images"][0]["rgba"] = "not base64!".into(),
+            2 => value["images"][0]["height"] = 0.into(),
+            3 => value["meshes"][0]["faces"][0]["material"]["textures"][0] = 1.into(),
+            4 => value["meshes"][0]["faces"][0]["material"]["metallic"] = 2.into(),
+            5 => value["meshes"][0]["faces"][0]["material"]["alpha_mode"] = "UNKNOWN".into(),
+            6 => value["meshes"][0]["faces"][0]["material"]["emissive"][0] = (-1).into(),
+            _ => value["images"] = serde_json::Value::Array(vec![value["images"][0].clone(); 17]),
+        }
+        assert!(prepare(&value).is_err(), "invalid appearance case {case}");
+    }
+}
+
+#[test]
 fn blender_live_rejects_bad_skin_geometry_and_protocol_without_replacing_good_state() {
     for change in 0..8 {
         let mut value = triangle();
@@ -102,7 +155,7 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     let ctx = egui::Context::default();
     let probe = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("free port");
     let port = probe.local_addr().expect("address").port();
-    let shared = transport::start_listener(probe, supported(), Default::default(), ctx).expect("start");
+    let shared = transport::start_listener(probe, supported(), Default::default(), ctx, None).expect("start");
     let owner = Server { shared: shared.clone() };
     let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
     stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
@@ -111,6 +164,7 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     let mut line = String::new();
     reader.read_line(&mut line).expect("hello");
     assert!(line.contains("mPelvis"));
+    assert!(line.contains("pbr-materials"));
     for revision in 1..=3 {
         let mut value = triangle();
         value["revision"] = revision.into();

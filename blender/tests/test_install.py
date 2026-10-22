@@ -22,6 +22,7 @@ assert hasattr(bpy.types.Scene, "aurora_live"), "extension was not enabled"
 assert bpy.ops.aurora.create_sl_rig(with_tshirt=True) == {"FINISHED"}
 shirt = bpy.context.object
 assert len(shirt.find_armature().data.bones) == 159
+assert bpy.ops.aurora.auto_weights() == {"FINISHED"}
 result = bpy.ops.preferences.addon_disable(module="bl_ext.user_default.aurora_live_mesh")
 assert "FINISHED" in result and not hasattr(bpy.types.Scene, "aurora_live"), result
 print("AURORA_BLENDER_INSTALL_OK", flush=True)

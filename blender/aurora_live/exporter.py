@@ -10,6 +10,7 @@ import math
 import bpy
 import numpy as np
 from mathutils import Matrix
+from .materials import Capture
 
 MAX_CORNERS = 600_000
 
@@ -36,20 +37,7 @@ def _column_major(matrix):
     return [float(matrix[row][column]) for column in range(4) for row in range(4)]
 
 
-def _material_color(source, slot):
-    material = source.material_slots[slot].material if slot < len(source.material_slots) else None
-    if material is None:
-        return [0.45, 0.22, 0.85, 1.0]
-    color = list(material.diffuse_color)
-    if material.use_nodes and material.node_tree:
-        shader = next((node for node in material.node_tree.nodes if node.type == "BSDF_PRINCIPLED"), None)
-        if shader:
-            color = list(shader.inputs["Base Color"].default_value)
-            color[3] *= shader.inputs["Alpha"].default_value
-    return [min(1.0, max(0.0, float(value))) for value in color]
-
-
-def _mesh(source, supported, forward, rest_axes):
+def _mesh(source, supported, forward, rest_axes, capture):
     source.update_from_editmode()
     armature = source.find_armature()
     if armature is None:
@@ -151,7 +139,8 @@ def _mesh(source, supported, forward, rest_axes):
                 joints, vertex_weights = weights[vertex_index]
                 vertices.append({"position": positions[vertex_index], "normal": normals[index],
                     "uv": uv[index], "joints": joints, "weights": vertex_weights})
-            surfaces.append({"color": _material_color(source, int(slot)), "vertices": vertices, "indices": indices.reshape(-1).tolist()})
+            color, material = capture.material(source, int(slot))
+            surfaces.append({"color": color, "material": material, "vertices": vertices, "indices": indices.reshape(-1).tolist()})
         if not surfaces or len(surfaces) > 32:
             raise ValueError(source.name + ": expected 1 to 32 nonempty material surfaces")
         return {"name": source.name, "joints": names, "inverse_bind": inverse_bind, "faces": surfaces}
@@ -169,16 +158,17 @@ def _mesh(source, supported, forward, rest_axes):
 
 def snapshot(objects, supported, revision, forward="NATIVE", rest_axes=None):
     meshes = []
+    capture = Capture()
     for source in objects:
         try:
             exists = source.name in bpy.data.objects
         except ReferenceError:
             exists = False
         if exists and source.type == "MESH":
-            meshes.append(_mesh(source, supported, forward, rest_axes or {}))
+            meshes.append(_mesh(source, supported, forward, rest_axes or {}, capture))
     if len(meshes) > 32:
         raise ValueError("Select at most 32 mesh objects")
     corners = sum(len(face["vertices"]) for mesh in meshes for face in mesh["faces"])
     if corners > MAX_CORNERS:
         raise ValueError("Snapshot exceeds 600,000 mesh corners")
-    return {"protocol": 1, "revision": revision, "meshes": meshes}
+    return {"protocol": 1, "revision": revision, "meshes": meshes, "images": capture.images}

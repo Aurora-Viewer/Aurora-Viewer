@@ -27,7 +27,7 @@ def receive(connection, size):
 def hello(connection):
     if receive(connection, 8) != module.MAGIC:
         raise ValueError("Bad handshake")
-    connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"max_bytes":67108864}\n')
+    connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"max_bytes":67108864,"features":["pbr-materials"]}\n')
 
 
 def snapshot(connection):
@@ -36,6 +36,34 @@ def snapshot(connection):
 
 
 class ClientTests(unittest.TestCase):
+    def test_busy_image_staging_retries_without_another_edit(self):
+        received = []
+        def server(listener):
+            with listener.accept()[0] as connection:
+                connection.settimeout(4)
+                hello(connection)
+                received.append(snapshot(connection)["revision"])
+                connection.sendall(b'{"ok":false,"retry":true,"error":"staging busy"}\n')
+                received.append(snapshot(connection)["revision"])
+                connection.sendall(b'{"ok":true,"revision":7}\n')
+        client, thread, failures = self.serve(server)
+        client.submit({"revision":7})
+        self.finish(client, thread, failures)
+        self.assertEqual(received, [7,7])
+
+    def test_old_viewer_is_rejected_before_a_material_snapshot_is_sent(self):
+        received = []
+        def server(listener):
+            with listener.accept()[0] as connection:
+                connection.settimeout(3)
+                self.assertEqual(receive(connection, 8), module.MAGIC)
+                connection.sendall(b'{"protocol":1,"joints":["mPelvis"]}\n')
+                received.append(connection.recv(1))
+        client, thread, failures = self.serve(server)
+        client.submit({"revision":1})
+        self.finish(client, thread, failures)
+        self.assertEqual(received, [b""], "an older viewer must receive no unsupported material data")
+
     def serve(self, callback):
         listener = socket.socket()
         listener.bind(("127.0.0.1", 0))

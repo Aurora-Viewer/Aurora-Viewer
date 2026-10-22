@@ -63,6 +63,7 @@ pub struct Live {
     pub owner: Option<Uuid>,
     pub addon: addon::Addon,
     pub save_addon: bool,
+    pub start_requested: bool,
 }
 impl Default for Live {
     fn default() -> Self {
@@ -81,6 +82,7 @@ impl Default for Live {
             owner: None,
             addon: Default::default(),
             save_addon: false,
+            start_requested: false,
         }
     }
 }
@@ -89,11 +91,17 @@ impl Live {
         self.server.is_some()
     }
 
-    pub fn start(&mut self, supported: HashSet<String>, rest_axes: std::collections::HashMap<String, [f32; 16]>, ctx: &egui::Context) {
+    pub fn start(
+        &mut self,
+        supported: HashSet<String>,
+        rest_axes: std::collections::HashMap<String, [f32; 16]>,
+        ctx: &egui::Context,
+        pool: Arc<aurora_render::StagingPool>,
+    ) {
         if self.running() {
             return;
         }
-        match transport::start(self.port, supported, rest_axes, ctx.clone()) {
+        match transport::start(self.port, supported, rest_axes, ctx.clone(), Some(pool)) {
             Ok(shared) => {
                 self.server = Some(Server { shared });
                 self.error = None;
@@ -103,6 +111,7 @@ impl Live {
     }
 
     pub fn stop(&mut self) {
+        self.start_requested = false;
         self.server = None;
         self.clear = true;
     }
