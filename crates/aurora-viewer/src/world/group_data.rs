@@ -221,7 +221,7 @@ impl GroupMgr {
     }
 
     /// sendGroupRoleDataRequest: not again while one is pending.
-    fn request_roles(&mut self, group: Uuid) {
+    pub fn request_roles(&mut self, group: Uuid) {
         let g = self.data(group);
         if g.role_request.is_some() {
             return;
@@ -607,6 +607,11 @@ impl GroupMgr {
     /// LLGroupMgr::sendGroupTitleUpdate: sent, and our copy follows at once.
     pub fn set_title(&mut self, group: Uuid, role: Uuid) {
         self.out.push(NetCommand::GroupTitleUpdate { group, role });
+        self.title_sent(group, role);
+    }
+
+    /// Also used by scripted title changes after the common action guard.
+    pub fn title_sent(&mut self, group: Uuid, role: Uuid) {
         if let Some(g) = self.groups.get_mut(&group) {
             for t in &mut g.titles {
                 t.selected = t.role == role;

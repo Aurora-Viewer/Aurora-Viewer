@@ -322,6 +322,7 @@ pub struct World {
     pub rlva: rlva::Rlva,
     pub rlva_privacy: rlva::privacy::TextFilter,
     pub rlva_hover_privacy: rlva::privacy::TextFilter,
+    rlva_location_hidden: bool,
     /// Derendered objects and residents, and the asset blacklist.
     pub derender: derender::Derender,
     /// Our groups and the group / conference chat sessions.
@@ -579,6 +580,7 @@ impl World {
             rlva: rlva::Rlva::default(),
             rlva_privacy: Default::default(),
             rlva_hover_privacy: Default::default(),
+            rlva_location_hidden: false,
             derender: derender::Derender::default(),
             groups: groups::GroupChats::default(),
             calls: calls::Calls::default(),
@@ -1811,7 +1813,11 @@ impl World {
                 }
                 self.movement_complete = true;
                 if self.teleporting || !self.arrived_once {
-                    let region = self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default();
+                    let region = if self.rlva.has("showloc") {
+                        aurora_i18n::tr!("rlva-hidden-region").to_owned()
+                    } else {
+                        self.regions.get(&handle).map(|r| r.name.clone()).unwrap_or_default()
+                    };
                     self.tp_history.arrived(tphistory::TpEntry { region, handle, position });
                     // LLViewerParcelMgr::onTeleportFinished: a local teleport keeps
                     // the agent parcel (the simulator only sends ParcelProperties

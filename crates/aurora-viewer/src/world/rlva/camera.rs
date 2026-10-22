@@ -1,5 +1,5 @@
 //! Camera modifiers share the RLVa exclusive owner and remain session-local.
-use super::Rlva;
+use super::{Command, Param, Rlva};
 use crate::camera::CameraSettings;
 use glam::Vec3;
 use uuid::Uuid;
@@ -12,6 +12,57 @@ pub fn vector(text: &str) -> Option<Vec3> {
         parts.next()?.parse().ok()?,
     );
     (parts.next().is_none() && p.is_finite()).then_some(p)
+}
+
+/// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>: a UUID defaults to its object's
+/// scale length; a region-local position defaults to zero distance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FocusTarget {
+    Object(Uuid),
+    Position(Vec3),
+}
+
+pub struct FocusRequest {
+    pub target: FocusTarget,
+    distance: Option<f32>,
+    direction: Option<Vec3>,
+}
+
+impl FocusRequest {
+    pub fn parse(text: &str) -> Option<Self> {
+        let mut parts = text.split(';');
+        let target = parts.next()?;
+        let target = Uuid::parse_str(target)
+            .ok()
+            .map(FocusTarget::Object)
+            .or_else(|| vector(target).map(FocusTarget::Position))?;
+        let distance = parts.next().filter(|v| !v.is_empty()).map(str::parse::<f32>).transpose().ok()?;
+        if distance.is_some_and(|v| !v.is_finite()) {
+            return None;
+        }
+        let direction = parts
+            .next()
+            .filter(|v| !v.is_empty())
+            .map(vector)
+            .map_or(Some(None), |v| v.map(Some))?;
+        parts.next().is_none().then_some(Self {
+            target,
+            distance,
+            direction,
+        })
+    }
+
+    pub fn camera(&self, focus: Vec3, scale: Vec3, current: Vec3) -> Option<Vec3> {
+        let default_distance = if matches!(self.target, FocusTarget::Object(_)) {
+            scale.length()
+        } else {
+            0.0
+        };
+        let distance = self.distance.unwrap_or(default_distance).max(0.001);
+        let direction = self.direction.unwrap_or(current - focus).normalize_or(Vec3::X);
+        let camera = focus + direction * distance;
+        camera.is_finite().then_some(camera)
+    }
 }
 
 /// RlvCommandOptionAdjustHeight: the one-value form is centimetres; the
@@ -59,13 +110,22 @@ impl Rlva {
     }
 
     pub fn camera_limit(&self, name: &str, default: f32, minimum: bool) -> f32 {
+        self.camera_number(name, minimum).unwrap_or(default)
+    }
+
+    fn camera_number(&self, name: &str, minimum: bool) -> Option<f32> {
         self.rules
             .iter()
             .filter(|(id, _)| self.enabled() && self.camera_owner().is_none_or(|owner| **id == owner))
             .flat_map(|(_, rules)| rules.iter())
             .filter(|r| super::canonical(&r.behaviour) == name)
             .filter_map(|r| {
-                r.option.parse::<f32>().ok().map(|v| {
+                let value = if r.behaviour.starts_with("camzoom") && r.option.is_empty() {
+                    Some(1.0)
+                } else {
+                    r.option.parse::<f32>().ok()
+                };
+                value.map(|v| {
                     if r.behaviour.starts_with("camzoom") {
                         std::f32::consts::FRAC_PI_3 / v
                     } else {
@@ -73,7 +133,79 @@ impl Rlva {
                     }
                 })
             })
-            .fold(default, if minimum { f32::max } else { f32::min })
+            .reduce(if minimum { f32::max } else { f32::min })
+    }
+
+    /// RlvReplyCamMinMaxModifierHandler returns an empty reply for an
+    /// inactive modifier, even when normal camera limits have defaults.
+    pub fn camera_reply(&self, command: &Command, distance: f32, fov: f32) -> Option<String> {
+        if !command.option.is_empty() || !matches!(command.param, Param::Reply(_)) {
+            return None;
+        }
+        if command.behaviour == "getcam_textures" {
+            return Some(self.camera_texture().map(|id| id.to_string()).unwrap_or_default());
+        }
+        let value = match command.behaviour.as_str() {
+            "getcam_avdist" => Some(distance),
+            "getcam_fov" => Some(fov),
+            "getcam_fovmin" => self.camera_number("setcam_fovmin", true),
+            "getcam_fovmax" => self.camera_number("setcam_fovmax", false),
+            "getcam_avdistmin" => self.camera_number("setcam_avdistmin", true),
+            "getcam_avdistmax" => self.camera_number("setcam_avdistmax", false),
+            _ => return None,
+        };
+        Some(value.map(|v| format!("{v:.3}")).unwrap_or_default())
+    }
+
+    pub fn camera_preset_locked(&self, actor: Uuid) -> bool {
+        self.camera_owner().is_some_and(|owner| owner != actor)
+            || ["setcam_eyeoffset", "setcam_eyeoffsetscale", "setcam_focusoffset"]
+                .iter()
+                .any(|name| self.has(name))
+    }
+
+    pub fn preserve_camera_settings(&self, requested: &mut CameraSettings, before: &CameraSettings) {
+        if self.camera_preset_locked(Uuid::nil()) {
+            requested.preset = before.preset;
+            requested.camera_offset = before.camera_offset;
+            requested.focus_offset = before.focus_offset;
+            requested.offset_scale = before.offset_scale;
+        }
+        if self.camera_owner().is_some() {
+            requested.fov = before.fov;
+        }
+    }
+
+    /// Native camera forces share the preset/FOV guards from RlvActions.
+    /// Focus and mode commands still use their own native restrictions.
+    pub fn camera_force(&mut self, actor: Uuid, c: &Command) -> bool {
+        let vector = matches!(c.behaviour.as_str(), "setcam_eyeoffset" | "setcam_focusoffset");
+        let scale = c.behaviour == "setcam_eyeoffsetscale";
+        let fov = c.behaviour == "setcam_fov";
+        if !vector && !scale && !fov {
+            return false;
+        }
+        if !self.enabled()
+            || c.param != Param::Force
+            || if fov {
+                self.camera_owner().is_some_and(|owner| owner != actor)
+            } else {
+                self.camera_preset_locked(actor)
+            }
+        {
+            return true;
+        }
+        if c.option.is_empty() {
+            if fov {
+                self.camera_values
+                    .insert(c.behaviour.clone(), crate::camera::DEFAULT_FOV.to_string());
+            } else {
+                self.camera_values.remove(&c.behaviour);
+            }
+        } else if (vector && self::vector(&c.option).is_some()) || (!vector && c.option.parse::<f32>().is_ok_and(f32::is_finite)) {
+            self.camera_values.insert(c.behaviour.clone(), c.option.clone());
+        }
+        true
     }
 
     pub fn camera_settings(&self, original: &CameraSettings) -> CameraSettings {
@@ -90,8 +222,10 @@ impl Rlva {
         if let Some(v) = self.camera_value("setcam_fov").and_then(|v| v.parse::<f32>().ok()) {
             s.fov = v;
         }
-        let lo = self.camera_limit("setcam_fovmin", 0.1, true);
-        let hi = self.camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false).max(lo);
+        let lo = self.camera_limit("setcam_fovmin", 0.1, true).clamp(0.1, std::f32::consts::PI - 0.1);
+        let hi = self
+            .camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false)
+            .clamp(lo, std::f32::consts::PI - 0.1);
         s.fov = s.fov.clamp(lo, hi);
         s
     }
@@ -120,7 +254,7 @@ impl super::super::World {
                 if point.is_some_and(|p| p.hud) {
                     return true;
                 }
-                return !self.rlva.has("showself") && !(self.rlva.has("showselfhead") && point.is_some_and(|p| p.group == 3));
+                return !self.rlva.has("showself") && !(self.rlva.has("showselfhead") && point.is_some_and(|p| p.group == 2));
             }
             root = parent.0;
         }

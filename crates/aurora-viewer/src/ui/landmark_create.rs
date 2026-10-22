@@ -236,6 +236,9 @@ impl CreateLandmarkUi {
     /// the landmark is made at once in that folder, named like the window's
     /// title (createLandmarkHere without the window).
     pub fn quick(&mut self, world: &World, folder_kind: i32) -> Option<NetCommand> {
+        if world.rlva.has("showloc") {
+            return None;
+        }
         let parent = crate::world::appearance::system_folder(&world.inventory, folder_kind)?;
         if world.main().is_none() || world.parcel.is_none() {
             log::warn!("landmark not created: no agent region or parcel yet");
@@ -267,6 +270,9 @@ impl CreateLandmarkUi {
     /// window and create the landmark (onOpen, setLandmarkInfo). Already open:
     /// it is only brought back, without a second landmark.
     pub fn open(&mut self, world: &World, dest: Option<Uuid>) -> Option<NetCommand> {
+        if world.rlva.has("showloc") {
+            return None;
+        }
         if self.open {
             return None;
         }
@@ -293,6 +299,12 @@ impl CreateLandmarkUi {
             kind: NewItem::Landmark,
             name: world.parcel_name.clone(),
         })
+    }
+
+    pub fn apply_rlva_privacy(&mut self, hidden: bool) {
+        if hidden && !self.editing {
+            self.open = false;
+        }
     }
 
     /// LLLandmarksInventoryObserver::checkCreated: the landmark the window

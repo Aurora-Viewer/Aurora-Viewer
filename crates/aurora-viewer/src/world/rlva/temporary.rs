@@ -37,7 +37,7 @@ impl World {
 
     pub(super) fn rlva_attachment_remove_at(&self, item: Uuid, point: u8, actor: Uuid) -> bool {
         !self.rlva_point_locked("remattach", point, actor)
-            && !self.rlva.rules_for("detach", actor).any(|(source, option)| {
+            && !self.rlva.rules_for("detach", Uuid::nil()).any(|(source, option)| {
                 if option.is_empty() {
                     self.rlva_attachment_item(source) == Some(item)
                 } else {
@@ -56,7 +56,7 @@ impl World {
         point.is_some_and(|point| self.rlva_attachment_remove_at(item, point, actor))
     }
 
-    pub(super) fn rlva_temporary_addable(&self, item: Uuid, point: u8, actor: Uuid) -> bool {
+    pub(super) fn rlva_temporary_addable(&self, item: Uuid, point: u8, _actor: Uuid) -> bool {
         let Some(key) = self.rlva_temporary_attachment(item) else {
             return false;
         };
@@ -68,10 +68,6 @@ impl World {
         } else {
             point
         };
-        !self.rlva_point_locked("addattach", point, actor)
-            && !self
-                .rlva
-                .rules_for("detach", actor)
-                .any(|(_, option)| !option.is_empty() && super::inventory::point(option) == Some(point))
+        self.rlva_point_addable(point)
     }
 }

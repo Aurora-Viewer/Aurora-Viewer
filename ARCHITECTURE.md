@@ -27,9 +27,19 @@ temporary camera settings and exclusive ownership. `events.rs` handles
 permission/teleport consent, command notifications and stand returns;
 `editing.rs` checks linksets and material/media writes. `environment.rs`
 keeps scripted sky, water and day cycles separate from saved local choices.
+`groups.rs` resolves forced group/role changes through native membership and
+role data, retains the actor across asynchronous replies and applies the
+reference's 60-second throttle and single early change for the lock owner.
+Simulator-triggered group changes restore only the last permitted group;
+the internal restoration actor cannot activate an arbitrary group.
 `privacy.rs` provides display-only identity/location projections, keeping
 canonical cache records, transcript file identities and region coordinates
-intact. Privacy commands remain unadvertised until the UI audit is complete.
+intact. `privacy/matcher.rs` compiles Unicode word-boundary replacements into
+a shared trie, reused while the patterns stay unchanged. Name exceptions,
+limited avatar menus, location writes, application links and teleport offers
+are checked at both their native UI paths and the common action boundary.
+The current teleport-history label follows location privacy without losing
+its navigation coordinates; persisted arrivals omit a hidden current place.
 `effects.rs` owns per-object sphere/overlay modifiers, tween targets and
 overlay linkset arbitration. `aurora-render/src/rlva.rs` runs at most six
 depth-aware sphere effects after glow, tonemapping, antialiasing and scene

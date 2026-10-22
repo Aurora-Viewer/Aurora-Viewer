@@ -68,6 +68,15 @@ impl TeleportHistory {
         self.current.checked_sub(1).and_then(|i| self.items.get(i))
     }
 
+    /// RlvUIEnabler::onToggleShowLoc keeps the navigation destination while
+    /// removing the current location's visible name.
+    pub fn replace_current_region(&mut self, region: &str) -> Option<TpEntry> {
+        let current = self.items.get_mut(self.current)?;
+        let previous = current.clone();
+        current.region = region.to_owned();
+        Some(previous)
+    }
+
     pub fn next(&self) -> Option<&TpEntry> {
         self.items.get(self.current + 1)
     }

@@ -427,7 +427,7 @@ impl<'a> Cx<'a> {
     /// another row, or another window edits them).
     pub fn track(&mut self, t: &dyn Track) {
         match self.mode {
-            Mode::Reset => t.reset(self.s, self.d),
+            Mode::Reset if !self.rlva_locked(t) => t.reset(self.s, self.d),
             #[cfg(test)]
             Mode::Collect => {
                 let mut paths = Vec::new();
@@ -436,6 +436,19 @@ impl<'a> Cx<'a> {
             }
             _ => {}
         }
+    }
+
+    fn rlva_locked(&self, track: &dyn Track) -> bool {
+        if !self.st.rlva_camera_preset_locked && !self.st.rlva_camera_fov_locked {
+            return false;
+        }
+        let mut paths = Vec::new();
+        track.paths(&mut paths);
+        paths.iter().any(|path| match *path {
+            "camera.preset" | "camera.camera_offset" | "camera.focus_offset" | "camera.offset_scale" => self.st.rlva_camera_preset_locked,
+            "camera.fov" => self.st.rlva_camera_fov_locked,
+            _ => false,
+        })
     }
 
     /// A row: `label` on the left (`hint` under the pointer), the control
@@ -460,7 +473,9 @@ impl<'a> Cx<'a> {
         let modified = t.modified(self.s, self.d);
         match self.mode {
             Mode::Reset => {
-                t.reset(self.s, self.d);
+                if !self.rlva_locked(t) {
+                    t.reset(self.s, self.d);
+                }
                 return false;
             }
             #[cfg(test)]
@@ -812,7 +827,7 @@ impl<'a> Cx<'a> {
             self.block = Some((top, shape));
         }
         let cell = self.cell(wide);
-        let parent_off = self.greyed || self.parent.as_ref().is_some_and(|p| p.off);
+        let parent_off = self.greyed || self.parent.as_ref().is_some_and(|p| p.off) || self.rlva_locked(t);
         let size_key = id.with("control");
         let control = self
             .st
@@ -975,7 +990,7 @@ impl<'a> Cx<'a> {
 
         // the modified dot: a click puts the row back to its default
         let mut reset = false;
-        if modified {
+        if modified && !self.rlva_locked(t) {
             let dot = Rect::from_center_size(pos2(cell.left() + GUTTER / 2.0 + 1.0, label_rect.center().y), Vec2::splat(16.0));
             let resp = self
                 .ui

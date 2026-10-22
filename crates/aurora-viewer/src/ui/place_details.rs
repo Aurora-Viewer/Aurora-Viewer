@@ -71,7 +71,7 @@ pub struct PlaceDetailsUi {
 /// "title_landmark" / "title_landmark_detail" with the item's name;
 /// "title_teleport_history_item").
 pub fn window_title(place: &Place, world: &World) -> String {
-    match &place.source {
+    let title = match &place.source {
         Source::Link { .. } | Source::Parcel(_) => match shown(place, world) {
             Shown::Parcel(d) => aurora_i18n::tr!("ui-place-details-location-details-2", value0 = d.name.to_string()),
             _ => aurora_i18n::tr!("ui-place-details-location-details").to_owned(),
@@ -81,7 +81,8 @@ pub fn window_title(place: &Place, world: &World) -> String {
             None => aurora_i18n::tr!("common-landmark").to_owned(),
         },
         Source::History { title, .. } => aurora_i18n::tr!("ui-place-details-teleport-history-for", title = title.to_string()),
-    }
+    };
+    world.rlva_filter_text(&title).into_owned()
 }
 
 /// The header of the Places window's profile (LLPanelPlaceProfile::
@@ -210,7 +211,7 @@ fn slurl_of(place: &Place, world: &World) -> Option<String> {
             .sim_at_global(global.x, global.y)
             .map_or_else(|| place.region_hint().to_owned(), |(_, s)| s.name.clone()),
     };
-    (!region.is_empty()).then(|| crate::slurl::make(&region, place.region_pos))
+    (!region.is_empty() && !world.rlva_private_region(&region)).then(|| crate::slurl::make(&region, place.region_pos))
 }
 
 /// "Teleport" of a profile (onTeleportButtonClicked).
@@ -408,8 +409,8 @@ fn small_icon(ui: &mut egui::Ui, name: &str, size: f32, tint: egui::Color32) {
 }
 
 /// Parcel name (SansSerifLarge) and "Region: Name (x, y, z)".
-fn titles(data: &Shown, place: &Place) -> (String, Option<String>) {
-    match data {
+fn titles(data: &Shown, place: &Place, world: &World) -> (String, Option<String>) {
+    let (name, region) = match data {
         Shown::Parcel(d) => (
             if d.name.is_empty() {
                 NOT_AVAILABLE.to_owned()
@@ -434,7 +435,11 @@ fn titles(data: &Shown, place: &Place) -> (String, Option<String>) {
                 NOT_AVAILABLE = NOT_AVAILABLE.to_string()
             )),
         ),
-    }
+    };
+    (
+        world.rlva_filter_text(&name).into_owned(),
+        region.map(|r| world.rlva_filter_text(&r).into_owned()),
+    )
 }
 
 /// "maturity_icon" / "maturity_value", icon first in reading order (a
@@ -526,7 +531,7 @@ fn place_profile(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, data: &Shown) {
             }
         }
     });
-    let (parcel_name, region) = titles(data, place);
+    let (parcel_name, region) = titles(data, place, c.world);
     ui.add(egui::Label::new(RichText::new(parcel_name).size(15.0).strong().color(p.ink)).truncate());
     ui.add_space(2.0);
     if let Some(r) = region {
@@ -584,7 +589,7 @@ fn landmark_info(ui: &mut egui::Ui, c: &mut Ctx, place: &Place, item: Uuid, data
     ui.spacing_mut().item_spacing.y = 3.0;
     ui.spacing_mut().interact_size.y = 16.0;
     let width = ui.available_width();
-    let (parcel_name, region) = titles(data, place);
+    let (parcel_name, region) = titles(data, place, c.world);
     ui.add(egui::Label::new(RichText::new(parcel_name).size(15.0).strong().color(p.ink)).truncate());
     ui.add_space(2.0);
     // region on the left, maturity at the right end of the same line

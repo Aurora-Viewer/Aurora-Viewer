@@ -18,6 +18,7 @@ impl App {
     pub(super) fn update_rlva(&mut self) {
         self.demo_rlva();
         self.world.rlva.configure(self.settings.rlva_enabled);
+        self.create_landmark_ui.apply_rlva_privacy(self.world.rlva.has("showloc"));
         self.media.enforce_focus(&self.world);
         if !self.settings.rlva_enabled && !self.appearance_ui.pending_actor.is_nil() {
             if let Some((_, sync)) = self.appearance_ui.pending.as_mut() {
@@ -44,6 +45,9 @@ impl App {
             self.world.rlva.self_detach = None;
         }
         self.world.rlva_update_stand();
+        for (actor, command) in self.world.rlva_group_tick() {
+            self.send_from(command, actor);
+        }
         if let Some((handle, position)) = self.world.rlva.stand_return {
             self.send(NetCommand::TeleportTo {
                 handle,
@@ -123,11 +127,13 @@ impl App {
             let scenario = mode.strip_suffix("-released").unwrap_or(&mode);
             if scenario == "baseline"
                 || scenario.starts_with("sphere-")
+                || scenario.starts_with("camera-")
                 || matches!(scenario, "overlay" | "textures" | "silhouette" | "self" | "head" | "resolution")
             {
                 // Keep the avatar and the world visible in offline visual
                 // comparisons; a conversation otherwise covers the subject.
                 self.panels.chat = false;
+                self.panels.inventory = false;
                 let focus = self.world.agent.position + Vec3::Z;
                 self.camera.set_view(
                     focus + Vec3::new(-4.0, -6.0, 2.5),
@@ -139,6 +145,36 @@ impl App {
             let message = if scenario == "baseline" {
                 self.panels.settings = false;
                 "@clear".to_owned()
+            } else if scenario == "camera-prefs" {
+                self.options_ui.page = ui::options::Page::Camera;
+                self.options_ui.tab = 0;
+                "@setcam=n,setcam_eyeoffset:-4/0/1=n,setcam_fov:0.8=force".to_owned()
+            } else if scenario == "camera-focus" {
+                self.panels.settings = false;
+                format!(
+                    "@setcam_focus:{};4;0/-1/0=force,setcam_fovmin:0.6=n,setcam_fovmax:0.9=n",
+                    crate::demo::DEMO_LOUP
+                )
+            } else if scenario.starts_with("privacy") || scenario == "nearby" {
+                self.panels.settings = false;
+                self.panels.inventory = false;
+                self.panels.chat = true;
+                if scenario == "nearby" {
+                    self.panels.people = true;
+                    self.panels.people_tab = 0;
+                    "@shownearby=n".to_owned()
+                } else if scenario == "privacy-except" {
+                    let speaker = self
+                        .world
+                        .chat
+                        .iter()
+                        .rev()
+                        .find(|line| !line.source.is_nil() && line.source != self.world.agent_id)
+                        .map_or(crate::demo::DEMO_LOUP, |line| line.source);
+                    format!("@shownames_sec=n,shownames_sec:{speaker}=n,showloc=n")
+                } else {
+                    "@shownames=n,showloc=n".to_owned()
+                }
             } else if let Some(effect) = scenario.strip_prefix("sphere-") {
                 let (number, params, strength) = match effect {
                     "blur" => (1, "0/0/0/0", 8.0),
@@ -294,7 +330,10 @@ impl App {
     }
 
     fn rlva_camera_commands(&mut self) {
-        use crate::world::rlva::{Param, camera::vector};
+        use crate::world::rlva::{
+            Param,
+            camera::{FocusRequest, FocusTarget},
+        };
         for (actor, c) in std::mem::take(&mut self.world.rlva.viewer) {
             if c.behaviour.starts_with("getdebug_") {
                 if let Param::Reply(channel) = c.param {
@@ -348,94 +387,77 @@ impl App {
                 continue;
             }
             if let Param::Reply(channel) = c.param {
-                if c.behaviour == "getcam_textures" {
-                    if c.option.is_empty() {
-                        self.world.rlva.reply(
-                            channel,
-                            self.world.rlva.camera_texture().map(|id| id.to_string()).unwrap_or_default(),
-                        );
-                    }
-                    continue;
-                }
-                let value = match c.behaviour.as_str() {
-                    "getcam_avdist" => self.camera.position.distance(self.world.agent.position),
-                    "getcam_fov" => self.camera.fov_y,
-                    "getcam_fovmin" => self.world.rlva.camera_limit("setcam_fovmin", 0.1, true),
-                    "getcam_fovmax" => self.world.rlva.camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false),
-                    "getcam_avdistmin" => self.world.rlva.camera_limit("setcam_avdistmin", 0.0, true),
-                    "getcam_avdistmax" => self.world.rlva.camera_limit("setcam_avdistmax", f32::MAX, false),
-                    _ => continue,
-                };
-                if c.option.is_empty() {
-                    self.world.rlva.reply(channel, format!("{value:.6}"));
+                let fov = self.world.rlva.camera_settings(&self.settings.camera).fov;
+                if let Some(reply) = self
+                    .world
+                    .rlva
+                    .camera_reply(&c, self.camera.position.distance(self.world.agent.position), fov)
+                {
+                    self.world.rlva.reply(channel, reply);
                 }
                 continue;
             }
-            if self.world.rlva.camera_owner().is_some_and(|owner| owner != actor) {
+            if self.world.rlva.camera_force(actor, &c) {
                 continue;
             }
             match c.behaviour.as_str() {
-                "setcam_eyeoffset" | "setcam_focusoffset" => {
-                    if c.option.is_empty() {
-                        self.world.rlva.camera_values.remove(&c.behaviour);
-                    } else if vector(&c.option).is_some() {
-                        self.world.rlva.camera_values.insert(c.behaviour, c.option);
-                    }
-                }
-                "setcam_eyeoffsetscale" | "setcam_fov" => {
-                    if c.option.is_empty() {
-                        self.world.rlva.camera_values.remove(&c.behaviour);
-                    } else if c
-                        .option
-                        .parse::<f32>()
-                        .is_ok_and(|v| v.is_finite() && v > 0.0 && (c.behaviour != "setcam_fov" || v < std::f32::consts::PI))
-                    {
-                        self.world.rlva.camera_values.insert(c.behaviour, c.option);
-                    }
-                }
                 "setcam_mode" => match c.option.as_str() {
-                    "mouselook" if self.world.rlva.camera_value("setcam_mouselook").is_none() => {
+                    "mouselook"
+                        if self.world.rlva.camera_value("setcam_mouselook").is_none()
+                            && self.world.rlva.camera_limit("setcam_avdistmin", 0.0, true) <= 0.0 =>
+                    {
                         self.camera.change_to_mouselook(&mut self.world.agent, &self.settings.camera, true)
                     }
                     "thirdperson" | "thirdview" => self.camera.change_to_default(&mut self.world.agent, &self.settings.camera),
+                    "reset" | "" => self
+                        .camera
+                        .reset_view(&mut self.world.agent, &self.settings.camera, true, true, false, false),
                     _ => {}
                 },
                 "setcam_focus" => {
-                    let mut parts = c.option.split(';');
-                    let Some(target) = parts.next() else {
+                    let Some(request) = FocusRequest::parse(&c.option) else {
                         continue;
                     };
-                    let focus = vector(target).or_else(|| {
-                        Uuid::parse_str(target)
-                            .ok()
-                            .and_then(|id| self.world.objects.index_of_uuid(&id))
-                            .and_then(|i| crate::scene::Scene::object_transform_unshifted(&self.world, i, Instant::now()))
-                            .map(|(p, _, _)| p)
-                    });
-                    let Some(focus) = focus else {
+                    let now = Instant::now();
+                    let (focus, object) = match request.target {
+                        FocusTarget::Position(position) if self.world.main_region.is_some() => (position, None),
+                        FocusTarget::Position(_) => continue,
+                        FocusTarget::Object(id) => {
+                            let Some((i, o)) = self
+                                .world
+                                .objects
+                                .index_of_uuid(&id)
+                                .and_then(|i| self.world.objects.get(i).map(|o| (i, o)))
+                            else {
+                                continue;
+                            };
+                            let Some((position, rotation, hud)) = crate::scene::Scene::object_transform_unshifted(&self.world, i, now)
+                            else {
+                                continue;
+                            };
+                            if hud {
+                                continue;
+                            }
+                            let geom = crate::camera::FocusObject {
+                                position,
+                                rotation,
+                                scale: o.scale,
+                                avatar: o.is_avatar(),
+                                mesh: o.volume.is_mesh(),
+                            };
+                            let focus = if o.is_avatar() {
+                                self.scene.head_world(&self.world, &id, now).unwrap_or(position)
+                            } else {
+                                position
+                            };
+                            (focus, Some((id, geom)))
+                        }
+                    };
+                    let Some(camera) = request.camera(focus, object.map_or(Vec3::ZERO, |(_, o)| o.scale), self.camera.position) else {
                         continue;
                     };
-                    let distance = parts
-                        .next()
-                        .filter(|s| !s.is_empty())
-                        .map_or(Some(self.camera.position.distance(focus)), |s| s.parse::<f32>().ok());
-                    let Some(distance) = distance.filter(|d| d.is_finite() && *d >= 0.0) else {
-                        continue;
-                    };
-                    let direction = parts
-                        .next()
-                        .filter(|s| !s.is_empty())
-                        .map_or(Some(self.camera.position - focus), vector)
-                        .and_then(Vec3::try_normalize);
-                    let Some(direction) = direction else {
-                        continue;
-                    };
-                    self.camera.set_view(
-                        focus + direction * distance.max(0.001),
-                        focus,
-                        &mut self.world.agent,
-                        &self.settings.camera,
-                    );
+                    self.camera
+                        .set_script_focus(camera, focus, object, &mut self.world.agent, &self.settings.camera);
                 }
                 _ => {}
             }

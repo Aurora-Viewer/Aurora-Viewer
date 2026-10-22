@@ -3,6 +3,7 @@
 use super::super::{World, names::AvatarName};
 use std::borrow::Cow;
 use uuid::Uuid;
+mod matcher;
 
 pub fn anonymous(id: Uuid) -> &'static AvatarName {
     static NAMES: aurora_i18n::Localized<Vec<AvatarName>> = aurora_i18n::Localized::new();
@@ -30,6 +31,7 @@ pub fn anonymous(id: Uuid) -> &'static AvatarName {
 #[derive(Default, Clone)]
 pub struct TextFilter {
     replacements: Vec<(String, String)>,
+    matcher: std::sync::OnceLock<std::sync::Arc<matcher::Matcher>>,
     private_names: bool,
     allowed_names: std::collections::HashSet<Uuid>,
 }
@@ -49,7 +51,14 @@ impl TextFilter {
                 if *title == link.name {
                     *title = replacement.clone();
                 }
-                filter.add(&link.name, replacement);
+                let original = link.name.to_lowercase();
+                if !filter
+                    .replacements
+                    .iter()
+                    .any(|(name, value)| *name == original && value == replacement)
+                {
+                    filter.add(&link.name, replacement);
+                }
                 link.name = replacement.clone();
             } else if let Cow::Owned(text) = self.apply(&link.name) {
                 link.name = text;
@@ -65,7 +74,25 @@ impl TextFilter {
     }
     fn add(&mut self, original: &str, replacement: &str) {
         if original.chars().count() > 2 && !original.eq_ignore_ascii_case(replacement) {
-            self.replacements.push((original.to_lowercase(), replacement.to_owned()));
+            let needle = original.to_lowercase();
+            self.replacements.push((needle, replacement.to_owned()));
+            let _ = self.matcher.take();
+        }
+    }
+
+    fn add_identity(&mut self, original: &str, replacement: &str) {
+        self.add(original, replacement);
+        // Visible Unicode URLs may escape only spaces, while canonical
+        // application links escape every non-ASCII UTF-8 byte.
+        self.add(&original.replace(' ', "%20"), replacement);
+        self.add(&aurora_net::land::uri_escape(original), replacement);
+    }
+
+    fn reuse_matcher(&mut self, previous: &Self) {
+        if self.replacements == previous.replacements
+            && let Some(matcher) = previous.matcher.get()
+        {
+            let _ = self.matcher.set(matcher.clone());
         }
     }
 
@@ -73,53 +100,39 @@ impl TextFilter {
         if self.replacements.is_empty() {
             return Cow::Borrowed(text);
         }
-        let word = |c: char| c.is_alphanumeric() || c == '_';
-        let mut out = String::new();
+        let matcher = self
+            .matcher
+            .get_or_init(|| std::sync::Arc::new(matcher::Matcher::new(&self.replacements)));
+        let mut out: Option<String> = None;
+        let mut copied = 0;
         let mut offset = 0;
-        let mut changed = false;
         while offset < text.len() {
             let remaining = &text[offset..];
-            let boundary = offset == 0 || !text[..offset].chars().next_back().is_some_and(word);
-            let replacement = boundary
-                .then(|| {
-                    self.replacements.iter().find_map(|(needle, replacement)| {
-                        // Unicode lowercase can expand a scalar (for example İ).
-                        // Compare scalar streams while retaining original byte ends.
-                        let mut expected = needle.chars().peekable();
-                        for (byte, c) in remaining.char_indices() {
-                            for lower in c.to_lowercase() {
-                                if expected.next() != Some(lower) {
-                                    return None;
-                                }
-                            }
-                            if expected.peek().is_none() {
-                                let end = byte + c.len_utf8();
-                                if !remaining[end..].chars().next().is_some_and(word) {
-                                    return Some((end, replacement));
-                                }
-                                return None;
-                            }
-                        }
-                        None
-                    })
-                })
-                .flatten();
-            if let Some((count, replacement)) = replacement {
-                out.push_str(replacement);
+            let boundary = offset == 0 || !text[..offset].chars().next_back().is_some_and(matcher::word);
+            if let Some((count, index)) = boundary.then(|| matcher.at(remaining)).flatten() {
+                let out = out.get_or_insert_with(|| String::with_capacity(text.len()));
+                out.push_str(&text[copied..offset]);
+                out.push_str(&self.replacements[index].1);
                 offset += count;
-                changed = true;
+                copied = offset;
             } else {
                 let c = remaining.chars().next().expect("nonempty suffix");
-                out.push(c);
                 offset += c.len_utf8();
             }
         }
-        if changed { Cow::Owned(out) } else { Cow::Borrowed(text) }
+        match out {
+            Some(mut out) => {
+                out.push_str(&text[copied..]);
+                Cow::Owned(out)
+            }
+            None => Cow::Borrowed(text),
+        }
     }
 }
 
 impl World {
     pub fn refresh_rlva_privacy(&mut self) {
+        self.rlva_refresh_location_history();
         let private = self.rlva.has("shownames");
         let mut allowed = std::collections::HashSet::new();
         if private {
@@ -133,13 +146,16 @@ impl World {
             }
         }
         self.social.avatar_names.set_rlva_privacy(private, allowed);
-        let filter = self.rlva_text_filter(false);
+        let mut filter = self.rlva_text_filter(false);
+        filter.reuse_matcher(&self.rlva_privacy);
         for notification in &mut self.notifications.list {
             filter.redact_notice(&mut notification.title, &mut notification.body, &mut notification.name_links);
         }
         self.rlva_privacy = filter;
         self.rlva_hover_privacy = if self.rlva.has("shownearby") {
-            self.rlva_text_filter(true)
+            let mut filter = self.rlva_text_filter(true);
+            filter.reuse_matcher(&self.rlva_hover_privacy);
+            filter
         } else {
             self.rlva_privacy.clone()
         };
@@ -147,6 +163,66 @@ impl World {
 
     pub fn rlva_can_name(&self, id: Uuid) -> bool {
         !self.rlva.enabled() || id == self.agent_id || self.rlva.allows("shownames", &id.to_string())
+    }
+
+    pub fn rlva_private_region(&self, region: &str) -> bool {
+        self.rlva.has("showloc")
+            && self
+                .regions
+                .values()
+                .any(|r| !r.name.is_empty() && r.name.eq_ignore_ascii_case(region))
+    }
+
+    /// LLAvatarActions::canOfferTeleport permits a location reveal only to
+    /// a permissive tplure exception or an online friend granted map rights.
+    pub fn rlva_can_offer_teleport(&self, id: Uuid) -> bool {
+        !self.rlva.has("showloc")
+            || self
+                .rlva
+                .rules_for("tplure", Uuid::nil())
+                .any(|(_, option)| Uuid::parse_str(option).ok() == Some(id))
+            || self
+                .social
+                .friends
+                .iter()
+                .any(|f| f.id == id && f.online && f.rights_given & super::super::social::rights::MAP_LOCATION != 0)
+    }
+
+    /// LLAvatarActions::offerTeleport filters the recipients separately, so
+    /// an ineligible resident does not cancel invitations to eligible ones.
+    pub fn rlva_filter_teleport_offer(&self, recipients: &mut Vec<Uuid>) {
+        if self.rlva.has("showloc") {
+            recipients.retain(|id| self.rlva_can_offer_teleport(*id));
+        }
+    }
+
+    fn rlva_refresh_location_history(&mut self) {
+        let hidden = self.rlva.has("showloc");
+        if hidden == self.rlva_location_hidden {
+            return;
+        }
+        self.rlva_location_hidden = hidden;
+        if hidden {
+            if let Some(current) = self.tp_history.replace_current_region(aurora_i18n::tr!("rlva-hidden-region")) {
+                let global = glam::DVec3::new(
+                    (current.handle >> 32) as f64 + f64::from(current.position.x),
+                    f64::from(current.handle as u32) + f64::from(current.position.y),
+                    f64::from(current.position.z),
+                );
+                if let Some(last) = self.tp_storage.items.last()
+                    && last.title.ends_with(&current.region)
+                    && last.global.distance(global) < 5.0
+                {
+                    self.tp_storage.remove(self.tp_storage.items.len() - 1);
+                }
+            }
+        } else {
+            let _ = self.tp_history.replace_current_region(&self.region_name());
+            if let Some(global) = self.agent_global() {
+                self.tp_record = Some((global, std::time::Instant::now()));
+                self.record_arrival();
+            }
+        }
     }
 
     /// RlvUIEnabler permits land/estate administration under showloc only
@@ -215,13 +291,14 @@ impl World {
                 if id == self.agent_id || (!clear_nearby && self.rlva_can_name(id)) {
                     continue;
                 }
+                self.social.avatar_names.want(&id);
                 let replacement = if clear_nearby {
                     String::new()
                 } else {
                     anonymous(id).display_name.clone()
                 };
                 if let Some(name) = self.social.names.get(&id) {
-                    filter.add(name, &replacement);
+                    filter.add_identity(name, &replacement);
                 }
                 if let Some(name) = self
                     .objects
@@ -229,12 +306,12 @@ impl World {
                     .and_then(|i| self.objects.get(i))
                     .and_then(|o| o.display_name())
                 {
-                    filter.add(&name, &replacement);
+                    filter.add_identity(&name, &replacement);
                 }
                 if let Some(name) = self.social.avatar_names.raw(&id) {
-                    filter.add(&name.display_name, &replacement);
-                    filter.add(&name.user_name(), &replacement);
-                    filter.add(&name.username, &replacement);
+                    filter.add_identity(&name.display_name, &replacement);
+                    filter.add_identity(&name.user_name(), &replacement);
+                    filter.add_identity(&name.username, &replacement);
                 }
             }
         }
@@ -247,7 +324,7 @@ impl World {
         }
         filter
             .replacements
-            .sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+            .sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
         filter.replacements.dedup();
         filter
     }
@@ -264,7 +341,101 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::rlva::{Command, Rule};
+
+    fn restrict(world: &mut World, commands: &str) {
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Privacy fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: glam::Vec3::ZERO,
+            message: format!("@{commands}"),
+        }));
+    }
+
+    #[test]
+    fn rlva_privacy_matcher_keeps_longest_unicode_matches_and_reuses_unchanged_patterns() {
+        let mut filter = TextFilter::default();
+        filter.add("Secret Region", "hidden");
+        filter.add("Secret Region Annex", "annex");
+        filter.add_identity("Élodie Meadows", "anonymous");
+        assert_eq!(
+            filter.apply("SECRET REGION ANNEX / Secret Region / ÉLODIE MEADOWS"),
+            "annex / hidden / anonymous"
+        );
+        assert_eq!(filter.apply("Élodie%20Meadows"), "anonymous");
+        assert_eq!(filter.apply("%C3%89lodie%20Meadows"), "anonymous");
+        assert!(matches!(filter.apply("Secret Regional and Élodie Meadowson"), Cow::Borrowed(_)));
+        let mut same = TextFilter::default();
+        same.replacements.clone_from(&filter.replacements);
+        same.reuse_matcher(&filter);
+        assert!(std::sync::Arc::ptr_eq(filter.matcher.get().unwrap(), same.matcher.get().unwrap()));
+        same.add("Another Place", "elsewhere");
+        assert_eq!(same.apply("Another Place"), "elsewhere");
+        assert!(!std::sync::Arc::ptr_eq(filter.matcher.get().unwrap(), same.matcher.get().unwrap()));
+    }
+
+    #[test]
+    fn rlva_location_history_keeps_destinations_and_teleport_offers_require_reference_exceptions() {
+        use crate::world::tphistory::{HistoryItem, HistoryStorage, TeleportHistory, TpEntry};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let handle = world.main_region.unwrap();
+        let name = world.region_name();
+        let global = world.agent_global().unwrap();
+        world.tp_history = TeleportHistory::default();
+        world.tp_history.arrived(TpEntry {
+            region: "Older destination".into(),
+            handle,
+            position: glam::Vec3::ONE,
+        });
+        world.tp_history.arrived(TpEntry {
+            region: name.clone(),
+            handle,
+            position: world.agent.position,
+        });
+        let old = HistoryItem {
+            title: "Older destination".into(),
+            global: global + glam::DVec3::X * 100.0,
+            date: 1.0,
+            slurl: String::new(),
+        };
+        world.tp_storage = HistoryStorage::in_memory(vec![
+            old.clone(),
+            HistoryItem {
+                title: name,
+                global,
+                date: 2.0,
+                slurl: String::new(),
+            },
+        ]);
+        world.rlva.configure(true);
+        restrict(&mut world, "showloc=n");
+        assert_eq!(world.tp_storage.items, vec![old]);
+        assert_eq!(world.tp_history.previous().unwrap().position, glam::Vec3::ONE);
+        let friend = Uuid::from_u128(99);
+        assert!(!world.rlva_can_offer_teleport(friend));
+        world.social.friends.push(crate::world::social::Friend {
+            id: friend,
+            online: true,
+            rights_given: 2,
+            rights_has: 0,
+        });
+        assert!(world.rlva_can_offer_teleport(friend));
+        world.social.friends.last_mut().unwrap().online = false;
+        assert!(!world.rlva_can_offer_teleport(friend));
+        restrict(&mut world, &format!("tplure:{friend}=n"));
+        assert!(world.rlva_can_offer_teleport(friend), "offers use permissive tplure exceptions");
+        let mut recipients = vec![friend, Uuid::from_u128(100)];
+        world.rlva_filter_teleport_offer(&mut recipients);
+        assert_eq!(recipients, vec![friend]);
+        restrict(&mut world, "showloc=y");
+        assert_eq!(world.tp_storage.items.len(), 2);
+        assert_eq!(world.tp_storage.items.last().unwrap().global, global);
+    }
 
     #[test]
     fn rlva_display_names_never_replace_canonical_cache_records_or_identity_lookups() {
@@ -303,16 +474,7 @@ mod tests {
         world.parcel_name = "Secret Parcel".into();
         let position = world.agent.position;
         world.rlva.configure(true);
-        // Privacy commands stay unadvertised while their remaining UI entry
-        // points are audited; exercise the display policy independently.
-        for text in ["shownames=n", "showloc=n"] {
-            world
-                .rlva
-                .rules
-                .entry(Uuid::from_u128(1))
-                .or_default()
-                .insert(Rule::from(&Command::parse(text).unwrap()));
-        }
+        restrict(&mut world, "shownames=n,showloc=n");
         world.refresh_rlva_privacy();
         let text = "ÉLODIE MEADOWS visits Secret Region / Secret Parcel. Élodie Meadowson stays.";
         let filtered = world.rlva_filter_text(text);

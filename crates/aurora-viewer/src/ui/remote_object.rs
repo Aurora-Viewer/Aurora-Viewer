@@ -25,11 +25,11 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
     let screen = ctx.content_rect();
     let mut open = true;
     let mut close = false;
-    let place = place(&o);
+    let place = place(&o).filter(|place| !world.rlva_private_region(&place.location.region));
     let title = if o.name.is_empty() { o.id.to_string() } else { o.name.clone() };
     Floater::new(
         "remote_object",
-        title,
+        world.rlva_filter_text(&title).into_owned(),
         egui::pos2(screen.center().x - 160.0, screen.center().y - 90.0),
         Vec2::new(320.0, 150.0),
     )

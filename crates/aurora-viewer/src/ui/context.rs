@@ -639,6 +639,34 @@ fn avatar_menu_reporting(
     let here = avatar_position(world, &id).is_some();
     let online = friend.as_ref().is_none_or(|f| f.online);
     let name = world.social.name_of(&id);
+    if !world.rlva_can_name(id) {
+        // RLVa's restricted nearby/name menu exposes no profile, identity
+        // clipboard or conversation-history routes (RlvActions::canShowName).
+        if menu::item_if(
+            ui,
+            p,
+            "send-filled",
+            aurora_i18n::tr!("common-offer-teleport"),
+            online && world.rlva_can_offer_teleport(id),
+        ) {
+            act(CtxAction::OfferTeleport(id));
+        }
+        if menu::item_if(ui, p, "plane-arrival-filled", aurora_i18n::tr!("common-request-teleport"), online) {
+            act(CtxAction::RequestTeleport(id));
+        }
+        if menu::item_if(ui, p, "zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), here) {
+            act(CtxAction::ZoomAvatar(id));
+        }
+        let text = if blocked {
+            aurora_i18n::tr!("common-unblock")
+        } else {
+            aurora_i18n::tr!("common-block")
+        };
+        if menu::item(ui, p, "ban", text) {
+            act(CtxAction::ToggleBlock(id));
+        }
+        return;
+    }
     let profile = |ui: &mut egui::Ui| {
         if menu::item(ui, p, "user-filled", aurora_i18n::tr!("common-view-profile")) {
             act(CtxAction::Profile(id));
@@ -650,7 +678,13 @@ fn avatar_menu_reporting(
         }
     };
     let offer_tp = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), online) {
+        if menu::item_if(
+            ui,
+            p,
+            "send-filled",
+            aurora_i18n::tr!("common-offer-teleport"),
+            online && world.rlva_can_offer_teleport(id),
+        ) {
             act(CtxAction::OfferTeleport(id));
         }
     };
@@ -1122,6 +1156,73 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rlva_hidden_identity_menu_keeps_zoom_and_block_without_profile_or_clipboard_routes() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let id = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .map(|(_, o)| o.full_id)
+            .unwrap();
+        world.rlva.configure(true);
+        world.apply(aurora_net::NetEvent::Chat(aurora_net::ChatMessage {
+            from_name: "Menu fixture".into(),
+            source_id: Uuid::from_u128(1),
+            owner_id: world.agent_id,
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: Vec3::ZERO,
+            message: "@shownames=n".into(),
+        }));
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let ctx = egui::Context::default();
+        theme.apply(&ctx, 1.0);
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 800.0))),
+                ..Default::default()
+            },
+            |ui| {
+                avatar_list_menu(ui, &p, &world, id, AvatarList::Name);
+            },
+        );
+        fn collect(shape: &egui::Shape, texts: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => texts.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => {
+                    for s in shapes {
+                        collect(s, texts);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        for shape in output.shapes {
+            collect(&shape.shape, &mut texts);
+        }
+        assert!(texts.iter().any(|t| t.contains(aurora_i18n::tr!("common-zoom-2"))));
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains(aurora_i18n::tr!("common-block")) || t.contains(aurora_i18n::tr!("common-unblock")))
+        );
+        for label in [
+            aurora_i18n::tr!("common-view-profile"),
+            aurora_i18n::tr!("common-copy-name"),
+            aurora_i18n::tr!("common-copy-url"),
+            aurora_i18n::tr!("common-copy-mention-uri"),
+            aurora_i18n::tr!("common-view-conversation-history"),
+        ] {
+            assert!(!texts.iter().any(|t| t.contains(label)), "unexpected identity route: {label}");
+        }
+    }
 
     #[test]
     fn modifier_click_opens_the_editing_of_an_attachment_the_tools_can_select() {

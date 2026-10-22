@@ -5,6 +5,182 @@ const B: Uuid = Uuid::from_u128(2);
 const TARGET: Uuid = Uuid::from_u128(3);
 
 #[test]
+fn rlva_inventory_wire_order_attachment_groups_and_own_locks_match_the_reference() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::{
+        AttachRequest,
+        inventory::{InvFolder, InvItem},
+    };
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    let cof = Uuid::from_u128(500);
+    let mut items = Vec::new();
+    for kind in [0, 4, 9] {
+        let id = Uuid::from_u128(600 + kind);
+        world.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                parent: cof,
+                name: format!("Layer {kind}"),
+                asset_type: if kind == 0 { 13 } else { 5 },
+                flags: kind as u32,
+                ..Default::default()
+            },
+        );
+        items.push(id);
+    }
+    world.inventory.folders.insert(
+        cof,
+        Folder {
+            info: InvFolder {
+                id: cof,
+                parent: world.inventory.root,
+                type_default: crate::world::outfit::FT_CURRENT_OUTFIT,
+                ..Default::default()
+            },
+            children: Vec::new(),
+            items,
+            state: FetchState::Fetched,
+            library: false,
+        },
+    );
+    let query = |text| Command::parse(text).unwrap();
+    assert_eq!(
+        world.rlva_inventory_query(&query("getoutfit=123"), A).as_deref(),
+        Some("10010000000010000")
+    );
+    assert_eq!(world.rlva_inventory_query(&query("getoutfit:shirt=123"), A).as_deref(), Some("1"));
+    assert_eq!(
+        world.rlva_inventory_query(&query("getoutfitnames:shirt=123"), A).as_deref(),
+        Some("")
+    );
+    for (item, point) in [(701, 1), (702, 2), (705, 5), (707, 7), (731, 31)] {
+        let id = Uuid::from_u128(item);
+        let update = crate::demo::outfit_attachment(&AttachRequest {
+            item_id: id,
+            owner_id: world.agent_id,
+            point,
+            add: true,
+            flags: 0,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            name: String::new(),
+            desc: String::new(),
+        });
+        world.objects.upsert(world.main_region.unwrap(), update);
+    }
+    for (group, expected) in [
+        ("head", "skull"),
+        ("torso", "chest"),
+        ("arms", "left hand"),
+        ("legs", "left foot"),
+        ("hud", "center 2"),
+    ] {
+        let text = format!("getattachnames:{group}=123");
+        let c = Command::parse(&text).unwrap();
+        assert_eq!(world.rlva_inventory_query(&c, A).as_deref(), Some(expected));
+    }
+    let hud_points = world.rlva_inventory_query(&query("getaddattachnames:hud=123"), A).unwrap();
+    assert!(hud_points.split(',').any(|p| p == "center 2"));
+    assert!(
+        !hud_points.split(',').any(|p| p == "left ring finger"),
+        "Bento group 8 is not a HUD"
+    );
+    let head = Uuid::from_u128(702);
+    command(&mut world.rlva, head, "@detach=n");
+    assert_eq!(
+        world.rlva_inventory_query(&query("getremattachnames:head=123"), head).as_deref(),
+        Some(""),
+        "queries do not waive their issuer's lock"
+    );
+    command(&mut world.rlva, head, "@remattach:head=force");
+    world.rlva_pending();
+    assert!(matches!(world.rlva.appearance.pop(), Some((_, crate::world::appearance::Action::RemoveItems(ids))) if ids.is_empty()));
+    command(&mut world.rlva, head, "@detach=y,remattach:head=force");
+    world.rlva_pending();
+    assert!(matches!(world.rlva.appearance.pop(), Some((_, crate::world::appearance::Action::RemoveItems(ids))) if ids == vec![head]));
+    command(&mut world.rlva, A, "@detach:skull=n,remoutfit:shirt=n");
+    assert!(
+        !world
+            .rlva_inventory_query(&query("getaddattachnames:head=123"), A)
+            .unwrap()
+            .split(',')
+            .any(|p| p == "skull")
+    );
+    assert_eq!(
+        world.rlva_inventory_query(&query("getremoutfitnames=123"), A).as_deref(),
+        Some("gloves")
+    );
+    command(&mut world.rlva, A, "@showselfhead=n");
+    let i = world.objects.index_of_uuid(&head).unwrap();
+    assert!(!world.rlva_object_visible(i), "head attachments use group 2 from avatar_lad.xml");
+    let chest = world.objects.index_of_uuid(&Uuid::from_u128(701)).unwrap();
+    assert!(world.rlva_object_visible(chest));
+}
+
+#[test]
+fn rlva_privacy_strict_exceptions_landmarks_profile_locations_and_nearby_release_together() {
+    use aurora_net::{
+        NetCommand,
+        profile::{ClassifiedInfo, PickInfo},
+    };
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva.configure(true);
+    command(&mut world.rlva, A, "@shownames_sec=n,showloc=n,shownearby=n");
+    command(&mut world.rlva, A, &format!("@shownames_sec:{TARGET}=n"));
+    assert!(world.rlva_can_name(TARGET));
+    command(&mut world.rlva, B, "@shownames_sec=n");
+    assert!(!world.rlva_can_name(TARGET));
+    command(&mut world.rlva, B, &format!("@shownames_sec:{TARGET}=n"));
+    assert!(world.rlva_can_name(TARGET) && world.rlva_can_name(world.agent_id));
+    assert!(!world.rlva_can_name(Uuid::from_u128(99)));
+    world.refresh_rlva_privacy();
+    assert!(crate::ui::people::nearby(&world).is_empty());
+    let landmark = NetCommand::CreateInventoryItem {
+        parent: world.inventory.root,
+        kind: aurora_net::inventory::operations::NewItem::Landmark,
+        name: "private".into(),
+    };
+    assert!(!world.rlva_allows_command(&landmark, Uuid::nil()));
+    let mut dialog = crate::ui::landmark_create::CreateLandmarkUi::default();
+    assert!(dialog.open(&world, None).is_none() && !dialog.open);
+    let mut pick = PickInfo {
+        id: TARGET,
+        creator: world.agent_id,
+        pos_global: world.agent_global().unwrap(),
+        ..Default::default()
+    };
+    assert!(!world.rlva_allows_command(&NetCommand::PickUpdate(Box::new(pick.clone())), Uuid::nil()));
+    world.profiles.picks.insert(pick.id, pick.clone());
+    assert!(world.rlva_allows_command(&NetCommand::PickUpdate(Box::new(pick.clone())), Uuid::nil()));
+    pick.pos_global.x += 1.0;
+    assert!(!world.rlva_allows_command(&NetCommand::PickUpdate(Box::new(pick)), Uuid::nil()));
+    let mut classified = ClassifiedInfo {
+        id: TARGET,
+        creator: world.agent_id,
+        pos_global: world.agent_global().unwrap(),
+        ..Default::default()
+    };
+    assert!(!world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified.clone())), Uuid::nil()));
+    world.profiles.classifieds.insert(classified.id, classified.clone());
+    assert!(world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified.clone())), Uuid::nil()));
+    classified.pos_global.x += 1.0;
+    assert!(!world.rlva_allows_command(&NetCommand::ClassifiedUpdate(Box::new(classified)), Uuid::nil()));
+    world.rlva.configure(false);
+    world.refresh_rlva_privacy();
+    assert!(world.rlva_can_name(Uuid::from_u128(99)) && !crate::ui::people::nearby(&world).is_empty());
+    assert!(world.rlva_allows_command(&landmark, Uuid::nil()));
+}
+
+#[test]
 fn rlva_debug_resolution_writes_are_allowlisted_locked_ordered_and_released() {
     let mut r = enabled();
     command(
@@ -166,8 +342,13 @@ fn rlva_temporary_attachment_locks_and_detachme_do_not_require_inventory_or_cof(
         local_id: key.local_id,
     };
     assert!(!world.rlva_allows_command(&detach, Uuid::nil()));
-    assert!(world.rlva_allows_command(&detach, A));
+    assert!(
+        !world.rlva_allows_command(&detach, A),
+        "force commands obey their own attachment locks"
+    );
     command(&mut world.rlva, A, "@detachme=force");
+    assert!(world.rlva_pending().is_empty(), "detachme skips nostrip, not attachment locks");
+    command(&mut world.rlva, A, "@detach=y,detachme=force");
     assert!(
         world
             .rlva_pending()
@@ -207,9 +388,9 @@ fn rlva_temporary_attachment_locks_and_detachme_do_not_require_inventory_or_cof(
     command(&mut world.rlva, B, "@clear");
     assert!(
         world.rlva_allows_command(&move_to_other_point, A),
-        "a forced move bypasses only its own source"
+        "releasing all point locks permits moving the attachment"
     );
-    assert!(!world.rlva_allows_command(&move_to_other_point, Uuid::nil()));
+    assert!(world.rlva_allows_command(&move_to_other_point, Uuid::nil()));
     world.inventory.items.remove(&A);
     world.rlva_watchdog_tick(std::time::Instant::now());
     world.objects.remove(&key);
@@ -447,6 +628,124 @@ fn rlva_camera_owner_and_clamps_are_temporary_and_reject_nonfinite_values() {
 }
 
 #[test]
+fn rlva_camera_replies_and_forces_match_modifier_lifetimes_and_preset_locks() {
+    let mut r = enabled();
+    let query = |name: &str| Command::parse(&format!("{name}=123")).unwrap();
+    for name in [
+        "getcam_fovmin",
+        "getcam_fovmax",
+        "getcam_avdistmin",
+        "getcam_avdistmax",
+        "getcam_textures",
+    ] {
+        assert_eq!(r.camera_reply(&query(name), 5.0, 0.8).as_deref(), Some(""));
+    }
+    assert_eq!(r.camera_reply(&query("getcam_avdist"), 1.23456, 0.8).as_deref(), Some("1.235"));
+    assert_eq!(r.camera_reply(&query("getcam_fov"), 5.0, 0.8).as_deref(), Some("0.800"));
+    command(&mut r, B, "@setcam_avdistmin:20=n,setcam_fovmax:2=n");
+    command(&mut r, A, "@setcam=n");
+    assert_eq!(
+        r.camera_reply(&query("getcam_avdistmin"), 5.0, 0.8).as_deref(),
+        Some(""),
+        "non-owner modifiers stay inactive"
+    );
+    let force = |name, option| Command::parse(&format!("{name}:{option}=force")).unwrap();
+    r.camera_force(B, &force("setcam_fov", "1.2"));
+    assert!(r.camera_values.is_empty());
+    r.camera_force(A, &force("setcam_eyeoffsetscale", "0"));
+    assert_eq!(r.camera_settings(&crate::camera::CameraSettings::default()).offset_scale, 0.0);
+    command(&mut r, A, "@setcam_eyeoffset:-4/0/1=n,setcam_fovmin:0.5=n");
+    r.camera_force(A, &force("setcam_eyeoffsetscale", "3"));
+    assert_eq!(
+        r.camera_values["setcam_eyeoffsetscale"], "0",
+        "an offset restriction locks forced preset writes too"
+    );
+    r.camera_force(A, &force("setcam_fov", "1.2"));
+    assert_eq!(r.camera_settings(&crate::camera::CameraSettings::default()).fov, 1.2);
+    r.camera_force(A, &force("setcam_fov", ""));
+    assert_eq!(
+        r.camera_settings(&crate::camera::CameraSettings::default()).fov,
+        crate::camera::DEFAULT_FOV
+    );
+    command(&mut r, A, "@clear");
+    assert_eq!(r.camera_reply(&query("getcam_avdistmin"), 5.0, 0.8).as_deref(), Some("20.000"));
+    command(&mut r, B, "@clear");
+    assert!(
+        !r.camera_values.contains_key("setcam_fov"),
+        "last limit release restores the user's FOV"
+    );
+    command(&mut r, A, "@camzoommin=n");
+    assert_eq!(r.camera_reply(&query("getcam_fovmin"), 5.0, 0.8).as_deref(), Some("1.047"));
+    r.configure(false);
+    assert_eq!(
+        r.camera_settings(&crate::camera::CameraSettings::default()),
+        crate::camera::CameraSettings::default()
+    );
+}
+
+#[test]
+fn rlva_camera_focus_defaults_fit_objects_and_positions_without_changing_identity() {
+    use camera::{FocusRequest, FocusTarget};
+    use glam::Vec3;
+    let object = FocusRequest::parse(&TARGET.to_string()).unwrap();
+    assert_eq!(object.target, FocusTarget::Object(TARGET));
+    let at = Vec3::new(10.0, 20.0, 30.0);
+    let camera = object.camera(at, Vec3::new(2.0, 3.0, 6.0), at + Vec3::X * 100.0).unwrap();
+    assert_eq!(
+        camera,
+        at + Vec3::X * 7.0,
+        "default object distance is its scale length, not current distance"
+    );
+    let position = FocusRequest::parse("10/20/30").unwrap();
+    assert_eq!(position.target, FocusTarget::Position(at));
+    assert!(position.camera(at, Vec3::ZERO, at).unwrap().distance(at) < 0.002);
+    let explicit = FocusRequest::parse(&format!("{TARGET};4;0/0/-2")).unwrap();
+    assert_eq!(explicit.camera(at, Vec3::ZERO, at).unwrap(), at - Vec3::Z * 4.0);
+    for text in ["", "10/20/NaN", "10/20/30;NaN", "10/20/30;;1/0", "10/20/30;4;1/0/0;extra"] {
+        assert!(FocusRequest::parse(text).is_none(), "{text}");
+    }
+}
+
+#[test]
+fn rlva_camera_preference_mutations_preserve_locked_fields_and_allow_unrelated_options() {
+    let mut r = enabled();
+    let before = crate::camera::CameraSettings::default();
+    let mut requested = before.clone();
+    requested.camera_offset = [-8.0, 2.0, 3.0];
+    requested.fov = 0.8;
+    requested.zoom_time = 2.0;
+    command(&mut r, A, "@setcam_eyeoffset:0/0/2=n");
+    r.preserve_camera_settings(&mut requested, &before);
+    assert_eq!(requested.camera_offset, before.camera_offset);
+    assert_eq!(requested.fov, 0.8, "preset locks do not lock the FOV");
+    assert_eq!(requested.zoom_time, 2.0);
+    command(&mut r, A, "@setcam=n");
+    r.preserve_camera_settings(&mut requested, &before);
+    assert_eq!(requested.fov, before.fov);
+    r.configure(false);
+    requested.camera_offset = [-8.0, 2.0, 3.0];
+    r.preserve_camera_settings(&mut requested, &before);
+    assert_eq!(requested.camera_offset, [-8.0, 2.0, 3.0]);
+}
+
+#[test]
+fn rlva_command_discovery_includes_strict_and_supported_environment_variants() {
+    assert_eq!(command_list("shownames;add"), "shownames;shownames_sec");
+    assert_eq!(command_list("shownames;add;"), "shownamesshownames_sec");
+    for set in [false, true] {
+        let commands = environment::command_names(set);
+        assert!(commands.iter().all(|name| environment::supports(name, set)));
+        let listed = command_list(if set { "setenv_;force" } else { "getenv_;reply" });
+        for name in commands {
+            assert!(listed.split(';').any(|n| n == name), "{name}");
+        }
+    }
+    let mut r = enabled();
+    command(&mut r, A, "@setcam_fov_sec:1=force,getcam_fov_sec=123,getenv_daytime_sec=123");
+    assert!(r.pending.is_empty() && r.out.is_empty(), "only restrictions accept strict suffixes");
+}
+
+#[test]
 fn rlva_shared_wear_and_nostrip_apply_to_scripted_undressing() {
     use crate::world::inventory::{FetchState, Folder};
     use aurora_net::inventory::{InvFolder, InvItem};
@@ -485,7 +784,7 @@ fn rlva_shared_wear_and_nostrip_apply_to_scripted_undressing() {
     command(&mut w.rlva, A, "@addoutfit:shirt=n,remoutfit:shirt=n");
     assert!(!w.rlva_can_add(TARGET, 0, Uuid::nil()));
     assert!(!w.rlva_can_remove(TARGET, Uuid::nil()));
-    assert!(w.rlva_can_add(TARGET, 0, A));
+    assert!(!w.rlva_can_add(TARGET, 0, A), "own wearable locks still apply to forces");
     command(&mut w.rlva, A, "@clear");
     command(&mut w.rlva, B, "@sharedwear=n");
     assert!(!w.rlva_can_add(TARGET, 0, A));
@@ -797,7 +1096,10 @@ fn rlva_folder_locks_respect_scope_nearest_exception_other_issuers_and_folded_fo
         !w.rlva_can_remove(Uuid::from_u128(20), Uuid::nil()),
         "another issuer's lock survives the exception"
     );
-    assert!(w.rlva_can_remove(Uuid::from_u128(20), B));
+    assert!(
+        !w.rlva_can_remove(Uuid::from_u128(20), B),
+        "an issuer cannot bypass its own folder lock"
+    );
     command(&mut w.rlva, A, "@clear");
     command(&mut w.rlva, B, "@clear");
     let object = Uuid::from_u128(23);

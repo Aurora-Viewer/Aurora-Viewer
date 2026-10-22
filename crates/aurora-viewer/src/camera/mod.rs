@@ -666,6 +666,20 @@ impl Camera {
         self.set_camera_pos_and_focus(camera, focus, None, s);
     }
 
+    /// RlvForceHandler<RLV_BHVR_SETCAM_FOCUS>: retain the exact object UUID
+    /// for tracking; avatar requests focus on the posed head supplied by Scene.
+    pub fn set_script_focus(
+        &mut self,
+        camera: Vec3,
+        focus: Vec3,
+        object: Option<(Uuid, FocusObject)>,
+        agent: &mut AgentState,
+        s: &CameraSettings,
+    ) {
+        self.set_focus_on_avatar(false, true, true, agent, s);
+        self.set_camera_pos_and_focus(camera, focus, object, s);
+    }
+
     /// Context menu "Zoom" (handle_zoom_to_object).
     pub fn zoom_to(&mut self, point: Vec3, agent: &mut AgentState, s: &CameraSettings) {
         self.set_focus_on_avatar(false, true, true, agent, s);
@@ -1237,8 +1251,14 @@ impl Camera {
                 self.position = origin + direction * distance.clamp(min, max);
             }
         }
-        let min = world.rlva.camera_limit("setcam_fovmin", 0.1, true);
-        let max = world.rlva.camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false).max(min);
+        let min = world
+            .rlva
+            .camera_limit("setcam_fovmin", 0.1, true)
+            .clamp(0.1, std::f32::consts::PI - 0.1);
+        let max = world
+            .rlva
+            .camera_limit("setcam_fovmax", std::f32::consts::PI - 0.1, false)
+            .clamp(min, std::f32::consts::PI - 0.1);
         self.fov_y = self.fov_y.clamp(min, max);
     }
 

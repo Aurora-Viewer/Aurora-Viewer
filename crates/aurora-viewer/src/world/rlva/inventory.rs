@@ -26,6 +26,23 @@ pub const LAYERS: &[&str] = &[
     "physics",
     "universal",
 ];
+// RlvHandler::onGetOutfit uses the historical protocol order, independent
+// of LLWearableType's numeric order used by flags and the name queries.
+const OUTFIT_ORDER: &[usize] = &[9, 8, 5, 4, 6, 12, 7, 11, 10, 1, 3, 2, 0, 13, 14, 15, 16];
+const GROUPS: &[&str] = &["arms", "head", "legs", "torso", "hud"];
+
+/// rlvAttachGroupFromIndex; body groups in avatar_lad.xml are zero-based.
+/// Deliberate correction: HUDs use the native HUD flag below. The reference's
+/// pre-Bento group 8 is now ordinary Bento points; actual HUDs use group 9.
+fn group_name(group: u8) -> Option<&'static str> {
+    Some(match group {
+        0 | 1 | 3 | 4 => "arms",
+        2 => "head",
+        5 | 7 => "legs",
+        6 => "torso",
+        _ => return None,
+    })
+}
 pub const POINTS: &[&str] = &[
     "",
     "chest",
@@ -196,6 +213,10 @@ fn resolve(inv: &Inventory, name: &str) -> Option<Uuid> {
 }
 
 impl World {
+    fn rlva_attachment_group(&self, point: u8) -> Option<&'static str> {
+        let point = self.avatar_lib.attach_points.get(&point)?;
+        if point.hud { Some("hud") } else { group_name(point.group) }
+    }
     /// Shared originals can live elsewhere; locks and getpath follow every
     /// shared link, then fold attachment-point folders into their parent.
     fn rlva_item_folders(&self, item: Uuid) -> Vec<Uuid> {
@@ -238,7 +259,7 @@ impl World {
         self.rlva_folder_signature(folder, add, actor).is_empty()
     }
 
-    fn rlva_folder_signature(&self, folder: Uuid, add: bool, actor: Uuid) -> std::collections::BTreeSet<(Uuid, String, String)> {
+    fn rlva_folder_signature(&self, folder: Uuid, add: bool, _actor: Uuid) -> std::collections::BTreeSet<(Uuid, String, String)> {
         let folder = folded_parent(&self.inventory, folder);
         let mut ancestors = Vec::new();
         let mut id = folder;
@@ -252,9 +273,6 @@ impl World {
         // issuer cannot release another issuer's subtree lock.
         let mut nearest = std::collections::BTreeMap::<Uuid, (usize, bool, Vec<(String, String)>)>::new();
         for (source, rules) in &self.rlva.rules {
-            if *source == actor {
-                continue;
-            }
             for rule in rules {
                 let name = rule.behaviour.as_str();
                 let global = name
@@ -511,6 +529,7 @@ impl World {
             return false;
         }
         let worn = self.rlva_worn_attachment_points();
+        let group = GROUPS.contains(&c.option.as_str()) && resolve(&self.inventory, &c.option).is_none();
         let action = if name == "detachme" {
             self.rlva_attachment_item(source).map(|item| {
                 self.rlva.self_detach = Some((source, item));
@@ -518,12 +537,17 @@ impl World {
             })
         } else if !context
             && matches!(name, "detach" | "remattach")
-            && (c.option.is_empty() || point(&c.option).is_some() || Uuid::parse_str(&c.option).is_ok())
+            && (c.option.is_empty() || point(&c.option).is_some() || Uuid::parse_str(&c.option).is_ok() || group)
         {
             let target = Uuid::parse_str(&c.option).ok().and_then(|id| self.rlva_attachment_item(id));
             let ids = worn
                 .iter()
-                .filter(|(id, at)| c.option.is_empty() || point(&c.option) == Some(**at) || target == Some(**id))
+                .filter(|(id, at)| {
+                    c.option.is_empty()
+                        || point(&c.option) == Some(**at)
+                        || target == Some(**id)
+                        || (group && self.rlva_attachment_group(**at) == Some(c.option.as_str()))
+                })
                 .map(|(id, _)| *id)
                 .filter(|id| self.rlva_can_remove(*id, source))
                 .collect();
@@ -597,7 +621,7 @@ impl World {
             ids.sort();
             ids.dedup();
             if matches!(name, "detach" | "detachall" | "remattach" | "remoutfit") {
-                ids.retain(|id| self.rlva_can_remove(*id, source));
+                ids.retain(|id| self.inventory.items.get(id).is_some_and(|it| it.asset_type != 13) && self.rlva_can_remove(*id, source));
                 Some(appearance::Action::RemoveItems(ids))
             } else {
                 ids.sort_by(|a, b| {
@@ -721,12 +745,7 @@ impl World {
         };
         if it.asset_type == 6 {
             let at = if at == 0 { (it.flags & 0xff) as u8 } else { at };
-            if self.rlva_point_locked("addattach", at, actor)
-                || self
-                    .rlva
-                    .rules_for("detach", actor)
-                    .any(|(_, v)| !v.is_empty() && point(v) == Some(at))
-            {
+            if !self.rlva_point_addable(at) {
                 return false;
             }
         }
@@ -763,14 +782,21 @@ impl World {
         self.rlva.watchdog.sources.get(&object).copied()
     }
 
-    pub(super) fn rlva_point_locked(&self, name: &str, p: u8, actor: Uuid) -> bool {
+    pub(super) fn rlva_point_locked(&self, name: &str, p: u8, _actor: Uuid) -> bool {
         self.rlva
-            .rules_for(name, actor)
+            .rules_for(name, Uuid::nil())
             .any(|(_, option)| option.is_empty() || point(option) == Some(p))
     }
-    fn rlva_layer_locked(&self, name: &str, kind: u8, actor: Uuid) -> bool {
+    pub(super) fn rlva_point_addable(&self, p: u8) -> bool {
+        !self.rlva_point_locked("addattach", p, Uuid::nil())
+            && !self
+                .rlva
+                .rules_for("detach", Uuid::nil())
+                .any(|(_, option)| !option.is_empty() && point(option) == Some(p))
+    }
+    fn rlva_layer_locked(&self, name: &str, kind: u8, _actor: Uuid) -> bool {
         self.rlva
-            .rules_for(name, actor)
+            .rules_for(name, Uuid::nil())
             .any(|(_, option)| option.is_empty() || layer(option) == Some(kind))
     }
 
@@ -847,7 +873,10 @@ impl World {
                 .enumerate()
                 .filter(|(i, _)| match mode {
                     "getoutfitnames" => worn(*i),
-                    "getaddoutfitnames" => !self.rlva_layer_locked("addoutfit", *i as u8, Uuid::nil()),
+                    "getaddoutfitnames" => {
+                        !self.rlva_layer_locked("addoutfit", *i as u8, Uuid::nil())
+                            && !(*i < 4 && worn(*i) && self.rlva_layer_locked("remoutfit", *i as u8, Uuid::nil()))
+                    }
                     _ => cof
                         .iter()
                         .filter_map(|l| self.inventory.items.get(&l.target))
@@ -877,12 +906,18 @@ impl World {
             }
             "getoutfit" => {
                 return Some(if c.option.is_empty() {
-                    (0..LAYERS.len()).map(|i| if worn(i) { '1' } else { '0' }).collect()
+                    OUTFIT_ORDER.iter().map(|i| if worn(*i) { '1' } else { '0' }).collect()
                 } else {
                     layer(&c.option).map_or(String::new(), |i| if worn(i as usize) { "1" } else { "0" }.to_owned())
                 });
             }
-            "getoutfitnames" | "getaddoutfitnames" | "getremoutfitnames" => return Some(list_layers(&c.behaviour)),
+            "getoutfitnames" | "getaddoutfitnames" | "getremoutfitnames" => {
+                return Some(if c.option.is_empty() {
+                    list_layers(&c.behaviour)
+                } else {
+                    String::new()
+                });
+            }
             "getattachnames" | "getaddattachnames" | "getremattachnames" => {
                 return Some(
                     POINTS
@@ -890,19 +925,12 @@ impl World {
                         .enumerate()
                         .skip(1)
                         .filter(|(i, _)| {
-                            let group = self.avatar_lib.attach_points.get(&(*i as u8)).map(|p| match p.group {
-                                1 | 2 | 4 | 5 => "arms",
-                                3 => "head",
-                                6 | 8 => "legs",
-                                7 => "torso",
-                                9 => "hud",
-                                _ => "",
-                            });
-                            !matches!(c.option.as_str(), "arms" | "head" | "legs" | "torso" | "hud") || group == Some(c.option.as_str())
+                            let group = self.rlva_attachment_group(*i as u8);
+                            !GROUPS.contains(&c.option.as_str()) || group == Some(c.option.as_str())
                         })
                         .filter(|(i, _)| match c.behaviour.as_str() {
                             "getattachnames" => worn_points.values().any(|p| *p == *i as u8),
-                            "getaddattachnames" => !self.rlva_point_locked("addattach", *i as u8, Uuid::nil()),
+                            "getaddattachnames" => self.rlva_point_addable(*i as u8),
                             _ => worn_points
                                 .iter()
                                 .any(|(id, at)| *at == *i as u8 && self.rlva_can_remove(*id, source)),

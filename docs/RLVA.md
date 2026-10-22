@@ -61,6 +61,12 @@ script authors; the command lists below describe this branch specifically.
   camdistmin/max, camzoommin/max, camunlock and touchfar compatibility names
   preserve independent removal; adjustheight and getheightoffset use the
   native hover-height path.
+  Inactive camera limits reply with an empty string; active numeric replies
+  use three decimals. UUID focus fits the object's scale by default, targets
+  an avatar's posed head and retains object tracking; position focus defaults
+  to zero distance. Offset restrictions also lock forced preset writes and
+  native preference/shortcut changes. Reset and default-FOV forces use the
+  reference's defaults; releasing the last FOV limit restores the user's value.
 - Vision: per-object setsphere blend, fixed/variable blur, chromatic
   aberration and pixelation; avatar/camera origins, distance/value extension
   and tweened local modifiers. At most six sphere effects run in order on
@@ -77,7 +83,31 @@ script authors; the command lists below describe this branch specifically.
   dark colour and take precedence over render exceptions.
 - Display: showinv, showminimap, showworldmap, shownametags and
   showhovertext/all/hud/world.
+- Privacy: showloc, shownames (including strict UUID exceptions) and
+  shownearby. Display names, rich chat, notifications, hover text, maps and
+  radar use privacy projections while canonical identities and transcript
+  filenames stay intact. Hidden-name avatar menus expose the reference's
+  limited actions. Application links and place details filter labels and
+  disallow copying a hidden location. New landmarks, picks and classifieds
+  cannot reveal the current location; existing entries remain editable.
+  Teleport offers retain only eligible recipients (permissive tplure
+  exceptions or online friends granted map rights). Hiding the location
+  removes its current persisted arrival and masks the navigation label;
+  releasing restores it without changing destination coordinates.
 - Queries: version/new/num, getcommand, getgroup, getsitid, getstatus/all.
+  Command discovery includes strict restriction names and supported legacy
+  environment components. `getoutfit` uses the historical protocol bit order;
+  attachment name queries and forced removals use native point groups.
+  Forced inventory operations obey every issuer's locks, including their own;
+  detachme exempts its own item from nostrip, while attachment locks still apply.
+  Deliberate correction to the reference's old numeric HUD mapping: the HUD
+  group uses each point's actual HUD flag. This includes current group-9 HUDs
+  and avoids treating the group-8 Bento body points as HUDs.
+- Groups: forced UUID/name activation and role-name prefixes, exact-match
+  precedence, native asynchronous role fetching, 60-second throttling and
+  the reference's one early change for the lock owner. Group/title writes
+  recheck setgroup; simulator-triggered group changes restore the last
+  permitted membership without flooding activation messages.
 - Environment: exclusive setenv ownership, scalar/vector/texture get/set
   extensions, legacy colour components and intensity, sun/moon angles,
   asset UUIDs and named library sky/day presets. Temporary overrides restore
@@ -106,23 +136,21 @@ than asserting a complete RLV specification version.
 
 ## Work still required before parity
 
-- Display-only privacy groundwork now covers the name cache, chat, hover
-  text, notifications/history, radar and map labels. Canonical names and
-  transcript filenames remain intact. These commands are deliberately not
-  registered yet: profile, application-link, location and clipboard paths
-  still need the final audit.
-- Location and identity filtering across every surface (showloc, shownames,
-  nearby people, notifications, profiles, maps, hover tips, stored transcripts
-  and application links).
+- Live-script validation of location and identity restrictions across the
+  implemented UI paths, including delayed name resolutions, exceptions and
+  opening an already-visible window while a restriction changes.
 - Complete environment/debug conformance, wearable/attachment/sit
   notifications and permission entry-point validation.
-- Complete linked/folded-folder conformance, attachment-point groups for
-  every command, shared inventory offers and rename-on-wear, queue timeout
+  Ground-sit transitions from an object seat, nil-UUID sit aliases, actor
+  tracking for sit/stand notifications and clothing-change notifications
+  still need their native asynchronous handlers.
+- Complete linked/folded-folder conformance, optional shared inventory offers
+  and legacy rename-on-wear settings, queue timeout
   behavior and live confirmation of attachment recovery across crossings.
 - Every media/touch interaction path and surface-distance checks; all edit,
   inventory and document entry points must be audited against live scripts.
-- Visual conformance of sphere/overlay effects, forced textures and
-  silhouettes; object focus details and every extended camera query.
+- Live visual comparison of sphere/overlay effects, forced textures,
+  silhouettes and camera focus; final audit of native camera entry points.
 - Protocol conformance fixtures for every registered command and every UI
   entry point, source disappearance/reattachment across region crossings,
   and human grid validation with real scripts and attachments.
@@ -137,9 +165,9 @@ issuers, strict exceptions, redirection, UTF-8 filtering, reply channels,
 camera ownership, garbage collection, shared paths and clothing locks.
 Run `scripts/check.ps1` for the required complete workspace checks.
 
-Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,318 workspace
+Validation on 2026-10-22, including merged PRs #805, #807, #809 and #810: `scripts/check.ps1` passes with 4,330 workspace
 tests passed, zero failures and 27 ignored; scripts, formatting and Clippy
-are clean. This includes 38 RLVa logic/integration/shader tests, covering
+are clean. This includes 50 RLVa logic/integration/shader tests, covering
 environment conversions, command notifications, permission filtering,
 teleport consent, edit/material/media guards, folder scopes/exceptions,
 inventory moves, folded point folders, ordered outfit transactions, camera
@@ -148,7 +176,13 @@ alpha masks, shader validation, display-only privacy, surface distances,
 local teleports across region edges, encoded empty/UTF-8 replies, attachment
 recovery timing, saved-asset ordering, locked/nostrip replacement, temporary
 attachments, changing attachment points, allowlisted debug writes, real target
-dimensions and pick-coordinate conversion. The additional Vulkan test
+dimensions and pick-coordinate conversion, registered privacy commands and
+strict exceptions, location history, landmark/pick/classified writes, mixed
+teleport-offer recipients, restricted native name menus, longest Unicode/URL
+matches, active/inactive camera replies, focus defaults, preset mutations,
+command discovery, historical outfit order, attachment groups and own locks,
+group/name/role selection, asynchronous loading and precise restoration.
+The additional Vulkan test
 `cargo test --workspace rlva_gpu --locked -- --ignored` checks five sphere
 modes, chained masks, reduced-scene upscaling and overlay alpha holes from
 real GPU pixels without egui. It passes, including the extended upscale
@@ -169,6 +203,16 @@ With the newer fixed avatar framing, `resolution` (FR) visibly renders
 coarse 12-pixel blocks while the UI remains sharp; `resolution-released`
 (EN) restores full detail. These are offline presentation checks, not live
 script or complete-parity acceptance.
+
+Native conformance captures on 2026-10-22: inspected `privacy` (FR),
+`privacy-except` and `privacy-released` (EN), and `nearby` (FR). Names and
+current-location labels hide, the chosen speaker remains visible through
+the strict exception, disabling restores the names/place, and Nearby is
+empty. Inspected `camera-focus` (EN), `camera-prefs` (FR), `head` (FR),
+`self` (EN) and `silhouette` (FR): camera focus targets the avatar's head,
+restricted preference fields are disabled, own head/body visibility follows
+the commands and the distant other avatar becomes a dark silhouette.
+These are offline native checks, without human grid acceptance.
 
 `AURORA_DEMO_RLVA=enabled|disabled|released` opens the native preference page
 and delivers synthetic object commands through `World::apply`. Capture after

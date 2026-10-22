@@ -133,6 +133,21 @@ impl World {
         }
         let blocked = |name| r.has_except(name, actor);
         match command {
+            NetCommand::CreateInventoryItem {
+                kind: aurora_net::inventory::operations::NewItem::Landmark,
+                ..
+            } => !r.has("showloc"),
+            NetCommand::OfferTeleport { to, .. } => to.iter().all(|id| self.rlva_can_offer_teleport(*id)),
+            NetCommand::PickUpdate(pick) if r.has("showloc") => self
+                .profiles
+                .picks
+                .get(&pick.id)
+                .is_some_and(|old| old.pos_global == pick.pos_global),
+            NetCommand::ClassifiedUpdate(classified) if r.has("showloc") => self
+                .profiles
+                .classifieds
+                .get(&classified.id)
+                .is_some_and(|old| old.pos_global == classified.pos_global),
             NetCommand::EditInventory { change, .. } => self.rlva_inventory_mutation_allowed(change, actor),
             NetCommand::CopyInventoryItems(copies) => copies
                 .iter()
@@ -152,7 +167,10 @@ impl World {
                 ..
             } => self.rlva_allows_im("sendim", *to),
             NetCommand::SendImDialog { to, dialog: 4, .. } => r.allows("share", &to.to_string()),
-            NetCommand::ActivateGroup(_) => !blocked("setgroup"),
+            NetCommand::ActivateGroup(group) => {
+                !blocked("setgroup") || (actor == super::groups::ACTOR && r.has("setgroup") && r.groups.restore_allowed(*group))
+            }
+            NetCommand::GroupTitleUpdate { .. } => !blocked("setgroup"),
             NetCommand::TeleportHome | NetCommand::TeleportLandmark(_) => {
                 !blocked("tplm") && !(self.agent.is_sitting() && blocked("unsit"))
             }
@@ -379,6 +397,10 @@ impl World {
                 }
                 continue;
             }
+            if c.behaviour == "setgroup" {
+                commands.extend(self.rlva_group_force(source, &c, std::time::Instant::now()));
+                continue;
+            }
             let command = match c.behaviour.as_str() {
                 "unsit" if c.option.is_empty() => Some(NetCommand::OneShotControl(control::STAND_UP)),
                 "sitground" if c.option.is_empty() => Some(NetCommand::OneShotControl(control::SIT_ON_GROUND)),
@@ -391,7 +413,6 @@ impl World {
                         target: o.full_id,
                         offset: Vec3::ZERO,
                     }),
-                "setgroup" => Uuid::parse_str(&c.option).ok().map(NetCommand::ActivateGroup),
                 "setrot" => {
                     if let Ok(angle) = c.option.parse::<f32>()
                         && angle.is_finite()

@@ -15,6 +15,7 @@ mod editing;
 pub mod effects;
 pub mod environment;
 mod events;
+mod groups;
 mod inventory;
 mod policy;
 pub mod privacy;
@@ -125,6 +126,9 @@ fn im_range(text: &str) -> Option<(f32, f32)> {
 /// Commands listed here have a consumer. Do not advertise unfinished handlers
 /// through @getcommand: scripts use it to decide whether a feature is safe.
 pub const RESTRICTIONS: &[&str] = &[
+    "showloc",
+    "shownames",
+    "shownearby",
     "setsphere",
     "setcam_avdist",
     "setcam_textures",
@@ -349,6 +353,7 @@ fn supports_strict(name: &str) -> bool {
             | "tplure"
             | "tprequest"
             | "shownametags"
+            | "shownames"
     )
 }
 
@@ -368,7 +373,7 @@ fn canonical(name: &str) -> &str {
 
 fn valid_option(c: &Command) -> bool {
     if matches!(c.behaviour.as_str(), "camzoommin" | "camzoommax") {
-        return c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v > 0.0);
+        return c.option.is_empty() || c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v > 0.0);
     }
     match canonical(&c.behaviour) {
         "attachthis"
@@ -380,16 +385,10 @@ fn valid_option(c: &Command) -> bool {
         | "detachthis_except"
         | "detachallthis_except" => !c.option.split('/').any(|v| matches!(v, "." | "..")),
         "notify" => events::notification_option(&c.option).is_some(),
-        "setcam_fovmin" | "setcam_fovmax" => c
-            .option
-            .parse::<f32>()
-            .is_ok_and(|v| v.is_finite() && v > 0.0 && v < std::f32::consts::PI),
-        "setcam_avdist"
-        | "setcam_avdistmin"
-        | "setcam_avdistmax"
-        | "setcam_origindistmin"
-        | "setcam_origindistmax"
-        | "setcam_eyeoffsetscale" => c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0),
+        "setcam_fovmin" | "setcam_fovmax" | "setcam_eyeoffsetscale" => c.option.parse::<f32>().is_ok_and(f32::is_finite),
+        "setcam_avdist" | "setcam_avdistmin" | "setcam_avdistmax" | "setcam_origindistmin" | "setcam_origindistmax" => {
+            c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0)
+        }
         "setcam_eyeoffset" | "setcam_focusoffset" => camera::vector(&c.option).is_some(),
         "fartouch" | "sittp" | "tplocal" => c.option.is_empty() || c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0),
         "touchthis" | "editobj" => Uuid::parse_str(&c.option).is_ok(),
@@ -401,8 +400,8 @@ fn valid_option(c: &Command) -> bool {
         "addoutfit" | "remoutfit" => c.option.is_empty() || inventory::layer(&c.option).is_some(),
         "recvim" | "sendim" | "startim" if im_range(&c.option).is_some() => true,
         "shownametags" if c.option.parse::<f32>().is_ok_and(|v| v.is_finite() && v >= 0.0) => true,
-        "recvchat" | "recvemote" | "recvim" | "sendim" | "startim" | "share" | "shownametags" | "accepttp" | "accepttprequest"
-        | "tplure" | "tprequest" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
+        "recvchat" | "recvemote" | "recvim" | "sendim" | "startim" | "share" | "shownametags" | "shownames" | "accepttp"
+        | "accepttprequest" | "tplure" | "tprequest" => c.option.is_empty() || Uuid::parse_str(&c.option).is_ok(),
         "showhovertext" => Uuid::parse_str(&c.option).is_ok(),
         "recvchatfrom" | "recvemotefrom" | "recvimfrom" | "sendimto" | "startimto" => Uuid::parse_str(&c.option).is_ok(),
         "sendchannel" | "sendchannel_except" => c.option.is_empty() || c.option.parse::<i32>().is_ok_and(|v| v != 0),
@@ -420,6 +419,7 @@ pub struct Rlva {
     pub appearance: Vec<(Uuid, super::appearance::Action)>,
     pub viewer: Vec<(Uuid, Command)>,
     pub camera_values: BTreeMap<String, String>,
+    pub groups: groups::Groups,
     pub visuals: effects::Visuals,
     pub watchdog: watchdog::Watchdog,
     pub recovery: Vec<NetCommand>,
@@ -507,6 +507,7 @@ impl Rlva {
         self.appearance.clear();
         self.viewer.clear();
         self.camera_values.clear();
+        self.groups = Default::default();
         self.visuals = Default::default();
         self.watchdog = Default::default();
         self.recovery.clear();
@@ -525,6 +526,7 @@ impl Rlva {
     }
 
     pub fn forget(&mut self, source: Uuid) {
+        let was_fov_locked = self.has("setcam_fovmin") || self.has("setcam_fovmax");
         self.watchdog.sources.remove(&source);
         self.visuals.forget(source);
         if self.self_detach.is_some_and(|(id, _)| id == source) {
@@ -539,6 +541,9 @@ impl Rlva {
         self.lookups.remove(&source);
         if self.rules.remove(&source).is_some() {
             self.revision = self.revision.wrapping_add(1);
+        }
+        if was_fov_locked && !self.has("setcam_fovmin") && !self.has("setcam_fovmax") {
+            self.camera_values.remove("setcam_fov");
         }
         self.pending.retain(|(id, _)| *id != source);
         self.appearance.retain(|(id, _)| *id != source);
@@ -621,6 +626,7 @@ impl Rlva {
             return;
         }
         let was_environment_locked = self.has("setenv");
+        let was_fov_locked = self.has("setcam_fovmin") || self.has("setcam_fovmax");
         match c.param {
             Param::Add | Param::Remove => {
                 if c.param == Param::Add
@@ -669,13 +675,16 @@ impl Rlva {
                 }
             }
             Param::Force
-                if (FORCES.contains(&c.behaviour.as_str()) || environment::supports(&c.behaviour, true)) && self.pending.len() < 256 =>
+                if !c.strict
+                    && (FORCES.contains(&c.behaviour.as_str()) || environment::supports(&c.behaviour, true))
+                    && self.pending.len() < 256 =>
             {
                 self.pending.push((source, c))
             }
             Param::Reply(channel)
                 if channel > 0
                     && channel != i32::MAX
+                    && !c.strict
                     && (QUERIES.contains(&c.behaviour.as_str())
                         || environment::supports(&c.behaviour, false)
                         || c.behaviour.starts_with("getdebug_")) =>
@@ -699,6 +708,9 @@ impl Rlva {
         }
         if was_environment_locked && !self.has("setenv") {
             self.clear_environment();
+        }
+        if was_fov_locked && !self.has("setcam_fovmin") && !self.has("setcam_fovmax") {
+            self.camera_values.remove("setcam_fov");
         }
         for name in ["setsphere", "setoverlay"] {
             let active = self
@@ -924,25 +936,26 @@ fn command_list(option: &str) -> String {
     let mut parts = option.splitn(3, ';');
     let filter = parts.next().unwrap_or_default();
     let kind = parts.next().unwrap_or("any");
-    let separator = parts.next().filter(|v| !v.is_empty()).unwrap_or(";");
+    let separator = parts.next().unwrap_or(";");
     let mut names = BTreeSet::new();
     for (name, list) in [("add", RESTRICTIONS), ("force", FORCES), ("reply", QUERIES)] {
         if kind.is_empty() || kind == "any" || kind == name {
             names.extend(list.iter().filter(|n| n.contains(filter)).map(|n| (*n).to_owned()));
+            if name == "add" {
+                names.extend(
+                    list.iter()
+                        .filter(|n| supports_strict(n))
+                        .map(|n| format!("{n}_sec"))
+                        .filter(|n| n.contains(filter)),
+                );
+            }
         }
     }
     for prefix in ["getenv_", "setenv_"] {
         if !(kind.is_empty() || kind == "any" || kind == if prefix == "getenv_" { "reply" } else { "force" }) {
             continue;
         }
-        for field in environment::SCALARS
-            .iter()
-            .chain(environment::COLORS)
-            .chain(environment::TEXTURES)
-            .copied()
-            .chain(std::iter::once("cloudscroll"))
-        {
-            let name = format!("{prefix}{field}");
+        for name in environment::command_names(prefix == "setenv_") {
             if name.contains(filter) {
                 names.insert(name);
             }

@@ -2792,6 +2792,15 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   Compare it with `baseline` and `resolution-released`; check scene clicks
   still address their visible surfaces. Append `-released` to an effect mode to disable
   RLVa at frame 760 and verify restoration in the same run.
+  `privacy` hides nearby identities and the current place in Conversations
+  and the top bar; `privacy-except` permits one visible speaker through a
+  strict name exception. `privacy-released` restores names and location.
+  `nearby` opens People with an empty Nearby tab under shownearby. Inventory
+  is closed in these scenarios so the conversation and list remain visible.
+  `camera-focus` focuses a posed avatar's head at a scripted distance and
+  direction with FOV limits. `camera-prefs` opens Camera preferences under
+  an exclusive camera lock: preset, offset, distance and viewing-angle
+  controls must be disabled while unrelated options remain editable.
 
 - **`AURORA_DEMO_PERF`**: `compact` opens the compact view (frame rate and
   its graph); `full` the resource monitor on its overview; `network` the

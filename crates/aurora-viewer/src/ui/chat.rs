@@ -719,6 +719,13 @@ fn line_job(
     };
     let mut lead = name_gap;
     for (piece, link) in pieces(body, name_of) {
+        let piece = if let Some(Link::Agent(id)) = &link
+            && !world.rlva_can_name(*id)
+        {
+            world.social.name_of(id)
+        } else {
+            world.rlva_filter_text(&piece).into_owned()
+        };
         let badge = match &link {
             Some(Link::Url(u)) => Some(LinkBadge::Web(u.clone())),
             Some(Link::Place(_, place)) => world.map.ratings.get(&place.location.region).map(LinkBadge::Rating),
@@ -1236,6 +1243,8 @@ pub(crate) fn chat_text_marked(
     italics: bool,
     mark: Option<Mark>,
 ) {
+    let filtered = world.rlva_filter_text(text);
+    let text = filtered.as_ref();
     let segs = segments(text);
     // only a text that has a match is cut into runs
     let mark = mark.filter(|m| !view::find_ci(text, m.needle).is_empty());
@@ -1309,6 +1318,12 @@ fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32) {
 /// An avatar link of a text (its name, or the text it was written with):
 /// opens the profile, the name menu on a right click.
 fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, text: &str, size: f32) {
+    let projected = if world.rlva_can_name(id) {
+        world.rlva_filter_text(text).into_owned()
+    } else {
+        world.social.name_of(&id)
+    };
+    let text = projected.as_str();
     let k = super::colors::get();
     let r = action_marker::link(ui, action_marker::Action::Profile, text, size, super::colors::c(k.chat_slurl), None);
     name_menu(&r, p, world, id);

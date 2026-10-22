@@ -78,6 +78,32 @@ pub fn supports(behaviour: &str, set: bool) -> bool {
     })
 }
 
+/// Discovery uses the same property table as command dispatch, including
+/// legacy components and the environment-selection write extensions.
+pub fn command_names(set: bool) -> Vec<String> {
+    let prefix = if set { "setenv_" } else { "getenv_" };
+    let mut names: Vec<_> = SCALARS
+        .iter()
+        .chain(COLORS)
+        .chain(TEXTURES)
+        .copied()
+        .chain(["cloudscroll", "daytime"])
+        .map(|name| format!("{prefix}{name}"))
+        .collect();
+    for base in LEGACY {
+        for suffix in ["r", "g", "b", "x", "y", "z", "i"] {
+            let name = format!("{prefix}{base}{suffix}");
+            if supports(&name, set) {
+                names.push(name);
+            }
+        }
+    }
+    if set {
+        names.extend(["asset", "preset", "daycycle"].map(|name| format!("{prefix}{name}")));
+    }
+    names
+}
+
 fn number(text: &str) -> Option<f32> {
     text.parse::<f32>().ok().filter(|v| v.is_finite())
 }

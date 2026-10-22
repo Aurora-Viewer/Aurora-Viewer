@@ -1215,9 +1215,15 @@ impl App {
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
         self.world.rlva.configure(self.settings.rlva_enabled);
         self.world.rlva_prepare_outfit(&mut cmd, actor);
+        if let NetCommand::OfferTeleport { to, .. } = &mut cmd {
+            self.world.rlva_filter_teleport_offer(to);
+        }
         if !self.world.rlva_allows_command(&cmd, actor) {
             self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
             return;
+        }
+        if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
+            self.world.group_data.title_sent(*group, *role);
         }
         self.world.rlva_note_attachment_command(&cmd, actor, Instant::now());
         if self.world.rlva.enabled()
@@ -5177,7 +5183,9 @@ impl App {
     /// Preferences › Camera › "Reset all", and the Controls window's reset:
     /// every camera setting back to its default, the view behind the avatar.
     fn reset_camera_all(&mut self) {
+        let before = self.settings.camera.clone();
         self.settings.camera = crate::camera::CameraSettings::default();
+        self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before);
         self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
     }
 
@@ -9276,7 +9284,12 @@ impl App {
         }
         // the invitation to edit first (handle_lure), for all those chosen
         if !a.offer_tp.is_empty() {
-            self.contacts_ui.ask_teleport_offer(a.offer_tp, &self.world.region_name());
+            let ids = a
+                .offer_tp
+                .into_iter()
+                .filter(|id| self.world.rlva_can_offer_teleport(*id))
+                .collect();
+            self.contacts_ui.ask_teleport_offer(ids, &self.world.rlva_region_label());
         }
         if let Some(asset) = a.landmark {
             self.record_library_asset(asset, 3);
@@ -9449,6 +9462,9 @@ impl App {
                 self.snapshots.settings_changed = true;
             }
             BarAction::CameraPreset(preset) => {
+                if self.world.rlva.camera_preset_locked(uuid::Uuid::nil()) {
+                    return;
+                }
                 // as the camera controls' presets (LLFloaterCamera::switchToPreset)
                 self.settings.camera.apply_preset(preset);
                 self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
@@ -10001,7 +10017,11 @@ impl App {
                 // LLGroupActions::startCall
                 GroupAction::Call(group) => self.on_ctx_action(ui::context::CtxAction::Call(group)),
                 GroupAction::Activate(group) => self.send(NetCommand::ActivateGroup(group)),
-                GroupAction::SetTitle { group, role } => self.world.group_data.set_title(group, role),
+                GroupAction::SetTitle { group, role } => {
+                    if !self.world.rlva.has("setgroup") {
+                        self.world.group_data.set_title(group, role);
+                    }
+                }
                 GroupAction::SetFlags {
                     group,
                     accept_notices,
@@ -10266,7 +10286,11 @@ impl App {
                 .collect();
         }
         self.options_ui.rlva_restrictions = self.world.rlva.restrictions();
+        self.options_ui.rlva_camera_preset_locked = self.world.rlva.camera_preset_locked(uuid::Uuid::nil());
+        self.options_ui.rlva_camera_fov_locked = self.world.rlva.camera_owner().is_some();
+        let before_camera = self.settings.camera.clone();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
+        self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before_camera);
         // the panels hold the time of day shown and write it back to the
         // settings later in the frame: a choice made here (or by a reset)
         // goes to them first, or it is undone at once (#742)
@@ -11477,7 +11501,11 @@ impl App {
                             self.search_ui.open_tab(crate::world::search::Tab::Groups);
                         }
                         ui::people::PeopleAction::GroupData(group) => self.world.group_data.open(group, true),
-                        ui::people::PeopleAction::GroupTitle { group, role } => self.world.group_data.set_title(group, role),
+                        ui::people::PeopleAction::GroupTitle { group, role } => {
+                            if !self.world.rlva.has("setgroup") {
+                                self.world.group_data.set_title(group, role);
+                            }
+                        }
                         ui::people::PeopleAction::GroupFlags { group, notices, profile } => {
                             self.world.groups.set_flags(group, notices, profile)
                         }
