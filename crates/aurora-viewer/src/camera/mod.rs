@@ -22,6 +22,16 @@ pub use focus::FocusObject;
 pub use free::FreeCamera;
 pub use settings::{CameraPreset, CameraSettings, CameraShot, DEFAULT_FOV, FOV_RANGE};
 
+/// Reference for a rolled view, shared with flycam handoff and AgentUpdate.
+/// At a vertical pole the world Z axis cannot define an up direction.
+pub(crate) fn view_reference_up(direction: Vec3) -> Vec3 {
+    if direction.cross(Vec3::Z).length_squared() < 1e-6 {
+        Vec3::Y
+    } else {
+        Vec3::Z
+    }
+}
+
 use crate::agent::AgentState;
 use crate::scene::Scene;
 use crate::world::World;
@@ -260,6 +270,9 @@ pub struct Camera {
     /// The photo window's free camera: while set, the view is its own and
     /// the rest of the camera waits behind the avatar (`free.rs`).
     free: Option<FreeCamera>,
+    pub flycam: Option<crate::joystick::flycam::Flycam>,
+    /// Lens retained when flycam stops, until a reset or avatar movement.
+    flycam_lens: Option<(f32, f32)>,
     /// A passing pan of the view only (the region restart's shake,
     /// `world::region_restart::view_shake`): the eye and what it looks at
     /// move together, the camera itself does not.
@@ -325,6 +338,8 @@ impl Default for Camera {
             dt: 0.0,
             initialized: false,
             free: None,
+            flycam: None,
+            flycam_lens: None,
             shake: Vec3::ZERO,
             roll: 0.0,
         }
@@ -426,6 +441,7 @@ impl Camera {
         }
         // mouselook ends the free camera (the flycam's toggle the other way)
         self.free = None;
+        self.clear_flycam();
         // the view keeps its direction: the avatar turns to it
         agent.yaw += self.orbit_yaw;
         self.orbit_yaw = 0.0;
@@ -454,7 +470,10 @@ impl Camera {
     fn base_fov(&self, s: &CameraSettings) -> f32 {
         match self.ml_zoom.angle() {
             Some(angle) if self.mouselook() => angle,
-            _ => s.fov,
+            _ => self
+                .flycam_lens
+                .filter(|(original, _)| *original == s.fov)
+                .map_or(s.fov, |(_, lens)| lens),
         }
     }
 
@@ -735,6 +754,7 @@ impl Camera {
         if movement && !s.reset_on_movement {
             return;
         }
+        self.clear_flycam();
         if change_camera {
             self.change_to_default(agent, s);
         }
@@ -776,10 +796,34 @@ impl Camera {
         self.free.as_mut()
     }
 
+    /// On toggle-off the normal camera takes the exact view back, still
+    /// available to Alt-orbit and the camera controls (toggleFlycam).
+    pub fn retain_flycam_view(&mut self, agent: &mut AgentState, s: &CameraSettings) {
+        if let Some(pose) = self.flycam.take() {
+            self.set_view(pose.position, pose.position + pose.forward(), agent, s);
+            self.roll = pose.roll();
+            self.flycam_lens = Some((s.fov, pose.fov));
+            self.fov_zoom = 0.0;
+            self.current_fov_zoom = 0.0;
+            self.virtual_position = pose.position;
+            self.smoothing_stop = true;
+            self.anim = None;
+        }
+    }
+
+    pub fn clear_flycam(&mut self) {
+        let pose = self.flycam.take().is_some();
+        let lens = self.flycam_lens.take().is_some();
+        if pose || lens {
+            self.roll = 0.0;
+        }
+    }
+
     /// The camera leaves the avatar where it is, looking where it looks
     /// (moveFlycam's reset); mouselook ends first, like toggleFlycam's
     /// changeCameraToDefault.
     pub fn start_free(&mut self, agent: &mut AgentState, s: &CameraSettings) {
+        self.clear_flycam();
         if self.free.is_some() {
             return;
         }
@@ -826,6 +870,9 @@ impl Camera {
         if let Some(free) = &mut self.free {
             free.position += delta;
         }
+        if let Some(flycam) = &mut self.flycam {
+            flycam.position += delta;
+        }
         if let Some(a) = &mut self.anim {
             a.start_camera += delta;
             a.start_focus += delta;
@@ -841,6 +888,7 @@ impl Camera {
     /// back on the avatar without animation; FSResetCameraOnTP also drops
     /// the orbit, the pitch and the zoom (resetView of process_teleport_local).
     pub fn on_teleport_arrival(&mut self, s: &CameraSettings) {
+        self.clear_flycam();
         // a free camera stays in the region it left
         self.free = None;
         self.focus_on_avatar = true;
@@ -1221,6 +1269,14 @@ impl Camera {
         }
     }
 
+    /// The joystick's continuous pitch, as LLAgent::pitch updates the
+    /// third-person camera; mouselook uses AgentState::pitch instead.
+    pub fn joystick_pitch(&mut self, rate: f32, dt: f32) {
+        if !self.mouselook() && rate != 0.0 {
+            self.pitch_by(-rate * dt.clamp(0.0, 0.2));
+        }
+    }
+
     // ------------------------------------------------------------------ frame
 
     /// Once per frame, after the avatar moved (LLAgentCamera::updateCamera).
@@ -1258,6 +1314,11 @@ impl Camera {
     }
 
     fn update_unrestricted(&mut self, world: &mut World, s: &CameraSettings, f: &FrameInput) {
+        if self.flycam_lens.is_some_and(|(original, _)| original != s.fov) {
+            // A subsequent lens edit takes ownership of the value, including
+            // when the user later returns to the pre-flight preference.
+            self.flycam_lens = Some((s.fov, s.fov));
+        }
         let dt = f.dt.max(0.0);
         self.dt = dt;
         self.draw_distance = f.draw_distance;
@@ -1265,6 +1326,14 @@ impl Camera {
         self.own = world.agent_id;
         self.avatar = avatar_frame(world, s, f.now);
         self.sync_seat(&mut world.agent, s);
+        if let Some(flycam) = self.flycam {
+            self.position = flycam.position;
+            self.target = flycam.position + flycam.forward();
+            self.fov_y = flycam.fov;
+            self.roll = flycam.roll();
+            self.anim = None;
+            return;
+        }
         if let Some(free) = self.free {
             // the free camera's own view; the avatar's waits for its return
             self.position = free.position;
@@ -1626,19 +1695,21 @@ impl Camera {
     }
 
     pub fn view(&self) -> Mat4 {
+        if let Some(flycam) = self.flycam {
+            return glam::camera::rh::view::look_to_mat4(self.position + self.shake, flycam.forward(), flycam.up());
+        }
         // Scripts may set identical eye / focus points or look vertically.
         let direction = self.forward();
-        let up = if direction.cross(Vec3::Z).length_squared() < 1e-6 {
-            Vec3::Y
-        } else {
-            Vec3::Z
-        };
-        let up = if self.roll != 0.0 {
-            glam::Quat::from_axis_angle(direction.normalize_or(Vec3::X), self.roll) * up
-        } else {
-            up
-        };
+        let up = self.view_up();
         glam::camera::rh::view::look_to_mat4(self.position + self.shake, direction, up)
+    }
+
+    pub fn view_up(&self) -> Vec3 {
+        if let Some(flycam) = self.flycam {
+            return flycam.up();
+        }
+        let direction = self.forward();
+        glam::Quat::from_axis_angle(direction, self.roll) * view_reference_up(direction)
     }
 
     /// The view panned by `right` and `up` metres across the screen.
@@ -2055,6 +2126,102 @@ mod tests {
         cam.start_free(&mut w.agent, &s);
         cam.on_teleport_arrival(&s);
         assert!(cam.free().is_none());
+    }
+
+    #[test]
+    fn joystick_flycam_keeps_the_avatar_and_sends_its_camera_frame() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let avatar = (w.agent.position, w.agent.yaw, w.agent.pitch, w.agent.flying);
+        let mut flight = crate::joystick::flycam::Flycam::from_view(cam.position, cam.target, Vec3::Z, cam.fov_y);
+        let tuning = crate::joystick::Settings {
+            auto_level: false,
+            ..Default::default()
+        };
+        flight.step([2.0, 0.0, 1.0, 0.4, 0.3, 0.2, -0.5], &tuning, 0.2);
+        cam.flycam = Some(flight);
+        settle(&mut cam, &mut w, &s);
+        assert_eq!(avatar, (w.agent.position, w.agent.yaw, w.agent.pitch, w.agent.flying));
+        assert!(cam.position.distance(flight.position) < 1e-4);
+        assert!(cam.view().is_finite());
+        assert_eq!(cam.fov_y, flight.fov);
+        let update = w.agent.controls(&crate::agent::MoveInput::default(), &cam, 128.0);
+        assert!(update.camera_up.distance(flight.up()) < 1e-4);
+        // A pre-flight focus correction must not narrow the retained lens a
+        // second time when the ordinary camera resumes.
+        cam.fov_zoom = 0.7;
+        cam.current_fov_zoom = 0.7;
+        cam.retain_flycam_view(&mut w.agent, &s);
+        assert!(cam.flycam.is_none());
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(
+            cam.position.distance(flight.position) < 0.01,
+            "stopping must not blend from the pre-flight view"
+        );
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.position.distance(flight.position) < 0.01);
+        assert!((cam.fov_y - flight.fov).abs() < 1e-4);
+        assert!((cam.roll - flight.roll()).abs() < 1e-4);
+        let held = w.agent.controls(&crate::agent::MoveInput::default(), &cam, 128.0);
+        assert!(held.camera_up.distance(flight.up()) < 1e-4);
+        let changed_lens = CameraSettings { fov: 0.9, ..s.clone() };
+        assert_eq!(cam.base_fov(&changed_lens), 0.9, "a subsequent lens setting takes precedence");
+        cam.update(&mut w, &changed_lens, &frame(1.0 / 60.0));
+        cam.update(&mut w, &s, &frame(1.0 / 60.0));
+        assert!(
+            (cam.fov_y - s.fov).abs() < 1e-4,
+            "restoring a preference must not restore the old flycam zoom"
+        );
+        cam.handle_reset_view(&mut w.agent, &s);
+        assert_eq!(cam.roll, 0.0);
+        assert!(cam.flycam_lens.is_none());
+        cam.flycam = Some(flight);
+        cam.shift(Vec3::new(-256.0, 0.0, 0.0));
+        assert!(cam.flycam.expect("flight").position.distance(flight.position - Vec3::X * 256.0) < 1e-4);
+        cam.handle_reset_view(&mut w.agent, &s);
+        assert!(cam.flycam.is_none());
+        cam.flycam = Some(flight);
+        cam.change_to_mouselook(&mut w.agent, &s, false);
+        assert!(cam.flycam.is_none());
+        cam.flycam = Some(flight);
+        cam.on_teleport_arrival(&s);
+        assert!(cam.flycam.is_none());
+        cam.flycam = Some(flight);
+        cam.start_free(&mut w.agent, &s);
+        assert!(cam.flycam.is_none() && cam.free().is_some());
+    }
+
+    #[test]
+    fn joystick_flycam_keeps_rlva_camera_limits() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let avatar = w.agent.position;
+        w.rlva.configure(true);
+        assert!(w.rlva.receive(&aurora_net::ChatMessage {
+            from_name: "Camera test object".to_owned(),
+            source_id: Uuid::from_u128(1),
+            owner_id: Uuid::from_u128(2),
+            source_type: aurora_net::ChatSourceType::Object,
+            chat_type: aurora_net::ChatType::OwnerSay,
+            position: avatar,
+            message: "@setcam=n,setcam_avdistmax:2=n,setcam_fovmin:0.8=n".to_owned(),
+        }));
+        cam.flycam = Some(crate::joystick::flycam::Flycam::from_view(
+            avatar + Vec3::X * 50.0,
+            avatar,
+            Vec3::Z,
+            0.5,
+        ));
+        let f = frame(1.0 / 60.0);
+        cam.update(&mut w, &s, &f);
+        assert_eq!(w.agent.position, avatar);
+        assert!(cam.position.distance(avatar) <= 2.001);
+        let (min, max) = w.rlva.camera_fov_limits(f.aspect).expect("camera lens limits");
+        assert!((min..=max).contains(&cam.fov_y));
     }
 
     #[test]

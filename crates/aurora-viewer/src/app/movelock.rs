@@ -60,6 +60,8 @@ impl App {
             || input.down
             || input.turn_left
             || input.turn_right
+            || input.joystick_yaw != 0.0
+            || input.joystick_pitch != 0.0
             || self.autopilot.is_some()
             || self.autopilot_flags != 0;
         let water_modes = self

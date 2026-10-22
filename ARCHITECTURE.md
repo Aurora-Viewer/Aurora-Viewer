@@ -1138,6 +1138,18 @@ system-state changes. There is no bridge script change or new render pass.
 
 ## Life of a frame
 
+`joystick/` owns persisted NDOF settings, native input and the six-axis flycam
+pose. `backend.rs` reads generic joysticks through gilrs-core and SpaceMouse
+HID reports through hidapi on one worker; the frame copies a bounded latest
+snapshot without waiting. `Controller` applies mapping, dead zones, gain,
+button edges, focus/stale-input gating and re-centring after changes.
+`app/joystick.rs` joins avatar input to the existing simulator controls and
+running state; the independent flycam pose is shown by `camera::Camera`,
+including roll, zoom and region-origin shifts. It is cleared by reset,
+mouselook, teleport and photo free-camera entry. Preferences › Mouse and
+keyboard › Joystick and 3D mouse (`ui/options/pages/joystick.rs`) shares the
+normal search, modified-settings and reset paths.
+
 `build/task_inventory.rs` centralises the permissions and the destinations of
 the transfer of an object's contents to the personal inventory;
 `ui/inventory/task_drop.rs` provides the common source of the two contents

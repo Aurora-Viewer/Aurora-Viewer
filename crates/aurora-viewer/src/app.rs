@@ -60,6 +60,7 @@ mod inspect;
 mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
+mod joystick;
 mod link_health;
 mod marketplace_listings;
 mod money_tracker;
@@ -220,6 +221,7 @@ pub struct App {
     sky_log: crate::world::env::SkyLog,
     camera: Camera,
     input: MoveInput,
+    joystick: joystick::State,
     /// Keys and bindable mouse buttons held down.
     down: HashSet<Input>,
     shift: bool,
@@ -900,6 +902,7 @@ impl App {
             sky_log: Default::default(),
             camera: Camera::default(),
             input: MoveInput::default(),
+            joystick: Default::default(),
             down: HashSet::new(),
             shift: false,
             ctrl: false,
@@ -3073,6 +3076,8 @@ impl App {
 
     /// Escape / "Reset camera" (handle_reset_view).
     fn reset_camera_view(&mut self) {
+        self.joystick.active = false;
+        self.camera.clear_flycam();
         let was = self.camera.mouselook();
         self.camera.handle_reset_view(&mut self.world.agent, &self.settings.camera);
         if was && !self.camera.mouselook() {
@@ -3140,7 +3145,7 @@ impl App {
         let still_held = self.down.iter().any(|k| self.run_group(k) == Some(group)) || (group == 0 && self.mouse_walks());
         if !still_held {
             self.temp_run = None;
-            if !self.always_run {
+            if !self.always_run && !self.joystick.running {
                 self.send(NetCommand::SetAlwaysRun(false));
             }
         }
@@ -3197,6 +3202,7 @@ impl App {
         };
         match action {
             Action::Fly => self.toggle_fly(),
+            Action::Flycam => self.toggle_joystick_flycam(),
             Action::AlwaysRun => self.set_always_run(!self.always_run),
             Action::MoveLock => self.toggle_move_lock(),
             Action::MovementEnhancer => self.open_movement(),
@@ -5283,7 +5289,9 @@ impl App {
             return;
         }
         self.always_run = on;
-        self.send(NetCommand::SetAlwaysRun(self.always_run || self.temp_run.is_some()));
+        self.send(NetCommand::SetAlwaysRun(
+            self.always_run || self.temp_run.is_some() || self.joystick.running,
+        ));
         self.world.system_message(if self.always_run {
             aurora_i18n::tr!("app-always-run-enabled")
         } else {
@@ -5401,6 +5409,10 @@ impl App {
     }
 
     fn update_move_input(&mut self, typing: bool, dt: f32) {
+        self.poll_joystick(dt);
+        if self.joystick_flycam_step(dt) {
+            return;
+        }
         let web_or_popup = self.media.focus.is_some()
             || self.profile_ui.focused_web().is_some()
             || self.search_ui.focused_web().is_some()
@@ -5465,13 +5477,17 @@ impl App {
         i.strafe_right |= held(Action::StrafeRight);
         i.up |= held(Action::Up);
         i.down |= held(Action::Down);
+        let joystick_up = self.camera.free().is_none()
+            && self.settings.joystick.avatar_enabled
+            && (self.joystick.motion.axes[2] > 0.0 || self.joystick.motion.jump || self.joystick.motion.rise);
         i.down = self.crouch_toggle.apply(
             self.settings.crouch_toggle,
             self.world.agent.flying,
             self.world.agent.is_sitting(),
             i.down,
-            i.up,
+            i.up || joystick_up,
         );
+        self.joystick_avatar(&mut i);
         if self.camera.free().is_some() {
             // the photo's free camera takes the movement keys: the avatar
             // stays where it is (no walk, turn, jump or flight start)
@@ -5507,7 +5523,7 @@ impl App {
             i.strafe_left = false;
             i.strafe_right = false;
         }
-        i.run = self.temp_run.is_some();
+        i.run = self.temp_run.is_some() || self.joystick.running;
         if self.world.rlva.has("temprun") {
             i.run = false;
         }
@@ -5525,6 +5541,10 @@ impl App {
         };
         i.nudge_fb = since(&mut self.fb_since, i.forward || i.back) && self.mouse_mode != MouseMode::Steer;
         i.nudge_lr = since(&mut self.lr_since, i.strafe_left || i.strafe_right);
+        // Native joystick translation uses moveAt/moveLeft, without the
+        // keyboard's initial nudge (LLViewerJoystick::agentPush/Slide).
+        i.nudge_fb &= self.joystick.motion.axes[0] == 0.0;
+        i.nudge_lr &= self.joystick.motion.axes[1] == 0.0;
         // holding jump for 0.5 s on the ground starts flying (AutomaticFly)
         if i.up {
             self.world.agent.record_jump_input(now);
@@ -5550,9 +5570,20 @@ impl App {
         // moving brings the camera back to the avatar (LLAgent::moveAt & co ->
         // resetView, FSResetCameraOnMovement): after an orbit the agent turns
         // to where the camera looks, the camera stays put
-        let moving = i.forward || i.back || i.turn_left || i.turn_right || i.strafe_left || i.strafe_right || i.up || i.down;
+        let moving = i.forward
+            || i.back
+            || i.turn_left
+            || i.turn_right
+            || i.strafe_left
+            || i.strafe_right
+            || i.up
+            || i.down
+            || i.joystick_yaw != 0.0
+            || i.joystick_pitch != 0.0;
         if moving && self.mouse_mode != MouseMode::FocusOrbit {
-            let steering = self.mouse_mode == MouseMode::Steer;
+            // A stick held to look up/down keeps its aim while walking,
+            // like held mouse steering, instead of fighting the pitch fade.
+            let steering = self.mouse_mode == MouseMode::Steer || i.joystick_pitch != 0.0;
             self.camera
                 .reset_view(&mut self.world.agent, &self.settings.camera, true, false, true, steering);
         }
@@ -5600,6 +5631,7 @@ impl App {
             pan_down: rate[9],
         };
         self.camera.apply_keys(keys, &mut self.world.agent, &self.settings.camera, dt);
+        self.camera.joystick_pitch(i.joystick_pitch, dt);
     }
 
     // ------------------------------------------------------------------ frame
@@ -10456,9 +10488,14 @@ impl App {
         self.options_ui.rlva_restrictions = self.world.rlva.restrictions();
         self.options_ui.rlva_camera_preset_locked = self.world.rlva.camera_preset_locked(uuid::Uuid::nil());
         self.options_ui.rlva_camera_fov_locked = self.world.rlva.camera_owner().is_some();
+        self.options_ui.joystick = self.joystick.snapshot.clone();
+        self.options_ui.flycam_active = self.joystick.active;
         let before_camera = self.settings.camera.clone();
         let mut res = ui::options::show(ctx, p, &self.skin.icons, &mut self.settings, &mut self.options_ui, &mut open);
         self.world.rlva.preserve_camera_settings(&mut self.settings.camera, &before_camera);
+        if res.toggle_flycam {
+            self.toggle_joystick_flycam();
+        }
         // the panels hold the time of day shown and write it back to the
         // settings later in the frame: a choice made here (or by a reset)
         // goes to them first, or it is undone at once (#742)

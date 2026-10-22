@@ -340,6 +340,23 @@ fn a_page_reset_leaves_the_other_pages_alone() {
 }
 
 #[test]
+fn joystick_preferences_reset_device_mapping_buttons_and_both_tunings() {
+    let mut s = Settings::default();
+    s.joystick.enabled = true;
+    s.joystick.device = "test-device".into();
+    s.joystick.gamepad();
+    s.joystick.flycam.gain[3] = 0.7;
+    s.joystick.avatar.dead_zone[0] = 0.4;
+    s.joystick.auto_level = false;
+    s.joystick.jump_button = 7;
+    s.joystick.rise_button = 12;
+    s.joystick.fall_button = 13;
+    s.joystick.direct_zoom = true;
+    reset_page_settings(Page::Controls, &mut s);
+    assert_eq!(s.joystick, crate::joystick::Settings::default());
+}
+
+#[test]
 fn the_sound_page_puts_push_to_talk_back_only() {
     use crate::keybinds::Binding;
     let mut s = Settings::default();

@@ -182,6 +182,7 @@ the background still applies outside screenshots.
 
 | Variable | Effect |
 |---|---|
+| `AURORA_DEMO_JOYSTICK=preferences\|axes\|avatar\|flycam\|roll` | Synthetic joystick input, its preferences or an independent six-axis camera flight |
 | `AURORA_CAPTURE=<file.png>` | Saves a screenshot of the frame |
 | `AURORA_CAPTURE_FRAMES=<n>` | Frame captured (240 by default) |
 | `AURORA_CAPTURE_EXIT=1` | Quits after the screenshot |
@@ -190,6 +191,23 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
+
+`AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
+controller through the production input path, without connecting a device
+or a grid. `preferences` opens Mouse and keyboard › Joystick and 3D mouse;
+`axes` filters the axis mapping rows in preference search; `avatar` walks and turns;
+`flycam` starts at frame 630 and moves after 650;
+`roll` also enables roll and disables auto-level. Capture after frame 900.
+The avatar must stay put in the two camera scenarios. Compare the photo
+free camera (`AURORA_DEMO_CONTROLS=free`) and normal camera controls as well.
+Hardware validation: select the real device, enable input, apply Gamepad or
+SpaceMouse, centre its axes and release its buttons; check the live input,
+walking, sliding, looking, jump held to fly and a press to land. Start and
+stop flycam with its configured button or Alt+Shift+F, and return with Escape.
+Check all six axes, inverted gain, zones, smoothing, focus loss, disconnect,
+reconnect and saved settings. On the grid, the human verifies simulator
+controls (including a seated vehicle), loading around the flycam, region
+crossing and teleport. Never connect to a grid for this scenario yourself.
 
 `AURORA_CAPTURE_LAYOUT`: a screenshot otherwise starts from the default
 layout, to be reproducible. With this variable it reloads that of the

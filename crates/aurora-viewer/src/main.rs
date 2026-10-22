@@ -38,6 +38,7 @@ mod graphics_presets;
 mod hover_tips;
 mod imports;
 mod interaction;
+mod joystick;
 mod keybinds;
 mod keywords;
 mod link_preview;
