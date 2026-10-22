@@ -205,7 +205,7 @@ impl Search {
             )
             .on_hover_text(aurora_i18n::tr!("script-search-query"));
         if !ui.is_sizing_pass() && ui.is_enabled() && std::mem::take(&mut self.focus) {
-            response.request_focus();
+            editing::select(ui.ctx(), response.id, 0..self.query.chars().count(), true);
         }
         if (response.has_focus() || response.lost_focus()) && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
             self.find(ui.ctx(), id, source);

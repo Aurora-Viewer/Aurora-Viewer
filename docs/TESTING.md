@@ -998,6 +998,11 @@ in its source. Merely hovering another window must not redirect it. Clicking
 another window or the world must release Ctrl+F to the viewer's normal
 shortcut routing. Repeat between inventory/object editors and from a script
 menu or the Insert popup.
+In floating and integrated search, keep an existing query, place its caret
+in the middle, then press Ctrl+F: the whole query must be selected and typing
+must replace it. Repeat from the replacement field and the script itself,
+including accented characters and emoji in the query. Enter to find and
+resizing between search layouts must preserve a manually placed query caret.
 For native captures at 1600 × 1000, `search-left`, `search-inline`,
 `search-overlay` and `search-outside` seed these four placements with the
 same find/replace values; `preferences` opens the options. Scroll below the

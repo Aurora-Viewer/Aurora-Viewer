@@ -619,6 +619,8 @@ its search and its popup menus, independently of text-field focus. Ctrl+F
 is dispatched once after editor commands and uses that active document;
 clicking another window or the world releases it. `ui/find_shortcut.rs`
 uses the same activation before allowing the viewer's global Search action.
+An explicit search focus request selects the whole query in either layout;
+ordinary frames, layout transitions and Enter keep the query's current caret.
 `settings.rs` keeps the editor's colours and options in the common settings.
 `reference.rs` exposes the signatures and descriptions of the Firestorm
 catalogue embedded in `assets/lsl/reference.json`.

@@ -1036,6 +1036,68 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_f_selects_the_whole_existing_query_in_floating_and_inline_search() {
+        for inline in [false, true] {
+            let ctx = egui::Context::default();
+            let mut editors = Editors::default();
+            let target = target(1);
+            let load = editors.open(target, "Select search query".into(), true, true).unwrap();
+            editors.loaded(load, target, Ok("source".into()));
+            let mut settings = settings::ScriptSettings {
+                search_inline: inline,
+                ..Default::default()
+            };
+            super::super::widgets::place_floater(&ctx, &window(target), egui::pos2(100.0, 100.0), Vec2::new(900.0, 650.0));
+            for _ in 0..4 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+            for _ in 0..3 {
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            }
+            let search_id = egui::Id::new(dialogs::Search::WINDOW);
+            let query_id = search_id.with("query");
+            let replacement_id = search_id.with("replacement");
+            assert!(ctx.memory(|m| m.has_focus(query_id)));
+            assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 0.into()..0.into());
+            assert_eq!(
+                ctx.read_response(query_id).unwrap().layer_id.id == egui::Id::new(window(target)),
+                inline
+            );
+
+            for field in [source_id(target), query_id, replacement_id] {
+                editors.panels.search.query = "étoile 🌟".into();
+                editors.panels.search.replacement = "replacement".into();
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+                let at = if field == source_id(target) { 0 } else { 2 };
+                editing::select(&ctx, field, at..at, true);
+                frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+                frame_settings(&ctx, &mut editors, &mut settings, vec![key(egui::Key::F, egui::Modifiers::COMMAND)]);
+                for _ in 0..3 {
+                    frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+                }
+                assert!(ctx.memory(|m| m.has_focus(query_id)));
+                assert_eq!(editors.panels.search.query, "étoile 🌟");
+                assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 0.into()..8.into());
+                frame_settings(&ctx, &mut editors, &mut settings, vec![egui::Event::Text("new".into())]);
+                assert_eq!(editors.panels.search.query, "new");
+                assert_eq!(editors.panels.search.replacement, "replacement");
+                assert_eq!(editors.documents[0].source, "source");
+            }
+            // Finding with Enter must not reset a manually placed query caret.
+            editing::select(&ctx, query_id, 1..1, true);
+            frame_settings(
+                &ctx,
+                &mut editors,
+                &mut settings,
+                vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+            frame_settings(&ctx, &mut editors, &mut settings, vec![]);
+            assert_eq!(editing::cursor(&ctx, query_id).as_sorted_char_range(), 1.into()..1.into());
+        }
+    }
+
+    #[test]
     fn script_search_tries_both_sides_then_overlays_its_owner_and_hides_with_it() {
         let ctx = egui::Context::default();
         let mut editors = Editors::default();
