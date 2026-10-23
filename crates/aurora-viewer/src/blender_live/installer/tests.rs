@@ -16,8 +16,10 @@ fn blender_live_installer_selects_native_package_actions_without_downgrading() {
     assert_eq!(entry.action(), Action::Enable);
     entry.report.enabled = true;
     assert_eq!(entry.action(), Action::Reinstall);
-    entry.report.plugin_version = Some("0.10.0".into());
-    assert_eq!(entry.action(), Action::Newer, "numeric comparison, not lexical");
+    let [major, minor, patch] = semver(addon::version()).expect("bundled version");
+    entry.report.plugin_version = Some(format!("{major}.{}.{patch}", minor + 1));
+    assert_eq!(entry.action(), Action::Newer);
+    assert!(semver("0.10.0") > semver("0.9.0"), "numeric comparison, not lexical");
     entry.report.version = [2, 92, 0];
     assert_eq!(entry.action(), Action::Unsupported);
     entry.report.error = Some("probe failed".into());

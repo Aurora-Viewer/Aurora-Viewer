@@ -1,4 +1,4 @@
-"""Receive an authorized SL shape as a new, neutral rigged body reference.
+"""Receive an authorized SL shape as a new reference or on a selected SL rig.
 
 Only Blender's main thread calls this module. Payloads contain plain bounded
 data; no script, path, texture or existing object is accepted from the viewer.
@@ -9,7 +9,7 @@ import uuid
 
 import bpy
 from mathutils import Matrix, Quaternion, Vector
-from . import starter
+from . import starter, shape_apply
 
 
 def _numbers(value, length):
@@ -23,6 +23,8 @@ def _numbers(value, length):
 def validate(payload):
     if not isinstance(payload, dict):
         raise ValueError("Invalid shape transfer")
+    if payload.get("action", "create") not in {"create", "apply"}:
+        raise ValueError("Unsupported shape action")
     uuid.UUID(payload["id"])
     name = payload["name"]
     if not isinstance(name, str) or len(name) > 128:
@@ -44,6 +46,10 @@ def validate(payload):
         inverse = Matrix([values[i:i+4] for i in range(0, 16, 4)]).transposed()
         if abs(inverse.determinant()) < 1e-8 or (inverse @ definition["head"]).length > 0.0001:
             raise ValueError("Invalid shape bind matrix")
+        if payload.get("action") == "apply":
+            values = _numbers(joint["reference_bind"], 16)
+            if abs(Matrix([values[i:i+4] for i in range(0, 16, 4)]).determinant()) < 1e-8:
+                raise ValueError("Invalid reference shape bind")
     params = payload["params"]
     if not isinstance(params, dict) or len(params) > 512:
         raise ValueError("Invalid shape parameters")
@@ -84,12 +90,23 @@ def validate(payload):
 
 def apply(context, payload):
     definitions = validate(payload)
+    if payload.get("action") == "apply":
+        mode = context.object.mode if context.object else "OBJECT"
+        if mode not in {"OBJECT", "POSE"}:
+            raise ValueError("Leave Edit or Paint Mode to apply the shape")
+        if mode == "POSE":
+            bpy.ops.object.mode_set(mode="OBJECT")
+        try:
+            return shape_apply.apply(context, payload)
+        finally:
+            if mode == "POSE":
+                bpy.ops.object.mode_set(mode="POSE")
+    if context.object and context.object.mode != "OBJECT":
+        raise ValueError("Switch to Object Mode to receive the shape")
     existing = next((obj for obj in context.scene.objects if obj.type == "ARMATURE"
                      and obj.get("aurora_shape_id") == payload["id"]), None)
     if existing:
         return existing
-    if context.object and context.object.mode != "OBJECT":
-        raise ValueError("Switch to Object Mode to receive the shape")
     selected, active = list(context.selected_objects), context.view_layer.objects.active
     previous_rig = context.scene.aurora_live.rig
     rig, _unused = starter.create(context, with_tshirt=False, definitions=definitions,

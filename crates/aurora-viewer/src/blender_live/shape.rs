@@ -14,6 +14,22 @@ use uuid::Uuid;
 
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Action {
+    #[default]
+    Create,
+    Apply,
+}
+
+impl Action {
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Apply => "apply",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Key {
     pub item: Uuid,
@@ -60,8 +76,10 @@ pub struct Outgoing {
 #[derive(Default)]
 pub struct State {
     pub(crate) demo_sent: bool,
-    pub requested: bool,
+    pub requested: Option<Action>,
+    pub action: Action,
     pub blocked: Option<String>,
+    pub apply_blocked: Option<String>,
     pub message: String,
     pub error: bool,
     pub loading: Option<Key>,
@@ -158,11 +176,12 @@ pub fn build(library: &AvatarLibrary, bytes: &[u8], id: Uuid, name: &str) -> Res
         .joints
         .iter()
         .zip(&world)
-        .map(|(joint, world)| {
+        .zip(&rig.default_world_inv)
+        .map(|((joint, world), reference)| {
             let (_, rotation, head) = world.to_scale_rotation_translation();
             json!({"name": joint.name, "head": head.to_array(),
             "tail": world.transform_point3(joint.end).to_array(), "rotation": rotation.to_array(),
-            "inverse_bind": world.inverse().to_cols_array()})
+            "inverse_bind": world.inverse().to_cols_array(), "reference_bind": reference.to_cols_array()})
         })
         .collect();
     let data = json!({"id": id, "name": name.chars().take(128).collect::<String>(), "params": params,

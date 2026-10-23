@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 9, 0), "blender": (2, 93, 0),
+    "version": (0, 10, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -14,11 +14,11 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
-from . import compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui, shape_transfer
+from . import compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui, shape_apply, shape_transfer
 if _reloading:
     # Blender reloads the package during an in-place extension upgrade. Reload
     # dependencies first so the old exporter/client cannot survive that upgrade.
-    for _module in (compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui, shape_transfer):
+    for _module in (compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui, shape_apply, shape_transfer):
         importlib.reload(_module)
 Client = client.Client
 
@@ -105,7 +105,8 @@ def _tick():
         return None
     status, supported = _client.state()
     scene = bpy.context.scene
-    _incoming_shape = _client.take_shape(ready=not bpy.context.object or bpy.context.object.mode == "OBJECT")
+    _incoming_shape = _client.take_shape(ready=not bpy.context.object or bpy.context.object.mode == "OBJECT",
+                                         pose=bpy.context.mode == "POSE")
     if _incoming_shape is not None:
         identity = _incoming_shape.get("id", "") if isinstance(_incoming_shape, dict) else ""
         try:
@@ -190,7 +191,11 @@ class AURORA_OT_receive_shape(bpy.types.Operator):
     def execute(self, context):
         if _incoming_shape is None:
             return {"CANCELLED"}
-        shape_transfer.apply(context, _incoming_shape)
+        try:
+            shape_transfer.apply(context, _incoming_shape)
+        except (ValueError, RuntimeError, KeyError, TypeError, OverflowError) as error:
+            self.report({"ERROR"}, pgettext_iface(str(error)))
+            return {"CANCELLED"}
         return {"FINISHED"}
 
 
@@ -255,10 +260,7 @@ class AURORA_OT_connect(bpy.types.Operator):
         global _client, _force_capture
         tracking.prune(context.scene)
         if not context.scene.aurora_live.objects:
-            tracking.add(context.scene, _selected())
-        if not context.scene.aurora_live.objects:
-            self.report({"ERROR"}, "Select one or more rigged meshes first")
-            return {"CANCELLED"}
+            tracking.add(context.scene, [obj for obj in _selected() if obj.find_armature() is not None])
         _stop()
         _request_capture()
         _force_capture = True

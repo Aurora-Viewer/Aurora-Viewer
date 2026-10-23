@@ -54,10 +54,15 @@ rights fail closed. The worker deforms the bundled system body and all 159 joint
 from the shape asset alone. No attachment geometry or textures enter the payload.
 Negotiated `shape-transfer` controls carry one bounded reference over loopback;
 Blender confirms only after its main-thread undoable operator creates a new
-collection. Pending imports expire rather than interrupting Edit/Pose Mode.
-`shape_transfer.py` validates data before mutation and preserves existing rigs,
-weights and the live list. Shape-specific inverse binds cancel the transferred
+collection, or `shape-apply` applies it to the active selected SL armature.
+Creation waits for Object Mode; application accepts Object/Pose Mode and restores
+the latter after its rest update. Pending operations expire outside those modes.
+`shape_transfer.py` validates data before mutation; creation preserves existing
+work and the live list. Shape-specific inverse binds cancel the transferred
 rest scale/offsets when sending meshes back, preventing double shape deformation.
+`shape_apply.py` stages generic rest/mesh/key changes on disposable datablocks,
+preserves pose controls and weights, and delegates Avastar rigs to their enabled
+slider updater. Connection is independent of mesh selection or list contents.
 `compat.py` maps renamed Principled sockets and uses bone collections in 4.0+
 or named pose groups and armature layers in 2.93–3.x. The mesh exporter reads
 corner normals in 4.1+ and calculates split loop normals in older versions.

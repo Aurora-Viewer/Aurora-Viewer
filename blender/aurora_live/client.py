@@ -49,7 +49,7 @@ class Client:
         with self._lock:
             return self._rest_axes
 
-    def take_shape(self, ready=True):
+    def take_shape(self, ready=True, pose=False):
         with self._lock:
             if self._shape is not None and time.monotonic() - self._shape_received > 30:
                 identity = self._shape.get("id", "") if isinstance(self._shape, dict) else ""
@@ -57,7 +57,8 @@ class Client:
                                       "error": "Switch to Object Mode and send the shape again"}
                 self._shape = None
                 self._wake.set()
-            if not ready:
+            apply_in_pose = pose and isinstance(self._shape, dict) and self._shape.get("action") == "apply"
+            if not ready and not apply_in_pose:
                 return None
             value, self._shape = self._shape, None
             return value
@@ -127,7 +128,8 @@ class Client:
                             self._rest_axes = hello.get("rest_axes", {})
                         self._set_status("Connected to Aurora", hello["joints"])
                         if "shape-transfer" in hello.get("features", []):
-                            payload = b'{"type":"features","features":["shape-transfer"]}'
+                            features = [name for name in ("shape-transfer", "shape-apply") if name in hello.get("features", [])]
+                            payload = json.dumps({"type": "features", "features": features}).encode("utf-8")
                             connection.sendall(struct.pack("<I", len(payload)) + payload)
                             self._reply(reader)
                         sent = None

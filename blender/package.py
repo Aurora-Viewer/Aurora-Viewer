@@ -12,7 +12,7 @@ args.output.parent.mkdir(parents=True, exist_ok=True)
 with zipfile.ZipFile(args.output, "w", zipfile.ZIP_DEFLATED) as archive:
     prefix = "aurora_live/" if args.legacy else ""
     for name in ("__init__.py", "compat.py", "client.py", "exporter.py", "starter.py", "weights.py", "materials.py", "tracking.py",
-                 "handles.py", "rigging.py", "skinning.py", "posing.py", "tools_ui.py", "shape_transfer.py", "SKELETON-NOTICE.txt"):
+                 "handles.py", "rigging.py", "skinning.py", "posing.py", "tools_ui.py", "shape_apply.py", "shape_transfer.py", "SKELETON-NOTICE.txt"):
         archive.write(source / name, prefix + name)
     if not args.legacy:
         archive.write(source / "blender_manifest.toml", "blender_manifest.toml")

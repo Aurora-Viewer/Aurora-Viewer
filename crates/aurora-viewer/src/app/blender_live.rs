@@ -34,6 +34,9 @@ impl App {
         self.blender_live.shape.blocked = crate::blender_live::shape::editable(&self.world)
             .and_then(|_| self.blender_live.shape_connection())
             .err();
+        self.blender_live.shape.apply_blocked = crate::blender_live::shape::editable(&self.world)
+            .and_then(|_| self.blender_live.shape_apply_connection())
+            .err();
         let can_upload = !self.imports.busy() && self.imports.pending_files.is_none() && self.imports.entries.len() < 512;
         if self.blender_live.show(ctx, palette, can_upload) {
             self.blender_live.start_requested = true;
@@ -41,8 +44,8 @@ impl App {
         if std::mem::take(&mut self.blender_live.save_addon) {
             self.blender_live.addon.save(&self.scene.jobs, ctx);
         }
-        if std::mem::take(&mut self.blender_live.shape.requested) {
-            self.send_blender_shape();
+        if let Some(action) = self.blender_live.shape.requested.take() {
+            self.send_blender_shape(action);
         }
         let choose = std::mem::take(&mut self.blender_live.installer_choose);
         if std::mem::take(&mut self.blender_live.installer_scan) || choose {

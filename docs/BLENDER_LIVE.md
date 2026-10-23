@@ -39,8 +39,9 @@ inventory items or charge an upload fee.
 3. In Aurora's **Blender Live** window, click **Enable preview**.
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
-4. In Blender, select the rigged mesh objects, open the 3D view sidebar
-   (`N`) → **Aurora** → **Live**, click **Add selected meshes**, then **Connect to Aurora**.
+4. In Blender, open the 3D view sidebar (`N`) → **Aurora** → **Live**, then
+   **Connect to Aurora**. No object selection or rigged mesh is required.
+   To preview meshes, select them and click **Add selected meshes** at any time.
 5. Edit your mesh. **Automatic updates** is enabled by default, with an
    **Interval (seconds)** of **0.2**. Larger meshes can take longer to capture
    and prepare. Aurora supplies the
@@ -487,20 +488,40 @@ externally edited image in Blender; **Update now** also refreshes image caches.
 
 ### Send your shape to Blender
 
-With plug-in **0.9.0+** connected, use **Objects → Send shape to Blender** in
-Aurora's Blender Live window. Aurora requires the worn shape's resolved inventory item
+With plug-in **0.10.0+** connected, Aurora's Blender Live **Connection** section
+offers **Add a skeleton with my shape** and **Apply my shape to the selected
+skeleton**. Aurora requires the worn shape's resolved inventory item
 to belong to you and grant **Modify**. Missing inventory data or a no-modify
 shape disables the action; Copy/Transfer rights do not substitute for Modify.
 Rights, worn item and asset identity are checked again after loading and just
 before publishing. A shape change or revoked permission cancels pending work.
 
-Blender creates a **new collection** with the shape's 159-bone SL skeleton and
+The first action creates a **new collection** with the shape's 159-bone SL skeleton and
 a neutral rigged system-body reference (head, torso, legs, eyes and eyelashes).
 It retains the shape parameters on the new rig. Existing rigs, meshes, weights
 and synchronization-list entries remain intact. The reference faces -Y in
 Automatic mode and respects scene units and the 3D cursor. Object Mode is
 required; an import waiting in another mode expires after 30 seconds. The
 creation is undoable. Aurora reports success only after Blender imports it.
+
+The second action requires the target armature to be the active selected object
+in Blender (the sidebar's saved rig choice is not a substitute). It keeps the
+object, bone names, aliases, hierarchy, constraints, pose channels, weights,
+materials and sync-list flags. Generic SL rigs receive the shape's skeletal
+proportions; their bound meshes and all shape keys follow that rest change.
+Shared mesh/armature data is copied so other objects keep their original data.
+Repeating a shape does not multiply its scale. This operation is also undoable.
+Unmasked vertex-group Armature modifiers and editable local data are required.
+Generic mesh heads/bodies do not acquire surface morphs from SL sliders; the
+new reference body has those morphs. An Avastar rig uses the enabled Avastar
+add-on's own shape-slider updater for its controls, body morphs and mesh fitting;
+with Avastar disabled, it is rejected rather than edited as a generic rig.
+Enable Avastar's appearance sliders before applying; its disabled updater is
+reported instead of claiming a successful shape change.
+Object and Pose Mode are supported for application; Pose Mode is restored after
+the operation. Avastar versions without that API report an error. The `shape-apply` capability
+is negotiated separately: a 0.9 plug-in can create references but cannot receive
+an Apply command and accidentally create another rig.
 
 This transfers the saved worn **shape**, not worn mesh bodies, heads, clothes,
 skin textures, animations or unsaved shape-editor changes. Use the reference

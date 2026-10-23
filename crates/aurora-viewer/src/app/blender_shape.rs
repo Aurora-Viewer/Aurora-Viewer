@@ -1,5 +1,5 @@
 use super::*;
-use crate::blender_live::shape::{self, Key, Outgoing, Pending};
+use crate::blender_live::shape::{self, Action, Key, Outgoing, Pending};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -39,8 +39,13 @@ impl App {
         }
     }
 
-    pub(super) fn send_blender_shape(&mut self) {
-        let item = match shape::editable(&self.world).and_then(|item| self.blender_live.shape_connection().map(|_| item)) {
+    pub(super) fn send_blender_shape(&mut self, action: Action) {
+        let connection = if action == Action::Apply {
+            self.blender_live.shape_apply_connection()
+        } else {
+            self.blender_live.shape_connection()
+        };
+        let item = match shape::editable(&self.world).and_then(|item| connection.map(|_| item)) {
             Ok(item) => item,
             Err(error) => {
                 self.blender_live.shape.fail(error);
@@ -52,6 +57,7 @@ impl App {
         }
         let state = &mut self.blender_live.shape;
         state.message.clear();
+        state.action = action;
         state.error = false;
         state.loading = Some(Key::of(&item));
         state.started = Some(Instant::now());
@@ -92,8 +98,13 @@ impl App {
         let (tx, rx) = mpsc::channel();
         self.blender_live.shape.pending = Some(Pending { key, id, result: rx });
         let ctx = self.egui_ctx.clone();
+        let action = self.blender_live.shape.action;
         self.scene.jobs.execute(move || {
-            let _ = tx.send(shape::build(&library, &bytes, id, &name));
+            let result = shape::build(&library, &bytes, id, &name).map(|mut data| {
+                std::sync::Arc::make_mut(&mut data)["action"] = action.wire().into();
+                data
+            });
+            let _ = tx.send(result);
             ctx.request_repaint();
         });
         true
@@ -102,11 +113,19 @@ impl App {
     pub(super) fn update_blender_shape(&mut self) {
         if self.demo
             && !self.blender_live.shape.demo_sent
-            && matches!(std::env::var("AURORA_DEMO_BLENDER_LIVE").as_deref(), Ok("shape" | "shape-readonly"))
+            && matches!(
+                std::env::var("AURORA_DEMO_BLENDER_LIVE").as_deref(),
+                Ok("shape" | "shape-readonly" | "shape-apply")
+            )
             && self.blender_live.shape_connection().is_ok()
         {
             self.blender_live.shape.demo_sent = true;
-            self.send_blender_shape();
+            let action = if std::env::var("AURORA_DEMO_BLENDER_LIVE").as_deref() == Ok("shape-apply") {
+                Action::Apply
+            } else {
+                Action::Create
+            };
+            self.send_blender_shape(action);
         }
         let state = &self.blender_live.shape;
         if !state.busy() {
@@ -116,7 +135,11 @@ impl App {
             .loading
             .or_else(|| state.pending.as_ref().map(|pending| pending.key))
             .or(state.active.map(|active| active.0));
-        let shared = self.blender_live.shape_connection();
+        let shared = if state.action == Action::Apply {
+            self.blender_live.shape_apply_connection()
+        } else {
+            self.blender_live.shape_connection()
+        };
         let failure = if key.is_some_and(|key| !key.valid(&self.world)) {
             Some(aurora_i18n::tr!("blender-shape-changed").to_owned())
         } else if state.started.is_some_and(|start| start.elapsed() > Duration::from_secs(45)) {
@@ -143,7 +166,10 @@ impl App {
             state.started = None;
             state.error = error.is_some();
             state.message = error.map_or_else(
-                || aurora_i18n::tr!("blender-shape-success").to_owned(),
+                || match state.action {
+                    Action::Create => aurora_i18n::tr!("blender-shape-success").to_owned(),
+                    Action::Apply => aurora_i18n::tr!("blender-shape-applied").to_owned(),
+                },
                 |error| aurora_i18n::tr!("blender-shape-failed", error = error),
             );
         }

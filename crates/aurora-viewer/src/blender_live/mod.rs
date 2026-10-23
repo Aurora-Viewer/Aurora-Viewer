@@ -38,6 +38,7 @@ pub enum SourceState {
 pub struct Status {
     pub connected: bool,
     pub shape_capable: bool,
+    pub shape_apply_capable: bool,
     pub received: u64,
     pub error: Option<String>,
 }
@@ -128,6 +129,14 @@ impl Live {
             return Err(aurora_i18n::tr!("blender-shape-update-plugin").into());
         }
         Ok(shared.clone())
+    }
+
+    pub(crate) fn shape_apply_connection(&self) -> Result<Arc<Shared>, String> {
+        let shared = self.shape_connection()?;
+        if !shared.status.lock().shape_apply_capable {
+            return Err(aurora_i18n::tr!("blender-shape-update-apply").into());
+        }
+        Ok(shared)
     }
     pub fn state(&self, id: Uuid) -> SourceState {
         self.states.get(&id).copied().unwrap_or_default()

@@ -45,6 +45,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
                         start = true;
                     }
                 });
+                shape_controls(live, ui, p);
                 object_list(live, ui, p, can_upload);
                 let error = live
                     .error
@@ -180,20 +181,31 @@ fn installer(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
     }
 }
 
-fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, can_upload: bool) {
-    section_divider(ui, p);
+fn shape_controls(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
     ui.horizontal_wrapped(|ui| {
-        widgets::section_header(ui, p, "cube", aurora_i18n::tr!("blender-live-objects"));
-        let enabled = live.shape.blocked.is_none() && !live.shape.busy();
-        let button = ui
-            .add_enabled_ui(enabled, |ui| widgets::flat_button(ui, p, aurora_i18n::tr!("blender-shape-send")))
-            .inner;
-        if button
-            .on_hover_text(aurora_i18n::tr!("blender-shape-tooltip"))
-            .on_disabled_hover_text(live.shape.blocked.as_deref().unwrap_or(aurora_i18n::tr!("blender-shape-sending")))
-            .clicked()
-        {
-            live.shape.requested = true;
+        for (action, label, tooltip, blocked) in [
+            (
+                shape::Action::Create,
+                aurora_i18n::tr!("blender-shape-send"),
+                aurora_i18n::tr!("blender-shape-tooltip"),
+                &live.shape.blocked,
+            ),
+            (
+                shape::Action::Apply,
+                aurora_i18n::tr!("blender-shape-apply"),
+                aurora_i18n::tr!("blender-shape-apply-tooltip"),
+                &live.shape.apply_blocked,
+            ),
+        ] {
+            if ui
+                .add_enabled_ui(blocked.is_none() && !live.shape.busy(), |ui| widgets::flat_button(ui, p, label))
+                .inner
+                .on_hover_text(tooltip)
+                .on_disabled_hover_text(blocked.as_deref().unwrap_or(aurora_i18n::tr!("blender-shape-sending")))
+                .clicked()
+            {
+                live.shape.requested = Some(action);
+            }
         }
         if live.shape.busy() {
             ui.weak(aurora_i18n::tr!("blender-shape-sending"));
@@ -202,6 +214,10 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
     if !live.shape.message.is_empty() {
         ui.colored_label(if live.shape.error { p.danger } else { p.success }, &live.shape.message);
     }
+}
+
+fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, can_upload: bool) {
+    section(ui, p, "cube", aurora_i18n::tr!("blender-live-objects"));
     let sources = live.snapshot.as_ref().map(|s| s.sources.clone()).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
         ui.label(aurora_i18n::tr!(

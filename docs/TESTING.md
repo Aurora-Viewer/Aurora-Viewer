@@ -1717,7 +1717,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|upload\|shape\|shape-readonly` | Local Blender bridge, object controls, mesh import and permission-gated shape transfer |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|upload\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, object controls, mesh import and permission-gated shape transfer |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
@@ -1754,6 +1754,10 @@ client connects; `shape-readonly` removes Modify and must send nothing. Neither
 mode uses account assets or a grid. Run `blender/tests/bridge_shape.py` with
 `-- --port <port>` against the offline viewer; it checks a native import and
 streams a reference part back. Add `--readonly` to verify no shape arrives.
+`shape-apply` sends the same synthetic shape as an Apply action; run the bridge
+with `--apply` to create/select a test rig, receive the shape on that same rig
+and return its weighted shirt. Connection starts with an empty sync list.
+Pass `--hold 45` to keep Blender connected while capturing the viewer's controls.
 Native shape tests accept a synthetic fixture: set `AURORA_TEST_SHAPE_OUTPUT`
 to its JSON path, run `cargo test --workspace blender_live_shape_payload`, then
 run Blender with `--background --factory-startup --python-exit-code 1 --python

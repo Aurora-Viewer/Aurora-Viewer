@@ -43,6 +43,7 @@ pub(super) fn start_listener(
                     }
                     worker.status.lock().connected = false;
                     worker.status.lock().shape_capable = false;
+                    worker.status.lock().shape_apply_capable = false;
                     worker.shape.lock().take();
                     worker.shape_ack.lock().take();
                     worker.shape_cancel.lock().take();
@@ -97,12 +98,13 @@ fn serve(
     }
     let mut joints: Vec<_> = supported.iter().collect();
     joints.sort();
-    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer"] });
+    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer", "shape-apply"] });
     writeln!(stream, "{hello}")?;
     {
         let mut status = shared.status.lock();
         status.connected = true;
         status.shape_capable = false;
+        status.shape_apply_capable = false;
         status.error = None;
     }
     ctx.request_repaint();
@@ -175,7 +177,11 @@ fn control(bytes: &[u8], shared: &Shared) -> bool {
         return false;
     };
     match control.kind.as_str() {
-        "features" => shared.status.lock().shape_capable = control.features.iter().any(|f| f == "shape-transfer"),
+        "features" => {
+            let mut status = shared.status.lock();
+            status.shape_capable = control.features.iter().any(|f| f == "shape-transfer");
+            status.shape_apply_capable = status.shape_capable && control.features.iter().any(|f| f == "shape-apply");
+        }
         "shape-result" => {
             if let Some(id) = control.id {
                 *shared.shape_ack.lock() = Some((id, control.error.map(|message| message.chars().take(512).collect())));
@@ -187,8 +193,20 @@ fn control(bytes: &[u8], shared: &Shared) -> bool {
 }
 
 fn reply(stream: &mut TcpStream, shared: &Shared, mut reply: serde_json::Value) -> io::Result<()> {
-    let capable = shared.status.lock().shape_capable;
-    let shape = if capable { shared.shape.lock().take() } else { None };
+    let status = shared.status.lock();
+    let capable = status.shape_capable;
+    let apply_capable = status.shape_apply_capable;
+    drop(status);
+    let shape = if capable {
+        let mut queued = shared.shape.lock();
+        if queued.as_ref().is_some_and(|shape| shape.data["action"] == "apply") && !apply_capable {
+            None
+        } else {
+            queued.take()
+        }
+    } else {
+        None
+    };
     if let Some(shape) = shape {
         reply["shape"] = (*shape.data).clone();
         reply["shape"]["id"] = serde_json::json!(shape.id);

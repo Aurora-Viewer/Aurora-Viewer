@@ -52,6 +52,16 @@ class ClientTests(unittest.TestCase):
         client._reply(io.BytesIO(b'{"ok":true,"shape_cancel":"test-shape"}\n'))
         self.assertIsNone(client.take_shape())
 
+    def test_pose_mode_only_receives_apply_and_keeps_creation_pending(self):
+        client = module.Client.__new__(module.Client)
+        client._lock = threading.Lock()
+        client._wake = threading.Event()
+        client._shape = {"id": "test-shape", "action": "create"}
+        client._shape_received = time.monotonic()
+        self.assertIsNone(client.take_shape(ready=False, pose=True))
+        client._shape["action"] = "apply"
+        self.assertEqual(client.take_shape(ready=False, pose=True)["action"], "apply")
+
     def test_shape_transfer_negotiates_receives_large_data_and_confirms_main_thread_import(self):
         received = []
         identity = "00000000-0000-0000-0000-000000000123"
@@ -61,7 +71,7 @@ class ClientTests(unittest.TestCase):
             with listener.accept()[0] as connection:
                 connection.settimeout(5)
                 self.assertEqual(receive(connection, 8), module.MAGIC)
-                connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"features":["pbr-materials","shape-transfer"]}\n')
+                connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"features":["pbr-materials","shape-transfer","shape-apply"]}\n')
                 received.append(snapshot(connection))
                 payload = {"id": identity, "test_data": "x" * 300000}
                 connection.sendall(json.dumps({"ok": True, "shape": payload}).encode() + b"\n")
@@ -81,7 +91,7 @@ class ClientTests(unittest.TestCase):
         self.assertIsNone(client.take_shape(), "one import per delivered request")
         client.shape_result(identity)
         self.finish(client, thread, failures)
-        self.assertEqual(received[0], {"type": "features", "features": ["shape-transfer"]})
+        self.assertEqual(received[0], {"type": "features", "features": ["shape-transfer", "shape-apply"]})
         self.assertEqual(received[1], {"type": "shape-result", "id": identity, "error": None})
 
     def test_source_identity_is_negotiated_without_mutating_the_capture(self):

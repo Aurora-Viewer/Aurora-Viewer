@@ -149,7 +149,7 @@ class MaterialWeightTests(unittest.TestCase):
         self.material.node_tree.links.new(image.outputs["Color"], self.shader.inputs["Base Color"])
         self.material.node_tree.nodes.active = image
         submitted = []
-        fake = SimpleNamespace(state=lambda: ("Connected", self.names), rest_axes=lambda: {}, take_shape=lambda ready=True: None,
+        fake = SimpleNamespace(state=lambda: ("Connected", self.names), rest_axes=lambda: {}, take_shape=lambda ready=True, pose=False: None,
                                submit=submitted.append, close=lambda: None)
         aurora_live.tracking.add(bpy.context.scene, [self.mesh])
         with patch.object(aurora_live, "_client", fake):

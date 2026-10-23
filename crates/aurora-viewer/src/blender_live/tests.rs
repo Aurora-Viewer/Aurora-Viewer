@@ -384,5 +384,22 @@ fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separat
     }
     assert_eq!(shared.shape_ack.lock().take(), Some((id, None)));
     assert!(shared.latest.lock().is_none(), "shape controls never replace live mesh revisions");
+    *shared.shape.lock() = Some(shape::Outgoing {
+        id,
+        data: Arc::new(serde_json::json!({"action":"apply"})),
+    });
+    stream.write_all(&0u32.to_le_bytes()).expect("0.9 heartbeat");
+    line.clear();
+    reader.read_line(&mut line).expect("reply");
+    assert!(!line.contains("shape"), "0.9 must never interpret Apply as Create");
+    assert!(shared.shape.lock().is_some());
+    let data = br#"{"type":"features","features":["shape-transfer","shape-apply"]}"#;
+    stream.write_all(&(data.len() as u32).to_le_bytes()).expect("length");
+    stream.write_all(data).expect("features");
+    line.clear();
+    reader.read_line(&mut line).expect("apply delivery");
+    let reply: serde_json::Value = serde_json::from_str(&line).expect("JSON");
+    assert_eq!(reply["shape"]["action"], "apply");
+    assert!(shared.shape.lock().is_none());
     drop(owner);
 }
