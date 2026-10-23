@@ -190,6 +190,16 @@ impl App {
         if !self.demo || !std::env::var("AURORA_DEMO_HUDS").is_ok_and(|mode| mode.starts_with("drag")) {
             return;
         }
+        let mode = std::env::var("AURORA_DEMO_HUDS").unwrap_or_default();
+        if (self.frame_count == 680 && mode.starts_with("drag-lock")) || (self.frame_count == 700 && mode == "drag-lock-unlock") {
+            self.on_ctx_action(ui::context::CtxAction::SetHudMoveLock(
+                crate::world::objects::ObjKey {
+                    region: self.world.main_region.unwrap_or_default(),
+                    local_id: crate::demo::hud::CHILD,
+                },
+                self.frame_count == 680,
+            ));
+        }
         let child = (self.frame_count == 720)
             .then(|| {
                 self.world
@@ -209,6 +219,9 @@ impl App {
                 view.height * 0.5 - pos.z * view.height * view.zoom,
             );
             self.demo_hud_drag_key(true);
+            if mode == "drag-lock-camera" {
+                self.alt = true;
+            }
             self.on_left_press();
             log::info!(
                 "demo HUD drag start: active={}, script_touch={}, camera={:?}, key={}",
@@ -218,6 +231,16 @@ impl App {
                 self.demo_hud_drag_binding().map(|b| b.label()).unwrap_or_default()
             );
         } else if (740..840).contains(&self.frame_count) {
+            if mode == "drag-lock-camera" {
+                self.camera_mouse_delta(1.2, -0.7);
+                if self.frame_count == 780 {
+                    log::info!(
+                        "demo HUD locked camera: mode={:?}, hud_drag={}",
+                        self.mouse_mode,
+                        self.hud_drag.is_some()
+                    );
+                }
+            }
             self.cursor_pos.0 += 1.2;
             self.cursor_pos.1 -= 0.7;
             if self.frame_count == 800 {
@@ -233,6 +256,21 @@ impl App {
                 self.interactions.held.is_some(),
                 self.mouse_mode
             );
+        } else if self.frame_count == 880 && mode == "drag-lock" {
+            let key = crate::world::objects::ObjKey {
+                region: self.world.main_region.unwrap_or_default(),
+                local_id: crate::demo::hud::CHILD,
+            };
+            if let Some(idx) = self.world.objects.index_of(&key)
+                && let Some(view) = self.scene.lists.hud_view
+                && let Some((pos, _, _)) = Scene::object_transform(&self.world, idx, Instant::now(), 0)
+            {
+                self.cursor_pos = (
+                    view.width * 0.5 - pos.y * view.height * view.zoom,
+                    view.height * 0.5 - pos.z * view.height * view.zoom,
+                );
+                self.open_context_menu();
+            }
         }
     }
 

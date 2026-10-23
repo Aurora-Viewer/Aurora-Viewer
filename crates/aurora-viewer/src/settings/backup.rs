@@ -55,6 +55,7 @@ const ACCOUNT_FILES: &[&str] = &[
     crate::media::filter::FILE,
     crate::world::favorites::FILE,
     crate::world::hud_scale::FILE,
+    crate::world::hud_lock::FILE,
     crate::world::hover_height::FILE,
     crate::world::tphistory::TELEPORT_HISTORY_FILE,
 ];

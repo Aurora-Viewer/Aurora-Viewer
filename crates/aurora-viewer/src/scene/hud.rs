@@ -55,6 +55,8 @@ impl Scene {
         self.lists.hud_view = None;
         self.lists.hud_opaque.clear();
         self.lists.hud_blend.clear();
+        self.lists.hud_debug_red.clear();
+        self.lists.hud_debug_blue.clear();
         self.hud_own.clear();
         self.lists.hud_select_faces.clear();
         if !visible {
@@ -90,6 +92,17 @@ impl Scene {
                 self.textures.note_usage_fixed(id, px);
             }
             for face in &g.faces {
+                // LLDrawPoolAlpha::renderDebugAlpha also runs in the HUD pass.
+                if self.debug_alpha.is_some() {
+                    match face.pass {
+                        Pass::Blend | Pass::Hidden => self.lists.hud_debug_red.push(face.cmd),
+                        Pass::Mask | Pass::MaskTwoSided if face.pbr_alpha.is_some() || face.legacy_alpha.is_some() => {
+                            self.lists.hud_debug_blue.push(face.cmd);
+                        }
+                        Pass::Mask | Pass::MaskTwoSided => self.lists.hud_debug_red.push(face.cmd),
+                        _ => {}
+                    }
+                }
                 if self
                     .selection_faces
                     .get(&idx)
@@ -112,12 +125,13 @@ impl Scene {
     }
 
     pub fn hud_pick(&self, world: &World, cursor: (f32, f32), include_hidden: bool) -> Option<(usize, Vec3, (Vec3, Vec3))> {
-        self.hud_pick_impl(world, cursor, include_hidden, false)
+        self.hud_pick_impl(world, cursor, include_hidden || self.debug_alpha.is_some(), false)
     }
 
-    /// Alt movement picks visible geometry even when its click action is IGNORE.
+    /// The HUD move gesture reaches IGNORE prims, but respects texture holes.
     pub fn hud_move_pick(&self, world: &World, cursor: (f32, f32)) -> Option<usize> {
-        self.hud_pick_impl(world, cursor, false, true).map(|(idx, _, _)| idx)
+        self.hud_pick_impl(world, cursor, self.debug_alpha.is_some(), true)
+            .map(|(idx, _, _)| idx)
     }
 
     /// Editing and right-click selection also reach CLICK_ACTION_IGNORE

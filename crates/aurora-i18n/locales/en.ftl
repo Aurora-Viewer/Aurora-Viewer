@@ -6433,6 +6433,7 @@ extra-join-me = Join me!
 preferences-group-skin = Skin
 preferences-group-huds = HUDs
 hud-local-scale = Local size: { $percent } %
+hud-move-locked = Lock quick movement
 hud-local-scale-reset = Reset to 100%
 hud-local-scale-forget = Forget saved size
 hud-local-scale-help = Hold the HUD key: left drag to move, wheel to resize, Shift for finer steps. Size is saved on this PC by name and creator, for this account. While editing a HUD, the wheel without this key zooms the view of all HUDs.

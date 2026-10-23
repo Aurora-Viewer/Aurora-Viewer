@@ -470,6 +470,12 @@ impl World {
             .map_or(1.0, |o| self.hud_scales.scale(o.full_id))
     }
 
+    pub fn hud_move_locked(&self, idx: usize) -> bool {
+        self.hud_root(idx)
+            .and_then(|root| self.objects.get(root))
+            .is_some_and(|o| self.hud_locks.locked(o.full_id))
+    }
+
     pub fn visual_scale(&self, idx: usize) -> Vec3 {
         self.objects.get(idx).map_or(Vec3::ONE, |o| o.scale * self.hud_scale(idx))
     }
@@ -527,6 +533,8 @@ impl World {
             .unwrap_or_default();
         let before: Vec<_> = roots.iter().map(|(id, _, _)| self.hud_scales.scale(*id)).collect();
         self.hud_scales.refresh(&roots);
+        let lock_roots: Vec<_> = roots.iter().map(|(id, item, _)| (*id, *item)).collect();
+        self.hud_locks.refresh(&lock_roots);
         for ((id, _, _), before) in roots.iter().zip(before) {
             if before != self.hud_scales.scale(*id)
                 && let Some(root) = self.objects.index_of_uuid(id)

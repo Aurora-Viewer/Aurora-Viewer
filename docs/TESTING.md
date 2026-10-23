@@ -1514,6 +1514,11 @@ grid.
 - `drag`: grabs the child with Ctrl (frame 720), moves the whole HUD,
   releases Ctrl before the click (frame 800), then saves the position on
   left release (frame 840) without touching any script.
+- `drag-lock`: locks the HUD through its child at frame 680, attempts the
+  same drag, then opens the context menu at frame 880 with the lock checked.
+  The HUD must stay in place. `drag-lock-unlock` unlocks it at frame 700;
+  dragging must work again. `drag-lock-camera` holds Ctrl + Alt instead:
+  the camera must orbit while the locked HUD stays in place.
 - `drag-zoom`: the same at 50%; `drag-ignore`: on a child with the
   IGNORE action; `drag-ctrl`: explicitly binds Ctrl; `drag-key`: the B key
   instead of Ctrl; `drag-secondary`: ALT as primary key and Ctrl as
@@ -1535,6 +1540,17 @@ grid.
   `faces-turned` turns all the panels by 180°: the front column
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
+- `faces-alpha` uses a texture with holes in those panels. Normal touches
+  and quick movement pass through texture holes; opaque PBR ignores texture
+  alpha. Editing and right-click selection retain access to invisible faces.
+  With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
+  and material masks blue; their highlighted surfaces become pickable.
+
+Right-click a HUD and check **Lock quick movement** to prevent its held-key
+drag without blocking buttons, scripts, local resizing or explicit Edit.
+The lock applies to the whole linkset, survives reattachment/relogin for
+ordinary inventory HUDs, and is stored per account in `hud_locks.json`.
+Temporary attachments without a stable inventory item keep an instance lock.
 
 **`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
