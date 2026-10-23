@@ -55,10 +55,10 @@ pub struct Motion {
     pub mode: u8,
     /// Motors: [speed m/s (run: multiplier 1..5), avatar height m, auxiliary].
     /// Auxiliary: swim float-height offset m (7/8/10: water-relative goal),
-    /// exit climb m/s, otherwise zero. Passage/shore jump: region-space
+    /// exit climb m/s, water-walk jump height m, otherwise zero. Passage/shore jump: region-space
     /// displacement, never a teleport destination.
     pub parameters: [f32; 3],
-    /// Nonzero idempotency key for one physical passage/jump; zero for motors.
+    /// Nonzero idempotency key for one physical passage/jump; zero for continuous motors.
     pub action: u32,
 }
 impl Motion {
@@ -93,6 +93,13 @@ impl Motion {
         };
         motion.valid().then_some(motion)
     }
+    pub fn water_walk_jump(speed: f32, height: f32) -> Self {
+        Self {
+            mode: 13,
+            parameters: [speed, height, 1.0],
+            action: ((Uuid::new_v4().as_u128() as u32) & i32::MAX as u32).max(1),
+        }
+    }
     pub fn valid(self) -> bool {
         let [speed, height, climb] = self.parameters;
         if !self.parameters.iter().all(|v| v.is_finite()) {
@@ -109,7 +116,12 @@ impl Motion {
                 (0.25..=16.0).contains(&distance2) && (0.1..=3.5).contains(&climb) && self.action > 0 && self.action <= i32::MAX as u32
             }
             11 | 12 => speed == 0.0 && climb == 0.0 && (0.6..=3.0).contains(&height) && (1..=i32::MAX as u32).contains(&self.action),
-            1 | 2 | 3 | 4 | 6 | 7 | 8 | 10 | 13 => {
+            13 => {
+                (0.5..=8.0).contains(&speed)
+                    && (0.6..=3.0).contains(&height)
+                    && ((self.action == 0 && climb == 0.0) || ((1..=i32::MAX as u32).contains(&self.action) && climb == 1.0))
+            }
+            1 | 2 | 3 | 4 | 6 | 7 | 8 | 10 => {
                 let range = match self.mode {
                     1 => 1.0..=5.0,
                     // x5 downward flight is 114.35 m/s; leave rounding headroom.
@@ -533,6 +545,35 @@ mod tests {
         for bad in ["65537", "-1", "", "x"] {
             assert!(Ack::parse(&format!("{base}|{bad}")).is_none(), "{bad}");
         }
+    }
+    #[test]
+    fn water_walking_jump_payload_requires_a_bounded_one_shot_action() {
+        let jump = Motion::water_walk_jump(5.13, 1.7);
+        assert!(jump.valid());
+        assert_eq!(jump.mode, 13);
+        assert_eq!(jump.parameters, [5.13, 1.7, 1.0]);
+        assert!((1..=i32::MAX as u32).contains(&jump.action));
+        for invalid in [
+            Motion { action: 0, ..jump },
+            Motion { action: u32::MAX, ..jump },
+            Motion {
+                parameters: [5.13, 1.7, 0.0],
+                ..jump
+            },
+            Motion {
+                parameters: [5.13, 1.7, 1.01],
+                ..jump
+            },
+            Motion {
+                parameters: [5.13, 1.7, f32::NAN],
+                ..jump
+            },
+            Motion::water_walk_jump(8.01, 1.7),
+            Motion::water_walk_jump(3.2, 3.01),
+        ] {
+            assert!(!invalid.valid(), "{invalid:?}");
+        }
+        assert!(Motion::motor(13, 3.2, 1.7).valid());
     }
     #[test]
     fn motor_settings_and_physical_passage_have_distinct_bounded_payloads() {

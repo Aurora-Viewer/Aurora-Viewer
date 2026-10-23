@@ -6977,6 +6977,26 @@ at the 1.2 m/s crouch target. Both keep the native waterline root and use
 ephemeral local crouch clips through the ordinary AO owner. Inspect the pose,
 wave following and AO command trace; no cannonball or swim transition should
 occur. These modes do not change inventory or simulate bridge physics.
+`water-jump`, `water-jump-run` and `water-jump-hold` add a prescribed one-metre,
+0.9-second arc from the waterline, respectively stationary, running and with
+ascent held after landing. Capture frames 765/795/840 to inspect ascent,
+descent and restored surface support. These are animation/command fixtures,
+not a Havok simulation. Bridge 1.30 needs human simulator validation: enable
+walking on water, tap the configured ascent key at rest, while walking,
+running and crouching, then hold it through landing. Expect one jump, ordinary
+AO jump/fall animations and a return onto the water without entering flight
+or swimming. Repeat in a no-fly parcel, with remapped keys and AO off; check
+ceilings/walls, mode disable, seating and bridge loss during the jump.
+
+Water-walk jump checks (2026-10-23): full `scripts/check.ps1` green, 4,585
+passed, zero failures, 27 ignored; scripts, formatting and Clippy clean. Both
+bridge 1.30 scripts pass LSL lint with zero errors/warnings. Regressions cover
+one action across delayed ascent/fall/landing, airborne repress and held-key
+behavior, all movement directions, run and crouch precedence, no-fly support,
+underwater rejection, immediate context cancellation, timeout, ordinary AO
+replacements and stock fallback release, and immediate supersession of pending
+support/jump requests. These checks do not establish simulator physics.
+
 `water-walk-ui` and `swim-ui` also open the Movement tab for EN/FR control
 inspection, with only their corresponding water mode active.
 `cannonball-late` presses it shortly before contact and checks that even a

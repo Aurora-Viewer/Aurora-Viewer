@@ -1414,6 +1414,24 @@ fn provisioning_times_out_and_retry_keeps_existing_inventory_objects() {
 }
 
 #[test]
+fn water_walk_jump_and_landing_supersede_pending_support_without_waiting_for_an_ack() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    sim.bridge.motion = Motion::motor(13, 3.2, 1.7);
+    sim.bridge.send_mode(&sim.prefs, sim.now);
+    let mut previous = sim.bridge.pending.expect("support in flight");
+    for (ms, motion) in [(10, Motion::water_walk_jump(3.2, 1.7)), (20, Motion::motor(13, 3.2, 1.7))] {
+        sim.bridge.motion = motion;
+        sim.bridge.send_mode(&sim.prefs, sim.now + Duration::from_millis(ms));
+        let next = sim.bridge.pending.expect("superseding action");
+        assert_ne!(previous.0, next.0);
+        assert!(next.1 > previous.1);
+        assert_eq!(next.2.2, motion);
+        previous = next;
+    }
+}
+
+#[test]
 fn motion_release_supersedes_a_delayed_request_without_waiting_for_its_ack() {
     let mut sim = Simulator::new();
     sim.ready();

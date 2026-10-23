@@ -9876,6 +9876,7 @@ movement-water-takeoff = At the surface: take flight
 movement-water-dive = Dive: immediately after jumping
 movement-water-cannonball = Cannonball: in flight, or press again during a dive
 movement-water-walk-crouch = Crouch / crouch-walk
+movement-water-walk-jump = Jump and land on the water
 movement-water-walk = Walk / run on water
 movement-run-multiplier = Running multiplier
 movement-run-help = ×1 keeps normal running unchanged. Increase up to ×5 to boost running; walking is unchanged.

@@ -9872,6 +9872,7 @@ movement-water-takeoff = En surface : sortir en vol
 movement-water-dive = Plongeon : juste après le saut
 movement-water-cannonball = Bombe : en vol, ou nouvel appui en plongeon
 movement-water-walk-crouch = S’accroupir / marcher accroupi
+movement-water-walk-jump = Sauter et retomber sur l’eau
 movement-water-walk = Marcher / courir sur l’eau
 movement-run-multiplier = Multiplicateur de course
 movement-run-help = ×1 conserve la course normale. Augmente jusqu’à ×5 pour accélérer la course ; la marche reste inchangée.

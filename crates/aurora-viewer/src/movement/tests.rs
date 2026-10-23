@@ -117,6 +117,49 @@ fn water_walk_descent_keeps_support_and_uses_ground_crouch_states() {
 }
 
 #[test]
+fn water_walk_jump_keeps_motor_ownership_and_suppresses_automatic_flight_until_landing() {
+    let now = Instant::now();
+    let prefs = Preferences {
+        water_walk: true,
+        ..Default::default()
+    };
+    let mut r = Runtime::default();
+    let mut f = frame();
+    f.position.z = 20.85;
+    f.on_ground = false;
+    f.can_fly = false;
+    r.update(&prefs, &f, &MoveInput::default(), now);
+    let up = MoveInput {
+        up: true,
+        forward: true,
+        run: true,
+        ..Default::default()
+    };
+    let jump = r.update(&prefs, &f, &up, now).motion;
+    assert!(jump.action > 0 && jump.valid());
+    for (ms, z, vz, pose) in [
+        (100, 21.2, 2.0, crate::ao::State::Jumping),
+        (450, 21.6, 0.0, crate::ao::State::Jumping),
+        (700, 21.2, -2.0, crate::ao::State::Falling),
+    ] {
+        f.position.z = z;
+        f.velocity.z = vz;
+        let step = r.update(&prefs, &f, &up, now + Duration::from_millis(ms));
+        assert_eq!(step.motion, jump);
+        assert_eq!(step.flying, Some(false));
+        assert_eq!(r.state, State::WaterWalking);
+        assert_eq!(r.water_walk.pose(), Some(pose));
+        assert!(!r.native_fly_allowed() && !r.allows_idle_anchor());
+    }
+    f.position.z = 20.85;
+    f.velocity.z = 0.0;
+    let landed = r.update(&prefs, &f, &up, now + Duration::from_millis(1000));
+    assert_eq!(landed.motion, Motion::motor(13, 5.13, f.height));
+    assert_eq!(r.water_walk.pose(), Some(crate::ao::State::Running));
+    assert!(!r.native_fly_allowed());
+}
+
+#[test]
 fn water_walking_follows_visual_waves_only_while_supported() {
     let mut f = frame();
     f.position.z = 20.85;

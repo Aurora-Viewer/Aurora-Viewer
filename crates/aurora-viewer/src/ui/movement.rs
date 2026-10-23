@@ -71,6 +71,7 @@ impl MovementUi {
                 prefs.set_water_mode(true, walking, self.swim_ready);
             }
             key_hint(water_walk, p, Gesture::Tap(&down), aurora_i18n::tr!("movement-water-walk-crouch"));
+            key_hint(water_walk, p, Gesture::Tap(&up), aurora_i18n::tr!("movement-water-walk-jump"));
         });
         if !self.message.is_empty() {
             let message = ui.label(&self.message);

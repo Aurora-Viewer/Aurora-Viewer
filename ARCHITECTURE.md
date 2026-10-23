@@ -2144,7 +2144,7 @@ rest as droplets. Foam/ripple injection stays in the existing bounded compute
 field. The underside floor fallback approximates a rough multiple-bounce lobe
 continuously across grazing ray directions, avoiding alternating blue holes.
 
-Water walking (updated 2026-10-18): `movement/water_walk.rs` supplies a separate,
+Water walking (updated 2026-10-23): `movement/water_walk.rs` supplies a separate,
 per-account opt-in physical support controller. Bridge mode 13 steers toward
 native water height plus half the avatar height, with collision-aware targets
 bounded to 1.6 m; it uses ordinary 3.2/5.13 m/s walk/run speeds. Descend selects
@@ -2152,8 +2152,14 @@ Crouching at rest or CrouchWalk while moving, with the existing ground crouch
 speed of 1.2 m/s taking priority over run. Bridge 1.27 keeps water support during
 Descend and caps speed directly from captured controls before the next viewer
 command. It releases for dry terrain, flight, seats, suspension or bridge loss.
-Movelock retains its normal anchor ownership. A brief ascent uses the existing
-bounded jump pulse. The bottom-toolbar `water_walk` button and Movement
+Movelock retains its normal anchor ownership. Ascent at the supported surface
+starts a one-metre, 0.9-second jump in bridge 1.30 mode 13. A nonzero action ID
+and jump height distinguish it from ordinary support; retransmission never
+renews the trajectory. Collision-aware targets preserve directional movement
+and walk/run speed. The viewer keeps support ownership through Jumping/Falling
+AO signals until actual landing (three-second timeout), preventing automatic
+flight and repeated jumps from a held key. Crouching may start a jump, but a
+submerged avatar must first reach the surface. The bottom-toolbar `water_walk` button and Movement
 switch share this preference. Existing nonempty custom bars receive the button
 once; deliberate empty bars, side placement and later removal are preserved.
 The ordinary AO standing/walking/running/crouching selections, groups and cycles own

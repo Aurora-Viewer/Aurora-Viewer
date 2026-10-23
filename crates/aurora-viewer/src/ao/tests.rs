@@ -281,6 +281,34 @@ fn water_walk_without_ao_owns_stock_states_then_releases_them_immediately() {
 }
 
 #[test]
+fn water_walk_jump_fall_replacements_and_stock_fallback_release_native_signals() {
+    let (_, mut set) = fixture();
+    let now = Instant::now();
+    for state in [State::Jumping, State::Falling] {
+        // Give both airborne states an ordinary inventory replacement.
+        set.states.insert(state, set.states[&State::Running].clone());
+        for enabled in [false, true] {
+            let mut r = Runtime::default();
+            let raw = [signal(State::Walking, now)];
+            let mut f = frame(&raw);
+            f.enabled = enabled;
+            f.water_walk_hold = Some((state, signal(state, now)));
+            let (pose, commands) = r.update(Some(&set), f, now, |_| true, |_| 0);
+            let asset = if enabled { step(&set, state, 0) } else { state.motion() };
+            assert!(pose.iter().any(|a| a.id == asset));
+            assert!(commands.contains(&(asset, true)));
+            assert!(!pose.contains(&raw[0]));
+            let native = [signal(state, now + Duration::from_millis(50))];
+            let mut f = frame(&native);
+            f.enabled = false;
+            let (pose, commands) = r.update(None, f, now + Duration::from_millis(50), |_| true, |_| 0);
+            assert!(pose.contains(&native[0]), "{state:?} resumes after releasing the water hold");
+            assert!(commands.contains(&(asset, false)));
+        }
+    }
+}
+
+#[test]
 fn a_standalone_cannonball_slot_works_with_regular_ao_and_swimming_disabled() {
     let (_, mut set) = fixture();
     let config = set.states[&State::Running].clone();

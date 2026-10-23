@@ -1,10 +1,10 @@
-// Aurora LSL Bridge v1.29. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.30. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 // Mono's 64 KB holds this compiled controller too, with little to spare: the
 // read-only queries run in query.lsl, so a busy region cannot halt Movelock
 // with a Stack-Heap Collision. Keep new services out of this script.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.29";
+string VERSION = "1.30";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -68,6 +68,9 @@ integer gRunRestarts;
 integer gRunState;
 integer gRunPushes;
 integer gWaterJumpAction;
+integer gWalkJumpAction;
+integer gWalkJumpFinished;
+float gWalkJumpStarted;
 integer gWaterJumpFinished;
 float gWaterJumpStarted;
 
@@ -190,6 +193,7 @@ releasePass() {
     }
 }
 releaseMotion() {
+    if (gMode == 13) gWalkJumpFinished = TRUE;
     if (gMode == 11 || gMode == 12) gWaterJumpFinished = TRUE;
     clearRun(0);
     integer finishedPass = gMode == 5 && !gPassFinished;
@@ -498,10 +502,20 @@ applyMotion() {
         if (llGround(ZERO_VECTOR) >= water - 0.06 || (agentInfo & AGENT_FLYING)) { releaseMotion(); return; }
         // Crouching retains the same waterline support. React to captured
         // controls before the next viewer command, including always-run.
-        if ((gLevel & CONTROL_DOWN) && speed > 1.2) speed = 1.2;
-        vector target = position + direction * speed * 0.2;
-        target.z = water + gParameters.y * 0.5;
-        steer(position, position + bounded(target - position, 1.6), 0.2);
+        float lift = 0.0;
+        if (!gWalkJumpFinished && gParameters.z > 0.0) {
+            // A single 0.9 s arc rises one metre then settles back onto the
+            // waterline. HTTP refreshes retain its original start time.
+            float phase = (llGetTime() - gWalkJumpStarted) / 0.9;
+            if (phase >= 1.0) gWalkJumpFinished = TRUE;
+            else lift = 4.0 * gParameters.z * phase * (1.0 - phase);
+        }
+        if (gParameters.z == 0.0 && (gLevel & CONTROL_DOWN) && speed > 1.2) speed = 1.2;
+        float response = 0.2;
+        if (gParameters.z > 0.0) response = 0.1;
+        vector target = position + direction * speed * response;
+        target.z = water + gParameters.y * 0.5 + lift;
+        steer(position, position + bounded(target - position, 1.6), response);
         return;
     }
     if (gMode == 3 || gMode == 6 || gMode == 4) {
@@ -778,6 +792,17 @@ default {
                 vector parameters = <llList2Float(parts, 6), llList2Float(parts, 7), llList2Float(parts, 8)>;
                 integer action = llList2Integer(parts, 9);
                 integer previousMode = gMode;
+                if (mode == 13) {
+                    if (action > 0 && parameters.z == 1.0) {
+                        if (action != gWalkJumpAction) {
+                            gWalkJumpAction = action;
+                            gWalkJumpStarted = llGetTime();
+                            gWalkJumpFinished = FALSE;
+                        }
+                    } else if (action == 0 && parameters.z == 0.0) gWalkJumpFinished = TRUE;
+                    else mode = 0;
+                }
+                if (previousMode == 13 && mode != 13) gWalkJumpFinished = TRUE;
                 // An older in-flight surface refresh cannot undo the key edge.
                 // Explicit return/release commands always take precedence.
                 if (mode == 3 && gMode == 7 && llGetTime() < gNativeDiveUntil) {

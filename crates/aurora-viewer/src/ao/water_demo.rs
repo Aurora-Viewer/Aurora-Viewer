@@ -223,9 +223,11 @@ pub fn trajectory_input(frame: u64) -> Option<MoveInput> {
     }
     if mode.starts_with("water-") {
         return Some(MoveInput {
-            forward: mode != "water-crouch",
-            run: mode == "water-run",
+            forward: !matches!(mode, "water-crouch" | "water-jump" | "water-jump-hold"),
+            run: matches!(mode, "water-run" | "water-jump-run"),
             down: matches!(mode, "water-crouch" | "water-crouch-walk"),
+            up: mode.starts_with("water-jump")
+                && (0.5..if mode == "water-jump-hold" { 8.8 } else { 0.55 }).contains(&(((frame - 720) % 540) as f32 / 60.0)),
             ..Default::default()
         });
     }
@@ -306,8 +308,8 @@ pub fn trajectory(world: &mut World, frame: u64, now: Instant, float_height: f32
             (
                 Vec3::new(46.0, 124.0, world.main_water_height() + height * 0.5),
                 match mode {
-                    "water-run" => 5.0,
-                    "water-crouch" => 0.0,
+                    "water-run" | "water-jump-run" => 5.0,
+                    "water-crouch" | "water-jump" | "water-jump-hold" => 0.0,
                     "water-crouch-walk" => 1.2 * period / std::f32::consts::TAU,
                     _ => 3.2,
                 },
@@ -334,6 +336,11 @@ pub fn trajectory(world: &mut World, frame: u64, now: Instant, float_height: f32
         };
         position = center + Vec3::X * extent * phase.sin();
         velocity = Vec3::X * extent * (std::f32::consts::TAU / period) * phase.cos();
+        if mode.starts_with("water-jump") && (0.0..0.9).contains(&t) {
+            let phase = t / 0.9;
+            position.z += 4.0 * phase * (1.0 - phase);
+            velocity.z = 4.0 * (1.0 - 2.0 * phase) / 0.9;
+        }
         if mode.starts_with("swim-depth") {
             velocity.z = if (1.5..2.5).contains(&time) {
                 -1.6

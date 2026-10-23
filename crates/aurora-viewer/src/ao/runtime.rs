@@ -534,6 +534,7 @@ impl Runtime {
             State::Crouching,
             State::CrouchWalk,
             State::Jumping,
+            State::Falling,
         ] {
             if !self.active.iter().any(|a| a.id == state.motion()) {
                 self.owned.remove(&state.motion());
