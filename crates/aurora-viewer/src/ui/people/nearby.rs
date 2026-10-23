@@ -240,13 +240,23 @@ pub fn tab(
     blocked: &mut bool,
 ) {
     st.radar_selected.retain(|id| data.radar.get(id).is_some());
-    let (list, sheet) = areas(ui, st);
+    let (list, sheet) = areas(ui, st, false);
     if let Some(rect) = list {
         let mut child = list_ui(ui, rect, "people-nearby-list", sheet.is_some());
         list_part(&mut child, p, world, data, st, map, actions, blocked, sheet.is_some());
     }
     if let (Some(rect), Some(id)) = (sheet, st.sheet)
-        && super::sheet::show(&mut list_ui(ui, rect, "people-sheet", false), p, world, data, st, id, true, actions)
+        && super::sheet::show(
+            &mut list_ui(ui, rect, "people-sheet", false),
+            p,
+            world,
+            data,
+            st,
+            id,
+            true,
+            true,
+            actions,
+        )
     {
         close_sheet(st);
     }
@@ -261,10 +271,14 @@ pub(super) fn sheet_fits(width: f32) -> bool {
 /// sheet: the list alone, both side by side, or the sheet alone when the
 /// window is too narrow for both (and the list alone on the frame the
 /// window waits to grow for a sheet).
-pub(super) fn areas(ui: &mut egui::Ui, st: &PeopleUi) -> (Option<Rect>, Option<Rect>) {
+pub(super) fn areas(ui: &mut egui::Ui, st: &PeopleUi, persistent_sheet: bool) -> (Option<Rect>, Option<Rect>) {
     let body = Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
     ui.allocate_rect(body, Sense::hover());
     let split = sheet_fits(body.width());
+    if split && persistent_sheet {
+        let (list, sheet) = body.split_left_right_at_x(body.right() - SHEET_W);
+        return (Some(list), Some(sheet));
+    }
     match st.sheet {
         Some(_) if st.sheet_grow => (Some(body), None),
         Some(_) if split => {

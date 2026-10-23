@@ -997,7 +997,11 @@ fn contacts_navigation_entry_returns_from_sheet_to_list() {
             );
             h.click(h.rect(entry_id(Pinned::Contacts)).center());
             let texts = h.settle();
-            assert_eq!(h.people.sheet, None, "{style:?} at {width}: Contacts closes the sheet");
+            assert_eq!(
+                h.people.sheet,
+                (width == 960.0).then_some(Uuid::from_u128(0xF000)),
+                "{style:?} at {width}: Contacts returns to the list, retaining the permanent large-layout sheet"
+            );
             assert!(texts.iter().any(|t| t.source == "Friend 01"), "the list is back");
             assert_eq!(h.people.filter, "Friend 0", "the filter is preserved");
             assert_eq!(h.people.sel, selected, "the selection is preserved");
@@ -1101,11 +1105,101 @@ fn contacts_navigation_details_button_opens_sheet() {
                     h.settle();
                     h.click(h.rect(entry_id(Pinned::Contacts)).center());
                     let texts = h.settle();
-                    assert_eq!(h.people.sheet, None);
+                    assert_eq!(h.people.sheet, (width == 960.0).then_some(id));
                     assert!(texts.iter().any(|t| t.source == "Friend 01"), "Contacts returns to the list");
                 }
             }
         }
+    }
+}
+
+#[test]
+fn contacts_navigation_large_details_preserve_selection_and_show_empty_state() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        let mut h = contacts_navigation(style, 960.0);
+        h.settle();
+        assert_eq!(
+            h.people.sheet,
+            Some(Uuid::from_u128(0xF000)),
+            "the first visible friend is selected automatically"
+        );
+        assert_eq!(h.people.sel, vec![Uuid::from_u128(0xF000)]);
+        h.people.close_sheet();
+        h.people.sel = vec![Uuid::from_u128(0xF005)];
+        h.settle();
+        assert_eq!(
+            h.people.sheet,
+            Some(Uuid::from_u128(0xF005)),
+            "an existing selection wins over the first row"
+        );
+        h.people.filter = "Friend 12".into();
+        h.settle();
+        assert_eq!(
+            h.people.sheet,
+            Some(Uuid::from_u128(0xF00C)),
+            "the first matching friend replaces a filtered-out selection"
+        );
+        h.people.filter = "no matching contact".into();
+        let texts = h.settle();
+        assert_eq!(h.people.sheet, None);
+        assert!(h.people.sel.is_empty());
+        assert!(texts.iter().any(|t| t.source == aurora_i18n::tr!("people-contact-details-empty")));
+        h.people.filter.clear();
+        h.settle();
+        assert_eq!(
+            h.people.sheet,
+            Some(Uuid::from_u128(0xF000)),
+            "clearing the filter restores the detail panel"
+        );
+        h.world.social.friends.clear();
+        let texts = h.settle();
+        assert!(
+            texts.iter().any(|t| t.source == aurora_i18n::tr!("people-contact-details-empty")),
+            "an empty friend list keeps a placeholder"
+        );
+        assert!(h.actions.is_empty(), "automatic selection never starts a conversation");
+    }
+}
+
+#[test]
+fn contacts_navigation_resizing_keeps_the_list_and_selection() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        let mut h = contacts_navigation(style, 960.0);
+        let selected = Uuid::from_u128(0xF005);
+        h.people.sel = vec![selected];
+        h.settle();
+        for width in [
+            960.0, 880.0, 860.0, 850.0, 840.0, 820.0, 700.0, 640.0, 620.0, 600.0, 580.0, 460.0, 580.0, 600.0, 620.0, 640.0, 700.0, 820.0,
+            840.0, 860.0, 880.0, 960.0,
+        ] {
+            crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(width, 560.0));
+            for frame in 0..18 {
+                let texts = h.frame(Vec::new());
+                assert!(
+                    texts.iter().any(|t| t.source == "Friend 00"),
+                    "{style:?} at {width}, frame {frame}: the list stays visible through each threshold"
+                );
+                assert_eq!(h.people.sel, vec![selected], "resizing preserves the chosen friend");
+            }
+            if width >= 880.0 {
+                assert_eq!(h.people.sheet, Some(selected), "the large layout always shows the selected friend");
+            } else if width <= 820.0 {
+                assert_eq!(h.people.sheet, None, "the reduced layout returns to the list");
+            }
+        }
+    }
+}
+
+#[test]
+fn contacts_navigation_narrow_sort_menu_keeps_all_choices() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        let mut h = contacts_navigation(style, 400.0);
+        let texts = h.settle();
+        h.click(painted(&texts, aurora_i18n::tr!("people-sort-online-first")).rect.center());
+        let texts = h.settle();
+        let old = h.friends.sort;
+        h.click(painted(&texts, aurora_i18n::tr!("common-username")).rect.center());
+        assert_ne!(h.friends.sort, old, "the collapsed sort menu still changes the sort");
     }
 }
 

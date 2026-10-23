@@ -4356,7 +4356,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
   picker of "Add...". These modes enable the optional Contacts entry for
@@ -4365,14 +4365,20 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Preferences > Chat > Show the Contacts tab).
   In the Aurora and Compact conversation styles, test at full width,
   700 points and 460 points: a double-click on a friend starts their IM.
-  A single click opens the friend's sheet at full width, keeping the list
-  beside it; clicking another friend updates the sheet. At 700 and 460
+  At full width the detail panel is always present: retain the selected
+  friend or choose the first visible friend, and show a placeholder when
+  the list is empty (`empty` clears the demo friends). A single click
+  switches the displayed friend. At 700 and 460
   points it only selects the friend. Hovering shows a contact details
   button immediately before More; it opens the same sheet as a long press.
   The quick actions remain available at reduced widths with permissions
   enabled. When the sheet replaces the list, clicking
   Contacts returns to the list just like the sheet's cross, keeping the
   filter and selection. Repeat a double-click after returning to the list.
+  Resize across 600 and 850 points in both directions: sort choices fold
+  into a menu, contact sets wrap when needed, and quick actions that do not
+  fit stay in More. The list controls must stay inside their pane. Returning
+  from the large layout to a reduced one restores the list and its selection.
 - **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in

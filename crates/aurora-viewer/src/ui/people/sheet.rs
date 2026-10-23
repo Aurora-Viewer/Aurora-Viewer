@@ -105,6 +105,7 @@ pub(super) fn show(
     st: &mut PeopleUi,
     id: Uuid,
     nearby_tab: bool,
+    closable: bool,
     actions: &mut Vec<PeopleAction>,
 ) -> bool {
     let found = super::radar::rows(world, data, "").into_iter().find(|r| r.id == id);
@@ -114,9 +115,9 @@ pub(super) fn show(
     if !data.pics.contains_key(&id) {
         st.want_pic(id, ui.input(|i| i.time));
     }
-    // the head stays put above what scrolls: its cross is always there
+    // The head stays put above what scrolls.
     let (top, rest) = split_head(content);
-    let closed = head(&mut child(ui, top, ("people-sheet-head", id)), p, world, data, id, row);
+    let closed = head(&mut child(ui, top, ("people-sheet-head", id)), p, world, data, id, row, closable);
     egui::ScrollArea::vertical()
         .id_salt(("people-sheet-scroll", id))
         .auto_shrink([false, false])
@@ -157,7 +158,7 @@ pub(super) fn show(
 }
 
 /// The picture with its status dot, the names, and the cross.
-fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uuid, row: Option<&Row>) -> bool {
+fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uuid, row: Option<&Row>, closable: bool) -> bool {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 44.0), Sense::hover());
     let names = &world.social.avatar_names;
     let display = world.social.display_name_of(&id);
@@ -168,15 +169,20 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
         presence::paint_dot(ui.painter(), p, disc, status, p.panel);
     }
     // the cross at the right, the names between
-    let cross = Rect::from_center_size(Pos2::new(rect.right() - 10.0, rect.center().y), Vec2::splat(20.0));
-    let resp = ui.interact(cross, ui.scope_id().with(("people-sheet-close", id)), Sense::click());
-    if resp.hovered() {
-        ui.painter()
-            .rect_filled(cross, ui.visuals().widgets.inactive.corner_radius, p.raised);
-    }
-    super::radar::icon(ui, "x", cross, 14.0, if resp.hovered() { p.ink } else { p.muted });
+    let (right, closed) = if closable {
+        let cross = Rect::from_center_size(Pos2::new(rect.right() - 10.0, rect.center().y), Vec2::splat(20.0));
+        let resp = ui.interact(cross, ui.scope_id().with(("people-sheet-close", id)), Sense::click());
+        if resp.hovered() {
+            ui.painter()
+                .rect_filled(cross, ui.visuals().widgets.inactive.corner_radius, p.raised);
+        }
+        super::radar::icon(ui, "x", cross, 14.0, if resp.hovered() { p.ink } else { p.muted });
+        (cross.left() - 8.0, resp.on_hover_text(aurora_i18n::tr!("common-close")).clicked())
+    } else {
+        (rect.right(), false)
+    };
     let left = disc.right() + 10.0;
-    let width = (cross.left() - 8.0 - left).max(20.0);
+    let width = (right - left).max(20.0);
     // "Legacy Name · account name" under the display name: who they are
     // whatever the name preferences
     let sub = names.get(&id).map(|n| {
@@ -200,7 +206,22 @@ fn head(ui: &mut egui::Ui, p: &Palette, world: &World, data: &RadarData, id: Uui
     let name_h = name_g.size().y;
     ui.painter().galley(Pos2::new(left, top), name_g, p.ink);
     ui.painter().galley(Pos2::new(left, top + name_h), sub_g, p.muted);
-    resp.on_hover_text(aurora_i18n::tr!("common-close")).clicked()
+    closed
+}
+
+/// The permanent inline panel keeps its place when no friend matches.
+pub(super) fn empty(ui: &mut egui::Ui, p: &Palette) {
+    let (content, _) = frame(ui, p);
+    let center = content.center();
+    let icon = Rect::from_center_size(center - Vec2::new(0.0, 22.0), Vec2::splat(32.0));
+    super::radar::icon(ui, "user-filled", icon, 32.0, p.muted_dim);
+    let mut job = egui::text::LayoutJob::single_section(
+        aurora_i18n::tr!("people-contact-details-empty").to_owned(),
+        egui::TextFormat::simple(FontId::proportional(13.0), p.muted),
+    );
+    job.wrap.max_width = content.width();
+    let galley = ui.painter().layout_job(job);
+    widgets::paint_ink_centered(ui.painter(), galley, center + Vec2::new(0.0, 16.0), p.muted);
 }
 
 /// The actions of the avatar menu people use the most, the rest under "…".
@@ -662,7 +683,7 @@ mod tests {
         let mut actions = Vec::new();
         for height in [220.0, 300.0, 380.0] {
             let (bar, crossing) = scroll_bar_crossings(height, |ui| {
-                show(ui, &p, &world, &data, &mut st, friend, false, &mut actions);
+                show(ui, &p, &world, &data, &mut st, friend, false, true, &mut actions);
             });
             assert!(bar.is_some(), "{height}: the content overflows, the bar shows");
             assert!(crossing.is_empty(), "{height}: the bar {bar:?} crosses {crossing:?}");

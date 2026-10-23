@@ -134,21 +134,27 @@ type SheetFn = fn(&mut egui::Ui, &mut Ctx<'_>, &RadarData<'_>, &mut PeopleUi, Uu
 /// A tab's list, and beside it the sheet of the person held or group clicked
 /// (`nearby::areas`: the window widens for it before its frame).
 fn split(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, salt: &str, list: ListFn, sheet: SheetFn) {
-    let (list_rect, sheet_rect) = nearby::areas(ui, st);
+    let persistent_sheet = c.contact_sheet_button && c.contact_sheet_on_click;
+    let (list_rect, sheet_rect) = nearby::areas(ui, st, persistent_sheet);
     if let Some(rect) = list_rect {
         let beside = sheet_rect.is_some();
         list(&mut nearby::list_ui(ui, rect, salt, beside), c, data, st, beside);
     }
-    if let (Some(rect), Some(id)) = (sheet_rect, st.sheet)
-        && sheet(&mut nearby::list_ui(ui, rect, "people-sheet", false), c, data, st, id)
-    {
-        nearby::close_sheet(st);
+    if let Some(rect) = sheet_rect {
+        let mut child = nearby::list_ui(ui, rect, "people-sheet", false);
+        if let Some(id) = st.sheet {
+            if sheet(&mut child, c, data, st, id) {
+                nearby::close_sheet(st);
+            }
+        } else if persistent_sheet {
+            sheet::empty(&mut child, c.p);
+        }
     }
 }
 
 /// The sheet of a person, from any tab but Near you.
 fn person_sheet(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, id: Uuid) -> bool {
-    sheet::show(ui, c.p, c.world, data, st, id, false, c.actions)
+    sheet::show(ui, c.p, c.world, data, st, id, false, !c.contact_sheet_on_click, c.actions)
 }
 
 /// The row whose quick actions' menu is open keeps them shown.
@@ -237,6 +243,8 @@ pub struct PeopleUi {
     pic_budget: super::nameplate::PictureBudget,
     /// The person whose sheet is open (Aurora's look).
     pub sheet: Option<Uuid>,
+    /// Leaving the permanent inline detail panel returns to the friend list.
+    inline_friends_wide: bool,
     /// A sheet just opened: the window grows for it if it is too narrow.
     sheet_grow: bool,
     /// The width the window took for the sheet, given back when it closes.
@@ -498,6 +506,11 @@ pub fn friends_pane(
     } = pane;
     st.tab_shown(TAB_FRIENDS);
     st.sheet_grow = false;
+    let wide = nearby::sheet_fits(ui.available_width());
+    if st.inline_friends_wide && !wide {
+        nearby::close_sheet(st);
+    }
+    st.inline_friends_wide = wide;
     let mut actions = Vec::new();
     let mut c = Ctx {
         p,
@@ -508,7 +521,7 @@ pub fn friends_pane(
         images,
         actions: &mut actions,
         contact_sheet_button: true,
-        contact_sheet_on_click: nearby::sheet_fits(ui.available_width()),
+        contact_sheet_on_click: wide,
     };
     friends::tab(ui, &mut c, data, st);
     for ask in std::mem::take(&mut st.asks) {

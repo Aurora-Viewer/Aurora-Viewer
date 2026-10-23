@@ -7452,6 +7452,7 @@ people-view-sort-options = Options d'affichage et de tri
 people-filter-by-name = Filtrer par nom…
 people-edit-contact-hold = Maintenez le clic gauche pour modifier les paramètres du contact.
 people-show-contact-sheet = Afficher la fiche du contact
+people-contact-details-empty = Aucun contact à afficher
 people-view-rich = Lignes riches
 people-view-compact = Compact (une ligne chacun, pour une foule)
 people-alerts-options = Alertes et options

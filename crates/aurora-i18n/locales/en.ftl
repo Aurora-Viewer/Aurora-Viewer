@@ -7459,6 +7459,7 @@ people-view-sort-options = View/sort options
 people-filter-by-name = Filter by name…
 people-edit-contact-hold = Hold the left mouse button to edit contact settings.
 people-show-contact-sheet = Show contact details
+people-contact-details-empty = No contact to display
 people-view-rich = Rich rows
 people-view-compact = Compact (one line each, for a crowd)
 people-alerts-options = Alerts and options
