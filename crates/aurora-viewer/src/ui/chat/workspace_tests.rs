@@ -1016,7 +1016,7 @@ fn contacts_navigation_entry_returns_from_sheet_to_list() {
 }
 
 #[test]
-fn contacts_navigation_single_click_only_selects() {
+fn contacts_navigation_single_click_opens_sheet_only_at_large_width() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
         for width in [960.0, 700.0, 460.0] {
             let mut h = contacts_navigation(style, width);
@@ -1025,10 +1025,24 @@ fn contacts_navigation_single_click_only_selects() {
             for _ in 0..45 {
                 h.frame(Vec::new());
             }
-            assert_eq!(h.people.sheet, None, "{style:?} at {width}: a click never opens settings");
+            assert_eq!(
+                h.people.sheet,
+                (width == 960.0).then_some(Uuid::from_u128(0xF000)),
+                "{style:?} at {width}: a row click opens the sheet only when the list stays beside it"
+            );
             assert_eq!(h.people.sel, vec![Uuid::from_u128(0xF000)], "the contact is selected");
             assert!(h.actions.is_empty());
-            assert!(h.settle().iter().any(|t| t.source == "Friend 01"), "the list stays visible");
+            let texts = h.settle();
+            assert!(texts.iter().any(|t| t.source == "Friend 01"), "the list stays visible");
+            if width == 960.0 {
+                h.click(painted(&texts, "Friend 01").rect.center());
+                assert_eq!(
+                    h.people.sheet,
+                    Some(Uuid::from_u128(0xF001)),
+                    "clicking another row updates the open sheet"
+                );
+                assert!(h.actions.is_empty(), "switching sheets does not start an IM");
+            }
         }
     }
 }

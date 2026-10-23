@@ -122,6 +122,8 @@ pub(super) struct Ctx<'a> {
     pub actions: &'a mut Vec<PeopleAction>,
     /// Conversations exposes the inline contact sheet as a quick action.
     pub contact_sheet_button: bool,
+    /// A row click can open the sheet when the inline pane fits both sides.
+    pub contact_sheet_on_click: bool,
 }
 
 /// A tab's list side: (ui, context, radar, state, beside a sheet).
@@ -403,6 +405,7 @@ pub fn people_window(
                 images: contacts.images,
                 actions: &mut actions,
                 contact_sheet_button: false,
+                contact_sheet_on_click: false,
             };
             match panels.people_tab {
                 TAB_NEARBY => {
@@ -505,6 +508,7 @@ pub fn friends_pane(
         images,
         actions: &mut actions,
         contact_sheet_button: true,
+        contact_sheet_on_click: nearby::sheet_fits(ui.available_width()),
     };
     friends::tab(ui, &mut c, data, st);
     for ask in std::mem::take(&mut st.asks) {

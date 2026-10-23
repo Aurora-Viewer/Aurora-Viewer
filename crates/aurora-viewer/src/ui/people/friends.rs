@@ -374,8 +374,13 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     } else {
         rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, f.id)
     };
-    if action.sheet {
+    let click_sheet =
+        c.contact_sheet_on_click && !clicked_right && resp.clicked() && ui.input(|i| !i.modifiers.command && !i.modifiers.shift);
+    if action.sheet || click_sheet {
         super::nearby::open_sheet(st, f.id);
+        if c.contact_sheet_button {
+            st.sheet_grow = false;
+        }
     }
     if action.activate {
         c.actions.push(super::PeopleAction::OpenIm(f.id));

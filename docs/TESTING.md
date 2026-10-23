@@ -4365,7 +4365,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Preferences > Chat > Show the Contacts tab).
   In the Aurora and Compact conversation styles, test at full width,
   700 points and 460 points: a double-click on a friend starts their IM.
-  A single click selects the friend. Hovering shows a contact-details
+  A single click opens the friend's sheet at full width, keeping the list
+  beside it; clicking another friend updates the sheet. At 700 and 460
+  points it only selects the friend. Hovering shows a contact details
   button immediately before More; it opens the same sheet as a long press.
   The quick actions remain available at reduced widths with permissions
   enabled. When the sheet replaces the list, clicking
