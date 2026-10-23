@@ -118,6 +118,146 @@ fn blender_live_splits_many_materials_without_discarding_triangles() {
     let prepared = prepare(&value).expect("nine surfaces");
     assert_eq!(prepared.meshes.len(), 2);
     assert_eq!(prepared.triangles, 9);
+    assert_eq!(prepared.sources.len(), 1, "one source object, regardless of draw batches");
+    let scene = &prepared.sources[0].scene;
+    assert_eq!(scene.models.len(), 2);
+    assert_eq!(scene.instances.len(), 2);
+    assert_eq!(scene.models[1].submodel, 1);
+    assert_eq!(scene.models[0].center, scene.models[1].center);
+    assert_eq!(scene.models[0].size, scene.models[1].size);
+    assert!(prepared.meshes.iter().all(|m| m.source == prepared.sources[0].id));
+}
+
+#[test]
+fn blender_live_visibility_and_removal_survive_updates_reordering_and_renaming() {
+    let mut value = triangle();
+    let mut other = value["meshes"][0].clone();
+    value["meshes"][0]["source_id"] = Uuid::from_u128(1).to_string().into();
+    other["source_id"] = Uuid::from_u128(2).to_string().into();
+    value["meshes"].as_array_mut().expect("meshes").push(other);
+    let mut live = Live::default();
+    live.receive(prepare(&value).expect("two sources"));
+    live.set_state(Uuid::from_u128(1), SourceState::Hidden);
+    live.set_state(Uuid::from_u128(2), SourceState::Removed);
+    assert!(live.visible_snapshot().expect("snapshot").meshes.is_empty());
+    value["revision"] = 2.into();
+    value["meshes"][0]["name"] = "Renamed garment".into();
+    value["meshes"].as_array_mut().expect("meshes").reverse();
+    live.receive(prepare(&value).expect("updated sources"));
+    assert_eq!(live.state(Uuid::from_u128(1)), SourceState::Hidden);
+    assert_eq!(live.state(Uuid::from_u128(2)), SourceState::Removed);
+    live.set_state(Uuid::from_u128(1), SourceState::Visible);
+    let visible = live.visible_snapshot().expect("visible object");
+    assert_eq!(visible.sources.len(), 1);
+    assert_eq!(visible.sources[0].name, "Renamed garment");
+    assert_eq!(visible.meshes.len(), 1);
+    assert_eq!(visible.triangles, 1);
+    live.set_state(Uuid::from_u128(2), SourceState::Visible);
+    assert_eq!(live.visible_snapshot().expect("restored").sources.len(), 2);
+    value["meshes"] = serde_json::json!([]);
+    live.receive(prepare(&value).expect("empty source list"));
+    assert!(live.states.is_empty(), "departed sources do not accumulate in memory");
+}
+
+#[test]
+fn blender_live_legacy_identity_survives_reordering_and_rejects_duplicate_explicit_ids() {
+    let mut value = triangle();
+    let mut other = value["meshes"][0].clone();
+    other["name"] = "Other garment".into();
+    value["meshes"].as_array_mut().expect("meshes").push(other);
+    let first = prepare(&value).expect("legacy");
+    value["meshes"].as_array_mut().expect("meshes").reverse();
+    let reordered = prepare(&value).expect("reordered legacy");
+    assert_eq!(first.sources[0].id, reordered.sources[1].id);
+    assert_eq!(first.sources[1].id, reordered.sources[0].id);
+    for mesh in value["meshes"].as_array_mut().expect("meshes") {
+        mesh["source_id"] = Uuid::from_u128(1).to_string().into();
+    }
+    assert!(prepare(&value).is_err());
+    value["meshes"] = serde_json::json!([value["meshes"][0]]);
+    value["meshes"][0]["source_id"] = Uuid::nil().to_string().into();
+    assert!(prepare(&value).is_err());
+}
+
+#[test]
+fn blender_live_object_buttons_remove_restore_and_open_upload_only_when_available() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
+    let palette = theme.palette();
+    let mut live = Live {
+        open: true,
+        ..Default::default()
+    };
+    live.receive(prepare(&triangle()).expect("source"));
+    let source = live.selected.expect("selected source");
+    let mut time = 0.0;
+    let mut frame = |live: &mut Live, can_upload, events| {
+        time += 1.0 / 60.0;
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 900.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::ui::show(live, ui.ctx(), &palette, can_upload);
+            },
+        );
+        out.textures_delta.clear();
+        out
+    };
+    let position = |out: &egui::FullOutput, label: &str| {
+        out.shapes
+            .iter()
+            .find_map(|s| {
+                if let egui::Shape::Text(text) = &s.shape
+                    && text.galley.text() == label
+                {
+                    Some(text.pos + text.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| panic!("missing button: {label}"))
+    };
+    for _ in 0..6 {
+        frame(&mut live, true, vec![]);
+    }
+    let out = frame(&mut live, true, vec![]);
+    let remove = position(&out, aurora_i18n::tr!("common-remove"));
+    let click = |pos, pressed| {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    frame(&mut live, true, click(remove, true));
+    frame(&mut live, true, click(remove, false));
+    assert!(live.state(source) == SourceState::Removed);
+    let out = frame(&mut live, true, vec![]);
+    let restore = position(&out, aurora_i18n::tr!("blender-live-restore"));
+    frame(&mut live, true, click(restore, true));
+    frame(&mut live, true, click(restore, false));
+    assert!(live.state(source) == SourceState::Visible);
+    live.selected = Some(source);
+    let out = frame(&mut live, false, vec![]);
+    let upload = position(&out, aurora_i18n::tr!("blender-live-upload"));
+    frame(&mut live, false, click(upload, true));
+    frame(&mut live, false, click(upload, false));
+    assert!(live.upload_requested.is_none(), "busy importer cannot receive another draft");
+    let out = frame(&mut live, true, vec![]);
+    let upload = position(&out, aurora_i18n::tr!("blender-live-upload"));
+    frame(&mut live, true, click(upload, true));
+    frame(&mut live, true, click(upload, false));
+    assert_eq!(live.upload_requested, Some(source));
 }
 
 #[test]

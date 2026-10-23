@@ -68,7 +68,8 @@ pub(super) fn show(
                 ui.label(aurora_i18n::tr!("import-loading"));
             }
             if let Some(id) = imports.active {
-                if tool_button(ui, p, aurora_i18n::tr!("import-reload"), !busy).clicked() {
+                let reloadable = imports.entries.iter().any(|e| e.id == id && !e.from_live);
+                if tool_button(ui, p, aurora_i18n::tr!("import-reload"), !busy && reloadable).clicked() {
                     actions.push(Action::Reload(id));
                 }
                 if tool_button(ui, p, aurora_i18n::tr!("common-remove"), !busy).clicked() {
@@ -123,7 +124,11 @@ pub(super) fn show(
                                             .left_text(&entry.name)
                                             .truncate(),
                                     )
-                                    .on_hover_text(entry.path.to_string_lossy())
+                                    .on_hover_text(if entry.from_live {
+                                        aurora_i18n::tr!("blender-live-upload-frozen").to_string()
+                                    } else {
+                                        entry.path.to_string_lossy().into_owned()
+                                    })
                                     .clicked()
                                 {
                                     imports.active = Some(entry.id);
@@ -203,6 +208,16 @@ pub(super) fn show(
                                             &mut imports.destination,
                                             false,
                                         );
+                                        if entry.from_live {
+                                            ui.small(aurora_i18n::tr!("blender-live-upload-source"))
+                                                .on_hover_text(aurora_i18n::tr!("blender-live-upload-frozen"));
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(aurora_i18n::tr!("blender-live-upload-materials")).small(),
+                                                )
+                                                .wrap(),
+                                            );
+                                        }
                                     });
                                 } else if let Some(source) = &mut entry.source {
                                     match source {

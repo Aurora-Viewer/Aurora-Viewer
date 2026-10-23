@@ -601,7 +601,7 @@ impl Imports {
         if self.busy() {
             return;
         }
-        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && !e.reloading) else {
+        let Some(entry) = self.entries.iter_mut().find(|e| e.id == id && !e.reloading && !e.from_live) else {
             return;
         };
         entry.reloading = true;

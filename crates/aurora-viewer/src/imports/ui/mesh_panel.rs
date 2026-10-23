@@ -73,7 +73,7 @@ pub(super) fn show(
                 .data_mut(|d| d.insert_temp(egui::Id::unique(("mesh_content_height", entry.id)), ui.available_height()));
             // Keep full-width rows clear of the rounded viewport edge at fractional DPI.
             ui.set_max_width((ui.available_width() - ui.spacing().item_spacing.x).max(0.0));
-            mesh_controls(ui, p, entry.id, draft, prefs, actions, section)
+            mesh_controls(ui, p, entry.id, draft, prefs, actions, section, entry.from_live)
         });
     #[cfg(test)]
     ui.ctx()
@@ -289,6 +289,7 @@ fn mesh_controls(
     prefs: &mut Preferences,
     actions: &mut Vec<Action>,
     section: usize,
+    from_live: bool,
 ) -> bool {
     draft.inspector.verbose = ui
         .ctx()
@@ -345,7 +346,13 @@ fn mesh_controls(
                         egui::ComboBox::from_id_salt(("source", id, level))
                             .width(160.0)
                             .truncate()
-                            .selected_text(lod_source(source))
+                            .selected_text(
+                                if from_live && level == 3 && source == mesh::LodSource::File && lod.path.is_none() {
+                                    aurora_i18n::tr!("blender-live-title")
+                                } else {
+                                    lod_source(source)
+                                },
+                            )
                             .show_ui(ui, |ui| {
                                 for choice in [
                                     mesh::LodSource::File,
@@ -372,7 +379,14 @@ fn mesh_controls(
                             if flat_button(ui, p, aurora_i18n::tr!("import-browse")).clicked() {
                                 actions.push(Action::MeshFile(id, level));
                             }
-                            ui.allocate_ui(Vec2::new(125.0, 26.0), |ui| source_path(ui, p, lod.path.as_deref()));
+                            ui.allocate_ui(Vec2::new(125.0, 26.0), |ui| {
+                                if from_live && level == 3 && lod.path.is_none() {
+                                    ui.add(egui::Label::new(aurora_i18n::tr!("blender-live-upload-source")).truncate())
+                                        .on_hover_text(aurora_i18n::tr!("blender-live-upload-frozen"));
+                                } else {
+                                    source_path(ui, p, lod.path.as_deref());
+                                }
+                            });
                         } else if lod.source != mesh::LodSource::Above {
                             let before = lod.error_mode;
                             egui::ComboBox::from_id_salt(("criterion", id, level))

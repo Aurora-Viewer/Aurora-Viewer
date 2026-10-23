@@ -64,9 +64,37 @@ current enabled objects after an error.
 The add-on reconnects automatically when Aurora becomes available again,
 resending its latest snapshot. Disconnecting Blender leaves the last good
 preview visible. Aurora's **Stop and remove** closes the listener and removes
-the preview; **Remove meshes** clears the current preview until Blender next
-sends a change. Closing the window keeps the bridge active. The listener is
+the preview; **Remove meshes** withdraws all current objects until restored.
+Closing the window keeps the bridge active. The listener is
 off on each viewer launch, and changing accounts stops it.
+
+## Manage objects and upload in Aurora
+
+Aurora's **Build → Blender Live** lists each source object by its Blender
+name, even if it spans several render batches. Uncheck an object to hide it
+temporarily; rechecking displays its latest geometry and materials. Select
+its name and use **Remove** to withdraw it from the list and avatar preview.
+Subsequent live revisions keep it removed. **Restore removed objects** brings
+those sources back. These controls affect Aurora's local preview and do not
+change the synchronization list or scene in Blender.
+
+Visibility and removal survive source renames with plug-in 0.8.6+ and list
+reordering. Settings reset when a source stops being sent (for example, when
+disabled/removed in Blender), when stopping the bridge or changing accounts.
+Older plug-ins use names as their identity, so renaming starts a new entry.
+
+Select a source and click **Upload object…** to open a frozen snapshot in the
+normal mesh importer. All its parts, weights, inverse binds, UVs, colors and
+image pixels belong to that draft; later live edits cannot alter a pending
+quote or upload. Existing drafts remain available, and the new draft is
+selected alone. Review the LODs, physics, scale, destination and permissions,
+calculate the cost, then confirm the upload normally. Opening the draft
+does not request a quote, charge money or create an inventory item.
+
+The existing mesh upload format includes base colors and diffuse/base-color
+textures. PBR material assets require a separate material upload; the importer
+displays this limitation beside the frozen-source notice. The live preview
+continues to show its supported PBR materials.
 
 Both packages contain the same rig, automatic weights, live materials and
 transport. Install only one format in each Blender profile; disable any older
@@ -77,8 +105,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.8.5.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.5-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.8.6.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.6-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -491,7 +519,7 @@ can be opened normally and connected through the Aurora sidebar.
 TCP listens on IPv4 loopback only. The client sends the eight bytes
 `AURBLD1\n`. Aurora responds with one newline-terminated JSON object containing
 `protocol`, the supported `joints`, their inverse neutral `rest_axes` (column-major,
-translation removed), `features: ["pbr-materials"]`, and `max_bytes`. Every subsequent client
+translation removed), `features: ["pbr-materials", "source-ids"]`, and `max_bytes`. Every subsequent client
 message is a four-byte unsigned little-endian JSON byte count, then a UTF-8
 snapshot. Length zero is a heartbeat. The reply is newline-terminated JSON
 with `ok`, `revision` on success, or `error` on rejection. A success acknowledges
@@ -502,7 +530,12 @@ reply; the client retries its newest snapshot after 0.5 seconds without needing
 another edit. Invalid content is retained as an error until edited or resent.
 
 Snapshots have `protocol`, `revision` and `meshes`. Each mesh has `name`,
-`joints`, column-major `inverse_bind` matrices, and `faces`. A face contains
+`joints`, column-major `inverse_bind` matrices, and `faces`. The optional
+`source_id` is a non-null UUID unique within a snapshot, identifying a scene's
+synchronization entry, never a grid asset. The add-on sends it only when the
+viewer advertises `source-ids`; older viewers continue to receive v1 meshes
+without that field. Older add-ons work with name-based identity.
+A face contains
 linear RGBA `color`, `vertices` and triangle `indices`; a vertex has `position`,
 `normal`, `uv`, four `joints` indices and four `weights`. `meshes: []` removes
 all previews. No paths, executable commands, grid URLs or asset UUIDs are

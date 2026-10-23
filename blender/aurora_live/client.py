@@ -11,6 +11,14 @@ MAX_BYTES = 64 * 1024 * 1024
 MAX_REPLY = 256 * 1024
 
 
+def wire_snapshot(snapshot, features):
+    if "source-ids" in features or "meshes" not in snapshot:
+        return snapshot
+    # v1 peers without this optional capability reject unknown mesh fields.
+    return dict(snapshot, meshes=[{key: value for key, value in mesh.items() if key != "source_id"}
+                                  for mesh in snapshot["meshes"]])
+
+
 class Client:
     def __init__(self, port):
         self.port = port
@@ -90,7 +98,8 @@ class Client:
                             with self._lock:
                                 latest = self._latest
                             if latest is not None and latest["revision"] != sent:
-                                payload = json.dumps(latest, separators=(",", ":"), allow_nan=False).encode("utf-8")
+                                payload = json.dumps(wire_snapshot(latest, hello.get("features", [])),
+                                                     separators=(",", ":"), allow_nan=False).encode("utf-8")
                                 if len(payload) > min(MAX_BYTES, hello.get("max_bytes", MAX_BYTES)):
                                     self._set_status("Mesh snapshot exceeds the 64 MiB limit")
                                     sent = latest["revision"]

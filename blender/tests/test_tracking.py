@@ -15,6 +15,21 @@ from aurora_live import starter, tracking
 
 
 class TrackingTests(unittest.TestCase):
+    def test_source_identity_survives_rename_pause_reorder_and_repairs_duplicated_ids(self):
+        scene = bpy.context.scene
+        tracking.add(scene, [self.shirt, self.other])
+        first = tracking.source_ids(scene)
+        self.assertEqual(len(set(first.values())), 2)
+        self.shirt.name = "Renamed garment"
+        scene.aurora_live.objects[0].enabled = False
+        scene.aurora_live.objects.move(0, 1)
+        self.assertEqual(tracking.source_ids(scene), first)
+        entries = scene.aurora_live.objects
+        entries[0].source_id = entries[1].source_id
+        repaired = tracking.source_ids(scene)
+        self.assertEqual(len(set(repaired.values())), 2)
+        self.assertEqual(repaired, tracking.source_ids(scene))
+
     @classmethod
     def setUpClass(cls):
         aurora_live.register()
@@ -193,8 +208,9 @@ class TrackingTests(unittest.TestCase):
 
     def test_saved_scene_restores_entries_and_flags_but_stops_the_connection(self):
         tracking.add(bpy.context.scene, [self.shirt, self.other])
+        tracking.source_ids(bpy.context.scene)
         bpy.context.scene.aurora_live.objects[1].enabled = False
-        expected = [(entry.object.name, entry.enabled) for entry in bpy.context.scene.aurora_live.objects]
+        expected = [(entry.object.name, entry.enabled, entry.source_id) for entry in bpy.context.scene.aurora_live.objects]
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / "sync-list.blend")
             bpy.ops.wm.save_as_mainfile(filepath=path)
@@ -202,7 +218,7 @@ class TrackingTests(unittest.TestCase):
             bpy.ops.wm.open_mainfile(filepath=path)
         self.assertIsNone(aurora_live._client)
         self.assertEqual(self.closed, [True])
-        self.assertEqual([(entry.object.name, entry.enabled) for entry in bpy.context.scene.aurora_live.objects], expected)
+        self.assertEqual([(entry.object.name, entry.enabled, entry.source_id) for entry in bpy.context.scene.aurora_live.objects], expected)
 
     def test_undo_redo_restores_membership_and_resends_without_an_rna_update(self):
         bpy.context.preferences.edit.use_global_undo = True

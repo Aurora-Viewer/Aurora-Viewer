@@ -2,7 +2,7 @@
 //! are accepted. Skinning uses the normal local mesh pipeline (VJLocalMeshObject,
 //! indra/newview/vjlocalmesh.cpp); the live transport is an Aurora extension.
 
-use aurora_assets::import_mesh::{self, Model, Skin, Vertex, encode};
+use aurora_assets::import_mesh::{self, Instance, Model, Scene, Skin, Vertex, encode};
 use glam::{Mat4, Vec3};
 use serde::Deserialize;
 use std::{collections::HashSet, sync::Arc};
@@ -30,6 +30,8 @@ pub struct Snapshot {
 #[serde(deny_unknown_fields)]
 pub struct Mesh {
     pub name: String,
+    #[serde(default)]
+    pub source_id: Option<Uuid>,
     pub joints: Vec<String>,
     /// Column-major inverse binds in metres, in SL's Z-up coordinate frame.
     pub inverse_bind: Vec<[f32; 16]>,
@@ -62,11 +64,21 @@ pub struct Prepared {
     pub meshes: Vec<PreparedMesh>,
     pub triangles: usize,
     pub images: Vec<PreparedImage>,
+    pub sources: Vec<PreparedSource>,
+}
+
+#[derive(Clone)]
+pub struct PreparedSource {
+    pub id: Uuid,
+    pub name: String,
+    /// Immutable import input, shared with a draft when Upload is selected.
+    pub scene: Arc<Scene>,
 }
 
 #[derive(Clone)]
 pub struct PreparedMesh {
     pub id: Uuid,
+    pub source: Uuid,
     pub name: String,
     pub data: Arc<Vec<u8>>,
     pub header: aurora_assets::MeshHeader,
@@ -97,10 +109,31 @@ pub fn prepare_staged(
     let mut total_indices = 0usize;
     let mut meshes = Vec::new();
     let mut triangles = 0;
+    let mut sources = Vec::new();
+    let mut source_ids = HashSet::new();
+    let mut occurrences = std::collections::HashMap::<String, u32>::new();
     for mesh in snapshot.meshes {
         if mesh.name.len() > 256 || mesh.name.chars().any(char::is_control) {
             return Err(aurora_i18n::tr!("blender-live-invalid-name").into());
         }
+        // Older add-ons identify an object by name. Occurrences keep even
+        // ambiguous legacy names separate; new add-ons also survive renaming.
+        let occurrence = occurrences.entry(mesh.name.clone()).or_default();
+        let source = mesh.source_id.unwrap_or_else(|| {
+            use sha2::{Digest, Sha256};
+            let mut hash = Sha256::new();
+            hash.update(b"Aurora Blender Live source v1");
+            hash.update(occurrence.to_le_bytes());
+            hash.update(mesh.name.as_bytes());
+            let mut bytes = [0; 16];
+            bytes.copy_from_slice(&hash.finalize()[..16]);
+            Uuid::from_bytes(bytes)
+        });
+        *occurrence += 1;
+        if source.is_nil() || !source_ids.insert(source) {
+            return Err(aurora_i18n::tr!("blender-live-invalid-source").into());
+        }
+        let mut scene = Scene::default();
         let count = mesh.joints.len();
         if count == 0 || count > 110 || count != mesh.inverse_bind.len() {
             return Err(aurora_i18n::tr!("blender-live-invalid-joints").into());
@@ -163,14 +196,31 @@ pub fn prepare_staged(
             }
             let material = colors.len();
             colors.push(surface.color);
-            materials.push(surface.material.map(|value| value.prepare(surface.color, &images)).transpose()?);
+            let value = surface.material.map(|value| value.prepare(surface.color, &images)).transpose()?;
+            let pbr = value.clone().unwrap_or_else(|| aurora_assets::material::PbrMaterial {
+                base_color_factor: surface.color,
+                ..Default::default()
+            });
+            let textures = [
+                pbr.base_color_texture,
+                pbr.normal_texture,
+                pbr.metallic_roughness_texture,
+                pbr.emissive_texture,
+            ];
+            scene.materials.push(import_mesh::Material {
+                name: format!("{} {}", mesh.name, material + 1),
+                images: textures.map(|id| id.and_then(|id| images.iter().position(|image| image.id == id))),
+                value: pbr,
+            });
+            materials.push(value);
             faces.extend(import_mesh::split_face(vertices, surface.indices, material).map_err(|e| e.to_string())?);
         }
         // Split materials and 16-bit vertex batches instead of truncating them.
-        for chunk in faces.chunks(8) {
+        let (center, size) = import_mesh::normalization(&faces).map_err(|e| e.to_string())?;
+        for (part, chunk) in faces.chunks(8).enumerate() {
             let mut model = Model {
                 name: mesh.name.clone(),
-                submodel: 0,
+                submodel: part as u32,
                 faces: chunk.to_vec(),
                 skin: Some(Skin {
                     names: mesh.joints.clone(),
@@ -182,8 +232,15 @@ pub fn prepare_staged(
                 center: Vec3::ZERO,
                 size: Vec3::ONE,
             };
-            model.normalize().map_err(|e| e.to_string())?;
+            model.normalize_to(center, size).map_err(|e| e.to_string())?;
             triangles += model.triangles();
+            scene.instances.push(Instance {
+                model: scene.models.len(),
+                transform: Mat4::from_scale_rotation_translation(size, glam::Quat::IDENTITY, center),
+                name: mesh.name.clone(),
+                materials: model.faces.iter().map(|face| face.material).collect(),
+            });
+            scene.models.push(model.clone());
             let colors = chunk.iter().map(|face| colors[face.material]).collect();
             let materials = chunk
                 .iter()
@@ -207,6 +264,7 @@ pub fn prepare_staged(
                 .and_then(|bytes| aurora_assets::decode_skin(bytes).map_err(|_| "Invalid prepared skin"))?;
             meshes.push(PreparedMesh {
                 id: Uuid::new_v4(),
+                source,
                 name: mesh.name.clone(),
                 data: Arc::new(data),
                 header,
@@ -215,11 +273,17 @@ pub fn prepare_staged(
                 materials,
             });
         }
+        sources.push(PreparedSource {
+            id: source,
+            name: mesh.name,
+            scene: Arc::new(scene),
+        });
     }
     Ok(Prepared {
         revision: snapshot.revision,
         meshes,
         triangles,
         images,
+        sources,
     })
 }

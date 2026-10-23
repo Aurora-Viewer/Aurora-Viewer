@@ -19,6 +19,7 @@ pub struct Image {
 #[derive(Clone)]
 pub struct PreparedImage {
     pub id: Uuid,
+    pub pixels: Arc<aurora_assets::DecodedImage>,
     pub staged: Option<Arc<StagedTexture>>,
     pub alpha: crate::scene::jobs::AlphaKind,
     pub has_alpha: bool,
@@ -81,7 +82,14 @@ pub fn images(images: Vec<Image>, pool: Option<&StagingPool>, cache: &HashMap<Uu
             }
             let alpha = crate::scene::jobs::classify_alpha(&rgba);
             let has_alpha = rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 255);
-            let levels = aurora_render::build_mips(image.width, image.height, rgba, 12);
+            let pixels = Arc::new(aurora_assets::DecodedImage {
+                width: image.width,
+                height: image.height,
+                components: 4,
+                data: rgba,
+                discard: 0,
+            });
+            let levels = aurora_render::build_mips(image.width, image.height, pixels.data.clone(), 12);
             let staged = if let Some(pool) = pool {
                 let refs: Vec<_> = levels.iter().map(|(w, h, bytes)| (*w, *h, bytes.as_slice())).collect();
                 Some(Arc::new(StagedTexture::new(pool, &refs).ok_or_else(|| STAGING_BUSY.to_owned())?))
@@ -90,6 +98,7 @@ pub fn images(images: Vec<Image>, pool: Option<&StagingPool>, cache: &HashMap<Uu
             };
             Ok(PreparedImage {
                 id,
+                pixels,
                 staged,
                 alpha,
                 has_alpha,

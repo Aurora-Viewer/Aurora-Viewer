@@ -31,11 +31,20 @@ impl App {
     }
 
     pub(super) fn show_blender_live(&mut self, ctx: &egui::Context, palette: &Palette) {
-        if self.blender_live.show(ctx, palette) {
+        let can_upload = !self.imports.busy() && self.imports.pending_files.is_none() && self.imports.entries.len() < 512;
+        if self.blender_live.show(ctx, palette, can_upload) {
             self.blender_live.start_requested = true;
         }
         if std::mem::take(&mut self.blender_live.save_addon) {
             self.blender_live.addon.save(&self.scene.jobs, ctx);
+        }
+        if let Some(id) = self.blender_live.upload_requested.take()
+            && can_upload
+            && let Some(snapshot) = &self.blender_live.snapshot
+            && let Some(source) = snapshot.sources.iter().find(|source| source.id == id)
+        {
+            self.imports
+                .open_live_mesh(source.clone(), snapshot.images.clone(), &self.scene.jobs, ctx);
         }
     }
 
@@ -67,8 +76,13 @@ impl App {
         }
         if self.blender_live.clear {
             self.blender_live.clear = false;
-            self.blender_live.snapshot = None;
+            if let Some(snapshot) = self.blender_live.snapshot.take() {
+                self.scene.jobs.discard(snapshot);
+            }
             self.blender_live.owner = None;
+            self.blender_live.states.clear();
+            self.blender_live.selected = None;
+            self.blender_live.upload_requested = None;
             self.clear_blender_preview();
         }
         // An offline fixture uses the exact protocol and production skin path.
@@ -85,16 +99,36 @@ impl App {
                 &self.egui_ctx,
                 renderer.staging_pool(),
             );
-            match crate::blender_live::demo_fixture(&self.world.avatar_lib.rig) {
-                Ok(snapshot) => self.blender_live.snapshot = Some(snapshot),
+            let mode = std::env::var("AURORA_DEMO_BLENDER_LIVE").unwrap_or_default();
+            match crate::blender_live::demo_fixture(&self.world.avatar_lib.rig, mode != "1") {
+                Ok(snapshot) => {
+                    self.blender_live.receive(snapshot);
+                    self.blender_live.owner = Some(self.world.agent_id);
+                    if mode == "objects" {
+                        let ids: Vec<_> = self
+                            .blender_live
+                            .snapshot
+                            .as_ref()
+                            .into_iter()
+                            .flat_map(|s| &s.sources)
+                            .map(|s| s.id)
+                            .collect();
+                        if ids.len() == 3 {
+                            self.blender_live.set_state(ids[1], crate::blender_live::SourceState::Hidden);
+                            self.blender_live.set_state(ids[2], crate::blender_live::SourceState::Removed);
+                        }
+                    } else if mode == "upload" {
+                        self.blender_live.upload_requested = self.blender_live.selected;
+                        self.blender_live.open = false;
+                    }
+                }
                 Err(error) => self.blender_live.error = Some(error),
             }
         }
         if let Some(snapshot) = self.blender_live.take_latest() {
-            if let Some(old) = self.blender_live.snapshot.replace(snapshot) {
+            if let Some(old) = self.blender_live.receive(snapshot) {
                 self.scene.jobs.discard(old);
             }
-            self.blender_live.revision = None;
             self.blender_live.owner = Some(self.world.agent_id);
         }
         let missing = self
@@ -105,8 +139,9 @@ impl App {
         if let Some(snapshot) = self.blender_live.snapshot.as_ref()
             && (Some(snapshot.revision) != self.blender_live.revision || missing)
             && self.world.objects.index_of_uuid(&self.world.agent_id).is_some()
+            && let Some(snapshot) = self.blender_live.visible_snapshot()
         {
-            self.install_blender_snapshot(snapshot.clone(), renderer);
+            self.install_blender_snapshot(snapshot, renderer);
         }
         if self.demo && self.blender_live.demo_started && self.frame_count.is_multiple_of(120) {
             let (appearances, images) = self.scene.preview_appearance_counts();

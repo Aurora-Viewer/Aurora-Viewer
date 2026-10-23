@@ -14,7 +14,7 @@ pub use demo::fixture as demo_fixture;
 
 use parking_lot::Mutex;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -23,6 +23,14 @@ use std::{
 use uuid::Uuid;
 
 pub const DEFAULT_PORT: u16 = 17655;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SourceState {
+    #[default]
+    Visible,
+    Hidden,
+    Removed,
+}
 
 #[derive(Default)]
 pub struct Status {
@@ -64,6 +72,9 @@ pub struct Live {
     pub addon: addon::Addon,
     pub save_addon: bool,
     pub start_requested: bool,
+    pub states: HashMap<Uuid, SourceState>,
+    pub selected: Option<Uuid>,
+    pub upload_requested: Option<Uuid>,
 }
 impl Default for Live {
     fn default() -> Self {
@@ -83,10 +94,68 @@ impl Default for Live {
             addon: Default::default(),
             save_addon: false,
             start_requested: false,
+            states: HashMap::new(),
+            selected: None,
+            upload_requested: None,
         }
     }
 }
 impl Live {
+    pub fn state(&self, id: Uuid) -> SourceState {
+        self.states.get(&id).copied().unwrap_or_default()
+    }
+
+    pub fn set_state(&mut self, id: Uuid, state: SourceState) {
+        self.states.insert(id, state);
+        self.revision = None;
+        if state == SourceState::Removed && self.selected == Some(id) {
+            self.selected = None;
+        } else if state == SourceState::Visible && self.selected.is_none() {
+            self.selected = Some(id);
+        }
+    }
+
+    pub fn receive(&mut self, snapshot: protocol::Prepared) -> Option<protocol::Prepared> {
+        self.states.retain(|id, _| snapshot.sources.iter().any(|source| source.id == *id));
+        if self
+            .selected
+            .is_none_or(|id| !snapshot.sources.iter().any(|s| s.id == id) || self.state(id) == SourceState::Removed)
+        {
+            self.selected = snapshot
+                .sources
+                .iter()
+                .find(|s| self.state(s.id) != SourceState::Removed)
+                .map(|s| s.id);
+        }
+        self.revision = None;
+        self.snapshot.replace(snapshot)
+    }
+
+    pub fn visible_snapshot(&self) -> Option<protocol::Prepared> {
+        let mut snapshot = self.snapshot.clone()?;
+        snapshot.sources.retain(|s| self.state(s.id) == SourceState::Visible);
+        snapshot.meshes.retain(|m| self.state(m.source) == SourceState::Visible);
+        snapshot.triangles = snapshot.sources.iter().flat_map(|s| &s.scene.models).map(|m| m.triangles()).sum();
+        let textures: HashSet<_> = snapshot
+            .meshes
+            .iter()
+            .flat_map(|m| &m.materials)
+            .flatten()
+            .flat_map(|(_, m)| {
+                [
+                    m.base_color_texture,
+                    m.normal_texture,
+                    m.metallic_roughness_texture,
+                    m.emissive_texture,
+                ]
+                .into_iter()
+                .flatten()
+            })
+            .collect();
+        snapshot.images.retain(|image| textures.contains(&image.id));
+        Some(snapshot)
+    }
+
     pub fn running(&self) -> bool {
         self.server.is_some()
     }
@@ -120,8 +189,8 @@ impl Live {
         self.server.as_ref()?.shared.latest.lock().take()
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) -> bool {
+    pub fn show(&mut self, ctx: &egui::Context, p: &crate::theme::Palette, can_upload: bool) -> bool {
         self.addon.poll();
-        ui::show(self, ctx, p)
+        ui::show(self, ctx, p, can_upload)
     }
 }

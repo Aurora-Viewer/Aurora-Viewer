@@ -6,6 +6,7 @@
 pub mod animation;
 pub mod demo;
 pub mod files;
+mod live;
 pub mod local;
 pub mod maps;
 pub mod mesh;
@@ -279,6 +280,7 @@ impl Source {
 pub struct Entry {
     pub id: Uuid,
     pub path: PathBuf,
+    pub from_live: bool,
     pub name: String,
     pub description: String,
     pub folder: Uuid,
@@ -346,6 +348,7 @@ impl Entry {
             id: Uuid::new_v4(),
             name: path.file_stem().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
             path,
+            from_live: false,
             description: String::new(),
             folder: Uuid::nil(),
             selected: source.is_some(),
@@ -881,6 +884,9 @@ impl Imports {
                             entry.folder = Self::default_folder(world, prefs, source.kind());
                         }
                     }
+                    if let Some(entry) = entries.iter().find(|e| e.from_live && self.choice.accepts(e)) {
+                        self.active = Some(entry.id);
+                    }
                     if self.active.is_none() {
                         self.active = entries.iter().find(|e| self.choice.accepts(e)).map(|e| e.id);
                     }
@@ -1113,6 +1119,7 @@ impl Imports {
                                     draft.scene = scene;
                                     draft.images = images;
                                     entry.path = path;
+                                    entry.from_live = false;
                                 } else if level < 4 {
                                     draft
                                         .inspector

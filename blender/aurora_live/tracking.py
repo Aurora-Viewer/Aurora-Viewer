@@ -1,5 +1,6 @@
 """Scene-owned synchronization entries; object pointers survive renaming/saving."""
 import bpy
+import uuid
 from bpy.props import BoolProperty, IntProperty, PointerProperty, StringProperty
 
 on_change = None
@@ -31,6 +32,25 @@ def active(scene):
     return [entry.object for entry in scene.aurora_live.objects if entry.enabled and valid(scene, entry.object)]
 
 
+def source_ids(scene):
+    """Persistent entry identities survive renaming, saving and list reordering."""
+    result = {}
+    seen = set()
+    for entry in scene.aurora_live.objects:
+        if not valid(scene, entry.object):
+            continue
+        try:
+            key = uuid.UUID(entry.source_id)
+        except (ValueError, AttributeError):
+            key = None
+        if key is None or not key.int or key in seen:
+            key = uuid.uuid4()
+            entry.source_id = str(key)
+        seen.add(key)
+        result[entry.object.as_pointer()] = str(key)
+    return result
+
+
 def add(scene, objects):
     prune(scene)
     prefs = scene.aurora_live
@@ -50,6 +70,7 @@ def add(scene, objects):
 
 class AURORA_PG_sync_object(bpy.types.PropertyGroup):
     object: PointerProperty(type=bpy.types.Object)
+    source_id: StringProperty(options={"HIDDEN"})
     name: StringProperty(get=lambda self: self.object.name if self.object else "")
     enabled: BoolProperty(name="Synchronize", default=True, update=changed,
                           description="Include this object in Aurora's live preview")

@@ -2,7 +2,7 @@ use super::*;
 use crate::ui::widgets::{self, Floater};
 use egui::Vec2;
 
-pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palette) -> bool {
+pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palette, can_upload: bool) -> bool {
     if !live.open {
         return false;
     }
@@ -12,7 +12,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
         "blender_live",
         aurora_i18n::tr!("blender-live-title"),
         egui::pos2(70.0, 110.0),
-        Vec2::new(460.0, 440.0),
+        Vec2::new(500.0, 590.0),
     );
     floater.min_size = Vec2::new(400.0, 350.0);
     floater.show(ctx, p, &mut open, |ui| {
@@ -45,24 +45,35 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
                         start = true;
                     }
                     if ui
-                        .add_enabled_ui(!live.objects.is_empty(), |ui| {
-                            widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-clear"))
-                        })
+                        .add_enabled_ui(
+                            live.snapshot
+                                .as_ref()
+                                .is_some_and(|s| s.sources.iter().any(|s| live.state(s.id) != SourceState::Removed)),
+                            |ui| widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-clear")),
+                        )
                         .inner
                         .clicked()
+                        && let Some(snapshot) = &live.snapshot
                     {
-                        live.clear = true;
+                        let ids: Vec<_> = snapshot.sources.iter().map(|s| s.id).collect();
+                        for id in ids {
+                            live.set_state(id, SourceState::Removed);
+                        }
                     }
                 });
                 ui.add_space(8.0);
                 ui.label(aurora_i18n::tr!(
                     "blender-live-counts",
-                    objects = live.objects.len(),
+                    objects =
+                        live.snapshot
+                            .as_ref()
+                            .map_or(0, |s| s.sources.iter().filter(|s| live.state(s.id) == SourceState::Visible).count()),
                     triangles = live.triangles
                 ));
                 if let Some(revision) = live.revision {
                     ui.label(aurora_i18n::tr!("blender-live-revision", revision = revision));
                 }
+                object_list(live, ui, p, can_upload);
                 let error = live
                     .error
                     .clone()
@@ -102,4 +113,90 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
     });
     live.open = open;
     start
+}
+
+fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, can_upload: bool) {
+    ui.add_space(8.0);
+    widgets::section_header(ui, p, "cube", aurora_i18n::tr!("blender-live-objects"));
+    let sources = live.snapshot.as_ref().map(|s| s.sources.clone()).unwrap_or_default();
+    if sources.iter().all(|s| live.state(s.id) == SourceState::Removed) {
+        ui.weak(aurora_i18n::tr!("blender-live-empty"));
+    }
+    egui::ScrollArea::vertical()
+        .id_salt("blender_live_objects")
+        .max_height(190.0)
+        .show(ui, |ui| {
+            for source in &sources {
+                let state = live.state(source.id);
+                if state == SourceState::Removed {
+                    continue;
+                }
+                ui.push_id(source.id, |ui| {
+                    ui.horizontal(|ui| {
+                        let mut visible = state == SourceState::Visible;
+                        if widgets::checkbox(ui, p, &mut visible, "")
+                            .on_hover_text(aurora_i18n::tr!("blender-live-visible"))
+                            .changed()
+                        {
+                            live.set_state(source.id, if visible { SourceState::Visible } else { SourceState::Hidden });
+                        }
+                        if ui
+                            .add_sized(
+                                Vec2::new(ui.available_width(), 26.0),
+                                egui::Button::selectable(live.selected == Some(source.id), "")
+                                    .left_text(&source.name)
+                                    .truncate(),
+                            )
+                            .on_hover_text(&source.name)
+                            .clicked()
+                        {
+                            live.selected = Some(source.id);
+                        }
+                    });
+                });
+            }
+        });
+    ui.horizontal_wrapped(|ui| {
+        let selected = live
+            .selected
+            .is_some_and(|id| sources.iter().any(|s| s.id == id) && live.state(id) != SourceState::Removed);
+        if widgets::action_button_if(
+            ui,
+            p,
+            "file-upload-filled",
+            aurora_i18n::tr!("blender-live-upload"),
+            widgets::ActionKind::Primary,
+            Vec2::new(0.0, ui.spacing().interact_size.y),
+            selected && can_upload,
+        )
+        .clicked()
+        {
+            live.upload_requested = live.selected;
+        }
+        if widgets::action_button_if(
+            ui,
+            p,
+            "trash-filled",
+            aurora_i18n::tr!("common-remove"),
+            widgets::ActionKind::Flat,
+            Vec2::new(0.0, ui.spacing().interact_size.y),
+            selected,
+        )
+        .clicked()
+            && let Some(id) = live.selected
+        {
+            live.set_state(id, SourceState::Removed);
+        }
+        if sources.iter().any(|s| live.state(s.id) == SourceState::Removed)
+            && widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-restore")).clicked()
+        {
+            for source in &sources {
+                if live.state(source.id) == SourceState::Removed {
+                    live.set_state(source.id, SourceState::Visible);
+                }
+            }
+        }
+    });
+    ui.small(aurora_i18n::tr!("blender-live-list-help"));
+    ui.small(aurora_i18n::tr!("blender-live-upload-help"));
 }

@@ -10434,6 +10434,17 @@ build-material-base-tint = Base tint
 build-material-emissive-tint = Emissive tint
 
 blender-live-title = Blender Live
+blender-live-invalid-source = Invalid or duplicate live object identifier.
+blender-live-objects = Blender objects
+blender-live-empty = No objects in this preview.
+blender-live-visible = Show this object on my avatar
+blender-live-upload = Upload object…
+blender-live-restore = Restore removed objects
+blender-live-list-help = Uncheck to hide temporarily. Remove withdraws the object from this preview; Blender keeps it.
+blender-live-upload-help = Upload opens a snapshot in the mesh importer, where you review the settings and cost before confirming.
+blender-live-upload-frozen = Blender Live snapshot. Further live edits do not change this draft. Use Upload object again for a new snapshot.
+blender-live-upload-source = Blender Live · frozen snapshot
+blender-live-upload-materials = Includes base colors and textures. Upload PBR materials separately.
 blender-live-invalid-material = Invalid live material, image dimensions, pixel budget or texture reference.
 blender-live-material-busy = Preparing live material images; retrying automatically.
 blender-live-save-addon = Save Blender plug-in…

@@ -15,6 +15,11 @@ no references or pending jobs. `blender/aurora_live/` is the shared Blender 2.93
 implementation, with main-thread rest capture, a separate socket worker and a
 single latest-snapshot mailbox. `docs/BLENDER_LIVE.md` describes setup and
 wire limits; `blender/tests/` exercises real Blender capture and transport.
+Optional negotiated source UUIDs keep Aurora's per-object visibility/removal
+stable across renames and render-batch splitting. Prepared sources share immutable
+import scenes and decoded pixels; `imports/live.rs` freezes the selected source
+on a worker into the existing mesh draft, quote and confirmed upload workflow.
+Hidden/removed sources keep receiving edits, with no simulator traffic.
 `compat.py` maps renamed Principled sockets and uses bone collections in 4.0+
 or named pose groups and armature layers in 2.93–3.x. The mesh exporter reads
 corner normals in 4.1+ and calculates split loop normals in older versions.

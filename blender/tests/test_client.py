@@ -36,6 +36,13 @@ def snapshot(connection):
 
 
 class ClientTests(unittest.TestCase):
+    def test_source_identity_is_negotiated_without_mutating_the_capture(self):
+        value = {"revision": 1, "meshes": [{"name": "Shirt", "source_id": "stable-id"}]}
+        self.assertIs(module.wire_snapshot(value, ["pbr-materials", "source-ids"]), value)
+        legacy = module.wire_snapshot(value, ["pbr-materials"])
+        self.assertEqual(legacy, {"revision": 1, "meshes": [{"name": "Shirt"}]})
+        self.assertEqual(value["meshes"][0]["source_id"], "stable-id")
+
     def test_busy_image_staging_retries_without_another_edit(self):
         received = []
         def server(listener):

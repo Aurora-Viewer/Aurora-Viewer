@@ -159,7 +159,7 @@ def _mesh(source, supported, forward, rest_axes, capture):
         bpy.context.view_layer.update()
 
 
-def snapshot(objects, supported, revision, forward="NATIVE", rest_axes=None):
+def snapshot(objects, supported, revision, forward="NATIVE", rest_axes=None, source_ids=None):
     meshes = []
     capture = Capture()
     for source in objects:
@@ -168,7 +168,10 @@ def snapshot(objects, supported, revision, forward="NATIVE", rest_axes=None):
         except ReferenceError:
             exists = False
         if exists and source.type == "MESH":
-            meshes.append(_mesh(source, supported, forward, rest_axes or {}, capture))
+            mesh = _mesh(source, supported, forward, rest_axes or {}, capture)
+            if source_ids and source.as_pointer() in source_ids:
+                mesh["source_id"] = source_ids[source.as_pointer()]
+            meshes.append(mesh)
     if len(meshes) > 32:
         raise ValueError("Select at most 32 mesh objects")
     corners = sum(len(face["vertices"]) for mesh in meshes for face in mesh["faces"])

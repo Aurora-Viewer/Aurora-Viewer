@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 8, 5), "blender": (2, 93, 0),
+    "version": (0, 8, 6), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -121,7 +121,7 @@ def _tick():
             if painting:
                 materials.invalidate()
             _revision += 1
-            value = exporter.snapshot(objects, supported, _revision, prefs.forward, _client.rest_axes())
+            value = exporter.snapshot(objects, supported, _revision, prefs.forward, _client.rest_axes(), tracking.source_ids(scene))
             _client.submit(value)
             _error = ""
         except (ValueError, RuntimeError, ReferenceError, OverflowError) as error:
@@ -531,7 +531,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Send now": "Envoyer maintenant", "Aurora port": "Port Aurora", "Update interval": "Intervalle de mise à jour",
     "Coordinates": "Coordonnées", "SL / Z up": "SL / Z vertical", "Blender -Y forward": "Blender -Y vers l’avant",
     "Enable Blender Live in Aurora first.": "Activez d’abord Blender Live dans Aurora.",
-    "Local preview · no asset upload": "Aperçu local · sans téléversement",
+    "Local preview · no asset upload": "Aperçu local · sans import automatique",
 }.items()}}
 
 
