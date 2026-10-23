@@ -61,7 +61,10 @@ fn alpha(seconds: f32, line: &ChatLine, now: std::time::SystemTime) -> f32 {
 
 /// The colour of a head's name: ours in the theme's teal, an object's in
 /// its kind's colour, a resident's in ink (the Conversations thread's).
-fn name_color(p: &Palette, line: &ChatLine) -> Color32 {
+fn name_color(p: &Palette, line: &ChatLine, world: &World) -> Color32 {
+    if let Some(color) = crate::ui::colors::contact_sender_color(line, world) {
+        return color;
+    }
     if is_object(line.kind) {
         return crate::ui::colors::sender_color(line);
     }
@@ -200,7 +203,9 @@ fn card<'a>(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 let font = egui::FontId::new(12.5, crate::ui::fonts::semibold(ui.ctx()));
-                let galley = ui.painter().layout(first.from.clone(), font, name_color(p, first), text_w * 0.6);
+                let galley = ui
+                    .painter()
+                    .layout(first.from.clone(), font, name_color(p, first, world), text_w * 0.6);
                 let (r, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                 ui.painter().galley(r.min, galley, p.ink);
                 names.push((r, first));

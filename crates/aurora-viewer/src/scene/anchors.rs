@@ -49,6 +49,7 @@ use super::avatar::AvatarLibrary;
 use super::meshes::MeshStreamer;
 use super::sync_sets::{IndexSet, MAX_DEPTH};
 use super::{GeomKey, Scene, hover};
+use crate::fast_hash::FastMap;
 use crate::world::World;
 use crate::world::objects::Object;
 use aurora_render::Renderer;
@@ -409,7 +410,7 @@ impl Scene {
     /// Anchor matrix index of anchor `slot` of `wearer`, once its palette
     /// exists on the CPU side (a palette allocated in this frame is sized
     /// by the next `update_poses`).
-    pub(super) fn anchor_matrix(palette_slots: &HashMap<Uuid, u32>, palettes: usize, wearer: &Object, slot: u8) -> Option<u32> {
+    pub(super) fn anchor_matrix(palette_slots: &FastMap<Uuid, u32>, palettes: usize, wearer: &Object, slot: u8) -> Option<u32> {
         let base = *palette_slots.get(&wearer.full_id)? as usize * PALETTE_JOINTS;
         (base + PALETTE_JOINTS <= palettes && (slot as usize) < ANCHORS).then_some((base + ANCHOR_BASE + slot as usize) as u32)
     }

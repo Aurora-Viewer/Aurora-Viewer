@@ -398,6 +398,12 @@ impl<'a> Cx<'a> {
         self.greyed = off;
     }
 
+    /// A search is under way: the rows' `keywords` are read (a page skips
+    /// building costly ones otherwise).
+    pub fn searching(&self) -> bool {
+        !self.words.is_empty()
+    }
+
     /// More words the search finds the next row by (the names of its
     /// choices, the keys of a shortcut).
     pub fn keywords(&mut self, words: &str) -> &mut Self {

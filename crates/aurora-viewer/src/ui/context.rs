@@ -79,6 +79,7 @@ pub struct ContextMenu {
 pub struct ObjectFacts {
     pub local_hud_scale: Option<f32>,
     pub saved_hud_scale: bool,
+    pub hud_move_locked: bool,
     /// enable_object_edit on one of our attachments, body or HUD: the
     /// build tools can select it.
     pub edit: bool,
@@ -208,6 +209,7 @@ pub struct AttachChoice {
 pub enum CtxAction {
     ResetHudScale(ObjKey),
     ForgetHudScale(ObjKey),
+    SetHudMoveLock(ObjKey, bool),
     Detach(ObjKey),
     AttachmentInventory(Uuid),
     EditAttachment(ObjKey),

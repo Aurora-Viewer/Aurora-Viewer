@@ -975,7 +975,14 @@ fn second_life_tab(
         let field_w = (ui.available_width() - rights_w - if own { 36.0 } else { 8.0 }).max(80.0);
         inset(ui, p, field_w, 22.0, |ui| {
             ui.horizontal(|ui| {
-                ui.add(egui::Label::new(RichText::new(name).size(12.5).color(p.ink)).truncate());
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(name)
+                            .size(12.5)
+                            .color(crate::ui::colors::resident_name(world, &id, p.ink)),
+                    )
+                    .truncate(),
+                );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| copy_menu(ui, p, world, id));
             });
         });
@@ -1015,6 +1022,18 @@ fn second_life_tab(
             }
         }
     });
+    let appearance = world.contact_sets.appearance(&id);
+    if !appearance.icons.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            for badge in &appearance.icons {
+                let color = crate::ui::colors::set_color(badge.color);
+                if let Some(texture) = super::icons::global(crate::world::contact_sets::appearance::ICONS[badge.icon]) {
+                    ui.add(egui::Image::new(&texture).fit_to_exact_size(Vec2::splat(16.0)).tint(color));
+                }
+                ui.label(RichText::new(&badge.set).size(11.5).color(color));
+            }
+        });
+    }
     // key row: the UUID, then the online status of the others
     ui.horizontal(|ui| {
         label(ui, p, aurora_i18n::tr!("ui-profile-key"));

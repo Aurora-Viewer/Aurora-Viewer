@@ -677,16 +677,25 @@ impl Scene {
                 indices: &f.indices,
             })
         });
-        if mode == FacePick::Inventory {
+        if mode == FacePick::Inventory || (g.hud && !include_hidden) {
             return faces
                 .filter_map(|face| {
-                    let hit = pick::ray_faces(std::iter::once(face), model, ray.0, ray.1)?;
+                    let hit = if g.hud {
+                        pick::ray_faces_with_sidedness(std::iter::once(face), model, ray.0, ray.1, |face| {
+                            self.hud_double_sided(world, o, face)
+                        })?
+                    } else {
+                        pick::ray_faces(std::iter::once(face), model, ray.0, ray.1)?
+                    };
                     let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
                     let draw = geom
                         .faces
                         .get(hit.face)
                         .and_then(Option::as_ref)
                         .and_then(|a| g.faces.iter().find(|f| f.cmd.first_index == a.index_offset))?;
+                    if g.hud && (draw.pass == Pass::Hidden || draw.te_alpha < 0.004) {
+                        return None;
+                    }
                     let ignore_alpha = draw.pbr_alpha == Some(0)
                         || matches!(
                             draw.legacy_alpha,
@@ -710,25 +719,27 @@ impl Scene {
         }
         // LLVolume::lineSegmentIntersect rejects back-facing triangles.
         // Explicit double-sided materials remain interactive on both sides.
-        pick::ray_faces_with_sidedness(faces, model, ray.0, ray.1, |face| {
-            let Some((_, id)) = o
-                .extra
-                .render_materials
-                .iter()
-                .find(|(fi, id)| *fi as usize == face && !id.is_nil())
-            else {
-                return false;
-            };
-            let mut material = self.materials.peek(id).map(|m| (*m).clone()).unwrap_or_default();
-            if let Some((_, ov)) = world
-                .gltf_overrides
-                .get(&o.key)
-                .and_then(|s| s.iter().rev().find(|(fi, _)| *fi as usize == face))
-            {
-                material.apply_override(ov);
-            }
-            material.double_sided
-        })
+        pick::ray_faces_with_sidedness(faces, model, ray.0, ray.1, |face| self.hud_double_sided(world, o, face))
+    }
+
+    fn hud_double_sided(&self, world: &World, o: &Object, face: usize) -> bool {
+        let Some((_, id)) = o
+            .extra
+            .render_materials
+            .iter()
+            .find(|(fi, id)| *fi as usize == face && !id.is_nil())
+        else {
+            return false;
+        };
+        let mut material = self.materials.peek(id).map(|m| (*m).clone()).unwrap_or_default();
+        if let Some((_, ov)) = world
+            .gltf_overrides
+            .get(&o.key)
+            .and_then(|s| s.iter().rev().find(|(fi, _)| *fi as usize == face))
+        {
+            material.apply_override(ov);
+        }
+        material.double_sided
     }
 
     /// The material mode, independent of texel opacity. In particular, a
@@ -2048,6 +2059,75 @@ pub(super) mod tests {
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
+    }
+
+    #[test]
+    fn hud_texture_holes_pass_through_except_in_editing_and_transparency_debug() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.get(own).unwrap().key.local_id;
+        for (idx, x) in [(front, 3.0), (back, 7.0)] {
+            let o = world.objects.get_mut(idx).unwrap();
+            o.parent_id = parent;
+            o.state = 31u8.rotate_left(4);
+            o.position = Vec3::new(x, 0.0, 0.0);
+            let g = &mut scene.gpu[idx];
+            g.hud = true;
+            g.owner_avatar = Some(own);
+            g.center = o.position;
+            g.radius = 1.0;
+        }
+        scene.index_objects();
+        scene.build_huds(&world, [1280, 720], true);
+        let cursor = (640.0, 360.0);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        let texture = Uuid::from_u128(8888);
+        scene.gpu[front].faces[0].tex_id = texture;
+        scene.gpu[front].faces[0].pass = Pass::Blend;
+        scene
+            .textures
+            .pick_masks
+            .insert(texture, super::super::textures::PickMask::from_rgba(2, 2, &[0; 16]).unwrap());
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+        assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
+        // Follow repeats/offsets in HUD space, rather than the raw mesh UV.
+        let mut pixels = vec![255; 4 * 4 * 4];
+        for y in 0..4 {
+            for x in 2..4 {
+                pixels[(y * 4 + x) * 4 + 3] = 0;
+            }
+        }
+        scene
+            .textures
+            .pick_masks
+            .insert(texture, super::super::textures::PickMask::from_rgba(4, 4, &pixels).unwrap());
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].offset_s = 0.5;
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].offset_s = 0.0;
+        // Opaque materials display the texture without its alpha channel.
+        scene.gpu[front].faces[0].pbr_alpha = Some(0);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        scene.gpu[front].faces[0].pbr_alpha = Some(2);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        scene.build_huds(&world, [1280, 720], true);
+        assert!(scene.lists.hud_debug_blue.is_empty());
+        // The overlay's displayed triangles become pickable, with no texture test.
+        scene.debug_alpha = Some(false);
+        scene.build_huds(&world, [1280, 720], true);
+        assert_eq!(scene.lists.hud_debug_red.len(), 1);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        scene.gpu[front].faces[0].pass = Pass::Mask;
+        scene.build_huds(&world, [1280, 720], true);
+        assert_eq!(scene.lists.hud_debug_blue.len(), 1);
+        assert!(scene.lists.hud_debug_red.is_empty());
+        scene.debug_alpha = None;
+        scene.build_huds(&world, [1280, 720], true);
+        assert!(scene.lists.hud_debug_blue.is_empty());
+        scene.gpu[front].faces[0].te_alpha = 0.0;
+        scene.textures.pick_masks.remove(&texture);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
     }
 
     #[test]

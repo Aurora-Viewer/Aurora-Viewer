@@ -1514,6 +1514,11 @@ grid.
 - `drag`: grabs the child with Ctrl (frame 720), moves the whole HUD,
   releases Ctrl before the click (frame 800), then saves the position on
   left release (frame 840) without touching any script.
+- `drag-lock`: locks the HUD through its child at frame 680, attempts the
+  same drag, then opens the context menu at frame 880 with the lock checked.
+  The HUD must stay in place. `drag-lock-unlock` unlocks it at frame 700;
+  dragging must work again. `drag-lock-camera` holds Ctrl + Alt instead:
+  the camera must orbit while the locked HUD stays in place.
 - `drag-zoom`: the same at 50%; `drag-ignore`: on a child with the
   IGNORE action; `drag-ctrl`: explicitly binds Ctrl; `drag-key`: the B key
   instead of Ctrl; `drag-secondary`: ALT as primary key and Ctrl as
@@ -1535,6 +1540,17 @@ grid.
   `faces-turned` turns all the panels by 180°: the front column
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
+- `faces-alpha` uses a texture with holes in those panels. Normal touches
+  and quick movement pass through texture holes; opaque PBR ignores texture
+  alpha. Editing and right-click selection retain access to invisible faces.
+  With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
+  and material masks blue; their highlighted surfaces become pickable.
+
+Right-click a HUD and check **Lock quick movement** to prevent its held-key
+drag without blocking buttons, scripts, local resizing or explicit Edit.
+The lock applies to the whole linkset, survives reattachment/relogin for
+ordinary inventory HUDs, and is stored per account in `hud_locks.json`.
+Temporary attachments without a stable inventory item keep an instance lock.
 
 **`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
@@ -2709,7 +2725,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
-| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `recent` or `blocked` | People with the mock-up's contents: Near you (rich rows, compact crowd, a person's sheet, Firestorm's table) and the other tabs |
+| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `visuals`, `visuals-stack`, `visuals-legacy`, `recent` or `blocked` | People scenarios, including the contact-set visual editor and overlapping sets |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
@@ -4140,6 +4156,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `AURORA_FPS_LIMIT=60`, they are greyed out at frame 780 and removed from the
   list at frame 1400. `friends` and `groups`: these tabs. `profile`: the
   Groups tab and the "Group Profile" window of the first group.
+- **`AURORA_DEMO_PEOPLE=visuals|visuals-stack|visuals-legacy`**: open the Family set's visual editor with a live plate preview. Family supplies a pink background and names, while the higher-priority Shop supplies a gold border and star badge replacing the friend heart. The same resident belongs to both, with a non-friend included. `visuals-stack` shows both set icons; `visuals-legacy` keeps classic world tags unchanged. Change priority, colour, switches, icon, preferred size and the global icon mode; inspect the live preview and world plates. Close the editor to inspect the nearby/friends/set lists, chat and minimap. Reduced plates still expand on hover; distance and crowd rules still apply. Demo sets remain in memory.
+
+  For assignment, drag a resident's name from the chat, or a row from People, onto a real set pill or the selected set's member pane. The resident is added without leaving their other sets; internal pseudo-sets do not accept drops, and an inventory drag is left for its original destination. Close the editor to inspect the resolved world plate; change priority to check that one set can supply the border while another supplies the name/background. With `AURORA_DEMO_PROFILE=wolf:compact`, the profile shows the selected set badges side by side.
+
 - **`AURORA_DEMO_PEOPLE=rows|crowd|sheet|legacy|friends|groups|sets|recent|blocked`**: People › Near you in
   Aurora's look, with the residents of the People mock-up (names, ranges,
   states, arrivals), alone on screen. `rows`: the rich rows grouped by
@@ -5381,6 +5401,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_WORN_RANK=avatar` | Meshes worn by other avatars downloaded in the rank of their avatar, not their own size (off by default) |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
+| `AURORA_PENDING_PARK=0` | Every object waiting for its geometry asked about by the sync's round, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
 | `AURORA_SYNC_SLOW=<ms>` | The steps of each frame whose scene sync is slower than `ms` |
 | `AURORA_MATERIAL_REBUILD=all` or `alt` | Every object using materials rebuilt at each material change, as before |
@@ -5886,6 +5907,14 @@ What the inventory must show with these scenarios:
     `cull_kb`, `journal_kb`, `r_resources`. To be combined with
     `AURORA_DEMO_CROWD=40,busy`, `AURORA_DEMO_ANIMESH=1` and
     `AURORA_DEMO_STREAM=12000,400`.
+- **`AURORA_PENDING_PARK=0`**: the objects whose geometry is not bound yet
+  are all asked about again by the sync, 2,048 a frame at most, as before.
+  By default those waiting for a geometry still being built or downloaded
+  leave that round until it is ready or dropped, and come back to it every
+  2 s in case (`scene/sync_sets.rs`). Compare `s_sync_list` over whole
+  runs with many meshes still downloading: `AURORA_DEMO_ARRIVAL=<folder>,
+  net=200,bw=8,n=6000,avatars=30,worn=6` (about 2,000 geometries pending
+  for a minute).
 - **`AURORA_SYNC_CHECK=1`**: one `sync check` line per second, in averages
   per frame: the objects listed by the sync according to what put them
   there (`moving`: what moves by itself and what follows it; `changed`:

@@ -31,6 +31,34 @@ pub fn c(v: Rgba) -> Color32 {
     )
 }
 
+/// Contact-set colours are stored in linear RGBA in the Legacy-compatible
+/// file. Apply the existing colour-blind adaptation after conversion.
+pub fn set_color(v: [f32; 4]) -> Color32 {
+    crate::colorblind::adapt(
+        Color32::from(egui::Rgba::from_rgba_unmultiplied(v[0], v[1], v[2], v[3])),
+        crate::colorblind::current(),
+    )
+}
+
+pub fn resident_name(world: &World, id: &Uuid, fallback: Color32) -> Color32 {
+    world.contact_sets.appearance(id).ui_name.map(set_color).unwrap_or(fallback)
+}
+
+pub fn contact_chat_color(line: &ChatLine, world: &World) -> Option<Color32> {
+    matches!(line.kind, ChatKind::Local(_) | ChatKind::Im | ChatKind::Own)
+        .then(|| world.contact_sets.appearance(&line.source).chat_text.map(set_color))
+        .flatten()
+}
+
+pub fn contact_sender_color(line: &ChatLine, world: &World) -> Option<Color32> {
+    matches!(line.kind, ChatKind::Local(_) | ChatKind::Im | ChatKind::Own)
+        .then(|| {
+            let a = world.contact_sets.appearance(&line.source);
+            a.chat_name.or(a.ui_name).map(set_color)
+        })
+        .flatten()
+}
+
 /// Linden Lab staff ("First Linden" / "first.linden").
 pub fn is_linden(name: &str) -> bool {
     let n = name.trim();
@@ -68,6 +96,9 @@ pub fn keyword_color(line: &ChatLine) -> Option<Color32> {
 /// Text color of a chat line (LLViewerChat::getChatColor): the keyword
 /// colour for a line that holds a keyword, else the sender's.
 pub fn chat_color(line: &ChatLine, world: &World) -> Color32 {
+    if let Some(color) = contact_chat_color(line, world) {
+        return color;
+    }
     if let Some(color) = keyword_color(line) {
         return color;
     }
@@ -129,6 +160,9 @@ pub fn tag_color(world: &World, id: &Uuid, name: &str, custom_display_name: bool
 
 /// Minimap marker color of an avatar.
 pub fn map_color(world: &World, id: &Uuid, name: &str) -> Color32 {
+    if let Some(color) = world.contact_sets.appearance(id).minimap {
+        return set_color(color);
+    }
     let k = get();
     let v = if *id == world.agent_id {
         k.map_me

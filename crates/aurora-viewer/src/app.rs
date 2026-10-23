@@ -2922,7 +2922,7 @@ impl App {
                 .as_ref()
                 .zip(self.world.map.track.as_ref())
                 .is_some_and(|(hit, track)| hit.contains(at, track))
-            && (!self.huds_shown() || self.scene.hud_pick(&self.world, self.cursor_pos, true).is_none())
+            && (!self.huds_shown() || self.scene.hud_pick(&self.world, self.cursor_pos, false).is_none())
     }
 
     /// The camera drag a left click would start under the pointer, like
@@ -3357,6 +3357,7 @@ impl App {
         if self.hud_drag_requested()
             && self.huds_shown()
             && let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos)
+            && !(self.alt && self.world.hud_move_locked(idx))
         {
             // Own the complete gesture: no media / script click or camera focus,
             // even when the visible frontmost HUD cannot be moved.
@@ -3372,7 +3373,9 @@ impl App {
             return;
         }
         let (x, y) = self.cursor_pos;
-        if let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, (x, y), true) {
+        if let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, (x, y), false)
+            && !(self.alt && self.world.hud_move_locked(idx))
+        {
             self.media.build_mode = self.build.open;
             if !self.alt && !self.ctrl && !self.shift && !self.build.open {
                 let mods = aurora_media::Modifiers {
@@ -7074,7 +7077,7 @@ impl App {
                     let depth = point.map(|p| (p - ray.0).dot(ray.1));
                     let (ray, depth, hud) = self
                         .scene
-                        .hud_pick(&self.world, self.cursor_pos, true)
+                        .hud_pick(&self.world, self.cursor_pos, false)
                         .map_or((ray, depth, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
                     if let Some(c) = self.media.on_hover(&self.world, &self.scene, ray, depth, mods, hud) {
                         self.media_cursor = Some(match c.as_str() {
@@ -13370,6 +13373,10 @@ impl ApplicationHandler for App {
                 if crate::demo::people::mode() == Some(crate::demo::people::Mode::Sets) {
                     self.contacts_ui.set_choice = Some(aurora_i18n::tr!("demo-family").to_owned());
                     self.people_ui.select(vec![crate::demo::people::NOVA]);
+                    if crate::demo::people::visuals() {
+                        self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                        self.settings.classic_name_tags = std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v == "visuals-legacy");
+                    }
                 }
                 self.panels.people = true;
                 self.panels.people_tab = crate::demo::people::tab();
@@ -14683,9 +14690,12 @@ impl ApplicationHandler for App {
             // HUD fixtures exercise screen-space rendering and the same
             // linked-object touch / inventory paths as real attachments.
             if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
-                let faces = matches!(mode.as_str(), "faces" | "faces-turned");
+                let faces = matches!(mode.as_str(), "faces" | "faces-turned" | "faces-alpha");
                 if faces {
-                    for (id, material) in crate::demo::hud::face_materials() {
+                    for (id, mut material) in crate::demo::hud::face_materials() {
+                        if mode == "faces-alpha" {
+                            material.base_color_texture = Some(crate::demo::TEX_HOLES);
+                        }
                         self.scene.materials.insert(id, material);
                     }
                 }
@@ -14696,6 +14706,20 @@ impl ApplicationHandler for App {
                 };
                 for ev in events {
                     self.world.apply(ev);
+                }
+                if mode == "faces-alpha" {
+                    for local_id in 8270..8279 {
+                        let key = crate::world::objects::ObjKey {
+                            region: self.world.main_region.unwrap_or_default(),
+                            local_id,
+                        };
+                        if let Some(idx) = self.world.objects.index_of(&key)
+                            && let Some(object) = self.world.objects.get_mut(idx)
+                            && let Some(te) = &mut object.te
+                        {
+                            Arc::make_mut(te).faces[4].texture = crate::demo::TEX_HOLES;
+                        }
+                    }
                 }
                 self.settings.show_huds = mode != "hidden";
                 self.panels.inventory = false;
@@ -15122,7 +15146,7 @@ impl ApplicationHandler for App {
                     Some(ray) => {
                         let (ray, depth, hud) = self
                             .scene
-                            .hud_pick(&self.world, self.cursor_pos, true)
+                            .hud_pick(&self.world, self.cursor_pos, false)
                             .map_or((ray, None, false), |(_, p, r)| (r, Some((p - r.0).dot(r.1)), true));
                         self.media.on_scroll(&self.world, &self.scene, ray, depth, steps, mods, hud)
                     }

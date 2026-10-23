@@ -258,7 +258,9 @@ pub(super) fn show(
         egui::pos2(text_left, title_y),
         text_right - text_left,
         title_font,
-        p.ink,
+        who.avatar
+            .map(|id| crate::ui::colors::resident_name(world, &id, p.ink))
+            .unwrap_or(p.ink),
     );
     if !who.subtitle.is_empty() {
         crate::ui::widgets::paint_elided(

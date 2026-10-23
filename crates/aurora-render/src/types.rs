@@ -342,6 +342,8 @@ pub struct DrawLists {
     pub hud_view: Option<HudView>,
     pub hud_opaque: Vec<DrawCmd>,
     pub hud_blend: Vec<DrawCmd>,
+    pub hud_debug_red: Vec<DrawCmd>,
+    pub hud_debug_blue: Vec<DrawCmd>,
     pub terrain: Vec<DrawCmd>,
     pub opaque: Vec<DrawCmd>,
     pub opaque_two_sided: Vec<DrawCmd>,
@@ -462,6 +464,8 @@ impl DrawLists {
         self.hud_view = src.hud_view;
         self.hud_opaque.clone_from(&src.hud_opaque);
         self.hud_blend.clone_from(&src.hud_blend);
+        self.hud_debug_red.clone_from(&src.hud_debug_red);
+        self.hud_debug_blue.clone_from(&src.hud_debug_blue);
         self.terrain.clone_from(&src.terrain);
         self.opaque.clone_from(&src.opaque);
         self.opaque_two_sided.clone_from(&src.opaque_two_sided);
@@ -501,6 +505,8 @@ impl DrawLists {
         self.hud_view = None;
         self.hud_opaque.clear();
         self.hud_blend.clear();
+        self.hud_debug_red.clear();
+        self.hud_debug_blue.clear();
         self.terrain.clear();
         self.opaque.clear();
         self.opaque_two_sided.clear();
@@ -540,6 +546,8 @@ impl DrawLists {
         self.water_exclusion.len()
             + self.hud_opaque.len()
             + self.hud_blend.len()
+            + self.hud_debug_red.len()
+            + self.hud_debug_blue.len()
             + self.terrain.len()
             + self.opaque.len()
             + self.opaque_two_sided.len()
@@ -1434,6 +1442,8 @@ mod tests {
         };
         scene.hud_opaque.push(cmd(20));
         scene.hud_blend.push(cmd(21));
+        scene.hud_debug_red.push(cmd(23));
+        scene.hud_debug_blue.push(cmd(24));
         scene.terrain.push(cmd(1));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
         scene.blend_glow.extend([false, true, false]);
@@ -1478,6 +1488,8 @@ mod tests {
         assert_eq!(packet.hud_view.map(HudView::matrix), scene.hud_view.map(HudView::matrix));
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert_eq!(packet.hud_blend[0].record, 21);
+        assert_eq!(packet.hud_debug_red[0].record, 23);
+        assert_eq!(packet.hud_debug_blue[0].record, 24);
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(packet.blend_glow, [false, true, false]);
         assert_eq!(packet.blend_depth, 1);
@@ -1496,6 +1508,8 @@ mod tests {
         assert_eq!(packet.blend.len(), 3);
         assert!(scene.hud_view.is_none());
         assert!(scene.hud_opaque.is_empty());
+        assert!(scene.hud_debug_red.is_empty());
+        assert!(scene.hud_debug_blue.is_empty());
         assert!(scene.select_faces.is_empty());
         assert!(scene.hud_select_faces.is_empty());
         assert!(packet.hud_view.is_some());

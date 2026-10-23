@@ -28,6 +28,7 @@ fn movable_root(world: &World, idx: usize) -> Option<usize> {
     (parent.is_avatar()
         && parent.full_id == world.agent_id
         && (31..=38).contains(&o.attachment_point())
+        && !world.hud_locks.locked(o.full_id)
         && o.update_flags & OBJECT_MOVE != 0)
         .then_some(root)
 }
@@ -225,6 +226,11 @@ mod tests {
     fn no_modify_hud_is_movable_but_locked_foreign_and_world_objects_are_not() {
         let (mut world, root, child) = fixture();
         world.objects.get_mut(root).unwrap().update_flags &= !(1 << 2);
+        assert!(HudDrag::can_start(&world, child));
+        let id = world.objects.get(root).unwrap().full_id;
+        world.hud_locks.set(id, true);
+        assert!(!HudDrag::can_start(&world, child));
+        world.hud_locks.set(id, false);
         assert!(HudDrag::can_start(&world, child));
         world.objects.get_mut(root).unwrap().update_flags &= !OBJECT_MOVE;
         assert!(!HudDrag::can_start(&world, child));

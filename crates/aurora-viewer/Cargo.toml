@@ -68,6 +68,9 @@ serde_path_to_error = "0.1.20"
 # Apache-2.0 with the reference's zlib notice
 bevy_mikktspace = "1.0.0"
 fancy-regex = "0.19.2"
+# Hashing of the maps the frame walks (fast_hash.rs); zlib licence, already
+# in the tree through hashbrown
+foldhash = "0.2.0"
 # global allocator (allocator.rs): one heap per thread, so the main thread
 # no longer queues behind the background jobs on the system heap's lock; MIT.
 # mimalloc 2 (`v2`): with 3, the render thread lost 20 to 43 ms now and then

@@ -32,6 +32,7 @@ use super::GeomKey;
 use super::fetch_priority::{self, urgent};
 use super::jobs::{JobResult, Jobs, mesh_to_faces};
 use super::mesh_bytes::{MeshBytes, ranges_to_fetch};
+use crate::fast_hash::FastMap;
 use aurora_assets::material::PbrOverride;
 use aurora_assets::{AssetError, MeshHeader, PbrMaterial, SkinInfo};
 use aurora_net::fetch::ByteRange;
@@ -262,13 +263,13 @@ fn cache_path(cache_dir: &std::path::Path, id: &Uuid) -> Option<PathBuf> {
 }
 
 pub struct MeshStreamer {
-    entries: HashMap<Uuid, MeshEntry>,
+    entries: FastMap<Uuid, MeshEntry>,
     /// The meshes `update` has something to do for (`MeshEntry::has_work`),
     /// each listed once. It only visits these: a region leaves thousands of
     /// loaded meshes behind, and walking them all at each frame cost 0.13 ms
     /// for good after one visit to a busy region (7,700 meshes).
     todo: Vec<Uuid>,
-    by_key: HashMap<u64, Uuid>,
+    by_key: FastMap<u64, Uuid>,
     next_key: u64,
     /// Downloads to rank again, or to drop (no object wants them any more),
     /// told to the fetcher at the next `update`.
@@ -299,9 +300,9 @@ impl MeshStreamer {
             let _ = std::fs::create_dir_all(cache_dir.join("mesh"));
         }
         MeshStreamer {
-            entries: HashMap::new(),
+            entries: FastMap::default(),
             todo: Vec::new(),
-            by_key: HashMap::new(),
+            by_key: FastMap::default(),
             next_key: 1,
             moved: Vec::new(),
             dropped: Vec::new(),
@@ -1285,9 +1286,9 @@ mod tests {
 
     fn mesh_streamer() -> MeshStreamer {
         MeshStreamer {
-            entries: HashMap::new(),
+            entries: FastMap::default(),
             todo: Vec::new(),
-            by_key: HashMap::new(),
+            by_key: FastMap::default(),
             next_key: 1,
             moved: Vec::new(),
             dropped: Vec::new(),

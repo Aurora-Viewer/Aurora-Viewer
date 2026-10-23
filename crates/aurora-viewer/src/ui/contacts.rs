@@ -25,6 +25,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+pub(crate) mod drag;
+mod visuals;
+
 /// Most friends one action applies to (MAX_FRIEND_SELECT, MAX_SELECTIONS).
 const MAX_SELECT: usize = 20;
 /// Width of the button column (80 px in Firestorm; French labels are longer).
@@ -715,6 +718,12 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
                 .then(|| world.contact_sets.color_to_show(&f.id, |id| social.is_friend(id)))
                 .flatten()
                 .map(color32);
+            let color = world
+                .contact_sets
+                .appearance(&f.id)
+                .ui_name
+                .map(crate::ui::colors::set_color)
+                .or(color);
             FriendRow {
                 id: f.id,
                 online: f.online,
@@ -1663,7 +1672,7 @@ fn sets_tab(
                                 row_icon(ui, p, icon, pics.avatars.get(id), "user-filled");
                                 x = icon.right() + 6.0;
                             }
-                            let col = color.unwrap_or(if *on { p.ink } else { p.muted });
+                            let col = crate::ui::colors::resident_name(world, id, color.unwrap_or(if *on { p.ink } else { p.muted }));
                             let galley = egui::WidgetText::from(RichText::new(name.as_str()).size(12.5).color(col)).into_galley(
                                 ui,
                                 Some(egui::TextWrapMode::Truncate),
@@ -1847,9 +1856,8 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
         "contact_set_config",
         aurora_i18n::tr!("ui-contacts-configure", set = set.to_string()),
         ctx.content_rect().center() - Vec2::new(160.0, 140.0),
-        Vec2::new(320.0, 280.0),
+        Vec2::new(430.0, 650.0),
     )
-    .fixed()
     .show(ctx, p, &mut open, |ui| {
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut st.rename).desired_width(200.0));
@@ -1878,35 +1886,41 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
             }
             ui.label(RichText::new(aurora_i18n::tr!("common-color")).size(12.5).color(p.ink));
         });
-        let mut sort = cfg.sort_by_online;
-        if widgets::switch_labeled(ui, p, &mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status")).changed() {
-            world.contact_sets.set_sort_by_online(&set, sort);
-        }
-        widgets::divider(ui, p);
-        ui.label(
-            RichText::new(aurora_i18n::tr!("ui-contacts-all-contact-sets"))
-                .size(12.5)
-                .strong()
-                .color(p.ink),
-        );
-        ui.horizontal(|ui| {
-            if let Some(c) = set_color_button(ui, p, "default_color", world.contact_sets.default_color) {
-                world.contact_sets.set_default_color(c);
-            }
-            ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-default-color")).size(12.5).color(p.ink));
-        });
-        widgets::switch_labeled(
-            ui,
-            p,
-            &mut settings.set_list_icons,
-            aurora_i18n::tr!("ui-contacts-show-profile-pictures-in-contact-set-lists"),
-        );
-        widgets::switch_labeled(
-            ui,
-            p,
-            &mut settings.colorize_friends,
-            aurora_i18n::tr!("ui-contacts-friend-list-color-based-on-contact-set"),
-        );
+        visuals::preview(ui, p, world, &set);
+        egui::ScrollArea::vertical()
+            .max_height((ctx.content_rect().height() - 360.0).clamp(180.0, 420.0))
+            .show(ui, |ui| {
+                let mut sort = cfg.sort_by_online;
+                if widgets::switch_labeled(ui, p, &mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status")).changed() {
+                    world.contact_sets.set_sort_by_online(&set, sort);
+                }
+                visuals::editor(ui, p, world, &set, &cfg.visuals);
+                widgets::divider(ui, p);
+                ui.label(
+                    RichText::new(aurora_i18n::tr!("ui-contacts-all-contact-sets"))
+                        .size(12.5)
+                        .strong()
+                        .color(p.ink),
+                );
+                ui.horizontal(|ui| {
+                    if let Some(c) = set_color_button(ui, p, "default_color", world.contact_sets.default_color) {
+                        world.contact_sets.set_default_color(c);
+                    }
+                    ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-default-color")).size(12.5).color(p.ink));
+                });
+                widgets::switch_labeled(
+                    ui,
+                    p,
+                    &mut settings.set_list_icons,
+                    aurora_i18n::tr!("ui-contacts-show-profile-pictures-in-contact-set-lists"),
+                );
+                widgets::switch_labeled(
+                    ui,
+                    p,
+                    &mut settings.colorize_friends,
+                    aurora_i18n::tr!("ui-contacts-friend-list-color-based-on-contact-set"),
+                );
+            });
     });
     if !open {
         st.config = None;

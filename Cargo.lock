@@ -695,6 +695,7 @@ dependencies = [
  "env_logger",
  "fancy-regex",
  "flate2",
+ "foldhash 0.2.0",
  "gilrs-core",
  "glam 0.34.1",
  "hidapi",

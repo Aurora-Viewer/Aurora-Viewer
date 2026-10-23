@@ -15,6 +15,9 @@
 //! - **Pending**: objects whose wanted geometry is not bound yet; visited
 //!   when that geometry can make progress (ready, or to be requested again).
 //!   Beyond [`PENDING_PER_FRAME`] of them, a frame only looks at a part.
+//!   Those waiting for a geometry still being built or downloaded are
+//!   parked out of that round until it changes ([`SyncSets::geometry_changed`]),
+//!   and put back in it every [`PARKED_SECONDS`] in case.
 //! - **Detail level checks** ([`LodChecks::Events`]): an object at rest is
 //!   visited when the camera has travelled far enough for its level to
 //!   change (lod_watch.rs); what the GPU places from an avatar moves with
@@ -139,6 +142,32 @@ pub const PENDING_ROUND: usize = 4;
 /// How many of `waiting` objects a frame asks about.
 fn pending_checks(waiting: usize) -> usize {
     waiting.min(waiting.div_ceil(PENDING_ROUND).max(PENDING_PER_FRAME))
+}
+
+/// Time between two returns of a parked object to the pending round,
+/// whatever happened to its geometry: a safety net for a change nothing
+/// announced.
+pub const PARKED_SECONDS: f32 = 2.0;
+
+/// What an object waiting for its geometry needs ([`SyncState::pending_due`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingGeom {
+    /// Nothing pending any more.
+    Done,
+    /// A sync can make progress now.
+    Due,
+    /// Not yet, for a reason no event announces: asked again in the round.
+    Later,
+    /// Not before the geometry of this token (never 0) changes: parked.
+    Waits(u64),
+}
+
+/// Whether objects waiting for a geometry are parked: not with
+/// `AURORA_PENDING_PARK=0`, which asks about all of them in the round as
+/// before, to compare.
+fn parking() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_PENDING_PARK").as_deref() != Ok("0"))
 }
 
 /// Parent chains longer than this are cut (as `Scene::object_transform`).
@@ -333,9 +362,8 @@ pub trait SyncState {
     fn anchored(&self, idx: usize) -> bool;
     /// Must be synced: changed, or its last sync could not finish.
     fn needs_sync(&self, idx: usize, o: &Object) -> bool;
-    /// Pending geometry: None when nothing is pending any more, else
-    /// whether a sync can make progress now.
-    fn pending_due(&self, idx: usize) -> Option<bool>;
+    /// Pending geometry: what the object waits for, if anything.
+    fn pending_due(&self, idx: usize) -> PendingGeom;
 }
 
 /// Full syncs put off to later frames, nearest to the camera first.
@@ -527,6 +555,14 @@ pub struct SyncSets {
     pub own_moving: IndexSet,
     pub dirty: IndexSet,
     pub pending: IndexSet,
+    /// Pending objects waiting for a geometry being built or downloaded,
+    /// out of the pending round (never in `pending` at the same time).
+    parked: IndexSet,
+    /// The token whose list holds an object (0: none), by object index.
+    parked_on: Vec<u64>,
+    /// Objects to put back in the round when a geometry changes, by its
+    /// token (stale entries are skipped: `parked_on` tells).
+    parked_by: std::collections::HashMap<u64, Vec<usize>>,
     /// Objects whose faces use materials (glTF or legacy).
     pub material_users: IndexSet,
     /// Material generation the material users were last checked against.
@@ -541,6 +577,8 @@ pub struct SyncSets {
     /// Where the next frame goes on in `pending`, in the objects the GPU
     /// places and in the slab (the sweep), with what the rounds are owed.
     pending_next: usize,
+    parked_next: usize,
+    parked_credit: f32,
     anchored_next: usize,
     anchored_credit: f32,
     sweep_next: usize,
@@ -565,10 +603,61 @@ impl SyncSets {
         self.own_moving.remove(idx);
         self.dirty.remove(idx);
         self.pending.remove(idx);
+        self.parked.remove(idx);
+        if let Some(t) = self.parked_on.get_mut(idx) {
+            *t = 0;
+        }
         self.material_users.remove(idx);
         self.backlog.remove(idx);
         self.arrivals.remove(idx);
         self.lod.forget(idx);
+    }
+
+    /// After a full sync: whether the object still waits for its geometry
+    /// (asked about in the round from the next frame on).
+    pub fn geometry_wanted(&mut self, idx: usize, waiting: bool) {
+        self.parked.remove(idx);
+        if waiting {
+            self.pending.insert(idx);
+        } else {
+            self.pending.remove(idx);
+        }
+    }
+
+    /// The geometry of `token` is ready or gone: the objects parked for it
+    /// go back to the pending round.
+    pub fn geometry_changed(&mut self, token: u64) {
+        let Some(list) = self.parked_by.remove(&token) else {
+            return;
+        };
+        for idx in list {
+            if self.parked_on.get(idx) == Some(&token) {
+                self.parked_on[idx] = 0;
+                if self.parked.remove(idx) {
+                    self.pending.insert(idx);
+                }
+            }
+        }
+    }
+
+    /// Out of the pending round until the geometry of `token` changes.
+    fn park(&mut self, idx: usize, token: u64) {
+        self.pending.remove(idx);
+        self.parked.insert(idx);
+        if self.parked_on.len() <= idx {
+            self.parked_on.resize(idx + 1, 0);
+        }
+        // (already in its list: a full sync took it out of the round and
+        // back, the geometry it waits for is the same)
+        if self.parked_on[idx] != token {
+            self.parked_on[idx] = token;
+            self.parked_by.entry(token).or_default().push(idx);
+        }
+    }
+
+    #[cfg(test)]
+    fn parked_len(&self) -> usize {
+        self.parked.len()
     }
 
     /// Listed in this frame because it follows something that moves: it
@@ -655,6 +744,37 @@ impl SyncSets {
         }
         list.sources.dirty = list.items.len() - list.sources.moving;
         let before_pending = list.items.len();
+        // parked objects asked about again in turn, all of them every
+        // PARKED_SECONDS (with the slice, back in the round at once: the
+        // way before)
+        let park = match checks {
+            LodChecks::Events { dt, .. } if parking() => Some(dt),
+            _ => None,
+        };
+        let again = match park {
+            Some(dt) => round_share(&mut self.parked_credit, self.parked.len(), dt, PARKED_SECONDS),
+            None => self.parked.len(),
+        };
+        for _ in 0..again {
+            if self.parked_next >= self.parked.len() {
+                self.parked_next = 0;
+            }
+            let Some(&idx) = self.parked.items.get(self.parked_next) else {
+                break;
+            };
+            match park.map(|_| state.pending_due(idx)) {
+                // still waiting for a geometry in progress (maybe another)
+                Some(PendingGeom::Waits(token)) => {
+                    self.park(idx, token);
+                    self.parked_next += 1;
+                }
+                // back in the round (swap-removed: the last one takes its place)
+                _ => {
+                    self.parked.remove(idx);
+                    self.pending.insert(idx);
+                }
+            }
+        }
         // (all of them while they are few; else a part, the next frame
         // going on where this one stops)
         let mut i = self.pending_next;
@@ -672,12 +792,16 @@ impl SyncSets {
             }
             match state.pending_due(idx) {
                 // (swap-removed: the last one takes its place)
-                None => {
+                PendingGeom::Done => {
                     self.pending.remove(idx);
                     continue;
                 }
-                Some(true) => self.push_one(objects, idx, &mut list),
-                Some(false) => {}
+                PendingGeom::Waits(token) if park.is_some() => {
+                    self.park(idx, token);
+                    continue;
+                }
+                PendingGeom::Due => self.push_one(objects, idx, &mut list),
+                PendingGeom::Later | PendingGeom::Waits(_) => {}
             }
             i += 1;
         }
@@ -840,6 +964,8 @@ mod tests {
         pending: Vec<(usize, bool)>,
         /// Answer for the objects that are not in `pending`.
         pending_else: Option<bool>,
+        /// Objects waiting for the geometry of a token (before `pending`).
+        waits: Vec<(usize, u64)>,
         /// Calls of `pending_due`.
         asked: std::cell::Cell<usize>,
     }
@@ -857,9 +983,16 @@ mod tests {
         fn needs_sync(&self, idx: usize, o: &Object) -> bool {
             o.render.needs_records || o.shape_dirty || o.material_dirty || self.extra.contains(&idx)
         }
-        fn pending_due(&self, idx: usize) -> Option<bool> {
+        fn pending_due(&self, idx: usize) -> PendingGeom {
             self.asked.set(self.asked.get() + 1);
-            self.pending.iter().find(|p| p.0 == idx).map(|p| p.1).or(self.pending_else)
+            if let Some(&(_, token)) = self.waits.iter().find(|w| w.0 == idx) {
+                return PendingGeom::Waits(token);
+            }
+            match self.pending.iter().find(|p| p.0 == idx).map(|p| p.1).or(self.pending_else) {
+                Some(true) => PendingGeom::Due,
+                Some(false) => PendingGeom::Later,
+                None => PendingGeom::Done,
+            }
         }
     }
 
@@ -1322,6 +1455,92 @@ mod tests {
             f.frame(&state);
         }
         assert_eq!(f.sets.pending.len(), 0);
+    }
+
+    #[test]
+    fn objects_waiting_for_a_geometry_in_progress_are_parked_until_it_changes() {
+        let mut f = Fixture::new();
+        let mut state = State::default();
+        let a = f.add(9000, 0, false);
+        let b = f.add(9001, 0, false);
+        let c = f.add(9002, 0, false);
+        f.frame_events(&state, &[], 0.0);
+        for i in [a, b, c] {
+            f.sets.pending.insert(i);
+        }
+        // a and c wait for geometries being built, b for its sculpt map
+        state.waits = vec![(a, 7), (c, 7)];
+        state.pending = vec![(b, false)];
+        assert!(f.frame_events(&state, &[], 0.0).is_empty());
+        assert_eq!(f.sets.parked_len(), 2);
+        assert!(!f.sets.pending.contains(a) && f.sets.pending.contains(b));
+        // parked: no longer asked about at each frame
+        state.asked.set(0);
+        f.frame_events(&state, &[], 0.0);
+        assert_eq!(state.asked.get(), 1);
+        // another geometry changed: still parked
+        f.sets.geometry_changed(8);
+        assert_eq!(f.sets.parked_len(), 2);
+        // theirs is ready: back in the round, synced
+        f.sets.geometry_changed(7);
+        state.waits.clear();
+        state.pending = vec![(a, true), (b, false), (c, true)];
+        assert_eq!(f.frame_events(&state, &[], 0.0), vec![a, c]);
+        assert_eq!(f.sets.parked_len(), 0);
+        f.sets.geometry_changed(7);
+
+        // a full sync puts a parked object back in the round (or out of it)
+        state.waits = vec![(a, 9), (c, 9)];
+        f.frame_events(&state, &[], 0.0);
+        assert_eq!(f.sets.parked_len(), 2);
+        f.sets.geometry_wanted(a, true);
+        f.sets.geometry_wanted(c, false);
+        assert!(f.sets.pending.contains(a) && !f.sets.pending.contains(c));
+        assert_eq!(f.sets.parked_len(), 0);
+        // parked again for the same geometry: listed once for it
+        f.frame_events(&state, &[], 0.0);
+        assert_eq!(f.sets.parked_by[&9], vec![a, c]);
+        // removed from the store: out of every set, its wake is skipped
+        f.sets.forget(a);
+        f.sets.geometry_changed(9);
+        assert!(!f.sets.pending.contains(a) && !f.sets.parked.contains(a));
+        // with the slice (the way before), nothing stays parked
+        state.waits = vec![(b, 3)];
+        f.frame_events(&state, &[], 0.0);
+        assert!(f.sets.parked.contains(b));
+        f.frame(&state);
+        assert!(f.sets.pending.contains(b) && f.sets.parked_len() == 0);
+    }
+
+    #[test]
+    fn parked_objects_come_back_to_the_round_in_case() {
+        let mut f = Fixture::new();
+        let objs: Vec<usize> = (0..48).map(|i| f.add(10_000 + i, 0, false)).collect();
+        let mut state = State {
+            waits: objs.iter().map(|&i| (i, 5)).collect(),
+            ..State::default()
+        };
+        f.frame_events(&state, &[], 0.0);
+        for &i in &objs {
+            f.sets.pending.insert(i);
+        }
+        f.frame_events(&state, &[], 0.0);
+        assert_eq!(f.sets.parked_len(), objs.len());
+        // its geometry changed without a word: met again within the period
+        let lost = objs[30];
+        state.waits.retain(|w| w.0 != lost);
+        state.pending = vec![(lost, true)];
+        let dt = 1.0 / 60.0;
+        let frames = (PARKED_SECONDS / dt).ceil() as usize + 1;
+        state.asked.set(0);
+        let mut listed = false;
+        for _ in 0..frames {
+            listed |= f.frame_events(&state, &[], dt).contains(&lost);
+        }
+        assert!(listed);
+        // the others, asked about again too, stay parked
+        assert!(state.asked.get() >= objs.len());
+        assert_eq!(f.sets.parked_len(), objs.len() - 1);
     }
 
     #[test]

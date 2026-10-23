@@ -222,7 +222,11 @@ fn picture_and_names(
         ui.add_space(if who.subtitle.is_some() { 2.0 } else { 11.0 });
         ui.horizontal(|ui| {
             let pill_w = if status.is_some_and(|s| s.pill()) { 110.0 } else { 0.0 };
-            let title = RichText::new(&who.title).size(14.0).strong().color(p.ink);
+            let color = who
+                .avatar
+                .map(|id| crate::ui::colors::resident_name(world, &id, p.ink))
+                .unwrap_or(p.ink);
+            let title = RichText::new(&who.title).size(14.0).strong().color(color);
             let r = ui.add(crate::ui::widgets::elided_label(ui, title, names_w - pill_w).sense(egui::Sense::click()));
             if let Some(a) = who.avatar {
                 super::name_menu(&r, p, world, a);

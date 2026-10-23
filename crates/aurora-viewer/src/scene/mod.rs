@@ -65,6 +65,7 @@ mod water_contacts;
 mod water_effects;
 pub mod wind_sound;
 
+use crate::fast_hash::{FastMap, FastSet};
 use crate::frame_par::{self, Grain};
 use crate::world::World;
 use crate::world::objects::{Object, ObjectStore};
@@ -184,6 +185,11 @@ struct GeomEntry {
 const GEOM_KEEP_FRAMES: u32 = 600;
 /// Unused geometries looked at per frame once their time has come.
 const GEOM_FREED_PER_FRAME: usize = 256;
+/// Frames between two looks at what an avatar's attachments show of its
+/// bakes when nothing it wears changed: a safety net for a change the
+/// store did not report (every 30 frames before, 2 % of the main thread
+/// in a busy club).
+const BOM_SWEEP_FRAMES: usize = 300;
 
 /// How the frame's loops over objects are shared between the main thread
 /// and the pool's workers (frame_par.rs); the costs are those of the dev
@@ -699,8 +705,8 @@ pub struct Scene {
     pub neutral_pose_test: Option<bool>,
     pub jobs: Jobs,
     job_rx: crossbeam_channel::Receiver<JobResult>,
-    geoms: HashMap<GeomKey, GeomEntry>,
-    flexibles: HashMap<usize, flexible::State>,
+    geoms: FastMap<GeomKey, GeomEntry>,
+    flexibles: FastMap<usize, flexible::State>,
     /// Grass tufts drawn, and the terrain they were placed on (plants.rs).
     grass: HashMap<usize, plants::GrassBuilt>,
     pub textures: TextureStreamer,
@@ -789,7 +795,10 @@ pub struct Scene {
     visit_tmp: Vec<(usize, bool)>,
     /// Objects whose faces were built since the lists were last made: the
     /// size of their textures on screen is noted at once.
-    fresh_usage: std::collections::HashSet<usize>,
+    fresh_usage: FastSet<usize>,
+    /// Avatars whose bake slots shown by their attachments (`bom_mask`)
+    /// may have changed: something they wear changed, arrived or left.
+    bom_stale: FastSet<usize>,
     /// What the lists look for in each object slot (list_index.rs).
     list_index: list_index::ListIndex,
     /// Objects with light parameters (kept by `sync_object`, which sees every
@@ -823,12 +832,12 @@ pub struct Scene {
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
     /// The avatars the last lists drew as impostors, by object index.
-    far_avatars: HashMap<usize, impostors::Far>,
+    far_avatars: FastMap<usize, impostors::Far>,
     /// When each skeleton was last posed (an impostor keeps its pose
     /// between pictures).
-    posed_at: HashMap<Uuid, Instant>,
+    posed_at: FastMap<Uuid, Instant>,
     /// The skeletons posed in this frame, by object index.
-    posed_now: HashSet<usize>,
+    posed_now: FastSet<usize>,
     /// AURORA_SYNC_CHECK: impostor pictures taken, and those taken with a
     /// pose of an earlier frame (must stay 0), logged every 10 s.
     picture_check: (u64, u64, Option<Instant>),
@@ -889,7 +898,7 @@ pub struct Scene {
     /// HUD attachments of our avatar and what places them besides their
     /// own updates (screen aspect, local zoom and offset): they are placed
     /// again when it changes, not at each frame.
-    hud_roots: HashMap<usize, (Uuid, [f32; 5])>,
+    hud_roots: FastMap<usize, (Uuid, [f32; 5])>,
     hud_roots_tmp: Vec<(usize, Uuid, [f32; 5])>,
     /// When the last sync ran (the rounds of the detail level checks).
     last_sync: Option<Instant>,
@@ -899,7 +908,7 @@ pub struct Scene {
     last_origin: Option<(u32, u32)>,
     blend_tmp: Vec<blend_order::BlendEntry>,
     pub anims: anim::AnimStreamer,
-    object_signals: HashMap<Uuid, animesh::Signals>,
+    object_signals: FastMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
     pub sounds: sounds::SoundManager,
     /// Environment settings assets (the EEP default day).
@@ -907,7 +916,7 @@ pub struct Scene {
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
     /// them on).
     pub landmark_results: Vec<aurora_net::FetchResult>,
-    palette_slots: HashMap<Uuid, u32>,
+    palette_slots: FastMap<Uuid, u32>,
     palette_free: Vec<u32>,
     palette_count: u32,
     palettes: Vec<[[f32; 4]; 4]>,
@@ -915,7 +924,7 @@ pub struct Scene {
     /// Avatar body physics: which avatars move, and their motions.
     pub body_physics: body_physics::Config,
     physics_rig: Option<Arc<body_physics::PhysicsRig>>,
-    physics: HashMap<Uuid, body_physics::BodyPhysics>,
+    physics: FastMap<Uuid, body_physics::BodyPhysics>,
     last_palette_gc: Instant,
     /// Periodic streaming summary in the log.
     last_diag: Instant,
@@ -932,13 +941,13 @@ pub struct Scene {
     /// the frame profile at the end of the frame.
     pub parts: crate::frame_profile::Parts,
     /// Rest skeleton (shape + joint offsets of worn meshes) per skeleton owner.
-    skeletons: HashMap<Uuid, AvatarSkeleton>,
+    skeletons: FastMap<Uuid, AvatarSkeleton>,
     /// Skeleton owner of each object listed in a cached skeleton's members.
-    skeleton_member_of: HashMap<usize, Uuid>,
+    skeleton_member_of: FastMap<usize, Uuid>,
     /// Mesh metadata generation the cached skeletons were checked against.
     skeleton_meta_gen: u64,
     /// Playing motions and held pose per skeleton owner.
-    motions: HashMap<Uuid, anim::Controller>,
+    motions: FastMap<Uuid, anim::Controller>,
     /// The frame's poses (`update_poses`), empty between frames: each
     /// entry carries a controller and its physics, about a kilobyte, and
     /// the list grew again from nothing every frame.
@@ -1285,8 +1294,8 @@ impl Scene {
             jobs,
             job_rx,
             sculpt_watch: sculpt_watch::SculptWatch::from_env(),
-            geoms: HashMap::new(),
-            flexibles: HashMap::new(),
+            geoms: Default::default(),
+            flexibles: Default::default(),
             grass: HashMap::new(),
             textures: TextureStreamer::new(cache_dir.clone()),
             meshes: MeshStreamer::new(cache_dir.clone()),
@@ -1335,28 +1344,29 @@ impl Scene {
             system_bounds: Vec::new(),
             visit_tmp: Vec::new(),
             fresh_usage: Default::default(),
+            bom_stale: Default::default(),
             list_index: Default::default(),
             light_objects: Default::default(),
             light_textures: HashMap::new(),
             light_scratch: Default::default(),
             spot_shadows: Default::default(),
             mirror_objects: Default::default(),
-            selection_wire: HashMap::new(),
+            selection_wire: Default::default(),
             inspected_mesh: None,
             mesh_lod_overrides: HashMap::new(),
-            selection_silhouettes: HashSet::new(),
-            selection_faces: HashMap::new(),
+            selection_silhouettes: Default::default(),
+            selection_faces: Default::default(),
             selection_changed: None,
             debug_alpha: None,
-            beacon_highlights: HashSet::new(),
+            beacon_highlights: Default::default(),
             beacon_markers: Vec::new(),
             land_overlays: Default::default(),
             pass_view: false,
             last_cull: None,
             impostors: Default::default(),
-            far_avatars: HashMap::new(),
-            posed_at: HashMap::new(),
-            posed_now: HashSet::new(),
+            far_avatars: Default::default(),
+            posed_at: Default::default(),
+            posed_now: Default::default(),
             picture_check: (0, 0, None),
             loading: Default::default(),
             rez: Default::default(),
@@ -1383,7 +1393,7 @@ impl Scene {
             still: still_check::StillCheck::from_env(),
             sync_check: sync_check::SyncCheck::from_env(),
             sync_slow: sync_slow::SlowSync::limit_from_env(),
-            hud_roots: HashMap::new(),
+            hud_roots: Default::default(),
             hud_roots_tmp: Vec::new(),
             last_sync: None,
             frame: 0,
@@ -1395,25 +1405,25 @@ impl Scene {
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             landmark_results: Vec::new(),
             anims,
-            object_signals: HashMap::new(),
-            palette_slots: HashMap::new(),
+            object_signals: Default::default(),
+            palette_slots: Default::default(),
             palette_free: Vec::new(),
             palette_count: lips.slots,
             palettes: lips.matrices.clone(),
             live_morphs: lips,
             body_physics: body_physics::Config::default(),
             physics_rig,
-            physics: HashMap::new(),
+            physics: Default::default(),
             last_palette_gc: Instant::now(),
             last_diag: Instant::now(),
             staging: None,
             geom_waiting: Vec::new(),
             geom_waiting_spare: Vec::new(),
             parts: Default::default(),
-            skeletons: HashMap::new(),
-            skeleton_member_of: HashMap::new(),
+            skeletons: Default::default(),
+            skeleton_member_of: Default::default(),
             skeleton_meta_gen: 0,
-            motions: HashMap::new(),
+            motions: Default::default(),
             pose_work: Vec::new(),
             pose_owners: Vec::new(),
             skin_binds: Default::default(),
@@ -1499,6 +1509,8 @@ impl Scene {
                 Some(GeomState::Pending) => self.geom_pending = self.geom_pending.saturating_sub(1),
                 _ => {}
             }
+            // (what waited for it asks for it again)
+            self.sets.geometry_changed(sync_plan::wait_token(&key));
             // the skin bindings go with the last detail level of the mesh:
             // an object drawn with them holds one of its geometries
             if let GeomKey::Mesh { id, .. } = key
@@ -1649,6 +1661,7 @@ impl Scene {
             },
             None => self.geom_insert(key, GeomState::Ready(g)),
         }
+        self.sets.geometry_changed(sync_plan::wait_token(&key));
     }
 
     fn ensure_avatar_parts(&mut self, renderer: &mut Renderer) {
@@ -1884,7 +1897,12 @@ impl Scene {
         self.anchors.forget(i);
         self.pick.remove(i);
         self.list_index.remove(i);
+        self.bom_stale.remove(&i);
         if let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take) {
+            // (something worn left: its wearer's bake slots)
+            if let Some(wearer) = g.owner_avatar {
+                self.bom_stale.insert(wearer);
+            }
             self.release_obj(renderer, i, &mut g);
         }
         renderer.cull.objects.set(i, CullObject::NONE);
@@ -2330,6 +2348,7 @@ impl Scene {
         for &idx in &touched {
             // a new object in the slot of a removed one not released yet
             self.release_slot(renderer, idx);
+            self.note_worn_change(world, idx);
             // a new object: its first sync waits its turn, without a
             // place in this frame's list
             if world.objects.is_arrival(idx) {
@@ -2912,11 +2931,7 @@ impl Scene {
         {
             self.sets.dirty.insert(idx);
         }
-        if g.wanted_geom.is_some() && g.wanted_geom != g.geom {
-            self.sets.pending.insert(idx);
-        } else {
-            self.sets.pending.remove(idx);
-        }
+        self.sets.geometry_wanted(idx, g.wanted_geom.is_some() && g.wanted_geom != g.geom);
         if g.material_ids.is_empty() {
             self.sets.material_users.remove(idx);
         } else {
@@ -3477,6 +3492,16 @@ impl Scene {
         None
     }
 
+    /// Object `idx` changed or arrived through the store: if it is worn, what
+    /// its wearer's attachments show of its bakes is looked at again.
+    fn note_worn_change(&mut self, world: &World, idx: usize) {
+        if world.objects.get(idx).is_some_and(|o| !o.is_avatar())
+            && let Some((_, wearer)) = Self::wearer_avatar(world, idx)
+        {
+            self.bom_stale.insert(wearer);
+        }
+    }
+
     /// Bake slots (texture-entry index bits) shown by the avatar's attachments
     /// and their child prims.
     pub(crate) fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
@@ -3526,12 +3551,14 @@ impl Scene {
         let record_model = if anchor.is_some() { Mat4::IDENTITY } else { avatar_model }.to_cols_array_2d();
         let system_binds = self.skin_binds.system(&self.avatar_lib.rig);
         let appearance_gen = world.appearance_generation(&o.full_id);
-        // bakes used by attachments (checked every 30 frames)
-        let bom_mask = if !self.gpu[idx].is_avatar || (self.frame as usize + idx).is_multiple_of(30) {
-            Self::bom_mask(world, idx)
-        } else {
-            self.gpu[idx].bom_mask
-        };
+        // bakes used by attachments: when something worn changed, and every
+        // BOM_SWEEP_FRAMES in case (each time it walks every prim worn)
+        let bom_mask =
+            if !self.gpu[idx].is_avatar || self.bom_stale.remove(&idx) || (self.frame as usize + idx).is_multiple_of(BOM_SWEEP_FRAMES) {
+                Self::bom_mask(world, idx)
+            } else {
+                self.gpu[idx].bom_mask
+            };
         // over the complexity limit: grey silhouette of the system body
         // (Pipeline::generateImpostor: avatar geometry only, alpha masking
         // off, filled with the muted color LLColor4::grey4)
@@ -5220,6 +5247,35 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn a_worn_prim_changing_has_its_wearers_bake_slots_looked_at_again() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for ev in crate::demo::events()
+            .into_iter()
+            .chain(crate::demo::cloud_self_events(&lib.shape_params))
+        {
+            world.apply(ev);
+        }
+        let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        let own = world.objects.index_of_uuid(&world.agent_id).expect("demo agent");
+        let key = world.objects.get(own).expect("avatar").key;
+        let worn = world.objects.children_of(&key)[0];
+        // the avatar itself moving: nothing it wears changed
+        scene.note_worn_change(&world, own);
+        assert!(scene.bom_stale.is_empty());
+        scene.note_worn_change(&world, worn);
+        assert!(scene.bom_stale.contains(&own));
+        // a prim on the ground has no wearer
+        scene.bom_stale.clear();
+        let ground = (0..world.objects.slots.len())
+            .find(|&i| world.objects.get(i).is_some_and(|o| !o.is_avatar() && o.parent_id == 0))
+            .expect("a prim on the ground");
+        scene.note_worn_change(&world, ground);
+        assert!(scene.bom_stale.is_empty());
+    }
 
     #[test]
     fn zero_subtype_sculpt_selects_map_geometry_for_every_lod() {

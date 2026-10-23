@@ -10,6 +10,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+pub mod appearance;
+pub use appearance::{Appearance, PlateSize, Visuals};
+#[cfg(test)]
+mod appearance_tests;
+
 pub const CONTACT_SETS_FILE: &str = "settings_friends_groups.xml";
 
 /// Internal set names (CS_SET_*): pseudo-sets of the set combo and keys of
@@ -36,6 +41,8 @@ pub struct ContactSet {
     pub sort_by_online: bool,
     /// RGBA, 0..1.
     pub color: [f32; 4],
+    pub priority: i32,
+    pub visuals: Visuals,
     /// Per-set automatic responses: kept as read so that the file round-trips
     /// (not used by Aurora yet).
     autoresponse: BTreeMap<String, Llsd>,
@@ -49,6 +56,8 @@ impl ContactSet {
             notify: false,
             sort_by_online: true,
             color,
+            priority: 0,
+            visuals: Visuals::default(),
             autoresponse: BTreeMap::new(),
         }
     }
@@ -58,6 +67,8 @@ impl ContactSet {
 #[derive(Debug, Default)]
 pub struct ContactSets {
     sets: BTreeMap<String, ContactSet>,
+    pub stack_icons: bool,
+    appearances: std::collections::HashMap<Uuid, std::sync::Arc<Appearance>>,
     pub default_color: [f32; 4],
     /// Non-friends added to a set or given an alias (mExtraAvatars).
     extra: BTreeSet<Uuid>,
@@ -133,7 +144,10 @@ impl ContactSets {
         };
         for (key, value) in map.iter() {
             match key.as_str() {
-                GLOBAL_SETTINGS => self.default_color = color_from(&value["defaultColor"], GREY),
+                GLOBAL_SETTINGS => {
+                    self.default_color = color_from(&value["defaultColor"], GREY);
+                    self.stack_icons = value["aurora_stack_icons"].as_bool();
+                }
                 EXTRA_AVS => {
                     if let Some(m) = value.as_map() {
                         self.extra.extend(m.keys().filter_map(|k| Uuid::parse_str(k).ok()));
@@ -151,6 +165,8 @@ impl ContactSets {
                 k if Self::is_internal(k) => {}
                 name => {
                     let mut set = ContactSet::new(name, color_from(&value["color"], self.default_color));
+                    set.priority = value["aurora_priority"].as_i32();
+                    set.visuals = Visuals::read(&value["aurora_visuals"]);
                     set.notify = value["notify"].as_bool();
                     set.sort_by_online = !value.has("sort_by_online_status") || value["sort_by_online_status"].as_bool();
                     for k in AUTORESPONSE_KEYS {
@@ -165,6 +181,7 @@ impl ContactSets {
                 }
             }
         }
+        self.rebuild_appearances();
     }
 
     /// exportToLLSD.
@@ -172,6 +189,7 @@ impl ContactSets {
         let mut out = Llsd::new_map();
         let mut global = Llsd::new_map();
         global.insert("defaultColor", color_llsd(self.default_color));
+        global.insert("aurora_stack_icons", self.stack_icons);
         out.insert(GLOBAL_SETTINGS, global);
         let mut extra = Llsd::new_map();
         for id in &self.extra {
@@ -186,6 +204,8 @@ impl ContactSets {
         for (name, set) in &self.sets {
             let mut s = Llsd::new_map();
             s.insert("color", color_llsd(set.color));
+            s.insert("aurora_priority", set.priority);
+            s.insert("aurora_visuals", set.visuals.write());
             s.insert("notify", set.notify);
             s.insert("sort_by_online_status", set.sort_by_online);
             for (k, v) in &set.autoresponse {
@@ -204,6 +224,7 @@ impl ContactSets {
     /// saveToDisk, after every change.
     fn changed(&mut self) {
         self.generation += 1;
+        self.rebuild_appearances();
         let Some(path) = &self.path else {
             return;
         };

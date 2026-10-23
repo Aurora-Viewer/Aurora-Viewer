@@ -35,6 +35,8 @@ mod workspace;
 mod action_marker_tests;
 #[cfg(test)]
 mod buttons_tests;
+#[cfg(test)]
+mod contact_visual_tests;
 
 use super::context::CtxAction;
 use super::presence;
@@ -630,7 +632,9 @@ fn line_job(
     };
     let body_only = matches!(look, JobLook::Body);
     // a line that holds a keyword takes its colour, name included
-    let col = super::colors::keyword_color(line).unwrap_or_else(|| color_for(line.kind, p));
+    let col = super::colors::contact_chat_color(line, world)
+        .or_else(|| super::colors::keyword_color(line))
+        .unwrap_or_else(|| color_for(line.kind, p));
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
         color: p.muted_dim,
@@ -645,7 +649,7 @@ fn line_job(
     // name in semi-bold light violet, no colon, a system line in italics;
     // every other colour stays the kind's
     let resident = matches!(line.kind, ChatKind::Local(_) | ChatKind::Own);
-    let name_fmt = match pill {
+    let mut name_fmt = match pill {
         Some(family) => super::fonts::semibold_format(family, size, if resident { p.violet_light } else { col }),
         None => egui::TextFormat {
             color: col,
@@ -653,6 +657,9 @@ fn line_job(
             ..Default::default()
         },
     };
+    if let Some(color) = super::colors::contact_sender_color(line, world) {
+        name_fmt.color = color;
+    }
     let text_fmt = egui::TextFormat {
         color: col,
         font_id: egui::FontId::proportional(size),
@@ -1130,6 +1137,9 @@ fn web_target(url: &str) -> Cow<'_, str> {
 /// Right click on the sender of a chat line: the name menu, its report on
 /// the line.
 fn line_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, line: &crate::world::ChatLine, menu: Option<egui::Id>) {
+    if !matches!(line.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
+        super::contacts::drag::person_source(r, id);
+    }
     if let Some(menu) = menu {
         line_menu::sender(r, menu, id, line);
     } else {
@@ -1139,6 +1149,7 @@ fn line_name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid
 
 /// Right click on an avatar name in a conversation (menu_url_agent.xml).
 fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
+    super::contacts::drag::person_source(r, id);
     super::menu::context_menu(r, p, |ui| {
         super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name)
     });
@@ -1970,7 +1981,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                         }
                         avatar_pic(ui, p, env.pics.get(&line.source), &name, 20.0);
                     }
-                    let col = tone.unwrap_or_else(|| super::colors::sender_color(line));
+                    let col = super::colors::contact_sender_color(line, world)
+                        .or(tone)
+                        .unwrap_or_else(|| super::colors::sender_color(line));
                     let time = header_time(ui, p, hhmm(line.time));
                     let reserve = time.size().x + ui.spacing().item_spacing.x;
                     let r = header_names(ui, p, &name, username.as_deref(), col, reserve);

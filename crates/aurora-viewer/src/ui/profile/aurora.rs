@@ -566,7 +566,9 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
         let max = (ui.available_width() - if w.editing { 30.0 } else { 0.0 }).max(40.0);
         ui.add(widgets::elided_label(
             ui,
-            RichText::new(&name).font(semibold(ui, size)).color(p.ink),
+            RichText::new(&name)
+                .font(semibold(ui, size))
+                .color(crate::ui::colors::resident_name(env.world, &w.id, p.ink)),
             max,
         ));
         if w.editing && widgets::icon_button(ui, p, "pencil-filled", aurora_i18n::tr!("common-set-display-name"), true) {
@@ -1073,6 +1075,9 @@ fn badge_widget(ui: &mut egui::Ui, env: &Env, id: Uuid, b: &Badge, is_friend: bo
     let soft = |c: Color32| c.gamma_multiply(0.14);
     match b {
         Badge::Friend => {
+            if env.world.contact_sets.appearance(&id).replace_friend {
+                return;
+            }
             pill(
                 ui,
                 Some(Lead::Icon("heart-filled")),
@@ -1096,8 +1101,13 @@ fn badge_widget(ui: &mut egui::Ui, env: &Env, id: Uuid, b: &Badge, is_friend: bo
             pill(ui, Some(Lead::Icon(icon)), name, None, fg, soft(fg), Sense::hover());
         }
         Badge::Set(name, color) => {
-            pill(ui, Some(Lead::Dot(*color)), name, None, p.muted, p.bar, Sense::hover())
-                .on_hover_text(aurora_i18n::tr!("ui-profile-aurora-contact-set"));
+            let appearance = env.world.contact_sets.appearance(&id);
+            let icon = appearance.icons.iter().find(|icon| &icon.set == name);
+            let lead = icon
+                .map(|icon| Lead::Icon(crate::world::contact_sets::appearance::ICONS[icon.icon]))
+                .unwrap_or(Lead::Dot(*color));
+            let ink = icon.map(|icon| crate::ui::colors::set_color(icon.color)).unwrap_or(p.muted);
+            pill(ui, Some(lead), name, None, ink, p.bar, Sense::hover()).on_hover_text(aurora_i18n::tr!("ui-profile-aurora-contact-set"));
         }
         Badge::Blocked => {
             pill(

@@ -1298,6 +1298,12 @@ fn fs_debug_flat(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(debug_r, debug_g, debug_b, debug_a);
 }
 
+@fragment
+fn fs_hud_debug(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
+    return vec4<f32>(debug_r, debug_g, debug_b, debug_a);
+}
+
 // One texel per 4 m ParcelOverlay cell. Explicit LOD and texel centres
 // preserve ownership and the west/south boundary flags at any distance.
 fn parcel_cell(rec: DrawRecord, cell: vec2<f32>) -> vec4<f32> {
