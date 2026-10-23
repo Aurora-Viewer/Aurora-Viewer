@@ -10,6 +10,7 @@ pub mod banlines;
 pub mod blend_order;
 pub mod body_physics;
 pub mod complexity;
+pub mod creation_preview;
 pub(crate) mod default_motions;
 pub mod describe;
 pub mod drawn;
@@ -888,6 +889,7 @@ pub struct Scene {
     pub agent_idx: Option<usize>,
     rlva_render_state: (Option<Uuid>, bool, bool),
     pub lists: DrawLists,
+    pub creation_preview: creation_preview::CreationPreview,
     pub stats: SceneStats,
     /// AURORA_STILL_CHECK: what changes while the picture should stand still.
     pub still: Option<still_check::StillCheck>,
@@ -1238,6 +1240,25 @@ impl Scene {
         }
     }
 
+    /// Invisible selected meshes need records for their wireframe, including
+    /// while dragging. They retain Pass::Hidden in all ordinary world passes.
+    pub fn set_wire_selection(&mut self, world: &mut World, selected: HashMap<usize, bool>) {
+        if self.selection_wire == selected {
+            return;
+        }
+        for &idx in self.selection_wire.keys().chain(selected.keys()) {
+            let changed = self.selection_wire.contains_key(&idx) != selected.contains_key(&idx);
+            if changed
+                && let Some(object) = world.objects.get_mut(idx)
+                && (0..aurora_prim::te::MAX_TES).any(|face| te_invisible(object, face))
+            {
+                object.material_dirty = true;
+                object.render.needs_records = true;
+            }
+        }
+        self.selection_wire = selected;
+    }
+
     /// Invisible selected faces get temporary records for their overlay only.
     /// Ordinary transparent faces keep their zero-record path. Changing an
     /// opaque face selection never rebuilds its geometry or material records.
@@ -1389,6 +1410,7 @@ impl Scene {
             agent_idx: None,
             rlva_render_state: (None, false, false),
             lists: DrawLists::default(),
+            creation_preview: creation_preview::CreationPreview::default(),
             stats: SceneStats::default(),
             still: still_check::StillCheck::from_env(),
             sync_check: sync_check::SyncCheck::from_env(),
@@ -1935,6 +1957,7 @@ impl Scene {
         }
         self.water.clear(renderer);
         self.banlines.clear(renderer);
+        self.creation_preview.clear(renderer);
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
         // (our avatar is a first appearance again at the next login)
@@ -3271,6 +3294,7 @@ impl Scene {
                 && self.debug_alpha.is_none()
                 && !self.pass_view
                 && !self.beacon_highlights.contains(&idx)
+                && !self.selection_wire.contains_key(&idx)
                 && selected_faces & 1u64.checked_shl(fi as u32).unwrap_or(0) == 0
             {
                 // fully transparent face: LL registers it as PASS_ALPHA_INVISIBLE,

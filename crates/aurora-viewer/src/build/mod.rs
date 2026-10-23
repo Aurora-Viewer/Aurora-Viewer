@@ -1675,7 +1675,7 @@ impl BuildTool {
     }
 
     /// The region under a point and its offset.
-    fn region_at(world: &World, point: Vec3) -> Option<(RegionHandle, Vec3)> {
+    pub(crate) fn region_at(world: &World, point: Vec3) -> Option<(RegionHandle, Vec3)> {
         world.regions.keys().find_map(|&h| {
             let off = world.region_offset(h)?;
             let r = world.regions.get(&h)?;
@@ -1815,7 +1815,7 @@ impl BuildTool {
     /// objects About Land's "Show" highlights (LLSelectMgr's highlighted
     /// objects, drawn whether the tools are open or not).
     fn outlined(&self, world: &World, s: &BuildSettings) -> Vec<(usize, bool)> {
-        let mut prims = if self.face_mode() || !(self.open || self.menu_selection) || !s.show_highlight || self.manip.dragging() {
+        let mut prims = if self.face_mode() || !(self.open || self.menu_selection) || !s.show_highlight {
             Vec::new()
         } else {
             self.color_highlighted(world)
@@ -1842,6 +1842,19 @@ impl BuildTool {
             .into_iter()
             .filter_map(|(i, _)| world.objects.get(i).is_some_and(|o| o.is_flexible()).then_some(i))
             .collect()
+    }
+
+    /// LLToolCompCreate uses Shift / Ctrl to select instead of placing.
+    /// The local loading hologram is an Aurora placement aid (#854).
+    pub fn creation_preview_enabled(&self, s: &BuildSettings, over_ui: bool, mods: Mods) -> bool {
+        self.open
+            && self.tool == Tool::Create
+            && !self.replacement_active()
+            && !self.ui.color_picker.pipette
+            && !s.copy_selection
+            && s.create_shape < shapes::shapes().len()
+            && !over_ui
+            && !(mods.shift || mods.ctrl || mods.alt)
     }
 
     fn face_mode(&self) -> bool {

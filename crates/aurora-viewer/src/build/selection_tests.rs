@@ -23,6 +23,64 @@ fn selected(tool: &BuildTool) -> Vec<u32> {
 }
 
 #[test]
+fn creation_preview_follows_tool_state_and_defers_to_selection_modifiers() {
+    let (_, mut tool, mut settings) = fixture();
+    let mods = Mods::default();
+    assert!(!tool.creation_preview_enabled(&settings, false, mods));
+    tool.open_build(Tool::Create);
+    assert!(tool.creation_preview_enabled(&settings, false, mods));
+    assert!(!tool.creation_preview_enabled(&settings, true, mods));
+    for mods in [
+        Mods { shift: true, ..mods },
+        Mods { ctrl: true, ..mods },
+        Mods { alt: true, ..mods },
+    ] {
+        assert!(!tool.creation_preview_enabled(&settings, false, mods));
+    }
+    settings.copy_selection = true;
+    assert!(!tool.creation_preview_enabled(&settings, false, mods));
+    settings.copy_selection = false;
+    settings.create_shape = shapes::shapes().len();
+    assert!(!tool.creation_preview_enabled(&settings, false, mods));
+    settings.create_shape = 8;
+    assert!(tool.creation_preview_enabled(&settings, false, mods));
+    tool.open = false;
+    assert!(!tool.creation_preview_enabled(&settings, false, mods));
+}
+
+#[test]
+fn transparent_selection_keeps_its_outline_during_a_real_move_drag() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99614);
+    let owner = world.agent_id;
+    let o = world.objects.get_mut(idx).unwrap();
+    o.owner_id = owner;
+    o.update_flags = crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_MODIFY;
+    let te = Arc::make_mut(o.te.as_mut().unwrap());
+    for face in &mut te.faces {
+        face.color[3] = 0.0;
+    }
+    let position = o.position;
+    let eye = position + Vec3::new(8.0, -8.0, 6.0);
+    let view = glam::camera::rh::view::look_at_mat4(eye, position, Vec3::Z);
+    let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.0, 0.1);
+    tool.cam = geom::Cam::new(eye, position, projection * view, 1.0, 800.0, 800.0, 1.0);
+    world.agent.position = eye;
+    settings.snap = false;
+    tool.click_select(&mut world, &settings, Some(idx), false);
+    let before = tool.outlined(&world, &settings);
+    assert!(before.iter().any(|p| p.0 == idx));
+    let handle = position + Vec3::Z * tool.cam.meters_for_pixels(position, 50.0) * 0.9;
+    let cursor = tool.cam.project_px(handle).unwrap();
+    assert!(tool.mouse_down(&mut world, &mut settings, None, None, None, cursor, Mods::default()));
+    tool.update(&mut world, &settings, (cursor.0 + 30.0, cursor.1 - 30.0), false, Mods::default());
+    assert!(tool.manip.dragging(), "The regression must exercise an active manipulation");
+    assert_eq!(tool.outlined(&world, &settings), before);
+    settings.show_highlight = false;
+    assert!(tool.outlined(&world, &settings).is_empty());
+}
+
+#[test]
 fn edit_pointing_tracks_selected_prims_and_clears_on_close_and_for_attachments() {
     let (mut world, mut tool, mut settings) = seated_fixture(false);
     let idx = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;

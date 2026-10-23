@@ -54,6 +54,7 @@ pub enum Step {
     TexturePicker(bool),
     CloseView,
     CreateAt(Vec3),
+    CreationPreview(usize),
     Delete,
     Contents,
     ContentsProperties,
@@ -295,13 +296,13 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     };
     let cycle = matches!(parts[0], "cycle" | "cycle-linked");
     let (t, m, land) = match parts[0] {
-        "rotate" => (Tool::Edit, EditMode::Rotate, 6),
-        "stretch" => (Tool::Edit, EditMode::Stretch, 6),
+        "rotate" | "invisible-rotate" => (Tool::Edit, EditMode::Rotate, 6),
+        "stretch" | "invisible-stretch" => (Tool::Edit, EditMode::Stretch, 6),
         "face" | "faces" | "faces-invisible" | "faces-ready" => (Tool::Edit, EditMode::Face, 6),
         "align" => (Tool::Edit, EditMode::Align, 6),
         "grab" => (Tool::Grab, EditMode::Move, 6),
         "focus" => (Tool::Focus, EditMode::Move, 6),
-        "create" => (Tool::Create, EditMode::Move, 6),
+        "create" | "create-preview" => (Tool::Create, EditMode::Move, 6),
         "land" => (Tool::Land, EditMode::Move, 1),
         "select" => (Tool::Land, EditMode::Move, 6),
         _ => (Tool::Edit, EditMode::Move, 6),
@@ -316,6 +317,21 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     let Some(frame) = (frame + 215).checked_sub(base) else {
         return Vec::new();
     };
+    if parts[0] == "create-preview" {
+        return match frame {
+            215 => vec![Step::Open(Tool::Create, EditMode::Move, 6)],
+            220 => vec![Step::CreationPreview(num(h).unwrap_or(0.0) as usize)],
+            225.. => {
+                let point = world.agent.position + Vec3::new(5.0, 3.0, 0.0);
+                let point = Vec3::new(point.x, point.y, crate::demo::floor_at(point.x, point.y));
+                tool.cam
+                    .project_px(point)
+                    .map(|(x, y)| vec![Step::Cursor(x, y)])
+                    .unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
+    }
     if matches!(parts[0], "create-delete" | "create-ready") {
         return match frame {
             215 => vec![Step::Open(Tool::Create, EditMode::Move, 6)],
@@ -467,6 +483,16 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             "bottom" => Some((x_start(tool), tool.cam.height - 1.0)),
             _ => None,
         });
+    // The close view animates for up to one second. A press while it is
+    // moving can miss the handle by the time the asynchronous pick returns.
+    let frame = if parts[0].starts_with("invisible-") && frame >= 250 {
+        if frame < 330 {
+            return Vec::new();
+        }
+        frame - 80
+    } else {
+        frame
+    };
     match frame {
         215 => vec![Step::Open(t, m, land)],
         220 if object.is_some() => object.into_iter().map(Step::Select).collect(),
@@ -492,6 +518,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
         260 | 270 if cycle => vec![Step::Wheel(-1.0)],
         280 if cycle => vec![Step::Wheel(1.0)],
         235 if parts[0] == "select" => vec![Step::Cursor(x + dx, y + dy)],
+        235 if parts[0].starts_with("invisible-") => vec![Step::CloseView],
         240 if parts[0] == "select" => vec![Step::Release],
         250 => match handle.and_then(|h| handle_px(tool, world, s, h)) {
             Some((hx, hy)) => {
