@@ -42,6 +42,7 @@ pub mod pass {
     pub const MASK: u32 = 3;
     pub const MASK_2S: u32 = 4;
     pub const BLEND: u32 = 5;
+    pub const WATER_EXCLUSION: u32 = 6;
     pub const BITS: u32 = 7;
 }
 
@@ -72,7 +73,8 @@ pub mod avatar_state {
     pub const LOADING: u32 = 4;
 }
 
-pub const BINS: usize = 15;
+pub const BINS: usize = 16;
+pub const BIN_WATER_EXCLUSION: usize = 15;
 pub const MAIN_BINS: usize = 4;
 /// Shadow casters of each cascade drawn depth only: opaque faces, which
 /// `fs_shadow` never discards.
@@ -90,19 +92,19 @@ pub const BIN_SPOT: usize = 13;
 pub const SPOT_SHADOWS: usize = 2;
 /// Argument regions: the bins, then the occlusion's phase 1 and phase 2
 /// prepass lists of the main bins (depth only, in no particular order).
-pub const REGION_PRE1: usize = 15;
-pub const REGION_PRE2: usize = 19;
-const REGIONS: usize = 23;
+pub const REGION_PRE1: usize = 16;
+pub const REGION_PRE2: usize = 20;
+const REGIONS: usize = 24;
 
-const COUNT_VISIBLE: usize = 15;
-const COUNT_TRIANGLES: usize = 16;
-const COUNT_HIDDEN: usize = 17;
+const COUNT_VISIBLE: usize = 16;
+const COUNT_TRIANGLES: usize = 17;
+const COUNT_HIDDEN: usize = 18;
 /// Counts of the phase 1 and phase 2 prepass lists of each main bin.
-pub const COUNT_PRE1: usize = 18;
-pub const COUNT_PRE2: usize = 22;
+pub const COUNT_PRE1: usize = 19;
+pub const COUNT_PRE2: usize = 23;
 /// Profile (`frame_flags::SHADOW_STATS`), per cascade: triangles of its
 /// casters, then its rigged casters, then their triangles.
-const COUNT_SHADOW: usize = 26;
+const COUNT_SHADOW: usize = 27;
 #[cfg(test)]
 const SHADOW_STATS: usize = 9;
 const COUNTS: usize = 40;
@@ -445,6 +447,10 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
     let p = f.bits & pass::BITS;
     if p == pass::HIDDEN {
         return (0, visible);
+    }
+    if p == pass::WATER_EXCLUSION {
+        let allowed = in_view && o.flags & (object_flags::AVATAR | object_flags::RIGGED) == 0 && o.avatar >= n;
+        return (if allowed { 1 << BIN_WATER_EXCLUSION } else { 0 }, visible);
     }
     let mut m = 0u32;
     let rigged = o.flags & (object_flags::RIGGED | object_flags::AVATAR) != 0;
@@ -1306,7 +1312,9 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 40] = [
+        let pairs: [(&str, u32); 42] = [
+            ("PASS_WATER_EXCLUSION", pass::WATER_EXCLUSION),
+            ("BIN_WATER_EXCLUSION", BIN_WATER_EXCLUSION as u32),
             ("BIN_SHADOW_ALPHA", BIN_SHADOW_ALPHA as u32),
             ("BIN_SPOT", BIN_SPOT as u32),
             ("F_SPOT", frame_flags::SPOT),
@@ -1482,6 +1490,36 @@ mod tests {
             sizes: [0, 4, 0, frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER],
             groups: [0; 4],
         }
+    }
+
+    #[test]
+    fn water_exclusion_has_no_scene_shadow_or_reflection_bins() {
+        let frame = frame_for_tests();
+        let mut objects = [CullObject {
+            sphere: [10.0, 0.0, 0.0, 1.0],
+            flags: object_flags::ACTIVE,
+            ..CullObject::NONE
+        }];
+        let faces = [CullFace {
+            object: 0,
+            bits: pass::WATER_EXCLUSION | FACE_FIRST,
+            index_count: 6,
+            ..CullFace::NONE
+        }];
+        let spheres = world_spheres(&objects, &[], &[], &[]);
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 0), (1 << BIN_WATER_EXCLUSION, true));
+        for flag in [object_flags::HUD, object_flags::AVATAR, object_flags::RIGGED] {
+            objects[0].flags = object_flags::ACTIVE | flag;
+            assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 0).0, 0);
+        }
+        objects[0].flags = object_flags::ACTIVE;
+        objects[0].avatar = 0;
+        objects[0].state = avatar_state::FULL;
+        assert_eq!(
+            face_bins(&frame, &faces, &objects, &spheres, 0).0,
+            0,
+            "attachments do not exclude water"
+        );
     }
 
     #[test]
@@ -1820,7 +1858,7 @@ mod tests {
                     first_index: rand(100_000),
                     base_vertex: rand(100_000) as i32,
                     object: rand(n_obj),
-                    bits: rand(6) | if rand(4) == 0 { FACE_FIRST } else { 0 },
+                    bits: rand(7) | if rand(4) == 0 { FACE_FIRST } else { 0 },
                     _pad: [0; 3],
                 }
             })

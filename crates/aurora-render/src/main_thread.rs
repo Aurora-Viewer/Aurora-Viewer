@@ -273,7 +273,7 @@ impl Renderer {
         }
         let max_textures = alim
             .max_binding_array_elements_per_shader_stage
-            .min(alim.max_sampled_textures_per_shader_stage.saturating_sub(16))
+            .min(alim.max_sampled_textures_per_shader_stage.saturating_sub(17))
             .clamp(64, 16384);
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("aurora"),

@@ -71,7 +71,9 @@ pub fn update(
         }
     }
     if crate::ao::water_demo::mode().is_none() && camera.free().is_none() {
-        let (eye, target) = if mode.contains("parts-") {
+        let (eye, target) = if mode.contains("exclusion") {
+            (Vec3::new(48.0, 111.0, 28.0), Vec3::new(48.0, 127.0, 19.0))
+        } else if mode.contains("parts-") {
             let x = if mode.contains("parts-feet") { 62.0 } else { 52.0 };
             if mode.contains("parts-feet") {
                 (Vec3::new(x - 1.5, 122.2, 21.2), Vec3::new(x, 124.0, 20.05))
@@ -177,6 +179,41 @@ pub fn update(
         0,
         0,
     );
+    if mode.contains("exclusion") {
+        // Matched floors remain visible through an invisible face above water
+        // (left) and below water (right). Only the left surface must hide water.
+        for (id, x, z, scale, color) in [
+            (99520, 44.0, 18.5, Vec3::new(6.0, 7.0, 0.3), [0.9, 0.12, 0.04, 1.0]),
+            (99521, 52.0, 18.5, Vec3::new(6.0, 7.0, 0.3), [0.04, 0.7, 0.2, 1.0]),
+            (99522, 44.0, 20.6, Vec3::new(6.0, 7.0, 0.1), [1.0; 4]),
+            (99523, 52.0, 19.2, Vec3::new(6.0, 7.0, 0.1), [1.0; 4]),
+        ] {
+            let mut te = super::te(color, 0, true, 0.0);
+            if id >= 99522 {
+                for face in &mut Arc::make_mut(&mut te).faces {
+                    face.texture = if mode.contains("exclusion-control") {
+                        aurora_prim::te::TRANSPARENT_TEXTURE
+                    } else {
+                        aurora_prim::te::WATER_EXCLUSION_TEXTURE
+                    };
+                }
+            }
+            objects.push(super::prim(
+                id,
+                Vec3::new(x, 127.0, z),
+                Quat::IDENTITY,
+                scale,
+                box_shape,
+                te,
+                Default::default(),
+                "",
+            ));
+        }
+        if let Some(handle) = world.main_region {
+            world.apply(NetEvent::ObjectUpdates { handle, objects });
+        }
+        return changed;
+    }
     for (id, pos, scale, color) in [
         (
             99500,

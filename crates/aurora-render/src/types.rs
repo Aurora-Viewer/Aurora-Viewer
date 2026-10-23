@@ -336,6 +336,8 @@ pub struct ShadowCaster {
 /// Visible draws for a frame, built by the world.
 #[derive(Default)]
 pub struct DrawLists {
+    /// Invisible water exclusion surfaces, in the CPU culling fallback.
+    pub water_exclusion: Vec<DrawCmd>,
     /// Own HUD attachments, drawn after post-processing with their own depth.
     pub hud_view: Option<HudView>,
     pub hud_opaque: Vec<DrawCmd>,
@@ -466,6 +468,7 @@ impl DrawLists {
         self.mask.clone_from(&src.mask);
         self.mask_two_sided.clone_from(&src.mask_two_sided);
         self.water.clone_from(&src.water);
+        self.water_exclusion.clone_from(&src.water_exclusion);
         self.blend.clone_from(&src.blend);
         self.blend_glow.clone_from(&src.blend_glow);
         self.blend_depth = src.blend_depth;
@@ -504,6 +507,7 @@ impl DrawLists {
         self.mask.clear();
         self.mask_two_sided.clear();
         self.water.clear();
+        self.water_exclusion.clear();
         self.blend.clear();
         self.blend_depth = 0;
         self.blend_depth_alpha_test = false;
@@ -533,7 +537,8 @@ impl DrawLists {
     }
 
     pub fn total(&self) -> usize {
-        self.hud_opaque.len()
+        self.water_exclusion.len()
+            + self.hud_opaque.len()
             + self.hud_blend.len()
             + self.terrain.len()
             + self.opaque.len()

@@ -326,6 +326,12 @@ pub struct FaceDraw {
 }
 
 impl FaceDraw {
+    /// LLVolumeGeometryManager::genDrawInfo sends opaque alpha-ramp faces
+    /// to PASS_INVISIBLE. They affect water only, never scene colour/depth.
+    fn water_exclusion(&self) -> bool {
+        self.tex_id == aurora_prim::te::WATER_EXCLUSION_TEXTURE && self.pbr_alpha.is_none() && self.te_alpha >= 0.999
+    }
+
     /// Its zero alpha hides the whole face, as LL never draws it: a
     /// Blinn-Phong face, or a blended glTF material. An opaque glTF
     /// material ignores its base color alpha and a masked one leaves it to
@@ -585,7 +591,11 @@ fn cull_face(f: &FaceDraw, idx: usize, first: bool) -> CullFace {
         first_index: f.cmd.first_index,
         base_vertex: f.cmd.base_vertex,
         object: idx as u32,
-        bits: f.pass.gpu_code() | if first { FACE_FIRST } else { 0 },
+        bits: if f.water_exclusion() {
+            aurora_render::gpu_cull::pass::WATER_EXCLUSION
+        } else {
+            f.pass.gpu_code()
+        } | if first { FACE_FIRST } else { 0 },
         _pad: [0; 3],
     }
 }
@@ -4029,6 +4039,7 @@ impl Scene {
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
         struct Local {
+            water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
             opaque2: Vec<DrawCmd>,
             mask: Vec<DrawCmd>,
@@ -4052,6 +4063,7 @@ impl Scene {
             usage: Vec<(Uuid, f32, bool)>,
         }
         let new_local = || Local {
+            water_exclusion: Vec::new(),
             opaque: Vec::new(),
             opaque2: Vec::new(),
             mask: Vec::new(),
@@ -4184,6 +4196,11 @@ impl Scene {
                     }
                 }
                 if pass == Pass::Hidden {
+                    // LLVolumeGeometryManager excludes attachments and rigged
+                    // meshes from PASS_INVISIBLE. No ordinary depth or shadow.
+                    if full && in_view && f.water_exclusion() && avatar.is_none() && !g.rigged {
+                        l.water_exclusion.push(cmd);
+                    }
                     continue;
                 }
                 if full {
@@ -4238,6 +4255,7 @@ impl Scene {
         })
         .into_iter()
         .reduce(|mut a, mut b| {
+            a.water_exclusion.append(&mut b.water_exclusion);
             a.opaque.append(&mut b.opaque);
             a.opaque2.append(&mut b.opaque2);
             a.mask.append(&mut b.mask);
@@ -4263,6 +4281,7 @@ impl Scene {
         .unwrap_or_else(new_local);
         self.visit_tmp = visit;
         self.lists.opaque = result.opaque;
+        self.lists.water_exclusion = result.water_exclusion;
         self.lists.opaque_two_sided = result.opaque2;
         self.lists.mask = result.mask;
         self.lists.mask_two_sided = result.mask2;
@@ -5708,6 +5727,30 @@ mod tests {
             rez_glow: false,
             system: None,
         }
+    }
+
+    #[test]
+    fn hide_water_is_invisible_but_keeps_its_gpu_exclusion_draw() {
+        let mut face = FaceDraw {
+            tex_id: aurora_prim::te::WATER_EXCLUSION_TEXTURE,
+            base_slot: aurora_render::textures::TRANSPARENT,
+            ..test_face(Pass::Hidden, true)
+        };
+        assert_eq!(classify(&face, AlphaKind::Mask), Pass::Hidden);
+        assert!(face.water_exclusion());
+        assert_eq!(
+            cull_face(&face, 0, true).bits,
+            aurora_render::gpu_cull::pass::WATER_EXCLUSION | FACE_FIRST
+        );
+        assert!(!is_special(&[face]), "a hidden water mask must not add glow draws");
+        face.te_alpha = 0.5;
+        assert!(!face.water_exclusion());
+        face.te_alpha = 1.0;
+        face.pbr_alpha = Some(0);
+        assert!(!face.water_exclusion());
+        face.pbr_alpha = None;
+        face.tex_id = aurora_prim::te::TRANSPARENT_TEXTURE;
+        assert!(!face.water_exclusion(), "ordinary transparency must not hide water");
     }
 
     /// LLVOAvatar::renderSkinned / renderTransparent: the system body is

@@ -68,9 +68,11 @@ const TYPICAL: J2kInfo = J2kInfo {
 /// Textures drawn with the built-in transparent slot, never downloaded: the
 /// transparent texture, and the bake of a part an alpha layer hides whole
 /// (IMG_INVISIBLE, never fetched from the bake service:
-/// LLVOAvatar::getBakedTextureImage, indra/newview/llvoavatar.cpp).
+/// LLVOAvatar::getBakedTextureImage, indra/newview/llvoavatar.cpp). The
+/// viewer-local alpha ramp is invisible in colour; its geometry goes to
+/// the separate water exclusion pass (LLDrawPoolWaterExclusion::render).
 pub fn is_builtin_transparent(id: &Uuid) -> bool {
-    *id == aurora_prim::te::TRANSPARENT_TEXTURE || *id == super::avatar::IMG_INVISIBLE
+    *id == aurora_prim::te::TRANSPARENT_TEXTURE || *id == super::avatar::IMG_INVISIBLE || *id == aurora_prim::te::WATER_EXCLUSION_TEXTURE
 }
 
 fn first_bytes(px: f32) -> usize {
@@ -1061,17 +1063,21 @@ impl TextureStreamer {
             staging: None,
             bc7: false,
             bc7_cache: false,
-            pick_masks: [aurora_prim::te::TRANSPARENT_TEXTURE, super::avatar::IMG_INVISIBLE]
-                .into_iter()
-                .map(|id| {
-                    let mask = PickMask {
-                        width: 1,
-                        height: 1,
-                        bits: vec![0],
-                    };
-                    (id, mask)
-                })
-                .collect(),
+            pick_masks: [
+                aurora_prim::te::TRANSPARENT_TEXTURE,
+                super::avatar::IMG_INVISIBLE,
+                aurora_prim::te::WATER_EXCLUSION_TEXTURE,
+            ]
+            .into_iter()
+            .map(|id| {
+                let mask = PickMask {
+                    width: 1,
+                    height: 1,
+                    bits: vec![0],
+                };
+                (id, mask)
+            })
+            .collect(),
             // built-in slots: the transparent texture has no visible pixel
             alpha_by_slot: {
                 let mut a = vec![AlphaKind::Opaque; 16];
@@ -3057,6 +3063,8 @@ mod tests {
         let textures = TextureStreamer::new(PathBuf::new());
         assert!(!textures.pick_masks[&aurora_prim::te::TRANSPARENT_TEXTURE].hits(glam::Vec2::splat(0.5)));
         assert!(!textures.pick_masks[&super::super::avatar::IMG_INVISIBLE].hits(glam::Vec2::splat(0.5)));
+        assert!(!textures.pick_masks[&aurora_prim::te::WATER_EXCLUSION_TEXTURE].hits(glam::Vec2::splat(0.5)));
+        assert!(is_builtin_transparent(&aurora_prim::te::WATER_EXCLUSION_TEXTURE));
     }
 
     fn rgba(width: u32, height: u32, levels: u32) -> ChainSize {
@@ -4131,6 +4139,7 @@ mod tests {
         assert!(!b.s.refresh(&Uuid::nil()));
         assert!(!b.s.refresh(&aurora_prim::te::BLANK_TEXTURE));
         assert!(!b.s.refresh(&aurora_prim::te::TRANSPARENT_TEXTURE));
+        assert!(!b.s.refresh(&aurora_prim::te::WATER_EXCLUSION_TEXTURE));
         // the invisible bake is never downloaded, so never refreshed either
         assert!(!b.s.refresh(&super::super::avatar::IMG_INVISIBLE));
         assert!(b.s.entries.is_empty());

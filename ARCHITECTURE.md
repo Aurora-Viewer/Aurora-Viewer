@@ -1,5 +1,15 @@
 # Aurora Viewer architecture
 
+Water exclusion faces use the viewer-local `WATER_EXCLUSION_TEXTURE` alpha-ramp
+UUID. `scene/textures.rs` resolves it without a network request; visually hidden
+faces retain a dedicated GPU culling bin (and a CPU fallback list). Before scene
+colour, the renderer draws water in white and front-facing exclusion surfaces in
+black into an R8 mask with independent nearest-interface depth. This follows
+`LLDrawPoolWaterExclusion::render`: water in front wins, exclusions in front hide
+surface shading and above-water fog. Ordinary objects, shadows, reflection
+captures and underwater fog retain their own depth and visibility. Attachments
+and rigged meshes do not generate exclusions, as in the Legacy Viewer.
+
 `world/beacons.rs` keeps the saved source filters and property-lines switch,
 and the session's ownership and particle visibility switches.
 `scene/world_overlays.rs` collects object beacons in parallel and retains only

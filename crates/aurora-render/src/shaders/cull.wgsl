@@ -9,6 +9,7 @@
 //   7..9    water reflection, mirror, reflection probe face
 //   10..12  shadow cascades, casters drawn with the alpha test
 //   13..14  shadow maps of the two projectors that cast shadows
+//   15      water exclusion surfaces (no scene colour, shadow or reflection)
 // Bins keep the record order (no atomics on the slots): coplanar faces drawn
 // in the same pass keep the same winner from one frame to the next.
 //   cs_classify: bin mask of each face, face count of each bin per workgroup;
@@ -22,7 +23,8 @@
 // The tests mirror Scene::build_lists (CPU path) and `gpu_cull::face_bins`.
 // The Hi-Z sphere test (hiz_test.wgsl) is prepended to this module.
 
-const BINS: u32 = 15u;
+const BINS: u32 = 16u;
+const BIN_WATER_EXCLUSION: u32 = 15u;
 const MAIN_BINS: u32 = 4u;
 const BIN_SHADOW: u32 = 4u;
 const BIN_REFL_WATER: u32 = 7u;
@@ -32,18 +34,18 @@ const BIN_SHADOW_ALPHA: u32 = 10u;
 const BIN_SPOT: u32 = 13u;
 // argument regions after the bins: occlusion phase 1 and phase 2 prepass
 // lists of each main bin (own counts)
-const REGION_PRE1: u32 = 15u;
-const REGION_PRE2: u32 = 19u;
+const REGION_PRE1: u32 = 16u;
+const REGION_PRE2: u32 = 20u;
 
 // counts: bin sizes, then statistics
-const COUNT_VISIBLE: u32 = 15u;
-const COUNT_TRIANGLES: u32 = 16u;
-const COUNT_HIDDEN: u32 = 17u;
-const COUNT_PRE1: u32 = 18u;
-const COUNT_PRE2: u32 = 22u;
+const COUNT_VISIBLE: u32 = 16u;
+const COUNT_TRIANGLES: u32 = 17u;
+const COUNT_HIDDEN: u32 = 18u;
+const COUNT_PRE1: u32 = 19u;
+const COUNT_PRE2: u32 = 23u;
 // profile (F_SHADOW_STATS), per cascade: triangles of its casters, then its
 // rigged casters (avatars and rigged meshes), then their triangles
-const COUNT_SHADOW: u32 = 26u;
+const COUNT_SHADOW: u32 = 27u;
 const SHADOW_STATS: u32 = 9u;
 
 // planes of a cascade's caster volume (CullFrame.shadow_planes)
@@ -59,6 +61,7 @@ const PASS_OPAQUE: u32 = 1u;
 const PASS_OPAQUE_2S: u32 = 2u;
 const PASS_MASK_2S: u32 = 4u;
 const PASS_BLEND: u32 = 5u;
+const PASS_WATER_EXCLUSION: u32 = 6u;
 const FACE_FIRST: u32 = 8u;
 
 // CullObject.flags
@@ -367,6 +370,10 @@ fn face_mask(i: u32) -> u32 {
     let fp = f.bits & PASS_BITS;
     if (fp == PASS_HIDDEN) {
         return 0u;
+    }
+    if (fp == PASS_WATER_EXCLUSION) {
+        let allowed = in_view && (o.flags & (OBJ_AVATAR | OBJ_RIGGED)) == 0u && o.avatar >= n;
+        return select(0u, 1u << BIN_WATER_EXCLUSION, allowed);
     }
     var m = 0u;
     // LLPipeline::renderShadow: blended faces cast too, rigged or not
