@@ -14313,6 +14313,12 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                if matches!(view.as_str(), "outfit-menu" | "outfit-menu-loading") {
+                    crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                    if view == "outfit-menu-loading" {
+                        self.world.inventory.items.remove(&uuid::Uuid::from_u128(723));
+                    }
+                }
                 let configured_view = matches!(
                     view.as_str(),
                     "permissions"

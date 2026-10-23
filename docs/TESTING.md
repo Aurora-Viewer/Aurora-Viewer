@@ -4966,6 +4966,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   Capture frames `700,850`: first the title bar alone, then the restored
   window with the demo object selected and revealed. Covers both layouts
   without grid access; also test manually with a worn attachment on Agni.
+- `outfit-menu`, `outfit-menu-loading`: a saved outfit's inventory context
+  menu with Appearance closed. The first has its originals loaded and the
+  replacement/addition entries enabled; the second withholds one linked
+  original and keeps them disabled while the menu asks for it. The demo
+  does not answer that network request. Capture at frame 700. On a grid,
+  log in without opening Appearance and replace an outfit from Inventory;
+  after its contents arrive, the entry must activate in the same open menu.
 - `favorites`, `aurora-favorites`: the Favorites tab with three objects of
   the same type, added through the batch planner. `favorites-multi` and
   `aurora-favorites-multi` show their selected rows and Add to Favorites

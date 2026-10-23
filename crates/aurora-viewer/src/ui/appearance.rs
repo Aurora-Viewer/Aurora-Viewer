@@ -69,7 +69,20 @@ impl AppearanceUi {
         agent: Uuid,
         worn: &HashSet<Uuid>,
     ) -> Vec<aurora_net::NetCommand> {
-        model::prepare(inv, agent, worn)
+        self.filter_requests(model::prepare(inv, agent, worn))
+    }
+
+    pub fn prepare_contents(
+        &mut self,
+        inv: &mut crate::world::inventory::Inventory,
+        agent: Uuid,
+        folder: Uuid,
+    ) -> Vec<aurora_net::NetCommand> {
+        self.filter_requests(model::prepare_contents(inv, agent, folder))
+    }
+
+    fn filter_requests(&mut self, commands: Vec<aurora_net::NetCommand>) -> Vec<aurora_net::NetCommand> {
+        commands
             .into_iter()
             .filter_map(|cmd| {
                 if let aurora_net::NetCommand::FetchItems { items, owner } = cmd {

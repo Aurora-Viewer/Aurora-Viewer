@@ -348,7 +348,13 @@ pub(super) fn show(
                     prefs,
                     actions,
                 );
-                let content = crate::world::appearance::wearable_contents(inv, id).unwrap_or_default();
+                let content = crate::world::appearance::wearable_contents(inv, id);
+                // LLFolderBridge::buildContextMenuOptions starts the recursive
+                // inventory fetch before enabling the outfit entries.
+                if single && content.is_err() && !rules::library(inv, id) {
+                    actions.push(InvAction::PrepareOutfit(id));
+                }
+                let content = content.unwrap_or_default();
                 let can_wear = single && !facts.appearance_busy && !content.is_empty() && !rules::library(inv, id);
                 menu::separator(ui, p);
                 entry(

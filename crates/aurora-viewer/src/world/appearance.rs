@@ -179,6 +179,41 @@ pub fn prepare(inv: &mut Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<Ne
     }
 }
 
+/// LLRightClickInventoryFetchDescendentsObserver
+/// (indra/newview/llinventorybridge.cpp): load only the menu's subtree and
+/// its link targets, without opening the Appearance window.
+pub fn prepare_contents(inv: &mut Inventory, agent: Uuid, folder: Uuid) -> Vec<NetCommand> {
+    let mut pending = vec![folder];
+    let mut seen = HashSet::new();
+    let mut missing = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(f) = inv.folders.get(&id) else { continue };
+        if f.library || matches!(f.info.type_default, 14 | 50) {
+            continue;
+        }
+        pending.extend(f.children.iter().copied());
+        for link in folder_links(inv, id) {
+            if !link.folder && !link.target.is_nil() && !inv.items.contains_key(&link.target) {
+                missing.insert(link.target);
+            }
+        }
+        if inv.queue.len() < 16 {
+            inv.request(id);
+        }
+    }
+    if missing.is_empty() {
+        Vec::new()
+    } else {
+        vec![NetCommand::FetchItems {
+            items: missing.into_iter().collect(),
+            owner: agent,
+        }]
+    }
+}
+
 /// LLAppearanceMgr::wearInventoryCategory: ordinary folders are recursive;
 /// unrelated inventory types are ignored, incomplete or broken links are refused.
 pub fn wearable_contents(inv: &Inventory, folder: Uuid) -> Result<Vec<OutfitLink>, String> {
@@ -1045,6 +1080,63 @@ mod tests {
         let mut inv = Inventory::default();
         seed_demo(&mut inv, Uuid::from_u128(1));
         inv
+    }
+
+    #[test]
+    fn outfit_menu_fetches_only_its_subtree_and_retries_failed_folders() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let root = Uuid::from_u128(704);
+        let child = Uuid::from_u128(900);
+        let untouched = Uuid::from_u128(703);
+        let mut nested = inv.folders[&root].clone();
+        nested.info.id = child;
+        nested.info.parent = root;
+        nested.info.type_default = -1;
+        nested.children = vec![root]; // malformed cycles must not loop
+        nested.state = FetchState::Failed;
+        inv.folders.insert(child, nested);
+        inv.folders.get_mut(&root).expect("root").children.push(child);
+        inv.folders.get_mut(&root).expect("root").state = FetchState::Unknown;
+        inv.folders.get_mut(&untouched).expect("other outfit").state = FetchState::Unknown;
+        inv.queue.clear();
+        let original = inv.items.remove(&Uuid::from_u128(723)).expect("linked original");
+        let mut link = inv
+            .items
+            .values()
+            .find(|it| it.parent == root && it.asset_id == original.id)
+            .expect("link")
+            .clone();
+        link.id = Uuid::from_u128(901);
+        link.parent = child;
+        inv.add_items(vec![link]);
+        let commands = prepare_contents(&mut inv, agent, root);
+        assert_eq!(inv.queue.len(), 2);
+        assert!(inv.queue.contains(&(root, false)));
+        assert!(inv.queue.contains(&(child, false)));
+        assert_eq!(inv.folders[&untouched].state, FetchState::Unknown);
+        assert!(
+            matches!(commands.as_slice(), [NetCommand::FetchItems { items, owner }]
+            if items == &[original.id] && *owner == agent),
+            "shared original is fetched once"
+        );
+        inv.failed(&[child]);
+        inv.queue.clear();
+        prepare_contents(&mut inv, agent, root);
+        assert_eq!(inv.queue, vec![(child, false)]);
+        // A large ordinary folder cannot fill the entire network queue at once.
+        for n in 1000..1040 {
+            let id = Uuid::from_u128(n);
+            let mut folder = inv.folders[&child].clone();
+            folder.info.id = id;
+            folder.children.clear();
+            folder.items.clear();
+            folder.state = FetchState::Unknown;
+            inv.folders.insert(id, folder);
+            inv.folders.get_mut(&root).expect("root").children.push(id);
+        }
+        prepare_contents(&mut inv, agent, root);
+        assert_eq!(inv.queue.len(), 16);
     }
 
     #[test]
