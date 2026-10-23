@@ -1,6 +1,6 @@
 //! Rolling disk cache: textures, meshes, materials, animations, sounds and
 //! environment settings (shared by every region, keyed by asset id),
-//! per-region object caches and the inventory cache. A background thread
+//! per-region object caches, the inventory cache and copied pictures. A background thread
 //! keeps the total under the size limit by evicting the least recently used
 //! files. The directories are only walked at startup, when the bytes written
 //! since push the estimate over the limit, and every 30 minutes (cheap even
@@ -14,7 +14,17 @@ use std::time::{Duration, Instant, SystemTime};
 /// Sub-directories managed by the cache. Every folder written through
 /// [`write`] belongs here, or the walks never see it: never trimmed, never
 /// counted.
-pub const DIRS: [&str; 8] = ["tex", "mesh", "mat", "anim", "objects", "inventory", "sound", "settings"];
+pub const DIRS: [&str; 9] = [
+    "tex",
+    "mesh",
+    "mat",
+    "anim",
+    "objects",
+    "inventory",
+    "sound",
+    "settings",
+    "clipboard-images",
+];
 
 /// Bytes written to the cache since the last walk.
 static WRITTEN: AtomicU64 = AtomicU64::new(0);

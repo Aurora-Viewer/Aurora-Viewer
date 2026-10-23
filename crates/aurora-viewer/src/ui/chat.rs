@@ -2252,6 +2252,8 @@ pub fn show(
     friends: Option<super::people::FriendsPane<'_, '_>>,
     open: &mut bool,
 ) -> Vec<ConvAction> {
+    let enlarged = st.previews.enlarged();
+    st.previews.lightbox_keys(ctx);
     st.reorder.begin(ctx, world);
     let mut actions = Vec::new();
     let mut friends = friends;
@@ -2268,7 +2270,7 @@ pub fn show(
     }
     let style = st.demo_style.unwrap_or(st.style);
     // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`)
-    if *open {
+    if *open && !enlarged {
         let order = if style.workspace() {
             sidebar::tab_order(world, st)
         } else {
@@ -2303,7 +2305,11 @@ pub fn show(
     // hopped for a frame
     let least = egui::vec2(if style.workspace() { 300.0 } else { 0.0 }, 240.0);
     floater.min_size = floater.min_size.max(least);
-    floater.show(ctx, p, open, |ui| {
+    let image_bounds = floater.show(ctx, p, open, |ui| {
+        let bounds = ui.available_rect_before_wrap().intersect(ui.clip_rect());
+        if enlarged {
+            ui.disable();
+        }
         if style.workspace() {
             let env = workspace::Env {
                 p,
@@ -2320,7 +2326,7 @@ pub fn show(
                 compact: style == crate::settings::ChatStyle::Compact,
             };
             workspace::show(ui, env, world, st, &mut actions);
-            return;
+            return bounds;
         }
         let h = (ui.available_height() - 6.0).max(140.0);
         ui.horizontal_top(|ui| {
@@ -2677,7 +2683,9 @@ pub fn show(
                 }
             });
         });
+        bounds
     });
+    st.previews.lightbox(ctx, p, image_bounds.filter(|_| *open));
     if tear_off {
         actions.push(ConvAction::Contacts(super::contacts::ContactsAction::ToggleTornOff));
     }
@@ -2951,6 +2959,10 @@ fn line_extras(
 /// on a conversation of the list (`conv_menu`); `AURORA_DEMO_CONV_GIVE`'s
 /// inventory carried to an IM (`workspace`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let preview = previews::demo_events(ctx, frame);
+    if !preview.is_empty() {
+        return preview;
+    }
     let reorder = reorder::demo_events(ctx, frame);
     if !reorder.is_empty() {
         return reorder;
