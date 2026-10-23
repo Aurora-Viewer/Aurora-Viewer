@@ -385,12 +385,7 @@ fn list_part(
                 let pointer = resp.hover_pos();
                 let hot =
                     (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(row.id) || st.demo_hover == Some(row.id);
-                let mut end = right_end(rect, names_left(rect, compact), badge_count, Some(count), compact);
-                if !hot {
-                    let names_right = end.names_right;
-                    end = right_end(rect, names_left(rect, compact), badge_count, None, compact);
-                    end.names_right = end.names_right.min(names_right);
-                }
+                let end = right_end(rect, names_left(rect, compact), badge_count, hot.then_some(count), compact);
                 let tip = if compact {
                     paint_compact(ui, p, world, data, st, row, rect, &end, i, selected, hot, pointer, actions)
                 } else {
@@ -643,8 +638,20 @@ pub(super) struct RightEnd {
     pub dist: Option<Rect>,
     /// The pill of the quick actions, with one rectangle per button.
     pub actions: Option<(Rect, Vec<Rect>)>,
-    /// Where the names stop.
+    /// Normal text limit, independent of the hover actions.
     pub names_right: f32,
+}
+
+impl RightEnd {
+    /// Badges may move left on hover. Clip the normal name galley behind
+    /// them instead of laying out a shorter name with another ellipsis.
+    fn name_painter(&self, ui: &egui::Ui) -> egui::Painter {
+        let mut clip = ui.clip_rect();
+        if let Some(left) = self.badges.first().map(|r| r.left()).or(self.more.map(|(r, _)| r.left())) {
+            clip.max.x = clip.max.x.min(left - NAMES_GAP);
+        }
+        ui.painter().with_clip_rect(clip)
+    }
 }
 
 /// The right end of `row` for `badges` badges, its names starting at
@@ -662,7 +669,7 @@ pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Opti
         )
     });
     let actions = actions.map(|n| {
-        let left = (names_left + NAMES_GAP + super::rows::ACTION_NAMES_MIN).min(right - super::rows::actions_width_for(n, 14.0));
+        let left = names_left.min(right - super::rows::actions_width_for(n, 14.0));
         let slot = super::rows::actions_slot(row, left, right, n, m.button);
         super::rows::action_rects(slot, n, m.button)
     });
@@ -695,13 +702,19 @@ pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Opti
         .collect();
     rects.reverse();
     let first = rects.first().map(|r| r.left()).or(more.map(|(r, _)| r.left())).unwrap_or(zone);
+    // Hover controls cover the name instead of shortening its normal text layout.
+    let names_right = if actions.is_some() {
+        right_end(row, names_left, badges, None, compact).names_right
+    } else {
+        first - NAMES_GAP
+    };
     RightEnd {
         badges: rects,
         more,
         seen: if actions.is_none() { seen } else { None },
         dist: actions.is_none().then_some(dist),
         actions,
-        names_right: first - NAMES_GAP,
+        names_right,
     }
 }
 
@@ -815,11 +828,7 @@ fn paint_rich(
         let left = seen.right() - galley.size().x;
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, seen.center().y, p.muted_dim);
     }
-    let tip = paint_badges(ui, p, &list, end, false, pointer);
-    if hot && let Some((pill, cells)) = &end.actions {
-        hover_actions(ui, p, world, st, row, *pill, cells, &quick_actions(world, row), actions);
-    }
-    // the names in what is left
+    // Keep the normal name layout underneath the hover controls.
     let width = (end.names_right - left).max(0.0);
     let name_color = if data.settings.color_names {
         band.color(p)
@@ -842,8 +851,13 @@ fn paint_rich(
     let total = name_g.size().y + user_g.size().y - 2.0;
     let top = identity.center().y - total / 2.0;
     let name_h = name_g.size().y;
-    ui.painter().galley(Pos2::new(left, top), name_g, name_color);
-    ui.painter().galley(Pos2::new(left, top + name_h - 2.0), user_g, p.muted);
+    let painter = end.name_painter(ui);
+    painter.galley(Pos2::new(left, top), name_g, name_color);
+    painter.galley(Pos2::new(left, top + name_h - 2.0), user_g, p.muted);
+    let tip = paint_badges(ui, p, &list, end, false, pointer);
+    if hot && let Some((pill, cells)) = &end.actions {
+        hover_actions(ui, p, world, st, row, *pill, cells, &quick_actions(world, row), actions);
+    }
     tip.or_else(|| (cut && pointer.is_some_and(|at| at.x >= left && at.x <= left + width)).then(|| row.name.clone()))
 }
 
@@ -892,10 +906,6 @@ fn paint_compact(
         let left = dist.right() - galley.size().x;
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
     }
-    let tip = paint_badges(ui, p, &list, end, true, pointer);
-    if hot && let Some((pill, cells)) = &end.actions {
-        hover_actions(ui, p, world, st, row, *pill, cells, &quick_actions(world, row), actions);
-    }
     let width = (end.names_right - left).max(0.0);
     let name_color = if data.settings.color_names {
         band.color(p)
@@ -911,7 +921,11 @@ fn paint_compact(
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     let g = ui.painter().layout_job(job);
     let cut = g.elided;
-    crate::ui::widgets::paint_row_text(ui.painter(), g, left, identity.center().y, name_color);
+    crate::ui::widgets::paint_row_text(&end.name_painter(ui), g, left, identity.center().y, name_color);
+    let tip = paint_badges(ui, p, &list, end, true, pointer);
+    if hot && let Some((pill, cells)) = &end.actions {
+        hover_actions(ui, p, world, st, row, *pill, cells, &quick_actions(world, row), actions);
+    }
     tip.or_else(|| (cut && pointer.is_some_and(|at| at.x >= left && at.x <= left + width)).then(|| row.name.clone()))
 }
 
@@ -1044,6 +1058,16 @@ mod tests {
                     for _ in 0..3 {
                         frames.run(Vec::new(), &mut draw);
                     }
+                    let shapes = frames.shapes(Vec::new(), &mut draw);
+                    let name_index = shapes
+                        .iter()
+                        .position(|shape| matches!(shape, egui::Shape::Text(t) if t.galley.text() == row.name))
+                        .expect("the resident's name is painted");
+                    let pill_index = shapes
+                        .iter()
+                        .position(|shape| matches!(shape, egui::Shape::Rect(r) if r.rect == *pill && r.fill == p.raised))
+                        .expect("the action strip is painted");
+                    assert!(pill_index > name_index, "the hover strip covers the name");
                     frames.run(
                         vec![
                             egui::Event::PointerMoved(info),
@@ -1105,6 +1129,11 @@ mod tests {
                 for badges in 0..=MAX_BADGES {
                     for actions in [None, Some(3), Some(4), Some(5)] {
                         let end = right_end(row, left, badges, actions, compact);
+                        assert_eq!(
+                            end.names_right,
+                            right_end(row, left, badges, None, compact).names_right,
+                            "hover actions never shorten the name's normal layout"
+                        );
                         let mut parts: Vec<Rect> = end.badges.clone();
                         parts.extend(end.more.map(|(r, _)| r));
                         let shown_badges = parts.len();
@@ -1143,7 +1172,7 @@ mod tests {
                         } else {
                             narrowest_cut = true;
                         }
-                        if shown_badges > 0 {
+                        if shown_badges > 0 && actions.is_none() {
                             assert!(end.names_right - left >= m.names_min - 0.01, "the names keep their room");
                         }
                     }

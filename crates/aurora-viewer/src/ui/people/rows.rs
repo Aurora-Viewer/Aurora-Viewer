@@ -1,8 +1,8 @@
 //! The pieces the lists of People share in Aurora's look (the mock-up's
 //! rows): a row's face, its round picture and status dot, its two lines of
-//! names, the right end laid out from the right edge without ever covering
-//! anything (what does not fit folds into "+2" or steps aside), the quick
-//! actions of the row under the pointer, and the Ctrl / Shift selection.
+//! names, the fixed controls laid out from the right edge (what does not
+//! fit folds into "+2" or steps aside), the quick actions over the names
+//! of the row under the pointer, and the Ctrl / Shift selection.
 
 use crate::theme::Palette;
 use crate::ui::context::{self, AvatarList};
@@ -21,8 +21,6 @@ const PAD: f32 = 8.0;
 /// One quick action's button, and the room around them in their pill.
 pub(super) const BUTTON: Vec2 = Vec2::new(26.0, 24.0);
 const ACTIONS_PAD: f32 = 3.0;
-/// A stable clickable name beside the avatar and the hover strip.
-pub(super) const ACTION_NAMES_MIN: f32 = 32.0;
 /// Width of the "+2" of what does not fit.
 pub(super) const MORE_W: f32 = 24.0;
 /// Height of a toolbar (search, buttons).

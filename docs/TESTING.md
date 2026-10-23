@@ -4281,8 +4281,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   stay to the left of the actions and fold when necessary. Row heights stay
   at 42 points in rich density and 24 points in compact density, at every
   width and with or without hover. Actions stay on one horizontal line;
-  names truncate and button widths tighten when needed, with unchanged
-  icon sizes. Name click targets remain stable when buttons appear. The
+  actions overlay the names without changing their normal text layout.
+  Button widths tighten when needed, with unchanged icon sizes and the
+  avatar still available for row clicks. The
   details action before More opens the resident sheet.
   `legacy`: the same
   residents in Firestorm's table, for this run only (the preference is
@@ -4387,8 +4388,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Permission cells stay in the same right-aligned positions with or without
   hover. Every quick action stays visible to their left, on one horizontal
   line. Rows always stay 42 points high while resizing in either direction.
-  Names truncate before the actions, whose widths tighten if necessary;
-  name and avatar click targets remain stable. Permission groups only show
+  Actions paint over names without reserving any text width, even while
+  hidden; their widths tighten if necessary and avatars remain clickable.
+  Permission groups only show
   when room remains for every action, independently of hover.
   Details remains before More.
   When the sheet replaces the list, clicking

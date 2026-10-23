@@ -937,6 +937,11 @@ fn contacts_navigation(style: ChatStyle, width: f32) -> Harness {
     h
 }
 
+/// Hover actions deliberately cover names; the avatar remains a row click target.
+fn contact_avatar(texts: &[crate::ui::widgets::elide_tests::Text], name: &str) -> egui::Pos2 {
+    painted(texts, name).rect.left_center() - egui::vec2(25.0, 0.0)
+}
+
 /// A single click must leave the row available for the second click even
 /// when the friend's sheet will replace the list in a reduced layout.
 #[test]
@@ -946,7 +951,7 @@ fn contacts_navigation_double_click_opens_im_at_every_width() {
             for waiting_frames in [0, 10] {
                 let mut h = contacts_navigation(style, width);
                 let texts = h.settle();
-                let at = painted(&texts, "Friend 00").rect.center();
+                let at = contact_avatar(&texts, "Friend 00");
                 h.click(at);
                 assert!(h.actions.is_empty(), "a single click does not start an IM");
                 h.settle();
@@ -982,7 +987,7 @@ fn contacts_navigation_entry_returns_from_sheet_to_list() {
             let mut h = contacts_navigation(style, width);
             let texts = h.settle();
             h.people.filter = "Friend 0".into();
-            h.hold(painted(&texts, "Friend 00").rect.center());
+            h.hold(contact_avatar(&texts, "Friend 00"));
             for _ in 0..30 {
                 h.frame(Vec::new());
             }
@@ -1006,7 +1011,7 @@ fn contacts_navigation_entry_returns_from_sheet_to_list() {
             assert_eq!(h.people.filter, "Friend 0", "the filter is preserved");
             assert_eq!(h.people.sel, selected, "the selection is preserved");
             assert!(h.st.contacts);
-            let at = painted(&texts, "Friend 00").rect.center();
+            let at = contact_avatar(&texts, "Friend 00");
             h.click(at);
             h.click(at);
             assert!(
@@ -1025,7 +1030,7 @@ fn contacts_navigation_single_click_opens_sheet_only_at_large_width() {
         for width in [960.0, 860.0, 700.0, 460.0, 394.0] {
             let mut h = contacts_navigation(style, width);
             let texts = h.settle();
-            h.click(painted(&texts, "Friend 00").rect.center());
+            h.click(contact_avatar(&texts, "Friend 00"));
             for _ in 0..45 {
                 h.frame(Vec::new());
             }
@@ -1039,7 +1044,7 @@ fn contacts_navigation_single_click_opens_sheet_only_at_large_width() {
             let texts = h.settle();
             assert!(texts.iter().any(|t| t.source == "Friend 01"), "the list stays visible");
             if width >= 860.0 {
-                h.click(painted(&texts, "Friend 01").rect.center());
+                h.click(contact_avatar(&texts, "Friend 01"));
                 assert_eq!(
                     h.people.sheet,
                     Some(Uuid::from_u128(0xF001)),
@@ -1066,7 +1071,7 @@ fn contacts_navigation_details_button_opens_sheet() {
                     }
                     h.contacts_settings.column_permissions = permissions;
                     let texts = h.settle();
-                    let name = painted(&texts, "Friend 00").rect.center();
+                    let name = contact_avatar(&texts, "Friend 00");
                     h.frame(vec![egui::Event::PointerMoved(name)]);
                     h.settle();
                     let hovered = h.frames.ctx.interaction_snapshot(|i| i.hovered.clone());

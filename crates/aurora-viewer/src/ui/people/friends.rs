@@ -389,9 +389,9 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     } else {
         Vec::new()
     };
-    let mut end = rows::end_before(
+    let end = rows::end_before(
         bounds,
-        rows::names_left(bounds) + rows::ACTION_NAMES_MIN + PARTS_GAP + rows::actions_width_for(5, 18.0) + PARTS_GAP,
+        rows::names_left(bounds) + rows::actions_width_for(5, 18.0) + PARTS_GAP,
         &widths,
         PARTS_GAP,
         false,
@@ -416,9 +416,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let left = rows::names_left(rect);
     // Keep the permission cells anchored when hover actions appear, as
     // LLAvatarListItem::showPermissions / updateChildren reserve their slots.
-    let slot = rows::actions_slot(rect, left + rows::ACTION_NAMES_MIN + PARTS_GAP, right, count, rows::BUTTON);
-    // The name keeps the same click target when its hover buttons appear.
-    end.names_right = end.names_right.min(slot.left() - PARTS_GAP);
+    let slot = rows::actions_slot(rect, left, right, count, rows::BUTTON);
     let actions = hot.then(|| (quick_actions(f), slot));
     rows::picture(ui, p, c.world, identity, data.pics.get(&f.id), f.id, &line.name, false);
     let mut clicked_right = false;
@@ -427,9 +425,6 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     }
     if let Some(cell) = end.items.get(1) {
         clicked_right = granted(ui, c, f, *cell);
-    }
-    if let Some((buttons, slot)) = &actions {
-        hover_actions(ui, c, st, f, *slot, buttons);
     }
     let color = if c.contact_settings.colorize_friends {
         line.set.unwrap_or(p.ink)
@@ -453,6 +448,10 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     } else {
         true
     };
+    // The requested hover strip covers the text without taking any of its width.
+    if let Some((buttons, slot)) = &actions {
+        hover_actions(ui, c, st, f, *slot, buttons);
+    }
     ui.set_opacity(opacity);
     let action = if clicked_right {
         rows::RowAction::default()
@@ -629,11 +628,13 @@ mod tests {
                     settings.sort = sort;
                     let bounds = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(width, 500.0));
                     let mut fixed_rights = None;
+                    let mut fixed_name = None;
                     for hot in [false, true] {
                         st.demo_hover = hot.then_some(Uuid::from_u128(0xF000));
                         let mut layer = None;
+                        let mut shapes = Vec::new();
                         for _ in 0..3 {
-                            frames.run(Vec::new(), |ui| {
+                            shapes = frames.shapes(Vec::new(), |ui| {
                                 let mut child = super::super::nearby::list_ui(ui, bounds, "bounded-friends-test", true);
                                 layer = Some(child.layer_id());
                                 let mut c = Ctx {
@@ -679,8 +680,34 @@ mod tests {
                             .iter()
                             .filter(|w| w.sense.senses_click() && w.rect.height() == 24.0 && w.rect.width() <= 26.0)
                             .collect();
+                        let (name_index, name) = shapes
+                            .iter()
+                            .enumerate()
+                            .find_map(|(i, shape)| match shape {
+                                egui::Shape::Text(t) if t.galley.text() == "Friend 00 with a long display name" => Some((i, t)),
+                                _ => None,
+                            })
+                            .expect("the first friend's name is painted");
+                        let shown: String = name.galley.rows.iter().flat_map(|r| r.row.glyphs.iter().map(|g| g.chr)).collect();
+                        let layout = (shown, name.pos, name.galley.size());
+                        if let Some(fixed) = &fixed_name {
+                            assert_eq!(&layout, fixed, "hover actions do not change the name's layout");
+                        } else {
+                            fixed_name = Some(layout);
+                        }
                         if hot {
                             assert_eq!(quick.len(), 5, "{width}: every quick action remains visible");
+                            if width <= 400.0 {
+                                assert!(
+                                    name.pos.x + name.galley.size().x > quick[0].rect.right(),
+                                    "the name uses the space underneath the hover actions"
+                                );
+                            }
+                            let pill_index = shapes
+                                .iter()
+                                .position(|shape| matches!(shape, egui::Shape::Rect(r) if r.fill == p.raised && quick.iter().all(|w| r.rect.contains_rect(w.rect))))
+                                .expect("the action strip is painted");
+                            assert!(pill_index > name_index, "the hover strip is painted over the name");
                             for action in quick {
                                 let row = rects
                                     .iter()
