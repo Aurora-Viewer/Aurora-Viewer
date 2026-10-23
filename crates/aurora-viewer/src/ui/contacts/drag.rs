@@ -45,7 +45,7 @@ mod tests {
 
     fn target(ctx: &egui::Context, events: Vec<egui::Event>, set: &str) -> (egui::Rect, bool) {
         let mut result = (egui::Rect::NOTHING, false);
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(300.0, 200.0))),
                 events,
@@ -60,6 +60,8 @@ mod tests {
                 );
             },
         );
+        // This headless interaction test does not render font-atlas uploads.
+        output.textures_delta.clear();
         result
     }
 
