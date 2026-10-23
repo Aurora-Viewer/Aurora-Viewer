@@ -356,7 +356,7 @@ mod tests {
             })
             .collect();
         let mut changed = false;
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             RawInput {
                 events,
                 ..Default::default()
@@ -365,10 +365,12 @@ mod tests {
                 changed |= keyboard(ui.ctx(), saved);
             },
         );
+        output.textures_delta.clear();
         if changed {
             ctx.set_zoom_factor(*saved);
         }
-        let _ = ctx.run_ui(RawInput::default(), |_| {});
+        let mut output = ctx.run_ui(RawInput::default(), |_| {});
+        output.textures_delta.clear();
         assert_eq!(ctx.zoom_factor(), *saved);
         changed
     }
@@ -409,7 +411,7 @@ mod tests {
             repeat: false,
             modifiers: Modifiers::COMMAND,
         };
-        let _ = ctx.run_ui(
+        let mut output = ctx.run_ui(
             RawInput {
                 events: vec![event],
                 ..Default::default()
@@ -419,7 +421,9 @@ mod tests {
                 assert!(!keyboard(ui.ctx(), &mut saved));
             },
         );
-        let _ = ctx.run_ui(RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(RawInput::default(), |_| {});
+        output.textures_delta.clear();
         assert_eq!(saved, 1.0);
         assert_eq!(ctx.zoom_factor(), 1.0);
     }
