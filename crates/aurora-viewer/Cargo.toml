@@ -75,8 +75,9 @@ fancy-regex = "0.19.2"
 # Held at these two versions: libmimalloc-sys 0.1.48 and later compile
 # mimalloc through a `.cc` file that cc passes to cl as `-Tp <file>`, which
 # sccache 0.18 (the shared build cache, AGENTS.md section 3) breaks
-# ("c1xx: cannot open source file '/WX-'"). Bump both once sccache handles it
-# (also in .github/dependabot.yml).
+# ("c1xx: cannot open source file '/WX-'"). Fixed in sccache by
+# mozilla/sccache#2904, after 0.18: bump both at the first sccache release
+# that has it (also in .github/dependabot.yml).
 mimalloc = { version = "=0.1.50", features = ["v2"] }
 libmimalloc-sys = "=0.1.47"
 
