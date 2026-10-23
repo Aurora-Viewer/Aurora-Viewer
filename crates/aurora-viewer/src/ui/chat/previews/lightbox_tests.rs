@@ -42,6 +42,20 @@ fn input(events: Vec<egui::Event>) -> egui::RawInput {
     }
 }
 
+// These headless frames deliberately discard uploads; egui requires the
+// renderer's texture delta to be acknowledged even without a GPU backend.
+fn run_ui(ctx: &Context, input: egui::RawInput, draw: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
+    let mut output = ctx.run_ui(input, draw);
+    output.textures_delta.clear();
+    output
+}
+
+fn run_pass(ctx: &Context, input: egui::RawInput, draw: impl FnMut(&Context)) -> egui::FullOutput {
+    let mut output = ctx.run_pass(input, draw);
+    output.textures_delta.clear();
+    output
+}
+
 fn pointer(at: Pos2, pressed: bool) -> egui::Event {
     egui::Event::PointerButton {
         pos: at,
@@ -70,7 +84,7 @@ fn card_click_enlarges_locally_and_group_reveal_stays_a_separate_click() {
     );
     let at = Pos2::new(90.0, 120.0);
     let mut frame = |events| {
-        ctx.run_ui(input(events), |ui| {
+        run_ui(&ctx, input(events), |ui| {
             card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load);
         })
     };
@@ -88,7 +102,7 @@ fn card_click_enlarges_locally_and_group_reveal_stays_a_separate_click() {
     pv.close_lightbox(&ctx);
     let browser_at = Pos2::new(239.0, 21.0);
     let mut frame = |events| {
-        ctx.run_ui(input(events), |ui| {
+        run_ui(&ctx, input(events), |ui| {
             card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load);
         })
     };
@@ -103,7 +117,7 @@ fn card_click_enlarges_locally_and_group_reveal_stays_a_separate_click() {
     assert!(!pv.enlarged());
     pv.place = lp::Place::Group;
     let mut frame = |events| {
-        let _ = ctx.run_ui(input(events), |ui| {
+        let _ = run_ui(&ctx, input(events), |ui| {
             card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load);
         });
     };
@@ -113,7 +127,7 @@ fn card_click_enlarges_locally_and_group_reveal_stays_a_separate_click() {
     assert!(pv.revealed.contains(&7));
     assert!(!pv.enlarged());
     let mut frame = |events| {
-        let _ = ctx.run_ui(input(events), |ui| {
+        let _ = run_ui(&ctx, input(events), |ui| {
             card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load);
         });
     };
@@ -135,7 +149,7 @@ fn image_layer_receives_wheel_and_drag_and_closing_restores_focus() {
     };
     pv.lightbox = Some(Lightbox::new(&ctx, "https://i.imgur.com/test.png".to_owned(), shown(&ctx)));
     let mut frame = |events| {
-        let _ = ctx.run_pass(input(events), |ctx| {
+        let _ = run_pass(&ctx, input(events), |ctx| {
             pv.lightbox_keys(ctx);
             pv.lightbox(ctx, &p, Some(bounds));
         });
@@ -153,14 +167,15 @@ fn image_layer_receives_wheel_and_drag_and_closing_restores_focus() {
     assert!(pv.lightbox.as_ref().unwrap().view.zoom > 1.0);
     let before = pv.lightbox.as_ref().unwrap().view.offset;
     let mut frame = |events| {
-        let _ = ctx.run_pass(input(events), |ctx| pv.lightbox(ctx, &p, Some(bounds)));
+        let _ = run_pass(&ctx, input(events), |ctx| pv.lightbox(ctx, &p, Some(bounds)));
     };
     frame(vec![pointer(at, true)]);
     frame(vec![egui::Event::PointerMoved(at + Vec2::new(35.0, 20.0))]);
     frame(vec![pointer(at + Vec2::new(35.0, 20.0), false)]);
     assert!((pv.lightbox.as_ref().unwrap().view.offset - before).length() > 10.0);
     let mut escaped = false;
-    let _ = ctx.run_pass(
+    let _ = run_pass(
+        &ctx,
         input(vec![egui::Event::Key {
             key: egui::Key::Escape,
             physical_key: None,
@@ -204,11 +219,12 @@ fn close_accelerator_dismisses_the_image_before_its_conversation() {
         ..Default::default()
     };
     pv.lightbox = Some(Lightbox::new(&ctx, String::new(), shown(&ctx)));
-    let _ = ctx.run_pass(input(vec![]), |ctx| {
+    let _ = run_pass(&ctx, input(vec![]), |ctx| {
         crate::ui::widgets::Floater::new("conversations", "Chat", Pos2::ZERO, Vec2::new(500.0, 350.0)).show(ctx, &p, &mut true, |_| {});
         crate::ui::close_key::shown(ctx, owner);
     });
-    let _ = ctx.run_pass(
+    let _ = run_pass(
+        &ctx,
         input(vec![egui::Event::Key {
             key: egui::Key::W,
             physical_key: None,
@@ -245,7 +261,7 @@ fn hover_actions_copy_pixels_and_open_an_independent_image_window() {
         },
     );
     let mut frame = |events| {
-        let _ = ctx.run_ui(input(events), |ui| {
+        let _ = run_ui(&ctx, input(events), |ui| {
             card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load)
         });
     };
@@ -261,7 +277,7 @@ fn hover_actions_copy_pixels_and_open_an_independent_image_window() {
     assert!(!pv.image_window_open());
     let window = Pos2::new(209.0, 21.0);
     let mut frame = |events| {
-        let _ = ctx.run_ui(input(events), |ui| {
+        let _ = run_ui(&ctx, input(events), |ui| {
             card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load)
         });
     };
@@ -270,7 +286,7 @@ fn hover_actions_copy_pixels_and_open_an_independent_image_window() {
     frame(vec![pointer(window, false)]);
     assert!(pv.image_window_open());
     assert!(!pv.enlarged(), "The new icon must not darken the conversation");
-    let _ = ctx.run_pass(input(vec![]), |ctx| {
+    let _ = run_pass(&ctx, input(vec![]), |ctx| {
         pv.lightbox(ctx, &p, None); // the chat was closed
         pv.player_window(ctx, &p);
     });
