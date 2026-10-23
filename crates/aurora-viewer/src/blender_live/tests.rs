@@ -249,9 +249,10 @@ fn blender_live_row_buttons_import_their_own_source_only_when_available() {
     assert!(sources.iter().all(|id| live.state(*id) == SourceState::Removed));
     let out = frame(&mut live, true, vec![]);
     assert!(positions(&out, aurora_i18n::tr!("blender-live-upload")).is_empty());
-    let restore = positions(&out, aurora_i18n::tr!("blender-live-restore"))[0];
-    frame(&mut live, true, click(restore, true));
-    frame(&mut live, true, click(restore, false));
+    assert!(positions(&out, aurora_i18n::tr!("blender-live-restore")).is_empty());
+    for id in &sources {
+        live.set_state(*id, SourceState::Visible);
+    }
     assert!(sources.iter().all(|id| live.state(*id) == SourceState::Visible));
     let out = frame(&mut live, false, vec![]);
     let imports = positions(&out, aurora_i18n::tr!("blender-live-upload"));

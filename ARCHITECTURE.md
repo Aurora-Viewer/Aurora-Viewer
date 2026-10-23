@@ -28,7 +28,7 @@ Hidden/removed sources keep receiving edits, with no simulator traffic.
 The Blender Live floater separates connection, objects and plug-in controls
 with shared horizontal dividers in a brighter palette tone and plain section
 headings. Each source row imports its own snapshot directly;
-visibility and bulk removal/restoration remain independent of import selection.
+visibility and bulk removal remain independent of import selection.
 `compat.py` maps renamed Principled sockets and uses bone collections in 4.0+
 or named pose groups and armature layers in 2.93–3.x. The mesh exporter reads
 corner normals in 4.1+ and calculates split loop normals in older versions.

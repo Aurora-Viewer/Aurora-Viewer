@@ -90,8 +90,9 @@ name, even if it spans several render batches. The window separates
 Uncheck an object to hide it
 temporarily; rechecking displays its latest geometry and materials.
 **Remove meshes** withdraws all sources from the list and avatar preview.
-Subsequent live revisions keep them removed. **Restore removed objects** brings
-those sources back. These controls affect Aurora's local preview and do not
+Subsequent live revisions keep them removed. To bring them back, restart the
+preview and use **Update now** in Blender. These controls affect Aurora's
+local preview and do not
 change the synchronization list or scene in Blender.
 
 Visibility and removal survive source renames with plug-in 0.8.6+ and list

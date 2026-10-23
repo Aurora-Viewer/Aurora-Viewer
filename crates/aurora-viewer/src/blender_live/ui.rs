@@ -164,15 +164,6 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                 });
             }
         });
-    if sources.iter().any(|s| live.state(s.id) == SourceState::Removed)
-        && widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-restore")).clicked()
-    {
-        for source in &sources {
-            if live.state(source.id) == SourceState::Removed {
-                live.set_state(source.id, SourceState::Visible);
-            }
-        }
-    }
 }
 
 fn section(ui: &mut egui::Ui, p: &crate::theme::Palette, icon: &str, title: &str) {
