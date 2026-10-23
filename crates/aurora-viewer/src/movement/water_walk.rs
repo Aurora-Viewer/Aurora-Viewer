@@ -240,7 +240,7 @@ mod tests {
         };
         let jump = r.update(true, &f, &input, now).unwrap();
         assert_eq!(jump.mode, 13);
-        assert_eq!(jump.parameters, [3.2, f.height, 1.0]);
+        assert_eq!(jump.parameters, [3.2, f.height, 4.0]);
         assert!(jump.valid() && jump.action > 0);
         assert!(r.active());
         assert_eq!(r.signal(now).unwrap().0, State::Jumping);

@@ -336,10 +336,11 @@ pub fn trajectory(world: &mut World, frame: u64, now: Instant, float_height: f32
         };
         position = center + Vec3::X * extent * phase.sin();
         velocity = Vec3::X * extent * (std::f32::consts::TAU / period) * phase.cos();
-        if mode.starts_with("water-jump") && (0.0..0.9).contains(&t) {
-            let phase = t / 0.9;
-            position.z += 4.0 * phase * (1.0 - phase);
-            velocity.z = 4.0 * (1.0 - 2.0 * phase) / 0.9;
+        if mode.starts_with("water-jump") && (0.0..aurora_net::bridge::WATER_WALK_JUMP_DURATION).contains(&t) {
+            let phase = t / aurora_net::bridge::WATER_WALK_JUMP_DURATION;
+            let scale = 4.0 * aurora_net::bridge::WATER_WALK_JUMP_HEIGHT;
+            position.z += scale * phase * (1.0 - phase);
+            velocity.z = scale * (1.0 - 2.0 * phase) / aurora_net::bridge::WATER_WALK_JUMP_DURATION;
         }
         if mode.starts_with("swim-depth") {
             velocity.z = if (1.5..2.5).contains(&time) {

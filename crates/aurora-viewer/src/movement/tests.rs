@@ -160,6 +160,49 @@ fn water_walk_jump_keeps_motor_ownership_and_suppresses_automatic_flight_until_l
 }
 
 #[test]
+fn water_walk_full_height_jump_keeps_ownership_until_the_longer_arc_lands() {
+    let now = Instant::now();
+    let prefs = Preferences {
+        water_walk: true,
+        ..Default::default()
+    };
+    let mut runtime = Runtime::default();
+    let mut f = frame();
+    let surface = 20.85;
+    f.position.z = surface;
+    f.on_ground = false;
+    runtime.update(&prefs, &f, &MoveInput::default(), now);
+    let input = MoveInput {
+        up: true,
+        forward: true,
+        run: true,
+        ..Default::default()
+    };
+    let jump = runtime.update(&prefs, &f, &input, now).motion;
+    assert_eq!(jump.parameters, [5.13, f.height, 4.0]);
+    // Prescribed samples of a 4 m / 1.6 s arc, not a Havok simulation.
+    for (ms, lift, velocity, pose) in [
+        (100, 0.9375, 8.75, crate::ao::State::Jumping),
+        (800, 4.0, 0.0, crate::ao::State::Jumping),
+        (1200, 3.0, -5.0, crate::ao::State::Falling),
+        (1500, 0.9375, -8.75, crate::ao::State::Falling),
+    ] {
+        f.position.z = surface + lift;
+        f.velocity.z = velocity;
+        let step = runtime.update(&prefs, &f, &input, now + Duration::from_millis(ms));
+        assert_eq!(step.motion, jump);
+        assert_eq!(step.flying, Some(false));
+        assert_eq!(runtime.water_walk.pose(), Some(pose));
+        assert!(!runtime.native_fly_allowed() && !runtime.allows_idle_anchor());
+    }
+    f.position.z = surface;
+    f.velocity.z = 0.0;
+    let landed = runtime.update(&prefs, &f, &input, now + Duration::from_millis(1700));
+    assert_eq!(landed.motion, Motion::motor(13, 5.13, f.height));
+    assert_eq!(runtime.water_walk.pose(), Some(crate::ao::State::Running));
+}
+
+#[test]
 fn water_walking_follows_visual_waves_only_while_supported() {
     let mut f = frame();
     f.position.z = 20.85;

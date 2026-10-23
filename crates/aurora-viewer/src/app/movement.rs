@@ -201,7 +201,12 @@ impl App {
                     46.0
                 };
                 let center = Vec3::new(x, 124.0, self.world.main_water_height());
-                (center + Vec3::new(-3.2, -4.5, 2.1), center + Vec3::Z * 0.15)
+                if crate::ao::water_demo::mode().is_some_and(|mode| mode.starts_with("water-jump")) {
+                    let height = aurora_net::bridge::WATER_WALK_JUMP_HEIGHT;
+                    (center + Vec3::new(-6.0, -8.0, height + 0.6), center + Vec3::Z * (height * 0.6))
+                } else {
+                    (center + Vec3::new(-3.2, -4.5, 2.1), center + Vec3::Z * 0.15)
+                }
             } else {
                 (Vec3::new(44.5, 116.0, 23.4) + offset, Vec3::new(45.2, 124.0, 21.8) + offset)
             };

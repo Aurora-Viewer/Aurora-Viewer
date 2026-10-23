@@ -6977,18 +6977,19 @@ at the 1.2 m/s crouch target. Both keep the native waterline root and use
 ephemeral local crouch clips through the ordinary AO owner. Inspect the pose,
 wave following and AO command trace; no cannonball or swim transition should
 occur. These modes do not change inventory or simulate bridge physics.
-`water-jump`, `water-jump-run` and `water-jump-hold` add a prescribed one-metre,
-0.9-second arc from the waterline, respectively stationary, running and with
-ascent held after landing. Capture frames 765/795/840 to inspect ascent,
+`water-jump`, `water-jump-run` and `water-jump-hold` add a prescribed four-metre,
+1.6-second arc from the waterline, respectively stationary, running and with
+ascent held after landing. Capture frames 765/825/870 to inspect ascent,
 descent and restored surface support. These are animation/command fixtures,
-not a Havok simulation. Bridge 1.30 needs human simulator validation: enable
+with the jump camera pulled back to keep the entire increased arc in view,
+not a Havok simulation. Bridge 1.31 needs human simulator validation: enable
 walking on water, tap the configured ascent key at rest, while walking,
 running and crouching, then hold it through landing. Expect one jump, ordinary
 AO jump/fall animations and a return onto the water without entering flight
 or swimming. Repeat in a no-fly parcel, with remapped keys and AO off; check
 ceilings/walls, mode disable, seating and bridge loss during the jump.
 
-Water-walk jump checks (2026-10-23): full `scripts/check.ps1` green, 4,585
+Initial water-walk jump checks (1 m / 0.9 s; 2026-10-23): full `scripts/check.ps1` green, 4,585
 passed, zero failures, 27 ignored; scripts, formatting and Clippy clean. Both
 bridge 1.30 scripts pass LSL lint with zero errors/warnings. Regressions cover
 one action across delayed ascent/fall/landing, airborne repress and held-key
@@ -7004,6 +7005,17 @@ real inventory poses or Havok behavior. Raw screenshots, profile samples and
 scoped logs remain in the task's `.scratch/`; shared desktop load is visible,
 so these are not isolated performance measurements. Human simulator acceptance
 of the physical jump and AO poses remains required before PR.
+
+Higher water-walk jump checks (2026-10-23): after the human confirmed the first
+jump worked but was too small, bridge 1.31 targets 4 m / 1.6 s, following the
+ordinary avatar reference in [Physics Test](https://wiki.secondlife.com/wiki/Physics_Test).
+The native offline fixture shares the commanded height and duration constants;
+its camera keeps the full arc visible. Full `scripts/check.ps1` green: 4,586
+passed, zero failures, 27 ignored; scripts, formatting and Clippy clean. Both
+LSL scripts lint with zero errors/warnings. The new regression keeps motor/AO
+ownership through the prescribed 4 m apex and longer descent, then restores
+running support while ascent stays held. Native capture and human simulator
+acceptance of the increased height remain pending.
 
 `water-walk-ui` and `swim-ui` also open the Movement tab for EN/FR control
 inspection, with only their corresponding water mode active.

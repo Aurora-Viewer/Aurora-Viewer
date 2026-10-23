@@ -45,6 +45,12 @@ pub struct Command {
     pub motion: Motion,
 }
 
+/// Commanded water-walk arc, following the avatar jump reference (~3.98 m,
+/// 1.6 s) in https://wiki.secondlife.com/wiki/Physics_Test. Actual simulator
+/// motion still depends on the collision-aware motor.
+pub const WATER_WALK_JUMP_HEIGHT: f32 = 4.0;
+pub const WATER_WALK_JUMP_DURATION: f32 = 1.6;
+
 /// Motor configuration; LSL derives direction from its current control events.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Motion {
@@ -96,7 +102,7 @@ impl Motion {
     pub fn water_walk_jump(speed: f32, height: f32) -> Self {
         Self {
             mode: 13,
-            parameters: [speed, height, 1.0],
+            parameters: [speed, height, WATER_WALK_JUMP_HEIGHT],
             action: ((Uuid::new_v4().as_u128() as u32) & i32::MAX as u32).max(1),
         }
     }
@@ -119,7 +125,8 @@ impl Motion {
             13 => {
                 (0.5..=8.0).contains(&speed)
                     && (0.6..=3.0).contains(&height)
-                    && ((self.action == 0 && climb == 0.0) || ((1..=i32::MAX as u32).contains(&self.action) && climb == 1.0))
+                    && ((self.action == 0 && climb == 0.0)
+                        || ((1..=i32::MAX as u32).contains(&self.action) && climb == WATER_WALK_JUMP_HEIGHT))
             }
             1 | 2 | 3 | 4 | 6 | 7 | 8 | 10 => {
                 let range = match self.mode {
@@ -551,7 +558,7 @@ mod tests {
         let jump = Motion::water_walk_jump(5.13, 1.7);
         assert!(jump.valid());
         assert_eq!(jump.mode, 13);
-        assert_eq!(jump.parameters, [5.13, 1.7, 1.0]);
+        assert_eq!(jump.parameters, [5.13, 1.7, 4.0]);
         assert!((1..=i32::MAX as u32).contains(&jump.action));
         for invalid in [
             Motion { action: 0, ..jump },
@@ -561,7 +568,11 @@ mod tests {
                 ..jump
             },
             Motion {
-                parameters: [5.13, 1.7, 1.01],
+                parameters: [5.13, 1.7, 4.01],
+                ..jump
+            },
+            Motion {
+                parameters: [5.13, 1.7, 1.0],
                 ..jump
             },
             Motion {
