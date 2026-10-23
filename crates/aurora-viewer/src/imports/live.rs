@@ -51,6 +51,21 @@ impl Imports {
         jobs: &crate::scene::jobs::Jobs,
         ctx: &egui::Context,
     ) {
+        self.open_live_mesh_lods(source, images, None, jobs, ctx);
+    }
+
+    pub fn open_blender_lods(&mut self, bundle: crate::blender_live::import::Bundle, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
+        self.open_live_mesh_lods(bundle.high, bundle.images, Some(bundle.lods), jobs, ctx);
+    }
+
+    fn open_live_mesh_lods(
+        &mut self,
+        source: PreparedSource,
+        images: Vec<PreparedImage>,
+        lods: Option<[Arc<aurora_assets::import_mesh::Scene>; 3]>,
+        jobs: &crate::scene::jobs::Jobs,
+        ctx: &egui::Context,
+    ) {
         if self.pending_files.is_some() || self.busy() || self.entries.len() >= 512 {
             return;
         }
@@ -73,7 +88,7 @@ impl Imports {
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
-            let mut entry = entry(source, images, &prefs);
+            let mut entry = entry_lods(source, images, &prefs, lods);
             entry.id = id;
             if retained.saturating_add(entry.source.as_ref().map_or(0, Source::retained_bytes)) > 1024 * 1024 * 1024 {
                 entry.source = None;
@@ -86,11 +101,50 @@ impl Imports {
     }
 }
 
+fn entry_lods(
+    source: PreparedSource,
+    images: Vec<PreparedImage>,
+    prefs: &Preferences,
+    lods: Option<[Arc<aurora_assets::import_mesh::Scene>; 3]>,
+) -> Entry {
+    let mut entry = entry(source, images, prefs);
+    if let Some(lods) = lods
+        && let Some(Source::Mesh(draft)) = &mut entry.source
+    {
+        for (level, scene) in lods.into_iter().enumerate() {
+            draft.lods[level].triangles = scene.models.iter().map(|model| model.triangles()).sum();
+            draft.lods[level].source = mesh::LodSource::File;
+            draft.lods[level].file = Some(scene);
+        }
+    }
+    entry
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use base64::{Engine, engine::general_purpose::STANDARD};
     use glam::Mat4;
+
+    #[test]
+    fn blender_lods_are_assigned_to_file_levels_and_remain_unquoted() {
+        let lib = crate::scene::avatar::AvatarLibrary::load();
+        let prepared = crate::blender_live::demo_fixture(&lib.rig, false).expect("live input");
+        let high = prepared.sources[0].clone();
+        let lods = std::array::from_fn(|_| high.scene.clone());
+        let entry = entry_lods(high, prepared.images, &Preferences::default(), Some(lods));
+        let Some(Source::Mesh(draft)) = &entry.source else {
+            panic!("mesh draft")
+        };
+        assert!(
+            draft.lods[..3]
+                .iter()
+                .all(|lod| lod.source == mesh::LodSource::File && lod.file.is_some() && lod.path.is_none())
+        );
+        let prepared = mesh::prepare(draft).expect("prepared levels");
+        assert!(prepared.lods.iter().all(|lods| lods.iter().all(Option::is_some)));
+        assert!(draft.quote.is_none() && draft.pending.is_none());
+    }
 
     #[test]
     fn blender_live_upload_freezes_all_parts_skin_materials_and_pixels_into_an_unquoted_draft() {

@@ -8,7 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 use uuid::Uuid;
 pub const STAGING_BUSY: &str = "AURORA_BLENDER_STAGING_BUSY";
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Image {
     pub width: u32,

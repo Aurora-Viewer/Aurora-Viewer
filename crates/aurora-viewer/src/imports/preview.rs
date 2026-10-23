@@ -280,6 +280,7 @@ fn mesh_joint_world(
     skin: &aurora_assets::import_mesh::Skin,
     imported: bool,
     pelvis: f32,
+    bend: f32,
 ) -> Vec<glam::Mat4> {
     let mut positions = rig.local_pos.clone();
     if imported {
@@ -289,7 +290,19 @@ fn mesh_joint_world(
             }
         }
     }
-    rig.world_with(&rig.local_rot, Vec3::Z * pelvis, &positions, &rig.scale)
+    let mut rotations = rig.local_rot.clone();
+    let bend = bend.clamp(0.0, 90.0).to_radians();
+    for (name, turn) in [
+        ("mElbowLeft", glam::Quat::from_rotation_z(-bend)),
+        ("mElbowRight", glam::Quat::from_rotation_z(bend)),
+        ("mKneeLeft", glam::Quat::from_rotation_y(bend)),
+        ("mKneeRight", glam::Quat::from_rotation_y(bend)),
+    ] {
+        if let Some(&joint) = rig.names.get(name) {
+            rotations[joint] *= turn;
+        }
+    }
+    rig.world_with(&rotations, Vec3::Z * pelvis, &positions, &rig.scale)
 }
 
 fn build(
@@ -371,7 +384,7 @@ fn build(
                             .map(|name| avatars.rig.names.get(name).copied())
                             .collect::<Option<Vec<_>>>()?;
                         let inverse = skin.inverse_bind.iter().map(|m| *m * skin.bind_shape).collect::<Vec<_>>();
-                        let world = mesh_joint_world(&avatars.rig, skin, draft.options.joints, draft.options.pelvis);
+                        let world = mesh_joint_world(&avatars.rig, skin, draft.options.joints, draft.options.pelvis, draft.preview_bend);
                         let rest = joints.iter().zip(&inverse).map(|(j, m)| world[*j] * *m).collect();
                         Some(Arc::new(aurora_render::preview::Skin {
                             joints,
@@ -461,7 +474,7 @@ fn build(
                 if (draft.show_joints || draft.show_overrides)
                     && let Some(skin) = &high.skin
                 {
-                    let world = mesh_joint_world(&avatars.rig, skin, draft.show_overrides, draft.options.pelvis);
+                    let world = mesh_joint_world(&avatars.rig, skin, draft.show_overrides, draft.options.pelvis, draft.preview_bend);
                     for name in &skin.names {
                         let Some(&joint) = avatars.rig.names.get(name) else { continue };
                         let center = world[joint].w_axis.truncate();
@@ -754,6 +767,41 @@ impl Imports {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mesh_lod_bend_diagnostic_moves_wrists_and_ankles_without_editing_the_upload_geometry() {
+        let avatars = crate::scene::avatar::AvatarLibrary::load();
+        let mut draft = crate::imports::tests::mesh_fixture();
+        let skin = aurora_assets::import_mesh::Skin {
+            names: vec!["mPelvis".into()],
+            inverse_bind: vec![glam::Mat4::IDENTITY],
+            alternate_bind: Vec::new(),
+            bind_shape: glam::Mat4::IDENTITY,
+            pelvis_offset: 0.0,
+        };
+        let neutral = super::mesh_joint_world(&avatars.rig, &skin, false, 0.0, 0.0);
+        let bent = super::mesh_joint_world(&avatars.rig, &skin, false, 0.0, 60.0);
+        for name in ["mWristLeft", "mWristRight", "mAnkleLeft", "mAnkleRight"] {
+            let joint = avatars.rig.names[name];
+            assert!((neutral[joint].w_axis - bent[joint].w_axis).length() > 0.05, "{name}");
+        }
+        let original = crate::imports::mesh::prepare(&draft).expect("original upload data");
+        draft.preview_bend = 60.0;
+        let diagnostic = crate::imports::mesh::prepare(&draft).expect("same upload data");
+        for (a, b) in original.lods.iter().zip(&diagnostic.lods) {
+            for (a, b) in a.iter().zip(b) {
+                let a = a.as_ref().expect("LOD");
+                let b = b.as_ref().expect("LOD");
+                let positions = |model: &aurora_assets::import_mesh::Model| {
+                    model
+                        .faces
+                        .iter()
+                        .flat_map(|face| face.vertices.iter().map(|vertex| vertex.position))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(positions(a), positions(b));
+            }
+        }
+    }
     use super::*;
 
     #[test]

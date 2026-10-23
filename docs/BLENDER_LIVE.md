@@ -132,13 +132,47 @@ disabled/removed in Blender), when stopping the bridge or changing accounts.
 Older plug-ins use names as their identity, so renaming starts a new entry.
 
 Each object has its own **Import** button on its row, with no selection required.
-Click it to open a frozen snapshot of that object in the
-normal mesh importer. All its parts, weights, inverse binds, UVs, colors and
+With plug-in 0.11.0+, it asks Blender to prepare the current object and all
+three lower LODs, then opens them in the normal mesh importer. All four levels
+are assigned automatically. All parts, weights, inverse binds, UVs, colors and
 image pixels belong to that draft; later live edits cannot alter a pending
 quote or upload. Existing drafts remain available, and the new draft is
 selected alone. Review the LODs, physics, scale, destination and permissions,
 calculate the cost, then confirm the upload normally. Opening the draft
 does not request a quote, charge money or create an inventory item.
+
+Select a source in Blender's synchronization list and expand **Import / LOD**.
+Each source retains its own Medium, Low and Lowest settings in the `.blend`:
+
+- **Existing object:** choose a mesh explicitly, or detect it by name suffix.
+  Defaults are `_medium`, `_low`, `_lowest`, case insensitive. A trailing
+  `_high`, `.high` or `-high` is removed before adding the configured suffix.
+  Explicit assignment takes priority; hidden objects are supported.
+- **Automatic:** reduce disposable copies of the current rest mesh with
+  Blender's Decimate modifier. Set a percentage of High triangles (defaults:
+  50%, 25%, 12.5%) or an approximate triangle target for each level.
+- **Existing or automatic:** the default; use an assigned/detected object,
+  generating only when none exists. An invalid existing mesh reports an error
+  instead of being silently replaced.
+
+Existing levels must use the same armature and High's materials. Material slots
+are matched and reordered; omitted surfaces become empty geometry at that level.
+Incompatible or ambiguous slots are rejected. All levels share one validated
+joint/bind palette. Generation bakes current shape keys and geometry modifiers
+on copies at rest, retaining interpolated weights, UVs and material assignments.
+Original meshes, modifiers, keys, pose, selection and list flags stay intact.
+
+In Aurora, select each LOD row to inspect its geometry and triangle count. The
+skinned preview's **Test bend (°)** slider bends elbows and knees to inspect
+deformations; it changes only the preview pose. Review the reductions visually,
+especially seams and small details, before confirming an import. Automatic
+triangle counts are approximate and may require adjusting the target.
+
+Preparation waits for Blender's Object Mode, with an actionable error after
+30 seconds; Aurora abandons an unanswered request after 180 seconds or a
+disconnect. Each bundle is bounded to 600,000 exported corners and 64 MiB.
+Older plug-ins can still synchronize live, but must be updated for this import
+workflow. A paused source can be imported without enabling its live preview.
 
 The existing mesh upload format includes base colors and diffuse/base-color
 textures. PBR material assets require a separate material upload; the importer
@@ -611,7 +645,7 @@ can be opened normally and connected through the Aurora sidebar.
 TCP listens on IPv4 loopback only. The client sends the eight bytes
 `AURBLD1\n`. Aurora responds with one newline-terminated JSON object containing
 `protocol`, the supported `joints`, their inverse neutral `rest_axes` (column-major,
-translation removed), `features: ["pbr-materials", "source-ids", "shape-transfer"]`, and `max_bytes`. Every subsequent client
+translation removed), `features: ["pbr-materials", "source-ids", "shape-transfer", "shape-apply", "import-lods"]`, and `max_bytes`. Every subsequent client
 message is a four-byte unsigned little-endian JSON byte count, then a UTF-8
 snapshot. Length zero is a heartbeat. The reply is newline-terminated JSON
 with `ok`, `revision` on success, or `error` on rejection. A success acknowledges
@@ -632,6 +666,20 @@ Controls are bounded to 4 KiB and never affect mesh revisions. Old clients
 receive no shape data. Pending sends are cleared on disconnect, not replayed.
 An optional `shape_cancel` request UUID in a reply clears a matching reference
 still waiting for Object Mode when authorization is revoked or the send expires.
+
+Clients negotiating `import-lods` can receive
+`prepare_import: {"id":"<request UUID>","source":"<source UUID>"}` in a reply.
+Blender's main thread prepares the source's configured levels; its socket worker
+sends a length-prefixed body beginning with four ASCII bytes `LODS`, followed
+by UTF-8 JSON containing `id`, `source`, `levels` and shared `images`. `levels`
+is ordered Lowest, Low, Medium, High. Each level contains the regular wire
+`mesh`, `slots` mapping its nonempty surfaces to High, and a bounded `origin`
+label. Errors send `id`, `source`, `error` instead. The viewer validates the
+bundle on its transport worker and reuses the strict mesh decoder; it never
+places these scenes in the live render mailbox. Request identity is checked
+before decoding and again before publication. Stale responses are ignored;
+requests are transient, cancelled on disconnect and never replayed. LOD replies
+and acknowledgements do not advance or replace live mesh revisions.
 
 Snapshots have `protocol`, `revision` and `meshes`. Each mesh has `name`,
 `joints`, column-major `inverse_bind` matrices, and `faces`. The optional

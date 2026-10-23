@@ -218,6 +218,9 @@ fn shape_controls(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette)
 
 fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, can_upload: bool) {
     section(ui, p, "cube", aurora_i18n::tr!("blender-live-objects"));
+    if !live.import.message.is_empty() {
+        ui.colored_label(if live.import.error { p.danger } else { p.muted }, &live.import.message);
+    }
     let sources = live.snapshot.as_ref().map(|s| s.sources.clone()).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
         ui.label(aurora_i18n::tr!(

@@ -44,6 +44,9 @@ pub(super) fn start_listener(
                     worker.status.lock().connected = false;
                     worker.status.lock().shape_capable = false;
                     worker.status.lock().shape_apply_capable = false;
+                    worker.status.lock().import_capable = false;
+                    worker.import_request.lock().take();
+                    worker.import_expected.lock().take();
                     worker.shape.lock().take();
                     worker.shape_ack.lock().take();
                     worker.shape_cancel.lock().take();
@@ -98,13 +101,14 @@ fn serve(
     }
     let mut joints: Vec<_> = supported.iter().collect();
     joints.sort();
-    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer", "shape-apply"] });
+    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer", "shape-apply", "import-lods"] });
     writeln!(stream, "{hello}")?;
     {
         let mut status = shared.status.lock();
         status.connected = true;
         status.shape_capable = false;
         status.shape_apply_capable = false;
+        status.import_capable = false;
         status.error = None;
     }
     ctx.request_repaint();
@@ -124,6 +128,29 @@ fn serve(
         }
         let mut bytes = vec![0; len];
         read(stream, &mut bytes, shared, Duration::from_secs(5))?;
+        if bytes.starts_with(b"LODS") {
+            let expected = *shared.import_expected.lock();
+            if let Some(expected) = expected
+                && serde_json::from_slice::<super::import::Request>(&bytes[4..]).is_ok_and(|request| request == expected)
+            {
+                let result = super::import::decode(&bytes[4..], expected, supported);
+                let current = {
+                    let mut pending = shared.import_expected.lock();
+                    if *pending == Some(expected) {
+                        pending.take();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if current {
+                    *shared.import_result.lock() = Some((expected.id, result));
+                }
+            }
+            reply(stream, shared, serde_json::json!({"ok":true}))?;
+            ctx.request_repaint();
+            continue;
+        }
         if len <= 4096 && control(&bytes, shared) {
             reply(stream, shared, serde_json::json!({"ok": true}))?;
             ctx.request_repaint();
@@ -181,6 +208,7 @@ fn control(bytes: &[u8], shared: &Shared) -> bool {
             let mut status = shared.status.lock();
             status.shape_capable = control.features.iter().any(|f| f == "shape-transfer");
             status.shape_apply_capable = status.shape_capable && control.features.iter().any(|f| f == "shape-apply");
+            status.import_capable = control.features.iter().any(|f| f == "import-lods");
         }
         "shape-result" => {
             if let Some(id) = control.id {
@@ -196,7 +224,11 @@ fn reply(stream: &mut TcpStream, shared: &Shared, mut reply: serde_json::Value) 
     let status = shared.status.lock();
     let capable = status.shape_capable;
     let apply_capable = status.shape_apply_capable;
+    let import_capable = status.import_capable;
     drop(status);
+    if import_capable && let Some(request) = shared.import_request.lock().take() {
+        reply["prepare_import"] = serde_json::json!(request);
+    }
     let shape = if capable {
         let mut queued = shared.shape.lock();
         if queued.as_ref().is_some_and(|shape| shape.data["action"] == "apply") && !apply_capable {

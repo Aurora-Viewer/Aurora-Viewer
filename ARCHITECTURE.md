@@ -36,13 +36,20 @@ with the worker. `docs/BLENDER_LIVE.md` describes setup and
 wire limits; `blender/tests/` exercises real Blender capture and transport.
 Optional negotiated source UUIDs keep Aurora's per-object visibility/removal
 stable across renames and render-batch splitting. Prepared sources share immutable
-import scenes and decoded pixels; `imports/live.rs` freezes the selected source
-on a worker into the existing mesh draft, quote and confirmed upload workflow.
+import scenes and decoded pixels. Negotiated `import-lods` requests identify a
+source and a transient request UUID; `blender/aurora_live/lods.py` resolves its
+per-entry settings and prepares existing or disposable reduced rest meshes.
+`blender_live/import.rs` validates the four-level reply on the transport worker,
+unifies bind/material layouts, and pads missing surfaces with NoGeometry.
+`imports/live.rs` freezes those scenes into the existing mesh draft with all
+four File LODs already assigned. Preparation never requests a quote or upload;
+the normal review, quote and confirmed upload workflow follows. Preview-only
+elbow/knee flexion inspects skinning without altering the uploaded mesh.
 Hidden/removed sources keep receiving edits, with no simulator traffic.
 The Blender Live floater separates connection, objects and plug-in controls
 with shared horizontal dividers in a brighter palette tone and plain section
 headings. Connection status shares its title row; port, loopback address and
-start/stop share a single control row. Each source row imports its own snapshot directly;
+start/stop share a single control row. Each source row requests its own fresh LOD bundle;
 visibility and bulk removal remain independent of import selection.
 Plugins lists detected Blender versions and installed plug-in versions, with a
 per-installation Install/Update/Enable/Reinstall action. Manual ZIP export remains

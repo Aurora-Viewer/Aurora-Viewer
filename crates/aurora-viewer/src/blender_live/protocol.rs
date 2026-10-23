@@ -14,7 +14,7 @@ pub use appearance::{Image, Material, PreparedImage, STAGING_BUSY};
 pub const VERSION: u32 = 1;
 pub const MAX_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_OBJECTS: usize = 32;
-const MAX_CORNERS: usize = 600_000;
+pub(super) const MAX_CORNERS: usize = 600_000;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,6 +101,15 @@ pub fn prepare_staged(
         return Err(aurora_i18n::tr!("blender-live-invalid-size").into());
     }
     let snapshot: Snapshot = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    prepare_snapshot(snapshot, supported, pool, cache)
+}
+
+pub(super) fn prepare_snapshot(
+    snapshot: Snapshot,
+    supported: &HashSet<String>,
+    pool: Option<&aurora_render::StagingPool>,
+    cache: &std::collections::HashMap<Uuid, PreparedImage>,
+) -> Result<Prepared, String> {
     if snapshot.protocol != VERSION || snapshot.meshes.len() > MAX_OBJECTS {
         return Err(aurora_i18n::tr!("blender-live-invalid-protocol").into());
     }

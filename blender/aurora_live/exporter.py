@@ -61,7 +61,7 @@ def coordinate_basis(armature, forward="AUTO"):
     return Matrix.Rotation(math.pi / 2, 4, "Z") if forward == "NEGATIVE_Y" else Matrix.Identity(4)
 
 
-def _mesh(source, supported, forward, rest_axes, capture):
+def _mesh(source, supported, forward, rest_axes, capture, include_slots=False):
     source.update_from_editmode()
     armature = source.find_armature()
     if armature is None:
@@ -83,6 +83,8 @@ def _mesh(source, supported, forward, rest_axes, capture):
     clone.parent = None
     clone.matrix_world = source.matrix_world
     bpy.context.scene.collection.objects.link(clone)
+    clone.hide_viewport = False
+    clone.hide_set(False)
     captured = None
     evaluated = None
     try:
@@ -183,7 +185,10 @@ def _mesh(source, supported, forward, rest_axes, capture):
             surfaces.append({"color": color, "material": material, "vertices": vertices, "indices": indices.reshape(-1).tolist()})
         if not surfaces or len(surfaces) > 32:
             raise ValueError(source.name + ": expected 1 to 32 nonempty material surfaces")
-        return {"name": source.name, "joints": names, "inverse_bind": inverse_bind, "faces": surfaces}
+        result = {"name": source.name, "joints": names, "inverse_bind": inverse_bind, "faces": surfaces}
+        if include_slots:
+            result["_slots"] = [int(slot) for slot in np.unique(materials)]
+        return result
     finally:
         if evaluated is not None and captured is not None:
             evaluated.to_mesh_clear()

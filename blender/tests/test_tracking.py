@@ -56,7 +56,7 @@ class TrackingTests(unittest.TestCase):
         self.names = {bone.name for bone in self.rig.data.bones}
         self.sent = []
         self.closed = []
-        self.fake = SimpleNamespace(state=lambda: ("Connected", self.names), rest_axes=lambda: {}, take_shape=lambda ready=True, pose=False: None,
+        self.fake = SimpleNamespace(state=lambda: ("Connected", self.names), rest_axes=lambda: {}, take_shape=lambda ready=True, pose=False: None, take_import=lambda ready=True: None,
                                     submit=self.sent.append, close=lambda: self.closed.append(True))
 
     def tick(self):

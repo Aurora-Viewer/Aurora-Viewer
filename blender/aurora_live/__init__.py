@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 10, 0), "blender": (2, 93, 0),
+    "version": (0, 11, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -14,11 +14,11 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
-from . import compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui, shape_apply, shape_transfer
+from . import compat, client, materials, weights, starter, exporter, lods, tracking, handles, rigging, skinning, posing, tools_ui, shape_apply, shape_transfer
 if _reloading:
     # Blender reloads the package during an in-place extension upgrade. Reload
     # dependencies first so the old exporter/client cannot survive that upgrade.
-    for _module in (compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui, shape_apply, shape_transfer):
+    for _module in (compat, client, materials, weights, starter, exporter, lods, tracking, handles, rigging, skinning, posing, tools_ui, shape_apply, shape_transfer):
         importlib.reload(_module)
 Client = client.Client
 
@@ -73,6 +73,9 @@ def _load_pre(_unused):
 
 @persistent
 def _refresh_handles(_unused=None):
+    for scene in bpy.data.scenes:
+        for entry in scene.aurora_live.objects:
+            lods.initialize(entry)
     for obj in list(bpy.data.objects):
         if obj.type == "ARMATURE":
             handles.apply(obj)
@@ -105,6 +108,15 @@ def _tick():
         return None
     status, supported = _client.state()
     scene = bpy.context.scene
+    request = _client.take_import(ready=bpy.context.mode == "OBJECT")
+    if request is not None:
+        _exporting = True
+        try:
+            _client.import_result(lods.prepare(bpy.context, request, supported, _client.rest_axes()))
+        except (ValueError, RuntimeError, KeyError, TypeError, OverflowError) as error:
+            _client.import_result(dict(request, error=pgettext_iface(str(error))[:512]))
+        finally:
+            _exporting = False
     _incoming_shape = _client.take_shape(ready=not bpy.context.object or bpy.context.object.mode == "OBJECT",
                                          pose=bpy.context.mode == "POSE")
     if _incoming_shape is not None:
@@ -200,6 +212,7 @@ class AURORA_OT_receive_shape(bpy.types.Operator):
 
 
 class AURORA_PG_live(bpy.types.PropertyGroup):
+    show_lods: BoolProperty(name="Import / LOD", default=False)
     objects: CollectionProperty(type=tracking.AURORA_PG_sync_object)
     object_index: IntProperty(default=0, min=0)
     rig: PointerProperty(name="Avatar rig", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "ARMATURE")
@@ -383,6 +396,7 @@ def _draw_live(layout, context):
             enabled=len(tracking.active(context.scene)), total=len(prefs.objects)), translate=False)
     else:
         layout.label(text="Add selected meshes to start syncing.")
+    lods.draw(layout, context)
     if _error:
         box = layout.box()
         box.alert = True
@@ -407,11 +421,29 @@ def _draw_starter(layout, context):
     if context.mode != "OBJECT":
         layout.label(text="Switch to Object Mode to create a rig.", icon="INFO")
 
-_classes = tracking.CLASSES + (AURORA_PG_live, AURORA_OT_receive_shape, AURORA_OT_starter, AURORA_OT_weights, AURORA_OT_connect,
+_classes = lods.CLASSES + tracking.CLASSES + (AURORA_PG_live, AURORA_OT_receive_shape, AURORA_OT_starter, AURORA_OT_weights, AURORA_OT_connect,
                              AURORA_OT_disconnect, AURORA_OT_refresh, AURORA_PT_live) + tools_ui.CLASSES
 
 _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator") for key, value in {
     "Connecting to Aurora…": "Connexion à Aurora…", "Connected to Aurora": "Connecté à Aurora",
+    "Import / LOD": "Import / LOD", "LOD source": "Source du LOD", "LOD object": "Objet LOD",
+    "Existing or automatic": "Existant sinon automatique", "Existing object": "Objet existant",
+    "Automatic": "Automatique", "Name suffix": "Suffixe du nom", "Reduction target": "Objectif de réduction",
+    "Percentage": "Pourcentage", "Triangles": "Triangles", "Keep (%)": "Conserver (%)",
+    "Triangle target": "Objectif de triangles",
+    "Use the assigned or named object; generate only when none exists":
+        "Utiliser l’objet associé ou détecté par son nom ; générer uniquement s’il n’existe pas",
+    "Require the assigned or named mesh": "Exiger l’objet associé ou détecté par son nom",
+    "Generate a disposable reduced copy of the High mesh": "Générer une copie réduite temporaire du maillage High",
+    "Percentage of High triangles": "Pourcentage des triangles du niveau High",
+    "Maximum triangle target": "Objectif maximal de triangles",
+    "Sources stay unchanged; inspect each LOD in Aurora.": "Sources préservées ; vérifiez chaque LOD dans Aurora.",
+    "Choose a different LOD mesh in the current scene": "Choisissez un autre maillage LOD dans la scène actuelle",
+    "LOD objects must use the same avatar rig as High": "Les LOD doivent utiliser le même squelette que High",
+    "LOD materials must match High's material slots": "Les matériaux des LOD doivent correspondre à ceux de High",
+    "LOD bind matrices disagree with High": "Les matrices de liaison des LOD diffèrent de celles de High",
+    "Import LODs exceed 110 avatar joints": "Les LOD de l’import dépassent 110 articulations",
+    "The requested source is no longer in this scene's live list": "L’objet demandé ne figure plus dans la liste live de cette scène",
     "Waiting for Aurora: Update Aurora Viewer to use live PBR materials":
         "Mettez à jour Aurora Viewer pour utiliser les matériaux PBR live",
     "Live materials use the mesh's active UV map": "Les matériaux live utilisent la carte UV active du maillage",

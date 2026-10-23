@@ -124,6 +124,7 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry) {
         draft.show_joints,
         draft.show_overrides,
         draft.explode,
+        draft.preview_bend,
     );
     if entry.local {
         ui.label(aurora_i18n::tr!("import-local-mesh-instance"));
@@ -153,6 +154,7 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry) {
         checkbox(ui, p, &mut draft.preview_weights, aurora_i18n::tr!("import-preview-weights"));
         checkbox(ui, p, &mut draft.show_joints, aurora_i18n::tr!("import-preview-joints"));
         checkbox(ui, p, &mut draft.show_overrides, aurora_i18n::tr!("import-preview-overrides"));
+        ui.add(egui::Slider::new(&mut draft.preview_bend, 0.0..=90.0).text(aurora_i18n::tr!("import-preview-bend")));
     });
     if draft.preview_physics {
         ui.add(egui::Slider::new(&mut draft.explode, 0.0..=3.0).text(aurora_i18n::tr!("import-explode-hulls")));
@@ -166,6 +168,7 @@ fn preview_controls(ui: &mut egui::Ui, p: &Palette, entry: &mut Entry) {
             draft.show_joints,
             draft.show_overrides,
             draft.explode,
+            draft.preview_bend,
         )
     {
         entry.invalidate_preview();
@@ -347,7 +350,8 @@ fn mesh_controls(
                             .width(160.0)
                             .truncate()
                             .selected_text(
-                                if from_live && level == 3 && source == mesh::LodSource::File && lod.path.is_none() {
+                                if from_live && source == mesh::LodSource::File && lod.path.is_none() && (level == 3 || lod.file.is_some())
+                                {
                                     aurora_i18n::tr!("blender-live-title")
                                 } else {
                                     lod_source(source)
@@ -380,7 +384,7 @@ fn mesh_controls(
                                 actions.push(Action::MeshFile(id, level));
                             }
                             ui.allocate_ui(Vec2::new(125.0, 26.0), |ui| {
-                                if from_live && level == 3 && lod.path.is_none() {
+                                if from_live && lod.path.is_none() && (level == 3 || lod.file.is_some()) {
                                     ui.add(egui::Label::new(aurora_i18n::tr!("blender-live-upload-source")).truncate())
                                         .on_hover_text(aurora_i18n::tr!("blender-live-upload-frozen"));
                                 } else {

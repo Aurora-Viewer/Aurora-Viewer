@@ -1717,7 +1717,8 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|upload\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, object controls, mesh import and permission-gated shape transfer |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, prepared LOD import and permission-gated shape transfer |
+| `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
@@ -1765,6 +1766,20 @@ blender/tests/test_shape_transfer.py -- <fixture.json>`. Precreate isolated
 Blender user directories and use a private temporary directory for UI tests.
 No fee or upload request is sent automatically. Check skin weights, LODs,
 physics, the source snapshot notice and the separate-PBR-upload notice.
+
+`lods` waits for a real local client and requests its first source's prepared
+LOD bundle once. Run `blender/tests/bridge_lods.py -- --port <port> --hold 45`
+using Blender's isolated background arguments. It supplies a hidden, named
+Medium mesh and automatically reduces Low and Lowest using distinct budgets.
+The normal importer must open with four File levels, decreasing triangle counts
+and retained skin/UV/materials. Select each LOD and test the bend slider in the
+skinned preview. No cost request or upload is sent.
+`blender/tests/test_lods.py` covers manual priority, name matching, automatic
+budgets, hidden meshes, weight/material validation, original-data preservation
+and `.blend` persistence. An optional `-- <fixture.json>` saves its native
+four-level fixture; set `AURORA_TEST_LODS_OUTPUT` to that path and run
+`cargo test --workspace blender_lods_native_fixture -- --ignored --nocapture`
+to check the same bytes in Aurora's decoder and aligned scenes.
 
 The installer bridge can be exercised without a grid using system Python:
 `python blender/tests/test_installer_bridge.py <blender-executable> --extension-zip <extension.zip> --legacy-zip <legacy.zip> --work <new-temporary-directory>`.

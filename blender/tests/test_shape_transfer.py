@@ -123,6 +123,7 @@ class ShapeTransferTests(unittest.TestCase):
     def test_connect_without_selection_or_mesh_and_keep_receiving_shapes(self):
         fake = MagicMock()
         fake.state.return_value = ("Connected to Aurora", frozenset(PAYLOAD["names"]))
+        fake.take_import.return_value = None
         fake.take_shape.return_value = None
         fake.rest_axes.return_value = {}
         with patch.object(aurora_live, "Client", return_value=fake):
@@ -130,6 +131,7 @@ class ShapeTransferTests(unittest.TestCase):
             self.assertIs(aurora_live._client, fake)
             aurora_live._tick()
             self.assertEqual(fake.submit.call_args[0][0]["meshes"], [])
+            fake.take_import.return_value = None
             fake.take_shape.return_value = PAYLOAD
             aurora_live._tick()
             self.assertTrue(bpy.context.object.get("aurora_shape_id"))
@@ -138,6 +140,7 @@ class ShapeTransferTests(unittest.TestCase):
     def test_apply_without_target_reports_an_actionable_error_through_the_timer(self):
         fake = MagicMock()
         fake.state.return_value = ("Connected to Aurora", frozenset(PAYLOAD["names"]))
+        fake.take_import.return_value = None
         fake.take_shape.return_value = self.apply_payload()
         fake.rest_axes.return_value = {}
         with patch.object(aurora_live, "_client", fake):

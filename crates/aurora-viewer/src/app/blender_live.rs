@@ -37,7 +37,10 @@ impl App {
         self.blender_live.shape.apply_blocked = crate::blender_live::shape::editable(&self.world)
             .and_then(|_| self.blender_live.shape_apply_connection())
             .err();
-        let can_upload = !self.imports.busy() && self.imports.pending_files.is_none() && self.imports.entries.len() < 512;
+        let can_upload = !self.imports.busy()
+            && self.imports.pending_files.is_none()
+            && self.imports.entries.len() < 512
+            && !self.blender_live.import.busy();
         if self.blender_live.show(ctx, palette, can_upload) {
             self.blender_live.start_requested = true;
         }
@@ -59,8 +62,12 @@ impl App {
             && let Some(snapshot) = &self.blender_live.snapshot
             && let Some(source) = snapshot.sources.iter().find(|source| source.id == id)
         {
-            self.imports
-                .open_live_mesh(source.clone(), snapshot.images.clone(), &self.scene.jobs, ctx);
+            if self.demo && std::env::var("AURORA_DEMO_BLENDER_LIVE").as_deref() == Ok("upload") {
+                self.imports
+                    .open_live_mesh(source.clone(), snapshot.images.clone(), &self.scene.jobs, ctx);
+            } else {
+                self.blender_live.request_import(id);
+            }
         }
     }
 
@@ -80,6 +87,17 @@ impl App {
 
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
         self.update_blender_shape();
+        if self.blender_live.owner.is_some_and(|owner| owner != self.world.agent_id) {
+            self.blender_live.stop();
+        }
+        self.blender_live.poll_import();
+        if !self.imports.busy()
+            && self.imports.pending_files.is_none()
+            && self.imports.entries.len() < 512
+            && let Some(bundle) = self.blender_live.import.ready.take()
+        {
+            self.imports.open_blender_lods(bundle, &self.scene.jobs, &self.egui_ctx);
+        }
         if std::mem::take(&mut self.blender_live.start_requested) {
             self.blender_live.start(
                 self.blender_joints(),
@@ -87,9 +105,6 @@ impl App {
                 &self.egui_ctx,
                 renderer.staging_pool(),
             );
-        }
-        if self.blender_live.owner.is_some_and(|owner| owner != self.world.agent_id) {
-            self.blender_live.stop();
         }
         if self.blender_live.clear {
             self.blender_live.clear = false;
@@ -110,6 +125,12 @@ impl App {
         {
             self.blender_live.demo_started = true;
             self.blender_live.open = true;
+            // Isolate automated bridge tests from already-open Blender clients.
+            if let Ok(port) = std::env::var("AURORA_DEMO_BLENDER_PORT").unwrap_or_default().parse::<u16>()
+                && port >= 1024
+            {
+                self.blender_live.port = port;
+            }
             self.blender_live.start(
                 self.blender_joints(),
                 self.blender_rest_axes(),
@@ -121,7 +142,7 @@ impl App {
                 self.demo_blender_shape(mode == "shape-readonly");
             }
             match crate::blender_live::demo_fixture(&self.world.avatar_lib.rig, mode != "1") {
-                Ok(snapshot) if !mode.starts_with("shape") => {
+                Ok(snapshot) if !mode.starts_with("shape") && mode != "lods" => {
                     self.blender_live.receive(snapshot);
                     self.blender_live.owner = Some(self.world.agent_id);
                     if mode == "objects" {
@@ -151,6 +172,15 @@ impl App {
                 self.scene.jobs.discard(old);
             }
             self.blender_live.owner = Some(self.world.agent_id);
+        }
+        if self.demo
+            && std::env::var("AURORA_DEMO_BLENDER_LIVE").as_deref() == Ok("lods")
+            && !self.blender_live.import.demo_requested
+            && let Some(source) = self.blender_live.snapshot.as_ref().and_then(|snapshot| snapshot.sources.first())
+        {
+            let id = source.id;
+            self.blender_live.import.demo_requested = true;
+            self.blender_live.request_import(id);
         }
         let missing = self
             .blender_live

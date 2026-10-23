@@ -2,6 +2,7 @@
 import bpy
 import uuid
 from bpy.props import BoolProperty, IntProperty, PointerProperty, StringProperty
+from . import lods
 
 on_change = None
 
@@ -60,6 +61,7 @@ def add(scene, objects):
         if valid(scene, obj) and obj.as_pointer() not in seen:
             entry = prefs.objects.add()
             entry.object = obj
+            lods.initialize(entry)
             seen.add(obj.as_pointer())
             added += 1
     if added:
@@ -69,6 +71,10 @@ def add(scene, objects):
 
 
 class AURORA_PG_sync_object(bpy.types.PropertyGroup):
+    medium: PointerProperty(type=lods.AURORA_PG_lod)
+    low: PointerProperty(type=lods.AURORA_PG_lod)
+    lowest: PointerProperty(type=lods.AURORA_PG_lod)
+    lod_initialized: BoolProperty(default=False, options={"HIDDEN"})
     object: PointerProperty(type=bpy.types.Object)
     source_id: StringProperty(options={"HIDDEN"})
     name: StringProperty(get=lambda self: self.object.name if self.object else "")

@@ -4,6 +4,7 @@
 
 mod addon;
 mod demo;
+pub(crate) mod import;
 mod installer;
 pub mod protocol;
 pub(crate) mod shape;
@@ -39,6 +40,7 @@ pub struct Status {
     pub connected: bool,
     pub shape_capable: bool,
     pub shape_apply_capable: bool,
+    pub import_capable: bool,
     pub received: u64,
     pub error: Option<String>,
 }
@@ -51,6 +53,9 @@ pub(crate) struct Shared {
     pub shape: Mutex<Option<shape::Outgoing>>,
     pub shape_ack: Mutex<Option<(Uuid, Option<String>)>>,
     pub shape_cancel: Mutex<Option<Uuid>>,
+    pub import_request: Mutex<Option<import::Request>>,
+    pub import_expected: Mutex<Option<import::Request>>,
+    pub import_result: Mutex<Option<(Uuid, Result<import::Bundle, String>)>>,
 }
 
 struct Server {
@@ -78,6 +83,7 @@ pub struct Live {
     pub owner: Option<Uuid>,
     pub addon: addon::Addon,
     pub shape: shape::State,
+    pub import: import::State,
     pub(super) installer: installer::Installer,
     pub(super) installer_scan: bool,
     pub(super) installer_choose: bool,
@@ -105,6 +111,7 @@ impl Default for Live {
             owner: None,
             addon: Default::default(),
             shape: Default::default(),
+            import: Default::default(),
             installer: Default::default(),
             installer_scan: false,
             installer_choose: false,
@@ -217,6 +224,7 @@ impl Live {
     }
 
     pub fn stop(&mut self) {
+        self.import = Default::default();
         self.start_requested = false;
         self.server = None;
         self.clear = true;

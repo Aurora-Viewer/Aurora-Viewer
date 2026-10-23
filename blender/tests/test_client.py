@@ -36,6 +36,56 @@ def snapshot(connection):
 
 
 class ClientTests(unittest.TestCase):
+    def test_import_request_and_binary_result_are_independent_of_live_revisions(self):
+        identity = {"id": "00000000-0000-0000-0000-000000000123", "source": "00000000-0000-0000-0000-000000000456"}
+        received = []
+        ready = threading.Event()
+        decoding, release = threading.Event(), threading.Event()
+        def server(listener):
+            with listener.accept()[0] as connection:
+                connection.settimeout(5)
+                self.assertEqual(receive(connection, 8), module.MAGIC)
+                connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"features":["pbr-materials","shape-transfer","import-lods"]}\n')
+                received.append(snapshot(connection))
+                connection.sendall(json.dumps({"ok": True, "prepare_import": identity}).encode() + b"\n")
+                ready.set()
+                size = struct.unpack("<I", receive(connection, 4))[0]
+                payload = receive(connection, size)
+                self.assertEqual(payload[:4], b"LODS")
+                received.append(json.loads(payload[4:]))
+                decoding.set()
+                self.assertTrue(release.wait(3))
+                connection.sendall(b'{"ok":true}\n')
+                received.append(snapshot(connection))
+                connection.sendall(b'{"ok":true,"revision":4}\n')
+        client, thread, failures = self.serve(server)
+        self.assertTrue(ready.wait(3))
+        self.assertIsNone(client.take_import(ready=False))
+        deadline, request = time.monotonic() + 3, None
+        while request is None and time.monotonic() < deadline:
+            request = client.take_import()
+            time.sleep(0.01)
+        self.assertEqual(request, identity)
+        self.assertIsNone(client.take_import())
+        client.import_result(dict(identity, levels=[], images=[]))
+        self.assertTrue(decoding.wait(3))
+        self.assertEqual(client._connection.gettimeout(), 180.0)
+        release.set()
+        client.submit({"protocol": 1, "revision": 4, "meshes": [], "images": []})
+        self.finish(client, thread, failures)
+        self.assertIn("import-lods", received[0]["features"])
+        self.assertEqual(received[1]["id"], identity["id"])
+        self.assertEqual(received[2]["revision"], 4)
+
+    def test_import_waiting_for_object_mode_expires_with_an_actionable_error(self):
+        client = module.Client.__new__(module.Client)
+        client._lock, client._wake = threading.Lock(), threading.Event()
+        client._import = {"id": "request", "source": "source"}
+        client._import_received = time.monotonic() - 31
+        self.assertIsNone(client.take_import(ready=False))
+        self.assertIn("Object Mode", client._import_result["error"])
+        self.assertIsNone(client.take_import())
+
     def test_shape_waiting_for_object_mode_expires_and_can_be_cancelled(self):
         client = module.Client.__new__(module.Client)
         client._lock = threading.Lock()

@@ -32,6 +32,9 @@ class Client:
         self._shape = None
         self._shape_received = 0.0
         self._shape_result = None
+        self._import = None
+        self._import_received = 0.0
+        self._import_result = None
         self._status = "Connecting to Aurora…"
         self._thread = threading.Thread(target=self._run, name="Aurora Live", daemon=True)
         self._thread.start()
@@ -68,8 +71,28 @@ class Client:
             self._shape_result = {"type": "shape-result", "id": identity, "error": error}
         self._wake.set()
 
+    def take_import(self, ready=True):
+        with self._lock:
+            if self._import is not None and time.monotonic() - self._import_received > 30:
+                self._import_result = dict(self._import, error="Switch to Object Mode and click Import again")
+                self._import = None
+                self._wake.set()
+            if not ready:
+                return None
+            request, self._import = self._import, None
+            return request
+
+    def import_result(self, result):
+        with self._lock:
+            self._import_result = result
+        self._wake.set()
+
     def _reply(self, reader):
         reply = self._line(reader)
+        if isinstance(reply.get("prepare_import"), dict):
+            with self._lock:
+                self._import = reply["prepare_import"]
+                self._import_received = time.monotonic()
         if isinstance(reply, dict) and "shape" in reply:
             with self._lock:
                 self._shape = reply["shape"]
@@ -128,7 +151,7 @@ class Client:
                             self._rest_axes = hello.get("rest_axes", {})
                         self._set_status("Connected to Aurora", hello["joints"])
                         if "shape-transfer" in hello.get("features", []):
-                            features = [name for name in ("shape-transfer", "shape-apply") if name in hello.get("features", [])]
+                            features = [name for name in ("shape-transfer", "shape-apply", "import-lods") if name in hello.get("features", [])]
                             payload = json.dumps({"type": "features", "features": features}).encode("utf-8")
                             connection.sendall(struct.pack("<I", len(payload)) + payload)
                             self._reply(reader)
@@ -140,6 +163,22 @@ class Client:
                             with self._lock:
                                 latest = self._latest
                                 result, self._shape_result = self._shape_result, None
+                                prepared, self._import_result = self._import_result, None
+                            if prepared is not None:
+                                payload = b"LODS" + json.dumps(prepared, separators=(",", ":"), allow_nan=False).encode("utf-8")
+                                if len(payload) > MAX_BYTES:
+                                    payload = b"LODS" + json.dumps({"id": prepared["id"], "source": prepared["source"],
+                                        "error": "Prepared LODs exceed 64 MiB"}, separators=(",", ":")).encode("utf-8")
+                                # A full four-level decode can outlast an ordinary
+                                # live frame. Keep it on the worker, bounded by the
+                                # viewer's import deadline; close() still interrupts.
+                                connection.settimeout(180.0)
+                                try:
+                                    connection.sendall(struct.pack("<I", len(payload)) + payload)
+                                    self._reply(reader)
+                                finally:
+                                    connection.settimeout(5.0)
+                                heartbeat = time.monotonic()
                             if result is not None:
                                 payload = json.dumps(result, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
                                 connection.sendall(struct.pack("<I", len(payload)) + payload)
@@ -175,3 +214,5 @@ class Client:
                     self._connection = None
                     self._shape = None
                     self._shape_result = None
+                    self._import = None
+                    self._import_result = None
