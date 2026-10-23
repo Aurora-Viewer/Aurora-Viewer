@@ -916,6 +916,7 @@ impl Inspector {
                 media: &mut self.media,
                 scene: &mut self.scene,
                 zoom_fraction: 0.0,
+                property_lines: &mut false,
                 demo: false,
             };
             super::super::show(

@@ -1157,6 +1157,7 @@ mod empty_map_tests {
             media: &mut media,
             scene: &mut scene,
             zoom_fraction: 0.0,
+            property_lines: &mut false,
             demo: false,
         };
         tool.out.clear();

@@ -53,6 +53,8 @@ pub struct Env<'a> {
     pub scene: &'a mut crate::scene::Scene,
     /// Focus tool slider: the camera's zoom fraction (0 out .. 1 in).
     pub zoom_fraction: f32,
+    /// The saved ShowPropertyLines switch, shared with both world menus.
+    pub property_lines: &'a mut bool,
     pub demo: bool,
 }
 
@@ -284,6 +286,7 @@ pub fn show(
         return false;
     }
     let before = s.clone();
+    let property_lines_before = *env.property_lines;
     // drafts belong to the selection they were typed for
     if tool.ui.last_selection != tool.selection {
         tool.cancel_color_picker(world);
@@ -434,7 +437,7 @@ pub fn show(
         tool.cancel_texture_picker(world, env);
         tool.close(world, s);
     }
-    *s != before
+    *s != before || *env.property_lines != property_lines_before
 }
 
 impl BuildTool {

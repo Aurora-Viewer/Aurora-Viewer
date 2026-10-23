@@ -314,7 +314,14 @@ const REGION_FLAGS_ALLOW_PARCEL_CHANGES: u32 = 1 << 26;
 const PARCEL_UNIT_AREA: f32 = 16.0;
 
 /// The land info panel (LLPanelLandInfo::refresh).
-pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+pub fn parcel_panel(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    s: &mut BuildSettings,
+    property_lines: &mut bool,
+) {
     let parcel = tool.land.parcel.clone().map(|(_, pi)| pi).or_else(|| world.parcel.clone());
     let sel_area = tool.land.selection_area();
     super::common::section(ui, p, aurora_i18n::tr!("build-ui-tools-parcel-information"));
@@ -350,6 +357,9 @@ pub fn parcel_panel(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world:
         .clicked()
     {
         tool.ui.requests.push(Request::AboutLand);
+    }
+    if let Some(v) = check(ui, p, *property_lines, false, aurora_i18n::tr!("common-show-boundaries"), true) {
+        *property_lines = v;
     }
     if let Some(v) = check(
         ui,

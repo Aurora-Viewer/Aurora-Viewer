@@ -872,6 +872,13 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
     ui.separator();
     ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);
     ui.item("mountain-filled", aurora_i18n::tr!("ui-context-edit-land"), CtxAction::EditTerrain);
+    ui.check(
+        "border-all",
+        aurora_i18n::tr!("common-show-boundaries"),
+        f.property_lines,
+        true,
+        CtxAction::SetPropertyLines(!f.property_lines),
+    );
     ui.separator();
     particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
 }

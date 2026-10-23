@@ -522,7 +522,7 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                         Tool::Create => tools::create_panel(ui, p, s),
                         Tool::Land => {
                             tools::land_panel(ui, p, tool, world, s);
-                            tools::parcel_panel(ui, p, tool, world, s);
+                            tools::parcel_panel(ui, p, tool, world, s, env.property_lines);
                         }
                         Tool::Edit => {}
                     }

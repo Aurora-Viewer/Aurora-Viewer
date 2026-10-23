@@ -113,16 +113,11 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
             let pass = take_icon(&mut rest, "ticket-filled");
             let edit = take_action(&mut rest, |a| matches!(a, CtxAction::EditTerrain));
             let buy = take_icon(&mut rest, "shopping-cart-filled");
-            return vec![
-                about,
-                build,
-                zoom,
-                if stand.enabled { stand } else { sit },
-                particles,
-                pass,
-                edit,
-                buy,
-            ];
+            // Keep the extra terrain toggle and particle action reachable
+            // without moving the other directions of menu_pie_land.xml.
+            rest.push(particles);
+            let more = submenu("dots-filled", aurora_i18n::tr!("ui-pie-more"), rest);
+            return vec![about, build, zoom, if stand.enabled { stand } else { sit }, more, pass, edit, buy];
         }
         Target::Avatar { own: true, .. } => {
             let community = take_icon(&mut rest, "users-group");
@@ -486,7 +481,7 @@ mod tests {
         let mut menu = open(Target::Ground);
         frame(&ctx, &mut menu, &facts, Vec::new());
         frame(&ctx, &mut menu, &facts, Vec::new());
-        click(&ctx, &mut menu, &facts, egui::pos2(300.0, 400.0), egui::PointerButton::Primary);
+        click(&ctx, &mut menu, &facts, egui::pos2(330.0, 330.0), egui::PointerButton::Primary);
         assert!(menu.is_some());
         assert!(super::super::take_requests(&ctx).is_empty());
         click(&ctx, &mut menu, &facts, egui::pos2(500.0, 400.0), egui::PointerButton::Primary);
@@ -685,6 +680,7 @@ mod tests {
         for facts in [
             Facts::default(),
             Facts {
+                property_lines: true,
                 seated: true,
                 object: super::super::ObjectFacts {
                     local_hud_scale: Some(1.6),
