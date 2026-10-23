@@ -7437,6 +7437,7 @@ radar-age-alert = { $days ->
 radar-too-far-to-zoom = Cet avatar est trop loin pour que la caméra aille jusqu'à lui.
 people-view-sort-options = Options d'affichage et de tri
 people-filter-by-name = Filtrer par nom…
+people-edit-contact-hold = Maintenez le clic gauche pour modifier les paramètres du contact.
 people-view-rich = Lignes riches
 people-view-compact = Compact (une ligne chacun, pour une foule)
 people-alerts-options = Alertes et options

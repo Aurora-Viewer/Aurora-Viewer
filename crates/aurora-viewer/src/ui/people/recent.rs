@@ -76,7 +76,6 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let world = c.world;
     let id = met.id;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click_and_drag());
-    resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(id));
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -123,16 +122,16 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         None,
         None,
     );
-    if rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id) {
+    let action = rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id);
+    if action.sheet {
         super::nearby::open_sheet(st, id);
     }
-    if resp.double_clicked() {
+    if action.activate {
         c.actions.push(PeopleAction::OpenIm(id));
     }
     rows::person_menu(&resp, p, world, &st.sel, id);
-    if cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right) {
-        resp.on_hover_text(name);
-    }
+    let detail = (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then_some(name);
+    rows::contact_tip(resp, detail);
 }
 
 fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, id: Uuid, slot: Rect, buttons: &[(&str, &str)]) {

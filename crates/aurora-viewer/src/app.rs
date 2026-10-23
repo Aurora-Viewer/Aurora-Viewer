@@ -7639,7 +7639,7 @@ impl App {
                 _ => {}
             }
         }
-        // AURORA_DEMO_POINTER="x,y[,l|r|s][;x,y…]": the pointer at these window
+        // AURORA_DEMO_POINTER="x,y[,l|r|s|h][;x,y…]": the pointer at these window
         // pixels from frame 300, one point every 60 frames (hover states,
         // sub-menus); ",l"/",r" left-/right-clicks the interface there; ",s"
         // leaves the pointer at rest there instead of moving it every frame
@@ -7648,24 +7648,25 @@ impl App {
             && self.frame_count >= 300
             && let Ok(v) = std::env::var("AURORA_DEMO_POINTER")
         {
-            let points: Vec<(f32, f32, Option<egui::PointerButton>, bool)> = v
+            let points: Vec<(f32, f32, Option<egui::PointerButton>, bool, u64)> = v
                 .split(';')
                 .filter_map(|pt| {
                     let mut it = pt.split(',').map(str::trim);
                     let x = it.next()?.parse().ok()?;
                     let y = it.next()?.parse().ok()?;
-                    let (button, still) = match it.next() {
-                        Some("l") => (Some(egui::PointerButton::Primary), false),
-                        Some("r") => (Some(egui::PointerButton::Secondary), false),
-                        Some("s") => (None, true),
-                        _ => (None, false),
+                    let (button, still, release) = match it.next() {
+                        Some("l") => (Some(egui::PointerButton::Primary), false, 3),
+                        Some("r") => (Some(egui::PointerButton::Secondary), false, 3),
+                        Some("h") => (Some(egui::PointerButton::Primary), true, 59),
+                        Some("s") => (None, true, 3),
+                        _ => (None, false, 3),
                     };
-                    Some((x, y, button, still))
+                    Some((x, y, button, still, release))
                 })
                 .collect();
             let step = (self.frame_count - 300) / 60;
             let i = (step as usize).min(points.len().saturating_sub(1));
-            if let Some(&(x, y, button, still)) = points.get(i) {
+            if let Some(&(x, y, button, still, release)) = points.get(i) {
                 let ppp = self.egui_ctx.pixels_per_point().max(0.1);
                 let pos = egui::pos2(x / ppp, y / ppp);
                 let click_frame = (self.frame_count - 300) % 60;
@@ -7675,7 +7676,7 @@ impl App {
                 }
                 if let Some(button) = button
                     && step as usize == i
-                    && matches!(click_frame, 2 | 3)
+                    && (click_frame == 2 || click_frame == release)
                 {
                     raw.events.push(egui::Event::PointerButton {
                         pos,

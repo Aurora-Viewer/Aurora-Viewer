@@ -2,7 +2,7 @@
 //! as rows with their picture, status, badges and range, grouped by the
 //! ranges of the chat (whisper, say, shout, beyond); a compact density of
 //! one line each for a crowd; sort pills; and the sheet of the person
-//! clicked, at the right (`sheet.rs`). The data, rules, options and menus
+//! held, at the right (`sheet.rs`). The data, rules, options and menus
 //! are those of Firestorm's radar table (`radar.rs`: FSRadar,
 //! fspanelradar.cpp, menu_fs_radar_options.xml), which Preferences › Aurora
 //! › People brings back.
@@ -164,7 +164,6 @@ const SORTS: [(Column, &str); 4] = [
 /// Open the sheet of `id`; the window grows for it on the next frame if it
 /// is too narrow.
 pub(super) fn open_sheet(st: &mut PeopleUi, id: Uuid) {
-    st.pending_sheet = None;
     if st.sheet.is_none() {
         st.sheet_grow = true;
     }
@@ -176,7 +175,6 @@ pub(super) fn open_sheet(st: &mut PeopleUi, id: Uuid) {
 /// its next frame (`fit_window`).
 pub(super) fn close_sheet(st: &mut PeopleUi) {
     st.sheet = None;
-    st.pending_sheet = None;
     st.sheet_grow = false;
 }
 
@@ -356,8 +354,6 @@ fn list_part(
                 }
                 let h = if compact { COMPACT_H } else { RICH_H };
                 let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::click_and_drag());
-                // dragged onto a conversation, the resident joins it
-                resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(row.id));
                 if !ui.is_rect_visible(rect) {
                     continue;
                 }
@@ -378,23 +374,13 @@ fn list_part(
                     paint_rich(ui, p, world, data, st, row, rect, selected, hot, pointer, actions)
                 };
                 ui.set_opacity(opacity);
-                if resp.clicked() {
-                    // Ctrl adds to the selection or takes away from it, Shift
-                    // takes the rows from the last one clicked; a plain click
-                    // opens the sheet
-                    let mods = ui.input(|i| i.modifiers);
-                    crate::ui::contacts::click_select(&mut st.radar_selected, &mut st.radar_anchor, &order, row.id, mods);
-                    if !mods.command && !mods.shift {
-                        open_sheet(st, row.id);
-                    }
-                }
-                if resp.secondary_clicked() && !st.radar_selected.contains(&row.id) {
-                    st.radar_selected = vec![row.id];
-                    st.radar_anchor = Some(row.id);
+                let action = super::rows::select(ui, &resp, &mut st.radar_selected, &mut st.radar_anchor, &order, row.id);
+                if action.sheet {
+                    open_sheet(st, row.id);
                 }
                 // double click: the camera goes to the avatar, when it is
                 // drawn (LLAvatarActions::zoomIn, FSPanelRadar)
-                if resp.double_clicked() {
+                if action.activate {
                     if row.loaded {
                         context::request(ui.ctx(), CtxAction::Zoom(row.position + glam::Vec3::Z * 0.6));
                     } else {
@@ -411,9 +397,7 @@ fn list_part(
                         context::avatar_list_menu(ui, p, world, row.id, AvatarList::Nearby);
                     }
                 });
-                if let Some(tip) = tip {
-                    resp.on_hover_text(tip);
-                }
+                super::rows::contact_tip(resp, tip.as_deref());
             }
         });
 }

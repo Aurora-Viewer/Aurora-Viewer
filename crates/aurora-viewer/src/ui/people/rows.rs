@@ -299,10 +299,25 @@ pub(super) fn actions(
         .collect()
 }
 
-/// A click on a row of a list that selects several (LLScrollListCtrl: Ctrl
-/// toggles, Shift extends from the last row clicked); true for a plain
-/// click, which opens the row's sheet. A right click on a row outside the
-/// selection selects it alone.
+/// A deliberate hold opens contact settings; ordinary clicks keep the
+/// Legacy list's selection and double-click actions (LLPanelPeople).
+const SHEET_HOLD_SECONDS: f64 = 0.5;
+
+#[derive(Clone, Copy)]
+struct SheetPress {
+    started: f64,
+    opened: bool,
+}
+
+#[derive(Default)]
+pub(super) struct RowAction {
+    pub sheet: bool,
+    pub activate: bool,
+}
+
+/// Ctrl toggles, Shift extends, right click selects for the menu. A hold
+/// belongs to this response only: moving, leaving the row or using a child
+/// button cancels it. Its release cannot also start an IM or a drag.
 pub(super) fn select(
     ui: &egui::Ui,
     resp: &egui::Response,
@@ -310,17 +325,74 @@ pub(super) fn select(
     anchor: &mut Option<Uuid>,
     order: &[Uuid],
     id: Uuid,
-) -> bool {
+) -> RowAction {
+    let (now, pressed, down, secondary, mods) = ui.input(|i| {
+        (
+            i.time,
+            i.pointer.primary_pressed(),
+            i.pointer.primary_down(),
+            i.pointer.secondary_down(),
+            i.modifiers,
+        )
+    });
+    let key = resp.id.with(("contact-sheet-press", id));
+    let mut press = ui.ctx().data_mut(|d| d.get_temp::<SheetPress>(key));
+    if pressed {
+        // egui can give a child the click and its row the potential drag.
+        // Being down on the row therefore does not establish click ownership.
+        let hovered = ui.ctx().interaction_snapshot(|i| i.hovered.clone());
+        let child_clicked = hovered
+            .iter()
+            .any(|other| *other != resp.id && ui.ctx().read_response(*other).is_some_and(|r| r.sense.senses_click()));
+        press = (resp.is_pointer_button_down_on() && !child_clicked && !mods.command && !mods.shift && !secondary).then_some(SheetPress {
+            started: now,
+            opened: false,
+        });
+    }
+    let consumed = press.is_some_and(|p| p.opened);
+    let mut action = RowAction::default();
+    if !consumed {
+        if !down || secondary || mods.command || mods.shift || !resp.contains_pointer() || resp.dragged() {
+            press = None;
+        } else if let Some(p) = &mut press {
+            let remaining = SHEET_HOLD_SECONDS - (now - p.started);
+            if remaining <= 0.0 {
+                p.opened = true;
+                action.sheet = true;
+                *sel = vec![id];
+                *anchor = Some(id);
+            } else {
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(remaining));
+            }
+        }
+    }
+    let consumed = consumed || action.sheet;
+    ui.ctx().data_mut(|d| {
+        d.remove::<SheetPress>(key);
+        if down && let Some(press) = press {
+            d.insert_temp(key, press);
+        }
+    });
+    if consumed {
+        return action;
+    }
+    resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(id));
     if resp.secondary_clicked() && !sel.contains(&id) {
         *sel = vec![id];
         *anchor = Some(id);
     }
-    if !resp.clicked() {
-        return false;
+    if resp.clicked() {
+        crate::ui::contacts::click_select(sel, anchor, order, id, mods);
     }
-    let mods = ui.input(|i| i.modifiers);
-    crate::ui::contacts::click_select(sel, anchor, order, id, mods);
-    !mods.command && !mods.shift
+    // egui counts clicks across widgets, so opening Contacts before a
+    // double click on its first row can count as three clicks.
+    action.activate = resp.double_clicked() || resp.triple_clicked();
+    action
+}
+
+pub(super) fn contact_tip(resp: egui::Response, detail: Option<&str>) {
+    let hint = aurora_i18n::tr!("people-edit-contact-hold");
+    resp.on_hover_text(detail.map_or_else(|| hint.to_owned(), |detail| format!("{detail}\n{hint}")));
 }
 
 /// The right-click menu of a resident's row: the menu of several when the
@@ -360,6 +432,140 @@ pub(super) fn empty(ui: &mut egui::Ui, p: &Palette, text: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct PressHarness {
+        frames: crate::ui::widgets::elide_tests::Frames,
+        sel: Vec<Uuid>,
+        anchor: Option<Uuid>,
+        sheets: usize,
+        activations: usize,
+        rects: Vec<Rect>,
+        modifiers: egui::Modifiers,
+    }
+
+    impl PressHarness {
+        fn frame(&mut self, events: Vec<egui::Event>) {
+            let order = [Uuid::from_u128(1), Uuid::from_u128(2)];
+            self.rects.clear();
+            self.frames.run(events, |ui| {
+                ui.input_mut(|i| i.modifiers = self.modifiers);
+                for id in order {
+                    let (rect, resp) = ui.allocate_exact_size(Vec2::new(300.0, RICH_H), Sense::click_and_drag());
+                    self.rects.push(rect);
+                    let child = Rect::from_min_max(Pos2::new(rect.right() - 30.0, rect.top()), rect.max);
+                    ui.interact(child, resp.id.with("quick-action"), Sense::click());
+                    let action = select(ui, &resp, &mut self.sel, &mut self.anchor, &order, id);
+                    self.sheets += usize::from(action.sheet);
+                    self.activations += usize::from(action.activate);
+                }
+            });
+        }
+
+        fn new() -> Self {
+            let mut h = Self {
+                frames: crate::ui::widgets::elide_tests::Frames::new(),
+                sel: Vec::new(),
+                anchor: None,
+                sheets: 0,
+                activations: 0,
+                rects: Vec::new(),
+                modifiers: egui::Modifiers::NONE,
+            };
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            h
+        }
+
+        fn button(&mut self, at: Pos2, button: egui::PointerButton, pressed: bool) {
+            self.frame(vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button,
+                    pressed,
+                    modifiers: self.modifiers,
+                },
+            ]);
+        }
+
+        fn wait(&mut self, frames: usize) {
+            for _ in 0..frames {
+                self.frame(Vec::new());
+            }
+        }
+    }
+
+    #[test]
+    fn contact_hold_opens_once_and_consumes_release_and_drag() {
+        let mut h = PressHarness::new();
+        let at = h.rects[0].center();
+        h.button(at, egui::PointerButton::Primary, true);
+        h.wait(20);
+        assert_eq!(h.sheets, 0, "a short press does not open settings");
+        h.wait(15);
+        assert_eq!(h.sheets, 1, "settings open while the button is still down");
+        assert_eq!(h.sel, vec![Uuid::from_u128(1)]);
+        h.wait(60);
+        assert_eq!(h.sheets, 1, "the same hold cannot reopen settings");
+        assert!(!egui::DragAndDrop::has_any_payload(&h.frames.ctx), "a held sheet is not a drag");
+        h.button(at, egui::PointerButton::Primary, false);
+        assert_eq!(h.activations, 0, "the release cannot start an IM");
+    }
+
+    #[test]
+    fn contact_hold_cancels_for_drag_child_button_and_right_click() {
+        for kind in ["drag", "leave", "child", "right", "short"] {
+            let mut h = PressHarness::new();
+            let mut at = h.rects[0].center();
+            if kind == "child" {
+                at.x = h.rects[0].right() - 15.0;
+            }
+            let button = if kind == "right" {
+                egui::PointerButton::Secondary
+            } else {
+                egui::PointerButton::Primary
+            };
+            h.button(at, button, true);
+            if kind == "short" {
+                h.button(at, button, false);
+            } else if kind == "drag" || kind == "leave" {
+                let to = if kind == "drag" {
+                    at + Vec2::new(15.0, 0.0)
+                } else {
+                    h.rects[1].center()
+                };
+                h.frame(vec![egui::Event::PointerMoved(to)]);
+                assert!(egui::DragAndDrop::has_payload_of_type::<crate::ui::call_invite::PersonDrag>(
+                    &h.frames.ctx
+                ));
+                h.frame(vec![egui::Event::PointerMoved(at)]);
+            }
+            h.wait(40);
+            assert_eq!(h.sheets, 0, "{kind} cannot open settings");
+            h.button(at, button, false);
+        }
+    }
+
+    #[test]
+    fn contact_hold_preserves_modified_selection() {
+        let mut h = PressHarness::new();
+        h.sel = vec![Uuid::from_u128(1)];
+        h.anchor = Some(Uuid::from_u128(1));
+        h.modifiers = egui::Modifiers::CTRL | egui::Modifiers::COMMAND;
+        let at = h.rects[1].center();
+        h.button(at, egui::PointerButton::Primary, true);
+        h.wait(35);
+        assert_eq!(h.sheets, 0);
+        h.button(at, egui::PointerButton::Primary, false);
+        assert_eq!(h.sel, vec![Uuid::from_u128(1), Uuid::from_u128(2)]);
+        h.modifiers = egui::Modifiers::SHIFT;
+        let at = h.rects[0].center();
+        h.button(at, egui::PointerButton::Primary, true);
+        h.wait(35);
+        h.button(at, egui::PointerButton::Primary, false);
+        assert_eq!(h.sheets, 0);
+        assert_eq!(h.sel.len(), 2, "Shift extends the selection");
+    }
 
     /// From the narrowest list (a floater is 220 points wide at least) to a
     /// wide one, with up to five parts of any width, folded or not: nothing

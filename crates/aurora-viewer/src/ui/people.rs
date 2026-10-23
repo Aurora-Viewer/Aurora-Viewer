@@ -3,7 +3,7 @@
 //! Blocked (`friends.rs`, `groups.rs`, `sets.rs`, `recent.rs`,
 //! `blocked.rs`: the tabs of Conversations › Contacts with all their
 //! rights and actions, `ui/contacts.rs` reused), each with the sheet of the
-//! person or group clicked (`sheet.rs`); `rows.rs` holds what their rows
+//! person held or group clicked (`sheet.rs`); `rows.rs` holds what their rows
 //! share. The friends tab is also the Contacts tab of the Conversations
 //! workspace (`friends_pane`). In the Legacy look (Preferences › Aurora,
 //! `Settings::classic_people`) Near you is the radar table (`radar.rs`) and
@@ -120,9 +120,6 @@ pub(super) struct Ctx<'a> {
     /// Group insignias.
     pub images: &'a HashMap<Uuid, egui::TextureHandle>,
     pub actions: &'a mut Vec<PeopleAction>,
-    /// The sheet replaces the friends list: keep its row until a second
-    /// click can no longer start an IM.
-    pub defer_sheet: bool,
 }
 
 /// A tab's list side: (ui, context, radar, state, beside a sheet).
@@ -130,7 +127,7 @@ type ListFn = fn(&mut egui::Ui, &mut Ctx<'_>, &RadarData<'_>, &mut PeopleUi, boo
 /// A tab's sheet of `id`; true when it was closed.
 type SheetFn = fn(&mut egui::Ui, &mut Ctx<'_>, &RadarData<'_>, &mut PeopleUi, Uuid) -> bool;
 
-/// A tab's list, and beside it the sheet of what was clicked
+/// A tab's list, and beside it the sheet of the person held or group clicked
 /// (`nearby::areas`: the window widens for it before its frame).
 fn split(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, salt: &str, list: ListFn, sheet: SheetFn) {
     let (list_rect, sheet_rect) = nearby::areas(ui, st);
@@ -236,8 +233,6 @@ pub struct PeopleUi {
     pic_budget: super::nameplate::PictureBudget,
     /// The person whose sheet is open (Aurora's look).
     pub sheet: Option<Uuid>,
-    /// A single click in Conversations waiting out egui's double-click interval.
-    pending_sheet: Option<(Uuid, f64)>,
     /// A sheet just opened: the window grows for it if it is too narrow.
     sheet_grow: bool,
     /// The width the window took for the sheet, given back when it closes.
@@ -372,7 +367,6 @@ pub fn people_window(
     let mut actions = Vec::new();
     if world.rlva.has("shownearby") && panels.people_tab == TAB_NEARBY {
         nearby::close_sheet(st);
-        st.pending_sheet = None;
     }
     let mut open = panels.people;
     let help = aurora_i18n::tr!("ui-people-nearby-avatars-and-friends-list");
@@ -406,7 +400,6 @@ pub fn people_window(
                 friends: &mut *friends,
                 images: contacts.images,
                 actions: &mut actions,
-                defer_sheet: false,
             };
             match panels.people_tab {
                 TAB_NEARBY => {
@@ -469,7 +462,7 @@ pub fn people_window(
 }
 
 /// What Conversations › Contacts shows in Aurora's look: the friends tab of
-/// this window (its list, and the sheet of the friend clicked), with a
+/// this window (its list, and the sheet of the friend held), with a
 /// state of its own so that each window keeps its filter, selection and
 /// sheet.
 pub struct FriendsPane<'a, 'r> {
@@ -508,7 +501,6 @@ pub fn friends_pane(
         friends: settings,
         images,
         actions: &mut actions,
-        defer_sheet: !nearby::sheet_fits(ui.available_width()),
     };
     friends::tab(ui, &mut c, data, st);
     for ask in std::mem::take(&mut st.asks) {
