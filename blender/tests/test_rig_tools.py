@@ -30,6 +30,7 @@ class RigToolsTests(unittest.TestCase):
         bpy.ops.object.delete(use_global=False)
         bpy.context.scene.aurora_live.objects.clear()
         bpy.context.scene.cursor.location = (0, 0, 0)
+        bpy.context.scene.aurora_live.forward = "NATIVE"
         self.rig, self.shirt = starter.create(bpy.context)
         bpy.context.scene.aurora_live.rig = self.rig
 

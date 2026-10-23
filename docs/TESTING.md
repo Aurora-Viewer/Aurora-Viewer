@@ -1745,8 +1745,24 @@ Objects and Plugins horizontal dividers and the truncated names beside their
 Import buttons. `upload` opens the importer directly with a frozen shell draft.
 Check that Connection status sits beside the title and its port, address and
 start/stop button stay on one line.
+Plugins automatically detects installed Blender executables on a worker. Check
+that paths and per-version plug-in statuses/actions are readable, Refresh rescans,
+and Choose Blender adds a portable executable. Manual ZIP export remains collapsed.
+Detection alone must not install or enable anything.
 No fee or upload request is sent automatically. Check skin weights, LODs,
 physics, the source snapshot notice and the separate-PBR-upload notice.
+
+The installer bridge can be exercised without a grid using system Python:
+`python blender/tests/test_installer_bridge.py <blender-executable> --extension-zip <extension.zip> --legacy-zip <legacy.zip> --work <new-temporary-directory>`.
+It creates every isolated user directory **before** launching Blender (older
+Blender can ignore a nonexistent configuration override when saving). It verifies
+fresh installation, upgrade, persistent activation, reactivation, backups,
+rollback after broken packages, downgrade refusal, classic-to-extension migration
+and preservation of an unrelated add-on/preference. It never saves a scene.
+To exercise Rust's actual bundled package/process path too, set
+`AURORA_TEST_BLENDER` to the executable and run
+`cargo test --workspace blender_live_installer_native -- --ignored --nocapture`.
+That ignored test creates and removes its own isolated profile.
 
 `AURORA_DEMO_GROUNDING` places our avatar on a solid ramp (`slope`) or
 different-height steps (`steps`). `landing` starts with a synthetic standing-up

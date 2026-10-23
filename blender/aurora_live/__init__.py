@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 8, 7), "blender": (2, 93, 0),
+    "version": (0, 8, 8), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -191,9 +191,10 @@ class AURORA_PG_live(bpy.types.PropertyGroup):
     interval: FloatProperty(name="Interval (seconds)", default=0.2, min=0.1, max=3600.0, soft_max=60.0, precision=2,
                             description="Minimum time in seconds between automatic updates; unchanged content is not sent")
     forward: EnumProperty(name="Coordinates", items=[
-        ("NATIVE", "SL / Z up", "Use the rig's existing SL coordinate axes"),
-        ("NEGATIVE_Y", "Blender -Y forward", "Rotate Blender -Y to SL +X"),
-    ], default="NATIVE", update=_settings_changed)
+        ("AUTO", "Automatic (Avastar / SL)", "Detect each rig's rest axes; create new rigs facing Blender -Y", 0, 2),
+        ("NATIVE", "SL / Z up", "Use the rig's existing SL coordinate axes", 0, 0),
+        ("NEGATIVE_Y", "Blender -Y forward", "Rotate Blender -Y to SL +X", 0, 1),
+    ], default="AUTO", update=_settings_changed)
 
 
 class AURORA_OT_starter(bpy.types.Operator):
@@ -568,6 +569,8 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Send the latest enabled objects and materials immediately, even in manual mode":
         "Envoyer immédiatement les objets actifs et leurs matériaux, même en mode manuel",
     "Coordinates": "Coordonnées", "SL / Z up": "SL / Z vertical", "Blender -Y forward": "Blender -Y vers l’avant",
+    "Automatic (Avastar / SL)": "Automatique (Avastar / SL)",
+    "Detect each rig's rest axes; create new rigs facing Blender -Y": "Détectez les axes de repos de chaque squelette ; les nouveaux rigs regardent vers −Y comme Avastar",
     "Enable Blender Live in Aurora first.": "Activez d’abord Blender Live dans Aurora.",
     "Local preview · no asset upload": "Aperçu local · sans import automatique",
 }.items()}}

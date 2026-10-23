@@ -32,7 +32,7 @@ const FILES: &[(&str, &[u8])] = &[
     ("LICENSE", include_bytes!("../../../../LICENSE")),
 ];
 
-fn archive(legacy: bool) -> Result<Vec<u8>, String> {
+pub(super) fn archive(legacy: bool) -> Result<Vec<u8>, String> {
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     for (name, bytes) in FILES {
@@ -48,6 +48,14 @@ fn archive(legacy: bool) -> Result<Vec<u8>, String> {
         writer.write_all(bytes).map_err(|error| error.to_string())?;
     }
     writer.finish().map(|cursor| cursor.into_inner()).map_err(|error| error.to_string())
+}
+
+pub(super) fn version() -> &'static str {
+    // The extension manifest is authoritative for both bundled layouts.
+    include_str!("../../../../blender/aurora_live/blender_manifest.toml")
+        .lines()
+        .find_map(|line| line.strip_prefix("version = \"").and_then(|v| v.strip_suffix('"')))
+        .unwrap_or("unknown")
 }
 
 #[derive(Default)]

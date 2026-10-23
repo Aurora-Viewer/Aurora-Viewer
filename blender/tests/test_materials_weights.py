@@ -33,6 +33,7 @@ class MaterialWeightTests(unittest.TestCase):
         bpy.context.scene.aurora_live.objects.clear()
         bpy.context.scene.unit_settings.scale_length = 1
         bpy.context.scene.cursor.location = (0, 0, 0)
+        bpy.context.scene.aurora_live.forward = "NATIVE"
         self.rig, self.mesh = starter.create(bpy.context)
         self.material = self.mesh.data.materials[0]
         self.shader = next(n for n in self.material.node_tree.nodes if n.type == "BSDF_PRINCIPLED")

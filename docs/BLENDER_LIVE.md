@@ -8,11 +8,27 @@ inventory items or charge an upload fee.
 
 ## Install and connect
 
-1. In Aurora, open **Build → Blender Live**, choose your Blender version,
-   and click **Save Blender plug-in…**. Choose where to save the ZIP. The
-   viewer bundles both matching formats; no source checkout or external
-Python installation is needed.
-2. Install the ZIP that matches your Blender version:
+1. In Aurora, open **Build → Blender Live**. The **Plugins** section automatically
+   detects local Blender installations and shows each executable's version,
+   path and installed Aurora plug-in version. Click **Install**, **Update** or
+   **Enable** on the desired row. Aurora chooses the compatible bundled package,
+   installs it and saves its enabled state in that Blender profile.
+2. If Blender is already open, restart it when convenient to load the updated
+   plug-in. Aurora never closes its windows or changes your scene. **Refresh**
+   rescans installations. **Choose Blender…** adds an executable in a custom or
+   portable location and remembers it for later. Standard application folders,
+   common portable folders, PATH and Windows application registrations are
+   searched without recursively scanning your disks. Removable drives are added
+   through **Choose Blender…**, avoiding empty card readers during automatic
+   detection. Prior Aurora package files and `userpref.blend` are preserved under the selected profile's
+   `aurora-backups` directory; failed installation restores these files. Newer
+   plug-in versions are never downgraded. Multiple executables of the same
+   Blender major/minor version can share one profile.
+
+   For installation on another computer or manual control, expand
+   **Manual installation (ZIP)** and click **Save Blender plug-in…**. The viewer
+   bundles both matching formats; no source checkout, download or external Python
+   installation is needed. Install the ZIP matching your Blender version:
    - **Blender 4.2 or later:** choose the **extension** package in Aurora.
      In Blender, open Preferences → Get Extensions → the top-right menu →
      Install from Disk, choose that ZIP, and enable it. Allow its network
@@ -42,6 +58,18 @@ The four navigation buttons keep the sidebar focused on one task:
 The **Avatar rig** selector is shared by Skeleton, Controls and Weights. Navigation
 belongs to the window manager, stays outside the scene's mesh/settings data,
 and defaults to Live on a fresh session.
+
+New starter rigs face **Blender -Y**, like Avastar, with the arms along X.
+**Coordinates → Automatic (Avastar / SL)** is the default. It detects each
+armature's rest orientation and converts its mesh, normals and joint binds to
+Second Life's +X axes together. Imported compatible Avastar rigs do not need
+Aurora-specific bone properties. Older Aurora +X rigs and -Y rigs can share one
+live list without rotating the Blender objects or editing their weights.
+The explicit **SL / Z up** and **Blender -Y forward** choices remain available
+and retain their saved values. If an older scene explicitly selected native
+coordinates for an Avastar rig, choose **Automatic (Avastar / SL)** and click
+**Update now**. Existing scenes and skeletons are never rotated automatically.
+See [Avastar's coordinate conventions](https://avalab.org/avastar/300/reference/usermanual/advanced/foreign-rigs/).
 
 **Automatic updates** sends changed geometry, weights, UVs, materials and list
 membership at most once per configured interval (**0.1–3,600 seconds**). Idle

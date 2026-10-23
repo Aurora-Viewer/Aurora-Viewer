@@ -38,6 +38,13 @@ impl App {
         if std::mem::take(&mut self.blender_live.save_addon) {
             self.blender_live.addon.save(&self.scene.jobs, ctx);
         }
+        let choose = std::mem::take(&mut self.blender_live.installer_choose);
+        if std::mem::take(&mut self.blender_live.installer_scan) || choose {
+            self.blender_live.installer.scan(&self.scene.jobs, ctx, choose);
+        }
+        if let Some(executable) = self.blender_live.installer_target.take() {
+            self.blender_live.installer.install(executable, &self.scene.jobs, ctx);
+        }
         if let Some(id) = self.blender_live.upload_requested.take()
             && can_upload
             && let Some(snapshot) = &self.blender_live.snapshot

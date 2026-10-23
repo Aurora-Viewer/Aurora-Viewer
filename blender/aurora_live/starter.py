@@ -233,9 +233,12 @@ def _tshirt(collection, rig, definitions, basis):
     return mesh
 
 
-def create(context, with_tshirt=True, forward="NATIVE"):
+def create(context, with_tshirt=True, forward=None):
     """Create a new collection at the cursor; never reuse or overwrite a rig."""
     definitions = joints()
+    forward = forward or context.scene.aurora_live.forward
+    if forward == "AUTO":
+        forward = "NEGATIVE_Y"
     basis = _basis(context, forward)
     selected = list(context.selected_objects)
     active = context.view_layer.objects.active
@@ -245,6 +248,7 @@ def create(context, with_tshirt=True, forward="NATIVE"):
         obj.select_set(False)
     try:
         rig = _rig(context, collection, definitions, basis)
+        rig["aurora_forward"] = forward
         shirt = _tshirt(collection, rig, definitions, basis) if with_tshirt else None
         if shirt:
             shirt.select_set(True)

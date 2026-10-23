@@ -37,6 +37,30 @@ def _column_major(matrix):
     return [float(matrix[row][column]) for column in range(4) for row in range(4)]
 
 
+def coordinate_basis(armature, forward="AUTO"):
+    """Map rest-data axes to SL +X; object placement is removed separately.
+
+    Avastar faces Blender -Y, while older Aurora/SL rigs face +X. Rest joint
+    pairs identify the left axis without relying on bone roll, current pose or
+    vendor properties. Capture remains independent for each armature.
+    """
+    if forward == "AUTO":
+        bones = {str(bone.get("aurora_joint", bone.name)): bone for bone in armature.data.bones
+                 if not bone.get("aurora_control", False)}
+        for stem in ("mShoulder", "mCollar", "mHip", "mEye", "mWrist"):
+            left, right = (bones.get(stem + side) for side in ("Left", "Right"))
+            if left is None or right is None:
+                continue
+            direction = left.head_local - right.head_local
+            if direction.x * direction.x + direction.y * direction.y < 1e-12:
+                continue
+            angle = math.pi / 2 - math.atan2(direction.y, direction.x)
+            return Matrix.Identity(4) if abs(math.remainder(angle, math.tau)) < 1e-6 else Matrix.Rotation(angle, 4, "Z")
+        # Partial older rigs do not always contain a symmetric joint pair.
+        forward = armature.get("aurora_forward", "NATIVE")
+    return Matrix.Rotation(math.pi / 2, 4, "Z") if forward == "NEGATIVE_Y" else Matrix.Identity(4)
+
+
 def _mesh(source, supported, forward, rest_axes, capture):
     source.update_from_editmode()
     armature = source.find_armature()
@@ -45,7 +69,7 @@ def _mesh(source, supported, forward, rest_axes, capture):
     # Ignore the armature's scene placement but retain its authored scale.
     root = Matrix.Translation(armature.matrix_world.translation) @ armature.matrix_world.to_quaternion().to_matrix().to_4x4()
     unit = bpy.context.scene.unit_settings.scale_length
-    basis = Matrix.Rotation(math.pi / 2, 4, "Z") if forward == "NEGATIVE_Y" else Matrix.Identity(4)
+    basis = coordinate_basis(armature, forward)
     transform = basis @ Matrix.Scale(unit, 4) @ root.inverted() @ source.matrix_world
     bone_transform = basis @ Matrix.Scale(unit, 4) @ root.inverted() @ armature.matrix_world
     normal_transform = transform.to_3x3().inverted().transposed()
@@ -159,7 +183,7 @@ def _mesh(source, supported, forward, rest_axes, capture):
         bpy.context.view_layer.update()
 
 
-def snapshot(objects, supported, revision, forward="NATIVE", rest_axes=None, source_ids=None):
+def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, source_ids=None):
     meshes = []
     capture = Capture()
     for source in objects:

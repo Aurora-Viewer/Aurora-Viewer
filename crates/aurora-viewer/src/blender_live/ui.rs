@@ -54,37 +54,130 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
                     ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-error", error = error));
                 }
                 section(ui, p, "download-filled", aurora_i18n::tr!("blender-live-plugins"));
-                ui.label(aurora_i18n::tr!("blender-live-instructions"));
-                ui.add_enabled_ui(!live.addon.busy, |ui| {
-                    widgets::radio_value(
-                        ui,
-                        p,
-                        &mut live.addon.legacy,
-                        false,
-                        aurora_i18n::tr!("blender-live-package-extension"),
-                    );
-                    widgets::radio_value(ui, p, &mut live.addon.legacy, true, aurora_i18n::tr!("blender-live-package-legacy"));
-                });
-                if ui
-                    .add_enabled_ui(!live.addon.busy, |ui| {
-                        widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-save-addon"))
-                    })
-                    .inner
-                    .clicked()
-                {
-                    live.save_addon = true;
-                }
-                if live.addon.saved {
-                    ui.colored_label(p.violet_light, aurora_i18n::tr!("blender-live-addon-saved"));
-                }
-                if let Some(error) = &live.addon.error {
-                    ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-addon-error", error = error.as_str()));
-                }
+                installer(live, ui, p);
+                widgets::collapsing(
+                    ui,
+                    p,
+                    "blender_live_manual_zip",
+                    aurora_i18n::tr!("blender-live-manual-install"),
+                    false,
+                    |ui| {
+                        ui.label(aurora_i18n::tr!("blender-live-instructions"));
+                        ui.add_enabled_ui(!live.addon.busy, |ui| {
+                            widgets::radio_value(
+                                ui,
+                                p,
+                                &mut live.addon.legacy,
+                                false,
+                                aurora_i18n::tr!("blender-live-package-extension"),
+                            );
+                            widgets::radio_value(ui, p, &mut live.addon.legacy, true, aurora_i18n::tr!("blender-live-package-legacy"));
+                        });
+                        if ui
+                            .add_enabled_ui(!live.addon.busy, |ui| {
+                                widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-save-addon"))
+                            })
+                            .inner
+                            .clicked()
+                        {
+                            live.save_addon = true;
+                        }
+                        if live.addon.saved {
+                            ui.colored_label(p.violet_light, aurora_i18n::tr!("blender-live-addon-saved"));
+                        }
+                        if let Some(error) = &live.addon.error {
+                            ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-addon-error", error = error.as_str()));
+                        }
+                    },
+                );
                 ui.small(aurora_i18n::tr!("blender-live-local-only"));
             });
     });
     live.open = open;
     start
+}
+
+fn installer(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
+    use super::installer::Action;
+    let installer = &live.installer;
+    if !installer.scanned {
+        live.installer_scan = true;
+    }
+    ui.horizontal_wrapped(|ui| {
+        ui.label(aurora_i18n::tr!("blender-live-bundled-version", version = super::addon::version()));
+        ui.add_enabled_ui(!installer.busy, |ui| {
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-detect")).clicked() {
+                live.installer_scan = true;
+            }
+            if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-choose-blender")).clicked() {
+                live.installer_choose = true;
+            }
+        });
+    });
+    if installer.busy {
+        ui.weak(if installer.installing.is_some() {
+            aurora_i18n::tr!("blender-live-installing")
+        } else {
+            aurora_i18n::tr!("blender-live-detecting")
+        });
+    } else if installer.scanned && installer.installations.is_empty() {
+        ui.weak(aurora_i18n::tr!("blender-live-no-installations"));
+    }
+    egui::ScrollArea::vertical()
+        .id_salt("blender_installations")
+        .max_height(180.0)
+        .show(ui, |ui| {
+            for installation in &installer.installations {
+                ui.push_id(&installation.executable, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(installation.label()).on_hover_text(installation.path_label());
+                        let report = &installation.report;
+                        let status = if let Some(version) = &report.plugin_version {
+                            aurora_i18n::tr!("blender-live-installed-version", version = version.as_str())
+                        } else {
+                            aurora_i18n::tr!("blender-live-not-installed").to_owned()
+                        };
+                        ui.weak(status);
+                        let action = installation.action();
+                        let label = match action {
+                            Action::Install => aurora_i18n::tr!("blender-live-install"),
+                            Action::Update => aurora_i18n::tr!("blender-live-update"),
+                            Action::Enable => aurora_i18n::tr!("blender-live-enable-addon"),
+                            Action::Reinstall => aurora_i18n::tr!("blender-live-reinstall"),
+                            Action::Newer => aurora_i18n::tr!("blender-live-newer"),
+                            Action::Unsupported => aurora_i18n::tr!("blender-live-unsupported-version"),
+                            Action::Failed => aurora_i18n::tr!("blender-live-detection-failed"),
+                        };
+                        let enabled =
+                            !installer.busy && matches!(action, Action::Install | Action::Update | Action::Enable | Action::Reinstall);
+                        if ui
+                            .add_enabled_ui(enabled, |ui| widgets::flat_button(ui, p, label))
+                            .inner
+                            .on_hover_text(report.error.as_deref().unwrap_or(label))
+                            .clicked()
+                        {
+                            live.installer_target = Some(installation.executable.clone());
+                        }
+                    });
+                    ui.add(egui::Label::new(egui::RichText::new(installation.path_label()).small().color(p.muted)).truncate())
+                        .on_hover_text(installation.path_label());
+                });
+            }
+        });
+    if let Some(report) = &installer.success {
+        ui.colored_label(p.success, aurora_i18n::tr!("blender-live-install-success"));
+        if let Some(backup) = &report.backup {
+            ui.small(aurora_i18n::tr!("blender-live-backup", path = backup.display().to_string()));
+        }
+        ui.small(aurora_i18n::tr!(
+            "blender-live-install-location",
+            path = report.target.display().to_string()
+        ))
+        .on_hover_text(report.profile.display().to_string());
+    }
+    if let Some(error) = &installer.error {
+        ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-installer-error", error = error.as_str()));
+    }
 }
 
 fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, can_upload: bool) {

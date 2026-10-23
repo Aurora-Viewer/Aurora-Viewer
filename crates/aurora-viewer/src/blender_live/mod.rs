@@ -4,6 +4,7 @@
 
 mod addon;
 mod demo;
+mod installer;
 pub mod protocol;
 #[cfg(test)]
 mod tests;
@@ -70,6 +71,10 @@ pub struct Live {
     pub snapshot: Option<protocol::Prepared>,
     pub owner: Option<Uuid>,
     pub addon: addon::Addon,
+    pub(super) installer: installer::Installer,
+    pub(super) installer_scan: bool,
+    pub(super) installer_choose: bool,
+    pub(super) installer_target: Option<std::path::PathBuf>,
     pub save_addon: bool,
     pub start_requested: bool,
     pub states: HashMap<Uuid, SourceState>,
@@ -92,6 +97,10 @@ impl Default for Live {
             snapshot: None,
             owner: None,
             addon: Default::default(),
+            installer: Default::default(),
+            installer_scan: false,
+            installer_choose: false,
+            installer_target: None,
             save_addon: false,
             start_requested: false,
             states: HashMap::new(),
@@ -191,6 +200,7 @@ impl Live {
 
     pub fn show(&mut self, ctx: &egui::Context, p: &crate::theme::Palette, can_upload: bool) -> bool {
         self.addon.poll();
+        self.installer.poll();
         ui::show(self, ctx, p, can_upload)
     }
 }

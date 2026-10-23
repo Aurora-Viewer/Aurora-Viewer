@@ -4,6 +4,20 @@
 snapshots and UI. Both matching Blender package layouts are bundled by
 `blender_live/addon.rs` and exported to ZIP on a worker, using the shared atomic
 file writer: a native extension for 4.2+ or a classic add-on for 2.93–4.1.
+`installer.rs` discovers bounded application directories, PATH and Windows
+application registrations, with a remembered manual executable picker. Discovery
+and installation run on workers, with at most two read-only Blender probes at a
+time. `blender/install_bridge.py`, bundled in the viewer, asks each executable
+for its actual version/profile and uses Blender's native offline package
+operators. Installation backs up Aurora's prior package and preferences, verifies
+every bundled file plus activation, restores files on failure, and saves only
+the changed Aurora enable state. An OS file lock serializes writes to a profile;
+newer plug-ins are never downgraded. Each background process loads its native
+preferences normally, disables scene script auto-execution and never saves a
+scene. Avoiding explicit preference reload works around a Blender 4.2 crash
+while preserving unrelated add-ons/settings. Manually
+selected executables are stored in `blender-installations.json` under Aurora's
+configuration directory. Existing Blender windows are never restarted or closed.
 A dedicated thread validates, normalizes and encodes the latest snapshot;
 `app/blender_live.rs` maintains render-only attachments under
 our avatar in `world::objects::PREVIEW_REGION`. These have no simulator identity
@@ -30,12 +44,23 @@ with shared horizontal dividers in a brighter palette tone and plain section
 headings. Connection status shares its title row; port, loopback address and
 start/stop share a single control row. Each source row imports its own snapshot directly;
 visibility and bulk removal remain independent of import selection.
+Plugins lists detected Blender versions and installed plug-in versions, with a
+per-installation Install/Update/Enable/Reinstall action. Manual ZIP export remains
+available in a collapsed section.
 `compat.py` maps renamed Principled sockets and uses bone collections in 4.0+
 or named pose groups and armature layers in 2.93–3.x. The mesh exporter reads
 corner normals in 4.1+ and calculates split loop normals in older versions.
 `blender/aurora_live/starter.py` creates the full Bento/Fitted Mesh armature
 from the same packaged `avatar_skeleton.xml`, and optionally an editable
 quad T-shirt with normalized weights, UVs and an Armature modifier.
+New rigs default to Blender -Y forward, matching Avastar. The default AUTO
+coordinate mode derives each armature's horizontal left axis from canonical
+rest-joint pairs (including aliases), converting vertices, normals and bind
+heads together to SL +X. It ignores current pose and object placement, supports
+mixed +X/-Y rigs in one snapshot and needs no vendor-specific metadata. Partial
+Aurora rigs retain an orientation hint; otherwise ambiguous partial rigs keep
+the previous native fallback. Explicit native/-Y overrides keep their original
+serialized enum numbers, and existing rest data/scenes are never rotated.
 `weights.py` solves automatic heat weights on disposable rest-pose copies,
 validates all selected objects, then publishes normalized four-bone weights
 without changing the source armature or non-bone groups. `materials.py`
