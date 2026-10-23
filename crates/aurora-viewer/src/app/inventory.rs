@@ -270,6 +270,14 @@ impl App {
                     }
                 }
             }
+            InvAction::PrepareOutfit(folder) => {
+                for command in self
+                    .appearance_ui
+                    .prepare_contents(&mut self.world.inventory, self.world.agent_id, folder)
+                {
+                    self.send(command);
+                }
+            }
             InvAction::Appearance(action) => {
                 self.inventory_ui.message.clear();
                 self.apply_appearance_action(action);

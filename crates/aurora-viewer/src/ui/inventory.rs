@@ -96,6 +96,7 @@ pub enum InvAction {
         kind: NewItem,
         name: String,
     },
+    PrepareOutfit(Uuid),
     Appearance(crate::world::appearance::Action),
     Animation {
         asset: Uuid,
@@ -1736,6 +1737,114 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outfit_menu_loads_missing_links_without_opening_appearance() {
+        use crate::world::appearance as model;
+        let agent = crate::demo::DEMO_AGENT;
+        let outfit = Uuid::from_u128(704);
+        let mut inv = Inventory::default();
+        model::seed_demo(&mut inv, agent);
+        let original = inv.items.remove(&Uuid::from_u128(723)).expect("saved outfit's spare attachment");
+        let links: Vec<_> = inv.folders[&outfit].items.iter().filter_map(|id| inv.items.remove(id)).collect();
+        let folder = inv.folders.get_mut(&outfit).expect("outfit");
+        folder.items.clear();
+        folder.state = FetchState::Unknown;
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let mut st = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        let mut appearance = super::super::appearance::AppearanceUi::default();
+        let facts = Facts {
+            agent,
+            ..Default::default()
+        };
+        let mut frame = |inv: &Inventory, events| {
+            let mut actions = Vec::new();
+            let output = headless_output(ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1200.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| context::show(ui, &p, inv, outfit, &mut st, &mut prefs, &facts, &mut actions),
+            ));
+            (output, actions)
+        };
+        let mut pos = egui::Pos2::ZERO;
+        for _ in 0..3 {
+            let (output, actions) = frame(&inv, Vec::new());
+            assert!(actions.iter().any(|a| matches!(a, InvAction::PrepareOutfit(id) if *id == outfit)));
+            for shape in output.shapes {
+                if let egui::epaint::Shape::Text(text) = shape.shape
+                    && text.galley.text() == aurora_i18n::tr!("ui-inventory-context-replace-current-outfit")
+                {
+                    pos = text.pos + text.galley.size() * 0.5;
+                }
+            }
+        }
+        assert_ne!(pos, egui::Pos2::ZERO, "replace entry is drawn");
+        let click = |pressed| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        frame(&inv, click(true));
+        let (_, actions) = frame(&inv, click(false));
+        assert!(
+            !actions.iter().any(|a| matches!(a, InvAction::Appearance(_))),
+            "incomplete replacement stays disabled"
+        );
+        assert!(appearance.prepare_contents(&mut inv, agent, outfit).is_empty());
+        assert!(inv.queue.contains(&(outfit, false)), "the menu fetches the cold folder first");
+        inv.apply(vec![aurora_net::inventory::FolderContents {
+            folder_id: outfit,
+            owner_id: agent,
+            version: 2,
+            folders: Vec::new(),
+            items: links,
+        }]);
+        let (_, actions) = frame(&inv, Vec::new());
+        assert!(actions.iter().any(|a| matches!(a, InvAction::PrepareOutfit(id) if *id == outfit)));
+        let commands = appearance.prepare_contents(&mut inv, agent, outfit);
+        assert!(matches!(commands.as_slice(), [aurora_net::NetCommand::FetchItems { items, owner }]
+            if items == &[original.id] && *owner == agent));
+        assert!(
+            appearance.prepare_contents(&mut inv, agent, outfit).is_empty(),
+            "no request per frame"
+        );
+        inv.add_items(vec![original]);
+        frame(&inv, Vec::new());
+        frame(&inv, click(true));
+        let (_, actions) = frame(&inv, click(false));
+        assert!(
+            actions
+                .iter()
+                .any(|a| matches!(a, InvAction::Appearance(model::Action::WearContents {
+            folder,
+            mode: model::WearMode::ReplaceOutfit,
+        }) if *folder == outfit)),
+            "replacement unlocks when the original arrives"
+        );
+        assert!(!actions.iter().any(|a| matches!(a, InvAction::PrepareOutfit(_))));
+        model::plan(
+            &inv,
+            model::Action::WearContents {
+                folder: outfit,
+                mode: model::WearMode::ReplaceOutfit,
+            },
+            &Default::default(),
+        )
+        .expect("replacement can be planned without opening Appearance");
+    }
 
     #[test]
     fn object_group_icons_follow_item_flags_without_changing_other_types() {

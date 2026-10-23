@@ -289,6 +289,7 @@ pub fn seed_received_big(inv: &mut Inventory, agent: Uuid, folders: u128, items:
 
 pub fn target(view: &str) -> Option<Uuid> {
     Some(Uuid::from_u128(match view {
+        "outfit-menu" | "outfit-menu-loading" => 704,
         "folder"
         | "clothes"
         | "body"
