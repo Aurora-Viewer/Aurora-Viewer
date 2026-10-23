@@ -139,6 +139,7 @@ impl App {
             // Account options remain accessible while region support loads.
             hover_height: w.login.is_some(),
             edit_linked: self.settings.build.edit_linked,
+            property_lines: self.settings.world_overlays.property_lines,
             voice: self.settings.audio.voice_enabled,
             particle_owner: self.object_menu.particle_owner.filter(|o| *o != w.agent_id),
             ..Facts::default()
@@ -327,6 +328,10 @@ impl App {
             CtxAction::BuyPass(point) => {
                 let (gx, gy) = ui::minimap::to_global(&self.world, point);
                 self.land_ui.buy_pass_at(&mut self.world, gx, gy);
+            }
+            CtxAction::SetPropertyLines(on) => {
+                self.settings.world_overlays.property_lines = on;
+                self.settings.save();
             }
             CtxAction::DisplayName => self.display_name_ui.open(),
             CtxAction::HoverHeight => self.hover_height_ui.open = true,

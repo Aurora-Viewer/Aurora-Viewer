@@ -58,6 +58,7 @@ beacons-particles = Sources de particules
 beacons-media = Sources de médias
 world-show-more = Afficher plus
 world-property-lines = Limites des parcelles
+common-show-boundaries = Afficher les frontières
 world-land-owners = Propriétaires des terrains
 world-hide-particles = Masquer les particules
 owned-land-title = Mes terrains

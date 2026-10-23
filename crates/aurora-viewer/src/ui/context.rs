@@ -182,6 +182,8 @@ pub struct Facts {
     pub friend: bool,
     /// EditLinkedParts.
     pub edit_linked: bool,
+    /// ShowPropertyLines, shared with the World menu and terrain editor.
+    pub property_lines: bool,
     /// The owner of the particle under the right click
     /// (LLPickInfo::mParticleOwnerID), when it is not us.
     pub particle_owner: Option<Uuid>,
@@ -233,6 +235,7 @@ pub enum CtxAction {
     BuyLand(Vec3),
     /// A pass for the parcel at the clicked point (Land.BuyPass).
     BuyPass(Vec3),
+    SetPropertyLines(bool),
     StandUp,
     SitGround,
     ToggleFly,

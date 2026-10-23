@@ -442,6 +442,7 @@ mod tests {
             media: &mut media,
             scene: &mut scene,
             zoom_fraction: 0.0,
+            property_lines: &mut false,
             demo: true,
         };
         tool.color_event(&mut world, Event::Preview([1.0, 0.0, 0.0]));

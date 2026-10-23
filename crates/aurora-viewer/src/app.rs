@@ -11541,6 +11541,7 @@ impl App {
                         media: &mut self.media,
                         scene: &mut self.scene,
                         zoom_fraction: self.camera.zoom_fraction(),
+                        property_lines: &mut self.settings.world_overlays.property_lines,
                         demo: self.demo,
                     };
                     self.settings.build.show_parcel_owners = self.settings.world_overlays.land_owners;
