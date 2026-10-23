@@ -44,8 +44,7 @@ impl MediaSettingsState {
     }
 }
 
-pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings, env: &mut Env) {
-    grid_options(ctx, p, tool, s);
+pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, _s: &mut BuildSettings, env: &mut Env) {
     weights(ctx, p, tool, world);
     media_settings(ctx, p, tool, world, env);
     group_picker(ctx, p, tool, world);
@@ -58,62 +57,49 @@ pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: 
     tool.ui.wanted_images.extend(w);
 }
 
-/// floater_build_options.xml ("Ruler options").
-fn grid_options(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: &mut BuildSettings) {
-    if !tool.ui.grid_options_open {
-        return;
-    }
-    let mut open = true;
-    let pos = ctx.content_rect().left_top() + Vec2::new(352.0, 60.0);
-    Floater::new(
-        "build_options",
-        aurora_i18n::tr!("build-ui-floaters-ruler-options"),
-        pos,
-        Vec2::new(260.0, 200.0),
-    )
-    .fixed()
-    .show(ctx, p, &mut open, |ui| {
-        row(ui, p, aurora_i18n::tr!("build-ui-floaters-unit-meters"), 150.0, |ui| {
-            spin(ui, &mut s.grid_resolution, 0.01, 0.01..=5.0, 3, 70.0, false);
-        });
-        row(
-            ui,
-            p,
-            aurora_i18n::tr!("build-ui-floaters-intersections-up-to-meters"),
-            150.0,
-            |ui| {
-                spin(ui, &mut s.grid_draw_size, 0.5, 1.0..=50.0, 1, 70.0, false);
-            },
-        );
-        row(ui, p, aurora_i18n::tr!("build-ui-floaters-decimal-precision"), 150.0, |ui| {
-            let mut d = s.decimal_precision as i32;
-            if spin_i(ui, &mut d, 0..=7, 70.0).changed {
-                s.decimal_precision = d as u8;
-            }
-        });
-        row(ui, p, aurora_i18n::tr!("build-ui-floaters-angle-degrees"), 150.0, |ui| {
-            spin(ui, &mut s.rotation_step, 0.1, 0.01..=359.99, 2, 70.0, false);
-        });
-        if let Some(v) = check(
-            ui,
-            p,
-            s.grid_sub_unit,
-            false,
-            aurora_i18n::tr!("build-ui-floaters-show-intermediate-tick-marks"),
-            true,
-        ) {
-            s.grid_sub_unit = v;
-        }
-        ui.horizontal(|ui| {
-            label(ui, p, aurora_i18n::tr!("build-ui-floaters-opacity"));
-            ui.add(
-                egui::Slider::new(&mut s.grid_opacity, 0.0..=1.0)
-                    .custom_parser(aurora_i18n::parse_number)
-                    .step_by(0.05),
-            );
-        });
+/// floater_build_options.xml, shared by the inline construction settings.
+pub(super) fn ruler_controls(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+    let label_width = (ui.available_width() - 80.0).max(30.0);
+    ui.spacing_mut().slider_width = (ui.available_width() - 80.0).clamp(40.0, 170.0);
+    row(ui, p, aurora_i18n::tr!("build-ui-floaters-unit-meters"), label_width, |ui| {
+        spin(ui, &mut s.grid_resolution, 0.01, 0.01..=5.0, 3, 70.0, false);
     });
-    tool.ui.grid_options_open = open;
+    row(
+        ui,
+        p,
+        aurora_i18n::tr!("build-ui-floaters-intersections-up-to-meters"),
+        label_width,
+        |ui| {
+            spin(ui, &mut s.grid_draw_size, 0.5, 1.0..=50.0, 1, 70.0, false);
+        },
+    );
+    row(ui, p, aurora_i18n::tr!("build-ui-floaters-decimal-precision"), label_width, |ui| {
+        let mut d = s.decimal_precision as i32;
+        if spin_i(ui, &mut d, 0..=7, 70.0).changed {
+            s.decimal_precision = d as u8;
+        }
+    });
+    row(ui, p, aurora_i18n::tr!("build-ui-floaters-angle-degrees"), label_width, |ui| {
+        spin(ui, &mut s.rotation_step, 0.1, 0.01..=359.99, 2, 70.0, false);
+    });
+    if let Some(v) = check(
+        ui,
+        p,
+        s.grid_sub_unit,
+        false,
+        aurora_i18n::tr!("build-ui-floaters-show-intermediate-tick-marks"),
+        true,
+    ) {
+        s.grid_sub_unit = v;
+    }
+    ui.horizontal(|ui| {
+        label(ui, p, aurora_i18n::tr!("build-ui-floaters-opacity"));
+        ui.add(
+            egui::Slider::new(&mut s.grid_opacity, 0.0..=1.0)
+                .custom_parser(aurora_i18n::parse_number)
+                .step_by(0.05),
+        );
+    });
 }
 
 /// LLFloaterObjectWeights ("Advanced").

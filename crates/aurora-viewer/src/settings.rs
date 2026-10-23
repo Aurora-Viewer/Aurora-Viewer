@@ -366,7 +366,7 @@ pub struct Settings {
     /// The Dev Toolbox's arrangement (Customize); None: the default one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev_toolbox: Option<crate::dev_toolbox::tools::Layout>,
-    /// Build tools (grid, snap, create, land brush).
+    /// Local construction preferences and layout, shared by every account.
     pub build: crate::build::BuildSettings,
     /// Camera (Firestorm "Move & View › View").
     pub camera: crate::camera::CameraSettings,
@@ -2419,6 +2419,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn construction_layout_is_saved_locally_and_shared_between_accounts() {
+        use crate::build::layout::{Item, Panel};
+        let path = scratch_settings_file();
+        let first = uuid::Uuid::from_u128(101);
+        let second = uuid::Uuid::from_u128(102);
+        let mut settings = Settings::default();
+        settings.select_hover_account(first);
+        settings.build.layout.place(Item::Actions, Panel::Settings, Some(Item::Snap), false);
+        settings.build.layout.place(Item::Shape, Panel::Hidden, None, false);
+        settings.build.transform_expanded = false;
+        settings.build.grid_resolution = 1.25;
+        let expected = settings.build.clone();
+        settings.save_to(&path);
+        let mut other = Settings::load_from(&path);
+        other.select_hover_account(second);
+        assert_eq!(other.build, expected);
+        other.build.layout.place(Item::Shape, Panel::Navigation, Some(Item::General), true);
+        other.build.snap = false;
+        let expected = other.build.clone();
+        other.save_to(&path);
+        let mut reopened = Settings::load_from(&path);
+        reopened.select_hover_account(first);
+        assert_eq!(reopened.build, expected);
+        let written: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert!(
+            written["build"]["layout"].is_object(),
+            "Construction uses the global preference object"
+        );
+    }
     #[test]
     fn water_choices_round_trip_and_quality_does_not_reset_effects() {
         let mut settings = super::WaterEffectsSettings {

@@ -7250,6 +7250,9 @@ replace-recovery-incomplete = Recovery incomplete: { $reason } Check the parts i
 
 # Compact build workspace
 build-compact-title = Build
+build-workspace-title = Construction
+build-workspace-object = OBJECT
+build-workspace-tools = TOOLS
 build-compact-help = Ctrl+B: open / close; Ctrl+1 to 5: camera, move, edit, create, land.
 build-compact-transform = Transform
 build-compact-shape = Shape
@@ -7330,9 +7333,9 @@ build-compact-prim-count = { $count ->
     [one] { $count } prim
    *[other] { $count } prims
     }
-build-compact-position = Position · m
-build-compact-size = Size · m
-build-compact-rotation = Rotation · °
+build-compact-position = Position
+build-compact-size = Size
+build-compact-rotation = Rotation
 build-compact-selection-snap = Selection and snapping
 build-compact-grid-unit = { $unit } m
 build-compact-copy-hint = Shift + drag: copy
@@ -10383,3 +10386,35 @@ contact-visual-icon-36 = Idea
 contact-visual-icon-37 = Pin
 contact-visual-icon-38 = Tag
 contact-visual-icon-39 = Identity
+
+# Personal construction layout
+build-layout-settings = Construction settings
+build-layout-ruler = Ruler settings
+build-layout-hidden = Hidden options
+build-layout-organize = Organize options…
+build-layout-finish = Finish organizing
+build-layout-transform = Position, size and rotation
+build-layout-manipulators = Move, rotate, stretch and align
+build-layout-actions = Undo, redo, link, unlink and duplicate
+build-layout-export-notecard = Export to a notecard
+build-layout-load-notecard = Load from a notecard
+build-layout-notecard-name = Construction settings
+build-layout-filter-notecards = Filter notecards
+build-layout-no-notecards = No available notecards.
+build-layout-invalid-notecard = This construction settings notecard is invalid.
+build-layout-saved = Settings exported to a notecard in inventory.
+build-layout-loaded = Construction settings restored.
+build-layout-reload = Load
+build-layout-loading = Loading settings…
+build-layout-drop-hidden = Drop here to hide
+build-layout-export = Export
+
+# Compact material layout
+build-material-surface = Surface
+build-material-relief-reflection = Relief and reflection
+build-material-lighting = Light response
+build-material-placement = Texture placement
+build-material-diffuse-tint = Diffuse tint
+build-material-specular-tint = Specular tint
+build-material-base-tint = Base tint
+build-material-emissive-tint = Emissive tint

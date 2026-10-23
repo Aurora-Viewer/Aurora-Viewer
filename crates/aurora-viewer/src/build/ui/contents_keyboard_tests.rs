@@ -8,6 +8,7 @@ use std::collections::HashSet;
 
 fn fixture() -> (Inspector, uuid::Uuid, Vec<uuid::Uuid>) {
     let mut inspector = Inspector::new();
+    inspector.settings.transform_expanded = false;
     inspector.tool.tab = 4;
     let object = inspector
         .world

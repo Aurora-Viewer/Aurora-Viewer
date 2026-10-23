@@ -107,7 +107,6 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
 
     let group = perm_state(&refs, |x| x.group_mask);
     let owner = perm_state(&refs, |x| x.owner_mask);
-    let base = perm_state(&refs, |x| x.base_mask);
     let share_bits = perm::COPY | perm::MODIFY | perm::MOVE;
     let (share, share_tentative) = if group.0 & share_bits == share_bits {
         (true, false)
@@ -246,6 +245,9 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 tool.ui.confirm = Some(Confirm::Deed(first.group_id));
             }
         });
+
+        ownership_permissions(ui, p, tool, world, &props, can_manipulate, can_sell);
+        crate::ui::widgets::divider(ui, p);
 
         // ---- click action
         let prims = tool.sel_prims(world);
@@ -387,69 +389,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         };
         ui.label(RichText::new(info).size(12.0).color(if modify { p.violet_light } else { p.muted }));
 
-        // ---- everyone / next owner
-        let everyone = perm_state(&refs, |x| x.everyone_mask);
-        let next = perm_state(&refs, |x| x.next_owner_mask);
-        label(ui, p, aurora_i18n::tr!("build-ui-general-anyone"));
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            let (v, t) = bit(everyone, perm::MOVE);
-            if let Some(n) = check(
-                ui,
-                p,
-                v,
-                t,
-                aurora_i18n::tr!("common-move"),
-                can_manipulate && owner.0 & perm::MOVE != 0,
-            ) {
-                tool.set_perm(world, perm_field::EVERYONE, n, perm::MOVE);
-            }
-            let (v, t) = bit(everyone, perm::COPY);
-            let copy_ok = owner.0 & perm::COPY != 0 && owner.0 & perm::TRANSFER != 0;
-            if let Some(n) = check(
-                ui,
-                p,
-                v,
-                t || !copy_ok,
-                aurora_i18n::tr!("common-copy-2"),
-                can_manipulate && copy_ok,
-            ) {
-                tool.set_perm(world, perm_field::EVERYONE, n, perm::COPY);
-            }
-        });
-        label(ui, p, aurora_i18n::tr!("build-ui-general-next-owner"));
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            let next_ok = can_sell && owner.0 & perm::TRANSFER != 0;
-            let (v, t) = bit(next, perm::MODIFY);
-            if let Some(n) = check(ui, p, v, t, aurora_i18n::tr!("common-edit"), next_ok && base.0 & perm::MODIFY != 0) {
-                tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::MODIFY);
-            }
-            let (v, t) = bit(next, perm::COPY);
-            let can_copy = owner.0 & perm::COPY != 0;
-            if let Some(n) = check(
-                ui,
-                p,
-                v,
-                t || !can_copy,
-                aurora_i18n::tr!("common-copy-2"),
-                next_ok && base.0 & perm::COPY != 0,
-            ) {
-                tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::COPY);
-            }
-            let (v, t) = bit(next, perm::TRANSFER);
-            // enabled by the next owner's copy bit (sic, LLPanelPermissions)
-            if let Some(n) = check(
-                ui,
-                p,
-                v,
-                t || !can_transfer,
-                aurora_i18n::tr!("common-transfer"),
-                next_ok && next.0 & perm::COPY != 0,
-            ) {
-                tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::TRANSFER);
-            }
-        });
+        ownership_permissions(ui, p, tool, world, &props, can_manipulate, can_sell);
     } else {
         row(
             ui,
@@ -461,6 +401,84 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             },
         );
     }
+}
+
+fn ownership_permissions(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    props: &[ObjectProps],
+    can_manipulate: bool,
+    can_sell: bool,
+) {
+    let refs: Vec<_> = props.iter().collect();
+    let owner = perm_state(&refs, |x| x.owner_mask);
+    let base = perm_state(&refs, |x| x.base_mask);
+    let can_transfer = owner.0 & perm::TRANSFER != 0;
+    // ---- everyone / next owner
+    let everyone = perm_state(&refs, |x| x.everyone_mask);
+    let next = perm_state(&refs, |x| x.next_owner_mask);
+    label(ui, p, aurora_i18n::tr!("build-ui-general-anyone"));
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        let (v, t) = bit(everyone, perm::MOVE);
+        if let Some(n) = check(
+            ui,
+            p,
+            v,
+            t,
+            aurora_i18n::tr!("common-move"),
+            can_manipulate && owner.0 & perm::MOVE != 0,
+        ) {
+            tool.set_perm(world, perm_field::EVERYONE, n, perm::MOVE);
+        }
+        let (v, t) = bit(everyone, perm::COPY);
+        let copy_ok = owner.0 & perm::COPY != 0 && owner.0 & perm::TRANSFER != 0;
+        if let Some(n) = check(
+            ui,
+            p,
+            v,
+            t || !copy_ok,
+            aurora_i18n::tr!("common-copy-2"),
+            can_manipulate && copy_ok,
+        ) {
+            tool.set_perm(world, perm_field::EVERYONE, n, perm::COPY);
+        }
+    });
+    label(ui, p, aurora_i18n::tr!("build-ui-general-next-owner"));
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        let next_ok = can_sell && owner.0 & perm::TRANSFER != 0;
+        let (v, t) = bit(next, perm::MODIFY);
+        if let Some(n) = check(ui, p, v, t, aurora_i18n::tr!("common-edit"), next_ok && base.0 & perm::MODIFY != 0) {
+            tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::MODIFY);
+        }
+        let (v, t) = bit(next, perm::COPY);
+        let can_copy = owner.0 & perm::COPY != 0;
+        if let Some(n) = check(
+            ui,
+            p,
+            v,
+            t || !can_copy,
+            aurora_i18n::tr!("common-copy-2"),
+            next_ok && base.0 & perm::COPY != 0,
+        ) {
+            tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::COPY);
+        }
+        let (v, t) = bit(next, perm::TRANSFER);
+        // enabled by the next owner's copy bit (sic, LLPanelPermissions)
+        if let Some(n) = check(
+            ui,
+            p,
+            v,
+            t || !can_transfer,
+            aurora_i18n::tr!("common-transfer"),
+            next_ok && next.0 & perm::COPY != 0,
+        ) {
+            tool.set_perm(world, perm_field::NEXT_OWNER, n, perm::TRANSFER);
+        }
+    });
 }
 
 #[cfg(test)]

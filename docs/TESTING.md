@@ -696,6 +696,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_FOCUS=off\|on` | Focus and camera following while editing |
 | `AURORA_DEMO_BUILD_EDGE=<edge>` | Move to the edge, hold then release |
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
+| `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
@@ -712,6 +713,58 @@ when unfocused") is ignored during a screenshot.
 
 
 ### Details
+
+`AURORA_DEMO_BUILD_SIZE` sets the compact construction window's initial dimensions
+once for reproducible captures; normal sessions restore saved geometry. There is
+one presentation at every width. The initial request is 350 by 820; the visible icons and expanded transform area
+can raise its minimum height. Append
+`+settings`, `+organize` or `+folded` to `AURORA_DEMO_BUILD_TAB=general` to inspect
+the side settings, hidden-item storage/notecard buttons or folded numeric values.
+The visible rail icons set the minimum editor height: attempt to shrink the
+window, then hide/restore icons and repeat. Every remaining icon must fit without
+a rail scrollbar. Check the settings gear remains square with values open/closed.
+The old `+grid` suffix now opens the same side settings with inline ruler controls.
+Human validation: move the main window to both sides; settings follow its free
+side and bottom. Organize options without changing their checkbox states, move
+both toolbar rows and rail icons into hidden storage and restore them. Export a
+named notecard, change the layout/ruler, load that inventory notecard and confirm
+restoration without changing object transforms. Check a foreign or malformed
+notecard reports an error without changing any settings. Construction preferences
+and layout save automatically in the local global settings file, shared across
+accounts. Notecard export is explicit. Grid login and inventory roundtrip are
+performed by the human; demo exports use synthetic inventory items.
+
+For the material layout, use `AURORA_DEMO_BUILD=move,object:125` and
+`AURORA_DEMO_BUILD_TAB=texture:bp+folded` at 350 by 820: three square previews
+are in one row, followed by tint/surface, relief/reflection and UV controls.
+For PBR, add `AURORA_DEMO_PBR_OVERRIDE=1`, select `move,object:150` and use
+`texture:pbr+folded`: a square rendered material preview and its four maps share
+the BP preview size in a three-column grid,
+then tint/surface, light response and per-channel UV controls. Scroll the main
+section to reach lower controls; the shared footer stays in place. Check each
+preview opens the matching picker, colors keep their live preview/cancel,
+alpha cutoffs appear in Mask mode, and per-channel UV values remain independent.
+Object 125 also checks the built-in white diffuse image. On the grid, assign
+White, Transparent and Default in turn: the first is white, the second shows a
+checkerboard, and Default displays its texture even when already resident or
+loaded from cache. Check PBR material factors/texture overrides update its preview.
+
+For selected-object display switching, keep `AURORA_DEMO_PBR_OVERRIDE=1` and
+`AURORA_DEMO_BUILD=move,object:151`. Compare `texture:bp+folded` with
+`texture:pbr+folded`: the selected slab has its plain classic texture in BP
+and tiled PBR texture with its UV/tint override in PBR; the other slab retains
+its PBR rendering. In the native viewer, click BP, PBR and
+Media repeatedly, select another object/linked part/face, then leave Materials
+or close/fold the editor. Each object must retain its last mode after
+deselection, independently of the next object. Use
+`AURORA_DEMO_BUILD=material-deselect,object:151` for an automatic native capture
+after closing/deselection: BP must remain plain and PBR must remain tiled.
+Reselect an object and choose PBR to restore its material, including every
+material/map/UV override. Leave the region by crossing or teleporting, then
+return: all local modes must be reset, including for cached objects. A teleport
+within the same region must keep them. Disconnect/reconnect must also reset
+them. No simulator material update is sent by changing tabs; BP texture edits
+still follow their normal edit commands.
 
 `AURORA_DEMO_SCULPT_ZERO=1` places three objects east of the start position
 (x=134, y=123/125/127). The grey object has no sculpt block and stays a torus;
@@ -1209,8 +1262,10 @@ this variable to check the initial focus on the avatar. The HUDs and enabled
 following keep their behaviour.
 
 **`AURORA_DEMO_BUILD_TAB=general|rights|object|transform|shape|features|texture[:pbr|bp|bp-normal|bp-specular|media]|contents`**
-— section of the build window shown by the script (General separates object information from Rights); `+weights`, `+grid`, `+media`, `+permissions`
-also open these windows.
+— section of the build window shown by the script. General includes object
+permissions; `rights`, `object` and `transform` redirect to General for older
+scenarios. `+weights`, `+media` and `+permissions` open the related dialogs;
+`+grid` opens the side settings with inline ruler controls.
 
 Use `faces-ready,object:99620` with `texture:bp-normal` or `texture:bp-specular`
 to inspect and edit UV transforms before assigning either map. Assign a map

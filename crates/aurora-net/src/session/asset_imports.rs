@@ -31,6 +31,7 @@ struct SettingsCreate {
     data: Vec<u8>,
     /// UpdateSettingsAgentInventory and FetchInventory2.
     caps: (String, String),
+    asset_type: i32,
 }
 
 /// PERM_COPY (llpermissionsflags.h).
@@ -405,16 +406,61 @@ impl Session<'_> {
                 folder: parent,
                 data,
                 caps,
+                asset_type: 56,
             },
         );
         self.send_main(&message, true);
     }
 
-    /// onInventoryItemCreated: everyone may copy the new item, then its asset
+    /// LLPreviewNotecard::onSaveComplete / create_inventory_item: use the
+    /// server's callback id before uploading, exactly as for settings items.
+    pub(super) fn create_notecard_item(&mut self, request: Uuid, parent: Uuid, name: String, data: Vec<u8>) {
+        let caps = self.main_cap("UpdateNotecardAgentInventory").zip(self.main_cap("FetchInventory2"));
+        let valid =
+            !parent.is_nil() && !name.trim().is_empty() && name.len() <= 255 && crate::inventory::notecard::Notecard::decode(&data).is_ok();
+        let Some(caps) = caps.filter(|_| valid && self.asset_imports.settings.len() < 8) else {
+            emit(
+                self.sh,
+                NetEvent::InventoryContentSaved {
+                    request,
+                    item: Uuid::nil(),
+                    result: Err(aurora_i18n::tr!("session-saving-is-unavailable-in-this-region").into()),
+                },
+            );
+            return;
+        };
+        let callback = self.inventory_callback(false);
+        let mut message = CreateInventoryItem::default();
+        message.agent_data.agent_id = self.agent_id();
+        message.agent_data.session_id = self.session_id();
+        message.inventory_block.folder_id = parent;
+        message.inventory_block.callback_id = callback;
+        // create_new_item (indra/newview/llviewerinventory.cpp) leaves the
+        // transaction null: this new note has no previously uploaded asset.
+        message.inventory_block.next_owner_mask = 0x7fff_ffff;
+        message.inventory_block.type_ = 7;
+        message.inventory_block.inv_type = 7;
+        message.inventory_block.wearable_type = 255;
+        message.inventory_block.name = str_field(&name);
+        self.asset_imports.settings.insert(
+            callback,
+            SettingsCreate {
+                started: Instant::now(),
+                request,
+                folder: parent,
+                data,
+                caps,
+                asset_type: 7,
+            },
+        );
+        self.send_main(&message, true);
+    }
+
+    /// onInventoryItemCreated: everyone may copy the new settings item, then its asset
     /// goes up (updateInventoryItem).
     fn settings_created(&mut self, pending: SettingsCreate, item: &InvItem) {
         let owner = self.agent_id();
-        if item.id.is_nil() || item.asset_type != 56 || item.parent != pending.folder || item.owner != owner {
+        if item.id.is_nil() || item.asset_type != pending.asset_type || item.parent != pending.folder || item.owner != owner {
             emit(
                 self.sh,
                 NetEvent::InventoryContentSaved {
@@ -425,7 +471,7 @@ impl Session<'_> {
             );
             return;
         }
-        if item.everyone_mask != PERM_COPY {
+        if pending.asset_type == 56 && item.everyone_mask != PERM_COPY {
             let callback = self.inventory_callback(false);
             let mut message = UpdateInventoryItem::default();
             message.agent_data.agent_id = owner;
@@ -444,7 +490,7 @@ impl Session<'_> {
         let id = item.id;
         tokio::spawn(async move {
             let (cap, fetch) = pending.caps;
-            let result = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, id, 56, pending.data).await;
+            let result = crate::inventory::operations::save_content(&http, &cap, &fetch, owner, id, pending.asset_type, pending.data).await;
             let _ = events.send(NetEvent::InventoryContentSaved {
                 request: pending.request,
                 item: id,

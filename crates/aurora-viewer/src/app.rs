@@ -1654,6 +1654,36 @@ impl App {
                 });
                 return;
             }
+            if let NetCommand::CreateNotecardItem {
+                request,
+                parent,
+                name,
+                data,
+            } = &cmd
+            {
+                let item = aurora_net::inventory::InvItem {
+                    id: uuid::Uuid::new_v4(),
+                    parent: *parent,
+                    name: name.clone(),
+                    asset_type: 7,
+                    inv_type: 7,
+                    asset_id: uuid::Uuid::new_v4(),
+                    owner: self.world.agent_id,
+                    creator: self.world.agent_id,
+                    base_mask: 0x7fff_ffff,
+                    owner_mask: 0x7fff_ffff,
+                    next_owner_mask: 0x7fff_ffff,
+                    ..Default::default()
+                };
+                self.demo_documents.insert(item.id, data.clone());
+                self.world.inventory.add_items(vec![item.clone()]);
+                self.on_app_event(NetEvent::InventoryContentSaved {
+                    request: *request,
+                    item: item.id,
+                    result: Ok(item),
+                });
+                return;
+            }
             if let NetCommand::SaveInventoryContent { request, item, data, .. } = &cmd {
                 if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| v == "note-error") {
                     self.on_app_event(NetEvent::InventoryContentSaved {
@@ -2335,6 +2365,12 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if crate::build::ui::layout_notecard_saved(&mut self.build, request, &result) {
+                if let Ok(item) = result {
+                    self.world.inventory.add_items(vec![item]);
+                }
+                return;
+            }
             if self.texture_library.material_save_pending(request) {
                 self.resource_material_saved(request, result);
                 return;
@@ -2429,6 +2465,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
+            if crate::build::ui::layout_notecard_loaded(&mut self.build, &mut self.world, &mut self.settings.build, item, &result) {
+                self.settings.save();
+            }
             if self.physics_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
@@ -4810,6 +4849,54 @@ impl App {
     fn on_build_request(&mut self, r: crate::build::ui::Request) {
         use crate::build::ui::Request;
         match r {
+            Request::ExportLayoutNotecard { name, text } => {
+                let profile = crate::build::layout::Profile::read(&text);
+                let data = aurora_net::inventory::notecard::Notecard::decode(text.as_bytes()).and_then(|note| note.encode(&text));
+                if let Err(reason) = profile.map(|_| ()).and(data.as_ref().map(|_| ()).map_err(Clone::clone)) {
+                    self.build.ui.notecards.message = reason;
+                } else if let Ok(data) = data {
+                    let parent = self
+                        .world
+                        .inventory
+                        .folders
+                        .values()
+                        .find(|folder| !folder.library && folder.info.type_default == 7)
+                        .map_or(self.world.inventory.root, |folder| folder.info.id);
+                    if !parent.is_nil() && self.build.ui.notecards.pending_save.is_none() {
+                        let request = uuid::Uuid::new_v4();
+                        self.build.ui.notecards.pending_save = Some(request);
+                        self.build.ui.notecards.message = aurora_i18n::tr!("notecard-saving").into();
+                        self.send(NetCommand::CreateNotecardItem {
+                            request,
+                            parent,
+                            name,
+                            data,
+                        });
+                    } else {
+                        self.build.ui.notecards.message = aurora_i18n::tr!("session-saving-is-unavailable-in-this-region").into();
+                    }
+                }
+            }
+            Request::LoadLayoutNotecard(id) => {
+                if self.world.inventory.can_preview(7)
+                    && self.build.ui.notecards.pending_load.is_none()
+                    && let Some(item) = self
+                        .world
+                        .inventory
+                        .items
+                        .get(&id)
+                        .filter(|item| {
+                            item.asset_type == 7
+                                && item.owner_mask & crate::world::inventory::actions::COPY != 0
+                                && !self.world.inventory.in_folder_type(id, 14)
+                        })
+                        .cloned()
+                {
+                    self.build.ui.notecards.pending_load = Some(id);
+                    self.build.ui.notecards.message = aurora_i18n::tr!("build-layout-loading").into();
+                    self.send(NetCommand::PreviewInventoryItem(item));
+                }
+            }
             Request::TransferTask(request) => self.apply_inventory_action(ui::inventory::InvAction::TakeTask(request)),
             Request::ZoomFraction(f) => self.camera.set_zoom_fraction(f),
             Request::AboutLand => self.panels.about_land = true,
@@ -5907,7 +5994,7 @@ impl App {
                 self.avatar_pics.insert(agent, t.clone());
                 continue;
             }
-            self.scene.textures.want_ui_image(renderer, image);
+            self.scene.textures.want_ui_image(renderer, image, &self.scene.jobs);
             if let Some((w, h, rgba)) = self.scene.textures.take_ui_image(&image)
                 && rgba.len() == (w * h * 4) as usize
             {
@@ -5987,7 +6074,7 @@ impl App {
             if self.ui_images.contains_key(&image) {
                 continue;
             }
-            self.scene.textures.want_ui_image(renderer, image);
+            self.scene.textures.want_ui_image(renderer, image, &self.scene.jobs);
             if let Some((w, h, rgba)) = self.scene.textures.take_ui_image(&image)
                 && rgba.len() == (w * h * 4) as usize
             {
@@ -9108,6 +9195,7 @@ impl App {
                             )));
                         }
                     }
+                    crate::build::demo::Step::CloseEditor => self.build.close(&mut self.world, &mut self.settings.build),
                     crate::build::demo::Step::Select(idx) => {
                         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
                         self.flush_build();

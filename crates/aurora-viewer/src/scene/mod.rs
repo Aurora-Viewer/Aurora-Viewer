@@ -59,6 +59,7 @@ pub mod texture_budget;
 pub(crate) mod texture_cache;
 pub mod texture_importance;
 mod texture_load;
+mod texture_ui;
 pub mod textures;
 pub mod water;
 mod water_contacts;

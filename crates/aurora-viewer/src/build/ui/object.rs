@@ -316,14 +316,14 @@ fn vec_block(
     let spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 2.0;
     let vector_name = [
-        aurora_i18n::tr!("build-ui-object-position"),
-        aurora_i18n::tr!("build-ui-object-size"),
-        aurora_i18n::tr!("build-ui-object-rotation"),
+        aurora_i18n::tr!("build-compact-position"),
+        aurora_i18n::tr!("build-compact-size"),
+        aurora_i18n::tr!("build-compact-rotation"),
     ][which];
     // LLPanelObject::onCopyPos/Size/Rot keeps a separate value per vector.
     // Keep each pair on its own caption line, independent of the manipulator.
     ui.horizontal(|ui| {
-        ui.label(RichText::new(title).size(11.0).color(p.muted));
+        ui.label(RichText::new(title).size(super::common::BODY).color(p.muted));
         super::compact::actions(ui, |ui| {
             if super::compact::icon_button(
                 ui,
@@ -354,7 +354,7 @@ fn vec_block(
     const GAP: f32 = 6.0;
     const HEIGHT: f32 = 28.0;
     const MARK: f32 = 2.0;
-    const LETTER: f32 = 10.0;
+    const LETTER: f32 = super::common::SMALL;
     let row = ui.add_enabled_ui(enabled, |ui| {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), HEIGHT), egui::Sense::hover());
         let width = ((rect.width() - 2.0 * GAP) / 3.0).max(40.0);
@@ -443,7 +443,7 @@ pub fn show_transform(
     tool: &mut BuildTool,
     world: &mut World,
     s: &mut BuildSettings,
-    mods: crate::build::Mods,
+    _mods: crate::build::Mods,
 ) {
     let Some(key) = tool.selection.first().copied() else { return };
     let Some(idx) = world.objects.index_of(&key) else { return };
@@ -476,8 +476,6 @@ pub fn show_transform(
         }
     };
     let mut rot = [wrap(x), wrap(y), wrap(z)];
-    super::compact::manipulation(ui, p, tool, world, s, mods);
-    ui.add_space(4.0);
     let mut pos = if local { local_pos } else { wp - off }.to_array();
     let region = world
         .regions
@@ -744,13 +742,13 @@ fn shape_pair(
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 ui.set_min_width(label_width);
-                ui.add(egui::Label::new(RichText::new(title).size(11.0).color(p.muted)).truncate())
+                ui.add(egui::Label::new(RichText::new(title).size(super::common::BODY).color(p.muted)).truncate())
                     .on_hover_text(title);
             },
         );
         for ((value, axis), range) in values.into_iter().zip(axes).zip(ranges) {
             ui.allocate_ui_with_layout(Vec2::new(30.0, 26.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(axis).size(10.0).color(p.muted));
+                ui.label(RichText::new(axis).size(super::common::SMALL).color(p.muted));
             });
             edit = edit.or(spin(ui, value, increment, range, decimals, 49.0, false));
         }
@@ -783,7 +781,6 @@ fn shape_column(
     flexible: bool,
     env: &mut Env,
 ) {
-    ui.style_mut().override_font_id = Some(egui::FontId::proportional(11.0));
     ui.spacing_mut().button_padding = Vec2::new(3.0, 3.0);
     if volume.is_mesh() {
         super::mesh::show(ui, p, tool, world, idx, env);

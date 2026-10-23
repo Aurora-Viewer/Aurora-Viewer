@@ -244,6 +244,21 @@ those sent by our avatar's objects. Settings persist; blocks do not. Preferences
 Its Cx rows participate in preference search, modified settings and page reset.
 `demo_anti_spam.rs` supplies synthetic floods through the production event path.
 
+The construction floater uses a single compact presentation (350 by 820 initial
+size), with ordinary saved geometry. Five editing sections share a full-width
+folding transform area and an editable footer. `build/layout.rs` owns the saved
+item order/destinations and the versioned, validated notecard profile, excluding
+object properties/transforms. `build/ui/layout.rs` renders the same controls in
+the footer or the bottom-aligned side settings. Organization captures whole rows,
+toolbars and navigation icons without changing option values; a temporary hidden
+storage accepts removed items. `build/ui/notecards.rs` routes profile downloads
+and acknowledgements. Explicit exports create a real inventory notecard through the matching
+CreateInventoryItem callback and UpdateNotecardAgentInventory; malformed profiles
+never partially apply. Ruler controls are shared with the native settings path.
+Selection, permission checks, drafts and simulator commands remain in the existing
+panels. `build/ui/common.rs` applies the monitor's local 12/11/13-point hierarchy
+while retaining theme fonts and global scaling.
+
 Aurora Viewer is a complete Second Life viewer written in Rust: login,
 UDP and HTTP networking, world (objects, terrain, avatars, environment),
 modern rendering (wgpu on Vulkan), sound, voice, media and interface (egui).
@@ -1024,6 +1039,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `scene/fetch_priority.rs` | Rank of every asset request in the fetcher's queue (`aurora-net/src/fetch.rs`): an urgent lane first (the sky, animations, sounds, materials, our own bakes and worn meshes, a window's image), then meshes and textures together by their size on screen, what shows nothing yet first; ranks sent again when the view changes them, requests dropped when nothing uses the asset any more |
 | `scene/texture_load.rs` | Measurement of the texture loads: time of the decoding tasks per step (codec, conversion, RGBA, mips, staging memory) and `texture load:` line of the log at the end of each load (duration, decodes per level, bytes downloaded, disk cache) |
 | `scene/texture_importance.rs` | Size a face's textures are loaded for, as the Legacy Viewer computes it (LLViewerTextureList::updateImageDecodePriority, LLFace::calcPixelArea, calcImportanceToCamera): the circle around the object from its nearest point, boosted up to eight times in area near the camera and in the middle of the view (none while the camera moves fast or under memory pressure), divided by the repeats squared; the same size for every map of the face. `AURORA_TEXTURE_SIZING=screen` brings the former sizing back |
+| `scene/texture_ui.rs` | Bounded, revisioned worker decoding of interface thumbnails for assets already resident on the GPU or in the texture cache; retries missing progressive cache files with backoff. Reserved white/transparent textures supply their known pixels without a download |
 | `scene/texture_budget.rs` | Texture memory budget: current target (the setting, less when the rest of what the viewer holds on the card leaves less room under the budget that the driver grants it, `aurora-render/src/vram.rs`), and pressure level when the pages exceed it. Under pressure, `scene/textures.rs` shrinks the textures loaded more finely than their on-screen size, off-screen ones first, by copying their levels on the GPU (`TextureTable::shrink`), without decoding them again; the pages they leave are compacted without waiting. Override: `AURORA_TEXTURE_BUDGET_MB` |
 | `scene/geometry_need.rs` | Geometry each region needed at its last visit (peak use of the geometry arena while the agent was there, `cache/geometry-needs.txt`): behind a loading or teleport screen the arena grows at once to it, or ahead of need beyond three quarters full, so that its buffers are not replaced in the middle of the scene (`GeometryArena::grow_ahead`) |
 | `aurora-render/src/frame_priority.rs` | Priority of the threads a frame waits for (main, render, frame helpers, texture pages): one step above normal, applied by each thread at its next turn; `AURORA_FRAME_PRIORITY=normal` or `alt` to compare |
@@ -1358,14 +1374,34 @@ with the application (`app/color_picker.rs`).
 `ui/widgets/workspace.rs` shares the navigation, the detail panels, the
 dialogs and the rows of the user inventory and of object contents
 (density, hover, selection and name style). `build/ui/compact.rs` arranges
-building in seven sections in a narrow inspector: General contains identity, group/share/deed, sale and search, while Rights keeps everyone/next-owner permissions. The five tools share the navigation rail; titles follow the section/tool, and edit selection/actions stay at the bottom of the main panel. The inspector resizes on both axes, fills the chosen height and retains its geometry across sections, tools and folding. The object inventory fills the remaining section viewport; tool hint space uses the exact wrapped text galley, preventing frame-by-frame window growth. Each transform vector has its own caption-line copy/paste controls; linked editing, face selection, both-sided stretching, root-axis editing and reflection probe selection share the footer. Probe selection is available without an existing selection, defaults off at startup and filters click/menu rays, face selection, cursor-wheel stacks and selection rectangles. Shape rows (including sculpted prims) and the material map/settings/UV grids reuse the existing editing commands. `build/ui/compact_tests.rs` covers the permission split, shared selection options, per-vector clipboard interactions in all manipulators, and actual pointer resizing with section/tool/fold transitions, stable narrow-tool geometry over repeated frames, and inventory filling/filtering after height changes.
-The footer also exposes World / Local / Reference through three persistent
-icon buttons in a vertical column below an XYZ symbol, with a violet face for
-the active mode and muted inactive icons. Rez-under-land-group shares this
-footer in Edit and Create. Linked-prim and face navigation have separate arrows.
+building in five sections in a compact inspector: General includes identity, group/share/deed, everyone/next-owner permissions before Click to, sale and search. Five tools share the configurable icon rail. Its visible rows set the minimum window height; the rail never uses a scrollbar, and short screens constrain the independently scrollable editing panels first. Position/size/rotation and their independent copy/paste controls occupy a full-width folding area; three reference icons and the settings gear sit in its right strip or folded bar. Option rows and whole manipulation/action toolbars can move between footer, side settings and hidden storage; rail icons can move between the rail and hidden storage. Organization disables ordinary control actions without changing their geometry. Layout and fold state are local preferences shared by every account in the global settings file. Versioned notecards export only construction settings and layout. Existing command permissions, drafts, material updates and object history remain authoritative. The object inventory fills the remaining section viewport. Native regressions cover pointer organization, checkbox row geometry, profile validation/roundtrip and existing material/content keyboard interactions.
+World / Local / Reference use three persistent icon buttons: vertical at the
+top of the expanded transform strip, horizontal in its folded bar, with a violet
+face for the active mode and muted inactive icons. Rez-under-land-group is in
+side settings by default and remains available in Edit and Create. Linked-prim
+and face navigation have separate arrows.
 The shared Floater supports a compact status row in its title; construction
 uses independent lock, no-mod and ownership states. Material projection/options
-are inline rather than collapsed.
+are inline rather than collapsed. Materials show three large Blinn-Phong previews
+in one row. PBR uses the same square size in a three-column grid: an actual GPU
+material preview followed by its four maps. The shared material preview cache
+builds the effective asset plus face overrides on scene workers. Tint, surface,
+lighting and per-channel UV controls follow below
+through the same native edit transactions; rectangular tint swatches use the
+shared color picker and preserve its live preview/accept/cancel behavior.
+`build/material_preview.rs` follows FSPanelFace::onMatTabChange and
+LLSelectMgr::hideGLTFMaterial/showGLTFMaterial: the visible Blinn-Phong section
+sets a transient render override on selected modifiable PBR objects, including
+all faces of selected linkset prims. `Object::visual_material` then resolves to
+Blinn-Phong for scene records and picking. As requested for Aurora, the last
+mode of each object survives deselection, leaving the section, folding and
+closing the editor. `ObjectStore` tracks those UUIDs for the region visit;
+`World::set_main_region` clears them on a real region change, and session reset
+discards them on logout or disconnection. Cached/parked objects cannot resurrect
+the choice. An unchanged inspector cannot reapply it after arrival. Asset IDs,
+face overrides and local asset bindings stay authoritative; no material network
+command is generated. Only changed objects are marked material-dirty; steady
+frames neither scan the world nor rebuild records.
 Construction uses the shared Floater's steady body sizing: content cannot widen
 the chosen inspector, including during or after PBR numeric scrubbing. PBR rows
 reserve the measured number field and its step buttons before truncating labels,

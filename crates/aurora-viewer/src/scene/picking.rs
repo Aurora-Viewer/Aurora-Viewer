@@ -723,15 +723,10 @@ impl Scene {
     }
 
     fn hud_double_sided(&self, world: &World, o: &Object, face: usize) -> bool {
-        let Some((_, id)) = o
-            .extra
-            .render_materials
-            .iter()
-            .find(|(fi, id)| *fi as usize == face && !id.is_nil())
-        else {
+        let Some(id) = o.visual_material(face) else {
             return false;
         };
-        let mut material = self.materials.peek(id).map(|m| (*m).clone()).unwrap_or_default();
+        let mut material = self.materials.peek(&id).map(|m| (*m).clone()).unwrap_or_default();
         if let Some((_, ov)) = world
             .gltf_overrides
             .get(&o.key)
@@ -925,11 +920,7 @@ impl Scene {
             };
             st = Vec2::new(0.5 + 2.0 * b.dot(p), 0.5 - 2.0 * b.cross(n).dot(p));
         }
-        let material = o
-            .extra
-            .render_materials
-            .iter()
-            .find(|(fi, id)| *fi as usize == hit.face && !id.is_nil());
+        let material = o.visual_material(hit.face);
         let pbr = material.is_some();
         let clock = AnimClock::new(o.tex_anim_clock.start);
         let animated = tex_anim_record(o, hit.face, geom.pick_faces.len(), &tf, pbr, clock);
@@ -965,8 +956,8 @@ impl Scene {
                 .apply(st.to_array()),
             );
         }
-        if let Some((_, id)) = material {
-            let loaded = self.materials.peek(id);
+        if let Some(id) = material {
+            let loaded = self.materials.peek(&id);
             let mut m = loaded.as_ref().map(|m| (**m).clone()).unwrap_or_default();
             if loaded.is_some()
                 && let Some((_, ov)) = world
@@ -2059,6 +2050,10 @@ pub(super) mod tests {
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::NONE;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
+        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = true;
+        assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
+        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = false;
+        assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
     }
 
     #[test]
@@ -2228,6 +2223,10 @@ pub(super) mod tests {
         let mut ov = aurora_assets::material::PbrOverride::default();
         ov.transforms[0].offset = [0.2, 0.1];
         world.gltf_overrides.insert(key, vec![(0, ov)].into());
+        assert!((uv(&world, &scene) - Vec2::new(0.9, 0.55)).length() < 0.0001);
+        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = true;
+        assert!((uv(&world, &scene) - Vec2::new(0.25, 0.65)).length() < 0.0001);
+        world.objects.get_mut(front).unwrap().render.blinn_phong_preview = false;
         assert!((uv(&world, &scene) - Vec2::new(0.9, 0.55)).length() < 0.0001);
     }
 

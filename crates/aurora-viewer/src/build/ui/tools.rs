@@ -12,17 +12,6 @@ use crate::world::World;
 use aurora_net::build::land_action;
 use egui::{Color32, RichText, Vec2};
 
-/// The tool buttons (icon, tooltip, tool).
-pub(super) fn tools() -> [(&'static str, &'static str, Tool); 5] {
-    [
-        ("zoom-filled", aurora_i18n::tr!("build-ui-tools-focus-ctrl-1"), Tool::Focus),
-        ("hand-grab", aurora_i18n::tr!("build-ui-tools-move-ctrl-2"), Tool::Grab),
-        ("pointer-filled", aurora_i18n::tr!("build-ui-tools-edit-ctrl-3"), Tool::Edit),
-        ("wand", aurora_i18n::tr!("build-ui-tools-create-ctrl-4"), Tool::Create),
-        ("mountain-filled", aurora_i18n::tr!("build-ui-tools-land-ctrl-5"), Tool::Land),
-    ]
-}
-
 /// "text status": the hint of the current tool (floater.string status_*).
 pub fn status_text(tool: &BuildTool, s: &BuildSettings, mods: Mods) -> &'static str {
     match tool.tool {
