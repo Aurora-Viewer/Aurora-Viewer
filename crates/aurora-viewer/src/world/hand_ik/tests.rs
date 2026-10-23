@@ -249,12 +249,21 @@ fn shared_protocol_negotiates_our_seat_and_owned_worn_sources_without_legacy_fal
 
 #[test]
 fn local_sources_release_on_parentage_deletion_region_teleport_and_lease_expiry() {
-    let now = Instant::now();
+    let replay = |world: &mut World, command: &NetCommand, at: Instant| {
+        for event in demo::hand_ik::reply(command) {
+            let NetEvent::Chat(chat) = event else { panic!("contact reply") };
+            world.receive_hand_contacts(&chat, at);
+        }
+    };
     for action in 0..6 {
         let worn = action == 1;
         let mut world = fixture(worn);
-        let command = negotiate(&mut world, now);
+        let now = Instant::now();
+        let command = world.update_hand_contacts(now).unwrap();
+        replay(&mut world, &command, now);
         let avatar = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        assert_eq!(ik::targets(&world, avatar, 0.0, now).len(), 2, "active before action {action}");
+        let ended = if action == 5 { now + LEASE + Duration::from_secs(1) } else { now };
         match action {
             0 => world.apply(NetEvent::ObjectUpdates {
                 handle: 1,
@@ -278,16 +287,18 @@ fn local_sources_release_on_parentage_deletion_region_teleport_and_lease_expiry(
                 None
             }
             _ => {
-                world.update_hand_contacts(now + LEASE + Duration::from_secs(1));
+                world.update_hand_contacts(ended);
                 None
             }
         };
-        assert!(ik::targets(&world, avatar, 0.0, now).is_empty(), "action {action}");
-        world.update_hand_contacts(now + Duration::from_secs(2));
-        for event in demo::hand_ik::reply(&command) {
-            world.apply(event);
-        }
-        assert!(ik::targets(&world, avatar, 0.0, now).is_empty(), "old reply after action {action}");
+        assert!(ik::targets(&world, avatar, 0.0, ended).is_empty(), "action {action}");
+        let later = ended + Duration::from_secs(2);
+        world.update_hand_contacts(later);
+        replay(&mut world, &command, later);
+        assert!(
+            ik::targets(&world, avatar, 0.0, later).is_empty(),
+            "old reply after action {action}"
+        );
     }
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::ik_edit::tests::HeadlessContext as _;
 use crate::{build::BuildTool, demo, scene::avatar::AvatarLibrary};
 use aurora_net::NetEvent;
 use std::sync::Arc;
@@ -59,7 +60,7 @@ fn compact_default_ik_window_keeps_two_bindings_and_smoothing_visible_without_sc
     let mut output = egui::FullOutput::default();
     for i in 0..4 {
         output.textures_delta.clear();
-        output = ctx.run_ui(
+        output = ctx.run_headless(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                 time: Some(i as f64 / 60.0),
@@ -119,7 +120,7 @@ fn binding_search_and_clipboard_feedback_preserve_calibration_and_selection() {
     theme.apply(&ctx, 1.0);
     let palette = theme.palette();
     let draw = |editor: &mut Editor, events: Vec<egui::Event>, time: f64| {
-        ctx.run_ui(
+        ctx.run_headless(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
                 time: Some(time),
@@ -377,7 +378,7 @@ fn inspector_separates_coordinate_frames_and_target_numeric_edits_preserve_other
     let mut time = 0.0;
     let mut draw = |editor: &mut Editor, events| {
         time += 1.0 / 60.0;
-        ctx.run_ui(
+        ctx.run_headless(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(900.0, 1400.0))),
                 time: Some(time),
@@ -516,7 +517,7 @@ fn activation_controls_are_in_the_selected_binding_card_and_editing_ignores_runt
     let palette = theme.palette();
     let mut labels = Vec::new();
     for _ in 0..3 {
-        let mut output = ctx.run_ui(
+        let mut output = ctx.run_headless(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1000.0, 1200.0))),
                 ..Default::default()
@@ -584,7 +585,7 @@ fn visible_timing_fields_edit_global_fades_but_only_the_selected_bones_distance_
     let mut time = 0.0;
     let mut draw = |editor: &mut Editor, events| {
         time += 1.0 / 60.0;
-        ctx.run_ui(
+        ctx.run_headless(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1000.0, 1400.0))),
                 time: Some(time),
@@ -721,7 +722,7 @@ fn global_smoothing_can_be_set_before_binding_and_imported_mixed_durations_are_n
     let before = editor.graph_definition();
     let ctx = egui::Context::default();
     let palette = crate::theme::Theme::default().palette();
-    let output = ctx.run_ui(egui::RawInput::default(), |ui| editor.smoothing_ui(ui, &palette));
+    let output = ctx.run_headless(egui::RawInput::default(), |ui| editor.smoothing_ui(ui, &palette));
     assert!(
         output
             .shapes
@@ -795,7 +796,7 @@ fn visible_tabs_and_real_button_clicks_keep_the_source_selected_when_picking_an_
     let mut time = 0.0;
     let mut draw = |editor: &mut Editor, events: Vec<egui::Event>| {
         time += 1.0 / 60.0;
-        ctx.run_ui(
+        ctx.run_headless(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                 time: Some(time),
@@ -1254,7 +1255,7 @@ fn binding_controls_detach_preserve_offsets_and_reset_selected_or_all_contacts()
     let mut time = 0.0;
     let mut draw = |editor: &mut Editor, events| {
         time += 1.0 / 60.0;
-        ctx.run_ui(
+        ctx.run_headless(
             egui::RawInput {
                 events,
                 time: Some(time),

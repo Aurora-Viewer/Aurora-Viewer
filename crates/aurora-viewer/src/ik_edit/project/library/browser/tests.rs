@@ -1,6 +1,7 @@
 use super::super::tests::{cleanup, root, run};
 use super::*;
 use crate::ik_edit::profiles::tests::fixture;
+use crate::ik_edit::tests::HeadlessContext as _;
 
 #[test]
 fn deleting_a_project_removes_only_its_uuid_file_and_cannot_be_recreated_by_autosave() {
@@ -76,7 +77,7 @@ fn projects_tab_selects_and_manages_complete_projects_through_real_pointer_input
     let mut time = 0.0;
     let mut draw = |editor: &mut Editor, events| {
         time += 1.0 / 60.0;
-        ctx.run_ui(
+        ctx.run_headless(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                 time: Some(time),

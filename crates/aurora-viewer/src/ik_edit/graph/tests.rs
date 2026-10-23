@@ -1,4 +1,5 @@
 use super::*;
+use crate::ik_edit::tests::HeadlessContext as _;
 use crate::{demo, scene::avatar::AvatarLibrary};
 use aurora_net::NetEvent;
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -171,7 +172,7 @@ fn virtual_list_shows_parents_and_ctrl_rotation_survives_modifier_release() {
                 modifiers,
             });
         }
-        let mut output = ctx.run_ui(
+        let mut output = ctx.run_headless(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                 time: Some(step as f64 / 60.0),
@@ -261,7 +262,7 @@ fn shift_drags_a_virtual_point_freely_while_default_mode_reserves_translation_fo
                     modifiers,
                 });
             }
-            let mut output = ctx.run_ui(
+            let mut output = ctx.run_headless(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(1600.0, 900.0))),
                     time: Some(time),
@@ -393,7 +394,7 @@ fn control_timeline_displays_loop_phase_without_stopping_a_long_running_preview(
     let before = editor.graph.time;
     let ctx = egui::Context::default();
     let palette = crate::theme::Theme::default().palette();
-    let _ = ctx.run_ui(egui::RawInput::default(), |ui| editor.graph.motion_ui(ui, &palette, 1));
+    let _ = ctx.run_headless(egui::RawInput::default(), |ui| editor.graph.motion_ui(ui, &palette, 1));
     assert!(editor.graph.playing);
     assert_eq!(editor.graph.time, before);
 }

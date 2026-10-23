@@ -1,6 +1,19 @@
 use super::*;
 use crate::scene::avatar::AvatarLibrary;
 
+pub(super) trait HeadlessContext {
+    fn run_headless(&self, input: egui::RawInput, draw: impl FnMut(&mut egui::Ui)) -> egui::FullOutput;
+}
+
+impl HeadlessContext for egui::Context {
+    fn run_headless(&self, input: egui::RawInput, draw: impl FnMut(&mut egui::Ui)) -> egui::FullOutput {
+        let mut output = self.run_ui(input, draw);
+        // These frames inspect geometry and commands without a GPU backend.
+        output.textures_delta.clear();
+        output
+    }
+}
+
 #[test]
 fn each_limb_enables_and_releases_independently_even_with_symmetry() {
     let lib = AvatarLibrary::load();

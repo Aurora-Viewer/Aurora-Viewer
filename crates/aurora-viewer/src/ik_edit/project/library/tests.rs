@@ -1,5 +1,6 @@
 use super::super::super::profiles::tests::fixture;
 use super::*;
+use crate::ik_edit::tests::HeadlessContext as _;
 
 pub(super) fn root() -> PathBuf {
     std::env::temp_dir().join(format!("aurora-ik-library-{}", Uuid::new_v4()))
@@ -164,7 +165,7 @@ fn first_open_and_project_creation_require_explicit_names_without_implicit_profi
     let mut time = 0.0;
     let mut draw = |editor: &mut Editor, events| {
         time += 1.0 / 60.0;
-        ctx.run_ui(
+        ctx.run_headless(
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 1000.0))),
                 time: Some(time),

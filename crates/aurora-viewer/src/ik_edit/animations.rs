@@ -404,6 +404,7 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ik_edit::tests::HeadlessContext as _;
     use aurora_net::inventory::InvItem;
     #[test]
     fn dragging_a_layer_moves_its_frame_and_loaded_asset_together() {
@@ -420,7 +421,7 @@ mod tests {
         let mut time = 0.0;
         let mut draw = |stack: &mut Stack, events| {
             time += 1.0 / 60.0;
-            ctx.run_ui(
+            ctx.run_headless(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, egui::vec2(600.0, 700.0))),
                     time: Some(time),
