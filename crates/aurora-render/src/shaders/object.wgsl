@@ -1071,7 +1071,10 @@ fn shade(in: VsOut, front: bool) -> Shaded {
 fn shade_material(in: VsOut, m: Material) -> Shaded {
     let rec = records[in.record];
     surface_occlusion = m.occlusion;
-    screen_surface = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u;
+    // a blended face opaque enough (fs_depth_contact) is in the occlusion's
+    // depth when BLEND_SCREEN_DEPTH; a more transparent one would get what
+    // lies behind it
+    screen_surface = (rec.flags.x & FLAG_ALPHA_BLEND) == 0u || ((frame.light_mode.z & BLEND_SCREEN_DEPTH) != 0u && m.color.a >= 0.5);
     // a blended face is in the depth the contact shadows read when it is
     // opaque enough (fs_depth_contact); a more transparent one would get
     // what lies behind it

@@ -1091,6 +1091,10 @@ const SHADOW_BIAS_LEGACY: u32 = 0x2000u;
 // indirect light of what lies behind them, as before (AURORA_BLEND_AO=old;
 // screen_ao)
 const BLEND_SCREEN_TERMS: u32 = 0x4000u;
+// frame.light_mode.z: the occlusion's depth holds the blended faces at least
+// half covered (renderer.rs, "occlusion depth"), which then take the
+// screen-space terms (screen_surface; AURORA_BLEND_AO)
+const BLEND_SCREEN_DEPTH: u32 = 0x10000u;
 
 // frame.light_mode.z: geometric specular anti-aliasing of the objects
 // (AURORA_SPECULAR_AA, specular_aa_roughness)
@@ -1372,11 +1376,14 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, nv: f32) -> vec3<f32> {
 // screen-space one (normal_map_occlusion); none outside the object shader.
 var<private> surface_occlusion: f32 = 0.0;
 
-// False while a blended face is shaded: the screen-space occlusion and
-// indirect light come from the opaque depth, so on a translucent face they
-// are those of what lies behind it, around a closer object a dark halo
-// (#556). The Legacy Viewer's alpha pass applies neither (materialF.glsl,
-// alphaF.glsl: no adjustIrradiance outside softenLightF).
+// False while a translucent blended face is shaded: the screen-space
+// occlusion and indirect light come from the occlusion's depth, so on such
+// a face they are those of what lies behind it, around a closer object a
+// dark halo (#556). The Legacy Viewer's alpha pass applies neither
+// (materialF.glsl, alphaF.glsl: no adjustIrradiance outside softenLightF).
+// A blended face at least half covered is in that depth (BLEND_SCREEN_DEPTH)
+// and takes them like an opaque one: a head whose halves differ in alpha
+// mode no longer shows a line down the middle (#882).
 var<private> screen_surface: bool = true;
 
 // Whether the fragment being shaded takes the screen-space terms (see
