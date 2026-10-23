@@ -4,7 +4,7 @@
 
 use super::anchors::{self, AnchorRef};
 use super::meshes::MeshStreamer;
-use super::sync_sets::{SyncState, Xf, XfCache};
+use super::sync_sets::{PendingGeom, SyncState, Xf, XfCache};
 use super::textures::TextureStreamer;
 use super::{GeomEntry, GeomKey, GeomState, GpuGeom, ObjGpu, Scene, anim, animesh, lod_for};
 use crate::world::World;
@@ -136,35 +136,52 @@ impl SyncState for FrameState<'_> {
                 .is_some_and(|g| self.mat_changes.stale(&g.material_ids, g.mat_generation, self.mat_gen))
     }
 
-    fn pending_due(&self, idx: usize) -> Option<bool> {
-        let g = self.gpu.get(idx)?;
-        let key = g.wanted_geom?;
+    fn pending_due(&self, idx: usize) -> PendingGeom {
+        let Some(g) = self.gpu.get(idx) else {
+            return PendingGeom::Done;
+        };
+        let Some(key) = g.wanted_geom else {
+            return PendingGeom::Done;
+        };
         if g.geom == Some(key) {
-            return None;
+            return PendingGeom::Done;
         }
-        Some(match self.geoms.get(&key).map(|e| &e.state) {
-            Some(GeomState::Ready(_)) => true,
+        match self.geoms.get(&key).map(|e| &e.state) {
+            Some(GeomState::Ready(_)) => PendingGeom::Due,
             // still being built or downloaded; a failed one is asked again
-            // once the geometry cache drops it
-            Some(GeomState::Pending) | Some(GeomState::Failed) => false,
+            // once the geometry cache drops it (Scene::geom_changed)
+            Some(GeomState::Pending) | Some(GeomState::Failed) => PendingGeom::Waits(wait_token(&key)),
             // a sculpt waits for its texture, or its placeholder when the
             // texture is missing; anything else is asked for
             None => match key {
-                GeomKey::Sculpt { hash, lod } => g.sculpt_wait.is_some_and(|t| {
-                    self.textures.sculpt_map(&t).is_some()
-                        || self.textures.is_unavailable(&t) && {
-                            let placeholder = GeomKey::SculptPlaceholder { hash, lod };
-                            g.geom != Some(placeholder)
-                                && !matches!(
-                                    self.geoms.get(&placeholder).map(|e| &e.state),
-                                    Some(GeomState::Pending) | Some(GeomState::Failed)
-                                )
-                        }
-                }),
-                _ => true,
+                GeomKey::Sculpt { hash, lod } => {
+                    let due = g.sculpt_wait.is_some_and(|t| {
+                        self.textures.sculpt_map(&t).is_some()
+                            || self.textures.is_unavailable(&t) && {
+                                let placeholder = GeomKey::SculptPlaceholder { hash, lod };
+                                g.geom != Some(placeholder)
+                                    && !matches!(
+                                        self.geoms.get(&placeholder).map(|e| &e.state),
+                                        Some(GeomState::Pending) | Some(GeomState::Failed)
+                                    )
+                            }
+                    });
+                    if due { PendingGeom::Due } else { PendingGeom::Later }
+                }
+                _ => PendingGeom::Due,
             },
-        })
+        }
     }
+}
+
+/// What the objects parked for geometry `key` are woken by (never 0):
+/// equal keys give equal tokens, a rare equal token for another key only
+/// wakes them for nothing.
+pub(super) fn wait_token(key: &GeomKey) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    key.hash(&mut h);
+    h.finish().max(1)
 }
 
 /// The detail level of an object as the debug overlay shows it.
@@ -681,24 +698,40 @@ mod tests {
             };
             state.pending_due(0)
         };
-        // still loading: nothing to build, as there
-        assert_eq!(due(&gpu, &geoms, &textures), Some(false));
+        // still loading: nothing to build, as there (no event for the
+        // texture: not parked)
+        assert_eq!(due(&gpu, &geoms, &textures), PendingGeom::Later);
         textures.test_missing(map);
-        assert_eq!(due(&gpu, &geoms, &textures), Some(true));
+        assert_eq!(due(&gpu, &geoms, &textures), PendingGeom::Due);
         let entry = |state| GeomEntry {
             state,
             refs: 0,
             zero_since: 0,
         };
         geoms.insert(placeholder, entry(GeomState::Pending));
-        assert_eq!(due(&gpu, &geoms, &textures), Some(false));
+        assert_eq!(due(&gpu, &geoms, &textures), PendingGeom::Later);
         geoms.insert(placeholder, entry(GeomState::Failed));
-        assert_eq!(due(&gpu, &geoms, &textures), Some(false));
+        assert_eq!(due(&gpu, &geoms, &textures), PendingGeom::Later);
         geoms.remove(&placeholder);
         gpu[0].geom = Some(placeholder);
-        assert_eq!(due(&gpu, &geoms, &textures), Some(false));
+        assert_eq!(due(&gpu, &geoms, &textures), PendingGeom::Later);
         // the map decoded: the sculpt replaces the sphere
         textures.test_sculpt_map(map);
-        assert_eq!(due(&gpu, &geoms, &textures), Some(true));
+        assert_eq!(due(&gpu, &geoms, &textures), PendingGeom::Due);
+        // being built: parked for it, until it is ready
+        geoms.insert(sculpt, entry(GeomState::Pending));
+        assert_eq!(due(&gpu, &geoms, &textures), PendingGeom::Waits(wait_token(&sculpt)));
+        assert_ne!(wait_token(&sculpt), wait_token(&placeholder));
+        let built = GpuGeom {
+            faces: Vec::new(),
+            min: Vec3::ZERO,
+            max: Vec3::ZERO,
+            joint_bounds: Vec::new(),
+            pick_faces: Vec::new(),
+        };
+        geoms.insert(sculpt, entry(GeomState::Ready(std::sync::Arc::new(built))));
+        assert_eq!(due(&gpu, &geoms, &textures), PendingGeom::Due);
+        gpu[0].geom = Some(sculpt);
+        assert_eq!(due(&gpu, &geoms, &textures), PendingGeom::Done);
     }
 }

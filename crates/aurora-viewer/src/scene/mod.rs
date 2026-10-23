@@ -1471,6 +1471,8 @@ impl Scene {
                 Some(GeomState::Pending) => self.geom_pending = self.geom_pending.saturating_sub(1),
                 _ => {}
             }
+            // (what waited for it asks for it again)
+            self.sets.geometry_changed(sync_plan::wait_token(&key));
             // the skin bindings go with the last detail level of the mesh:
             // an object drawn with them holds one of its geometries
             if let GeomKey::Mesh { id, .. } = key
@@ -1621,6 +1623,7 @@ impl Scene {
             },
             None => self.geom_insert(key, GeomState::Ready(g)),
         }
+        self.sets.geometry_changed(sync_plan::wait_token(&key));
     }
 
     fn ensure_avatar_parts(&mut self, renderer: &mut Renderer) {
@@ -2882,11 +2885,7 @@ impl Scene {
         {
             self.sets.dirty.insert(idx);
         }
-        if g.wanted_geom.is_some() && g.wanted_geom != g.geom {
-            self.sets.pending.insert(idx);
-        } else {
-            self.sets.pending.remove(idx);
-        }
+        self.sets.geometry_wanted(idx, g.wanted_geom.is_some() && g.wanted_geom != g.geom);
         if g.material_ids.is_empty() {
             self.sets.material_users.remove(idx);
         } else {
