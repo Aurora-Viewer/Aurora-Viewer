@@ -65,6 +65,7 @@ mod water_contacts;
 mod water_effects;
 pub mod wind_sound;
 
+use crate::fast_hash::{FastMap, FastSet};
 use crate::frame_par::{self, Grain};
 use crate::world::World;
 use crate::world::objects::{Object, ObjectStore};
@@ -689,8 +690,8 @@ pub struct Scene {
     pub neutral_pose_test: Option<bool>,
     pub jobs: Jobs,
     job_rx: crossbeam_channel::Receiver<JobResult>,
-    geoms: HashMap<GeomKey, GeomEntry>,
-    flexibles: HashMap<usize, flexible::State>,
+    geoms: FastMap<GeomKey, GeomEntry>,
+    flexibles: FastMap<usize, flexible::State>,
     /// Grass tufts drawn, and the terrain they were placed on (plants.rs).
     grass: HashMap<usize, plants::GrassBuilt>,
     pub textures: TextureStreamer,
@@ -779,7 +780,7 @@ pub struct Scene {
     visit_tmp: Vec<(usize, bool)>,
     /// Objects whose faces were built since the lists were last made: the
     /// size of their textures on screen is noted at once.
-    fresh_usage: std::collections::HashSet<usize>,
+    fresh_usage: FastSet<usize>,
     /// What the lists look for in each object slot (list_index.rs).
     list_index: list_index::ListIndex,
     /// Objects with light parameters (kept by `sync_object`, which sees every
@@ -810,12 +811,12 @@ pub struct Scene {
     /// Far avatars drawn as pictures (RenderAvatarMaxNonImpostors).
     impostors: impostors::Impostors,
     /// The avatars the last lists drew as impostors, by object index.
-    far_avatars: HashMap<usize, impostors::Far>,
+    far_avatars: FastMap<usize, impostors::Far>,
     /// When each skeleton was last posed (an impostor keeps its pose
     /// between pictures).
-    posed_at: HashMap<Uuid, Instant>,
+    posed_at: FastMap<Uuid, Instant>,
     /// The skeletons posed in this frame, by object index.
-    posed_now: HashSet<usize>,
+    posed_now: FastSet<usize>,
     /// AURORA_SYNC_CHECK: impostor pictures taken, and those taken with a
     /// pose of an earlier frame (must stay 0), logged every 10 s.
     picture_check: (u64, u64, Option<Instant>),
@@ -876,7 +877,7 @@ pub struct Scene {
     /// HUD attachments of our avatar and what places them besides their
     /// own updates (screen aspect, local zoom and offset): they are placed
     /// again when it changes, not at each frame.
-    hud_roots: HashMap<usize, (Uuid, [f32; 5])>,
+    hud_roots: FastMap<usize, (Uuid, [f32; 5])>,
     hud_roots_tmp: Vec<(usize, Uuid, [f32; 5])>,
     /// When the last sync ran (the rounds of the detail level checks).
     last_sync: Option<Instant>,
@@ -886,7 +887,7 @@ pub struct Scene {
     last_origin: Option<(u32, u32)>,
     blend_tmp: Vec<blend_order::BlendEntry>,
     pub anims: anim::AnimStreamer,
-    object_signals: HashMap<Uuid, animesh::Signals>,
+    object_signals: FastMap<Uuid, animesh::Signals>,
     /// World and interface sounds.
     pub sounds: sounds::SoundManager,
     /// Environment settings assets (the EEP default day).
@@ -894,7 +895,7 @@ pub struct Scene {
     /// Landmark asset fetches done, for `World::landmarks` (the app passes
     /// them on).
     pub landmark_results: Vec<aurora_net::FetchResult>,
-    palette_slots: HashMap<Uuid, u32>,
+    palette_slots: FastMap<Uuid, u32>,
     palette_free: Vec<u32>,
     palette_count: u32,
     palettes: Vec<[[f32; 4]; 4]>,
@@ -902,7 +903,7 @@ pub struct Scene {
     /// Avatar body physics: which avatars move, and their motions.
     pub body_physics: body_physics::Config,
     physics_rig: Option<Arc<body_physics::PhysicsRig>>,
-    physics: HashMap<Uuid, body_physics::BodyPhysics>,
+    physics: FastMap<Uuid, body_physics::BodyPhysics>,
     last_palette_gc: Instant,
     /// Periodic streaming summary in the log.
     last_diag: Instant,
@@ -914,13 +915,13 @@ pub struct Scene {
     /// the frame profile at the end of the frame.
     pub parts: crate::frame_profile::Parts,
     /// Rest skeleton (shape + joint offsets of worn meshes) per skeleton owner.
-    skeletons: HashMap<Uuid, AvatarSkeleton>,
+    skeletons: FastMap<Uuid, AvatarSkeleton>,
     /// Skeleton owner of each object listed in a cached skeleton's members.
-    skeleton_member_of: HashMap<usize, Uuid>,
+    skeleton_member_of: FastMap<usize, Uuid>,
     /// Mesh metadata generation the cached skeletons were checked against.
     skeleton_meta_gen: u64,
     /// Playing motions and held pose per skeleton owner.
-    motions: HashMap<Uuid, anim::Controller>,
+    motions: FastMap<Uuid, anim::Controller>,
     /// Skin bindings uploaded to the GPU: the default skeleton first (system
     /// avatar), then each rigged mesh (by asset id).
     skin_binds: skin_binds::SkinBinds,
@@ -1261,8 +1262,8 @@ impl Scene {
             jobs,
             job_rx,
             sculpt_watch: sculpt_watch::SculptWatch::from_env(),
-            geoms: HashMap::new(),
-            flexibles: HashMap::new(),
+            geoms: Default::default(),
+            flexibles: Default::default(),
             grass: HashMap::new(),
             textures: TextureStreamer::new(cache_dir.clone()),
             meshes: MeshStreamer::new(cache_dir.clone()),
@@ -1316,22 +1317,22 @@ impl Scene {
             light_textures: HashMap::new(),
             spot_shadows: Default::default(),
             mirror_objects: Default::default(),
-            selection_wire: HashMap::new(),
+            selection_wire: Default::default(),
             inspected_mesh: None,
             mesh_lod_overrides: HashMap::new(),
-            selection_silhouettes: HashSet::new(),
-            selection_faces: HashMap::new(),
+            selection_silhouettes: Default::default(),
+            selection_faces: Default::default(),
             selection_changed: None,
             debug_alpha: None,
-            beacon_highlights: HashSet::new(),
+            beacon_highlights: Default::default(),
             beacon_markers: Vec::new(),
             land_overlays: Default::default(),
             pass_view: false,
             last_cull: None,
             impostors: Default::default(),
-            far_avatars: HashMap::new(),
-            posed_at: HashMap::new(),
-            posed_now: HashSet::new(),
+            far_avatars: Default::default(),
+            posed_at: Default::default(),
+            posed_now: Default::default(),
             picture_check: (0, 0, None),
             loading: Default::default(),
             rez: Default::default(),
@@ -1358,7 +1359,7 @@ impl Scene {
             still: still_check::StillCheck::from_env(),
             sync_check: sync_check::SyncCheck::from_env(),
             sync_slow: sync_slow::SlowSync::limit_from_env(),
-            hud_roots: HashMap::new(),
+            hud_roots: Default::default(),
             hud_roots_tmp: Vec::new(),
             last_sync: None,
             frame: 0,
@@ -1370,24 +1371,24 @@ impl Scene {
             settings: settings::SettingsStreamer::new(cache_dir_anim.clone()),
             landmark_results: Vec::new(),
             anims,
-            object_signals: HashMap::new(),
-            palette_slots: HashMap::new(),
+            object_signals: Default::default(),
+            palette_slots: Default::default(),
             palette_free: Vec::new(),
             palette_count: lips.slots,
             palettes: lips.matrices.clone(),
             live_morphs: lips,
             body_physics: body_physics::Config::default(),
             physics_rig,
-            physics: HashMap::new(),
+            physics: Default::default(),
             last_palette_gc: Instant::now(),
             last_diag: Instant::now(),
             staging: None,
             geom_waiting: Vec::new(),
             parts: Default::default(),
-            skeletons: HashMap::new(),
-            skeleton_member_of: HashMap::new(),
+            skeletons: Default::default(),
+            skeleton_member_of: Default::default(),
             skeleton_meta_gen: 0,
-            motions: HashMap::new(),
+            motions: Default::default(),
             skin_binds: Default::default(),
             auto_hover: Default::default(),
             neutral_pose_test: (std::env::var("AURORA_TEST_NEUTRAL_POSE").as_deref() == Ok("1")).then_some(false),

@@ -68,6 +68,9 @@ serde_path_to_error = "0.1.20"
 # Apache-2.0 with the reference's zlib notice
 bevy_mikktspace = "1.0.0"
 fancy-regex = "0.19.2"
+# Hashing of the maps the frame walks (fast_hash.rs); zlib licence, already
+# in the tree through hashbrown
+foldhash = "0.2.0"
 
 # remembered login password and the GitHub authorization of crash reports
 # (Windows Credential Manager, macOS Keychain, Secret Service on Linux)

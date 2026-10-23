@@ -7,6 +7,7 @@ use super::meshes::MeshStreamer;
 use super::sync_sets::{PendingGeom, SyncState, Xf, XfCache};
 use super::textures::TextureStreamer;
 use super::{GeomEntry, GeomKey, GeomState, GpuGeom, ObjGpu, Scene, anim, animesh, lod_for};
+use crate::fast_hash::FastMap;
 use crate::world::World;
 use crate::world::objects::Object;
 use aurora_render::arena::RecordStore;
@@ -104,7 +105,7 @@ pub(super) struct Placement {
 /// Scene state the frame list consults (sync_sets.rs).
 pub(super) struct FrameState<'a> {
     pub(super) gpu: &'a [ObjGpu],
-    pub(super) geoms: &'a HashMap<GeomKey, GeomEntry>,
+    pub(super) geoms: &'a FastMap<GeomKey, GeomEntry>,
     pub(super) textures: &'a TextureStreamer,
     pub(super) mat_gen: u64,
     pub(super) mat_changes: &'a super::mat_changes::MatChanges,
@@ -225,9 +226,9 @@ fn lod_scale_bias(volume: &aurora_prim::params::VolumeParams) -> Vec3 {
 pub(super) struct SyncCtx<'a> {
     world: &'a World,
     meshes: &'a MeshStreamer,
-    geoms: &'a HashMap<GeomKey, GeomEntry>,
+    geoms: &'a FastMap<GeomKey, GeomEntry>,
     gpu: &'a [ObjGpu],
-    palette_slots: &'a HashMap<Uuid, u32>,
+    palette_slots: &'a FastMap<Uuid, u32>,
     skin_binds: &'a super::skin_binds::SkinBinds,
     palettes: &'a [[[f32; 4]; 4]],
     records: &'a RecordStore,
@@ -684,10 +685,10 @@ mod tests {
             sculpt_wait: Some(map),
             ..Default::default()
         }];
-        let mut geoms = HashMap::new();
+        let mut geoms = FastMap::default();
         let mut textures = TextureStreamer::new(std::path::PathBuf::new());
         let mat_changes = super::super::mat_changes::MatChanges::default();
-        let due = |gpu: &[ObjGpu], geoms: &HashMap<GeomKey, GeomEntry>, textures: &TextureStreamer| {
+        let due = |gpu: &[ObjGpu], geoms: &FastMap<GeomKey, GeomEntry>, textures: &TextureStreamer| {
             let state = FrameState {
                 gpu,
                 geoms,
