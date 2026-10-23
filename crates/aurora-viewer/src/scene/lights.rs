@@ -32,6 +32,17 @@ pub struct LightView {
     pub projector_shadows: bool,
 }
 
+/// The light list's working buffers, kept between frames for their room.
+#[derive(Default)]
+pub struct Scratch {
+    /// (distance, object index, light)
+    lights: Vec<(f32, usize, PointLight)>,
+    /// Objects whose projector is in the list.
+    projecting: Vec<usize>,
+    /// `Scene::light_objects`, copied: the loop borrows the scene.
+    objects: Vec<usize>,
+}
+
 /// The two projectors that cast shadows and how far each has faded in:
 /// LLPipeline::generateSunShadow's update of mShadowSpotLight. A projector
 /// keeps its shadow map while it is one of the two `targets`; otherwise its
@@ -109,10 +120,13 @@ impl Scene {
     pub fn local_lights(&mut self, world: &World, renderer: &mut Renderer, view: &LightView) -> (Vec<PointLight>, [Option<SpotShadow>; 2]) {
         let eye = view.eye;
         let now = Instant::now();
-        let mut lights: Vec<(f32, usize, PointLight)> = Vec::new();
-        let mut projecting: Vec<usize> = Vec::new();
-        let objects: Vec<usize> = self.light_objects.iter().copied().collect();
-        for idx in objects {
+        let Scratch {
+            mut lights,
+            mut projecting,
+            mut objects,
+        } = std::mem::take(&mut self.light_scratch);
+        objects.extend(self.light_objects.iter().copied());
+        for idx in objects.drain(..) {
             let Some(o) = world.objects.get(idx) else {
                 continue;
             };
@@ -169,7 +183,9 @@ impl Scene {
             }
             kept
         });
-        lights.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // (unstable: a stable sort allocates a buffer as long as the list;
+        // equal distances stay in index order, the order they came in)
+        lights.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
         lights.truncate(MAX_LIGHTS);
         // the two projectors of the list that weigh most on screen, among
         // those that reach into the half-space in front of the camera
@@ -197,7 +213,15 @@ impl Scene {
                 fade: slots.fade[k],
             })
         });
-        (lights.into_iter().map(|(_, _, l)| l).collect(), shadows)
+        let list = lights.iter().map(|(_, _, l)| *l).collect();
+        lights.clear();
+        projecting.clear();
+        self.light_scratch = Scratch {
+            lights,
+            projecting,
+            objects,
+        };
+        (list, shadows)
     }
 
     /// Texture table slot of the texture object `idx` projects, held while

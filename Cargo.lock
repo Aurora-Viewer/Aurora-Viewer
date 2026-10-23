@@ -701,9 +701,12 @@ dependencies = [
  "hidapi",
  "image",
  "keyring",
+ "libc",
+ "libmimalloc-sys",
  "log",
  "md5",
  "memmap2",
+ "mimalloc",
  "parking_lot",
  "png",
  "pollster 1.0.1",
@@ -3177,6 +3180,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.47"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d1eacfa31c33ec25e873c136ba5669f00f9866d0688bea7be4d3f7e43067df6"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3311,6 +3323,15 @@ dependencies = [
  "cc",
  "float-cmp 0.10.0",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "mimalloc"
+version = "0.1.50"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3627c4272df786b9260cabaa46aec1d59c93ede723d4c3ef646c503816b0640"
+dependencies = [
+ "libmimalloc-sys",
 ]
 
 [[package]]
