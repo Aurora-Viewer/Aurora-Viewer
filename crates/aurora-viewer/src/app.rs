@@ -15001,6 +15001,7 @@ impl ApplicationHandler for App {
                         && (self.build.ui.color_picker.is_open()
                             || self.script_editors.color_open()
                             || eyedropper
+                            || self.chat_ui.previews.enlarged()
                             || ui::emoji::picker_open(&self.egui_ctx))
                     {
                         return;

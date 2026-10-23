@@ -7,8 +7,8 @@
 //! Legacy Viewer does.
 //!
 //! A picture's card: hovered, buttons to open it in the browser, copy it or
-//! hide the preview; a click opens the link (through the trust warning of
-//! links); a right click also hides every preview of its site. A group's
+//! hide the preview; a click enlarges it over the conversation (`lightbox`);
+//! a right click also hides every preview of its site. A group's
 //! pictures are blurred until clicked (Preferences › Chat). A preview hidden,
 //! asked for or unblurred stays so until the viewer closes; a site hidden
 //! from the menu is saved in the settings.
@@ -24,6 +24,9 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
+
+mod lightbox;
+use lightbox::Lightbox;
 
 /// Cards under one message at most.
 const MAX_CARDS: usize = 3;
@@ -41,6 +44,7 @@ const PLAY: f32 = 56.0;
 const WINDOW_SIZE: Vec2 = Vec2::new(480.0, 300.0);
 
 /// A picture made into textures.
+#[derive(Clone)]
 struct Shown {
     frames: Vec<(egui::TextureHandle, Duration)>,
     /// One loop of the frames.
@@ -184,6 +188,9 @@ pub struct Previews {
     /// Blurred pictures clicked.
     revealed: HashSet<u64>,
     playing: Option<Playing>,
+    lightbox: Option<Lightbox>,
+    /// Offline capture: enlarge the first still/GIF, optionally zoomed/panned.
+    demo_zoom: Option<String>,
 }
 
 impl Default for Previews {
@@ -207,6 +214,8 @@ impl Default for Previews {
             hidden: HashSet::new(),
             revealed: HashSet::new(),
             playing: None,
+            lightbox: None,
+            demo_zoom: std::env::var("AURORA_DEMO_PREVIEW_ZOOM").ok(),
         }
     }
 }
@@ -251,6 +260,72 @@ fn megabytes(bytes: u64) -> String {
 }
 
 impl Previews {
+    pub fn enlarged(&self) -> bool {
+        self.lightbox.is_some()
+    }
+
+    /// Before the conversation's editor and shortcuts receive keys.
+    pub(super) fn lightbox_keys(&mut self, ctx: &egui::Context) {
+        if self.enlarged()
+            && ctx.memory(|m| m.top_modal_layer()).is_none()
+            && (crate::ui::close_key::take(ctx, egui::Id::unique("conversations"))
+                || ctx.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::W)
+                }))
+        {
+            self.close_lightbox(ctx);
+        }
+    }
+
+    fn close_lightbox(&mut self, ctx: &egui::Context) {
+        if let Some(view) = self.lightbox.take()
+            && let Some(field) = view.previous_focus
+        {
+            ctx.memory_mut(|m| m.request_focus(field));
+        }
+    }
+
+    /// Keep the image within its owning conversation, including when resized.
+    pub(super) fn lightbox(&mut self, ctx: &egui::Context, p: &Palette, bounds: Option<egui::Rect>) {
+        let Some(bounds) = bounds else {
+            self.close_lightbox(ctx);
+            return;
+        };
+        if self.lightbox.as_mut().is_some_and(|view| view.show(ctx, p, bounds)) {
+            self.close_lightbox(ctx);
+        }
+    }
+
+    fn enlarge(&mut self, ctx: &egui::Context, url: &str, trusted_only: bool) {
+        let Some(Cached {
+            entry: Entry::Picture(shown),
+            ..
+        }) = self.cache.get(url)
+        else {
+            return;
+        };
+        let mut view = Lightbox::new(ctx, url.to_owned(), shown.clone());
+        if self.demo {
+            if let Some(mode) = self.demo_zoom.take() {
+                view.demo(&mode);
+            }
+        } else if !shown.animated()
+            && shown.size.iter().copied().max().unwrap_or(0) > shown.frames[0].0.size().into_iter().max().unwrap_or(0) as u32
+            && let (Some(rt), Some((trusted, any))) = (&self.runtime, &self.clients)
+        {
+            let client = if trusted_only { trusted.clone() } else { any.clone() };
+            let url = url.to_owned();
+            let (tx, rx) = mpsc::channel();
+            view.pending = Some(rx);
+            let wake = ctx.clone();
+            view.task = Some(rt.spawn(async move {
+                let _ = tx.send(lp::fetch_enlarged_picture(&client, &url).await);
+                wake.request_repaint();
+            }));
+        }
+        self.lightbox = Some(view);
+    }
+
     /// Answers in, downloads out; the player of a card no longer drawn
     /// stops. Once per frame, before the lines are drawn.
     pub fn update(&mut self, ctx: &egui::Context) {
@@ -279,7 +354,9 @@ impl Previews {
             let mut idle: Vec<(u64, String)> = self
                 .cache
                 .iter()
-                .filter(|(_, c)| !matches!(c.entry, Entry::Queued | Entry::Loading))
+                .filter(|(url, c)| {
+                    !matches!(c.entry, Entry::Queued | Entry::Loading) && self.lightbox.as_ref().is_none_or(|view| &view.url != *url)
+                })
                 .map(|(u, c)| (c.used, u.clone()))
                 .collect();
             idle.sort();
@@ -450,6 +527,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
     let Some(cached) = pv.cache.get(url) else {
         return;
     };
+    let mut enlarge = false;
     let resp = match (&cached.entry, target) {
         (Entry::Queued | Entry::Loading, Target::Picture) => placeholder(ui, p, Vec2::new(width, (width * 0.75).round())),
         (Entry::Queued | Entry::Loading, Target::Video(_)) => {
@@ -467,8 +545,10 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
                 }
                 Some(Action::Copy) => ui.ctx().copy_image((*shown.copy).clone()),
                 Some(Action::Open) => super::open_web_link(ui.ctx(), url),
+                Some(Action::Enlarge) => enlarge = true,
                 None => {}
             }
+            enlarge |= !blur && pv.demo && pv.demo_zoom.as_ref().is_some_and(|mode| (mode == "gif") == shown.animated());
             out.resp
         }
         (Entry::Video { .. }, Target::Video(video)) => {
@@ -484,12 +564,16 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
         // not a picture, unavailable: the link stays a link
         _ => return,
     };
+    if enlarge {
+        pv.enlarge(ui.ctx(), url, trusted_only);
+    }
     card_menu(&resp, p, pv, k, url);
 }
 
 /// What the resident did on a picture.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
+    Enlarge,
     Open,
     Copy,
     Hide,
@@ -605,9 +689,11 @@ fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, width: f32, blur: bool
         }
     }
     if action.is_none() && resp.clicked() {
-        action = Some(Action::Open);
+        action = Some(Action::Enlarge);
     }
-    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let resp = resp
+        .on_hover_cursor(egui::CursorIcon::ZoomIn)
+        .on_hover_text(aurora_i18n::tr!("ui-chat-preview-enlarge"));
     PictureOut { resp, action }
 }
 

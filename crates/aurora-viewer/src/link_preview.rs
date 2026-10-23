@@ -427,14 +427,30 @@ async fn download(client: &reqwest::Client, url: &str, accept: &str, max: u64) -
 
 /// Download and decode the picture of `url`.
 pub async fn fetch_picture(client: &reqwest::Client, url: &str) -> Result<Picture, Failure> {
+    fetch_picture_sized(client, url, MAX_SIDE).await
+}
+
+/// Only the single open enlargement needs this resolution (at most 16 MiB
+/// of pixels). Cards and animated GIFs retain their existing memory budgets.
+pub async fn fetch_enlarged_picture(client: &reqwest::Client, url: &str) -> Result<Picture, Failure> {
+    fetch_picture_sized(client, url, 2048).await
+}
+
+async fn fetch_picture_sized(client: &reqwest::Client, url: &str, side: u32) -> Result<Picture, Failure> {
     let (body, kind) = download(client, url, "image/webp,image/png,image/*;q=0.8", MAX_BYTES).await?;
     // a picture says so, or says nothing precise about itself
     if !(kind.starts_with("image/") || kind.is_empty() || kind.starts_with("application/octet-stream")) {
         return Err(Failure::NotPicture);
     }
-    tokio::task::spawn_blocking(move || decode(&body))
-        .await
-        .unwrap_or(Err(Failure::NotPicture))
+    tokio::task::spawn_blocking(move || {
+        if side == MAX_SIDE {
+            decode(&body)
+        } else {
+            decode_sized(&body, side)
+        }
+    })
+    .await
+    .unwrap_or(Err(Failure::NotPicture))
 }
 
 /// Title, channel and picture of a video.
@@ -486,6 +502,10 @@ fn fit(w: u32, h: u32, side: u32) -> (u32, u32) {
 
 /// Decode a picture (PNG, JPEG, GIF, WebP, BMP), its frames when animated.
 pub fn decode(bytes: &[u8]) -> Result<Picture, Failure> {
+    decode_sized(bytes, MAX_SIDE)
+}
+
+fn decode_sized(bytes: &[u8], side: u32) -> Result<Picture, Failure> {
     let format = image::guess_format(bytes).map_err(|_| Failure::NotPicture)?;
     if format == image::ImageFormat::Gif {
         return decode_gif(bytes);
@@ -500,7 +520,7 @@ pub fn decode(bytes: &[u8]) -> Result<Picture, Failure> {
         Failure::NotPicture
     })?;
     let size = [img.width(), img.height()];
-    let (w, h) = fit(img.width(), img.height(), MAX_SIDE);
+    let (w, h) = fit(img.width(), img.height(), side);
     let kept = if (w, h) == (img.width(), img.height()) {
         img
     } else {
@@ -753,6 +773,9 @@ mod tests {
         assert_eq!(p.frames.len(), 1);
         assert_eq!(p.frames[0].0.size, [800, 600]);
         assert!(p.blurred.size[0] <= 48);
+        let detail = decode_sized(&png(2400, 1200), 2048).unwrap();
+        assert_eq!(detail.size, [2400, 1200]);
+        assert_eq!(detail.frames[0].0.size, [2048, 1024]);
         assert_eq!(decode(b"<html>not a picture</html>").err(), Some(Failure::NotPicture));
     }
 

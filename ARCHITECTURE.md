@@ -1194,6 +1194,15 @@ its mesh and record allocations. Selected invisible meshes temporarily
 retain draw records for their wireframe; manipulation keeps the selection
 outlines visible.
 
+`ui/chat/previews/lightbox.rs` owns the single enlarged conversation picture
+(#806): a dependent layer clipped to the chat body, fitted geometry,
+pointer-centered zoom, free panning and animated frames. The conversation
+body is disabled while it is open; Escape/Ctrl+W close the picture first and
+restore focus. Only this view requests a still image up to 2048 pixels per
+side, decoded off the frame through `link_preview.rs` with the card's download
+and redirect policy. Closing drops its textures and ignores late worker replies;
+GIFs retain their existing bounded frames. The Legacy chat stays text-only.
+
 ## Life of a frame
 
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam

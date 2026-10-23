@@ -2813,6 +2813,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_PREVIEWS=1\|states\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
+| `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan` | Open a picture over the demo conversation, fitted, animated, zoomed or panned |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
@@ -3710,6 +3711,21 @@ failure. Grid validation and any paid upload are performed by the human.
   title and picture come from YouTube. In the Legacy lines
   (`bubbles:legacy`) no card at all. Capture at frame 900 (1500 with
   `net`).
+- **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan`**: with `AURORA_DEMO_CONV`
+  and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture
+  (`1`), or animated picture (`gif`); `zoom` starts at twice its fitted size,
+  `pan` also moves it. The chat body dims, leaving its title bar reachable.
+  Test the wheel over the image (zoom around the pointer), left drag,
+  double-click or Fit to reset, the close button, a click on the dim margin,
+  Escape and Ctrl+W. The chat must not scroll, send text or switch tabs under
+  the image; closing restores its editor focus. Resize and move the floater,
+  cover it with another window, minimize and reopen it. In a group the first
+  click still reveals the blurred card; the next click enlarges it. GIFs
+  keep animating. Browser and Copy remain explicit actions. Capture at frame
+  900. No network in these four scenarios; normal still pictures request
+  detail up to 2048 pixels on opening, with the existing 8 MB download limit;
+  on failure their cached preview remains available. GIFs keep their card's
+  frame resolution and memory budget.
 - **`AURORA_DEMO_PREVIEW_PLAY=card|window`**: with
   `AURORA_DEMO_CONV_PREVIEWS`, the first video card drawn plays by itself,
   in its card (wider, stop and window buttons under it) or in the player
