@@ -7035,8 +7035,16 @@ apex and throughout descent, with AO replacements on and off; it checks local
 pose suppression, observer stop commands, surface recovery and ordinary fall
 restoration when support is disabled. Full `scripts/check.ps1` green: 4,587
 passed, zero failures, 27 ignored; scripts, formatting and Clippy clean. Both
-LSL scripts lint with zero errors/warnings. Updated native captures and human
-simulator acceptance are pending.
+LSL scripts lint with zero errors/warnings. Default dev executable
+`0.7.4+21.gd6129a768` built; three native offline runs exit 0 without
+warnings/errors. Nine captures were inspected: `balanced-water-jump-run` at
+1275/1305/1328/1350/1380, `balanced-water-jump-hold` at 788/840/1010 and
+neighbouring crouch-walk at 760. The entire intermediate arc stays in view,
+and held ascent leaves the avatar supported after landing. Profile samples
+remain at the configured 60 FPS cap with shared-desktop scheduling spikes;
+they are presentation fixtures, not an isolated performance comparison or
+simulator physics test. Human acceptance of the physical height and real
+inventory animation continuity remains pending before PR.
 
 `water-walk-ui` and `swim-ui` also open the Movement tab for EN/FR control
 inspection, with only their corresponding water mode active.
