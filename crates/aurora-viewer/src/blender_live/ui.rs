@@ -177,9 +177,7 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
 
 fn section(ui: &mut egui::Ui, p: &crate::theme::Palette, icon: &str, title: &str) {
     ui.add_space(12.0);
-    widgets::surface(ui, p, |ui| {
-        ui.set_min_width(ui.available_width());
-        widgets::section_header(ui, p, icon, title);
-    });
-    ui.add_space(4.0);
+    let divider_palette = crate::theme::Palette { raised: p.muted_dim, ..*p };
+    widgets::divider(ui, &divider_palette);
+    widgets::section_header(ui, p, icon, title);
 }
