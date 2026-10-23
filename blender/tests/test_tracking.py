@@ -43,6 +43,8 @@ class TrackingTests(unittest.TestCase):
         if bpy.context.object and bpy.context.object.mode != "OBJECT":
             bpy.ops.object.mode_set(mode="OBJECT")
         bpy.context.scene.aurora_live.objects.clear()
+        bpy.context.scene.aurora_live.auto_update = True
+        bpy.context.scene.aurora_live.interval = 0.2
         bpy.ops.object.select_all(action="SELECT")
         bpy.ops.object.delete(use_global=False)
         self.rig, self.shirt = starter.create(bpy.context)
@@ -66,6 +68,139 @@ class TrackingTests(unittest.TestCase):
             selected.select_set(False)
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
+
+    def test_automatic_updates_batch_geometry_material_and_membership_changes_until_interval(self):
+        prefs = bpy.context.scene.aurora_live
+        prefs.interval = 10
+        tracking.add(bpy.context.scene, [self.shirt, self.other])
+        with patch.object(aurora_live, "_client", self.fake), patch.object(aurora_live.time, "monotonic", return_value=100) as clock:
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 1)
+            self.shirt.data.vertices[0].co.x += 0.1
+            self.shirt.active_material.diffuse_color = (0.2, 0.4, 0.6, 1)
+            prefs.objects[1].enabled = False
+            clock.return_value = 109.9
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 1, "list changes must respect the interval too")
+            clock.return_value = 110
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 2)
+            self.assertEqual([mesh["name"] for mesh in self.sent[-1]["meshes"]], [self.shirt.name])
+            self.assertFalse(aurora_live._dirty)
+            clock.return_value = 150
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 2, "idle scenes must not be sent periodically")
+
+    def test_manual_mode_keeps_changes_pending_until_click_and_click_always_sends(self):
+        prefs = bpy.context.scene.aurora_live
+        prefs.auto_update = False
+        prefs.interval = 3600
+        with patch.object(aurora_live, "Client", return_value=self.fake), patch.object(aurora_live.time, "monotonic", return_value=100) as clock:
+            bpy.ops.aurora.live_connect()
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 1, "connecting must publish the initial preview in manual mode")
+            self.shirt.data.vertices[0].co.x += 0.1
+            tracking.add(bpy.context.scene, [self.other])
+            clock.return_value = 10000
+            with patch.object(aurora_live.exporter, "snapshot", wraps=aurora_live.exporter.snapshot) as capture:
+                aurora_live._tick()
+                capture.assert_not_called()
+            self.assertEqual(len(self.sent), 1)
+            self.assertTrue(aurora_live._dirty)
+            self.assertEqual(bpy.ops.aurora.live_refresh(), {"FINISHED"})
+            self.assertEqual(len(self.sent), 2, "capture must finish during the operator, without waiting for the timer")
+            self.assertEqual(len(self.sent[-1]["meshes"]), 2)
+            self.assertEqual(bpy.ops.aurora.live_refresh(), {"FINISHED"})
+            self.assertEqual(len(self.sent), 3, "a manual click must resend even unchanged content")
+            self.assertGreater(self.sent[-1]["revision"], self.sent[-2]["revision"])
+
+    def test_manual_click_bypasses_automatic_interval_and_resets_its_deadline(self):
+        prefs = bpy.context.scene.aurora_live
+        prefs.interval = 30
+        tracking.add(bpy.context.scene, [self.shirt])
+        with patch.object(aurora_live, "_client", self.fake), patch.object(aurora_live.time, "monotonic", return_value=100) as clock:
+            aurora_live._tick()
+            clock.return_value = 101
+            bpy.ops.aurora.live_refresh()
+            self.assertEqual(len(self.sent), 2)
+            self.shirt.data.vertices[0].co.x += 0.1
+            aurora_live._request_capture()
+            clock.return_value = 130.9
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 2)
+            clock.return_value = 131
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 3)
+
+    def test_manual_request_waits_for_handshake_and_is_cleared_on_disconnect(self):
+        bpy.context.scene.aurora_live.auto_update = False
+        ready = set()
+        self.fake.state = lambda: ("Connecting", ready)
+        with patch.object(aurora_live, "Client", return_value=self.fake):
+            bpy.ops.aurora.live_connect()
+            bpy.ops.aurora.live_refresh()
+            self.assertFalse(self.sent)
+            self.assertTrue(aurora_live._force_capture)
+            ready.update(self.names)
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 1)
+            self.assertFalse(aurora_live._force_capture)
+            bpy.ops.aurora.live_disconnect()
+            self.assertFalse(bpy.ops.aurora.live_refresh.poll())
+            self.assertFalse(bpy.app.timers.is_registered(aurora_live._tick))
+            self.assertIsNone(aurora_live._last_snapshot)
+
+    def test_schedule_settings_do_not_dirty_content_and_resuming_auto_sends_pending_changes(self):
+        prefs = bpy.context.scene.aurora_live
+        tracking.add(bpy.context.scene, [self.shirt])
+        with patch.object(aurora_live, "_client", self.fake), patch.object(aurora_live.time, "monotonic", return_value=100) as clock:
+            aurora_live._tick()
+            prefs.interval = 60
+            prefs.auto_update = False
+            self.assertFalse(aurora_live._dirty)
+            self.shirt.data.vertices[0].co.x += 0.1
+            aurora_live._request_capture()
+            clock.return_value = 160
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 1)
+            prefs.auto_update = True
+            aurora_live._tick()
+            self.assertEqual(len(self.sent), 2)
+
+    def test_texture_paint_sends_changed_pixels_without_repeating_idle_content(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        material = self.shirt.active_material
+        material.use_nodes = True
+        image = bpy.data.images.new("Scheduled paint", 2, 2)
+        image.pixels.foreach_set([1, 0, 0, 1] * 4)
+        node = material.node_tree.nodes.new("ShaderNodeTexImage")
+        node.image = image
+        shader = next(n for n in material.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+        material.node_tree.links.new(node.outputs["Color"], shader.inputs["Base Color"])
+        bpy.ops.object.mode_set(mode="TEXTURE_PAINT")
+        try:
+            with patch.object(aurora_live, "_client", self.fake):
+                self.tick()
+                self.tick()
+                self.assertEqual(len(self.sent), 1, "idle paint mode must not transmit identical snapshots")
+                image.pixels.foreach_set([0, 1, 0, 1] * 4)
+                image.update()
+                self.tick()
+                self.assertEqual(len(self.sent), 2)
+                self.assertEqual(base64.b64decode(self.sent[-1]["images"][0]["rgba"])[:3], b"\x00\xff\x00")
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+
+    def test_manual_click_can_retry_capture_errors(self):
+        tracking.add(bpy.context.scene, [self.shirt])
+        with patch.object(aurora_live, "_client", self.fake):
+            with patch.object(aurora_live.exporter, "snapshot", side_effect=ValueError("Test capture failure")):
+                bpy.ops.aurora.live_refresh()
+            self.assertEqual(aurora_live._error, "Test capture failure")
+            self.assertFalse(self.sent)
+            bpy.ops.aurora.live_refresh()
+            self.assertEqual(len(self.sent), 1)
+            self.assertFalse(aurora_live._error)
 
     def test_selection_is_additive_deduplicated_and_preserves_paused_entries(self):
         self.assertEqual(bpy.ops.aurora.live_selection(), {"FINISHED"})
@@ -210,6 +345,8 @@ class TrackingTests(unittest.TestCase):
         tracking.add(bpy.context.scene, [self.shirt, self.other])
         tracking.source_ids(bpy.context.scene)
         bpy.context.scene.aurora_live.objects[1].enabled = False
+        bpy.context.scene.aurora_live.auto_update = False
+        bpy.context.scene.aurora_live.interval = 37.5
         expected = [(entry.object.name, entry.enabled, entry.source_id) for entry in bpy.context.scene.aurora_live.objects]
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / "sync-list.blend")
@@ -218,6 +355,8 @@ class TrackingTests(unittest.TestCase):
             bpy.ops.wm.open_mainfile(filepath=path)
         self.assertIsNone(aurora_live._client)
         self.assertEqual(self.closed, [True])
+        self.assertFalse(bpy.context.scene.aurora_live.auto_update)
+        self.assertEqual(bpy.context.scene.aurora_live.interval, 37.5)
         self.assertEqual([(entry.object.name, entry.enabled, entry.source_id) for entry in bpy.context.scene.aurora_live.objects], expected)
 
     def test_undo_redo_restores_membership_and_resends_without_an_rna_update(self):

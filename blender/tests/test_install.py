@@ -32,12 +32,18 @@ else:
     result = bpy.ops.preferences.addon_enable(module=module)
 assert "FINISHED" in result, result
 assert hasattr(bpy.types.Scene, "aurora_live"), "extension was not enabled"
+prefs = bpy.context.scene.aurora_live
+assert prefs.auto_update and abs(prefs.interval - 0.2) < 0.000001
+prefs.auto_update = False
+prefs.interval = 45
+assert prefs.interval == 45 and not bpy.ops.aurora.live_refresh.poll()
+prefs.auto_update = True
 installed = importlib.import_module(module)
 if extension:
     # Blender strips bl_info from extension modules; its manifest is authoritative.
-    assert 'version = "0.8.6"' in Path(installed.__file__).with_name("blender_manifest.toml").read_text()
+    assert 'version = "0.8.7"' in Path(installed.__file__).with_name("blender_manifest.toml").read_text()
 else:
-    assert installed.bl_info["version"] == (0, 8, 6)
+    assert installed.bl_info["version"] == (0, 8, 7)
 assert bpy.ops.aurora.create_sl_rig(with_tshirt=True) == {"FINISHED"}
 shirt = bpy.context.object
 assert len(shirt.find_armature().data.bones) == 159

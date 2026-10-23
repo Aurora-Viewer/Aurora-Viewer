@@ -13,7 +13,12 @@ existing draw objects retain their geometry while replacement meshes load.
 `scene/blender_live.rs` retires obsolete assets as soon as their geometry has
 no references or pending jobs. `blender/aurora_live/` is the shared Blender 2.93+
 implementation, with main-thread rest capture, a separate socket worker and a
-single latest-snapshot mailbox. `docs/BLENDER_LIVE.md` describes setup and
+single latest-snapshot mailbox. Per-scene automatic/manual settings gate dirty
+captures at a seconds-based interval, including membership changes; an explicit
+refresh captures immediately or waits for the handshake. Initial connections
+always capture. Comparing prepared content suppresses identical automatic
+revisions, including idle texture-paint ticks, while sharing payload buffers
+with the worker. `docs/BLENDER_LIVE.md` describes setup and
 wire limits; `blender/tests/` exercises real Blender capture and transport.
 Optional negotiated source UUIDs keep Aurora's per-object visibility/removal
 stable across renames and render-batch splitting. Prepared sources share immutable

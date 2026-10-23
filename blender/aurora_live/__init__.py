@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 8, 6), "blender": (2, 93, 0),
+    "version": (0, 8, 7), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -28,6 +28,8 @@ _dirty = True
 _exporting = False
 _revision = 0
 _last_capture = 0.0
+_force_capture = False
+_last_snapshot = None
 _error = ""
 _material_signature = ()
 
@@ -80,13 +82,16 @@ def _handle_size_changed(obj, _context):
 
 
 def _stop():
-    global _client, _error, _material_signature, _object_signature
+    global _client, _error, _material_signature, _object_signature, _force_capture, _last_capture, _last_snapshot
     if _client:
         _client.close()
     _client = None
     _object_signature = ()
     _error = ""
     _material_signature = ()
+    _force_capture = False
+    _last_capture = 0.0
+    _last_snapshot = None
     materials.invalidate()
     if bpy.app.timers.is_registered(_tick):
         bpy.app.timers.unregister(_tick)
@@ -94,6 +99,7 @@ def _stop():
 
 def _tick():
     global _dirty, _revision, _last_capture, _exporting, _error, _material_signature, _object_signature
+    global _force_capture, _last_snapshot
     if _client is None:
         return None
     status, supported = _client.state()
@@ -114,15 +120,23 @@ def _tick():
     painting = bpy.context.mode == "PAINT_TEXTURE"
     if painting:
         _dirty = True
-    if supported and _dirty and time.monotonic() - _last_capture >= prefs.interval:
+    due = prefs.auto_update and _dirty and time.monotonic() - _last_capture >= prefs.interval
+    if supported and (_force_capture or due):
+        forced, _force_capture = _force_capture, False
         _exporting = True
         _dirty = False
         try:
             if painting:
                 materials.invalidate()
-            _revision += 1
-            value = exporter.snapshot(objects, supported, _revision, prefs.forward, _client.rest_axes(), tracking.source_ids(scene))
-            _client.submit(value)
+            value = exporter.snapshot(objects, supported, _revision + 1, prefs.forward, _client.rest_axes(), tracking.source_ids(scene))
+            # Texture painting can change pixels without a depsgraph event.
+            # Compare the prepared payload, sharing its buffers with the worker,
+            # so idle paint ticks and unrelated notifications send no revisions.
+            content = {key: item for key, item in value.items() if key != "revision"}
+            if forced or content != _last_snapshot:
+                _revision += 1
+                _client.submit(value)
+                _last_snapshot = content
             _error = ""
         except (ValueError, RuntimeError, ReferenceError, OverflowError) as error:
             _error = pgettext_iface(str(error))
@@ -143,8 +157,8 @@ def _settings_changed(_self, _context):
 
 
 def _request_capture():
-    global _dirty, _last_capture, _error
-    _dirty, _last_capture, _error = True, 0.0, ""
+    global _dirty, _error
+    _dirty, _error = True, ""
     # Images may have changed while their object was paused or disconnected.
     materials.invalidate()
 
@@ -172,7 +186,10 @@ class AURORA_PG_live(bpy.types.PropertyGroup):
     starter_tshirt: BoolProperty(name="Add rigged test T-shirt", default=True,
                                 description="Create a weighted, editable T-shirt on the new SL skeleton")
     port: IntProperty(name="Aurora port", default=17655, min=1024, max=65535)
-    interval: FloatProperty(name="Update interval", default=0.2, min=0.1, max=5.0, subtype="TIME", update=_settings_changed)
+    auto_update: BoolProperty(name="Automatic updates", default=True,
+                              description="Send changed objects and materials at the chosen interval; disable for manual updates")
+    interval: FloatProperty(name="Interval (seconds)", default=0.2, min=0.1, max=3600.0, soft_max=60.0, precision=2,
+                            description="Minimum time in seconds between automatic updates; unchanged content is not sent")
     forward: EnumProperty(name="Coordinates", items=[
         ("NATIVE", "SL / Z up", "Use the rig's existing SL coordinate axes"),
         ("NEGATIVE_Y", "Blender -Y forward", "Rotate Blender -Y to SL +X"),
@@ -209,7 +226,7 @@ class AURORA_OT_connect(bpy.types.Operator):
     bl_label = "Connect to Aurora"
 
     def execute(self, context):
-        global _client
+        global _client, _force_capture
         tracking.prune(context.scene)
         if not context.scene.aurora_live.objects:
             tracking.add(context.scene, _selected())
@@ -218,6 +235,7 @@ class AURORA_OT_connect(bpy.types.Operator):
             return {"CANCELLED"}
         _stop()
         _request_capture()
+        _force_capture = True
         _client = Client(context.scene.aurora_live.port)
         bpy.app.timers.register(_tick, first_interval=0.1)
         return {"FINISHED"}
@@ -259,13 +277,19 @@ class AURORA_OT_disconnect(bpy.types.Operator):
 
 class AURORA_OT_refresh(bpy.types.Operator):
     bl_idname = "aurora.live_refresh"
-    bl_label = "Send now"
+    bl_label = "Update now"
+    bl_description = "Send the latest enabled objects and materials immediately, even in manual mode"
+
+    @classmethod
+    def poll(cls, _context):
+        return _client is not None and not _exporting
 
     def execute(self, _context):
-        global _dirty, _last_capture
-        _dirty = True
-        materials.invalidate()
-        _last_capture = 0.0
+        global _force_capture
+        _request_capture()
+        _force_capture = True
+        # Capture on this click; keep the request pending during the handshake.
+        _tick()
         return {"FINISHED"}
 
 
@@ -314,9 +338,15 @@ def _draw_live(layout, context):
         status, _supported = _client.state()
         layout.label(text=pgettext_iface(status), translate=False)
         layout.operator("aurora.live_disconnect", icon="UNLINKED")
-        layout.operator("aurora.live_refresh", icon="FILE_REFRESH")
     else:
         layout.operator("aurora.live_connect", icon="LINKED")
+    box = layout.box()
+    box.prop(prefs, "auto_update")
+    row = box.row()
+    row.enabled = prefs.auto_update
+    row.prop(prefs, "interval")
+    box.label(text="Only changed content is sent." if prefs.auto_update else "Manual updates only.", icon="INFO")
+    box.operator("aurora.live_refresh", icon="FILE_REFRESH")
     layout.label(text="Synchronized objects", icon="OUTLINER_OB_MESH")
     layout.operator("aurora.live_selection", icon="ADD")
     if prefs.objects:
@@ -338,7 +368,6 @@ def _draw_connection(layout, context):
     row = layout.row()
     row.enabled = _client is None
     row.prop(prefs, "port")
-    layout.prop(prefs, "interval")
     layout.prop(prefs, "forward")
 
 
@@ -528,7 +557,16 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Missing object": "Objet manquant", "{enabled} / {total} enabled": "{enabled} / {total} actifs",
     "Add selected meshes to start syncing.": "Ajoutez la sélection pour commencer.",
     "Select one or more rigged meshes first": "Sélectionnez d’abord un ou plusieurs maillages riggés",
-    "Send now": "Envoyer maintenant", "Aurora port": "Port Aurora", "Update interval": "Intervalle de mise à jour",
+    "Update now": "Mettre à jour maintenant", "Aurora port": "Port Aurora",
+    "Automatic updates": "Mise à jour automatique", "Interval (seconds)": "Intervalle (secondes)",
+    "Only changed content is sent.": "Envoi uniquement si modification.",
+    "Manual updates only.": "Mise à jour par bouton uniquement.",
+    "Send changed objects and materials at the chosen interval; disable for manual updates":
+        "Envoyer les objets et matériaux modifiés à l’intervalle choisi ; désactiver pour passer en mode manuel",
+    "Minimum time in seconds between automatic updates; unchanged content is not sent":
+        "Délai minimum en secondes entre les mises à jour automatiques ; aucun envoi si le contenu est inchangé",
+    "Send the latest enabled objects and materials immediately, even in manual mode":
+        "Envoyer immédiatement les objets actifs et leurs matériaux, même en mode manuel",
     "Coordinates": "Coordonnées", "SL / Z up": "SL / Z vertical", "Blender -Y forward": "Blender -Y vers l’avant",
     "Enable Blender Live in Aurora first.": "Activez d’abord Blender Live dans Aurora.",
     "Local preview · no asset upload": "Aperçu local · sans import automatique",

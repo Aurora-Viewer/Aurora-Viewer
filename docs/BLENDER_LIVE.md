@@ -25,14 +25,15 @@ Python installation is needed.
    program is already using that port, or to preview in another viewer.
 4. In Blender, select the rigged mesh objects, open the 3D view sidebar
    (`N`) → **Aurora** → **Live**, click **Add selected meshes**, then **Connect to Aurora**.
-5. Edit your mesh. The default capture interval is **0.2 seconds**; larger
-   meshes can take longer to capture and prepare. Aurora supplies the
+5. Edit your mesh. **Automatic updates** is enabled by default, with an
+   **Interval (seconds)** of **0.2**. Larger meshes can take longer to capture
+   and prepare. Aurora supplies the
    animation and avatar shape, independently of Blender's current pose.
 
 The four navigation buttons keep the sidebar focused on one task:
 
-- **Live**: connection and the synchronized-object list. **Connection settings**
-  is collapsed by default and holds the port, capture interval and coordinates.
+- **Live**: connection, automatic/manual update controls and the synchronized-object
+  list. **Connection settings** is collapsed by default and holds the port and coordinates.
 - **Skeleton**: bone visibility and display options. Expand **Create an SL avatar**
   to create a starter rig and optional test T-shirt.
 - **Controls**: hand/foot IK, root/COG controls and independent classic/Bento eye targets.
@@ -41,6 +42,17 @@ The four navigation buttons keep the sidebar focused on one task:
 The **Avatar rig** selector is shared by Skeleton, Controls and Weights. Navigation
 belongs to the window manager, stays outside the scene's mesh/settings data,
 and defaults to Live on a fresh session.
+
+**Automatic updates** sends changed geometry, weights, UVs, materials and list
+membership at most once per configured interval (**0.1–3,600 seconds**). Idle
+scenes send no repeated snapshots, including unchanged texture-paint content.
+The interval is expressed in seconds independently of Blender's frame rate.
+Uncheck this option to work in **manual mode**: edits remain pending until
+you click **Update now**. This button captures immediately while connected,
+bypassing the interval and resending even unchanged content. During the
+connection handshake, its request waits until Aurora is ready. Connecting
+always sends an initial preview, including in manual mode. The interval and
+automatic/manual choice are saved per scene in the `.blend` file.
 
 The **Synchronized objects** list is saved with each scene in the `.blend`
 file. **Add selected meshes** appends mesh objects without duplicates, keeping
@@ -58,8 +70,10 @@ Deleted objects are pruned at the next live tick or list operation.
 
 Disconnecting retains the list and pause flags. Loading another file stops the
 connection and restores that file's saved list. During a connection, switching
-scenes synchronizes the new scene's enabled entries. **Send now** retries the
-current enabled objects after an error.
+scenes schedules the new scene's enabled entries according to its update settings.
+**Update now** also retries the current enabled objects after an error. List
+changes respect the update mode and interval; in manual mode, click **Update now**
+to publish additions, pauses, resumptions or removals.
 
 The add-on reconnects automatically when Aurora becomes available again,
 resending its latest snapshot. Disconnecting Blender leaves the last good
@@ -105,8 +119,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.8.6.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.6-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.8.7.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.7-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -433,7 +447,7 @@ Bake procedural shaders, material groups and advanced Principled effects
 (coat, transmission, subsurface, sheen) to compatible images first. SL's PBR
 model does not represent every Blender shader input. The plug-in reports
 unsupported connected inputs and keeps the last valid preview. Reload an
-externally edited image in Blender; **Send now** also refreshes image caches.
+externally edited image in Blender; **Update now** also refreshes image caches.
 
 ## Rig and coordinate conventions
 
