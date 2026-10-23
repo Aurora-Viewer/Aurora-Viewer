@@ -166,6 +166,25 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
     let all = lines(c, &filter, st.friend_set.as_deref());
     let order: Vec<Uuid> = all.iter().map(|l| l.friend.id).collect();
     st.sel.retain(|id| order.contains(id));
+    if c.contact_sheet_on_click {
+        let selected = st
+            .sheet
+            .filter(|id| order.contains(id))
+            .or_else(|| st.sel.first().copied())
+            .or_else(|| order.first().copied());
+        if let Some(id) = selected {
+            if st.sheet != Some(id) {
+                super::nearby::open_sheet(st, id);
+                st.sheet_grow = false;
+            }
+            if st.sel.is_empty() {
+                st.sel.push(id);
+                st.anchor = Some(id);
+            }
+        } else {
+            super::nearby::close_sheet(st);
+        }
+    }
     let sections = c.friends.sort == SORT_STATUS;
     let online = all.iter().filter(|l| l.friend.online).count();
     egui::ScrollArea::vertical()
@@ -196,6 +215,14 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
 /// and the view options.
 fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
     let line = Vec2::new(ui.available_width(), rows::TOOLBAR_H);
+    let add_label = aurora_i18n::tr!("common-add");
+    let add_label = if c.contact_settings.show_search
+        && line.x < widgets::action_button_fit(ui, "user-plus", add_label) + rows::TOOLBAR_H + 12.0 + 100.0
+    {
+        ""
+    } else {
+        add_label
+    };
     ui.allocate_ui_with_layout(line, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let gear = rows::gear(ui, c.p, aurora_i18n::tr!("people-display-options"));
@@ -222,7 +249,7 @@ fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
             ui,
             c.p,
             "user-plus",
-            aurora_i18n::tr!("common-add"),
+            add_label,
             widgets::ActionKind::Flat,
             Vec2::new(0.0, rows::TOOLBAR_H),
         )
@@ -250,25 +277,66 @@ fn pills(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
             .map_or(0, |set| set.friends.iter().filter(|id| c.world.social.is_friend(id)).count())
     };
     sets.sort_by_key(|s| std::cmp::Reverse(friends_in(s)));
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
-        label(ui, p, aurora_i18n::tr!("people-sort"));
-        for (sort, key) in [
-            (SORT_STATUS, "people-sort-online-first"),
-            (SORT_NAME, "common-name"),
-            (SORT_USERNAME, "common-username"),
-        ] {
-            if widgets::filter_pill(ui, p, "", aurora_i18n::text(key), c.friends.sort == sort).clicked() {
-                c.friends.sort = sort;
+    let sets_below = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            label(ui, p, aurora_i18n::tr!("people-sort"));
+            let sorts = [
+                (SORT_STATUS, "people-sort-online-first"),
+                (SORT_NAME, "common-name"),
+                (SORT_USERNAME, "common-username"),
+            ];
+            let width: f32 = sorts
+                .iter()
+                .map(|(_, key)| widgets::filter_pill_width(ui, "", aurora_i18n::text(key)))
+                .sum::<f32>()
+                + 10.0;
+            if width <= ui.available_width() {
+                for (sort, key) in sorts {
+                    if widgets::filter_pill(ui, p, "", aurora_i18n::text(key), c.friends.sort == sort).clicked() {
+                        c.friends.sort = sort;
+                    }
+                }
+            } else {
+                let key = sorts.iter().find(|(sort, _)| *sort == c.friends.sort).unwrap_or(&sorts[0]).1;
+                let sort = widgets::filter_pill(ui, p, "chevron-down", aurora_i18n::text(key), true);
+                menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                    for (sort, key) in sorts {
+                        if menu::check(ui, p, "", aurora_i18n::text(key), c.friends.sort == sort, true) {
+                            c.friends.sort = sort;
+                        }
+                    }
+                });
             }
-        }
-        if sets.is_empty() {
-            return;
-        }
-        ui.add_space(6.0);
-        label(ui, p, aurora_i18n::tr!("people-set"));
-        set_pills(ui, c, &sets, &mut st.friend_set);
-    });
+            if sets.is_empty() {
+                return false;
+            }
+            let label_width = ui
+                .painter()
+                .layout_no_wrap(
+                    aurora_i18n::tr!("people-set").to_owned(),
+                    egui::FontId::proportional(11.0),
+                    p.muted_dim,
+                )
+                .size()
+                .x;
+            let needed = 6.0 + label_width + 5.0 + widgets::filter_pill_width(ui, "", "+00");
+            if ui.available_width() < needed {
+                return true;
+            }
+            ui.add_space(6.0);
+            label(ui, p, aurora_i18n::tr!("people-set"));
+            set_pills(ui, c, &sets, &mut st.friend_set);
+            false
+        })
+        .inner;
+    if sets_below {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            label(ui, p, aurora_i18n::tr!("people-set"));
+            set_pills(ui, c, &sets, &mut st.friend_set);
+        });
+    }
 }
 
 /// The small muted word before a row of pills.
@@ -314,7 +382,23 @@ pub(super) fn set_pills(ui: &mut egui::Ui, c: &Ctx, sets: &[String], chosen: &mu
 fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi, line: &Line, order: &[Uuid]) {
     let p = c.p;
     let f = &line.friend;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click_and_drag());
+    let width = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
+    let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(width, RICH_H));
+    let widths = if c.contact_settings.column_permissions {
+        vec![RECEIVED_W, GRANTED_W]
+    } else {
+        Vec::new()
+    };
+    let end = rows::end_before(
+        bounds,
+        rows::names_left(bounds) + rows::actions_width_for(5, 18.0) + PARTS_GAP,
+        &widths,
+        PARTS_GAP,
+        false,
+    );
+    let right = end.items.last().map_or(bounds.right(), |r| r.left()) - PARTS_GAP;
+    let count = 4 + usize::from(f.online);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, RICH_H), Sense::click_and_drag());
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -328,29 +412,19 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         ui.set_opacity(opacity * 0.75);
     }
     rows::face(ui, p, rect, selected, hot);
-    let left = rows::picture(ui, p, c.world, rect, data.pics.get(&f.id), f.id, &line.name, false);
-    // the right end, from the right edge: received, granted, quick actions
-    let buttons = hot.then(|| quick_actions(f));
-    let show_rights = c.contact_settings.column_permissions;
-    let mut widths = Vec::new();
-    if show_rights {
-        widths.extend([RECEIVED_W, GRANTED_W]);
-    }
-    if let Some(b) = &buttons {
-        widths.push(rows::actions_width(b.len()));
-    }
-    let end = rows::end(rect, left, &widths, PARTS_GAP, false);
+    let identity = rect;
+    let left = rows::names_left(rect);
+    // Keep the permission cells anchored when hover actions appear, as
+    // LLAvatarListItem::showPermissions / updateChildren reserve their slots.
+    let slot = rows::actions_slot(rect, left, right, count, rows::BUTTON);
+    let actions = hot.then(|| (quick_actions(f), slot));
+    rows::picture(ui, p, c.world, identity, data.pics.get(&f.id), f.id, &line.name, false);
     let mut clicked_right = false;
-    if show_rights {
-        if let Some(cell) = end.items.first() {
-            received(ui, p, f, *cell);
-        }
-        if let Some(cell) = end.items.get(1) {
-            clicked_right = granted(ui, c, f, *cell);
-        }
+    if let Some(cell) = end.items.first() {
+        received(ui, p, f, *cell);
     }
-    if let (Some(buttons), Some(slot)) = (&buttons, end.items.get(if show_rights { 2 } else { 0 })) {
-        hover_actions(ui, c, st, f, *slot, buttons);
+    if let Some(cell) = end.items.get(1) {
+        clicked_right = granted(ui, c, f, *cell);
     }
     let color = if c.contact_settings.colorize_friends {
         line.set.unwrap_or(p.ink)
@@ -358,15 +432,39 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         p.ink
     };
     let color = crate::ui::colors::resident_name(c.world, &f.id, color);
-    let cut = rows::names(ui, p, rect, left, end.names_right, &line.name, color, &line.status, line.set, None);
+    let cut = if end.names_right > left {
+        rows::names(
+            ui,
+            p,
+            identity,
+            left,
+            end.names_right,
+            &line.name,
+            color,
+            &line.status,
+            line.set,
+            None,
+        )
+    } else {
+        true
+    };
+    // The requested hover strip covers the text without taking any of its width.
+    if let Some((buttons, slot)) = &actions {
+        hover_actions(ui, c, st, f, *slot, buttons);
+    }
     ui.set_opacity(opacity);
     let action = if clicked_right {
         rows::RowAction::default()
     } else {
         rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, f.id)
     };
-    if action.sheet {
+    let click_sheet =
+        c.contact_sheet_on_click && !clicked_right && resp.clicked() && ui.input(|i| !i.modifiers.command && !i.modifiers.shift);
+    if action.sheet || click_sheet {
         super::nearby::open_sheet(st, f.id);
+        if c.embedded_contacts {
+            st.sheet_grow = false;
+        }
     }
     if action.activate {
         c.actions.push(super::PeopleAction::OpenIm(f.id));
@@ -376,7 +474,8 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     rows::contact_tip(resp, (on_names && (cut || line.full != line.name)).then_some(line.full.as_str()));
 }
 
-/// Profile, IM, a teleport offer to a friend online, and the whole menu.
+/// Profile, IM, a teleport offer to a friend online, the contact
+/// contact sheet, then the whole menu.
 fn quick_actions(f: &Friend) -> Vec<(&'static str, &'static str)> {
     let mut b = vec![
         ("user-filled", aurora_i18n::tr!("common-view-profile")),
@@ -385,6 +484,7 @@ fn quick_actions(f: &Friend) -> Vec<(&'static str, &'static str)> {
     if f.online {
         b.push(("send-filled", aurora_i18n::tr!("common-offer-teleport")));
     }
+    b.push(("info-circle-filled", aurora_i18n::tr!("people-show-contact-sheet")));
     b.push(("dots-filled", aurora_i18n::tr!("ui-chat-more")));
     b
 }
@@ -399,6 +499,14 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, f: &Friend, 
             "user-filled" if resp.clicked() => c.actions.push(super::PeopleAction::Profile(f.id)),
             "message-circle-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OpenIm(f.id)),
             "send-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OfferTeleport(f.id)),
+            "info-circle-filled" if resp.clicked() => {
+                st.sel = vec![f.id];
+                st.anchor = Some(f.id);
+                super::nearby::open_sheet(st, f.id);
+                if c.embedded_contacts {
+                    st.sheet_grow = false;
+                }
+            }
             "dots-filled" => {
                 let (p, world) = (c.p, c.world);
                 menu_open = menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
@@ -470,6 +578,164 @@ fn received(ui: &mut egui::Ui, p: &crate::theme::Palette, f: &Friend, slot: Rect
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inline_controls_fit_the_list_at_transition_widths() {
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        theme.apply(&frames.ctx, 1.0);
+        // Compare hover states without the scroll bar's width animation.
+        frames.ctx.all_styles_mut(|style| style.animation_time = 0.0);
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for index in 0..20 {
+            let id = Uuid::from_u128(0xF000 + index);
+            world.social.friends.push(Friend {
+                id,
+                online: true,
+                rights_given: 3,
+                rights_has: 7,
+            });
+            world.social.names.insert(id, format!("Friend {index:02} with a long display name"));
+        }
+        for name in ["Family and close friends", "Work and projects", "A circle with a very long name"] {
+            world.contact_sets.add_set(name);
+        }
+        let radar = crate::world::radar::Radar::default();
+        let mut radar_settings = super::super::RadarSettings::default();
+        let (voice, pics) = (HashMap::new(), HashMap::new());
+        let data = super::super::RadarData {
+            radar: &radar,
+            settings: &mut radar_settings,
+            voice: &voice,
+            draw_distance: 64.0,
+            now: 0.0,
+            pics: &pics,
+        };
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut contact_settings = crate::ui::contacts::ContactsSettings::default();
+        let mut settings = super::super::FriendsSettings::default();
+        let mut actions = Vec::new();
+        let mut st = PeopleUi {
+            demo_hover: Some(Uuid::from_u128(0xF000)),
+            ..PeopleUi::default()
+        };
+        for width in [
+            240.0, 254.0, 255.0, 256.0, 259.0, 260.0, 261.0, 280.0, 300.0, 320.0, 340.0, 360.0, 380.0, 400.0, 450.0, 510.0, 640.0,
+        ] {
+            for sort in [SORT_STATUS, SORT_NAME, SORT_USERNAME] {
+                for embedded in [false, true] {
+                    settings.sort = sort;
+                    let bounds = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(width, 500.0));
+                    let mut fixed_rights = None;
+                    let mut fixed_name = None;
+                    for hot in [false, true] {
+                        st.demo_hover = hot.then_some(Uuid::from_u128(0xF000));
+                        let mut layer = None;
+                        let mut shapes = Vec::new();
+                        for _ in 0..3 {
+                            shapes = frames.shapes(Vec::new(), |ui| {
+                                let mut child = super::super::nearby::list_ui(ui, bounds, "bounded-friends-test", true);
+                                layer = Some(child.layer_id());
+                                let mut c = Ctx {
+                                    p: &p,
+                                    world: &world,
+                                    contacts: &mut contacts,
+                                    contact_settings: &mut contact_settings,
+                                    friends: &mut settings,
+                                    images: &pics,
+                                    actions: &mut actions,
+                                    embedded_contacts: embedded,
+                                    contact_sheet_on_click: embedded,
+                                };
+                                list(&mut child, &mut c, &data, &mut st, true);
+                            });
+                        }
+                        let rects: Vec<_> = frames
+                            .ctx
+                            .viewport(|v| v.this_pass.widgets.get_layer(layer.expect("drawn")).cloned().collect());
+                        for widget in &rects {
+                            if widget.sense.senses_click()
+                                && widget.rect.height() <= 64.0
+                                && widget.rect.top() >= bounds.top()
+                                && widget.rect.bottom() <= bounds.bottom()
+                            {
+                                assert!(
+                                    widget.rect.left() >= bounds.left() - 0.5 && widget.rect.right() <= bounds.right() + 0.5,
+                                    "{width}, sort {sort}: a control leaves the list: {:?} outside {bounds:?}",
+                                    widget.rect
+                                );
+                            }
+                        }
+                        let rights: Vec<_> = rects.iter().filter(|w| w.rect.size() == CELL).map(|w| (w.id, w.rect)).collect();
+                        if width >= 300.0 {
+                            assert!(!rights.is_empty(), "the test exercises visible permissions");
+                        }
+                        if let Some(fixed) = &fixed_rights {
+                            assert_eq!(&rights, fixed, "{width}, sort {sort}: hover must not hide or move permission cells");
+                        } else {
+                            fixed_rights = Some(rights.clone());
+                        }
+                        let quick: Vec<_> = rects
+                            .iter()
+                            .filter(|w| w.sense.senses_click() && w.rect.height() == 24.0 && w.rect.width() <= 26.0)
+                            .collect();
+                        let (name_index, name) = shapes
+                            .iter()
+                            .enumerate()
+                            .find_map(|(i, shape)| match shape {
+                                egui::Shape::Text(t) if t.galley.text() == "Friend 00 with a long display name" => Some((i, t)),
+                                _ => None,
+                            })
+                            .expect("the first friend's name is painted");
+                        let shown: String = name.galley.rows.iter().flat_map(|r| r.row.glyphs.iter().map(|g| g.chr)).collect();
+                        let layout = (shown, name.pos, name.galley.size());
+                        if let Some(fixed) = &fixed_name {
+                            assert_eq!(&layout, fixed, "hover actions do not change the name's layout");
+                        } else {
+                            fixed_name = Some(layout);
+                        }
+                        if hot {
+                            assert_eq!(quick.len(), 5, "{width}: every quick action remains visible");
+                            if width <= 400.0 {
+                                assert!(
+                                    name.pos.x + name.galley.size().x > quick[0].rect.right(),
+                                    "the name uses the space underneath the hover actions"
+                                );
+                            }
+                            let pill_index = shapes
+                                .iter()
+                                .position(|shape| matches!(shape, egui::Shape::Rect(r) if r.fill == p.raised && quick.iter().all(|w| r.rect.contains_rect(w.rect))))
+                                .expect("the action strip is painted");
+                            assert!(pill_index > name_index, "the hover strip is painted over the name");
+                            for action in quick {
+                                let row = rects
+                                    .iter()
+                                    .filter(|w| w.sense.senses_drag() && w.rect.contains_rect(action.rect))
+                                    .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+                                    .expect("the action belongs to a row");
+                                assert_eq!(
+                                    row.rect.height(),
+                                    RICH_H,
+                                    "{width}: shrinking the list must not make its rows taller"
+                                );
+                                assert_eq!(action.rect.center().y, row.rect.center().y, "every action stays on one line");
+                                assert!(action.rect.left() >= rows::names_left(row.rect), "the avatar remains clickable");
+                                for (_, permission) in &rights {
+                                    if row.rect.contains(permission.center()) {
+                                        assert!(
+                                            action.rect.right() < permission.left(),
+                                            "{width}: hover actions stay left of permissions"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// The right end of a friend's row, at every width, with or without the
     /// rights and the quick actions: nothing overlaps (the generic rule of

@@ -240,13 +240,23 @@ pub fn tab(
     blocked: &mut bool,
 ) {
     st.radar_selected.retain(|id| data.radar.get(id).is_some());
-    let (list, sheet) = areas(ui, st);
+    let (list, sheet) = areas(ui, st, false);
     if let Some(rect) = list {
         let mut child = list_ui(ui, rect, "people-nearby-list", sheet.is_some());
         list_part(&mut child, p, world, data, st, map, actions, blocked, sheet.is_some());
     }
     if let (Some(rect), Some(id)) = (sheet, st.sheet)
-        && super::sheet::show(&mut list_ui(ui, rect, "people-sheet", false), p, world, data, st, id, true, actions)
+        && super::sheet::show(
+            &mut list_ui(ui, rect, "people-sheet", false),
+            p,
+            world,
+            data,
+            st,
+            id,
+            true,
+            true,
+            actions,
+        )
     {
         close_sheet(st);
     }
@@ -261,10 +271,14 @@ pub(super) fn sheet_fits(width: f32) -> bool {
 /// sheet: the list alone, both side by side, or the sheet alone when the
 /// window is too narrow for both (and the list alone on the frame the
 /// window waits to grow for a sheet).
-pub(super) fn areas(ui: &mut egui::Ui, st: &PeopleUi) -> (Option<Rect>, Option<Rect>) {
+pub(super) fn areas(ui: &mut egui::Ui, st: &PeopleUi, persistent_sheet: bool) -> (Option<Rect>, Option<Rect>) {
     let body = Rect::from_min_max(ui.cursor().min, ui.max_rect().max);
     ui.allocate_rect(body, Sense::hover());
     let split = sheet_fits(body.width());
+    if split && persistent_sheet {
+        let (list, sheet) = body.split_left_right_at_x(body.right() - SHEET_W);
+        return (Some(list), Some(sheet));
+    }
     match st.sheet {
         Some(_) if st.sheet_grow => (Some(body), None),
         Some(_) if split => {
@@ -352,8 +366,11 @@ fn list_part(
                     band = Some(Band::of(row.range));
                     band_header(ui, p, Band::of(row.range));
                 }
-                let h = if compact { COMPACT_H } else { RICH_H };
-                let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), h), Sense::click_and_drag());
+                let width = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
+                let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(width, if compact { COMPACT_H } else { RICH_H }));
+                let count = 4 + usize::from(!row.friend && row.id != world.agent_id);
+                let badge_count = badges(p, row).len();
+                let (rect, resp) = ui.allocate_exact_size(bounds.size(), Sense::click_and_drag());
                 if !ui.is_rect_visible(rect) {
                     continue;
                 }
@@ -368,10 +385,11 @@ fn list_part(
                 let pointer = resp.hover_pos();
                 let hot =
                     (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(row.id) || st.demo_hover == Some(row.id);
+                let end = right_end(rect, names_left(rect, compact), badge_count, hot.then_some(count), compact);
                 let tip = if compact {
-                    paint_compact(ui, p, world, data, st, row, rect, i, selected, hot, pointer, actions)
+                    paint_compact(ui, p, world, data, st, row, rect, &end, i, selected, hot, pointer, actions)
                 } else {
-                    paint_rich(ui, p, world, data, st, row, rect, selected, hot, pointer, actions)
+                    paint_rich(ui, p, world, data, st, row, rect, &end, selected, hot, pointer, actions)
                 };
                 ui.set_opacity(opacity);
                 let action = super::rows::select(ui, &resp, &mut st.radar_selected, &mut st.radar_anchor, &order, row.id);
@@ -460,20 +478,54 @@ fn sort_pills(ui: &mut egui::Ui, p: &Palette, data: &mut RadarData) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 5.0;
         ui.label(egui::RichText::new(aurora_i18n::tr!("people-sort")).size(11.0).color(p.muted_dim));
-        for (column, key) in SORTS {
-            let index = column.sort_index();
-            let on = data.settings.sort == index;
-            let icon = if on { "arrows-sort" } else { "" };
-            if widgets::filter_pill(ui, p, icon, aurora_i18n::text(key), on).clicked() {
-                if on {
-                    data.settings.sort_descending = !data.settings.sort_descending;
-                } else {
-                    data.settings.sort = index;
-                    data.settings.sort_descending = false;
+        let width = SORTS
+            .iter()
+            .map(|(column, key)| {
+                widgets::filter_pill_width(
+                    ui,
+                    if data.settings.sort == column.sort_index() {
+                        "arrows-sort"
+                    } else {
+                        ""
+                    },
+                    aurora_i18n::text(key),
+                )
+            })
+            .sum::<f32>()
+            + 15.0;
+        if width > ui.available_width() {
+            let (_, key) = SORTS
+                .iter()
+                .find(|(column, _)| data.settings.sort == column.sort_index())
+                .unwrap_or(&SORTS[0]);
+            let sort = widgets::filter_pill(ui, p, "chevron-down", aurora_i18n::text(key), true);
+            menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                for (column, key) in SORTS {
+                    if menu::check(ui, p, "", aurora_i18n::text(key), data.settings.sort == column.sort_index(), true) {
+                        choose_sort(data, column);
+                    }
+                }
+            });
+        } else {
+            for (column, key) in SORTS {
+                let index = column.sort_index();
+                let on = data.settings.sort == index;
+                let icon = if on { "arrows-sort" } else { "" };
+                if widgets::filter_pill(ui, p, icon, aurora_i18n::text(key), on).clicked() {
+                    choose_sort(data, column);
                 }
             }
         }
     });
+}
+
+fn choose_sort(data: &mut RadarData, column: Column) {
+    if data.settings.sort == column.sort_index() {
+        data.settings.sort_descending = !data.settings.sort_descending;
+    } else {
+        data.settings.sort = column.sort_index();
+        data.settings.sort_descending = false;
+    }
 }
 
 /// "16 near you · 7 within earshot · 2 friends": the figures in the ink,
@@ -481,7 +533,7 @@ fn sort_pills(ui: &mut egui::Ui, p: &Palette, data: &mut RadarData) {
 fn summary(ui: &mut egui::Ui, p: &Palette, total: usize, chat: usize, friends: usize) {
     // a line of text, not of buttons
     ui.spacing_mut().interact_size.y = 16.0;
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.add_space(2.0);
         ui.spacing_mut().item_spacing.x = 12.0;
         for (n, words) in [
@@ -569,17 +621,13 @@ const fn metrics(compact: bool) -> Metrics {
     }
 }
 
-/// Room around the quick actions' buttons in their pill.
-const ACTIONS_PAD: f32 = 3.0;
 /// Gap between the badges and the time, the range or the quick actions;
 /// between the names and the badges.
 const BADGES_GAP: f32 = 8.0;
 const NAMES_GAP: f32 = 6.0;
 
-/// Where the parts of a row's right end go. Nothing overlaps: under the
-/// pointer the quick actions take the place of the time and the range
-/// (which are not drawn then), the badges stay at their left, and those
-/// that do not fit before the names' least width give way to a "+2".
+/// Quick actions replace the time and distance at the row's right edge.
+/// Every action stays on one line; narrowing the list never changes row height.
 #[derive(Debug)]
 pub(super) struct RightEnd {
     /// The first badges of the row's list, left to right.
@@ -590,49 +638,44 @@ pub(super) struct RightEnd {
     pub dist: Option<Rect>,
     /// The pill of the quick actions, with one rectangle per button.
     pub actions: Option<(Rect, Vec<Rect>)>,
-    /// Where the names stop.
+    /// Normal text limit, independent of the hover actions.
     pub names_right: f32,
 }
 
+impl RightEnd {
+    /// Badges may move left on hover. Clip the normal name galley behind
+    /// them instead of laying out a shorter name with another ellipsis.
+    fn name_painter(&self, ui: &egui::Ui) -> egui::Painter {
+        let mut clip = ui.clip_rect();
+        if let Some(left) = self.badges.first().map(|r| r.left()).or(self.more.map(|(r, _)| r.left())) {
+            clip.max.x = clip.max.x.min(left - NAMES_GAP);
+        }
+        ui.painter().with_clip_rect(clip)
+    }
+}
+
 /// The right end of `row` for `badges` badges, its names starting at
-/// `names_left`; `actions` is the number of quick actions shown (the row is
-/// under the pointer), if any.
+/// `names_left`; `actions` replaces the time and distance while the row
+/// is under the pointer, without covering the avatar or changing row height.
 pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Option<usize>, compact: bool) -> RightEnd {
     let m = metrics(compact);
     let right = row.right() - m.pad;
     let y = row.center().y;
-    let (seen, dist, actions, zone) = match actions {
-        Some(n) => {
-            let width = n as f32 * (m.button.x + ACTIONS_PAD) + ACTIONS_PAD;
-            let pill = Rect::from_min_max(
-                Pos2::new(right - width, y - m.button.y / 2.0 - ACTIONS_PAD),
-                Pos2::new(right, y + m.button.y / 2.0 + ACTIONS_PAD),
-            );
-            let buttons = (0..n)
-                .map(|i| {
-                    Rect::from_min_size(
-                        Pos2::new(
-                            pill.left() + ACTIONS_PAD + i as f32 * (m.button.x + ACTIONS_PAD),
-                            pill.top() + ACTIONS_PAD,
-                        ),
-                        m.button,
-                    )
-                })
-                .collect();
-            (None, None, Some((pill, buttons)), pill.left())
-        }
-        None => {
-            let dist = Rect::from_min_max(Pos2::new(right - m.dist, row.top()), Pos2::new(right, row.bottom()));
-            let seen = (m.seen > 0.0).then(|| {
-                Rect::from_min_max(
-                    Pos2::new(dist.left() - 6.0 - m.seen, row.top()),
-                    Pos2::new(dist.left() - 6.0, row.bottom()),
-                )
-            });
-            let zone = seen.map_or(dist.left(), |s| s.left());
-            (seen, Some(dist), None, zone)
-        }
-    };
+    let dist = Rect::from_min_max(Pos2::new(right - m.dist, row.top()), Pos2::new(right, row.bottom()));
+    let seen = (m.seen > 0.0).then(|| {
+        Rect::from_min_max(
+            Pos2::new(dist.left() - 6.0 - m.seen, row.top()),
+            Pos2::new(dist.left() - 6.0, row.bottom()),
+        )
+    });
+    let actions = actions.map(|n| {
+        let left = names_left.min(right - super::rows::actions_width_for(n, 14.0));
+        let slot = super::rows::actions_slot(row, left, right, n, m.button);
+        super::rows::action_rects(slot, n, m.button)
+    });
+    let zone = actions
+        .as_ref()
+        .map_or_else(|| seen.map_or(dist.left(), |s| s.left()), |(pill, _)| pill.left());
     let badges_right = zone - BADGES_GAP;
     let room = badges_right - (names_left + m.names_min + NAMES_GAP);
     let width = |k: usize| if k == 0 { 0.0 } else { k as f32 * m.badge + (k - 1) as f32 * m.gap };
@@ -659,13 +702,19 @@ pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Opti
         .collect();
     rects.reverse();
     let first = rects.first().map(|r| r.left()).or(more.map(|(r, _)| r.left())).unwrap_or(zone);
+    // Hover controls cover the name instead of shortening its normal text layout.
+    let names_right = if actions.is_some() {
+        right_end(row, names_left, badges, None, compact).names_right
+    } else {
+        first - NAMES_GAP
+    };
     RightEnd {
         badges: rects,
         more,
-        seen,
-        dist,
+        seen: if actions.is_none() { seen } else { None },
+        dist: actions.is_none().then_some(dist),
         actions,
-        names_right: first - NAMES_GAP,
+        names_right,
     }
 }
 
@@ -702,7 +751,7 @@ fn paint_badges(
 }
 
 /// The quick actions of a row: profile, instant message, a friendship
-/// offer to a stranger, and the row's whole menu.
+/// offer to a stranger, contact details, and the row's whole menu.
 fn quick_actions(world: &World, row: &Row) -> Vec<(&'static str, &'static str)> {
     let mut buttons = vec![
         ("user-filled", aurora_i18n::tr!("common-view-profile")),
@@ -711,6 +760,7 @@ fn quick_actions(world: &World, row: &Row) -> Vec<(&'static str, &'static str)> 
     if !row.friend && row.id != world.agent_id {
         buttons.push(("user-plus", aurora_i18n::tr!("radar-add-friend")));
     }
+    buttons.push(("info-circle-filled", aurora_i18n::tr!("people-show-contact-sheet")));
     buttons.push(("dots-filled", aurora_i18n::tr!("ui-chat-more")));
     buttons
 }
@@ -724,8 +774,8 @@ fn names_left(rect: Rect, compact: bool) -> f32 {
     }
 }
 
-/// One avatar on two lines, with its picture, badges, time and range, or
-/// its quick actions in their place when `hot`.
+/// A rich identity with badges. Quick actions replace the time and range
+/// at the right. Every list width keeps the same row height.
 #[allow(clippy::too_many_arguments)]
 fn paint_rich(
     ui: &mut egui::Ui,
@@ -735,6 +785,7 @@ fn paint_rich(
     st: &mut PeopleUi,
     row: &Row,
     rect: Rect,
+    end: &RightEnd,
     selected: bool,
     hot: bool,
     pointer: Option<Pos2>,
@@ -750,18 +801,16 @@ fn paint_rich(
     };
     ui.painter().rect_filled(rect, radius, face);
     // the picture, round, with its status dot
-    let disc = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, rect.center().y), Vec2::splat(30.0));
+    let identity = Rect::from_min_size(rect.min, Vec2::new(rect.width(), RICH_H));
+    let disc = Rect::from_center_size(Pos2::new(rect.left() + 8.0 + 15.0, identity.center().y), Vec2::splat(30.0));
     widgets::avatar_disc(ui, p, disc, data.pics.get(&row.id), &row.name, row.muted);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.field);
     }
     let list = badges(p, row);
-    let buttons = hot.then(|| quick_actions(world, row));
     let left = names_left(rect, false);
-    let end = right_end(rect, left, list.len(), buttons.as_ref().map(Vec::len), false);
-    // the range, then the time since the arrival (or the quick actions),
-    // then the badges
+    // Quick actions take the place of the range and arrival time.
     let band = Band::of(row.range);
     if let Some(dist) = end.dist {
         let color = if row.range.is_some() { band.color(p) } else { p.muted };
@@ -779,11 +828,7 @@ fn paint_rich(
         let left = seen.right() - galley.size().x;
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, seen.center().y, p.muted_dim);
     }
-    let tip = paint_badges(ui, p, &list, &end, false, pointer);
-    if let (Some((pill, cells)), Some(buttons)) = (&end.actions, &buttons) {
-        hover_actions(ui, p, world, st, row, *pill, cells, buttons, actions);
-    }
-    // the names in what is left
+    // Keep the normal name layout underneath the hover controls.
     let width = (end.names_right - left).max(0.0);
     let name_color = if data.settings.color_names {
         band.color(p)
@@ -804,15 +849,19 @@ fn paint_rich(
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     let user_g = ui.painter().layout_job(job);
     let total = name_g.size().y + user_g.size().y - 2.0;
-    let top = rect.center().y - total / 2.0;
+    let top = identity.center().y - total / 2.0;
     let name_h = name_g.size().y;
-    ui.painter().galley(Pos2::new(left, top), name_g, name_color);
-    ui.painter().galley(Pos2::new(left, top + name_h - 2.0), user_g, p.muted);
+    let painter = end.name_painter(ui);
+    painter.galley(Pos2::new(left, top), name_g, name_color);
+    painter.galley(Pos2::new(left, top + name_h - 2.0), user_g, p.muted);
+    let tip = paint_badges(ui, p, &list, end, false, pointer);
+    if hot && let Some((pill, cells)) = &end.actions {
+        hover_actions(ui, p, world, st, row, *pill, cells, &quick_actions(world, row), actions);
+    }
     tip.or_else(|| (cut && pointer.is_some_and(|at| at.x >= left && at.x <= left + width)).then(|| row.name.clone()))
 }
 
-/// One avatar on one line, for a crowd; its quick actions in place of the
-/// range when `hot`.
+/// A compact identity with the complete action strip replacing the range.
 #[allow(clippy::too_many_arguments)]
 fn paint_compact(
     ui: &mut egui::Ui,
@@ -822,6 +871,7 @@ fn paint_compact(
     st: &mut PeopleUi,
     row: &Row,
     rect: Rect,
+    end: &RightEnd,
     index: usize,
     selected: bool,
     hot: bool,
@@ -837,16 +887,15 @@ fn paint_compact(
         // every other line, faintly, to follow a line across
         ui.painter().rect_filled(rect, radius, p.raised.gamma_multiply(0.12));
     }
-    let disc = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + 10.0, rect.center().y), Vec2::splat(20.0));
+    let identity = Rect::from_min_size(rect.min, Vec2::new(rect.width(), COMPACT_H));
+    let disc = Rect::from_center_size(Pos2::new(rect.left() + 6.0 + 10.0, identity.center().y), Vec2::splat(20.0));
     widgets::avatar_disc(ui, p, disc, data.pics.get(&row.id), &row.name, row.muted);
     let status = presence::of(world, &row.id);
     if status != presence::Status::Unknown {
         presence::paint_dot(ui.painter(), p, disc, status, p.panel);
     }
     let list = badges(p, row);
-    let buttons = hot.then(|| quick_actions(world, row));
     let left = names_left(rect, true);
-    let end = right_end(rect, left, list.len(), buttons.as_ref().map(Vec::len), true);
     let band = Band::of(row.range);
     if let Some(dist) = end.dist {
         let color = if row.range.is_some() { band.color(p) } else { p.muted };
@@ -856,10 +905,6 @@ fn paint_compact(
         ));
         let left = dist.right() - galley.size().x;
         crate::ui::widgets::paint_row_text(ui.painter(), galley, left, dist.center().y, color);
-    }
-    let tip = paint_badges(ui, p, &list, &end, true, pointer);
-    if let (Some((pill, cells)), Some(buttons)) = (&end.actions, &buttons) {
-        hover_actions(ui, p, world, st, row, *pill, cells, buttons, actions);
     }
     let width = (end.names_right - left).max(0.0);
     let name_color = if data.settings.color_names {
@@ -876,12 +921,16 @@ fn paint_compact(
     job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     let g = ui.painter().layout_job(job);
     let cut = g.elided;
-    crate::ui::widgets::paint_row_text(ui.painter(), g, left, rect.center().y, name_color);
+    crate::ui::widgets::paint_row_text(&end.name_painter(ui), g, left, identity.center().y, name_color);
+    let tip = paint_badges(ui, p, &list, end, true, pointer);
+    if hot && let Some((pill, cells)) = &end.actions {
+        hover_actions(ui, p, world, st, row, *pill, cells, &quick_actions(world, row), actions);
+    }
     tip.or_else(|| (cut && pointer.is_some_and(|at| at.x >= left && at.x <= left + width)).then(|| row.name.clone()))
 }
 
 /// The quick actions of the row under the pointer, in the pill `right_end`
-/// placed where its time and range were.
+/// placed at the right, where the time and range were.
 #[allow(clippy::too_many_arguments)]
 fn hover_actions(
     ui: &mut egui::Ui,
@@ -908,6 +957,11 @@ fn hover_actions(
             "user-filled" if resp.clicked() => actions.push(PeopleAction::Profile(row.id)),
             "message-circle-filled" if resp.clicked() => actions.push(PeopleAction::OpenIm(row.id)),
             "user-plus" if resp.clicked() => context::request(ui.ctx(), CtxAction::AddFriend(row.id)),
+            "info-circle-filled" if resp.clicked() => {
+                st.radar_selected = vec![row.id];
+                st.radar_anchor = Some(row.id);
+                open_sheet(st, row.id);
+            }
             "dots-filled" => {
                 menu_open = menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                     context::avatar_list_menu(ui, p, world, row.id, AvatarList::Nearby);
@@ -928,6 +982,123 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_nearby_action_stays_visible_and_details_opens_the_sheet() {
+        let theme = crate::theme::Theme::default();
+        let p = theme.palette();
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        theme.apply(&frames.ctx, 1.0);
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let radar = crate::world::radar::Radar::default();
+        let mut settings = super::super::RadarSettings::default();
+        let (voice, pics) = (std::collections::HashMap::new(), std::collections::HashMap::new());
+        let data = RadarData {
+            radar: &radar,
+            settings: &mut settings,
+            voice: &voice,
+            draw_distance: 96.0,
+            now: 0.0,
+            pics: &pics,
+        };
+        for compact in [false, true] {
+            for friend in [false, true] {
+                let row = Row {
+                    id: Uuid::from_u128(0xF100),
+                    name: "A resident with a long display name".into(),
+                    friend,
+                    muted: true,
+                    voice: Some(true),
+                    same_region: true,
+                    typing: true,
+                    sitting: true,
+                    payment: Payment::Used,
+                    note: "A contact note".into(),
+                    age: radar::Age::Unknown,
+                    seen: 125.0,
+                    range: Some(4.7),
+                    loaded: true,
+                    position: glam::Vec3::ZERO,
+                    left_behind: false,
+                };
+                let buttons = quick_actions(&world, &row);
+                assert_eq!(buttons.len(), if friend { 4 } else { 5 });
+                assert_eq!(buttons[buttons.len() - 2].0, "info-circle-filled");
+                for width in [220.0, 250.0, 260.0, 360.0, 520.0] {
+                    let base = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(width, if compact { COMPACT_H } else { RICH_H }));
+                    let end = right_end(
+                        base,
+                        names_left(base, compact),
+                        badges(&p, &row).len(),
+                        Some(buttons.len()),
+                        compact,
+                    );
+                    let full = base;
+                    let (pill, cells) = end.actions.as_ref().expect("every action has a slot");
+                    assert_eq!(cells.len(), buttons.len());
+                    assert!(cells.iter().all(|cell| full.contains_rect(*cell)));
+                    assert!(
+                        cells.iter().all(|cell| cell.center().y == base.center().y),
+                        "every action stays on one line"
+                    );
+                    assert!(
+                        cells.iter().all(|cell| cell.left() >= names_left(base, compact)),
+                        "the avatar remains clickable"
+                    );
+                    assert_eq!(pill.right(), base.right() - metrics(compact).pad);
+                    assert!(end.dist.is_none() && end.seen.is_none(), "actions replace the time and distance");
+                    let info = cells[cells.len() - 2].center();
+                    let mut st = PeopleUi::default();
+                    let mut actions = Vec::new();
+                    let mut draw = |ui: &mut egui::Ui| {
+                        if compact {
+                            paint_compact(ui, &p, &world, &data, &mut st, &row, full, &end, 0, false, true, None, &mut actions);
+                        } else {
+                            paint_rich(ui, &p, &world, &data, &mut st, &row, full, &end, false, true, None, &mut actions);
+                        }
+                    };
+                    for _ in 0..3 {
+                        frames.run(Vec::new(), &mut draw);
+                    }
+                    let shapes = frames.shapes(Vec::new(), &mut draw);
+                    let name_index = shapes
+                        .iter()
+                        .position(|shape| matches!(shape, egui::Shape::Text(t) if t.galley.text() == row.name))
+                        .expect("the resident's name is painted");
+                    let pill_index = shapes
+                        .iter()
+                        .position(|shape| matches!(shape, egui::Shape::Rect(r) if r.rect == *pill && r.fill == p.raised))
+                        .expect("the action strip is painted");
+                    assert!(pill_index > name_index, "the hover strip covers the name");
+                    frames.run(
+                        vec![
+                            egui::Event::PointerMoved(info),
+                            egui::Event::PointerButton {
+                                pos: info,
+                                button: egui::PointerButton::Primary,
+                                pressed: true,
+                                modifiers: egui::Modifiers::NONE,
+                            },
+                        ],
+                        &mut draw,
+                    );
+                    frames.run(
+                        vec![egui::Event::PointerButton {
+                            pos: info,
+                            button: egui::PointerButton::Primary,
+                            pressed: false,
+                            modifiers: egui::Modifiers::NONE,
+                        }],
+                        &mut draw,
+                    );
+                    assert_eq!(st.sheet, Some(row.id), "{width}, compact={compact}, friend={friend}");
+                    assert_eq!(st.radar_selected, vec![row.id]);
+                    assert!(st.sheet_grow, "People retains its sheet window expansion");
+                    assert!(actions.is_empty(), "details does not start a profile, IM or friendship offer");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_rows_are_grouped_by_the_ranges_of_the_chat() {
         assert_eq!(Band::of(Some(4.7)), Band::Whisper);
         assert_eq!(Band::of(Some(10.0)), Band::Whisper);
@@ -946,7 +1117,9 @@ mod tests {
     /// whenever a badge or a "+2" is shown.
     #[test]
     fn the_quick_actions_never_cover_the_badges() {
-        let overlap = |a: &Rect, b: &Rect| a.left() < b.right() - 0.01 && b.left() < a.right() - 0.01;
+        let overlap = |a: &Rect, b: &Rect| {
+            a.left() < b.right() - 0.01 && b.left() < a.right() - 0.01 && a.top() < b.bottom() - 0.01 && b.top() < a.bottom() - 0.01
+        };
         let mut narrowest_cut = false;
         for compact in [false, true] {
             let m = metrics(compact);
@@ -954,8 +1127,13 @@ mod tests {
                 let row = Rect::from_min_size(Pos2::ZERO, Vec2::new(width as f32, if compact { COMPACT_H } else { RICH_H }));
                 let left = names_left(row, compact);
                 for badges in 0..=MAX_BADGES {
-                    for actions in [None, Some(3), Some(4)] {
+                    for actions in [None, Some(3), Some(4), Some(5)] {
                         let end = right_end(row, left, badges, actions, compact);
+                        assert_eq!(
+                            end.names_right,
+                            right_end(row, left, badges, None, compact).names_right,
+                            "hover actions never shorten the name's normal layout"
+                        );
                         let mut parts: Vec<Rect> = end.badges.clone();
                         parts.extend(end.more.map(|(r, _)| r));
                         let shown_badges = parts.len();
@@ -965,8 +1143,15 @@ mod tests {
                             parts.push(*pill);
                             assert_eq!(buttons.len(), actions.unwrap_or(0));
                             assert!(buttons.iter().all(|b| pill.contains_rect(*b)), "buttons in their pill");
-                            // under the pointer, no time nor range
-                            assert!(end.seen.is_none() && end.dist.is_none());
+                            assert!(buttons.iter().all(|b| b.width() >= 14.0), "icons retain their full width");
+                            assert!(end.dist.is_none() && end.seen.is_none());
+                            assert_eq!(
+                                pill.right(),
+                                row.right() - m.pad,
+                                "actions stay over the distance at the right edge"
+                            );
+                            assert!(row.contains_rect(*pill), "actions never need a taller row");
+                            assert!(buttons.iter().all(|button| button.center().y == row.center().y));
                         }
                         for (i, a) in parts.iter().enumerate() {
                             assert!(
@@ -987,7 +1172,7 @@ mod tests {
                         } else {
                             narrowest_cut = true;
                         }
-                        if shown_badges > 0 {
+                        if shown_badges > 0 && actions.is_none() {
                             assert!(end.names_right - left >= m.names_min - 0.01, "the names keep their room");
                         }
                     }

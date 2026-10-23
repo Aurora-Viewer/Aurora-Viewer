@@ -8849,6 +8849,9 @@ impl App {
         // AURORA_DEMO_CONTACTS: contact sets and aliases to show, once logged in
         if self.demo && self.frame_count == 60 && std::env::var_os("AURORA_DEMO_CONTACTS").is_some() {
             crate::demo::seed_contact_sets(&mut self.world);
+            if std::env::var("AURORA_DEMO_CONTACTS").as_deref() == Ok("empty") {
+                self.world.social.friends.clear();
+            }
         }
         // AURORA_DEMO_PEOPLE's tabs: the mock-up's sets, pins and recent people
         if self.demo && self.frame_count == 60 {

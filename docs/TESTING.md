@@ -2806,7 +2806,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
-| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `visuals`, `visuals-stack`, `visuals-legacy`, `recent` or `blocked` | People scenarios, including the contact-set visual editor and overlapping sets |
+| `AURORA_DEMO_PEOPLE=<mode>[:width]` | People scenarios, including nearby/friends lists and contact-set visual editors |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
@@ -4277,8 +4277,16 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   window widens it by the sheet, and its cross gives the width back.
   `crowd`: forty residents in the compact density. `hover` and
   `crowd-hover`: `rows` and `crowd` with a friend under the pointer
-  carrying every badge: the quick actions take the place of the time and
-  the range, beside the badges, never over them. `legacy`: the same
+  carrying every badge. In both densities every quick action stays visible
+  at the right edge, replacing the time and distance during hover. Badges
+  stay to the left of the actions and fold when necessary. Row heights stay
+  at 42 points in rich density and 24 points in compact density, at every
+  width and with or without hover. Actions stay on one horizontal line;
+  actions overlay the names without changing their normal text layout.
+  Button widths tighten when needed, with unchanged icon sizes and the
+  avatar still available for row clicks. The
+  details action before More opens the resident sheet.
+  `legacy`: the same
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
   (payment info, notes) arrive four a second.
@@ -4297,6 +4305,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   for its sounds). Each tab keeps its menu of several people (Ctrl /
   Shift) and its sheet; a window too narrow for the six tabs shows the
   ones around the open tab beside "…".
+  Append `:<width>` for a responsive check, for example `hover:300`,
+  `crowd-hover:300` or `friends:360`. An explicit-width friends scenario
+  starts with the list alone; its details action must still open the sheet
+  and retain the normal window expansion. Repeat with `friends:620` and
+  the default friends scenario beside its sheet. Every friend action must
+  remain visible to the left of its permission cells.
 - **`AURORA_DEMO_STATUSMENU=1|invisible`**: the menu of the status
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
@@ -4357,7 +4371,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   1536 the position too, with `rights` the forbidden rights are named at
   1536 and all of them at 1920. With `AURORA_DEMO_NOTIFS=1`, frame 1160:
   the bell's red counter.
-- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden`**: Contacts
+- **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
   picker of "Add...". These modes enable the optional Contacts entry for
@@ -4366,9 +4380,27 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Preferences > Chat > Show the Contacts tab).
   In the Aurora and Compact conversation styles, test at full width,
   700 points and 460 points: a double-click on a friend starts their IM.
-  A single click opens their sheet; when it replaces the list, clicking
+  At full width the detail panel is always present: retain the selected
+  friend or choose the first visible friend, and show a placeholder when
+  the list is empty (`empty` clears the demo friends). A single click
+  switches the displayed friend. At 700 and 460
+  points it only selects the friend. Hovering shows a contact details
+  button immediately before More; it opens the same sheet as a long press.
+  Permission cells stay in the same right-aligned positions with or without
+  hover. Every quick action stays visible to their left, on one horizontal
+  line. Rows always stay 42 points high while resizing in either direction.
+  Actions paint over names without reserving any text width, even while
+  hidden; their widths tighten if necessary and avatars remain clickable.
+  Permission groups only show
+  when room remains for every action, independently of hover.
+  Details remains before More.
+  When the sheet replaces the list, clicking
   Contacts returns to the list just like the sheet's cross, keeping the
   filter and selection. Repeat a double-click after returning to the list.
+  Resize across 600 and 850 points in both directions: sort choices fold
+  into a menu, contact sets wrap when needed, and every quick action stays
+  visible. The list controls must stay inside their pane. Returning
+  from the large layout to a reduced one restores the list and its selection.
 - **`AURORA_DEMO_CHATLOG=im|find|history[:find]|offline|long:<n>[:scroll]`**:
   the conversation history without a grid. The demo is its own
   "grid": its files are in

@@ -47,19 +47,29 @@ pub enum Mode {
 
 pub fn mode() -> Option<Mode> {
     static MODE: std::sync::OnceLock<Option<Mode>> = std::sync::OnceLock::new();
-    *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_PEOPLE").ok()?.trim() {
-        "hover" => Some(Mode::Hover),
-        "crowd" | "foule" => Some(Mode::Crowd),
-        "crowd-hover" => Some(Mode::CrowdHover),
-        "sheet" | "fiche" => Some(Mode::Sheet),
-        "legacy" => Some(Mode::Legacy),
-        "friends" | "amis" => Some(Mode::Friends),
-        "groups" | "groupes" => Some(Mode::Groups),
-        "sets" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
-        "recent" | "récent" => Some(Mode::Recent),
-        "blocked" | "bloqué" => Some(Mode::Blocked),
-        _ => Some(Mode::Rows),
+    *MODE.get_or_init(|| {
+        let value = std::env::var("AURORA_DEMO_PEOPLE").ok()?;
+        match value.split(':').next()?.trim() {
+            "hover" => Some(Mode::Hover),
+            "crowd" | "foule" => Some(Mode::Crowd),
+            "crowd-hover" => Some(Mode::CrowdHover),
+            "sheet" | "fiche" => Some(Mode::Sheet),
+            "legacy" => Some(Mode::Legacy),
+            "friends" | "amis" => Some(Mode::Friends),
+            "groups" | "groupes" => Some(Mode::Groups),
+            "sets" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
+            "recent" | "récent" => Some(Mode::Recent),
+            "blocked" | "bloqué" => Some(Mode::Blocked),
+            _ => Some(Mode::Rows),
+        }
     })
+}
+
+/// An explicit list width for offline responsive-layout checks.
+fn width_override() -> Option<f32> {
+    let value = std::env::var("AURORA_DEMO_PEOPLE").ok()?;
+    let width: f32 = value.split_once(':')?.1.trim().parse().ok()?;
+    (width.is_finite() && width >= 220.0).then_some(width)
 }
 
 /// The modes of the tabs after Near you.
@@ -85,6 +95,9 @@ pub fn tab() -> u8 {
 
 /// The window's size in the mock-up, when it is not the default one.
 pub fn window_size() -> Option<(f32, f32)> {
+    if let Some(width) = width_override() {
+        return Some((width, 600.0));
+    }
     match mode()? {
         Mode::Sheet | Mode::Friends => Some((860.0, 600.0)),
         Mode::Groups => Some((860.0, 500.0)),
@@ -505,6 +518,9 @@ fn online_friends() -> Vec<Uuid> {
 
 /// The resident whose sheet opens with `sheet` and `friends`.
 pub fn sheet() -> Option<Uuid> {
+    if mode() == Some(Mode::Friends) && width_override().is_some() {
+        return None;
+    }
     matches!(mode(), Some(Mode::Sheet | Mode::Friends)).then_some(NOVA)
 }
 

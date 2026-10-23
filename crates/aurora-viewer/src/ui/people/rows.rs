@@ -1,8 +1,8 @@
 //! The pieces the lists of People share in Aurora's look (the mock-up's
 //! rows): a row's face, its round picture and status dot, its two lines of
-//! names, the right end laid out from the right edge without ever covering
-//! anything (what does not fit folds into "+2" or steps aside), the quick
-//! actions of the row under the pointer, and the Ctrl / Shift selection.
+//! names, the fixed controls laid out from the right edge (what does not
+//! fit folds into "+2" or steps aside), the quick actions over the names
+//! of the row under the pointer, and the Ctrl / Shift selection.
 
 use crate::theme::Palette;
 use crate::ui::context::{self, AvatarList};
@@ -19,7 +19,7 @@ const NAMES_GAP: f32 = 6.0;
 /// Room left of a row's right edge.
 const PAD: f32 = 8.0;
 /// One quick action's button, and the room around them in their pill.
-const BUTTON: Vec2 = Vec2::new(26.0, 24.0);
+pub(super) const BUTTON: Vec2 = Vec2::new(26.0, 24.0);
 const ACTIONS_PAD: f32 = 3.0;
 /// Width of the "+2" of what does not fit.
 pub(super) const MORE_W: f32 = 24.0;
@@ -210,8 +210,13 @@ pub(super) struct End {
 }
 
 pub(super) fn end(row: Rect, names_left: f32, widths: &[f32], gap: f32, fold: bool) -> End {
+    end_before(row, names_left + NAMES_MIN + NAMES_GAP, widths, gap, fold)
+}
+
+/// Keep the fixed right-side parts after a reserved horizontal strip.
+pub(super) fn end_before(row: Rect, minimum_left: f32, widths: &[f32], gap: f32, fold: bool) -> End {
     let right = row.right() - PAD;
-    let room = right - (names_left + NAMES_MIN + NAMES_GAP);
+    let room = right - minimum_left;
     let total = |k: usize| -> f32 { widths[..k].iter().sum::<f32>() + gap * k.saturating_sub(1) as f32 };
     let n = widths.len();
     let (shown, more) = if total(n) <= room {
@@ -261,6 +266,41 @@ pub(super) fn actions_width(n: usize) -> f32 {
     n as f32 * (BUTTON.x + ACTIONS_PAD) + ACTIONS_PAD
 }
 
+/// Width of a single strip for the chosen button width.
+pub(super) fn actions_width_for(count: usize, button_width: f32) -> f32 {
+    count as f32 * (button_width + ACTIONS_PAD) + ACTIONS_PAD
+}
+
+/// A single horizontal action strip inside the row, without changing its height.
+pub(super) fn actions_slot(row: Rect, left: f32, right: f32, count: usize, button: Vec2) -> Rect {
+    let width = count as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD;
+    Rect::from_min_max(Pos2::new((right - width).max(left), row.top()), Pos2::new(right, row.bottom()))
+}
+
+/// Keep every button on one line, tightening its hit area only
+/// when the usual size does not fit. Icons keep their usual size.
+pub(super) fn action_rects(slot: Rect, count: usize, button: Vec2) -> (Rect, Vec<Rect>) {
+    let count_f = count.max(1) as f32;
+    let button = Vec2::new(
+        button.x.min((slot.width() - ACTIONS_PAD * (count_f + 1.0)) / count_f).max(0.0),
+        button.y.min(slot.height() - 2.0 * ACTIONS_PAD).max(0.0),
+    );
+    let size = Vec2::new(count as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD, button.y + 2.0 * ACTIONS_PAD);
+    let pill = Rect::from_min_size(Pos2::new(slot.right() - size.x, slot.center().y - size.y / 2.0), size);
+    let cells = (0..count)
+        .map(|i| {
+            Rect::from_min_size(
+                Pos2::new(
+                    pill.left() + ACTIONS_PAD + i as f32 * (button.x + ACTIONS_PAD),
+                    pill.top() + ACTIONS_PAD,
+                ),
+                button,
+            )
+        })
+        .collect();
+    (pill, cells)
+}
+
 /// The quick actions of the row under the pointer, in their pill at the
 /// middle of `slot`: one response per button (`buttons`: icon, tip).
 pub(super) fn actions(
@@ -270,25 +310,15 @@ pub(super) fn actions(
     buttons: &[(&str, &str)],
     salt: impl std::hash::Hash + std::fmt::Debug,
 ) -> Vec<egui::Response> {
-    let y = slot.center().y;
-    let pill = Rect::from_min_max(
-        Pos2::new(slot.right() - actions_width(buttons.len()), y - BUTTON.y / 2.0 - ACTIONS_PAD),
-        Pos2::new(slot.right(), y + BUTTON.y / 2.0 + ACTIONS_PAD),
-    );
+    let (pill, cells) = action_rects(slot, buttons.len(), BUTTON);
     ui.painter()
         .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, p.raised);
     let id = ui.scope_id().with(salt);
     buttons
         .iter()
+        .zip(cells)
         .enumerate()
-        .map(|(i, (icon, tip))| {
-            let r = Rect::from_min_size(
-                Pos2::new(
-                    pill.left() + ACTIONS_PAD + i as f32 * (BUTTON.x + ACTIONS_PAD),
-                    pill.top() + ACTIONS_PAD,
-                ),
-                BUTTON,
-            );
+        .map(|(i, ((icon, tip), r))| {
             let resp = ui.interact(r, id.with(i), Sense::click());
             if resp.hovered() {
                 ui.painter().rect_filled(r, widgets::inner_radius(ui.visuals()), p.bar);

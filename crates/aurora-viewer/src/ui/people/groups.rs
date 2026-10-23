@@ -636,6 +636,8 @@ mod tests {
                     friends: &mut friends,
                     images: &images,
                     actions: &mut actions,
+                    embedded_contacts: false,
+                    contact_sheet_on_click: false,
                 };
                 group_sheet(ui, &mut c, &data, &mut st, group);
             });
