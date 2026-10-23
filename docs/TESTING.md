@@ -6982,7 +6982,7 @@ occur. These modes do not change inventory or simulate bridge physics.
 ascent held after landing. Capture frames 765/810/840 to inspect ascent,
 descent and restored surface support. These are animation/command fixtures,
 with the jump camera pulled back to keep the entire increased arc in view,
-not a Havok simulation. Bridge 1.32 needs human simulator validation: enable
+not a Havok simulation. For simulator regression checks with bridge 1.32: enable
 walking on water, tap the configured ascent key at rest, while walking,
 running and crouching, then hold it through landing. Expect one jump, ordinary
 AO jump animation retained through descent and a return onto the water without entering flight
@@ -6991,60 +6991,29 @@ ceilings/walls, mode disable, seating and bridge loss during the jump.
 In particular, Falling must stay hidden before water contact, while disabling
 water walking in midair must restore ordinary falling.
 
-Initial water-walk jump checks (1 m / 0.9 s; 2026-10-23): full `scripts/check.ps1` green, 4,585
-passed, zero failures, 27 ignored; scripts, formatting and Clippy clean. Both
-bridge 1.30 scripts pass LSL lint with zero errors/warnings. Regressions cover
-one action across delayed ascent/fall/landing, airborne repress and held-key
-behavior, all movement directions, run and crouch precedence, no-fly support,
-underwater rejection, immediate context cancellation, timeout, ordinary AO
-replacements and stock fallback release, and immediate supersession of pending
-support/jump requests. These checks do not establish simulator physics.
-Default dev executable `28342d99` built successfully. Five native offline runs
-exit 0 with zero warnings/errors; ten inspected captures cover the prescribed
-running-jump trajectory, held-key landing, neighbouring crouch-walk and FR/EN
-Movement hints. They establish root presentation and readable key hints, not
-real inventory poses or Havok behavior. Raw screenshots, profile samples and
-scoped logs remain in the task's `.scratch/`; shared desktop load is visible,
-so these are not isolated performance measurements. Human simulator acceptance
-of the physical jump and AO poses remains required before PR.
+Water-walk jump validation (2026-10-23): bridge 1.32 targets 2.5 m / 1.25 s,
+selected by the human after simulator tests. Movement keeps the same Jumping
+signal and animation clock through descent until actual water contact.
+Full `scripts/check.ps1` green: 4,587 passed, zero failures, 27 ignored;
+scripts, formatting and Clippy clean. Both LSL scripts lint without errors or
+warnings. Regressions cover delayed ascent updates, airborne repress and held
+keys, all movement directions, run/crouch precedence, no-fly support, underwater
+rejection, context cancellation, timeout and pending-request supersession. An
+integrated movement/AO regression injects native Falling throughout the arc,
+with replacements on and off; it checks local suppression, observer stop
+commands, surface recovery and ordinary fall restoration after disabling support.
 
-Higher water-walk jump checks (2026-10-23): after the human confirmed the first
-jump worked but was too small, bridge 1.31 targets 4 m / 1.6 s, following the
-ordinary avatar reference in [Physics Test](https://wiki.secondlife.com/wiki/Physics_Test).
-The native offline fixture shares the commanded height and duration constants;
-its camera keeps the full arc visible. Full `scripts/check.ps1` green: 4,586
-passed, zero failures, 27 ignored; scripts, formatting and Clippy clean. Both
-LSL scripts lint with zero errors/warnings. The new regression keeps motor/AO
-ownership through the prescribed 4 m apex and longer descent, then restores
-running support while ascent stays held. The default dev executable was rebuilt
-with the height follow-up sources (version base `24aa2598`, committed as
-`57feec53`). Three native offline runs exit 0 without warnings/errors. Nine
-inspected captures cover `higher-water-jump-run` at frames 1275/1305/1338/1365/1410,
-`higher-water-jump-hold` at 798/870/1010 and the neighbouring crouch-walk at 760.
-The full arc stays in view and the held-key fixture remains supported after
-landing. Profile samples reflect shared desktop load, not an isolated speed
-comparison. Human simulator acceptance of the increased physical height and
-real inventory poses remains pending before PR.
-
-Intermediate water-walk jump follow-up (2026-10-23): after the human found
-the 4 m jump too high and saw Falling during descent, bridge 1.32 targets
-2.5 m / 1.25 s, halfway between the initial and increased heights. Movement
-keeps the same Jumping signal and animation clock until actual water contact.
-An integrated movement/AO regression injects native Falling on ascent, at the
-apex and throughout descent, with AO replacements on and off; it checks local
-pose suppression, observer stop commands, surface recovery and ordinary fall
-restoration when support is disabled. Full `scripts/check.ps1` green: 4,587
-passed, zero failures, 27 ignored; scripts, formatting and Clippy clean. Both
-LSL scripts lint with zero errors/warnings. Default dev executable
-`0.7.4+21.gd6129a768` built; three native offline runs exit 0 without
-warnings/errors. Nine captures were inspected: `balanced-water-jump-run` at
-1275/1305/1328/1350/1380, `balanced-water-jump-hold` at 788/840/1010 and
-neighbouring crouch-walk at 760. The entire intermediate arc stays in view,
-and held ascent leaves the avatar supported after landing. Profile samples
-remain at the configured 60 FPS cap with shared-desktop scheduling spikes;
-they are presentation fixtures, not an isolated performance comparison or
-simulator physics test. Human acceptance of the physical height and real
-inventory animation continuity remains pending before PR.
+Default dev executable `0.7.4+21.gd6129a768` built; three final offline runs
+exit 0 without warnings/errors. Nine captures were inspected:
+`balanced-water-jump-run` at 1275/1305/1328/1350/1380,
+`balanced-water-jump-hold` at 788/840/1010 and neighbouring crouch-walk at 760.
+The entire arc stays in view and held ascent leaves the avatar supported after
+landing. Profile samples remain at the configured 60 FPS cap with shared-desktop
+scheduling spikes; these are prescribed presentation fixtures, not an isolated
+performance comparison or simulator physics test. The human validated the final
+height and real animation continuity in the normal-mode test viewer and
+authorized merge on 2026-10-23. Earlier FR/EN Movement captures also verified
+the translated jump hints and configured-key display.
 
 `water-walk-ui` and `swim-ui` also open the Movement tab for EN/FR control
 inspection, with only their corresponding water mode active.
