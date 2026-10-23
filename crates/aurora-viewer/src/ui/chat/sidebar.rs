@@ -182,6 +182,7 @@ enum Icon<'a> {
 
 struct Entry<'a> {
     icon: Icon<'a>,
+    name_color: Option<Color32>,
     name: &'a str,
     sub: Option<String>,
     sub_icon: Option<(&'static str, Color32)>,
@@ -279,6 +280,7 @@ pub(super) fn show(
             if show_contacts_tab && matches(aurora_i18n::tr!("common-contacts")) {
                 let e = Entry {
                     icon: Icon::Glyph("users", p.violet_pale),
+                    name_color: None,
                     name: aurora_i18n::tr!("common-contacts"),
                     sub: Some(match contacts_sub {
                         ContactsSub::Friends => aurora_i18n::tr!(
@@ -311,6 +313,7 @@ pub(super) fn show(
                 let e = Entry {
                     icon: Icon::Glyph("map-pin-filled", p.teal),
                     name: local,
+                    name_color: None,
                     sub: Some(local_sub(world, st)),
                     sub_icon: None,
                     current: shown,
@@ -371,6 +374,11 @@ pub(super) fn show(
                     }
                     let e = Entry {
                         icon,
+                        name_color: if section == Kind::Private {
+                            world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color)
+                        } else {
+                            None
+                        },
                         name: &name,
                         sub: Some(sub),
                         sub_icon,
@@ -416,6 +424,7 @@ pub(super) fn show(
                         st.wanted_pics.insert(id);
                         let e = Entry {
                             icon: Icon::Avatar(pics.get(&id), presence::of(world, &id)),
+                            name_color: world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color),
                             name: &name,
                             sub: Some(aurora_i18n::tr!("ui-chat-start-im").to_owned()),
                             sub_icon: Some(("message-circle-filled", p.muted_dim)),
@@ -435,6 +444,7 @@ pub(super) fn show(
                 let e = Entry {
                     icon: Icon::Glyph("search-filled", p.muted),
                     name: aurora_i18n::tr!("ui-chat-find-resident"),
+                    name_color: None,
                     sub: Some(st.side_filter.trim().to_owned()),
                     sub_icon: None,
                     current: false,
@@ -702,6 +712,7 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
     let x = pic.right() + 9.0;
     let bold = e.current || e.unread > 0;
     let name_color = if bold { p.ink } else { p.muted };
+    let name_color = e.name_color.unwrap_or(name_color);
     let font = if bold {
         egui::FontId::new(13.0, crate::ui::fonts::semibold(ui.ctx()))
     } else {

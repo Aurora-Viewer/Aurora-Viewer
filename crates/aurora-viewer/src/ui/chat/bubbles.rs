@@ -199,7 +199,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         ui.spacing_mut().item_spacing.y = spacing * 0.5;
         ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
             ui.add_space(lead + 2.0);
-            let col = tone.unwrap_or_else(|| super::super::colors::sender_color(line));
+            let col = super::super::colors::contact_sender_color(line, world)
+                .or(tone)
+                .unwrap_or_else(|| super::super::colors::sender_color(line));
             let r = ui.add(
                 super::super::widgets::elided_label(ui, RichText::new(&name).size(11.5).strong().color(col), max_bubble)
                     .sense(egui::Sense::click()),
@@ -232,6 +234,8 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
         // a keyword's colour shows on any bubble (Preferences › Chat)
         (false, None) => super::super::colors::keyword_color(line).unwrap_or(p.ink),
     };
+
+    let text_color = super::super::colors::contact_chat_color(line, world).unwrap_or(text_color);
 
     // top-aligned rows: a row aligned to its bottom would take the whole
     // height it is given; the picture is placed against the bubble after it

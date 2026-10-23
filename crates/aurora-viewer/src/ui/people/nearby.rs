@@ -808,6 +808,7 @@ fn paint_rich(
     } else {
         p.ink
     };
+    let name_color = crate::ui::colors::resident_name(world, &row.id, name_color);
     let mut name = semibold(ui, 13.0, name_color);
     name.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), name);
@@ -884,6 +885,7 @@ fn paint_compact(
     } else {
         p.ink
     };
+    let name_color = crate::ui::colors::resident_name(world, &row.id, name_color);
     let mut format = egui::TextFormat::simple(FontId::proportional(12.0), name_color);
     format.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);

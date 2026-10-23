@@ -307,6 +307,7 @@ fn plate_content(
         })
     });
     Content {
+        appearance: world.contact_sets.appearance(&id).clone(),
         name,
         username,
         title: o.group_title().filter(|_| world.group_titles.shows(own)),

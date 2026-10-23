@@ -87,7 +87,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         members.sort_by_cached_key(|id| name_of(id).to_lowercase());
     }
     st.sel.retain(|id| members.contains(id));
-    egui::ScrollArea::vertical()
+    let area = egui::ScrollArea::vertical()
         .id_salt("people-sets-rows")
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -99,6 +99,8 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
                 row(ui, c, data, st, &set, *id, &rows::display_name(world, id), &members);
             }
         });
+    let drop = ui.interact(area.inner_rect, ui.scope_id().with("contact_set_drop"), Sense::hover());
+    crate::ui::contacts::drag::set_target(&drop, &set);
 }
 
 /// The sets as pills with their member count (the chosen one lit), "New"
@@ -135,7 +137,9 @@ fn set_pills(ui: &mut egui::Ui, c: &mut Ctx, set: &str) {
                 .contact_sets
                 .set(name)
                 .map_or(p.muted, |s| crate::ui::contacts::color32(s.color));
-            if widgets::dot_pill(ui, p, color, name, Some(&n), name == set, false).0.clicked() {
+            let response = widgets::dot_pill(ui, p, color, name, Some(&n), name == set, false).0;
+            crate::ui::contacts::drag::set_target(&response, name);
+            if response.clicked() {
                 chosen = Some(name.clone());
             }
             room -= w + 5.0;
@@ -285,6 +289,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     } else {
         p.ink
     };
+    let color = crate::ui::colors::resident_name(world, &id, color);
     let cut = rows::names(ui, p, rect, left, end.names_right, name, color, &second_line(c, &id), None, None);
     if rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id) {
         super::nearby::open_sheet(st, id);

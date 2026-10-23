@@ -487,7 +487,16 @@ fn header(ui: &mut egui::Ui, p: &Palette, settings: &mut RadarSettings, counts: 
 }
 
 /// Paint one avatar; returns the text of the cell under the pointer.
-fn paint_row(ui: &egui::Ui, p: &Palette, data: &RadarData, row: &Row, rect: Rect, pointer: Option<egui::Pos2>) -> Option<String> {
+#[allow(clippy::too_many_arguments)]
+fn paint_row(
+    ui: &egui::Ui,
+    p: &Palette,
+    world: &World,
+    data: &RadarData,
+    row: &Row,
+    rect: Rect,
+    pointer: Option<egui::Pos2>,
+) -> Option<String> {
     let mut tip = None;
     for (column, cell) in cells(data.settings, rect) {
         let under = pointer.is_some_and(|at| cell.contains(at));
@@ -505,6 +514,7 @@ fn paint_row(ui: &egui::Ui, p: &Palette, data: &RadarData, row: &Row, rect: Rect
                 } else {
                     p.ink
                 };
+                let color = crate::ui::colors::resident_name(world, &row.id, color);
                 // the profile picture first (not in Firestorm's radar, asked
                 // by the human), then the name
                 let picture = Rect::from_min_size(egui::pos2(cell.left() + 4.0, cell.center().y - PICTURE / 2.0), Vec2::splat(PICTURE));
@@ -816,7 +826,7 @@ pub fn tab(
             if row.left_behind {
                 ui.set_opacity(opacity * LEFT_BEHIND_OPACITY);
             }
-            let tip = paint_row(ui, p, data, row, rect, pointer);
+            let tip = paint_row(ui, p, world, data, row, rect, pointer);
             ui.set_opacity(opacity);
             if resp.clicked() {
                 // Ctrl adds to the selection or takes away from it, Shift

@@ -3,6 +3,7 @@ use crate::theme::Theme;
 
 fn content() -> Content {
     Content {
+        appearance: Default::default(),
         name: "Nova ♪".into(),
         username: Some("Nova Exemple".into()),
         title: Some("Loups du Nord".into()),
@@ -23,6 +24,67 @@ fn detail() -> Detail {
         short: "245 000".into(),
         alert: true,
     }
+}
+
+#[test]
+fn contact_visuals_preserve_distance_crowd_hover_and_bound_badges() {
+    use crate::world::contact_sets::appearance::SetIcon;
+    use crate::world::contact_sets::{Appearance, PlateSize};
+    let mut c = content();
+    c.friend = true;
+    c.appearance = std::sync::Arc::new(Appearance {
+        size: PlateSize::Reduced,
+        replace_friend: true,
+        icons: (0..20)
+            .map(|_| SetIcon {
+                set: "Example".into(),
+                icon: 0,
+                color: [0.3, 0.6, 0.9, 1.0],
+            })
+            .collect(),
+        ..Default::default()
+    });
+    assert_eq!(preferred_level(Level::Full, &c, false), Level::Compact);
+    assert_eq!(preferred_level(Level::Far, &c, false), Level::Far);
+    assert_eq!(hover_level(preferred_level(Level::Full, &c, false), true, true), Level::Full);
+    let b = badges(Level::Full, &c);
+    assert!(!b.iter().any(|b| b == Badge::Friend));
+    assert_eq!(b.len(), 9);
+    assert!(b.iter().any(|b| b == Badge::More(12)));
+    assert_eq!(badges(Level::Far, &c).len(), 0);
+    std::sync::Arc::make_mut(&mut c.appearance).size = PlateSize::Expanded;
+    assert_eq!(preferred_level(Level::Far, &c, true), Level::Far);
+    assert_eq!(
+        crowd_level(preferred_level(Level::Full, &c, true), MAX_FULL + 1, false),
+        Level::Compact
+    );
+}
+
+#[test]
+fn contact_visuals_invalidate_surface_cache_without_a_geometry_change() {
+    let ctx = egui::Context::default();
+    Theme::default().apply(&ctx, 1.0);
+    let mut plates = Plates::default();
+    let mut c = content();
+    c.appearance = std::sync::Arc::new(crate::world::contact_sets::Appearance {
+        border: Some([1.0, 0.0, 0.0, 1.0]),
+        ..Default::default()
+    });
+    let colours = |shapes: Vec<egui::Shape>| {
+        shapes
+            .into_iter()
+            .filter_map(|s| match s {
+                egui::Shape::Mesh(m) => Some(m.vertices.iter().map(|v| v.color).collect::<Vec<_>>()),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>()
+    };
+    let before = frame(&ctx, &mut plates, &[tag(1, 5.0, c.clone())], 1.0);
+    std::sync::Arc::make_mut(&mut c.appearance).border = Some([0.0, 0.0, 1.0, 1.0]);
+    let after = frame(&ctx, &mut plates, &[tag(1, 5.0, c)], 1.1);
+    assert_eq!(before.0, after.0);
+    assert_ne!(colours(before.1), colours(after.1));
 }
 
 fn tag(n: u128, distance: f32, content: Content) -> Tag<'static> {
