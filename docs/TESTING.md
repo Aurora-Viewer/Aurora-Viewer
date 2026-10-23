@@ -6996,6 +6996,14 @@ behavior, all movement directions, run and crouch precedence, no-fly support,
 underwater rejection, immediate context cancellation, timeout, ordinary AO
 replacements and stock fallback release, and immediate supersession of pending
 support/jump requests. These checks do not establish simulator physics.
+Default dev executable `28342d99` built successfully. Five native offline runs
+exit 0 with zero warnings/errors; ten inspected captures cover the prescribed
+running-jump trajectory, held-key landing, neighbouring crouch-walk and FR/EN
+Movement hints. They establish root presentation and readable key hints, not
+real inventory poses or Havok behavior. Raw screenshots, profile samples and
+scoped logs remain in the task's `.scratch/`; shared desktop load is visible,
+so these are not isolated performance measurements. Human simulator acceptance
+of the physical jump and AO poses remains required before PR.
 
 `water-walk-ui` and `swim-ui` also open the Movement tab for EN/FR control
 inspection, with only their corresponding water mode active.
