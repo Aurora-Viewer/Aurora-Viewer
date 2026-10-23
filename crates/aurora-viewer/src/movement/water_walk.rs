@@ -9,10 +9,15 @@ use std::time::{Duration, Instant};
 pub struct Runtime {
     active: bool,
     up: bool,
-    jump_until: Option<Instant>,
-    resume_after: Option<Instant>,
+    jump: Option<Jump>,
     pose: Option<State>,
     signal: Option<PlayingAnimation>,
+}
+
+struct Jump {
+    motion: Motion,
+    started: Instant,
+    risen: bool,
 }
 
 impl Runtime {
@@ -51,23 +56,35 @@ impl Runtime {
             self.active = false;
             self.pose = None;
             self.signal = None;
-            self.jump_until = None;
-            self.resume_after = None;
+            self.jump = None;
             return None;
         }
-        if up_edge && self.active {
-            self.jump_until = Some(now + Duration::from_millis(350));
-            self.resume_after = Some(now + Duration::from_millis(750));
-        }
-        if self.jump_until.is_some_and(|until| now < until) {
-            self.active = false;
-            self.pose = Some(State::Jumping);
-            let mut motion = Motion::motor(4, 3.2, frame.height);
-            motion.parameters[2] = 2.5;
-            return Some(motion);
-        }
         let target = frame.water? + frame.height * 0.5;
-        if self.resume_after.is_some_and(|until| now < until) || frame.position.z > target + 0.45 {
+        let running = frame.running || input.run;
+        let speed = if running { 5.13 } else { 3.2 };
+        // LLAgent::moveUp starts a ground jump on ascent. Native translation
+        // is captured over water, so keep the jump in the support motor with
+        // one action ID; repeated commands must never renew its trajectory.
+        if up_edge && self.active && self.jump.is_none() && !frame.locked && (frame.position.z - target).abs() < 0.3 {
+            self.jump = Some(Jump {
+                motion: Motion::water_walk_jump(speed, frame.height),
+                started: now,
+                risen: false,
+            });
+        }
+        if let Some(jump) = &mut self.jump {
+            jump.risen |= frame.position.z > target + 0.2;
+            let landed = jump.risen && frame.position.z <= target + 0.12 && frame.velocity.z <= 0.5;
+            if !frame.locked && !landed && now.duration_since(jump.started) < Duration::from_secs(3) {
+                // Keep the same jump animation clock through descent. This
+                // supported arc returns to water, so a native fall signal
+                // must not interrupt the pose before actual contact.
+                self.pose = Some(State::Jumping);
+                return Some(jump.motion);
+            }
+            self.jump = None;
+        }
+        if frame.position.z > target + 0.45 {
             self.active = false;
             self.pose = None;
             self.signal = None;
@@ -75,7 +92,6 @@ impl Runtime {
         }
         self.active = true;
         let moving = input.forward || input.back || input.strafe_left || input.strafe_right || frame.velocity.truncate().length() > 0.25;
-        let running = frame.running || input.run;
         // Match ground crouching intent (LLAgent::moveUp and AOSet's separate
         // crouch states in indra/newview/llagent.cpp and aoset.cpp). Descend
         // keeps the water support; it no longer means leaving this mode.
@@ -210,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn water_walk_can_rise_from_depth_and_jump_without_restarting_the_pulse() {
+    fn water_walk_jump_keeps_one_action_and_animation_through_descent_until_landing() {
         let now = Instant::now();
         let mut r = Runtime::default();
         let mut f = frame();
@@ -221,10 +237,125 @@ mod tests {
             up: true,
             ..Default::default()
         };
-        assert_eq!(r.update(true, &f, &input, now).unwrap().mode, 4);
-        assert_eq!(r.signal(now).unwrap().0, State::Jumping);
-        assert!(r.update(true, &f, &input, now + Duration::from_millis(400)).is_none());
-        assert_eq!(r.update(true, &f, &input, now + Duration::from_millis(800)).unwrap().mode, 13);
-        assert_eq!(r.signal(now).unwrap().0, State::Standing);
+        let jump = r.update(true, &f, &input, now).unwrap();
+        assert_eq!(jump.mode, 13);
+        assert_eq!(jump.parameters, [3.2, f.height, 2.5]);
+        assert!(jump.valid() && jump.action > 0);
+        assert!(r.active());
+        let (state, started) = r.signal(now).unwrap();
+        assert_eq!(state, State::Jumping);
+        // A delayed simulator update must not release the launch command.
+        assert_eq!(r.update(true, &f, &input, now + Duration::from_millis(400)), Some(jump));
+        f.position.z += 0.7;
+        f.velocity.z = 1.5;
+        r.update(true, &f, &MoveInput::default(), now + Duration::from_millis(600));
+        let later = now + Duration::from_millis(800);
+        assert_eq!(
+            r.update(true, &f, &input, later),
+            Some(jump),
+            "another airborne press cannot rearm the jump"
+        );
+        assert_eq!(r.signal(later).unwrap().0, State::Jumping);
+        f.velocity.z = -2.0;
+        assert_eq!(r.update(true, &f, &input, later), Some(jump));
+        let (state, descending) = r.signal(later).unwrap();
+        assert_eq!(state, State::Jumping);
+        assert_eq!(descending.continuous_start, started.continuous_start);
+        f.position.z = 20.95;
+        let landed = now + Duration::from_millis(1400);
+        let support = r.update(true, &f, &input, landed).unwrap();
+        assert_eq!(support, Motion::motor(13, 3.2, f.height));
+        assert_eq!(r.signal(landed).unwrap().0, State::Standing);
+        assert_eq!(
+            r.update(true, &f, &input, now + Duration::from_secs(2)),
+            Some(support),
+            "a held key never repeats"
+        );
+        r.update(true, &f, &MoveInput::default(), now + Duration::from_millis(2100));
+        let next = r.update(true, &f, &input, now + Duration::from_millis(2200)).unwrap();
+        assert_ne!(next.action, jump.action);
+        assert!(next.valid());
+    }
+
+    #[test]
+    fn water_walk_jump_works_in_each_direction_without_flight_and_preserves_run_speed() {
+        let now = Instant::now();
+        for direction in 0..5 {
+            for run in [false, true] {
+                let mut r = Runtime::default();
+                let mut f = frame();
+                f.can_fly = false;
+                let mut input = MoveInput {
+                    run,
+                    down: true,
+                    ..Default::default()
+                };
+                match direction {
+                    1 => input.forward = true,
+                    2 => input.back = true,
+                    3 => input.strafe_left = true,
+                    4 => input.strafe_right = true,
+                    _ => {}
+                }
+                r.update(true, &f, &input, now);
+                input.up = true;
+                let jump = r.update(true, &f, &input, now).unwrap();
+                assert_eq!(jump.parameters[0], if run { 5.13 } else { 3.2 });
+                assert!(jump.valid() && jump.action > 0);
+                assert_eq!(r.pose(), Some(State::Jumping), "ascent leaves the crouch pose");
+            }
+        }
+    }
+
+    #[test]
+    fn water_walk_jump_requires_surface_support_and_cancels_on_context_loss_or_timeout() {
+        let now = Instant::now();
+        for reason in 0..9 {
+            let mut r = Runtime::default();
+            let mut f = frame();
+            let up = MoveInput {
+                up: true,
+                ..Default::default()
+            };
+            r.update(true, &f, &MoveInput::default(), now);
+            assert!(r.update(true, &f, &up, now).unwrap().action > 0);
+            match reason {
+                0 => f.flying = true,
+                1 => f.seated = true,
+                2 => f.suspended = true,
+                3 => f.bridge_ready = false,
+                4 => f.water = None,
+                5 => f.ground = Some(20.0),
+                6 => f.locked = true,
+                _ => {}
+            }
+            let elapsed = if reason == 8 {
+                Duration::from_secs(3)
+            } else {
+                Duration::from_millis(100)
+            };
+            let result = r.update(reason != 7, &f, &up, now + elapsed);
+            assert!(r.jump.is_none());
+            assert!(result.is_none_or(|motion| motion.action == 0), "no surviving jump: {reason}");
+        }
+        for z in [18.0, 22.0] {
+            let mut r = Runtime::default();
+            let mut f = frame();
+            f.position.z = z;
+            r.update(true, &f, &MoveInput::default(), now);
+            let result = r.update(
+                true,
+                &f,
+                &MoveInput {
+                    up: true,
+                    ..Default::default()
+                },
+                now,
+            );
+            assert!(
+                result.is_none_or(|motion| motion.action == 0),
+                "no jump before reaching the surface"
+            );
+        }
     }
 }
