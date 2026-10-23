@@ -9307,11 +9307,6 @@ impl App {
             if let Some(old) = crate::scene::sync_sets::alternate_slice(self.sync_alt) {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
-            // AURORA_PENDING_PARK=alt: every object waiting for its geometry
-            // asked about in the round one second in three
-            if let Some(old) = crate::scene::sync_sets::alternate_park(self.sync_alt) {
-                self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
-            }
             // AURORA_MATERIAL_REBUILD=alt: every material user rebuilt at a
             // material change one second in three
             if let Some(old) = crate::scene::mat_changes::alternate(self.sync_alt) {

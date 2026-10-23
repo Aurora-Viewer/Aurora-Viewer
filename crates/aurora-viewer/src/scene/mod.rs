@@ -185,6 +185,11 @@ struct GeomEntry {
 const GEOM_KEEP_FRAMES: u32 = 600;
 /// Unused geometries looked at per frame once their time has come.
 const GEOM_FREED_PER_FRAME: usize = 256;
+/// Frames between two looks at what an avatar's attachments show of its
+/// bakes when nothing it wears changed: a safety net for a change the
+/// store did not report (every 30 frames before, 2 % of the main thread
+/// in a busy club).
+const BOM_SWEEP_FRAMES: usize = 300;
 
 /// How the frame's loops over objects are shared between the main thread
 /// and the pool's workers (frame_par.rs); the costs are those of the dev
@@ -781,6 +786,9 @@ pub struct Scene {
     /// Objects whose faces were built since the lists were last made: the
     /// size of their textures on screen is noted at once.
     fresh_usage: FastSet<usize>,
+    /// Avatars whose bake slots shown by their attachments (`bom_mask`)
+    /// may have changed: something they wear changed, arrived or left.
+    bom_stale: FastSet<usize>,
     /// What the lists look for in each object slot (list_index.rs).
     list_index: list_index::ListIndex,
     /// Objects with light parameters (kept by `sync_object`, which sees every
@@ -1312,6 +1320,7 @@ impl Scene {
             system_bounds: Vec::new(),
             visit_tmp: Vec::new(),
             fresh_usage: Default::default(),
+            bom_stale: Default::default(),
             list_index: Default::default(),
             light_objects: Default::default(),
             light_textures: HashMap::new(),
@@ -1858,7 +1867,12 @@ impl Scene {
         self.anchors.forget(i);
         self.pick.remove(i);
         self.list_index.remove(i);
+        self.bom_stale.remove(&i);
         if let Some(mut g) = self.gpu.get_mut(i).map(std::mem::take) {
+            // (something worn left: its wearer's bake slots)
+            if let Some(wearer) = g.owner_avatar {
+                self.bom_stale.insert(wearer);
+            }
             self.release_obj(renderer, i, &mut g);
         }
         renderer.cull.objects.set(i, CullObject::NONE);
@@ -2304,6 +2318,7 @@ impl Scene {
         for &idx in &touched {
             // a new object in the slot of a removed one not released yet
             self.release_slot(renderer, idx);
+            self.note_worn_change(world, idx);
             // a new object: its first sync waits its turn, without a
             // place in this frame's list
             if world.objects.is_arrival(idx) {
@@ -3447,6 +3462,16 @@ impl Scene {
         None
     }
 
+    /// Object `idx` changed or arrived through the store: if it is worn, what
+    /// its wearer's attachments show of its bakes is looked at again.
+    fn note_worn_change(&mut self, world: &World, idx: usize) {
+        if world.objects.get(idx).is_some_and(|o| !o.is_avatar())
+            && let Some((_, wearer)) = Self::wearer_avatar(world, idx)
+        {
+            self.bom_stale.insert(wearer);
+        }
+    }
+
     /// Bake slots (texture-entry index bits) shown by the avatar's attachments
     /// and their child prims.
     pub(crate) fn bom_mask(world: &World, avatar_idx: usize) -> u64 {
@@ -3496,12 +3521,14 @@ impl Scene {
         let record_model = if anchor.is_some() { Mat4::IDENTITY } else { avatar_model }.to_cols_array_2d();
         let system_binds = self.skin_binds.system(&self.avatar_lib.rig);
         let appearance_gen = world.appearance_generation(&o.full_id);
-        // bakes used by attachments (checked every 30 frames)
-        let bom_mask = if !self.gpu[idx].is_avatar || (self.frame as usize + idx).is_multiple_of(30) {
-            Self::bom_mask(world, idx)
-        } else {
-            self.gpu[idx].bom_mask
-        };
+        // bakes used by attachments: when something worn changed, and every
+        // BOM_SWEEP_FRAMES in case (each time it walks every prim worn)
+        let bom_mask =
+            if !self.gpu[idx].is_avatar || self.bom_stale.remove(&idx) || (self.frame as usize + idx).is_multiple_of(BOM_SWEEP_FRAMES) {
+                Self::bom_mask(world, idx)
+            } else {
+                self.gpu[idx].bom_mask
+            };
         // over the complexity limit: grey silhouette of the system body
         // (Pipeline::generateImpostor: avatar geometry only, alpha masking
         // off, filled with the muted color LLColor4::grey4)
@@ -5178,6 +5205,35 @@ fn classify(f: &FaceDraw, tex_alpha: AlphaKind) -> Pass {
 mod tests {
     use super::*;
     use aurora_net::NetEvent;
+
+    #[test]
+    fn a_worn_prim_changing_has_its_wearers_bake_slots_looked_at_again() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for ev in crate::demo::events()
+            .into_iter()
+            .chain(crate::demo::cloud_self_events(&lib.shape_params))
+        {
+            world.apply(ev);
+        }
+        let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        let own = world.objects.index_of_uuid(&world.agent_id).expect("demo agent");
+        let key = world.objects.get(own).expect("avatar").key;
+        let worn = world.objects.children_of(&key)[0];
+        // the avatar itself moving: nothing it wears changed
+        scene.note_worn_change(&world, own);
+        assert!(scene.bom_stale.is_empty());
+        scene.note_worn_change(&world, worn);
+        assert!(scene.bom_stale.contains(&own));
+        // a prim on the ground has no wearer
+        scene.bom_stale.clear();
+        let ground = (0..world.objects.slots.len())
+            .find(|&i| world.objects.get(i).is_some_and(|o| !o.is_avatar() && o.parent_id == 0))
+            .expect("a prim on the ground");
+        scene.note_worn_change(&world, ground);
+        assert!(scene.bom_stale.is_empty());
+    }
 
     #[test]
     fn zero_subtype_sculpt_selects_map_geometry_for_every_lod() {

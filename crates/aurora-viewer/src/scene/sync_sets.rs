@@ -162,43 +162,12 @@ pub enum PendingGeom {
     Waits(u64),
 }
 
-/// AURORA_PENDING_PARK: `0` asks about every object waiting for its
-/// geometry in the round, as before the parking; `alt`: one second in
-/// three, the app switching at each line of the frame profile.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParkEnv {
-    On,
-    Off,
-    Alternate,
-}
-
-pub fn park_env() -> ParkEnv {
-    static ENV: std::sync::OnceLock<ParkEnv> = std::sync::OnceLock::new();
-    *ENV.get_or_init(|| match std::env::var("AURORA_PENDING_PARK").as_deref() {
-        Ok("alt") => ParkEnv::Alternate,
-        Ok("0") => ParkEnv::Off,
-        _ => ParkEnv::On,
-    })
-}
-
-static PARK_OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static PARK_SET: std::sync::Once = std::sync::Once::new();
-
-/// Whether objects waiting for a geometry are parked, at the moment.
+/// Whether objects waiting for a geometry are parked: not with
+/// `AURORA_PENDING_PARK=0`, which asks about all of them in the round as
+/// before, to compare.
 fn parking() -> bool {
-    PARK_SET.call_once(|| PARK_OFF.store(park_env() == ParkEnv::Off, std::sync::atomic::Ordering::Relaxed));
-    !PARK_OFF.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// `AURORA_PENDING_PARK=alt`: the way of second `n` of the run (true: as
-/// before, one second in three). None without `alt`.
-pub fn alternate_park(n: u64) -> Option<bool> {
-    (park_env() == ParkEnv::Alternate).then(|| {
-        let old = n.is_multiple_of(3);
-        parking();
-        PARK_OFF.store(old, std::sync::atomic::Ordering::Relaxed);
-        old
-    })
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_PENDING_PARK").as_deref() != Ok("0"))
 }
 
 /// Parent chains longer than this are cut (as `Scene::object_transform`).
