@@ -169,6 +169,9 @@ impl Who {
 /// greyed.
 fn name_color(env: &LineEnv, th: &Thread, line: &ChatLine, who: &Who) -> Color32 {
     let p = env.p;
+    if let Some(color) = crate::ui::colors::contact_sender_color(line, env.world) {
+        return color;
+    }
     if let Some(tone) = history_tone(p, line.origin) {
         return tone;
     }
@@ -190,6 +193,14 @@ fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
     let p = env.p;
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     let tone = history_tone(p, line.origin);
+    if let Some(color) = crate::ui::colors::contact_chat_color(line, env.world) {
+        let text = if emote {
+            format!("{name}{}", &line.text[3..])
+        } else {
+            line.text.clone()
+        };
+        return (text, color, emote || matches!(line.kind, ChatKind::Local(ChatType::Whisper)));
+    }
     if emote {
         return (format!("{name}{}", &line.text[3..]), tone.unwrap_or(p.violet_pale), true);
     }

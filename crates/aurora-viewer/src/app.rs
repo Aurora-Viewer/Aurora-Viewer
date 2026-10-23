@@ -13370,6 +13370,10 @@ impl ApplicationHandler for App {
                 if crate::demo::people::mode() == Some(crate::demo::people::Mode::Sets) {
                     self.contacts_ui.set_choice = Some(aurora_i18n::tr!("demo-family").to_owned());
                     self.people_ui.select(vec![crate::demo::people::NOVA]);
+                    if crate::demo::people::visuals() {
+                        self.contacts_ui.configure_set(aurora_i18n::tr!("demo-family"));
+                        self.settings.classic_name_tags = std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v == "visuals-legacy");
+                    }
                 }
                 self.panels.people = true;
                 self.panels.people_tab = crate::demo::people::tab();

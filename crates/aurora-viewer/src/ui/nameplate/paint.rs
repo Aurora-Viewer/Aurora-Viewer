@@ -125,6 +125,8 @@ impl<K: PartialEq> Built<K> {
 /// What the surface, its border and its lights are built from.
 #[derive(Clone, Copy, PartialEq)]
 struct SurfaceKey {
+    tint: Color32,
+    border: Option<Color32>,
     size: Vec2,
     halo: Option<Halo>,
     glass: f32,
@@ -190,7 +192,16 @@ fn line(env: &Env<'_>, text: &str, format: TextFormat, max_width: f32) -> Arc<Ga
 fn face(env: &Env<'_>, level: Level, c: &Content) -> Face {
     let p = env.p;
     let m = Metrics::of(level, SCALE);
-    let color = c.role.name_color(p, &crate::ui::colors::get());
+    let color = c
+        .appearance
+        .nameplate_name
+        .map(crate::ui::colors::set_color)
+        .unwrap_or_else(|| c.role.name_color(p, &crate::ui::colors::get()));
+    let color = c
+        .appearance
+        .background
+        .map(|bg| readable_name(color, plate_tint(env, bg), p.ink))
+        .unwrap_or(color);
     let mut format = match level {
         // the far pill's name is a regular weight
         Level::Far => TextFormat::simple(FontId::proportional(m.name_pt), color),
@@ -232,6 +243,45 @@ fn face(env: &Env<'_>, level: Level, c: &Content) -> Face {
     }
 }
 
+fn luminance(c: Color32) -> f32 {
+    let v = egui::Rgba::from(c).to_array();
+    0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+}
+
+fn contrast(a: Color32, b: Color32) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+fn plate_tint(env: &Env<'_>, color: [f32; 4]) -> Color32 {
+    let color = crate::ui::colors::set_color(color).to_opaque();
+    // Derive the hue from the set, while keeping the ordinary surface alpha.
+    // Check both the main ink and the secondary line against the tint.
+    let mut tint = color.lerp_to_gamma(env.tint, 0.65);
+    let target = if contrast(env.p.ink, env.p.navy) >= contrast(env.p.ink, env.p.field) {
+        env.p.navy
+    } else {
+        env.p.field
+    };
+    for _ in 0..12 {
+        if contrast(env.p.ink, tint) >= 4.5 && contrast(env.p.muted, tint) >= 3.0 {
+            break;
+        }
+        tint = tint.lerp_to_gamma(target, 0.2);
+    }
+    tint
+}
+
+fn readable_name(mut name: Color32, background: Color32, ink: Color32) -> Color32 {
+    for _ in 0..12 {
+        if contrast(name, background) >= 4.5 {
+            break;
+        }
+        name = name.lerp_to_gamma(ink, 0.2);
+    }
+    name
+}
+
 /// Draw the plate of `tag` and return its rectangle.
 pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache) -> Rect {
     let c = &tag.content;
@@ -253,7 +303,7 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
     // the bounce moves the surface alone, on whole pixels too; the plate
     // keeps its rectangle for the pointer, which does not chase the bounce
     let grow = (st.grow * ppp).round() / ppp;
-    background(env, rect.expand(grow), st, alpha, farness, &mut cache.surface);
+    background(env, rect.expand(grow), st, alpha, farness, c, &mut cache.surface);
     match from {
         None => contents(env, env.painter, rect, &to, tag, alpha, &mut cache.marks),
         Some((_, from)) => {
@@ -269,7 +319,8 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
 
 /// The blur of the world, then the surface, its border, its shadow and
 /// the voice halo in one mesh.
-fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache: &mut Option<Built<SurfaceKey>>) {
+#[allow(clippy::too_many_arguments)]
+fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, c: &Content, cache: &mut Option<Built<SurfaceKey>>) {
     let p = env.p;
     let s = SCALE;
     if st.glass > 0.0 {
@@ -279,6 +330,8 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache
             .add(aurora_render::glass_region(rect.shrink(0.5), radius, st.glass * alpha, GLASS_SHADE));
     }
     let key = SurfaceKey {
+        tint: c.appearance.background.map(|bg| plate_tint(env, bg)).unwrap_or(env.tint),
+        border: c.appearance.border.map(crate::ui::colors::set_color),
         size: rect.size(),
         halo: st.halo,
         glass: st.glass,
@@ -295,11 +348,13 @@ fn background(env: &Env<'_>, rect: Rect, st: &State, alpha: f32, far: f32, cache
             color: p.navy.gamma_multiply(0.35),
         };
         let opacity = lerp((lerp(TINT_PLAIN, far), lerp(TINT_GLASS, far)), st.glass);
-        let plain = p.ink.gamma_multiply(lerp(BORDER, far) + HOVER_BORDER * key.hover);
+        let plain = key
+            .border
+            .unwrap_or_else(|| p.ink.gamma_multiply(lerp(BORDER, far) + HOVER_BORDER * key.hover));
         let voice = key.halo.map(|halo| voice_light(p, halo, plain, key.size.y));
         let mut plate = Mesh::default();
         let at_origin = Rect::from_min_size(Pos2::ZERO, rect.size());
-        let fill = env.tint.lerp_to_gamma(p.ink, HOVER_LIGHT * key.hover).gamma_multiply(opacity);
+        let fill = key.tint.lerp_to_gamma(p.ink, HOVER_LIGHT * key.hover).gamma_multiply(opacity);
         let ppp = env.pixels_per_point;
         match voice {
             Some(v) => mesh::plate(&mut plate, at_origin, ppp, fill, v.border, &[shadow, v.glow], &[v.ring]),
@@ -408,6 +463,11 @@ pub(super) fn cover(size: [usize; 2]) -> Rect {
 
 fn badge_icon(p: &Palette, badge: Badge) -> Option<(&'static str, Color32)> {
     Some(match badge {
+        Badge::Contact { icon, color } => (
+            crate::world::contact_sets::appearance::ICONS[icon],
+            Color32::from_rgba_premultiplied(color[0], color[1], color[2], color[3]),
+        ),
+        Badge::More(_) => return None,
         Badge::Voice => ("microphone-filled", p.success),
         Badge::Friend => ("heart-filled", p.success),
         Badge::TooComplex => ("alert-triangle-filled", p.amber),
@@ -523,13 +583,26 @@ fn contents(
     };
     Built::of(cache, key, |key| marks(env, key)).emit(painter, origin, alpha);
     if let Some(photo) = l.photo.filter(|_| picture.is_none())
-        && let Some(icon) = env.icons.get("user-filled")
+        && let Some(icon) = env
+            .icons
+            .get("user-filled")
+            .cloned()
+            .or_else(|| crate::ui::icons::global("user-filled"))
     {
         let size = Vec2::splat(photo.radius * 2.0 * 30.0 / 54.0);
         painter.image(icon.id(), Rect::from_center_size(photo.center + origin, size), WHOLE, ink(p.muted));
     }
     let places = || face.badges.iter().zip(l.badges).map(|(b, r)| (b, r.translate(origin)));
     for (badge, r) in places() {
+        if let Badge::More(n) = badge {
+            painter.text(
+                r.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("+{n}"),
+                FontId::proportional(9.0),
+                ink(p.ink),
+            );
+        }
         if badge == Badge::Typing {
             let mut dots = Mesh::default();
             for i in 0..3 {
@@ -559,7 +632,7 @@ fn contents(
     // the badges' icons last: one texture each
     for (badge, r) in places() {
         if let Some((name, color)) = badge_icon(p, badge)
-            && let Some(icon) = env.icons.get(name)
+            && let Some(icon) = env.icons.get(name).cloned().or_else(|| crate::ui::icons::global(name))
         {
             let size = Vec2::splat(m.badge_icon);
             painter.image(icon.id(), Rect::from_center_size(r.center(), size), WHOLE, ink(color));

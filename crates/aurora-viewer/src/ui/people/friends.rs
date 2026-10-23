@@ -373,6 +373,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     } else {
         p.ink
     };
+    let color = crate::ui::colors::resident_name(c.world, &f.id, color);
     let cut = rows::names(ui, p, rect, left, end.names_right, &line.name, color, &line.status, line.set, None);
     ui.set_opacity(opacity);
     if resp.clicked() || resp.drag_started() {

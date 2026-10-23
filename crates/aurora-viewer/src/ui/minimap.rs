@@ -616,6 +616,12 @@ impl MiniMap {
                 .get(&id)
                 .copied()
                 .unwrap_or_else(|| super::colors::map_color(world, &id, &name));
+            let col = world
+                .contact_sets
+                .appearance(&id)
+                .minimap
+                .map(super::colors::set_color)
+                .unwrap_or(col);
             // unknown height: shown above while the camera is under 1020 m
             let dz = if known {
                 Some(pos.z - cam.pos.z)

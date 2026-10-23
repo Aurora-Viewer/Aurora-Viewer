@@ -111,7 +111,18 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         (None, Some(cell)) => super::radar::icon(ui, "heart-filled", *cell, 13.0, p.success),
         _ => {}
     }
-    let cut = rows::names(ui, p, rect, left, end.names_right, name, p.ink, &ago(met), None, None);
+    let cut = rows::names(
+        ui,
+        p,
+        rect,
+        left,
+        end.names_right,
+        name,
+        crate::ui::colors::resident_name(world, &id, p.ink),
+        &ago(met),
+        None,
+        None,
+    );
     if rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id) {
         super::nearby::open_sheet(st, id);
     }

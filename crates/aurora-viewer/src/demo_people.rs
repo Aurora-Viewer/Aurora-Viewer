@@ -55,7 +55,7 @@ pub fn mode() -> Option<Mode> {
         "legacy" => Some(Mode::Legacy),
         "friends" | "amis" => Some(Mode::Friends),
         "groups" | "groupes" => Some(Mode::Groups),
-        "sets" | "cercles" => Some(Mode::Sets),
+        "sets" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
         "recent" | "récent" => Some(Mode::Recent),
         "blocked" | "bloqué" => Some(Mode::Blocked),
         _ => Some(Mode::Rows),
@@ -184,6 +184,39 @@ pub fn seed(world: &mut crate::world::World) {
     if mode() == Some(Mode::Sets) {
         sets.set_pseudonym(&[DEMO_LOUP], aurora_i18n::tr!("demo-orion-the-great"), is_friend);
     }
+    if visuals() {
+        use crate::world::contact_sets::{PlateSize, Visuals};
+        let family = aurora_i18n::tr!("demo-family");
+        let shop = aurora_i18n::tr!("demo-shop");
+        sets.add_to_set(&[DEMO_LOUP, NOVA, id(3)], family, is_friend);
+        sets.add_to_set(&[DEMO_LOUP, NOVA], shop, is_friend);
+        sets.set_visuals(
+            family,
+            Visuals {
+                border: true,
+                background: true,
+                nameplate_name: true,
+                ui_name: true,
+                chat_name: true,
+                chat_text: true,
+                minimap: true,
+                icon: Some(0),
+                size: PlateSize::Reduced,
+                ..Default::default()
+            },
+        );
+        sets.set_visuals(
+            shop,
+            Visuals {
+                border: true,
+                icon: Some(1),
+                replace_friend: true,
+                ..Default::default()
+            },
+        );
+        sets.move_priority(shop, true);
+        sets.set_stack_icons(std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v == "visuals-stack"));
+    }
     world.contact_sets = sets;
     world.groups.favorites.insert(super::DEMO_GROUP1);
     // "2 notices" on the first group
@@ -199,6 +232,11 @@ pub fn seed(world: &mut crate::world::World) {
         let when = now - std::time::Duration::from_secs(minutes * 60);
         world.recent.add(world.agent_id, who, false, region, when);
     }
+}
+
+pub fn visuals() -> bool {
+    static MODE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v.starts_with("visuals")))
 }
 
 /// The crowd's density: `crowd` and `crowd-hover`.

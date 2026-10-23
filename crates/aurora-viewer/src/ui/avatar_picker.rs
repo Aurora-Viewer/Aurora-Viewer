@@ -190,7 +190,8 @@ impl AvatarPicker {
                                 ui.painter().galley(at, g.clone(), p.muted);
                                 g.size().x + 12.0
                             };
-                            let g = egui::WidgetText::from(RichText::new(name).size(12.0).color(p.ink)).into_galley(
+                            let color = super::colors::resident_name(world, id, p.ink);
+                            let g = egui::WidgetText::from(RichText::new(name).size(12.0).color(color)).into_galley(
                                 ui,
                                 Some(egui::TextWrapMode::Truncate),
                                 (w - 12.0 - extra_w).max(20.0),

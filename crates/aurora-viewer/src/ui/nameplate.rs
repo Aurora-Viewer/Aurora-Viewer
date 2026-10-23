@@ -97,6 +97,18 @@ pub fn friends_level(level: Level, c: &Content, friends_only: bool) -> Level {
     }
 }
 
+/// Set sizes are preferences at close range, not a way to defeat distance,
+/// crowd limits or hover expansion. Expanded also admits a non-friend set
+/// member to the full-plate candidates, as the friend eligibility rule does.
+pub fn preferred_level(level: Level, c: &Content, friends_only: bool) -> Level {
+    use crate::world::contact_sets::PlateSize;
+    match c.appearance.size {
+        PlateSize::Reduced if level == Level::Full => Level::Compact,
+        PlateSize::Expanded => level,
+        _ => friends_level(level, c, friends_only),
+    }
+}
+
 /// Seconds a plate stays full after the pointer has left it: along its edge
 /// the pointer goes in and out without the plate blinking.
 pub const HOVER_LINGER: f64 = 0.3;
@@ -212,6 +224,11 @@ impl Role {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Badge {
+    Contact {
+        icon: usize,
+        color: [u8; 4],
+    },
+    More(usize),
     /// In the voice channel.
     Voice,
     Typing,
@@ -225,7 +242,7 @@ pub enum Badge {
 /// The badges of a plate, in drawing order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Badges {
-    list: [Option<Badge>; 5],
+    list: [Option<Badge>; 14],
     len: usize,
 }
 
@@ -258,6 +275,7 @@ pub struct Detail {
 /// Everything a plate says about an avatar.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Content {
+    pub appearance: std::sync::Arc<crate::world::contact_sets::Appearance>,
     pub name: String,
     pub username: Option<String>,
     pub title: Option<String>,
@@ -269,6 +287,53 @@ pub struct Content {
     pub friend: bool,
     pub too_complex: bool,
     pub blocked: bool,
+}
+
+/// A live editor preview shares the live geometry, contrast and badge code.
+pub fn preview(ui: &mut egui::Ui, p: &Palette, appearance: std::sync::Arc<crate::world::contact_sets::Appearance>) {
+    let (area, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 100.0), egui::Sense::hover());
+    let level = if appearance.size == crate::world::contact_sets::PlateSize::Reduced {
+        Level::Compact
+    } else {
+        Level::Full
+    };
+    let content = Content {
+        appearance,
+        name: aurora_i18n::tr!("contact-visual-sample-name").to_owned(),
+        username: None,
+        title: Some(aurora_i18n::tr!("contact-visual-sample-title").to_owned()),
+        detail: None,
+        role: Role::Friend,
+        presence: Presence::Online,
+        in_voice: false,
+        typing: false,
+        friend: true,
+        too_complex: false,
+        blocked: false,
+    };
+    let tag = Tag {
+        id: Uuid::nil(),
+        anchor: Pos2::new(area.center().x, area.bottom() - 12.0),
+        at: glam::Vec3::ZERO,
+        distance: 5.0,
+        fade: 1.0,
+        content,
+        voice: None,
+        loading: None,
+        picture: Picture::None,
+    };
+    let icons = crate::ui::icons::Icons::default();
+    let env = paint::Env::new(ui.painter(), p, &icons, ui.input(|i| i.time));
+    let state = paint::State {
+        level,
+        from: None,
+        progress: 1.0,
+        halo: None,
+        glass: 0.0,
+        hover: 0.0,
+        grow: 0.0,
+    };
+    paint::plate(&env, &tag, &state, &mut paint::Cache::default());
 }
 
 /// A line under the display name.
@@ -307,13 +372,22 @@ pub fn badges(level: Level, c: &Content) -> Badges {
     for (on, badge) in [
         (c.in_voice, Badge::Voice),
         (c.typing, Badge::Typing),
-        (c.friend, Badge::Friend),
+        (c.friend && !c.appearance.replace_friend, Badge::Friend),
         (c.too_complex, Badge::TooComplex),
         (c.blocked, Badge::Blocked),
     ] {
         if on {
             b.push(badge);
         }
+    }
+    for icon in c.appearance.icons.iter().take(8) {
+        b.push(Badge::Contact {
+            icon: icon.icon,
+            color: crate::ui::colors::set_color(icon.color).to_array(),
+        });
+    }
+    if c.appearance.icons.len() > 8 {
+        b.push(Badge::More(c.appearance.icons.len() - 8));
     }
     b
 }
@@ -398,7 +472,7 @@ pub struct Layout {
     pub subs: [Option<Pos2>; 2],
     /// Left and right of the text column.
     pub text_x: (f32, f32),
-    pub badges: [Rect; 5],
+    pub badges: [Rect; 14],
 }
 
 /// Lay a plate out: the picture at the left of a full plate, the lines
@@ -445,7 +519,7 @@ pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layo
         radius: 7.5 * s,
     });
 
-    let mut rects = [Rect::NOTHING; 5];
+    let mut rects = [Rect::NOTHING; 14];
     let (mut x, top) = match level {
         // 15 px above the inner top edge, 20 px from the inner right edge
         Level::Full => (width - 21.0 * s - row, -14.0 * s),
@@ -787,7 +861,7 @@ impl Plates {
         let mut rank = 0;
         for (i, tag) in tags.iter().enumerate().rev() {
             let previous = self.entries.get(&tag.id).map(|e| e.level);
-            let mut level = friends_level(level_for(tag.distance, previous), &tag.content, self.friends_only_full);
+            let mut level = preferred_level(level_for(tag.distance, previous), &tag.content, self.friends_only_full);
             if level == Level::Full {
                 level = crowd_level(level, rank, previous == Some(Level::Full));
                 rank += 1;
