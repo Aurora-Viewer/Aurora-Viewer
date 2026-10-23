@@ -502,6 +502,54 @@ fn click(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
     ]
 }
 
+#[test]
+fn keyboard_scale_survives_an_unrelated_preference_change_and_reload() {
+    for key in [egui::Key::Plus, egui::Key::Minus] {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        s.snap_windows = !s.snap_windows;
+        let expected = if key == egui::Key::Plus { 1.1 } else { 0.9 };
+        let events = [true, false]
+            .into_iter()
+            .map(|pressed| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            })
+            .collect();
+        frames.run(events, |ui| {
+            assert!(scale_keyboard(ui.ctx(), &mut s.ui_scale));
+        });
+        frames.ctx.set_zoom_factor(s.ui_scale);
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Layout, 0, Vec::new());
+        }
+        let label = texts
+            .iter()
+            .find(|t| t.source == aurora_i18n::tr!("ui-options-snap-windows"))
+            .expect("the snap windows preference")
+            .rect;
+        // Reset a real unrelated preference through its modified-setting dot.
+        for events in click(egui::pos2(label.left() - 8.0, label.center().y)) {
+            page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Layout, 0, events);
+        }
+        assert!(r.changed);
+        assert_eq!(s.snap_windows, Settings::default().snap_windows);
+        // App::frame reapplies the saved scale when any preference changes.
+        crate::theme::Theme::default().apply(&frames.ctx, s.font_scale);
+        frames.ctx.set_zoom_factor(s.ui_scale);
+        page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Layout, 0, Vec::new());
+        assert_eq!(s.ui_scale, expected);
+        assert_eq!(frames.ctx.zoom_factor(), expected);
+        let saved = serde_json::to_string(&s).expect("serialize settings");
+        let restored: Settings = serde_json::from_str(&saved).expect("reload settings");
+        assert_eq!(restored.ui_scale, expected);
+    }
+}
+
 fn preference_shapes(
     frames: &mut Frames,
     s: &mut Settings,

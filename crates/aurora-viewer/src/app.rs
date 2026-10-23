@@ -7551,6 +7551,37 @@ impl App {
         let mut raw = gfx.egui_state.take_egui_input(&gfx.window);
         raw.events.extend(self.alt_text.drain(..).map(egui::Event::Text));
         self.demo_script_input(&mut raw);
+        if self.demo && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "1:scale-keys") {
+            raw.focused = true;
+            raw.events.retain(|event| !matches!(event, egui::Event::WindowFocused(false)));
+            if self.frame_count == 600 {
+                self.settings.ui_scale = 1.0;
+                self.egui_ctx.set_zoom_factor(1.0);
+            }
+            let key = match self.frame_count {
+                620 => Some(egui::Key::Plus),
+                622 => Some(egui::Key::Equals),
+                900 | 902 | 904 | 906 => Some(egui::Key::Minus),
+                _ => None,
+            };
+            if let Some(key) = key {
+                raw.events.extend([true, false].map(|pressed| egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: egui::Modifiers::COMMAND,
+                }));
+            }
+            if matches!(self.frame_count, 700 | 800 | 960 | 1040) {
+                log::info!(
+                    "demo keyboard UI scale: frame={} saved={:.2} displayed={:.2}",
+                    self.frame_count,
+                    self.settings.ui_scale,
+                    self.egui_ctx.zoom_factor()
+                );
+            }
+        }
         if self.demo && self.capture.is_some() {
             raw.events.extend(self.login_form.motion.demo_events(self.frame_count));
             raw.events.extend(self.login_form.manager.demo_events(self.frame_count));
@@ -7779,6 +7810,7 @@ impl App {
             let t = Instant::now();
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
+            actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
             if inventory_drop.is_none() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
@@ -10591,6 +10623,14 @@ impl App {
             self.panels.time_of_day = self.settings.time_of_day;
         }
         // Repeatable live-scale profiling without taking the native pointer.
+        if self.demo
+            && matches!(self.frame_count, 740 | 980)
+            && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "1:scale-keys")
+        {
+            self.settings.snap_windows = !self.settings.snap_windows;
+            res.changed = true;
+            log::info!("demo keyboard UI scale: unrelated preference changed");
+        }
         if self.demo && self.frame_count >= 600 && std::env::var("AURORA_DEMO_OPTIONS").is_ok_and(|mode| mode == "1:scale") {
             let phase = (self.frame_count - 600) % 600;
             let scale = 1.0 + phase.min(600 - phase) as f32 / 600.0;
