@@ -204,9 +204,73 @@ class RigToolsTests(unittest.TestCase):
                 bpy.context.view_layer.update()
                 middle = self.rig.pose.bones[rigging.chain(self.rig, key)[1]]
                 self.assertLess((middle.tail - matrix.translation).length, 0.003)
+                joint_before = middle.head.copy()
+                pole = self.rig.pose.bones[rigging.control_name(key, True)]
+                pole_matrix = pole.matrix.copy()
+                pole_matrix.translation += root.matrix.to_3x3() @ Vector((0.1, 0, 0.1))
+                pole.matrix = pole_matrix
+                bpy.context.view_layer.update()
+                self.assertGreater((middle.head - joint_before).length, 0.005)
+                self.assertLess((middle.tail - matrix.translation).length, 0.003)
                 solved = self.pose(key)
                 rigging.set_ik(bpy.context, self.rig, key, False)
                 self.assertPoseNear(solved, self.pose(key), 0.0001)
+
+    def test_default_poles_are_behind_elbows_and_ahead_of_each_own_knee(self):
+        for forward, front in (("NATIVE", Vector((1, 0, 0))), ("NEGATIVE_Y", Vector((0, -1, 0)))):
+            rig, _shirt = starter.create(bpy.context, forward=forward)
+            # Canonical aliases and object transforms must not change the layout.
+            rig.data.bones["mPelvis"].name = "Custom pelvis"
+            rig.rotation_euler = (0.2, -0.3, 0.5)
+            rig.scale = (1.5, 1.5, 1.5)
+            rigging.setup(bpy.context, rig)
+            for key in rigging.LIMBS:
+                with self.subTest(forward=forward, limb=key):
+                    root, middle, _end = (rig.pose.bones[name] for name in rigging.chain(rig, key))
+                    pole = rig.pose.bones[rigging.control_name(key, True)]
+                    desired = -front if key.startswith("HAND") else front
+                    offset = pole.head - middle.head
+                    self.assertGreater(offset.normalized().dot(desired), 0.9999)
+                    ratio = offset.length / (middle.head - root.head).length
+                    self.assertTrue(1.5 < ratio < 2.5 if key.startswith("HAND") else 0.4 < ratio < 0.8)
+                    before = [rig.pose.bones[name].matrix.copy() for name in rigging.chain(rig, key)]
+                    rigging.set_ik(bpy.context, rig, key, True)
+                    self.assertPoseNear(before, [rig.pose.bones[name].matrix.copy() for name in rigging.chain(rig, key)])
+                    self.assertGreater((pole.head - middle.head).normalized().dot(desired), 0.9999)
+
+    def test_existing_poles_can_be_repositioned_without_rebuilding_or_changing_the_pose(self):
+        rigging.setup(bpy.context, self.rig)
+        bpy.ops.aurora.create_pose_controls(kind="ROOT")
+        self.rig.pose.bones["auroraPose.COG"].rotation_mode = "XYZ"
+        self.rig.pose.bones["auroraPose.COG"].rotation_euler.z = 0.35
+        for key in rigging.LIMBS:
+            middle = self.rig.pose.bones[rigging.chain(self.rig, key)[1]]
+            middle.rotation_mode = "XYZ"
+            middle.rotation_euler.x = 0.5
+        bpy.context.view_layer.update()
+        rest = {bone.name: (bone.matrix_local.copy(), bone.parent.name if bone.parent else None) for bone in self.rig.data.bones}
+        snapshot = exporter.snapshot([self.shirt], set(rest), 1)
+        tracking.add(bpy.context.scene, [self.shirt])
+        bpy.context.scene.aurora_live.objects[0].enabled = False
+        for enabled in (False, True):
+            for key in rigging.LIMBS:
+                if enabled:
+                    rigging.set_ik(bpy.context, self.rig, key, True)
+                pole = self.rig.pose.bones[rigging.control_name(key, True)]
+                pole.location.y += 0.2
+            bpy.context.view_layer.update()
+            before = {key: self.pose(key) for key in rigging.LIMBS}
+            selected = list(bpy.context.selected_objects)
+            mode = bpy.context.object.mode
+            self.assertEqual(bpy.ops.aurora.reposition_ik_poles(), {"FINISHED"})
+            for key in rigging.LIMBS:
+                self.assertPoseNear(before[key], self.pose(key), 0.0002)
+                self.assertEqual(rigging.constraint(self.rig, key).influence, float(enabled))
+            self.assertEqual(rest, {bone.name: (bone.matrix_local.copy(), bone.parent.name if bone.parent else None) for bone in self.rig.data.bones})
+            self.assertEqual(snapshot, exporter.snapshot([self.shirt], set(rest), 1))
+            self.assertFalse(bpy.context.scene.aurora_live.objects[0].enabled)
+            self.assertEqual(selected, list(bpy.context.selected_objects))
+            self.assertEqual(mode, bpy.context.object.mode)
 
     def test_widgets_have_distinct_outlines_and_preserve_solver_pose_and_export(self):
         rigging.setup(bpy.context, self.rig)

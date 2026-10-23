@@ -85,6 +85,21 @@ class AURORA_OT_ik_handles(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class AURORA_OT_ik_poles(bpy.types.Operator):
+    bl_idname = "aurora.reposition_ik_poles"
+    bl_label = "Reposition elbow / knee poles"
+    bl_description = "Align poles with the current limb pose without rebuilding the rig"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            rigging.reposition_poles(context, rigging.resolve(context))
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, tr(str(error)))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
 class AURORA_OT_ik_switch(bpy.types.Operator):
     bl_idname = "aurora.switch_ik"
     bl_label = "Enable / disable IK"
@@ -264,6 +279,7 @@ def draw_ik(layout, context):
         row = box.row(align=True)
         row.prop(rig, "show_in_front", text="In front")
         row.operator("aurora.refresh_ik_handles", text="", icon="FILE_REFRESH")
+        box.operator("aurora.reposition_ik_poles", text="Reposition poles", icon="CON_KINEMATIC")
         for prefix, label in (("HAND", "Hands"), ("FOOT", "Feet")):
             box = layout.box()
             box.label(text=label)
@@ -330,5 +346,5 @@ def draw_clean(layout, context):
     layout.operator("aurora.transfer_weights", text="Normalize to 4 weights", icon="BRUSH_DATA").clean = True
 
 
-CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_handles, AURORA_OT_ik_switch, AURORA_OT_ik_select,
+CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_handles, AURORA_OT_ik_poles, AURORA_OT_ik_switch, AURORA_OT_ik_select,
            AURORA_OT_pose_setup, AURORA_OT_pose_select, AURORA_OT_look_switch, AURORA_OT_look_center, AURORA_OT_transfer)

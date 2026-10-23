@@ -31,6 +31,12 @@ optional independent hand/foot IK target/pole controls, preserving SL rest
 bones. Pose selection and visibility use `PoseBone` in Blender 5 and `Bone`
 in older APIs; Edit Mode visibility stays on `EditBone`. In Blender 5,
 `Bone.hide` affects Edit Mode only, so pose display must not read that flag.
+Default poles use the avatar's geometric facing: behind elbows and ahead of
+each knee, at joint height, with separate arm/leg distances. Near-straight
+SL leg splay does not define the pole direction; deliberately bent FK limbs
+retain their bend plane. Switching and explicit pole repositioning calibrate
+the pole angle from the current pose. Existing files are never repositioned
+automatically, preserving authored pole poses and animation.
 `handles.py` builds cached, unlinked custom-shape meshes with continuous edge
 outlines for IK hands, feet, elbows and knees: rounded frames/platforms and
 simple diamond/circle poles, without decorative cages or 3D lettering.

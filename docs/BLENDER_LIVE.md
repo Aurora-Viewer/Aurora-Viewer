@@ -77,8 +77,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.8.3.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.3-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.8.4.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.4-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -184,7 +184,7 @@ in Blender 2.93–3.x). Creating controls again is idempotent. Use a simple,
 editable SL armature; limbs already constrained by another rigging tool are
 rejected before adding controls.
 
-Plug-in 0.8.3 gives IK controls clean, continuous custom-shape outlines:
+Plug-in 0.8.4 gives IK controls clean, continuous custom-shape outlines:
 rounded hand frames, slim foot platforms with a heel arc, rounded elbow
 diamonds and knee circles with small center marks. Left controls are teal;
 right controls are coral, with brighter selection states. Decorative cages,
@@ -201,6 +201,22 @@ rig. **In front** keeps handles visible through the garment. The refresh icon
 rebuilds all eight IK widgets without resetting a pose or changing the solver.
 Selecting **Target** or **Pole** enters Pose Mode and selects the corresponding
 control; you can also click its custom shape directly in the viewport.
+The default elbow poles sit behind the arms at elbow height, about two upper
+arm lengths away. Each knee pole sits directly ahead of its own knee at knee
+height, about 0.6 thigh lengths away. Avatar facing is derived from SL joint
+geometry, so the native and -Y starter orientations behave consistently.
+The small sideways rest bend of SL legs no longer sends the poles across
+the body. When enabling IK on a clearly bent FK limb, its current bend plane
+is retained instead. Pole angles are recalculated to keep the current pose.
+
+For an existing rig, **Controls > Reposition poles** applies the corrected
+placement without rebuilding controls, editing rest bones or changing the
+current IK/FK switches. This explicit action affects the current pose; it
+does not rewrite animation keys. Loading a file never repositions authored
+or animated poles automatically. Avastar's
+[IK controls](https://avalab.org/avastar/300/help/n-panel/rigging/ik-controls/)
+and [pole-angle explanation](https://avalab.org/avastar/300/help/n-panel/avastar/posing/pose-mode/)
+describe the same distinction between endpoint targets and elbow/knee poles.
 The native [Blender custom-shape display system](https://docs.blender.org/manual/en/4.2/animation/armatures/bones/properties/display.html)
 keeps these shapes outside rendered geometry.
 
@@ -343,7 +359,7 @@ entries, and weight changes trigger a new capture.
 
 ## Live materials
 
-Plug-in **0.8.3 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.8.4 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value

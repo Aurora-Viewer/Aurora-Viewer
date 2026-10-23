@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 8, 3), "blender": (2, 93, 0),
+    "version": (0, 8, 4), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -401,6 +401,11 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Back / torso": "Dos / torse", "Head / neck": "Tête / cou", "Bento spine": "Colonne Bento",
     "Controls": "Contrôles", "Hand/foot IK, root/COG and eye targets": "IK des mains/pieds, Root/COG et cibles du regard",
     "Handle size": "Taille des poignées", "Refresh IK handles": "Actualiser les poignées IK",
+    "Reposition poles": "Recaler les pôles",
+    "Reposition elbow / knee poles": "Recaler les pôles des coudes / genoux",
+    "Align poles with the current limb pose without rebuilding the rig":
+        "Recaler les pôles sur la pose actuelle des membres sans reconstruire le squelette",
+    "Cannot determine the avatar's facing direction": "Impossible de déterminer l’orientation de l’avatar",
     "Replace IK widgets without changing the pose, weights or solver":
         "Remplacer les poignées IK sans modifier la pose, les poids ni le solveur",
     "Root / COG": "Root / COG", "Root": "Root", "COG": "COG", "Add root / COG": "Ajouter Root / COG",

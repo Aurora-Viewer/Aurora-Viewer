@@ -161,18 +161,66 @@ def ready(rig):
     return all(constraint(rig, key) and all(control_name(key, pole) in rig.data.bones for pole in (False, True)) for key in LIMBS)
 
 
-def _pole(root, middle, end):
+def _pole_settings(rig, key, posed=False):
+    # Avatar facing comes from SL joint geometry, independent of bone roll,
+    # object rotation and the starter's native/-Y orientation.
+    left, right = (rig.data.bones[chain(rig, hand)[0]] for hand in ("HAND_L", "HAND_R"))
+    pelvis = next((bone for bone in rig.data.bones if bone.get("aurora_joint", bone.name) == "mPelvis"), None)
+    up = pelvis.tail_local - pelvis.head_local if pelvis else Vector((0, 0, 1))
+    direction = (left.head_local - right.head_local).normalized().cross(up.normalized())
+    if direction.length < 1e-6:
+        raise ValueError("Cannot determine the avatar's facing direction")
+    direction.normalize()
+    hand = key.startswith("HAND")
+    if hand:
+        direction.negate()
+    root, middle, _end = (rig.data.bones[name] for name in chain(rig, key))
+    if posed:
+        direction = rig.pose.bones[root.name].matrix.to_3x3() @ root.matrix_local.to_3x3().inverted() @ direction
+    return direction, (middle.head_local - root.head_local).length * (2 if hand else 0.6)
+
+
+def _pole(root, middle, end, direction, distance, follow_bend=True):
     axis = end - root
     if axis.length < 1e-6:
         raise ValueError("The IK chain has zero length")
-    direction = axis.normalized()
-    perpendicular = middle - root - direction * (middle - root).dot(direction)
-    if perpendicular.length < axis.length * 0.001:
-        fallback = Vector((-1, 0, 0))
-        if abs(fallback.dot(direction)) > 0.9:
-            fallback = Vector((0, 1, 0))
-        perpendicular = fallback - direction * fallback.dot(direction)
-    return middle + perpendicular.normalized() * axis.length * 0.75
+    axis_direction = axis.normalized()
+    perpendicular = middle - root - axis_direction * (middle - root).dot(axis_direction)
+    # SL's nearly straight legs have a small sideways rest bend. Amplifying
+    # it crosses the knee poles. Use anatomical defaults near extension;
+    # a deliberately bent FK limb instead keeps its current bend plane.
+    if follow_bend and perpendicular.length > axis.length * 0.05:
+        direction = perpendicular
+    if direction.cross(axis).length < direction.length * axis.length * 0.001:
+        direction = perpendicular if perpendicular.length > axis.length * 0.001 else axis_direction.orthogonal()
+    return middle + direction.normalized() * distance
+
+
+def _align_pole(rig, key):
+    root, middle, _end = (rig.pose.bones[name] for name in chain(rig, key))
+    position = _pole(root.head.copy(), middle.head.copy(), middle.tail.copy(), *_pole_settings(rig, key, posed=True))
+    pole = rig.pose.bones[control_name(key, True)]
+    matrix = pole.matrix.copy()
+    matrix.translation = position
+    pole.matrix = matrix
+    direction = (middle.tail - root.head).cross(position - root.head).cross(root.tail - root.head)
+    axis = (root.tail - root.head).normalized()
+    if direction.length > 1e-6:
+        x = root.matrix.to_3x3().col[0].normalized()
+        y = direction.normalized()
+        constraint(rig, key).pole_angle = -math.atan2(axis.dot(x.cross(y)), x.dot(y))
+
+
+def reposition_poles(context, rig):
+    editable(rig)
+    if not ready(rig):
+        raise ValueError("Create Aurora IK controls first")
+    if rig.data.pose_position != "POSE" or rig.mode == "EDIT":
+        raise ValueError("Use Pose Position and leave Edit Mode to switch IK")
+    context.view_layer.update()
+    for key in LIMBS:
+        _align_pole(rig, key)
+    context.view_layer.update()
 
 
 def setup(context, rig):
@@ -206,7 +254,7 @@ def setup(context, rig):
         for key, names in chains.items():
             root, middle, end = (rig.data.edit_bones[name] for name in names)
             end_matrix, end_length, tip = end.matrix.copy(), end.length, middle.tail.copy()
-            pole_position = _pole(root.head, middle.head, tip)
+            pole_position = _pole(root.head, middle.head, tip, *_pole_settings(rig, key), follow_bend=False)
             size = max((middle.head - root.head).length * 0.3, 0.001)
             for pole in (False, True):
                 name = control_name(key, pole)
@@ -253,7 +301,7 @@ def setup(context, rig):
             rotation.target, rotation.subtarget = rig, control_name(key)
             rotation.owner_space = rotation.target_space = "POSE"
             rotation.influence = 0
-        rig["aurora_ik_version"] = 1
+        rig["aurora_ik_version"] = 2
         handles.apply(rig)
         context.view_layer.update()
     finally:
@@ -284,17 +332,7 @@ def set_ik(context, rig, key, enabled):
         target = matrices[2].copy()
         target.translation = middle.tail.copy()
         rig.pose.bones[control_name(key)].matrix = target
-        pole_position = _pole(root.head.copy(), middle.head.copy(), middle.tail.copy())
-        pole = rig.pose.bones[control_name(key, True)]
-        matrix = pole.matrix.copy()
-        matrix.translation = pole_position
-        pole.matrix = matrix
-        direction = (middle.tail - root.head).cross(pole_position - root.head).cross(root.tail - root.head)
-        axis = (root.tail - root.head).normalized()
-        if direction.length > 1e-6:
-            x = root.matrix.to_3x3().col[0].normalized()
-            y = direction.normalized()
-            ik.pole_angle = -math.atan2(axis.dot(x.cross(y)), x.dot(y))
+        _align_pole(rig, key)
         upper, lower = root.tail - root.head, middle.tail - middle.head
         if upper.normalized().cross(lower.normalized()).length < 0.0001:
             # SL's straight T-pose is a singular IK seed. A tiny local pose
