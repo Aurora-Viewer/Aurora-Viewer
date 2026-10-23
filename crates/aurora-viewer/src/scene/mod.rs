@@ -800,6 +800,9 @@ pub struct Scene {
     /// Texture each projector of the frame's light list holds (object
     /// index: texture, slot), see `lights.rs`.
     light_textures: HashMap<usize, (Uuid, u32)>,
+    /// The light list's working buffers, empty between frames: the list is
+    /// built in their room instead of new ones each frame (`lights.rs`).
+    light_scratch: lights::Scratch,
     /// The projectors that cast shadows (`lights.rs`).
     spot_shadows: lights::SpotShadowSlots,
     /// Objects flagged as mirrors by their last sync, for `find_mirror`: as
@@ -920,6 +923,11 @@ pub struct Scene {
     staging: Option<Arc<aurora_render::StagingPool>>,
     /// Geometry whose staged data is not copyable yet (next frame).
     geom_waiting: Vec<(GeomKey, jobs::PreparedGeom, f32)>,
+    /// The other buffer of `geom_waiting`, empty: each frame the list is
+    /// rebuilt into it, so neither grows again from nothing (with the
+    /// system allocator, that growth queued the main thread behind the
+    /// jobs during bursts of results).
+    geom_waiting_spare: Vec<(GeomKey, jobs::PreparedGeom, f32)>,
     /// Streaming time of the frame by part (AURORA_PROFILE `s_*`), taken by
     /// the frame profile at the end of the frame.
     pub parts: crate::frame_profile::Parts,
@@ -931,6 +939,12 @@ pub struct Scene {
     skeleton_meta_gen: u64,
     /// Playing motions and held pose per skeleton owner.
     motions: HashMap<Uuid, anim::Controller>,
+    /// The frame's poses (`update_poses`), empty between frames: each
+    /// entry carries a controller and its physics, about a kilobyte, and
+    /// the list grew again from nothing every frame.
+    pose_work: Vec<PoseWork>,
+    /// The skeleton owners visited by `update_poses`, same.
+    pose_owners: Vec<(Uuid, u32)>,
     /// Skin bindings uploaded to the GPU: the default skeleton first (system
     /// avatar), then each rigged mesh (by asset id).
     skin_binds: skin_binds::SkinBinds,
@@ -1324,6 +1338,7 @@ impl Scene {
             list_index: Default::default(),
             light_objects: Default::default(),
             light_textures: HashMap::new(),
+            light_scratch: Default::default(),
             spot_shadows: Default::default(),
             mirror_objects: Default::default(),
             selection_wire: HashMap::new(),
@@ -1393,11 +1408,14 @@ impl Scene {
             last_diag: Instant::now(),
             staging: None,
             geom_waiting: Vec::new(),
+            geom_waiting_spare: Vec::new(),
             parts: Default::default(),
             skeletons: HashMap::new(),
             skeleton_member_of: HashMap::new(),
             skeleton_meta_gen: 0,
             motions: HashMap::new(),
+            pose_work: Vec::new(),
+            pose_owners: Vec::new(),
             skin_binds: Default::default(),
             auto_hover: Default::default(),
             neutral_pose_test: (std::env::var("AURORA_TEST_NEUTRAL_POSE").as_deref() == Ok("1")).then_some(false),
@@ -1693,7 +1711,8 @@ impl Scene {
         // Before, only the jobs were bounded: a chunk that became copyable
         // put all its geometry in the arena in the same frame.
         let mut placed = 0;
-        for (key, geom, area) in std::mem::take(&mut self.geom_waiting) {
+        let mut waiting = std::mem::replace(&mut self.geom_waiting, std::mem::take(&mut self.geom_waiting_spare));
+        for (key, geom, area) in waiting.drain(..) {
             if geom.ready() && (placed == 0 || t0.elapsed() < budget / 2) {
                 placed += 1;
                 self.place_geometry(renderer, key, geom, area);
@@ -1701,6 +1720,7 @@ impl Scene {
                 self.geom_waiting.push((key, geom, area));
             }
         }
+        self.geom_waiting_spare = waiting;
         let t = self.parts.lap(Part::Geometry, t0);
         let mut fetched = 0;
         while fetched == 0 || t0.elapsed() < budget * 3 / 4 {
@@ -4538,17 +4558,17 @@ impl Scene {
         }
         let rig = self.avatar_lib.rig.clone();
         // gather work: (slot, anims)
-        #[allow(clippy::type_complexity)]
-        let mut work: Vec<(usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant, Option<PhysicsJob>)> = Vec::new();
+        let mut work = std::mem::take(&mut self.pose_work);
         let mut shape_dz: Vec<(Uuid, f32)> = Vec::new();
         let mut posed: Vec<(Uuid, usize)> = Vec::new();
         self.posed_now.clear();
         // impostors keeping their last pose
         let mut held: Vec<Uuid> = Vec::new();
         let every_frame = impostors::pose_every_frame();
-        let owners: Vec<(Uuid, u32)> = self.palette_slots.iter().map(|(k, v)| (*k, *v)).collect();
+        let mut owners = std::mem::take(&mut self.pose_owners);
+        owners.extend(self.palette_slots.iter().map(|(k, v)| (*k, *v)));
         let changed = self.changed_skeletons(world);
-        for (owner, slot) in owners {
+        for (owner, slot) in owners.drain(..) {
             let Some(idx) = world.objects.index_of_uuid(&owner) else {
                 continue;
             };
@@ -4688,14 +4708,12 @@ impl Scene {
             posed.push((owner, slot as usize));
             self.posed_now.insert(idx);
         }
+        self.pose_owners = owners;
         self.stats.posed = work.len();
         // Keep the scene available for read-only support traces on pose workers.
         let mut pal = std::mem::take(&mut self.palettes);
         let mut chunks: Vec<Option<&mut [[[f32; 4]; 4]]>> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();
-        let mut jobs: Vec<(
-            &mut [[[f32; 4]; 4]],
-            &mut (usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant, Option<PhysicsJob>),
-        )> = work
+        let mut jobs: Vec<(&mut [[[f32; 4]; 4]], &mut PoseWork)> = work
             .iter_mut()
             .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
             .collect();
@@ -4725,12 +4743,13 @@ impl Scene {
             }
         });
         self.palettes = pal;
-        for (_, motions, _, owner, _, physics) in work {
+        for (_, motions, _, owner, _, physics) in work.drain(..) {
             self.motions.insert(owner, motions);
             if let Some(job) = physics {
                 self.physics.insert(owner, job.state);
             }
         }
+        self.pose_work = work;
         for (owner, _) in &posed {
             self.posed_at.insert(*owner, now);
         }
@@ -5078,6 +5097,10 @@ impl Scene {
         Some(changed)
     }
 }
+
+/// One skeleton's pose of the frame: palette slot, motions, rest skeleton,
+/// owner, pose clock and body physics.
+type PoseWork = (usize, anim::Controller, Arc<anim::SkeletonBase>, Uuid, Instant, Option<PhysicsJob>);
 
 /// One avatar's body physics, run with its pose.
 struct PhysicsJob {
