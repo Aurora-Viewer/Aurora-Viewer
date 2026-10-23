@@ -450,6 +450,24 @@ fn the_modified_settings_are_counted_on_their_pages() {
 }
 
 #[test]
+fn the_pages_are_counted_again_only_when_something_may_have_changed() {
+    let mut st = OptionsUi::default();
+    assert!(count_due(&st, 10.0, false), "never counted");
+    st.counted = Some((10.0, String::new()));
+    assert!(!count_due(&st, 10.1, false), "nothing happened");
+    assert!(count_due(&st, 10.1, true), "a click or a key this frame");
+    st.count_stale = true;
+    assert!(count_due(&st, 10.1, false), "a click or a change in the last frame");
+    st.count_stale = false;
+    st.query = "ombre".into();
+    assert!(count_due(&st, 10.1, false), "another search");
+    st.query.clear();
+    assert!(count_due(&st, 10.0 + COUNT_REFRESH, false), "the app's state behind the rows");
+    st.reveal = Some((Page::Graphics, 0, "x"));
+    assert!(count_due(&st, 10.1, false), "a row asked by its label");
+}
+
+#[test]
 fn every_page_names_its_tabs() {
     for page in Page::ALL {
         assert!(!page.tabs().is_empty(), "{page:?}");

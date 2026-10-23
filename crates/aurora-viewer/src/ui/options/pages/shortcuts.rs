@@ -44,12 +44,15 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         }
                     },
                 };
-                // the keys as the search reads them
-                let keys: Vec<String> = cx.s.keybinds.get(a).iter().flatten().map(|b| b.label()).collect();
-                cx.wide().keywords(&keys.join(" ")).row_with(label, "", &t, |ui, s, st, _| {
-                    let kb = s.keybinds.clone();
+                // the keys as the search reads them (their labels are costly:
+                // only while searching)
+                if cx.searching() {
+                    let keys: Vec<String> = cx.s.keybinds.get(a).iter().flatten().map(|b| b.label()).collect();
+                    cx.keywords(&keys.join(" "));
+                }
+                cx.wide().row_with(label, "", &t, |ui, s, st, _| {
                     for slot in 0..2 {
-                        binding_cell(ui, &p, &kb, st, a, slot);
+                        binding_cell(ui, &p, &s.keybinds, st, a, slot);
                     }
                     false
                 });

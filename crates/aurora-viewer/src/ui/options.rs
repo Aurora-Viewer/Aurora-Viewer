@@ -320,6 +320,11 @@ pub struct OptionsUi {
     subs: HashMap<egui::Id, (usize, bool)>,
     open_subs: HashSet<egui::Id>,
     counts: Counts,
+    /// When `counts` and `subs` were last taken and the search they were
+    /// for, and whether an input or a change since asks for them again
+    /// (`count_due`).
+    counted: Option<(f64, String)>,
+    count_stale: bool,
     /// "Go to" (search, crumbs, links): the page, its tab, the row to light.
     go_to: Option<(Page, usize, Option<egui::Id>)>,
     /// The cog to open with a row taken from the search.
@@ -894,6 +899,45 @@ fn count(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mu
     st.counts = counts;
 }
 
+/// How long the counts may wait for a change nothing announced (the app's
+/// state behind a row: devices, account, grid).
+const COUNT_REFRESH: f64 = 0.5;
+
+/// The user did something this frame: a click, a key, typed text. What it
+/// changes (here or in another window) is counted at the next frame.
+fn interaction(ui: &egui::Ui) -> bool {
+    ui.input(|i| {
+        i.events.iter().any(|e| {
+            matches!(
+                e,
+                egui::Event::PointerButton { .. }
+                    | egui::Event::Key {
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    }
+                    | egui::Event::Text(_)
+                    | egui::Event::Paste(_)
+            )
+        })
+    })
+}
+
+/// Whether to count every page again this frame. Running all their rows
+/// costs as much as drawing a page, so it waits for something that can
+/// change the counts: an input (this frame or the last), a change of the
+/// window, another search, or `COUNT_REFRESH` for the rest.
+fn count_due(st: &OptionsUi, now: f64, input: bool) -> bool {
+    input
+        || st.count_stale
+        || st.reveal.is_some()
+        || st.demo_open_cogs
+        || st
+            .counted
+            .as_ref()
+            .is_none_or(|(at, query)| now - at >= COUNT_REFRESH || now < *at || *query != st.query)
+}
+
 /// One frame of `body` outside the window (tests), its textures dropped as
 /// a renderer would take them.
 #[cfg(test)]
@@ -1043,7 +1087,11 @@ fn body(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut
         st.open(page, tab);
         st.reveal = reveal;
     }
-    count(ui, p, s, d, st, r);
+    let input = interaction(ui);
+    if count_due(st, now, input) {
+        count(ui, p, s, d, st, r);
+        st.counted = Some((now, st.query.clone()));
+    }
     st.demo_open_cogs = false;
 
     let footer = Rect::from_min_max(pos2(full.left(), full.bottom() - FOOTER_H), full.right_bottom());
@@ -1055,6 +1103,7 @@ fn body(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, d: &Settings, st: &mut
     let content_rect = page_area(ui, p, s, d, st, r, main, searching);
     footer_bar(ui, p, s, d, st, r, footer, searching, close, now);
     undo_bar(ui, p, s, st, r, content_rect);
+    st.count_stale = input || r.changed;
 }
 
 #[allow(clippy::too_many_arguments)]
