@@ -261,6 +261,11 @@ pub(super) fn actions_width(n: usize) -> f32 {
     n as f32 * (BUTTON.x + ACTIONS_PAD) + ACTIONS_PAD
 }
 
+/// Height of the quick actions when a narrow row wraps them into columns.
+pub(super) fn actions_height(n: usize, columns: usize) -> f32 {
+    n.div_ceil(columns.max(1)) as f32 * (BUTTON.y + ACTIONS_PAD) + ACTIONS_PAD
+}
+
 /// The quick actions of the row under the pointer, in their pill at the
 /// middle of `slot`: one response per button (`buttons`: icon, tip).
 pub(super) fn actions(
@@ -270,10 +275,24 @@ pub(super) fn actions(
     buttons: &[(&str, &str)],
     salt: impl std::hash::Hash + std::fmt::Debug,
 ) -> Vec<egui::Response> {
+    actions_wrapped(ui, p, slot, buttons, salt, buttons.len())
+}
+
+/// Keep every action at its usual size, wrapping inside the reserved slot.
+pub(super) fn actions_wrapped(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    slot: Rect,
+    buttons: &[(&str, &str)],
+    salt: impl std::hash::Hash + std::fmt::Debug,
+    columns: usize,
+) -> Vec<egui::Response> {
+    let columns = columns.max(1).min(buttons.len().max(1));
     let y = slot.center().y;
+    let height = actions_height(buttons.len(), columns);
     let pill = Rect::from_min_max(
-        Pos2::new(slot.right() - actions_width(buttons.len()), y - BUTTON.y / 2.0 - ACTIONS_PAD),
-        Pos2::new(slot.right(), y + BUTTON.y / 2.0 + ACTIONS_PAD),
+        Pos2::new(slot.right() - actions_width(columns), y - height / 2.0),
+        Pos2::new(slot.right(), y + height / 2.0),
     );
     ui.painter()
         .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, p.raised);
@@ -284,8 +303,8 @@ pub(super) fn actions(
         .map(|(i, (icon, tip))| {
             let r = Rect::from_min_size(
                 Pos2::new(
-                    pill.left() + ACTIONS_PAD + i as f32 * (BUTTON.x + ACTIONS_PAD),
-                    pill.top() + ACTIONS_PAD,
+                    pill.left() + ACTIONS_PAD + (i % columns) as f32 * (BUTTON.x + ACTIONS_PAD),
+                    pill.top() + ACTIONS_PAD + (i / columns) as f32 * (BUTTON.y + ACTIONS_PAD),
                 ),
                 BUTTON,
             );

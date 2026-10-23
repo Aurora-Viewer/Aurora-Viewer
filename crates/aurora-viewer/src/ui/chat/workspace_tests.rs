@@ -1022,7 +1022,7 @@ fn contacts_navigation_entry_returns_from_sheet_to_list() {
 #[test]
 fn contacts_navigation_single_click_opens_sheet_only_at_large_width() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
-        for width in [960.0, 700.0, 460.0] {
+        for width in [960.0, 860.0, 700.0, 460.0, 394.0] {
             let mut h = contacts_navigation(style, width);
             let texts = h.settle();
             h.click(painted(&texts, "Friend 00").rect.center());
@@ -1031,14 +1031,14 @@ fn contacts_navigation_single_click_opens_sheet_only_at_large_width() {
             }
             assert_eq!(
                 h.people.sheet,
-                (width == 960.0).then_some(Uuid::from_u128(0xF000)),
+                (width >= 860.0).then_some(Uuid::from_u128(0xF000)),
                 "{style:?} at {width}: a row click opens the sheet only when the list stays beside it"
             );
             assert_eq!(h.people.sel, vec![Uuid::from_u128(0xF000)], "the contact is selected");
             assert!(h.actions.is_empty());
             let texts = h.settle();
             assert!(texts.iter().any(|t| t.source == "Friend 01"), "the list stays visible");
-            if width == 960.0 {
+            if width >= 860.0 {
                 h.click(painted(&texts, "Friend 01").rect.center());
                 assert_eq!(
                     h.people.sheet,
@@ -1056,7 +1056,7 @@ fn contacts_navigation_single_click_opens_sheet_only_at_large_width() {
 #[test]
 fn contacts_navigation_details_button_opens_sheet() {
     for style in [ChatStyle::Aurora, ChatStyle::Compact] {
-        for width in [960.0, 700.0, 460.0] {
+        for width in [960.0, 860.0, 700.0, 460.0, 394.0] {
             for online in [false, true] {
                 for permissions in [false, true] {
                     let mut h = contacts_navigation(style, width);
@@ -1075,24 +1075,17 @@ fn contacts_navigation_details_button_opens_sheet() {
                         .filter_map(|id| h.frames.ctx.read_response(*id))
                         .filter(|r| r.sense.senses_drag() && r.rect.contains(name))
                         .min_by(|a, b| a.rect.width().total_cmp(&b.rect.width()))
-                        .expect("the hovered friend row")
-                        .rect;
-                    // Locate the actual quick-action responses; the scroll
-                    // bar can change the row's width while it fades in.
-                    let mut buttons = HashMap::new();
-                    for x in (row.left() as i32..row.right() as i32).step_by(10) {
-                        h.frame(vec![egui::Event::PointerMoved(egui::pos2(x as f32, row.center().y))]);
-                        h.frame(Vec::new());
-                        let hovered = h.frames.ctx.interaction_snapshot(|i| i.hovered.clone());
-                        for response in hovered.iter().filter_map(|id| h.frames.ctx.read_response(*id)) {
-                            if response.sense.senses_click() && response.rect.size() == egui::vec2(26.0, 24.0) {
-                                buttons.insert(response.id, response.rect);
-                            }
-                        }
-                    }
-                    let mut buttons: Vec<_> = buttons.into_values().collect();
-                    buttons.sort_by(|a, b| a.left().total_cmp(&b.left()));
-                    assert_eq!(buttons.len(), if online { 5 } else { 4 }, "all quick actions remain available");
+                        .expect("the hovered friend row");
+                    let mut buttons: Vec<_> = h.frames.ctx.viewport(|v| {
+                        v.this_pass
+                            .widgets
+                            .get_layer(row.layer_id)
+                            .filter(|w| w.sense.senses_click() && w.rect.size() == egui::vec2(26.0, 24.0) && row.rect.contains_rect(w.rect))
+                            .map(|w| w.rect)
+                            .collect()
+                    });
+                    buttons.sort_by(|a, b| a.top().total_cmp(&b.top()).then(a.left().total_cmp(&b.left())));
+                    assert_eq!(buttons.len(), if online { 5 } else { 4 }, "all quick actions remain visible");
                     let details = buttons[buttons.len() - 2].center();
                     h.click(details);
                     assert_eq!(
@@ -1105,7 +1098,7 @@ fn contacts_navigation_details_button_opens_sheet() {
                     h.settle();
                     h.click(h.rect(entry_id(Pinned::Contacts)).center());
                     let texts = h.settle();
-                    assert_eq!(h.people.sheet, (width == 960.0).then_some(id));
+                    assert_eq!(h.people.sheet, (width >= 860.0).then_some(id));
                     assert!(texts.iter().any(|t| t.source == "Friend 01"), "Contacts returns to the list");
                 }
             }
