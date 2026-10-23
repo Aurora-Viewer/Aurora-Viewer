@@ -10,6 +10,8 @@ publish.workspace = true
 aurora-updater = { version = "0.1.0", path = "../aurora-updater" }
 aurora-i18n = { version = "0.1.0", path = "../aurora-i18n" }
 anyhow = "1.0.104"
+# Embedded Blender image pixels; maintained MIT/Apache-2.0 codec.
+base64 = "0.23.1"
 aurora-assets = { version = "0.1.0", path = "../aurora-assets" }
 aurora-audio = { version = "0.1.0", path = "../aurora-audio" }
 aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }

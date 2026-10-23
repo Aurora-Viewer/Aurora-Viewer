@@ -433,6 +433,15 @@ impl MeshStreamer {
         }
     }
 
+    /// Live snapshots can hold large CPU buffers too: release their last
+    /// allocation off the frame thread once geometry retirement is safe.
+    pub fn retire_local(&mut self, id: &Uuid, jobs: &Jobs) {
+        if let Some(entry) = self.entries.remove(id) {
+            self.meta_generation += 1;
+            jobs.discard(entry);
+        }
+    }
+
     pub fn insert_demo_skin(&mut self, id: Uuid, skin: SkinInfo) {
         self.meta_generation += 1;
         self.entries.insert(

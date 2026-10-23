@@ -1,0 +1,10 @@
+avatar_skeleton.xml is the unchanged Second Life avatar definition bundled by
+Aurora Viewer (133 Bento bones and 26 collision volumes).
+
+Copyright (C) Linden Research, Inc.
+Original source: https://github.com/secondlife/viewer/tree/develop/indra/newview/character
+The matching reference file is also distributed with the Legacy Viewer.
+Originally licensed under LGPL-2.1; this copy is distributed under
+GPL-3.0-or-later, as permitted by section 3 of LGPL-2.1. See LICENSE.
+
+The starter garment is original Aurora Viewer content, GPL-3.0-or-later.

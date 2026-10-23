@@ -257,7 +257,9 @@ impl Scene {
             let Some(root) = world.objects.get(root_idx) else { continue };
             let point = root.attachment_point();
             let ap = self.avatar_lib.attach_points.get(&point);
-            if root.state == 0 {
+            // A Blender fitting preview must never change the hover value
+            // sent to the simulator or continuously invalidate calibration.
+            if root.state == 0 || root.is_client_preview() {
                 continue;
             }
             if ((31..=38).contains(&point) || ap.is_some_and(|a| a.hud)) && !has_rigged_foot_mesh(self, world, root_idx) {
@@ -936,6 +938,29 @@ mod tests {
         });
         settle(&mut scene, &mut world, now + Duration::from_secs(1));
         assert_eq!(world.hover_height.value(), scene.automatic_hover_base(&world).unwrap());
+    }
+
+    #[test]
+    fn blender_live_shoes_do_not_change_hover_or_invalidate_manual_height() {
+        let (mut world, mut scene, now) = fixture();
+        let lib = world.avatar_lib.clone();
+        crate::demo::auto_hover::install_mesh(&lib, &mut scene).unwrap();
+        settle(&mut scene, &mut world, now);
+        let calibration = scene.auto_hover.finished;
+        world.hover_height.preview(0.35);
+        world.hover_height.commit();
+        let parent = world
+            .objects
+            .index_of_uuid(&world.agent_id)
+            .and_then(|i| world.objects.get(i))
+            .expect("avatar")
+            .key;
+        world
+            .objects
+            .insert_preview_attachment(parent, crate::demo::auto_hover::rigged_object());
+        settle(&mut scene, &mut world, now + Duration::from_secs(1));
+        assert_eq!(world.hover_height.value(), 0.35);
+        assert_eq!(scene.auto_hover.finished, calibration);
     }
 
     #[test]

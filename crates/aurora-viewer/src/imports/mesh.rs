@@ -94,6 +94,7 @@ pub struct Draft {
     pub show_textures: bool,
     pub explode: f32,
     pub preview_weights: bool,
+    pub preview_bend: f32,
     pub show_joints: bool,
     pub show_overrides: bool,
 }
@@ -137,11 +138,14 @@ impl Draft {
         )
     }
     pub fn new(scene: Scene, images: HashMap<usize, LocalImage>) -> Self {
+        Self::from_shared(Arc::new(scene), images)
+    }
+    pub fn from_shared(scene: Arc<Scene>, images: HashMap<usize, LocalImage>) -> Self {
         let triangles = scene.models.iter().map(Model::triangles).sum::<usize>();
         let skin = scene.models.iter().any(|m| m.skin.is_some());
         Self {
             inspector: inspector::Inspector::new(&scene),
-            scene: Arc::new(scene),
+            scene,
             images,
             lods: std::array::from_fn(|i| Lod {
                 source: if i == 3 { LodSource::File } else { LodSource::Auto },
@@ -165,6 +169,7 @@ impl Draft {
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             preview_lod: 3,
+            preview_bend: 0.0,
             preview_physics: false,
             show_textures: true,
             explode: 0.0,

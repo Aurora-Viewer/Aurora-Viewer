@@ -802,7 +802,9 @@ impl World {
             return;
         };
         let (key, region) = (avatar.key, avatar.key.region);
-        let stale = |w: &World, i: &usize| w.objects.get(*i).is_some_and(|o| o.key.region != region);
+        // Render-only previews have a private namespace; a simulator can
+        // never confirm their arrival or require their removal.
+        let stale = |w: &World, i: &usize| w.objects.get(*i).is_some_and(|o| o.key.region != region && !o.is_client_preview());
         if !self.objects.children_of(&key).iter().any(|i| stale(self, i)) {
             self.left_behind_since = None;
             return;
@@ -5761,6 +5763,48 @@ mod motion_tests {
         world.flush_arrival(t + std::time::Duration::from_secs(46));
         assert!(world.objects.index_of_uuid(&worn.full_id).is_none());
         assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
+    }
+
+    #[test]
+    fn blender_live_preview_survives_arrival_cleanup_while_stale_grid_attachments_are_removed() {
+        let (mut world, avatar, worn, here, there) = worn_fixture();
+        let parent = world
+            .objects
+            .get(world.objects.index_of_uuid(&world.agent_id).expect("our avatar"))
+            .expect("avatar")
+            .key;
+        let mut preview = prim(&worn, 42, parent.local_id);
+        preview.state = 1u8.rotate_left(4);
+        let id = preview.full_id;
+        world.objects.insert_preview_attachment(parent, preview);
+        let now = Instant::now();
+        world.flush_arrival(now);
+        world.flush_arrival(now + std::time::Duration::from_secs(30));
+        assert!(
+            world.objects.index_of_uuid(&id).is_some(),
+            "a preview is not a missing simulator attachment"
+        );
+        world.apply(NetEvent::MainRegionChanged { handle: there });
+        world.apply(NetEvent::RegionRemoved { handle: here });
+        let mut destination = avatar;
+        destination.local_id = 7001;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: there,
+            objects: vec![destination],
+        });
+        world.flush_arrival(now + std::time::Duration::from_secs(31));
+        world.flush_arrival(now + std::time::Duration::from_secs(47));
+        assert!(
+            world.objects.index_of_uuid(&worn.full_id).is_none(),
+            "normal stale attachment cleanup remains active"
+        );
+        world.flush_arrival(now + std::time::Duration::from_secs(120));
+        let preview = world
+            .objects
+            .get(world.objects.index_of_uuid(&id).expect("preview retained"))
+            .expect("preview");
+        assert_eq!(preview.parent_region, there);
+        assert!(preview.is_client_preview());
     }
 
     /// A region a teleport away from `here`.

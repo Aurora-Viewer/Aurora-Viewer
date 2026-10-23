@@ -8,6 +8,7 @@ mod auto_hover;
 pub mod avatar;
 pub mod banlines;
 pub mod blend_order;
+mod blender_live;
 pub mod body_physics;
 pub mod complexity;
 pub mod creation_preview;
@@ -763,6 +764,9 @@ pub struct Scene {
     geom_zero: VecDeque<(GeomKey, u32)>,
     /// Geometries still being built or downloaded.
     geom_pending: usize,
+    retired_preview_meshes: HashSet<Uuid>,
+    preview_appearances: HashMap<Uuid, blender_live::Appearance>,
+    preview_images: HashMap<Uuid, blender_live::ImageSlot>,
     /// Objects by base texture slot of their faces, as (slot, object):
     /// faces are classified when built, and when a slot changes alpha
     /// class only the faces using it are classified again.
@@ -1353,6 +1357,9 @@ impl Scene {
             mat_changed_tmp: Vec::new(),
             geom_zero: VecDeque::new(),
             geom_pending: 0,
+            retired_preview_meshes: HashSet::new(),
+            preview_appearances: HashMap::new(),
+            preview_images: HashMap::new(),
             slot_users: Default::default(),
             alpha_changes_tmp: Vec::new(),
             sync_budget: std::time::Duration::from_millis(1),
@@ -1510,6 +1517,7 @@ impl Scene {
     /// at, not every geometry, and at most `GEOM_FREED_PER_FRAME` a frame
     /// (those of a region left by teleport all come due in the same frame).
     fn geom_gc(&mut self, renderer: &mut Renderer) {
+        self.collect_preview_meshes(renderer);
         let mut looked = 0;
         while let Some(&(key, since)) = self.geom_zero.front() {
             if self.frame.wrapping_sub(since) <= GEOM_KEEP_FRAMES || looked >= GEOM_FREED_PER_FRAME {

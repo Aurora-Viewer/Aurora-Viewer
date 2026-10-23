@@ -32,6 +32,8 @@ mod movelock;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
 mod avatar_health;
+mod blender_live;
+mod blender_shape;
 mod buy_currency;
 mod buy_land;
 mod chat_commands;
@@ -660,6 +662,7 @@ pub struct App {
     library_demo_seeded: bool,
     gesture_state: gestures::State,
     imports: crate::imports::Imports,
+    blender_live: crate::blender_live::Live,
     task_transfer: Option<ui::inventory::task_drop::PendingTransfer>,
     /// Inventory edits asked by the world (`World::take_inventory_edits`),
     /// awaiting their reply.
@@ -1168,6 +1171,7 @@ impl App {
             library_drag: Default::default(),
             gesture_state: Default::default(),
             imports: Default::default(),
+            blender_live: Default::default(),
             task_transfer: None,
             world_edits: Default::default(),
             demo_offer_shown: None,
@@ -2196,6 +2200,9 @@ impl App {
             self.world.social.avatar_names.save(&path);
         }
         self.scene.sounds.clear(self.audio_engine.as_ref());
+        self.blender_live.stop();
+        self.clear_blender_preview();
+        self.blender_live = Default::default();
         if let Some(g) = &mut self.gfx {
             self.scene.clear(&mut g.renderer);
         }
@@ -2468,10 +2475,14 @@ impl App {
             if crate::build::ui::layout_notecard_loaded(&mut self.build, &mut self.world, &mut self.settings.build, item, &result) {
                 self.settings.save();
             }
+            let blender_shape = self.blender_shape_loaded(item, asset, &result);
             if self.physics_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
             if self.shape_ui.loaded(&mut self.world, item, asset, &result) {
+                return;
+            }
+            if blender_shape {
                 return;
             }
             if self.ao_ui.import == Some(item) {
@@ -6672,6 +6683,7 @@ impl App {
             return;
         };
         self.apply_local_imports(&mut gfx.renderer);
+        self.update_blender_live(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
         // a photo drawn at its own size this frame: its proportions, the
@@ -9765,6 +9777,9 @@ impl App {
                 self.imports.toggle_launcher(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
             }
+            BarAction::BlenderLive => {
+                ui::widgets::open_floater(&self.egui_ctx, "blender_live", &mut self.blender_live.open);
+            }
             BarAction::ShowHuds(visible) => {
                 if !visible && self.world.rlva_has_locked_hud() {
                     self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
@@ -11993,6 +12008,7 @@ impl App {
                 t = self.ui_parts.lap(Part::UiPeople, t);
                 self.poll_inventory_animation_stats();
                 self.show_imports(&ctx, &p);
+                self.show_blender_live(&ctx, &p);
                 let inventory_preferences = self.settings.inventory.clone();
                 let mut open = self.panels.inventory;
                 if !self.inventory_ui.merchant_requested {

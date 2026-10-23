@@ -1,5 +1,156 @@
 # Aurora Viewer architecture
 
+`blender_live/` owns the opt-in loopback Blender transport, bounded v1 rest-mesh
+snapshots and UI. Both matching Blender package layouts are bundled by
+`blender_live/addon.rs` and exported to ZIP on a worker, using the shared atomic
+file writer: a native extension for 4.2+ or a classic add-on for 2.93–4.1.
+`installer.rs` discovers bounded application directories, PATH and Windows
+application registrations, with a remembered manual executable picker. Discovery
+and installation run on workers, with at most two read-only Blender probes at a
+time. `blender/install_bridge.py`, bundled in the viewer, asks each executable
+for its actual version/profile and uses Blender's native offline package
+operators. Installation backs up Aurora's prior package and preferences, verifies
+every bundled file plus activation, restores files on failure, and saves only
+the changed Aurora enable state. An OS file lock serializes writes to a profile;
+newer plug-ins are never downgraded. Each background process loads its native
+preferences normally, disables scene script auto-execution and never saves a
+scene. Avoiding explicit preference reload works around a Blender 4.2 crash
+while preserving unrelated add-ons/settings. Manually
+selected executables are stored in `blender-installations.json` under Aurora's
+configuration directory. Existing Blender windows are never restarted or closed.
+A dedicated thread validates, normalizes and encodes the latest snapshot;
+`app/blender_live.rs` maintains render-only attachments under
+our avatar in `world::objects::PREVIEW_REGION`. These have no simulator identity
+or edit/touch target. Arrival cleanup excludes these private roots from stale
+simulator attachments. Normal GPU skinning supplies animations and avatar shape;
+existing draw objects retain their geometry while replacement meshes load.
+`scene/blender_live.rs` retires obsolete assets as soon as their geometry has
+no references or pending jobs. `blender/aurora_live/` is the shared Blender 2.93+
+implementation, with main-thread rest capture, a separate socket worker and a
+single latest-snapshot mailbox. Per-scene automatic/manual settings gate dirty
+captures at a seconds-based interval, including membership changes; an explicit
+refresh captures immediately or waits for the handshake. Initial connections
+always capture. Comparing prepared content suppresses identical automatic
+revisions, including idle texture-paint ticks, while sharing payload buffers
+with the worker. `docs/BLENDER_LIVE.md` describes setup and
+wire limits; `blender/tests/` exercises real Blender capture and transport.
+Optional negotiated source UUIDs keep Aurora's per-object visibility/removal
+stable across renames and render-batch splitting. Prepared sources share immutable
+import scenes and decoded pixels. Negotiated `import-lods` requests identify a
+source and a transient request UUID; `blender/aurora_live/lods.py` resolves its
+per-entry settings and prepares existing or disposable reduced rest meshes.
+`blender_live/import.rs` validates the four-level reply on the transport worker,
+unifies bind/material layouts, and pads missing surfaces with NoGeometry.
+`imports/live.rs` freezes those scenes into the existing mesh draft with all
+four File LODs already assigned. Preparation never requests a quote or upload;
+the normal review, quote and confirmed upload workflow follows. Preview-only
+elbow/knee flexion inspects skinning without altering the uploaded mesh.
+Hidden/removed sources keep receiving edits, with no simulator traffic.
+The Blender Live floater separates connection, objects and plug-in controls
+with shared horizontal dividers in a brighter palette tone and plain section
+headings. Connection status shares its title row; port, loopback address and
+start/stop share a single control row. Each source row requests its own fresh LOD bundle;
+visibility and bulk removal remain independent of import selection.
+Plugins lists detected Blender versions and installed plug-in versions, with a
+per-installation Install/Update/Enable/Reinstall action. Manual ZIP export remains
+available in a collapsed section.
+`shape.rs` / `app/blender_shape.rs` authorize an explicit worn-shape transfer
+against the resolved COF target's current owner and Modify bit. Asset/item/rights
+are rechecked after download and worker preparation; other avatars and unknown
+rights fail closed. The worker deforms the bundled system body and all 159 joints
+from the shape asset alone. No attachment geometry or textures enter the payload.
+Negotiated `shape-transfer` controls carry one bounded reference over loopback;
+Blender confirms only after its main-thread undoable operator creates a new
+collection, or `shape-apply` applies it to the active selected SL armature.
+Creation waits for Object Mode; application accepts Object/Pose Mode and restores
+the latter after its rest update. Pending operations expire outside those modes.
+`shape_transfer.py` validates data before mutation; creation preserves existing
+work and the live list. Shape-specific inverse binds cancel the transferred
+rest scale/offsets when sending meshes back, preventing double shape deformation.
+`shape_apply.py` stages generic rest/mesh/key changes on disposable datablocks,
+preserves pose controls and weights, and delegates Avastar rigs to their enabled
+slider updater. Connection is independent of mesh selection or list contents.
+`compat.py` maps renamed Principled sockets and uses bone collections in 4.0+
+or named pose groups and armature layers in 2.93–3.x. The mesh exporter reads
+corner normals in 4.1+ and calculates split loop normals in older versions.
+`blender/aurora_live/starter.py` creates the full Bento/Fitted Mesh armature
+from the same packaged `avatar_skeleton.xml`, and optionally an editable
+quad T-shirt with normalized weights, UVs and an Armature modifier.
+New rigs default to Blender -Y forward, matching Avastar. The default AUTO
+coordinate mode derives each armature's horizontal left axis from canonical
+rest-joint pairs (including aliases), converting vertices, normals and bind
+heads together to SL +X. It ignores current pose and object placement, supports
+mixed +X/-Y rigs in one snapshot and needs no vendor-specific metadata. Partial
+Aurora rigs retain an orientation hint; otherwise ambiguous partial rigs keep
+the previous native fallback. Explicit native/-Y overrides keep their original
+serialized enum numbers, and existing rest data/scenes are never rotated.
+`weights.py` solves automatic heat weights on disposable rest-pose copies,
+validates all selected objects, then publishes normalized four-bone weights
+without changing the source armature or non-bone groups. `materials.py`
+captures connected Principled PBR inputs, UV maps and bounded embedded images;
+node signatures and texture-paint ticks supplement dependency-graph updates.
+`rigging.py` manages SL/Bento part visibility across collections/layers and
+optional independent hand/foot IK target/pole controls, preserving SL rest
+bones. Pose selection and visibility use `PoseBone` in Blender 5 and `Bone`
+in older APIs; Edit Mode visibility stays on `EditBone`. In Blender 5,
+`Bone.hide` affects Edit Mode only, so pose display must not read that flag.
+Default poles use the avatar's geometric facing: behind elbows and ahead of
+each knee, at joint height, with separate arm/leg distances. Near-straight
+SL leg splay does not define the pole direction; deliberately bent FK limbs
+retain their bend plane. Switching and explicit pole repositioning seed an
+analytic two-bone triangle in that plane using shortest-arc rotations, then
+calibrate the native solver's X/Z pole angle from the seeded bend. This avoids
+sideways knees during vertical foot lifts and stabilizes straight arms. Neutral
+SL leg splay moves slightly into the pole plane without changing rest bones
+or ankle targets. A separate corrective action recalibrates active legacy
+knees with targets/poles fixed. Existing files are never recalibrated or
+repositioned automatically, preserving authored control poses and keys.
+`handles.py` builds cached, unlinked custom-shape meshes with continuous edge
+outlines for IK hands, feet, elbows and knees: rounded frames/platforms and
+simple diamond/circle poles, without decorative cages or 3D lettering.
+Hand frames use the wrist's local XY palm plane and local Y finger direction;
+their cache revision migrates earlier vertical frames without rotating bones.
+Feet use the SL foot direction transformed back to bone space, keeping their
+rest soles horizontal. Teal/coral side
+colors use pose-bone color overrides in 4.0+ and separate pose groups earlier.
+A per-object size property updates only widgets. Registration/load migration
+fills missing or older Aurora shapes while retaining authored custom widgets;
+explicit refresh replaces those too. The timer and load hook are removed on
+unregister. No widget operation modifies solver state or deformation/export.
+The ordinary Back group contains only the classic pelvis/torso/chest and
+resets the four folded Bento spine joints to hidden on both show and hide.
+Head/neck is separate. A collapsed Advanced bones section exposes the four
+spine joints; ALL/DEFORM and the legacy BODY operator remain available.
+Classification follows canonical aliases. This changes no rest matrices,
+parents, deform flags, animation, weights or export membership.
+`posing.py` adds optional non-deforming Root/COG and independent classic/Bento
+eye targets. A pose-space Child Of inverse preserves the original pelvis
+pose and SL parent/rest hierarchy. Root parents only Aurora helper bones;
+IK targets and eye targets follow it in either creation order. COG movement
+leaves active IK targets anchored relative to Root. Eye Damped Track constraints
+start disabled and bake the visible eye matrices when disabled again. Canonical
+aliases, shared armature copies and selection/mode restoration are supported;
+foreign constraints and reserved-name conflicts fail before mutation. Unlinked
+custom-shape datablocks never enter the scene or live capture. All helper
+poses remain local to Blender and never enter the live deform palette.
+`skinning.py` evaluates unposed donor copies and transfers world-space surface
+or nearest-vertex weights, or cleans existing weights; all targets are
+validated before publishing four normalized deform influences. `tools_ui.py`
+owns the rig/IK/skinning operators and translated sidebar sections. The Aurora
+parent panel selects Live / Skeleton / Controls / Weights through a transient
+WindowManager enum; the panel draws only the selected category, avoiding stale
+child-panel polling when a category changes. Connection settings and starter
+creation are collapsed by default, also with transient UI state. Non-deform
+controls never enter the live joint palette; Blender poses stay local.
+`tracking.py` owns the scene's persistent synchronization list, native UIList,
+add-selection and remove operators. Enabled object pointers drive capture and
+dependency watching; membership polling detects Undo/Redo and scene switches.
+Disconnecting stops the worker while leaving entries and pause flags intact.
+`blender_live/appearance.rs` validates image dimensions, bytes and PBR fields,
+builds mips and stages uploads on the socket worker. Image UUIDs derive from
+pixel content. Preview geometry owns material/image references: retirement
+waits for the last geometry reference before freeing materials and GPU slots.
+
 Water exclusion faces use the viewer-local `WATER_EXCLUSION_TEXTURE` alpha-ramp
 UUID. `scene/textures.rs` resolves it without a network request; visually hidden
 faces retain a dedicated GPU culling bin (and a CPU fallback list). Before scene

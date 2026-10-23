@@ -617,7 +617,7 @@ pub fn selectable(world: &World, idx: usize) -> bool {
         let Some(o) = world.objects.get(i) else {
             return false;
         };
-        if o.is_avatar() || o.pcode != aurora_prim::params::LL_PCODE_VOLUME && !o.is_tree() {
+        if o.is_client_preview() || o.is_avatar() || o.pcode != aurora_prim::params::LL_PCODE_VOLUME && !o.is_tree() {
             return false;
         }
         if o.parent_id == 0 {

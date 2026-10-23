@@ -1717,6 +1717,8 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, prepared LOD import and permission-gated shape transfer |
+| `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_CLOUD=1` | Avatar loading clouds |
 | `AURORA_DEMO_CLASSIC=1` | Classic avatars: shapes and bakes with alpha |
@@ -1729,6 +1731,67 @@ To check with these scenarios:
 | `AURORA_DEMO_DISPLAYNAME_ERROR=<error_tag>` | Server error on the name change |
 
 ### Details
+
+`AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell
+on our animated avatar, through the production protocol and GPU skinning.
+The listener accepts the Blender extension on port 17655. Check that live
+retouches replace the shell, invalid data preserves the previous geometry,
+and Stop removes all preview objects. The demo log reports `ready_skinned`
+objects using our avatar's skeleton. See [Blender Live](BLENDER_LIVE.md).
+`objects` adds a belt and neck band, starts the belt hidden and the band
+removed. Toggle the belt and clear the objects; no restore button should
+appear. Each row's Import button opens that object's
+ordinary mesh importer without selecting it first. Check the Connection,
+Objects and Plugins horizontal dividers and the truncated names beside their
+Import buttons. `upload` opens the importer directly with a frozen shell draft.
+Check that Connection status sits beside the title and its port, address and
+start/stop button stay on one line.
+Plugins automatically detects installed Blender executables on a worker. Check
+that paths and per-version plug-in statuses/actions are readable, Refresh rescans,
+and Choose Blender adds a portable executable. Manual ZIP export remains collapsed.
+Detection alone must not install or enable anything.
+`shape` seeds a synthetic editable shape and sends it once a capable Blender
+client connects; `shape-readonly` removes Modify and must send nothing. Neither
+mode uses account assets or a grid. Run `blender/tests/bridge_shape.py` with
+`-- --port <port>` against the offline viewer; it checks a native import and
+streams a reference part back. Add `--readonly` to verify no shape arrives.
+`shape-apply` sends the same synthetic shape as an Apply action; run the bridge
+with `--apply` to create/select a test rig, receive the shape on that same rig
+and return its weighted shirt. Connection starts with an empty sync list.
+Pass `--hold 45` to keep Blender connected while capturing the viewer's controls.
+Native shape tests accept a synthetic fixture: set `AURORA_TEST_SHAPE_OUTPUT`
+to its JSON path, run `cargo test --workspace blender_live_shape_payload`, then
+run Blender with `--background --factory-startup --python-exit-code 1 --python
+blender/tests/test_shape_transfer.py -- <fixture.json>`. Precreate isolated
+Blender user directories and use a private temporary directory for UI tests.
+No fee or upload request is sent automatically. Check skin weights, LODs,
+physics, the source snapshot notice and the separate-PBR-upload notice.
+
+`lods` waits for a real local client and requests its first source's prepared
+LOD bundle once. Run `blender/tests/bridge_lods.py -- --port <port> --hold 45`
+using Blender's isolated background arguments. It supplies a hidden, named
+Medium mesh and automatically reduces Low and Lowest using distinct budgets.
+The normal importer must open with four File levels, decreasing triangle counts
+and retained skin/UV/materials. Select each LOD and test the bend slider in the
+skinned preview. No cost request or upload is sent.
+`blender/tests/test_lods.py` covers manual priority, name matching, automatic
+budgets, hidden meshes, weight/material validation, original-data preservation
+and `.blend` persistence. An optional `-- <fixture.json>` saves its native
+four-level fixture; set `AURORA_TEST_LODS_OUTPUT` to that path and run
+`cargo test --workspace blender_lods_native_fixture -- --ignored --nocapture`
+to check the same bytes in Aurora's decoder and aligned scenes.
+
+The installer bridge can be exercised without a grid using system Python:
+`python blender/tests/test_installer_bridge.py <blender-executable> --extension-zip <extension.zip> --legacy-zip <legacy.zip> --work <new-temporary-directory>`.
+It creates every isolated user directory **before** launching Blender (older
+Blender can ignore a nonexistent configuration override when saving). It verifies
+fresh installation, upgrade, persistent activation, reactivation, backups,
+rollback after broken packages, downgrade refusal, classic-to-extension migration
+and preservation of an unrelated add-on/preference. It never saves a scene.
+To exercise Rust's actual bundled package/process path too, set
+`AURORA_TEST_BLENDER` to the executable and run
+`cargo test --workspace blender_live_installer_native -- --ignored --nocapture`.
+That ignored test creates and removes its own isolated profile.
 
 `AURORA_DEMO_GROUNDING` places our avatar on a solid ramp (`slope`) or
 different-height steps (`steps`). `landing` starts with a synthetic standing-up

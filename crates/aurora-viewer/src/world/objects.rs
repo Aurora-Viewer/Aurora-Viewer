@@ -22,6 +22,9 @@ pub struct ObjKey {
 /// simulator is expected to give it to an object.
 pub const CARRIED_LOCAL_ID: u32 = u32::MAX;
 
+/// Private namespace for render-only Blender attachments, never a grid handle.
+pub const PREVIEW_REGION: RegionHandle = u64::MAX;
+
 /// Client-only appearance; never included in simulator texture/material edits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LocalAppearance {
@@ -162,6 +165,9 @@ pub struct Object {
 }
 
 impl Object {
+    pub fn is_client_preview(&self) -> bool {
+        self.key.region == PREVIEW_REGION
+    }
     pub fn local_appearance(&self, face: usize) -> Option<LocalAppearance> {
         self.render
             .local_appearance
@@ -1068,6 +1074,15 @@ impl ObjectStore {
             obj.motion_time = self.report_clock(region, received);
         }
         self.insert(obj)
+    }
+
+    /// Insert a render-only attachment with an explicit real avatar parent.
+    /// Its key cannot collide with a simulator object, even after crossings.
+    pub fn insert_preview_attachment(&mut self, parent: ObjKey, update: ObjectUpdate) -> usize {
+        let mut object = Object::from_update(PREVIEW_REGION, update);
+        object.parent_id = parent.local_id;
+        object.parent_region = parent.region;
+        self.insert(object)
     }
 
     /// Put a new object in a slot, under its key and its UUID.
