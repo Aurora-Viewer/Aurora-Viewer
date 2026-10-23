@@ -18,7 +18,7 @@ const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.32";
+const VERSION: &str = "1.33";
 const DISCOVERY_CHANNEL: i32 = -184735219;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
@@ -27,6 +27,7 @@ const SOURCE: &str = include_str!("bridge/bridge.lsl");
 // second script: Mono gives each script 64 KB, and the controller has little left.
 pub const QUERY_NAME: &str = "#Aurora Bridge Query";
 const QUERY_SOURCE: &str = include_str!("bridge/query.lsl");
+pub(crate) mod ik;
 
 pub mod services;
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -175,6 +176,7 @@ pub struct Bridge {
     restarted: bool,
     query_upload: Option<Uuid>,
     query_script: Uuid,
+    ik: ik::Service,
     query_restarted: bool,
     query: Option<Endpoint>,
     query_candidate: Option<(ChatMessage, Instant)>,
@@ -358,6 +360,7 @@ impl Bridge {
         self.checked_script = None;
         self.restarted = false;
         self.query_restarted = false;
+        self.ik.restarted = false;
         self.watch = Watch::default();
         self.query_watch = Watch::default();
         // A query hello is valid from compilation until the next save or move.
@@ -387,6 +390,7 @@ impl Bridge {
         self.mutation = None;
         self.upload = None;
         self.query_upload = None;
+        self.ik.upload = None;
         self.query_candidate = None;
         self.commands.clear();
         self.refresh_inventory = true;
@@ -680,6 +684,8 @@ impl Bridge {
                 .filter(|(_, at)| now.duration_since(*at) < Duration::from_secs(3));
             self.upload = None;
             self.query_upload = None;
+            self.ik.upload = None;
+            world.hand_contacts.relay = None;
             // An explicit resume/repair must still discover and rez an absent
             // inventory item, even when the region changed while paused.
             self.enter(
@@ -708,6 +714,7 @@ impl Bridge {
             Phase::Attach | Phase::Listing | Phase::Starting | Phase::Handshake | Phase::Ready
         ) {
             self.accept_query(world);
+            self.accept_ik(world);
         }
         // Ready mode only walks our attachment list; provisioning polls at
         // most four times a second, never scanning the entire inventory per frame.
@@ -717,6 +724,7 @@ impl Bridge {
         ) && self.accept_candidate(world, now)
         {
             if self.ready() {
+                self.accept_ik(world);
                 self.send_mode(prefs, now);
             }
             return;
@@ -1026,7 +1034,7 @@ impl Bridge {
                     && let Some(object) = world.objects.index_of_uuid(&self.object).and_then(|i| world.objects.get(i))
                 {
                     self.checked_script = Some(now);
-                    for item_id in [self.script, self.query_script] {
+                    for item_id in [self.script, self.query_script, self.ik.script] {
                         if !item_id.is_nil() {
                             self.commands.push(NetCommand::Build(BuildCmd::GetScriptRunning {
                                 handle: object.key.region,
@@ -1124,6 +1132,9 @@ impl Bridge {
     /// Return true only for events consumed by this bridge. Never show an
     /// Aurora handshake, token, endpoint or script's raw protocol in chat.
     pub fn event(&mut self, world: &mut World, event: &NetEvent, now: Instant) -> bool {
+        if self.ik_event(world, event, now) {
+            return true;
+        }
         match event {
             NetEvent::Chat(chat)
                 if chat.source_type == ChatSourceType::Object
@@ -1216,9 +1227,10 @@ impl Bridge {
                     return true;
                 };
                 let find = |name: &str| items.iter().find(|i| i.asset_type == 10 && i.name == name).map(|i| i.item_id);
-                if let (Some(script), Some(query)) = (find(NAME), find(QUERY_NAME)) {
+                if let (Some(script), Some(query), Some(ik)) = (find(NAME), find(QUERY_NAME), find(ik::NAME)) {
                     self.script = script;
                     self.query_script = query;
+                    self.ik.script = ik;
                     let folder = self.folder.to_string();
                     let mut upload = |item: Uuid, source: &str| {
                         let request = Uuid::new_v4();
@@ -1237,13 +1249,15 @@ impl Bridge {
                     };
                     let controller = upload(script, SOURCE);
                     let query = upload(query, QUERY_SOURCE);
+                    let ik = upload(ik, ik::SOURCE);
                     self.upload = Some(controller);
                     self.query_upload = Some(query);
+                    self.ik.upload = Some(ik);
                     self.enter(Phase::Upload, now);
                 } else if self.phase == Phase::Listing {
                     // A bridge made before the query service gets only the
                     // missing script; the controller keeps its item.
-                    for name in [NAME, QUERY_NAME] {
+                    for name in [NAME, QUERY_NAME, ik::NAME] {
                         if find(name).is_none() {
                             self.commands.push(NetCommand::Build(BuildCmd::RezScript {
                                 handle: root.key.region,
@@ -1271,17 +1285,19 @@ impl Bridge {
                 true
             }
             NetEvent::ScriptSaved { request, result, .. }
-                if self.phase == Phase::Upload && [self.upload, self.query_upload].contains(&Some(*request)) =>
+                if self.phase == Phase::Upload && [self.upload, self.query_upload, self.ik.upload].contains(&Some(*request)) =>
             {
                 if self.upload == Some(*request) {
                     self.upload = None;
-                } else {
+                } else if self.query_upload == Some(*request) {
                     self.query_upload = None;
+                } else {
+                    self.ik.upload = None;
                 }
                 if result.as_ref().is_ok_and(|r| r.compiled) {
                     // An early hello can arrive before the HTTP upload reply.
                     // Keep it; Starting validates it against the exact object.
-                    if self.upload.is_none() && self.query_upload.is_none() {
+                    if self.upload.is_none() && self.query_upload.is_none() && self.ik.upload.is_none() {
                         self.endpoint = None;
                         self.enter(Phase::Starting, now);
                     }
@@ -1297,13 +1313,17 @@ impl Bridge {
                 ..
             } if *object_id == self.object
                 && matches!(self.phase, Phase::Starting | Phase::Handshake)
-                && ((*item_id == self.script && !self.restarted) || (*item_id == self.query_script && !self.query_restarted)) =>
+                && ((*item_id == self.script && !self.restarted)
+                    || (*item_id == self.query_script && !self.query_restarted)
+                    || (*item_id == self.ik.script && !self.ik.restarted)) =>
             {
                 if let Some(object) = world.objects.index_of_uuid(&self.object).and_then(|i| world.objects.get(i)) {
                     if *item_id == self.script {
                         self.restarted = true;
-                    } else {
+                    } else if *item_id == self.query_script {
                         self.query_restarted = true;
+                    } else {
+                        self.ik.restarted = true;
                     }
                     self.commands.push(NetCommand::Build(BuildCmd::SetScriptRunning {
                         handle: object.key.region,

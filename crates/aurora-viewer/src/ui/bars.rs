@@ -21,6 +21,7 @@ use egui::{Color32, RichText, Vec2};
 
 #[derive(Default)]
 pub enum BarAction {
+    IkEdit,
     CheckUpdates,
     ReportBug,
     /// Help › Report Abuse (LLFloaterReporter::showFromMenu).
@@ -208,6 +209,7 @@ pub struct StatusInfo<'a> {
     /// keys of its shortcut.
     pub interface_hidden: bool,
     pub interface_keys: String,
+    pub ik_keys: String,
     pub health: HealthMenu,
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
@@ -952,7 +954,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
-        build_menu(ui, p, action);
+        build_menu(ui, p, action, &st.ik_keys);
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
         contents_menu(ui, p, panels);
@@ -1084,7 +1086,10 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
     });
 }
 
-fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction) {
+fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str) {
+    if menu::item_keys(ui, p, "bone-filled", aurora_i18n::tr!("ik-edit-title"), ik_keys) {
+        *action = BarAction::IkEdit;
+    }
     for (mode, icon, label) in [
         (0, "box", aurora_i18n::tr!("ui-bars-build-ctrl-b")),
         (1, "pencil-filled", aurora_i18n::tr!("ui-bars-edit-objects-ctrl-3")),
@@ -1691,6 +1696,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
             panels.people_tab = tab;
         }
         "build" => return BarAction::Build(0),
+        "ik_edit" => return BarAction::IkEdit,
         "profile" => return BarAction::MyProfile,
         "reporter" => return BarAction::ReportAbuse,
         "teleport_history" => return BarAction::TeleportHistory,

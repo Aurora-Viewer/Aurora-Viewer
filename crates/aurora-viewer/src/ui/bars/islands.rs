@@ -1014,6 +1014,7 @@ mod tests {
             camera_preset: Default::default(),
             interface_hidden: false,
             interface_keys: String::new(),
+            ik_keys: String::new(),
             health: Default::default(),
             hover_tips: Default::default(),
             world_overlays: Default::default(),

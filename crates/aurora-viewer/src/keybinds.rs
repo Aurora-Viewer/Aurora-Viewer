@@ -325,6 +325,8 @@ pub enum Action {
     RegionEstate,
     /// The compact texture/material library (Ctrl+Space).
     TextureLibrary,
+    /// Aurora's IK authoring panel (Ctrl+K).
+    IkEdit,
     /// "Search" (Firestorm Ctrl+F, menu_viewer.xml).
     Search,
     Performance,
@@ -447,6 +449,7 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::People, aurora_i18n::tr!("common-people")),
                     (Action::Inventory, aurora_i18n::tr!("common-inventory")),
                     (Action::TextureLibrary, aurora_i18n::tr!("texture-library-title")),
+                    (Action::IkEdit, aurora_i18n::tr!("ik-edit-title")),
                     (Action::Gestures, aurora_i18n::tr!("gesture-title")),
                     (Action::Minimap, aurora_i18n::tr!("common-mini-map")),
                     (Action::WorldMap, aurora_i18n::tr!("common-world-map")),
@@ -632,6 +635,7 @@ impl KeyBindings {
             (Action::People, [kmod(K::KeyA, true, true), None]),
             (Action::Inventory, [kmod(K::KeyI, true, false), None]),
             (Action::TextureLibrary, [kmod(K::Space, true, false), None]),
+            (Action::IkEdit, [kmod(K::KeyK, true, false), None]),
             (Action::Gestures, [kmod(K::KeyG, true, false), None]),
             (Action::Minimap, [kmod(K::KeyM, true, true), None]),
             (Action::WorldMap, [kmod(K::KeyM, true, false), None]),
@@ -1508,6 +1512,25 @@ mod tests {
     }
 
     #[test]
+    fn ik_shortcut_is_added_to_existing_settings_and_can_be_rebound_or_cleared() {
+        let mut keys = KeyBindings::default();
+        keys.map.retain(|(action, _)| *action != Action::IkEdit);
+        let mut keys = keys.sanitized();
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        assert_eq!(keys.triggered(&Input::key(KeyCode::KeyK), ctrl), Some(Action::IkEdit));
+        assert_eq!(keys.triggered(&Input::key(KeyCode::KeyK), Mods::default()), None);
+        keys.set(Action::IkEdit, 0, kmod(KeyCode::KeyJ, true, false));
+        let mut keys = keys.sanitized();
+        assert_eq!(keys.triggered(&Input::key(KeyCode::KeyK), ctrl), None);
+        assert_eq!(keys.triggered(&Input::key(KeyCode::KeyJ), ctrl), Some(Action::IkEdit));
+        keys.set(Action::IkEdit, 0, None);
+        assert_eq!(keys.sanitized().triggered(&Input::key(KeyCode::KeyJ), ctrl), None);
+    }
+
+    #[test]
     fn the_most_specific_held_binding_wins() {
         let kb = KeyBindings::default();
         let down: HashSet<Input> = [Input::key(KeyCode::ArrowUp)].into_iter().collect();
@@ -1573,6 +1596,7 @@ mod tests {
             (Action::AlwaysRun, (true, false, false), [K::KeyR; 4]),
             (Action::Conversations, (true, false, false), [K::KeyT; 4]),
             (Action::Inventory, (true, false, false), [K::KeyI; 4]),
+            (Action::IkEdit, (true, false, false), [K::KeyK; 4]),
             (Action::Gestures, (true, false, false), [K::KeyG; 4]),
             (Action::TeleportHistory, (false, false, true), [K::KeyH; 4]),
             (Action::Search, (true, false, false), [K::KeyF; 4]),

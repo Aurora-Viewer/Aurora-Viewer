@@ -31,6 +31,9 @@ $pages = @(
     @{ Section = 'For testers'; Page = 'Updates'; Title = 'Updates'; Source = 'docs/UPDATES.md' }
     @{ Section = 'For testers'; Page = 'Asset-imports'; Title = 'Asset imports'; Source = 'docs/IMPORTS.md' }
     @{ Section = 'For testers'; Page = 'Blender-Live'; Title = 'Blender Live Mesh'; Source = 'docs/BLENDER_LIVE.md' }
+    @{ Section = 'For testers'; Page = 'Hand-contacts'; Title = 'Motorcycle hand contacts'; Source = 'docs/HAND_CONTACTS.md' }
+    @{ Section = 'For testers'; Page = 'IK-Edit'; Title = 'IK Edit and bone contacts'; Source = 'docs/IK_EDIT.md' }
+    @{ Section = 'For testers'; Page = 'Animation-creation'; Title = 'Create native animations'; Source = 'docs/ANIMATION_CREATION.md' }
     @{ Section = 'For testers'; Page = 'Dev-Toolbox'; Title = 'Dev Toolbox'; Source = 'docs/DEV_TOOLBOX.md' }
     @{ Section = 'Contributing'; Page = 'Guide-for-humans'; Title = 'Guide for humans'; Source = 'HUMANS.md' }
     @{ Section = 'Contributing'; Page = 'Test-options'; Title = 'Test options and profiling'; Source = 'docs/TESTING.md' }

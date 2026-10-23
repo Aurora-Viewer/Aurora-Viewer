@@ -541,6 +541,30 @@ impl Default for Imports {
     }
 }
 impl Imports {
+    /// Stage a locally authored, already validated native file in the ordinary
+    /// inspector. Upload/payment still follows the existing explicit action.
+    pub fn authored_animation(
+        &mut self,
+        world: &crate::world::World,
+        prefs: &crate::ui::inventory::InventoryPreferences,
+        name: String,
+        bytes: Arc<Vec<u8>>,
+        animation: Arc<Animation>,
+    ) {
+        let mut entry = Entry::new(
+            PathBuf::from(format!("{name}.anim")),
+            Ok(Source::Animation {
+                bytes,
+                animation,
+                bvh: None,
+            }),
+            self.load_preferences.texture(),
+        );
+        entry.folder = Self::default_folder(world, prefs, Kind::Animation);
+        self.active = Some(entry.id);
+        self.entries.push(entry);
+        self.open(Choice::Animation);
+    }
     /// Repeating the import shortcut closes the visible chooser.
     pub fn toggle_launcher(&mut self, ctx: &egui::Context) {
         if self.launcher_open {

@@ -143,6 +143,7 @@ fn what(id: &str) -> &'static str {
         "J3" => tr!("dev-toolbox-what-j3"),
         "J4" => tr!("dev-toolbox-what-j4"),
         "J5" => tr!("dev-toolbox-what-j5"),
+        "J8" => tr!("dev-toolbox-what-j8"),
         "L1" => tr!("dev-toolbox-what-l1"),
         "L2" => tr!("dev-toolbox-what-l2"),
         "L3" => tr!("dev-toolbox-what-l3"),

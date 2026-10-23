@@ -44,6 +44,8 @@ pub struct Rig {
     /// Depth-first order (parents before children).
     pub order: Vec<usize>,
     pub names: HashMap<String, usize>,
+    /// One original skeleton name per index; `names` also accepts aliases.
+    pub canonical_names: Vec<String>,
     pub pelvis: usize,
     /// Upright root-to-skull chain, including the Bento spine joints.
     pub(super) tag_chain: Vec<(usize, f32)>,
@@ -108,6 +110,7 @@ impl Rig {
             default_world_inv: vec![Mat4::IDENTITY; n],
             order,
             names,
+            canonical_names: sk.joints.iter().take(n).map(|joint| joint.name.clone()).collect(),
             pelvis,
             tag_chain,
             skin_points: HashMap::new(),
@@ -326,6 +329,7 @@ impl Motion {
 /// Motions and held pose of one avatar (or animesh).
 #[derive(Default)]
 pub struct Controller {
+    pub(super) ik: super::ik::Pose,
     /// LLControlAvatar disables default head / eye motions.
     pub control: bool,
     pub(super) ground: Option<grounding::Frame>,
@@ -1162,11 +1166,12 @@ impl Controller {
             !protected(["mPelvis"; 3]) && !protected(["mHipLeft", "mKneeLeft", "mAnkleLeft"]),
             !protected(["mPelvis"; 3]) && !protected(["mHipRight", "mKneeRight", "mAnkleRight"]),
         ];
-        if self.control || self.preview_start.is_some() {
+        if self.control || self.preview_start.is_some() || self.ik.edit.active {
             self.placement = grounding::Placement::default();
         }
         let frame = self.ground.filter(|frame| {
             !self.control
+                && !self.ik.edit.active
                 && self.preview_start.is_none()
                 && (frame.standing_anchor || frame.velocity_z.abs() < 0.5)
                 && !self
@@ -1201,7 +1206,16 @@ impl Controller {
         let (rotations, pelvis) = corrected.as_ref().map_or((source_rotations, pelvis_offset), |pose| {
             (pose.rotations.as_slice(), pelvis_offset + pose.pelvis)
         });
-        let world = rig.world_with(rotations, pelvis, &local_pos, scale);
+        // Explicit contacts and authored poses take precedence over automatic
+        // foot placement; keep all corrections out of the animation blend state.
+        if self.ik.edit.active {
+            self.ik.set_rest_positions(rest_pos);
+        }
+        let edited = self.ik.apply(rig, rotations, &local_pos, pelvis, scale, now, hold_pose);
+        let (rotations, positions) = edited.as_ref().map_or((rotations, local_pos.as_slice()), |p| {
+            (p.rotations.as_slice(), p.positions.as_slice())
+        });
+        let world = rig.world_with(rotations, pelvis, positions, scale);
         if !hold_pose {
             self.update_live_morphs(now);
         }

@@ -314,7 +314,7 @@ impl Manip {
 
     // ---- hit testing
 
-    fn pick(&self, cam: &Cam, f: &Frame, mode: EditMode, cursor: (f32, f32)) -> Option<Part> {
+    pub(super) fn pick(&self, cam: &Cam, f: &Frame, mode: EditMode, cursor: (f32, f32)) -> Option<Part> {
         let m = Pos2::new(cursor.0 / cam.ppp, cursor.1 / cam.ppp);
         match mode {
             EditMode::Move => pick_translate(cam, f, m),
@@ -1126,7 +1126,7 @@ fn pick_scale(cam: &Cam, f: &Frame, m: Pos2) -> Option<Part> {
 
 // ---- dragging
 
-fn can_transform_selection(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode) -> bool {
+pub(super) fn can_transform_selection(world: &World, sel: &[ObjKey], linked: bool, mode: EditMode) -> bool {
     !sel.is_empty()
         && sel.iter().all(|key| {
             world

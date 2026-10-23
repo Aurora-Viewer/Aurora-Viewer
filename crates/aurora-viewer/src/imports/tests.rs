@@ -1,4 +1,59 @@
 use super::*;
+
+#[test]
+fn authored_native_animation_opens_the_normal_inspector_without_starting_or_charging_an_upload() {
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let animation = Animation {
+        base_priority: 3,
+        duration: 1.0,
+        emote_name: String::new(),
+        loop_in: 0.0,
+        loop_out: 1.0,
+        looping: true,
+        ease_in: 0.2,
+        ease_out: 0.3,
+        hand_pose: 0,
+        joints: vec![aurora_assets::anim::JointMotion {
+            joint_name: "mHead".into(),
+            priority: 5,
+            rot_keys: vec![aurora_assets::anim::RotKey {
+                time: 0.0,
+                rotation: glam::Quat::IDENTITY,
+            }],
+            pos_keys: Vec::new(),
+        }],
+    };
+    let bytes = Arc::new(aurora_assets::import_animation::encode(&animation).unwrap());
+    let animation = Arc::new(aurora_assets::anim::parse_animation_upload(&bytes).unwrap());
+    let mut imports = Imports::default();
+    imports.authored_animation(
+        &world,
+        &crate::ui::inventory::InventoryPreferences::default(),
+        "Authored".into(),
+        bytes.clone(),
+        animation,
+    );
+    assert!(imports.open);
+    assert_eq!(imports.inspector, Some(Choice::Animation));
+    assert_eq!(imports.entries.len(), 1);
+    let entry = &imports.entries[0];
+    assert_eq!(imports.active, Some(entry.id));
+    assert!(matches!(entry.status, Status::Ready));
+    let Some(Source::Animation {
+        bytes: stored,
+        animation,
+        bvh: None,
+    }) = &entry.source
+    else {
+        panic!("native source")
+    };
+    assert_eq!(**stored, *bytes);
+    assert_eq!(animation.joints[0].priority, 5);
+    assert!(imports.queue.is_empty());
+    assert!(imports.current.is_none());
+    assert!(!imports.confirm);
+    assert_eq!(imports.spent, 0);
+}
 use std::time::{Duration, Instant};
 
 #[test]

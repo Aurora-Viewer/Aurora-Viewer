@@ -521,6 +521,203 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
+roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,
+`world/bridge/ik.lsl`, with independent Mono memory and no movement, HTTP or
+periodic timer. It discovers regional publishers once on an authenticated
+arrival handshake and forwards negative-channel events using private owner chat.
+`world/hand_ik/relay.rs` authenticates relay envelopes, admits announced live
+seat/wearer sources, routes bounded definition requests and applies regional
+state events through the existing atomic revision/profile decoder.
+Only a complete definition matching the advertised bundle acknowledges initial
+loading. An early off event still releases contacts without silencing finite
+retries; a new bundle retires the old acknowledgement and partial transfer.
+Late old-bundle messages cannot acknowledge its replacement.
+`world/hand_ik/diagnostics.rs` builds the on-demand J8 local IK report from
+bounded counters and current sessions: relay validation, latched decoder failure,
+completed definitions, accepted activations, editor suppression and link-name
+resolution. It retains no packet bodies, authentication IDs or resident identities,
+and the report issues no network/property requests.
+`world/hand_ik/relay/declarations.rs` bounds identity-only regional declarations
+to 16 KiB and retries their authorization only after full simulator object events,
+covering late parentage and source reappearance without polling or rig preloads.
+`world/hand_ik/observers.rs` retains independent avatar/source sessions, verifies
+simulator parentage and shares a bounded request budget. Live sessions require
+the relay and never fall back to periodic candidate scans or lease renewals;
+offline protocol fixtures can still supply direct simulator snapshots.
+`world/hand_ik/reload.rs` normalizes a selected world/attachment root and queues
+one explicit authoring snapshot with a fresh nonce and zero cache hint. This
+separate session shares request/byte budgets but never enters runtime graphs.
+Tickets complete only on validated full definitions and cancel on source/region
+changes, explicit cancellation or a 45-second deadline. `ik_edit/object_data.rs`
+handles scene designation and imports the declaration as a fresh named project,
+rebasing source-relative virtual parents to that root. The existing project is
+saved before switching; imported runtime data carries no editor animation stack.
+The bridge's targeted edit command can query an unused publisher without an
+automatic announcement or any IK activation.
+`world/hand_ik/sources.rs` keeps independent source sessions, merges bone conflicts
+deterministically and prioritizes established sources. It discovers seat/worn
+sources without requiring the optional full-update OwnerID. Reception uses
+simulator-authenticated chat ownership, live root
+parentage and fresh session nonces, rejecting known ownership conflicts and
+requiring a worn publisher's owner to match its wearer. Full updates may omit
+OwnerID without sound/particles, as in Legacy LLViewerObject::processUpdateMessage.
+It bounds discovery, validates nonce/revision snapshots and
+expires a silent script; target parentage is checked from live objects.
+`world/hand_ik/limits.rs` admits only tracked live seat/wearer sources before
+JSON parsing, rate-limits regional and per-session ingress, and bounds serialized
+definitions plus incomplete replacements to 32 KiB per avatar and 128 KiB total.
+Each definition remains bounded to 8 KiB. Unused/invalid protocol messages never
+enter chat history or create sessions. Source loss and partial
+transfer timeouts drop data; explicit editor snapshots expire as well. There is
+no persistent rig catalog or disk cache.
+`world/hand_ik/profiles.rs` validates explicit named selections over shared
+binding declarations. Profiles contain bone names, never animation conditions.
+The selected keyword and per-binding source generations travel atomically with
+the cached rig. Shared contacts retain their clocks through mode switches;
+returning contacts reset even when an observer missed their release. Selection
+remains source-scoped; it never reads or controls avatar animation playback.
+`scene/hand_ik.rs` resolves the linked targets with this frame's interpolated
+transforms and rebuilt shape height, then analytically solves the two arm
+segments after animation blending. A configurable wrist-local contact point
+follows actual hand scale. Without an orientation target, the virtual
+elbow-to-palm segment reaches that point while preserving wrist articulation;
+with an authored orientation, the rotated palm offset determines the wrist
+goal. Zero/missing contact retains wrist-pivot behavior. An omitted target orientation preserves
+the animated local wrist articulation; an explicit quaternion follows the
+authored prim axes. `scene/anim.rs` keeps the corrected
+rotations separate from its held animation pose, so releasing contacts
+restores that pose. The ordinary parallel pose jobs and attachment palettes
+consume the final matrices. `demo_hand_ik.rs` drives the same protocol and
+render path on a tilted synthetic vehicle. See [HAND_CONTACTS.md](docs/HAND_CONTACTS.md)
+for motorcycle setup and creator offsets; [IK_EDIT.md](docs/IK_EDIT.md)
+documents the current multi-observer export and its wire contract.
+
+Bindings retain their own source contact, target offset and activation settings,
+including multiple slots for one bone. `ik_edit/graph.rs` selects and captures
+the association slot; row pencils replace that slot and link actions append.
+The avatar-frame numeric inspector starts collapsed, while every association
+owns its calibration disclosure. Runtime selection and fades use source/slot
+identity and the existing per-slot wire mask/cycles. `scene/ik/multiple.rs`
+combines same-bone targets by effective weight after their dependencies have
+resolved, using shaped material contacts and one capped joint influence.
+
+`scene/ik.rs` extends the same source protocol to named bones: analytic
+two-segment chains reuse the contact solver, longer ancestor paths use
+bounded CCD, and explicit direct mode converts a target into the bone's
+local transform. Its frozen editor snapshot and runtime corrections never
+feed back into the controller's animation pose. `ik_edit.rs` draws the own
+avatar's rendered skeleton, edits temporary goals, reads target prims and
+exports measured metric offsets/quaternions. The shared Build menu toggles
+the editor; exiting resumes the existing animation pause clock. See
+[IK_EDIT.md](docs/IK_EDIT.md) and `scripts/lsl/rig-contacts.lsl`.
+`ik_edit/gizmo.rs` provides local-only bone axis/plane translation and ring
+rotation in world or bone axes, reusing the build tools' geometry and drawing.
+Pointer ownership checks window layers before starting a drag; rotation
+holds the authored contact target and never writes a simulator transform.
+`ik_edit/rig_controls.rs` maps the four shoulder/hip chains to hand/ankle
+effectors and elbow/knee pole controls, and mirrors paired edits through
+their canonical rest frames. Optional protocol pole points use the same
+metric target-prim frame as contacts and enter the analytic two-link solver.
+`ik_edit/bindings.rs` retains independent prim-relative definitions and
+resolves them to avatar-frame goals each frame. Four limb switches and
+per-bone enable state suppress both editor and corresponding runtime goals;
+new associations follow position/orientation, and bone edits recapture their
+prim-relative offsets. Two clipboard exports provide the configured companion
+or its escaped `string RIG = "…";` declaration, preserving disabled states,
+authored weights and offsets;
+the frozen base is captured before any IK, so disabling cannot bake contacts.
+Authored strength blends local transforms independently of runtime fades.
+Existing pins retain their chain roots across activation changes. Extended
+limb reconciliation uses numerical contact tolerances, avoiding a visible
+millimetre reach threshold that can snap almost-straight arms during motion.
+A small secondary pose objective regularizes redundant body rotations in both
+the damped update and candidate scoring. Complete full-strength contact groups
+retain only their preceding body corrections as a seed over the new animation
+frame. Those corrections recover exponentially toward the current animation
+with a 0.25-second time constant; contact reprojection retains required reach
+assistance instead of permanently carrying an earlier posture across animation
+changes and restarts. Limb reprojection respects the selected roots; partial influences keep
+their single blend. Changes of chains, editing context or contact lifetime
+discard the seed. Animation inputs and the editor's frozen base remain intact.
+`scene/ik/activation.rs` owns per-binding proximity gates and independent
+smoothstep entry/release durations. A waiting contact may enter range after
+another contact solves, while its own correction never opens its gate.
+Fully influenced oriented parent contacts protect their frames from later
+child chains in both live and authored poses; position-only and partial
+parents retain their freedom. Three-joint non-limb chains retain their animated
+bend plane, transported with the contact direction; straight chains use a
+joint-local fallback. Finger contacts never inherit an avatar-space elbow pole.
+Explicit poles and the default arm/leg directions remain authoritative.
+Release crossfades
+the last controlled local rotations and direct translations toward the current
+animation, avoiding a jump when an Idle clip cuts in. IK segment positions keep
+following the current shaped/animated skeleton. Shared joints use a single
+sample and active contacts retain precedence. A script activation
+epoch, source session, definition bundle and per-bone mask cycle identify each
+lifetime. A new lifetime discards old envelopes, release deltas and body seeds,
+including off/on packets processed between rendered frames. Rig definitions
+stay cached across phase changes. Authoring previews stay immediate; the four
+parameters live in the selected binding card and both clipboard exports.
+`ik_edit/visibility.rs` classifies canonical Bento names into independent
+visual sets; its mask affects skeleton lines, handles, poles, highlights,
+gizmos and the picker list without removing any skeletal constraints.
+The initial Human preset excludes extended spines/appendages and ancillary
+groin joints; explicit association-row selection reveals the selected group.
+`ik_edit/profiles.rs` scopes authoring bindings and smoothing by named runtime
+profile, retaining each profile's independent animation snapshot. Explicit
+slot membership permits different calibrations for the same bone in different
+profiles; clipboard data duplicates only the referenced virtual ancestors.
+`ik_edit/project.rs` versions and bounds complete editor documents, schedules
+atomic account-local drafts and file dialogs on Jobs, and correlates explicit
+inventory notecard saves/loads. `ik_edit/project/library.rs` adds named,
+account-local project sets above the profile editor. UUID filenames are
+independent of editable titles. Transitions save the previous project before
+loading or creating the next one, with a brief input gate while Jobs owns the
+transition. Explicit saves/reloads and per-project autosaves share atomic IO;
+file/notecard exchange includes optional project identity, while runtime RIG
+exports remain profile definitions only.
+Its new-project menu centralizes blank creation, explicit object/attachment
+snapshots and local-file/notecard imports. Imports receive fresh identities so
+an imported copy cannot overwrite an existing library project.
+`ik_edit/project/library/browser.rs` presents the Projects tab, direct selection,
+search and per-row rename/duplicate/file-export/notecard/delete actions beside left-aligned
+names. Name selection opens Bindings after a successful load; row actions stay
+in Projects and preserve the working pose. `library/management.rs` resolves
+each action's own UUID document on Jobs, owns the local export dialog/atomic
+write and applies only catalogue changes
+unless that document is the active project. The compact header centers the
+read-only current title. Selection, creation, save/reload, target
+object designation, file/notecard exchange and draft recovery live inside Projects;
+the shared footer retains IK controls and runtime clipboard exports. Confirmed deletion
+validates one UUID-named document on Jobs before removing it, then clears the
+active editor without saving it again; empty-project cleanup needs no avatar pose.
+Project documents permit a genuinely empty set before first-profile creation;
+the initial UI gates authoring behind explicit project and profile naming.
+Import normalization creates groups only for existing authored data, never
+for an untouched empty editor. The network content-create callback validates
+the exact new item before uploading; notecards retain private permissions.
+`ik_edit/project/target.rs` designates a project's linkset independently of
+seat/script state. It normalizes child clicks to world/attachment roots,
+retargets all named anchors by unique in-linkset property names, releases
+unresolved anchors and preserves every calibration. Property discovery uses
+bounded child traversal and the existing read-only prim-property queue,
+limited to four requests per 250 ms. Project documents retain source identity
+and display name; preview contexts use the selected source frame. Project
+switches cancel any pending seated-object import.
+`ik_edit/animations.rs` manages inventory-backed authoring layers and independent
+30 Hz frame controls. The authoring tabs share the manipulation toolbar
+and export footer. Assets use the ordinary background `AnimStreamer`.
+`scene/ik/animations.rs` samples native tracks at fixed times, honoring native
+per-joint priority and upper-row precedence among equals. It works on a copy
+of the frozen base before IK. Optional live-input suppression uses the shaped
+rest positions supplied by the controller, compensating the live pelvis
+offset without changing animation signals, controller state or the pause clock.
+The companion accepts uniform legacy nine-/ten-field or new eleven-field
+rows; the new final percentage becomes a bounded `0..1` wire weight.
+The rig keeps one canonical skeleton name per joint index for authoring;
+animation and skin binding still accept the original alias map.
+
 `ui/fonts.rs` retains unscaled font definitions and installs the combined skin
 and Preferences text scale on every face. egui's shaped advances and row
 metrics therefore scale explicit `RichText`, painter fonts, semi-bold,
@@ -2087,6 +2284,164 @@ contains the Avatar dependencies/read-only position tables and Journal view;
 around the scrollable five-tab body. Geometry processing and fee protocol
 remain on their existing worker/session paths.
 
+Rig graph authoring (`ik_edit/graph.rs`, `graph/motion.rs`) shares bounded
+`world/rig_graph.rs` definitions with runtime. Parent-local helper transforms,
+keyed quaternion/translation curves and procedural motion remain independent
+of the skinned rig. `scene/ik/graph.rs` resolves own-bone/attachment anchors
+from the current working pose, orders dependencies and omits cycles. Remote
+avatars remain independent parallel pose jobs; a bounded second pass for
+cross-avatar targets refreshes their current frames. `world/hand_ik/graph_wire.rs` atomically
+reassembles bounded authenticated multipart graphs, caches bundles and phase
+clocks, and applies immediate releases. `scripts/lsl/rig-contacts.lsl` is the
+complete shared export, with named-link rebinding, independent observer
+subscriptions, cached heartbeats and rate-limited UTF-8-bounded fragments
+from seated creations or owned worn roots. Adjacent fragments share a packet
+only when the sampled header leaves room within the existing 880-byte relay
+limit; cadence, atomic parsing and byte/ingress budgets remain unchanged.
+Driver and observers use the same protocol-5 contract; obsolete prototype wire
+formats are unsupported.
+
+Native animation creation (`ik_edit/clip.rs`) is a separate mode of the same
+pose editor. It retains contact definitions while keyed samples and staged
+pose goals drive the own avatar. `clip/document.rs` captures LL-local
+rotations and scaled-parent positions, records pelvis translations by default
+and other directly edited position channels, trims/rebases native tracks and
+samples new boundaries. `clip/ui.rs` separates timeline, per-bone priorities
+and classic playback metadata. `clip/files.rs` binds previews and runs the
+existing `aurora_assets::import_animation` codec, full native validation,
+file dialogs and writes on background jobs. Preview revisions atomically
+replace the sample before recorded corrections are removed; later pose edits
+are retained. Immutable draft snapshots and a bounded session draft selector
+keep concurrent worker results separate. Generated native bytes enter the
+ordinary `Imports::authored_animation` inspector with normal folder selection;
+no upload/payment command is created by this handoff. Real skeletal keys
+include captured IK results; virtual control definitions remain in rig LSL.
+
+`ik_edit/prim_targets.rs` keeps read-only scene designation separate from the
+object Edit selection. A single edited prim proposes a draft target; an
+explicit pick overrides that proposal until the selection changes. Bone
+binding drafts and virtual parents have distinct picker destinations. Saved
+contacts change on an explicit guided target choice. Both floaters remain
+independent, with object manipulator geometry/permission checks arbitrating
+overlapping world handles.
+The editor fetches missing target names with bounded, deduplicated
+individual property requests; concrete picks acquire their root/link identity once
+the properties arrive. A target-name action explicitly opens object Edit and
+selects the exact linked part. After drawing IK, the app queues property
+requests on the existing build command path and applies edit actions before
+drawing object tools.
+
+`world/rig_targets.rs` resolves per-association `link` targets by object root
+and unique member name. `source` inherits the publisher root; `_ROOT_` selects
+the root without a name query. Runtime declarations (including prepared inactive
+profiles) and the open editor share a bounded session cache: 64 roots, 1,024
+prims, 256 members per root, 256 bytes per name. Missing properties use the existing
+`build/property_query.rs` routing, at most four reads in every rolling second
+and three finite attempts per lookup. The first four can leave on consecutive
+frames, avoiding quarter-second gaps on small cold linksets without increasing
+the read budget. Every member, including the root, follows
+FSAreaSearch::requestObjectProperties (indra/newview/fsareasearch.cpp), sending
+ObjectSelect then immediate ObjectDeselect for that individual local ID.
+Already selected prims are never deselected, including children of a selected
+linkset. These reads do not change local selection, manipulators or object transforms.
+J8 identifies unread root/anonymous child entries and their finite attempt counts,
+without exposing object IDs or relaxing complete-map uniqueness checks.
+New unresolved declarations and topology changes
+can refresh names once; repeated profile/state packets do not. Fresh property
+replies cannot be overwritten by the build cache's older names. Previously
+verified contacts remain usable during unrelated name refreshes. Project and
+binding clipboard snapshots share canonical root/link identities.
+Admission and query scheduling prioritize the editor, local seat and local
+attachments before observers, preserving existing entries within a priority.
+Maps rebuild only on membership/name changes; pose jobs read resolved
+identities and the ordinary current-frame transforms. Deleted/unlinked targets
+fail their live parentage check. Sources and regions release unused names.
+LSL forwards root/name declarations without resolving or rebuilding child UUIDs.
+
+`ik_edit/links.rs` owns the guided Bindings tab: a highlighted, locked source bone,
+direct prim/bone and row-pencil actions, scene designation, and atomic
+replacement with pose preservation and dependency validation. Cancellation
+leaves saved contacts intact. `ik_edit/pose.rs` owns detailed posing and
+release rebasing: explicit edits clear an inactive bone's suppression, while
+passive selection/refresh does not. Released bones start manual posing from
+their displayed transform without changing their authored mode. All parented
+joints default to length-preserving chains; Detach is explicit. The parentless
+root remains directly movable and has no Detach option. Limb activation counts
+IK goals and explicitly
+converts a direct goal back to its body-assisted IK chain. Association rows
+still control either mode. Reactivation synchronizes the selected inspector;
+unchecking Detach restores an actual chain when a direct binding resolved
+with its root equal to its own bone. `ik_edit/pose/tests.rs` exercises both transforms
+through real pointer events and all existing binding formats.
+`ik_edit/authoring.rs` records manual, unbound edits as local joint channels
+instead of world-space pins. Rotation changes only the chosen joint; a
+translation solves its configured chain once and records the affected local
+channels. Previously edited descendants follow later parent rotations.
+`scene/ik.rs::EditRequest::joints` applies these channels after animation
+sampling and before explicit targets. Local translation deltas preserve root
+offsets and shaped proportions. Explicit limb activation and binding creation
+remove the corresponding manual ownership. Native clip authoring saves and
+restores this layer and records its affected channels.
+`ik_edit/segments.rs` owns visible shaft geometry, canonical terminal tips and
+narrow screen-space selection. Real segments select their origin joint;
+virtual parent connectors select their node. Endpoint/effector/bend controls,
+gizmos, foreground windows, Alt camera navigation and prim designation retain
+priority. One small background hit widget follows the nearest segment, avoiding
+large bounding rectangles intercepting object editing. Bone-target picking
+uses the same geometry without changing its locked source.
+The standard Aurora IK strip exposes Bindings, Virtual bones,
+Animations and Display; animation subinspectors use the same
+shared widget. Row pencils use standard action buttons and dropdown menus.
+Bindings groups the local script-IK mask, independent limb activations and
+the Symmetry switch, world/local space and whole-pose reset in Options
+below the saved rows. The selected source card holds Detach (direct mode),
+chain root, bone reset and numeric position/rotation. Contact and target offsets
+are in an advanced source section. Saved rows own Follow rotation toggles;
+changes preserve offsets, selection, strength and disabled state. Script import
+is collapsible under Bindings Options. There is no IK Pose tab;
+virtual rows pair each control with its named parent, without duplicate tool
+selectors or link-name fields. Native clip authoring retains chain/space/reset
+controls in Pose because it has no Bindings tab.
+The persistent IK footer exports either the complete companion or just the
+rig JSON definition. `graph_payload` shares its bounded ASCII JSON with
+the rig script's RIG value, including converted legacy contacts and virtual-only
+graphs, without exposing session state or adding LSL boilerplate to the data.
+`ik_edit/poles.rs` draws active-only bend handles at their real bend targets
+and owns bend-target orbits. Their rotation gizmos pivot at the middle joint.
+Hand/foot grips and their translation/rotation axes stay at the physical
+contact. The four activations choose torso/hip ancestry through
+`scene/ik::extended_root`; explicit roots elsewhere remain creator-controlled.
+`scene/ik/body.rs` preserves analytic distal bend planes on longer chains.
+Coarse reach-shell projections recruit body ancestors beyond local reach;
+damped shared-body updates and bounded contact reprojection reconcile
+full-strength pins without accumulating partial-weight blends. Alternating
+Bento spine offsets retain their animation rather than becoming extra hinges.
+The shared gizmo shows translation arrows/planes by default, with no toggle.
+Ctrl exposes rotation rings; Shift hides the gizmo for free point translation.
+Ctrl wins when both modifiers are held. The grabbed gizmo operation stays
+fixed until mouse release if either modifier changes. Virtual
+and real-bone renderers share the manipulator without cancelling each other's
+drag state.
+Point hit areas take precedence over idle gizmo axes. Selected virtual points
+win virtual overlaps; covered point areas pass clicks through to the owning
+control rather than reserving an otherwise passive background layer.
+Remote-avatar authoring stays hidden while runtime compatibility is retained.
+The default Human display shows the torso/head, arms and legs. Four auxiliary
+Bento spine joints have their own opt-in display group; hidden spine pairs
+are skipped only for overlay connections, without changing rig transforms.
+
+Authoring opens independently of script sources; imports are explicit.
+`scene/ik.rs::EditRequest::suppress_script_ik` locally masks received goals
+without suppressing editor goals or changing publisher/lease state. Runtime
+targets keep updating under the frozen animation pose, so unmasking or
+closing restores their current state. Runtime activation policy remains in
+the LSL template, outside the authoring UI.
+
+Explicit IK is applied after additive animation and automatic terrain foot
+placement, without writing either correction into the held animation channels.
+IK Edit suspends automatic foot placement before capturing its frozen source.
+Cross-avatar target refresh retains terrain evaluation and advances body
+physics once from the final constrained pose, within the parallel pose jobs.
 
 ## Local interactive water
 

@@ -89,6 +89,8 @@ pub mod grounding;
 /// The demo group server (AURORA_DEMO_GROUP_PROFILE).
 #[path = "demo_group.rs"]
 pub mod group;
+#[path = "demo_hand_ik.rs"]
+pub mod hand_ik;
 /// Set Home to Here and Privacy's account settings (AURORA_DEMO_HOME,
 /// AURORA_DEMO_USERINFO).
 #[path = "demo_home.rs"]

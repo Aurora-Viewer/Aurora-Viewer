@@ -10,6 +10,8 @@ struct Simulator {
     copies: usize,
     uploads: usize,
     query_uploads: usize,
+    ik_uploads: usize,
+    ik_discoveries: usize,
     attaches: usize,
     unready_edits: usize,
 }
@@ -34,6 +36,8 @@ impl Simulator {
             copies: 0,
             uploads: 0,
             query_uploads: 0,
+            ik_uploads: 0,
+            ik_discoveries: 0,
             attaches: 0,
             unready_edits: 0,
         }
@@ -109,9 +113,20 @@ impl Simulator {
                         });
                     }
                     _ => {
+                        if let NetCommand::ScriptDialogReply {
+                            channel: ik::CONTROL,
+                            label,
+                            ..
+                        } = &command
+                            && label.ends_with("|discover")
+                        {
+                            self.ik_discoveries += 1;
+                        }
                         if let NetCommand::SaveScript { target, .. } = &command {
                             if target.item == self.bridge.query_script {
                                 self.query_uploads += 1;
+                            } else if target.item == self.bridge.ik.script {
+                                self.ik_uploads += 1;
                             } else {
                                 self.uploads += 1;
                             }
@@ -205,8 +220,8 @@ fn discovery_simulator_rejects_negative_chatfromviewer_and_misaddressed_dialog_r
             .reply(&sim.bridge, &sim.world, &valid, false, false, false)
             .expect("valid transport")
             .len(),
-        2,
-        "the controller and the query script both answer the probe"
+        3,
+        "the controller, query and IK scripts answer the same probe"
     );
 }
 
@@ -600,6 +615,43 @@ fn an_older_bridge_gets_only_the_missing_query_script() {
     assert_eq!(sim.bridge.script, controller, "the controller item is reused");
     assert!(!sim.bridge.query_script.is_nil());
     assert_eq!((sim.uploads, sim.query_uploads), (2, 2));
+}
+
+#[test]
+fn ik_relay_is_a_third_script_discovers_once_and_upgrades_an_existing_attachment() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    sim.step();
+    assert_eq!((sim.uploads, sim.query_uploads, sim.ik_uploads), (1, 1, 1));
+    assert_eq!(
+        sim.ik_discoveries, 1,
+        "saving the attachment cannot start premature regional discovery"
+    );
+    let relay = sim.world.hand_contacts.relay.clone().expect("authenticated relay");
+    assert_eq!(relay.root, sim.bridge.object);
+    assert_ne!(sim.bridge.ik.script, sim.bridge.script);
+    assert_ne!(sim.bridge.ik.script, sim.bridge.query_script);
+    for _ in 0..240 {
+        sim.step();
+    }
+    assert_eq!(sim.ik_discoveries, 1, "no periodic regional queries");
+    assert!(
+        sim.world.chat.iter().all(|chat| !chat.text.contains("auroraBridge")),
+        "bridge handshakes never enter chat"
+    );
+    let controller = sim.bridge.script;
+    let query = sim.bridge.query_script;
+    let attachment = sim.bridge.item;
+    sim.demo.forget_script(ik::NAME);
+    sim.bridge.retry(sim.now);
+    sim.ready();
+    sim.step();
+    assert_eq!(
+        (sim.bridge.script, sim.bridge.query_script, sim.bridge.item),
+        (controller, query, attachment)
+    );
+    assert_eq!(sim.ik_uploads, 2);
+    assert_eq!(sim.ik_discoveries, 2);
 }
 
 #[test]

@@ -19,8 +19,10 @@ pub mod fetch_priority;
 mod flexible;
 pub mod geometry_need;
 mod grounding;
+mod hand_ik;
 pub mod hover;
 pub mod hud;
+pub(crate) mod ik;
 pub mod impostors;
 pub mod inspect;
 pub mod jobs;
@@ -731,6 +733,7 @@ pub struct Scene {
     /// Skeletons whose animations are paused while something they carry is
     /// selected (build/anim_pause.rs), set by the app each frame.
     pub paused_skeletons: HashSet<Uuid>,
+    pub ik_edit: ik::EditRequest,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
     pub ground_avatar_feet: bool,
@@ -1338,6 +1341,7 @@ impl Scene {
             particles: particles::ParticleManager::default(),
             movement_preview: None,
             paused_skeletons: HashSet::new(),
+            ik_edit: ik::EditRequest::default(),
             synchronize_animations: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
@@ -4685,7 +4689,7 @@ impl Scene {
             motions.control = control;
             motions.point = point;
             motions.sitting = !control && world.objects.get(idx).is_some_and(|o| o.parent_id != 0);
-            let preview = if owner == world.agent_id {
+            let preview = if owner == world.agent_id && !self.ik_edit.active {
                 world.animation_preview_clock
             } else {
                 None
@@ -4693,7 +4697,15 @@ impl Scene {
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
             motions.set_synchronized(self.synchronize_animations);
-            motions.set_paused(self.paused_skeletons.contains(&owner), now);
+            motions.set_paused(
+                self.paused_skeletons.contains(&owner) || (owner == world.agent_id && self.ik_edit.active),
+                now,
+            );
+            motions.ik.edit = if owner == world.agent_id {
+                self.ik_edit.clone()
+            } else {
+                ik::EditRequest::default()
+            };
             motions.ground = self.grounding_frame(world, idx, now);
             match look {
                 Some((true, _)) => motions.look_cleared = true,
@@ -4758,6 +4770,11 @@ impl Scene {
                 }
             };
             shape_dz.push((owner, dz));
+            motions.ik.targets = if !control && preview.is_none() {
+                ik::targets(world, idx, dz, now)
+            } else {
+                Vec::new()
+            };
             if let Some(frame) = &mut motions.ground {
                 let previous = world.avatar_shape_dz.get(&owner).copied().unwrap_or(0.0);
                 frame.to_world.w_axis.z += dz - previous;
@@ -4792,7 +4809,9 @@ impl Scene {
             } else {
                 motions.evaluate(&rig, *pose_now, Some(base), chunk);
             }
-            if let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref()) {
+            if !motions.ik.has_external_targets()
+                && let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref())
+            {
                 job.run(physics_rig, &rig, now, chunk);
             }
             if neutral_owner == Some(*owner) {
@@ -4802,6 +4821,55 @@ impl Scene {
                 }
             }
         });
+        drop(jobs);
+        drop(chunks);
+        // Resolve cross-avatar references from one shared first-pass snapshot.
+        // Each dependent avatar gets at most one additional parallel solve at
+        // the same animation clock, without an iterative inter-avatar loop.
+        if work.iter().any(|(_, m, _, _, _, _)| m.ik.has_external_targets()) {
+            for (owner, slot) in &posed {
+                let start = *slot * anim::PALETTE_JOINTS;
+                if let Some(src) = pal.get(start..start + rig.len()) {
+                    let dst = world.avatar_poses.entry(*owner).or_default();
+                    dst.clear();
+                    dst.extend(
+                        src.iter()
+                            .zip(&rig.default_world_inv)
+                            .map(|(m, inv)| Mat4::from_cols_array_2d(m) * *inv),
+                    );
+                }
+            }
+            for (_, motions, _, _, _, _) in &mut work {
+                if motions.ik.has_external_targets() {
+                    motions.ik.refresh_external_targets(world, now);
+                }
+            }
+            let mut chunks: Vec<_> = pal.chunks_mut(anim::PALETTE_JOINTS).map(Some).collect();
+            let mut jobs: Vec<_> = work
+                .iter_mut()
+                .filter(|(_, m, _, _, _, _)| m.ik.has_external_targets())
+                .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
+                .collect();
+            frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
+                if let Some(frame) = motions.ground {
+                    motions.evaluate_on_ground(&rig, *pose_now, Some(base), chunk, |ankle| {
+                        self.ground_surface(world, frame, ankle, now)
+                    });
+                } else {
+                    motions.evaluate(&rig, *pose_now, Some(base), chunk);
+                }
+                // Advance body physics only once, from the final constrained pose.
+                if let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref()) {
+                    job.run(physics_rig, &rig, now, chunk);
+                }
+                if neutral_owner == Some(*owner) {
+                    let neutral = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
+                    for (dst, matrix) in chunk.iter_mut().zip(neutral) {
+                        *dst = matrix.to_cols_array_2d();
+                    }
+                }
+            });
+        }
         self.palettes = pal;
         for (_, motions, _, owner, _, physics) in work.drain(..) {
             self.motions.insert(owner, motions);
