@@ -713,6 +713,10 @@ struct Targets {
     gtao: Option<crate::gtao::Targets>,
     /// The frame groups bind GTAO's occlusion rather than the Legacy one.
     gtao_shown: bool,
+    /// The depth both occlusion methods read: a copy of the prepass with the
+    /// blended faces at least half covered drawn over it (#882), when one
+    /// of them is ready.
+    ao_depth: Option<(wgpu::Texture, wgpu::TextureView)>,
     /// The contact shadows' mask (contact_shadows.rs), when they are on or
     /// `AURORA_CONTACT_SHADOWS` keeps it ready.
     contact: Option<crate::contact_shadows::Targets>,
@@ -1347,6 +1351,9 @@ pub(crate) struct Backend {
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
+    /// This frame draws the blended faces at least half covered into the
+    /// occlusion's depth (`AURORA_BLEND_AO`).
+    blend_ao_depth: bool,
     bloom: crate::bloom::Bloom,
     /// The automatic exposure of skies that are not classic (exposure.rs).
     exposure: crate::exposure::Exposure,
@@ -2114,6 +2121,41 @@ fn shadow_bias_legacy_now(mode: u8, now: std::time::SystemTime) -> bool {
     }
 }
 
+/// How blended faces take the screen-space occlusion and indirect light
+/// (`AURORA_BLEND_AO`, see the frame uniforms).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlendAo {
+    /// Those at least half covered are in the occlusion's depth and take
+    /// it (the default, #882).
+    New,
+    /// None takes it (#556).
+    None,
+    /// All take that of what lies behind them (before #556).
+    Old,
+    /// `None` and `New` one second in two each.
+    Alt,
+}
+
+impl BlendAo {
+    fn from_env(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some("none") => Self::None,
+            Some("old") => Self::Old,
+            Some("alt") => Self::Alt,
+            _ => Self::New,
+        }
+    }
+
+    /// The mode of the frame drawn at `now`.
+    fn now(self, now: std::time::SystemTime) -> Self {
+        match self {
+            Self::Alt if shadow_bias_legacy_now(2, now) => Self::None,
+            Self::Alt => Self::New,
+            mode => mode,
+        }
+    }
+}
+
 /// The receiver bias `cascade_shadow` (common.wgsl) subtracts from a
 /// cascade's stored depth, in that depth's units: two texels of the
 /// cascade, in metres along the light, times the depth per metre of the
@@ -2639,6 +2681,7 @@ impl Backend {
             water_effects,
             contact,
             contact_now: false,
+            blend_ao_depth: true,
             bloom,
             exposure,
             histogram,
@@ -3466,6 +3509,12 @@ impl Backend {
         };
         let ao_override = crate::gtao::Override::from_env();
         let (legacy_ao, gtao_ao) = ao_override.needed(s.ao_method);
+        let ao_depth = (s.ssao > 0 && (legacy_ao || gtao_ao)).then(|| {
+            // copied in turn for the contact shadows
+            let copies = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
+            make_view(device, "occlusion depth", w, h, DEPTH_FORMAT, 1, sampled | copies)
+        });
+        let ao_depth_view = ao_depth.as_ref().map_or(&depth_ss, |(_, view)| view);
         let ao = (s.ssao > 0 && legacy_ao).then(|| {
             let (hw, hh) = (w.div_ceil(2), h.div_ceil(2));
             (
@@ -3492,7 +3541,7 @@ impl Backend {
         let indirect = crate::gtao::Indirect::from_env().needed(s.screen_indirect);
         let gtao = (s.ssao > 0 && gtao_ao).then(|| {
             let scene = indirect.then_some(&scene_copy);
-            gtao.targets(device, &depth_ss, scene, w, h, ao_override.level(s.ao_method))
+            gtao.targets(device, ao_depth_view, scene, w, h, ao_override.level(s.ao_method))
         });
         // the method shown first; `AURORA_AO=alt` switches it each second
         let gtao_shown = gtao.is_some() && !legacy_ao;
@@ -3539,6 +3588,7 @@ impl Backend {
             ao,
             gtao,
             gtao_shown,
+            ao_depth,
             contact,
             depth_ss_tex,
             water_refl,
@@ -3930,7 +3980,9 @@ impl Backend {
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&self.targets.depth_ss),
+                            resource: wgpu::BindingResource::TextureView(
+                                self.targets.ao_depth.as_ref().map_or(&self.targets.depth_ss, |(_, view)| view),
+                            ),
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
@@ -4864,19 +4916,22 @@ impl Backend {
         if shadow_bias_legacy_now(bias, std::time::SystemTime::now()) {
             main.light_sets.mode[2] |= 0x2000;
         }
-        // AURORA_BLEND_AO=old|new|alt: blended faces take the screen-space
-        // occlusion and indirect light of what lies behind them as before,
-        // not at all, or one second in two each (common.wgsl
-        // BLEND_SCREEN_TERMS)
-        static BLEND_AO: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-        let blend_ao = *BLEND_AO.get_or_init(|| match std::env::var("AURORA_BLEND_AO").as_deref().map(str::trim) {
-            Ok("old") => 1,
-            Ok("alt") => 2,
+        // AURORA_BLEND_AO=new|none|old|alt: the blended faces at least half
+        // covered drawn into the occlusion's depth and taking the
+        // screen-space occlusion and indirect light (#882), no blended face
+        // taking them (#556), all of them taking those of what lies behind
+        // them, or `none` and `new` one second in two each (common.wgsl
+        // BLEND_SCREEN_DEPTH, BLEND_SCREEN_TERMS)
+        static BLEND_AO: std::sync::OnceLock<BlendAo> = std::sync::OnceLock::new();
+        let blend_ao = BLEND_AO
+            .get_or_init(|| BlendAo::from_env(std::env::var("AURORA_BLEND_AO").ok().as_deref()))
+            .now(std::time::SystemTime::now());
+        self.blend_ao_depth = blend_ao == BlendAo::New;
+        main.light_sets.mode[2] |= match blend_ao {
+            BlendAo::New => 0x10000,
+            BlendAo::Old => 0x4000,
             _ => 0,
-        });
-        if shadow_bias_legacy_now(blend_ao, std::time::SystemTime::now()) {
-            main.light_sets.mode[2] |= 0x4000;
-        }
+        };
         // AURORA_TANGENTS=vertex|pixel|derivative|alt (common.wgsl
         // TANGENT_VERTEX, TANGENT_UNIT): the vertices' tangents, the
         // per-pixel frame where a face has none; the per-pixel frame alone;
@@ -5791,6 +5846,39 @@ impl Backend {
 
         prof.mark("prepass");
         mark(&mut encoder, MARK_DEPTH_END);
+        // ---- occlusion depth: the prepass and the blended faces at least
+        // half covered (fs_depth_contact). The many heads, bodies and hair
+        // whose faces are blended though they look opaque then take the
+        // occlusion like the opaque faces beside them, instead of what lies
+        // behind them (#556) or none (#882: one half of a head darker)
+        let (_, n_blend) = rg.blend;
+        let blend_in_ao_depth = self.blend_ao_depth && n_blend > 0 && self.targets.ao_depth.is_some();
+        if let Some((tex, view)) = &self.targets.ao_depth {
+            encoder.copy_texture_to_texture(
+                self.targets.depth_ss_tex.as_image_copy(),
+                tex.as_image_copy(),
+                self.targets.depth_ss_tex.size(),
+            );
+            if blend_in_ao_depth {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("occlusion depth"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                bind_mesh(&mut pass, &self.groups.a);
+                draw(&mut pass, &self.pipelines.pre_contact, rg.blend);
+            }
+        }
         // ---- SSAO
         if let (true, Some(t)) = (self.targets.gtao_shown, &self.targets.gtao) {
             self.gtao.encode(&mut encoder, t, indirect_now);
@@ -5825,13 +5913,17 @@ impl Backend {
         mark(&mut encoder, MARK_SSAO_END);
         // ---- contact shadows: what casts them beyond the prepass (the
         // blended faces opaque enough, the impostor cards) is drawn into a
-        // copy of its depth, which the pass then reads
+        // copy of its depth, which the pass then reads; the occlusion's
+        // depth already holds those blended faces
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
-            let (_, n_blend) = rg.blend;
             let more = crate::contact_shadows::Override::from_env().all_casters() && (n_blend > 0 || n_sprites > 0);
             if more {
+                let source = match &self.targets.ao_depth {
+                    Some((tex, _)) if blend_in_ao_depth => tex,
+                    _ => &self.targets.depth_ss_tex,
+                };
                 encoder.copy_texture_to_texture(
-                    self.targets.depth_ss_tex.as_image_copy(),
+                    source.as_image_copy(),
                     t.depth_texture().as_image_copy(),
                     self.targets.depth_ss_tex.size(),
                 );
@@ -5851,7 +5943,9 @@ impl Backend {
                     multiview_mask: None,
                 });
                 bind_mesh(&mut pass, &self.groups.a);
-                draw(&mut pass, &self.pipelines.pre_contact, rg.blend);
+                if !blend_in_ao_depth {
+                    draw(&mut pass, &self.pipelines.pre_contact, rg.blend);
+                }
                 if n_sprites > 0 {
                     pass.set_pipeline(&self.impostors.sprite_depth);
                     pass.set_bind_group(3, &self.impostors.bind_group, &[]);
@@ -7271,6 +7365,18 @@ mod tests {
         assert!(shadow_bias_legacy_now(1, at(11)));
         assert!(shadow_bias_legacy_now(2, at(10)));
         assert!(!shadow_bias_legacy_now(2, at(11)));
+    }
+
+    #[test]
+    fn blend_ao_switch_reads_its_modes() {
+        let at = |s: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s);
+        assert_eq!(BlendAo::from_env(None), BlendAo::New);
+        assert_eq!(BlendAo::from_env(Some("new")), BlendAo::New);
+        assert_eq!(BlendAo::from_env(Some(" none ")), BlendAo::None);
+        assert_eq!(BlendAo::from_env(Some("old")), BlendAo::Old);
+        assert_eq!(BlendAo::from_env(Some("alt")).now(at(10)), BlendAo::None);
+        assert_eq!(BlendAo::from_env(Some("alt")).now(at(11)), BlendAo::New);
+        assert_eq!(BlendAo::Old.now(at(10)), BlendAo::Old);
     }
 
     #[test]

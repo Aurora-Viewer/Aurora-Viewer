@@ -2301,6 +2301,7 @@ tests do not establish that this report uses an invalid joint or index.
 | `AURORA_DEMO_ARRIVAL=<folder>[,net=<ms>][,bw=<Mb/s>][,n=<objects>][,turn=<s>][,avatars=<n>][,worn=<m>][,pbr=1]` | Arrival test: objects, meshes and animated avatars all around, every asset downloaded from a local server |
 | `AURORA_DEMO_HAIR=<layers>[,<segments>[,<empty>[,<period>]]]` | Transparent face load: stacked shells on the avatars |
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
+| `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
@@ -5569,7 +5570,7 @@ What the inventory must show with these scenarios:
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where half covered (default), from 1/255, none (sorted with the others), or `write` by turns |
-| `AURORA_BLEND_AO=old`, `new` or `alt` | Blended faces with the screen-space occlusion and indirect light of what is behind them, as before |
+| `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 
 ### Details
 
@@ -5860,16 +5861,33 @@ What the inventory must show with these scenarios:
   its object and nothing writing depth (eyelashes showed through mesh
   hair). `alt`: `write` during one `perf summary` line out of three
   (`xmode=old`). See `AURORA_DEMO_LASHES` and `AURORA_DEMO_HALO`.
-- **`AURORA_BLEND_AO=old|new|alt`**: blended faces take neither the
-  screen-space ambient occlusion nor GTAO's indirect light (computed from
-  the opaque depth, they are those of what lies behind the face), as the
-  Legacy Viewer's alpha pass; `old` gives them back, `alt` one second in
-  two.
+- **`AURORA_BLEND_AO=new|none|old|alt`**: the occlusion (both methods)
+  reads a copy of the depth prepass with the blended faces at least half
+  covered drawn over it (`fs_depth_contact`, the rule of the contact
+  shadows), and those faces take the screen-space ambient occlusion and
+  GTAO's indirect light like the opaque ones (#882: a mesh head whose two
+  halves differ in alpha mode showed a line down the middle with the
+  occlusion on); more transparent ones take neither, as the Legacy
+  Viewer's alpha pass. `none`: no blended face takes them and the
+  occlusion reads the prepass alone (#556 to #882); `old`: every blended
+  face takes those of what lies behind it (before #556); `alt`: `none` one
+  second in two. With the contact shadows on, their pass copies that depth
+  instead of drawing the blended faces a second time. See
+  `AURORA_DEMO_BLEND_AO`.
 - **`AURORA_DEMO_HALO=1`**: a wide translucent pane (35 % opaque) 3 m
   ahead of the start position (`AURORA_DEMO_POS`), facing the camera, so
   that our avatar stands between the camera and the pane. With
   `AURORA_DEMO_HAIR=8,24,60,16` and `AURORA_RIGGED_BLEND=alt`, the ring of
   #556 (the pane missing around the hair) appears one second in three.
+- **`AURORA_DEMO_BLEND_AO=1`**: a flat face 4 m ahead of the start
+  position (`AURORA_DEMO_POS`) and 1.6 m to its left, above our avatar's
+  head, turned towards the camera: two halves alike, the left one blended
+  (alpha 0.99, opaque to the eye), a ball for a nose across the middle, a
+  wide hat brim above and two curtains of hair on its sides. With
+  `AURORA_DEMO_CAMERA=close,664,452,40`, a capture at frame 780 and
+  `AURORA_DEMO_DEBUG=ao`, `AURORA_BLEND_AO=none` shows the occlusion
+  around the nose stopping at the middle line, the left half white;
+  the default shows it whole (#882).
 - **`AURORA_FONT_FALLBACK=0`**: uses only the embedded fonts, as before the
   system fallback fonts were added: the characters they lack (Georgian,
   CJK, Arabic, mathematical letters…) become squares again. To compare with

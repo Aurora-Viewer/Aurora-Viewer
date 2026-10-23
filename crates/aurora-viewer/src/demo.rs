@@ -4394,6 +4394,54 @@ pub fn events() -> Vec<NetEvent> {
         ));
         id += 1;
     }
+    // AURORA_DEMO_BLEND_AO: a face ahead of the start position, its left
+    // and right halves alike but one blended (alpha 0.99, opaque to the
+    // eye), with a nose across the middle, under a wide hat brim and
+    // between two curtains of hair that occlude it (issue #882: the blended
+    // half took no ambient occlusion, a line down the middle of the head)
+    if std::env::var_os("AURORA_DEMO_BLEND_AO").is_some() {
+        let (sx, sy) = std::env::var("AURORA_DEMO_POS")
+            .ok()
+            .and_then(|v| {
+                let p: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                (p.len() >= 2).then(|| (p[0], p[1]))
+            })
+            .unwrap_or((132.0, 126.0));
+        // the start look-at of AgentMovementComplete, (0.8, 0.4)
+        let (dx, dy) = (0.894_427_2, 0.447_213_6);
+        // to the left of our avatar and above its head, in view of the
+        // start camera, the face turned towards it
+        let (px, py) = (sx + dx * 4.0 - dy * 1.6, sy + dy * 4.0 + dx * 1.6);
+        let head = Vec3::new(px, py, g(px, py) + 2.4);
+        let facing = Quat::from_rotation_z(dy.atan2(dx));
+        let ahead = Vec3::new(dx, dy, 0.0);
+        let side = Vec3::new(-dy, dx, 0.0);
+        let skin = |alpha: f32| te([0.92, 0.78, 0.72, alpha], 0, false, 0.0);
+        let mut parts = vec![
+            (head + side * 0.225, Vec3::new(0.04, 0.45, 0.7), boxp, skin(0.99)),
+            (head - side * 0.225, Vec3::new(0.04, 0.45, 0.7), boxp, skin(1.0)),
+            (
+                head - ahead * 0.06,
+                Vec3::splat(0.22),
+                shape(LL_PCODE_PATH_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, 100, 0, 0),
+                skin(1.0),
+            ),
+            (
+                head + Vec3::Z * 0.37,
+                Vec3::new(2.4, 2.4, 0.04),
+                boxp,
+                te([0.15, 0.12, 0.1, 1.0], 0, false, 0.0),
+            ),
+        ];
+        for s in [-1.0, 1.0] {
+            let hair = head + side * (s * 0.5) - ahead * 0.25 - Vec3::Z * 0.1;
+            parts.push((hair, Vec3::new(0.5, 0.06, 1.0), boxp, te([0.85, 0.82, 0.8, 1.0], 0, false, 0.0)));
+        }
+        for (pos, scale, volume, entry) in parts {
+            add(prim(id, pos, facing, scale, volume, entry, ExtraParams::default(), ""));
+            id += 1;
+        }
+    }
     let _ = id;
     if let Ok(spec) = std::env::var("AURORA_DEMO_FLEXIBLE") {
         objs.clear();
