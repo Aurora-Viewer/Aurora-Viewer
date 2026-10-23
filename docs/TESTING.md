@@ -1741,7 +1741,7 @@ objects using our avatar's skeleton. See [Blender Live](BLENDER_LIVE.md).
 removed, and exposes Restore removed objects. Toggle the belt, clear the
 objects and restore the list; each row's Import button opens that object's
 ordinary mesh importer without selecting it first. Check the Connection,
-Objects and Plugins divider lines and the truncated names beside their
+Objects and Plugins inset title strips and the truncated names beside their
 Import buttons. `upload` opens the importer directly with a frozen shell draft.
 No fee or upload request is sent automatically. Check skin weights, LODs,
 physics, the source snapshot notice and the separate-PBR-upload notice.

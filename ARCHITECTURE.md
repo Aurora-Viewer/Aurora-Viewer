@@ -26,7 +26,8 @@ import scenes and decoded pixels; `imports/live.rs` freezes the selected source
 on a worker into the existing mesh draft, quote and confirmed upload workflow.
 Hidden/removed sources keep receiving edits, with no simulator traffic.
 The Blender Live floater separates connection, objects and plug-in controls
-with shared dividers. Each source row imports its own snapshot directly;
+with full-width inset title strips and spacing using the shared surface/header
+widgets. Each source row imports its own snapshot directly;
 visibility and bulk removal/restoration remain independent of import selection.
 `compat.py` maps renamed Principled sockets and uses bone collections in 4.0+
 or named pose groups and armature layers in 2.93–3.x. The mesh exporter reads

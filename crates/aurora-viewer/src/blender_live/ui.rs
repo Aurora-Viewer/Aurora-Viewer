@@ -12,7 +12,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
         "blender_live",
         aurora_i18n::tr!("blender-live-title"),
         egui::pos2(70.0, 110.0),
-        Vec2::new(500.0, 590.0),
+        Vec2::new(500.0, 640.0),
     );
     floater.min_size = Vec2::new(400.0, 350.0);
     floater.show(ctx, p, &mut open, |ui| {
@@ -176,7 +176,10 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
 }
 
 fn section(ui: &mut egui::Ui, p: &crate::theme::Palette, icon: &str, title: &str) {
-    ui.add_space(8.0);
-    widgets::divider(ui, p);
-    widgets::section_header(ui, p, icon, title);
+    ui.add_space(12.0);
+    widgets::surface(ui, p, |ui| {
+        ui.set_min_width(ui.available_width());
+        widgets::section_header(ui, p, icon, title);
+    });
+    ui.add_space(4.0);
 }

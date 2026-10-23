@@ -86,7 +86,7 @@ off on each viewer launch, and changing accounts stops it.
 
 Aurora's **Build → Blender Live** lists each source object by its Blender
 name, even if it spans several render batches. The window separates
-**Connection**, **Objects** and **Plugins** with divider lines.
+**Connection**, **Objects** and **Plugins** with inset title strips and spacing.
 Uncheck an object to hide it
 temporarily; rechecking displays its latest geometry and materials.
 **Remove meshes** withdraws all sources from the list and avatar preview.
