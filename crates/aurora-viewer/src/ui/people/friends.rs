@@ -391,25 +391,17 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     };
     let end = rows::end(bounds, rows::names_left(bounds), &widths, PARTS_GAP, false);
     let right = end.items.last().map_or(bounds.right(), |r| r.left()) - PARTS_GAP;
-    let count = 3 + usize::from(f.online) + usize::from(c.contact_sheet_button);
-    let columns = if c.contact_sheet_button {
-        let fitting = (1..=count)
-            .rev()
-            .find(|n| rows::actions_width(*n) <= right - bounds.left() - PARTS_GAP)
-            .unwrap_or(1);
-        if fitting < count { fitting.min(count.div_ceil(2)) } else { count }
-    } else {
-        count
-    };
-    let stacked = c.contact_sheet_button && right - rows::actions_width(count) - PARTS_GAP < rows::names_left(bounds) + rows::NAMES_MIN;
+    let count = 4 + usize::from(f.online);
+    let layout = rows::ActionLayout::new(
+        RICH_H,
+        right - bounds.left() - PARTS_GAP,
+        right - rows::names_left(bounds) - rows::NAMES_MIN - PARTS_GAP,
+        count,
+        rows::BUTTON,
+    );
     // Reserve wrapped height even without hover, so entering or leaving a
     // row never moves its neighbors or the permission buttons.
-    let height = if stacked {
-        RICH_H + rows::actions_height(count, columns) + 6.0
-    } else {
-        RICH_H
-    };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, layout.height), Sense::click_and_drag());
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -423,25 +415,17 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         ui.set_opacity(opacity * 0.75);
     }
     rows::face(ui, p, rect, selected, hot);
-    let identity = Rect::from_min_size(rect.min, Vec2::new(width, RICH_H));
+    let identity = layout.identity(rect);
     let left = rows::names_left(rect);
     // Keep the permission cells anchored when hover actions appear, as
     // LLAvatarListItem::showPermissions / updateChildren reserve their slots.
     let mut end = rows::end(identity, left, &widths, PARTS_GAP, false);
     let actions = if hot {
-        let buttons = quick_actions(f, c.contact_sheet_button);
-        let start = right - rows::actions_width(columns);
-        let minimum = if c.contact_sheet_button {
-            rect.left() + PARTS_GAP
-        } else {
-            left + rows::NAMES_MIN + PARTS_GAP
-        };
-        (start >= minimum).then(|| {
-            let top = if stacked { rect.top() + RICH_H + 3.0 } else { rect.top() };
-            let bottom = rect.bottom() - if stacked { 3.0 } else { 0.0 };
-            let slot = Rect::from_min_max(Pos2::new(start, top), Pos2::new(right, bottom));
-            if !stacked {
-                end.names_right = end.names_right.min(start - PARTS_GAP);
+        let buttons = quick_actions(f);
+        let slot = layout.slot(rect, right);
+        (slot.left() >= rect.left() + PARTS_GAP).then(|| {
+            if !layout.stacked {
+                end.names_right = end.names_right.min(slot.left() - PARTS_GAP);
             }
             (buttons, slot)
         })
@@ -457,7 +441,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         clicked_right = granted(ui, c, f, *cell);
     }
     if let Some((buttons, slot)) = &actions {
-        hover_actions(ui, c, st, f, *slot, buttons, columns);
+        hover_actions(ui, c, st, f, *slot, buttons, layout.columns);
     }
     let color = if c.contact_settings.colorize_friends {
         line.set.unwrap_or(p.ink)
@@ -491,7 +475,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         c.contact_sheet_on_click && !clicked_right && resp.clicked() && ui.input(|i| !i.modifiers.command && !i.modifiers.shift);
     if action.sheet || click_sheet {
         super::nearby::open_sheet(st, f.id);
-        if c.contact_sheet_button {
+        if c.embedded_contacts {
             st.sheet_grow = false;
         }
     }
@@ -503,9 +487,9 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     rows::contact_tip(resp, (on_names && (cut || line.full != line.name)).then_some(line.full.as_str()));
 }
 
-/// Profile, IM, a teleport offer to a friend online, the optional inline
+/// Profile, IM, a teleport offer to a friend online, the contact
 /// contact sheet, then the whole menu.
-fn quick_actions(f: &Friend, sheet_button: bool) -> Vec<(&'static str, &'static str)> {
+fn quick_actions(f: &Friend) -> Vec<(&'static str, &'static str)> {
     let mut b = vec![
         ("user-filled", aurora_i18n::tr!("common-view-profile")),
         ("message-circle-filled", aurora_i18n::tr!("ui-context-send-im")),
@@ -513,9 +497,7 @@ fn quick_actions(f: &Friend, sheet_button: bool) -> Vec<(&'static str, &'static 
     if f.online {
         b.push(("send-filled", aurora_i18n::tr!("common-offer-teleport")));
     }
-    if sheet_button {
-        b.push(("info-circle-filled", aurora_i18n::tr!("people-show-contact-sheet")));
-    }
+    b.push(("info-circle-filled", aurora_i18n::tr!("people-show-contact-sheet")));
     b.push(("dots-filled", aurora_i18n::tr!("ui-chat-more")));
     b
 }
@@ -534,7 +516,9 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, f: &Friend, 
                 st.sel = vec![f.id];
                 st.anchor = Some(f.id);
                 super::nearby::open_sheet(st, f.id);
-                st.sheet_grow = false;
+                if c.embedded_contacts {
+                    st.sheet_grow = false;
+                }
             }
             "dots-filled" => {
                 let (p, world) = (c.p, c.world);
@@ -653,71 +637,73 @@ mod tests {
             240.0, 254.0, 255.0, 256.0, 259.0, 260.0, 261.0, 280.0, 300.0, 320.0, 340.0, 360.0, 380.0, 400.0, 450.0, 510.0, 640.0,
         ] {
             for sort in [SORT_STATUS, SORT_NAME, SORT_USERNAME] {
-                settings.sort = sort;
-                let bounds = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(width, 500.0));
-                let mut fixed_rights = None;
-                for hot in [false, true] {
-                    st.demo_hover = hot.then_some(Uuid::from_u128(0xF000));
-                    let mut layer = None;
-                    for _ in 0..3 {
-                        frames.run(Vec::new(), |ui| {
-                            let mut child = super::super::nearby::list_ui(ui, bounds, "bounded-friends-test", true);
-                            layer = Some(child.layer_id());
-                            let mut c = Ctx {
-                                p: &p,
-                                world: &world,
-                                contacts: &mut contacts,
-                                contact_settings: &mut contact_settings,
-                                friends: &mut settings,
-                                images: &pics,
-                                actions: &mut actions,
-                                contact_sheet_button: true,
-                                contact_sheet_on_click: true,
-                            };
-                            list(&mut child, &mut c, &data, &mut st, true);
-                        });
-                    }
-                    let rects: Vec<_> = frames
-                        .ctx
-                        .viewport(|v| v.this_pass.widgets.get_layer(layer.expect("drawn")).cloned().collect());
-                    for widget in &rects {
-                        if widget.sense.senses_click()
-                            && widget.rect.height() <= 64.0
-                            && widget.rect.top() >= bounds.top()
-                            && widget.rect.bottom() <= bounds.bottom()
-                        {
-                            assert!(
-                                widget.rect.left() >= bounds.left() - 0.5 && widget.rect.right() <= bounds.right() + 0.5,
-                                "{width}, sort {sort}: a control leaves the list: {:?} outside {bounds:?}",
-                                widget.rect
-                            );
+                for embedded in [false, true] {
+                    settings.sort = sort;
+                    let bounds = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(width, 500.0));
+                    let mut fixed_rights = None;
+                    for hot in [false, true] {
+                        st.demo_hover = hot.then_some(Uuid::from_u128(0xF000));
+                        let mut layer = None;
+                        for _ in 0..3 {
+                            frames.run(Vec::new(), |ui| {
+                                let mut child = super::super::nearby::list_ui(ui, bounds, "bounded-friends-test", true);
+                                layer = Some(child.layer_id());
+                                let mut c = Ctx {
+                                    p: &p,
+                                    world: &world,
+                                    contacts: &mut contacts,
+                                    contact_settings: &mut contact_settings,
+                                    friends: &mut settings,
+                                    images: &pics,
+                                    actions: &mut actions,
+                                    embedded_contacts: embedded,
+                                    contact_sheet_on_click: embedded,
+                                };
+                                list(&mut child, &mut c, &data, &mut st, true);
+                            });
                         }
-                    }
-                    let rights: Vec<_> = rects.iter().filter(|w| w.rect.size() == CELL).map(|w| (w.id, w.rect)).collect();
-                    assert!(!rights.is_empty(), "the test exercises visible permissions");
-                    if let Some(fixed) = &fixed_rights {
-                        assert_eq!(&rights, fixed, "{width}, sort {sort}: hover must not hide or move permission cells");
-                    } else {
-                        fixed_rights = Some(rights.clone());
-                    }
-                    let quick: Vec<_> = rects
-                        .iter()
-                        .filter(|w| w.sense.senses_click() && w.rect.size() == Vec2::new(26.0, 24.0))
-                        .collect();
-                    if hot {
-                        assert_eq!(quick.len(), 5, "{width}: every quick action remains visible");
-                        for action in quick {
-                            let row = rects
-                                .iter()
-                                .filter(|w| w.sense.senses_drag() && w.rect.contains_rect(action.rect))
-                                .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
-                                .expect("the action belongs to a row");
-                            for (_, permission) in &rights {
-                                if row.rect.contains(permission.center()) {
-                                    assert!(
-                                        action.rect.right() < permission.left(),
-                                        "{width}: hover actions stay left of permissions"
-                                    );
+                        let rects: Vec<_> = frames
+                            .ctx
+                            .viewport(|v| v.this_pass.widgets.get_layer(layer.expect("drawn")).cloned().collect());
+                        for widget in &rects {
+                            if widget.sense.senses_click()
+                                && widget.rect.height() <= 64.0
+                                && widget.rect.top() >= bounds.top()
+                                && widget.rect.bottom() <= bounds.bottom()
+                            {
+                                assert!(
+                                    widget.rect.left() >= bounds.left() - 0.5 && widget.rect.right() <= bounds.right() + 0.5,
+                                    "{width}, sort {sort}: a control leaves the list: {:?} outside {bounds:?}",
+                                    widget.rect
+                                );
+                            }
+                        }
+                        let rights: Vec<_> = rects.iter().filter(|w| w.rect.size() == CELL).map(|w| (w.id, w.rect)).collect();
+                        assert!(!rights.is_empty(), "the test exercises visible permissions");
+                        if let Some(fixed) = &fixed_rights {
+                            assert_eq!(&rights, fixed, "{width}, sort {sort}: hover must not hide or move permission cells");
+                        } else {
+                            fixed_rights = Some(rights.clone());
+                        }
+                        let quick: Vec<_> = rects
+                            .iter()
+                            .filter(|w| w.sense.senses_click() && w.rect.size() == Vec2::new(26.0, 24.0))
+                            .collect();
+                        if hot {
+                            assert_eq!(quick.len(), 5, "{width}: every quick action remains visible");
+                            for action in quick {
+                                let row = rects
+                                    .iter()
+                                    .filter(|w| w.sense.senses_drag() && w.rect.contains_rect(action.rect))
+                                    .min_by(|a, b| a.rect.area().total_cmp(&b.rect.area()))
+                                    .expect("the action belongs to a row");
+                                for (_, permission) in &rights {
+                                    if row.rect.contains(permission.center()) {
+                                        assert!(
+                                            action.rect.right() < permission.left(),
+                                            "{width}: hover actions stay left of permissions"
+                                        );
+                                    }
                                 }
                             }
                         }

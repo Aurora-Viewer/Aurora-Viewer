@@ -19,7 +19,7 @@ const NAMES_GAP: f32 = 6.0;
 /// Room left of a row's right edge.
 const PAD: f32 = 8.0;
 /// One quick action's button, and the room around them in their pill.
-const BUTTON: Vec2 = Vec2::new(26.0, 24.0);
+pub(super) const BUTTON: Vec2 = Vec2::new(26.0, 24.0);
 const ACTIONS_PAD: f32 = 3.0;
 /// Width of the "+2" of what does not fit.
 pub(super) const MORE_W: f32 = 24.0;
@@ -261,9 +261,82 @@ pub(super) fn actions_width(n: usize) -> f32 {
     n as f32 * (BUTTON.x + ACTIONS_PAD) + ACTIONS_PAD
 }
 
-/// Height of the quick actions when a narrow row wraps them into columns.
-pub(super) fn actions_height(n: usize, columns: usize) -> f32 {
-    n.div_ceil(columns.max(1)) as f32 * (BUTTON.y + ACTIONS_PAD) + ACTIONS_PAD
+/// The same adaptive action strip in People and Conversations. Information
+/// at the right keeps its place; a narrow row reserves a separate strip.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ActionLayout {
+    pub columns: usize,
+    pub stacked: bool,
+    pub height: f32,
+    base_height: f32,
+    size: Vec2,
+}
+
+impl ActionLayout {
+    pub fn new(base_height: f32, room: f32, inline_room: f32, count: usize, button: Vec2) -> Self {
+        let fitting = (1..=count)
+            .rev()
+            .find(|n| *n as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD <= room)
+            .unwrap_or(1);
+        let columns = if fitting < count {
+            fitting.min(count.div_ceil(2).max(1))
+        } else {
+            count.max(1)
+        };
+        let size = Vec2::new(
+            columns as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD,
+            count.div_ceil(columns) as f32 * (button.y + ACTIONS_PAD) + ACTIONS_PAD,
+        );
+        let stacked = count as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD > inline_room;
+        let height = if stacked {
+            base_height + size.y + 6.0
+        } else {
+            base_height.max(size.y)
+        };
+        Self {
+            columns,
+            stacked,
+            height,
+            base_height,
+            size,
+        }
+    }
+
+    pub fn identity(self, row: Rect) -> Rect {
+        Rect::from_min_size(row.min, Vec2::new(row.width(), self.base_height))
+    }
+
+    pub fn slot(self, row: Rect, right: f32) -> Rect {
+        let top = if self.stacked {
+            row.top() + self.base_height + ACTIONS_PAD
+        } else {
+            row.top()
+        };
+        let bottom = row.bottom() - if self.stacked { ACTIONS_PAD } else { 0.0 };
+        Rect::from_min_max(Pos2::new(right - self.size.x, top), Pos2::new(right, bottom))
+    }
+}
+
+/// The pill and every full-size button, in visual reading order.
+pub(super) fn action_rects(slot: Rect, count: usize, columns: usize, button: Vec2) -> (Rect, Vec<Rect>) {
+    let columns = columns.max(1).min(count.max(1));
+    let size = Vec2::new(
+        columns as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD,
+        count.div_ceil(columns) as f32 * (button.y + ACTIONS_PAD) + ACTIONS_PAD,
+    );
+    let pill = Rect::from_min_size(Pos2::new(slot.right() - size.x, slot.center().y - size.y / 2.0), size);
+    let cells = (0..count)
+        .map(|i| {
+            Rect::from_min_size(
+                Pos2::new(
+                    pill.left() + ACTIONS_PAD + (i % columns) as f32 * (button.x + ACTIONS_PAD),
+                    pill.top() + ACTIONS_PAD + (i / columns) as f32 * (button.y + ACTIONS_PAD),
+                ),
+                button,
+            )
+        })
+        .collect();
+    (pill, cells)
 }
 
 /// The quick actions of the row under the pointer, in their pill at the
@@ -287,27 +360,15 @@ pub(super) fn actions_wrapped(
     salt: impl std::hash::Hash + std::fmt::Debug,
     columns: usize,
 ) -> Vec<egui::Response> {
-    let columns = columns.max(1).min(buttons.len().max(1));
-    let y = slot.center().y;
-    let height = actions_height(buttons.len(), columns);
-    let pill = Rect::from_min_max(
-        Pos2::new(slot.right() - actions_width(columns), y - height / 2.0),
-        Pos2::new(slot.right(), y + height / 2.0),
-    );
+    let (pill, cells) = action_rects(slot, buttons.len(), columns, BUTTON);
     ui.painter()
         .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, p.raised);
     let id = ui.scope_id().with(salt);
     buttons
         .iter()
+        .zip(cells)
         .enumerate()
-        .map(|(i, (icon, tip))| {
-            let r = Rect::from_min_size(
-                Pos2::new(
-                    pill.left() + ACTIONS_PAD + (i % columns) as f32 * (BUTTON.x + ACTIONS_PAD),
-                    pill.top() + ACTIONS_PAD + (i / columns) as f32 * (BUTTON.y + ACTIONS_PAD),
-                ),
-                BUTTON,
-            );
+        .map(|(i, ((icon, tip), r))| {
             let resp = ui.interact(r, id.with(i), Sense::click());
             if resp.hovered() {
                 ui.painter().rect_filled(r, widgets::inner_radius(ui.visuals()), p.bar);

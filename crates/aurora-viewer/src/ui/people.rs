@@ -120,8 +120,8 @@ pub(super) struct Ctx<'a> {
     /// Group insignias.
     pub images: &'a HashMap<Uuid, egui::TextureHandle>,
     pub actions: &'a mut Vec<PeopleAction>,
-    /// Conversations exposes the inline contact sheet as a quick action.
-    pub contact_sheet_button: bool,
+    /// Conversations keeps its sheet inside the embedded Contacts pane.
+    pub embedded_contacts: bool,
     /// A row click can open the sheet when the inline pane fits both sides.
     pub contact_sheet_on_click: bool,
 }
@@ -134,7 +134,7 @@ type SheetFn = fn(&mut egui::Ui, &mut Ctx<'_>, &RadarData<'_>, &mut PeopleUi, Uu
 /// A tab's list, and beside it the sheet of the person held or group clicked
 /// (`nearby::areas`: the window widens for it before its frame).
 fn split(ui: &mut egui::Ui, c: &mut Ctx, data: &RadarData, st: &mut PeopleUi, salt: &str, list: ListFn, sheet: SheetFn) {
-    let persistent_sheet = c.contact_sheet_button && c.contact_sheet_on_click;
+    let persistent_sheet = c.embedded_contacts && c.contact_sheet_on_click;
     let (list_rect, sheet_rect) = nearby::areas(ui, st, persistent_sheet);
     if let Some(rect) = list_rect {
         let beside = sheet_rect.is_some();
@@ -412,7 +412,7 @@ pub fn people_window(
                 friends: &mut *friends,
                 images: contacts.images,
                 actions: &mut actions,
-                contact_sheet_button: false,
+                embedded_contacts: false,
                 contact_sheet_on_click: false,
             };
             match panels.people_tab {
@@ -520,7 +520,7 @@ pub fn friends_pane(
         friends: settings,
         images,
         actions: &mut actions,
-        contact_sheet_button: true,
+        embedded_contacts: true,
         contact_sheet_on_click: wide,
     };
     friends::tab(ui, &mut c, data, st);

@@ -2805,7 +2805,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
-| `AURORA_DEMO_PEOPLE=rows`, `hover`, `crowd`, `crowd-hover`, `sheet`, `legacy`, `friends`, `groups`, `sets`, `visuals`, `visuals-stack`, `visuals-legacy`, `recent` or `blocked` | People scenarios, including the contact-set visual editor and overlapping sets |
+| `AURORA_DEMO_PEOPLE=<mode>[:width]` | People scenarios, including nearby/friends lists and contact-set visual editors |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
 | `AURORA_DEMO_RLVA=enabled` | Scripted restrictions and the global opt-in in Preferences > Protections |
 | `AURORA_DEMO_OPTIONS=<page>[/<tab>][:<what>]` | Opens the preferences on a page, a search, the modified settings, open cogs or a reset |
@@ -4276,8 +4276,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   window widens it by the sheet, and its cross gives the width back.
   `crowd`: forty residents in the compact density. `hover` and
   `crowd-hover`: `rows` and `crowd` with a friend under the pointer
-  carrying every badge: the quick actions take the place of the time and
-  the range, beside the badges, never over them. `legacy`: the same
+  carrying every badge. In both densities every quick action stays visible
+  at the right edge, replacing the time and distance during hover. Badges
+  stay to the left of inline actions and fold when necessary. Very narrow
+  rows reserve an action line below the name, wrapping when needed, so
+  hover does not move the list. The details action before More opens the
+  resident sheet.
+  `legacy`: the same
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
   (payment info, notes) arrive four a second.
@@ -4296,6 +4301,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   for its sounds). Each tab keeps its menu of several people (Ctrl /
   Shift) and its sheet; a window too narrow for the six tabs shows the
   ones around the open tab beside "…".
+  Append `:<width>` for a responsive check, for example `hover:300`,
+  `crowd-hover:300` or `friends:360`. An explicit-width friends scenario
+  starts with the list alone; its details action must still open the sheet
+  and retain the normal window expansion. Repeat with `friends:620` and
+  the default friends scenario beside its sheet. Every friend action must
+  remain visible to the left of its permission cells.
 - **`AURORA_DEMO_STATUSMENU=1|invisible`**: the menu of the status
   dot, open at frame 300. `invisible`: with this status chosen (hollow
   grey dot); only the display changes, no right is modified and nothing
