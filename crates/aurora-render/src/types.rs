@@ -471,6 +471,7 @@ impl DrawLists {
         self.hud_debug_blue.clone_from(&src.hud_debug_blue);
         self.terrain.clone_from(&src.terrain);
         self.opaque.clone_from(&src.opaque);
+        self.creation_preview.clone_from(&src.creation_preview);
         self.opaque_two_sided.clone_from(&src.opaque_two_sided);
         self.mask.clone_from(&src.mask);
         self.mask_two_sided.clone_from(&src.mask_two_sided);
@@ -1450,6 +1451,7 @@ mod tests {
         scene.hud_debug_red.push(cmd(23));
         scene.hud_debug_blue.push(cmd(24));
         scene.terrain.push(cmd(1));
+        scene.creation_preview.push(cmd(25));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
         scene.blend_glow.extend([false, true, false]);
         scene.blend_depth = 1;
@@ -1495,6 +1497,7 @@ mod tests {
         assert_eq!(packet.hud_blend[0].record, 21);
         assert_eq!(packet.hud_debug_red[0].record, 23);
         assert_eq!(packet.hud_debug_blue[0].record, 24);
+        assert_eq!(packet.creation_preview[0].record, 25);
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(packet.blend_glow, [false, true, false]);
         assert_eq!(packet.blend_depth, 1);
@@ -1514,12 +1517,19 @@ mod tests {
         assert!(scene.hud_view.is_none());
         assert!(scene.hud_opaque.is_empty());
         assert!(scene.hud_debug_red.is_empty());
+        assert!(scene.creation_preview.is_empty());
+        assert_eq!(packet.creation_preview[0].record, 25);
         assert!(scene.hud_debug_blue.is_empty());
         assert!(scene.select_faces.is_empty());
         assert!(scene.hud_select_faces.is_empty());
         assert!(packet.hud_view.is_some());
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());
+        packet.copy_from(&scene);
+        assert!(
+            packet.creation_preview.is_empty(),
+            "A reused packet must not retain a hidden creation hologram"
+        );
     }
 
     /// `DrawRecord` must match the WGSL struct (std430: 4 × 4 floats for the

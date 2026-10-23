@@ -483,6 +483,16 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
             "bottom" => Some((x_start(tool), tool.cam.height - 1.0)),
             _ => None,
         });
+    // The close view animates for up to one second. A press while it is
+    // moving can miss the handle by the time the asynchronous pick returns.
+    let frame = if parts[0].starts_with("invisible-") && frame >= 250 {
+        if frame < 330 {
+            return Vec::new();
+        }
+        frame - 80
+    } else {
+        frame
+    };
     match frame {
         215 => vec![Step::Open(t, m, land)],
         220 if object.is_some() => object.into_iter().map(Step::Select).collect(),

@@ -854,8 +854,9 @@ The normal click must still create exactly one object on the surface.
 For persistent outlines, `invisible-move,object:99620,z,60,-30`,
 `invisible-rotate,object:99620,rz,60,0` and
 `invisible-stretch,object:99620,c7,60,-30` install an invisible torus linked
-to a mesh, frame it closely and hold the manipulation. Capture at frame
-700: both outlines remain visible with highlighting on.
+to a mesh, frame it closely, wait for the camera to settle and hold the
+manipulation. Capture at frame 780: both outlines remain visible with
+highlighting on.
 
 `AURORA_DEMO_BUILD=create-delete,object:118` creates a primitive at
 frame 625, selects it after the simulated reply and deletes it at frame 675.

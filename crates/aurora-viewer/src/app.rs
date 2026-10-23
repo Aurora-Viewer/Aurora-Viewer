@@ -9203,6 +9203,7 @@ impl App {
                                 &self.settings.camera,
                             );
                             self.panels.inventory = false;
+                            self.panels.chat = false;
                         }
                     }
                     crate::build::demo::Step::Linked(on) => {
