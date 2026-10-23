@@ -168,7 +168,7 @@ bindings. No animation-stop, script-stop or script-activation message is sent.
 designation. Click any prim of the source linkset, or use the single prim
 already selected in Edit. Sitting is unnecessary. Escape cancels designation;
 the pending-request cross cancels a transfer. The source must contain the
-current IK companion. The Aurora bridge updates to version 1.30 to relay this
+current IK companion. The Aurora bridge updates to version 1.33 to relay this
 explicit targeted request.
 
 The viewer requests a fresh full declaration using a dedicated nonce and zero
