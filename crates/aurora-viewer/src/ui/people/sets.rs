@@ -233,7 +233,6 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let p = c.p;
     let world = c.world;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click_and_drag());
-    resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(id));
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -291,16 +290,16 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     };
     let color = crate::ui::colors::resident_name(world, &id, color);
     let cut = rows::names(ui, p, rect, left, end.names_right, name, color, &second_line(c, &id), None, None);
-    if rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id) {
+    let action = rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id);
+    if action.sheet {
         super::nearby::open_sheet(st, id);
     }
-    if resp.double_clicked() {
+    if action.activate {
         c.actions.push(super::PeopleAction::OpenIm(id));
     }
     rows::person_menu(&resp, p, world, &st.sel, id);
-    if let Some(tip) = tip.or_else(|| (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then(|| name.to_owned())) {
-        resp.on_hover_text(tip);
-    }
+    let tip = tip.or_else(|| (cut && resp.hover_pos().is_some_and(|at| at.x <= end.names_right)).then(|| name.to_owned()));
+    rows::contact_tip(resp, tip.as_deref());
 }
 
 /// The residents a row's action applies to: the selection when the row is

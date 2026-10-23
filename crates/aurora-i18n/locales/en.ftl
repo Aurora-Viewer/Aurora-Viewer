@@ -7444,6 +7444,7 @@ radar-age-alert = { $days ->
 radar-too-far-to-zoom = This avatar is too far for the camera to reach it.
 people-view-sort-options = View/sort options
 people-filter-by-name = Filter by name…
+people-edit-contact-hold = Hold the left mouse button to edit contact settings.
 people-view-rich = Rich rows
 people-view-compact = Compact (one line each, for a crowd)
 people-alerts-options = Alerts and options

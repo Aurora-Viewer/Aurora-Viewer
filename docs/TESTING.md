@@ -338,7 +338,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
-| `AURORA_DEMO_POINTER=<points>` | Moves the pointer over the interface |
+| `AURORA_DEMO_POINTER=<points>` | Moves, clicks or holds the pointer over the interface |
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
 | `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave[,x,y]` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off |
@@ -577,14 +577,17 @@ when unfocused") is ignored during a screenshot.
   the cursor; a password field never offers Cut or Copy, a read-only one
   only Copy and Select All; the script editor and the notecards keep their
   own menu.
-- **`AURORA_DEMO_POINTER="x,y[,l|r|s][;x,y…]"`**: moves the interface
+- **`AURORA_DEMO_POINTER="x,y[,l|r|s|h][;x,y…]"`**: moves the interface
   pointer to these pixels of the window from frame 300, one point every
   60 frames (hover states, submenus); `,l` makes a left click, `,r` a right
   click on the interface at that spot. In the pie menu, the left click
   enters a submenu and the right click goes up one level. `,s` leaves the
   pointer still at that spot (it is only brought back there if it has moved
-  away): this is what is needed to capture a tooltip, which egui only shows
-  under a pointer at rest.
+    away): this is what is needed to capture a tooltip, which egui only shows
+    under a pointer at rest. `,h` holds the left button for 57 frames; use
+    `AURORA_FPS_LIMIT=60` to exercise the 0.5-second hold that opens a
+    person's contact settings in Contacts and People. Compare with `,l`:
+    a short click selects the row and keeps the list visible.
 - **`AURORA_DEMO_HOVER=1`**: from frame 300, the cursor sweeps the window
   for 120 frames, stays still for 120 frames, and so on (search for the
   object under the cursor and answers kept from one frame to the next,

@@ -1324,13 +1324,14 @@ still distinguishes a deliberate move from pointer jitter or a child control.
 appearance, crossings reported, regions left behind by a teleport), `ui/people/radar.rs`
 its table (Firestorm's look), its rows, its settings and its options menu; `ui/people/nearby.rs`
 the same list in Aurora's look (rows grouped by chat range, compact density, sort pills, quick
-actions over the row under the pointer), `ui/people/sheet.rs` the sheet of the person clicked,
+actions over the row under the pointer), `ui/people/sheet.rs` the sheet of the person held,
 at the right (rights of a friendship, what the radar knows, the avatar menu under "…"; the window
 widens for it before its frame and gives the width back, "Nickname and contact sets"),
 `ui/people/friends.rs`, `groups.rs` (with a group's sheet), `sets.rs`, `recent.rs` and
 `blocked.rs` the other tabs of Aurora's look (the Contacts tab's rights, actions and dialogs,
 reused from `ui/contacts.rs`), `ui/people/rows.rs` what their rows share (faces, names, a right
-end that never covers anything, quick actions, Ctrl / Shift selection), `world/recent.rs` the
+end that never covers anything, quick actions, Ctrl / Shift selection and the 0.5-second
+hold that opens contact settings in People and Conversations › Contacts), `world/recent.rs` the
 residents met lately (LLRecentPeople), `demo_people.rs` their offline scenario; `ui/people.rs`
 the window, its tabs, and the simple Friends, Groups and Blocked lists of Firestorm's look.
 `ui/widgets/pills.rs` shares the tabs in pills, the filter pills and the search box of the

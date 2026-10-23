@@ -156,6 +156,21 @@ impl Harness {
         self.frame(vec![button(false)]);
     }
 
+    fn hold(&mut self, at: egui::Pos2) {
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame(vec![egui::Event::PointerMoved(at)]);
+        self.frame(vec![button(true)]);
+        for _ in 0..36 {
+            self.frame(Vec::new());
+        }
+        self.frame(vec![button(false)]);
+    }
+
     /// A right click at `at`, and the frames that show its menu.
     fn right_click(&mut self, at: egui::Pos2) -> Vec<crate::ui::widgets::elide_tests::Text> {
         let button = |pressed| egui::Event::PointerButton {
@@ -951,7 +966,7 @@ fn contacts_navigation_double_click_opens_im_at_every_width() {
                     for _ in 0..30 {
                         h.frame(Vec::new());
                     }
-                    assert_eq!(h.people.sheet, None, "the cancelled single click cannot show a sheet after the IM");
+                    assert_eq!(h.people.sheet, None, "a double click cannot show a sheet after the IM");
                 }
             }
         }
@@ -967,11 +982,12 @@ fn contacts_navigation_entry_returns_from_sheet_to_list() {
             let mut h = contacts_navigation(style, width);
             let texts = h.settle();
             h.people.filter = "Friend 0".into();
-            h.click(painted(&texts, "Friend 00").rect.center());
+            h.hold(painted(&texts, "Friend 00").rect.center());
             for _ in 0..30 {
                 h.frame(Vec::new());
             }
-            assert_eq!(h.people.sheet, Some(Uuid::from_u128(0xF000)), "single click opens the sheet");
+            assert_eq!(h.people.sheet, Some(Uuid::from_u128(0xF000)), "a long press opens the sheet");
+            assert!(h.actions.is_empty(), "releasing the hold cannot also start an IM");
             let selected = h.people.sel.clone();
             let texts = h.settle();
             assert_eq!(
@@ -1000,20 +1016,20 @@ fn contacts_navigation_entry_returns_from_sheet_to_list() {
 }
 
 #[test]
-fn contacts_navigation_entry_cancels_a_pending_sheet() {
-    for width in [700.0, 460.0] {
-        let mut h = contacts_navigation(ChatStyle::Aurora, width);
-        let texts = h.settle();
-        h.click(painted(&texts, "Friend 00").rect.center());
-        h.click(h.rect(entry_id(Pinned::Contacts)).center());
-        for _ in 0..30 {
-            h.frame(Vec::new());
+fn contacts_navigation_single_click_only_selects() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for width in [960.0, 700.0, 460.0] {
+            let mut h = contacts_navigation(style, width);
+            let texts = h.settle();
+            h.click(painted(&texts, "Friend 00").rect.center());
+            for _ in 0..45 {
+                h.frame(Vec::new());
+            }
+            assert_eq!(h.people.sheet, None, "{style:?} at {width}: a click never opens settings");
+            assert_eq!(h.people.sel, vec![Uuid::from_u128(0xF000)], "the contact is selected");
+            assert!(h.actions.is_empty());
+            assert!(h.settle().iter().any(|t| t.source == "Friend 01"), "the list stays visible");
         }
-        assert_eq!(
-            h.people.sheet, None,
-            "Contacts cancels even a sheet waiting for the double-click interval"
-        );
-        assert!(h.settle().iter().any(|t| t.source == "Friend 01"));
     }
 }
 

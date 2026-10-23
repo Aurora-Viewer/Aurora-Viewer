@@ -5,7 +5,7 @@
 //! boxes are (applyRightsToFriends: the map goes with the online status,
 //! the right to modify our objects is confirmed first), and after a line
 //! the two we receive. Ctrl / Shift choose several for the menu of several;
-//! a plain click opens the sheet. The view options are the list's own
+//! a long press opens the sheet. The view options are the list's own
 //! (menu "Options", FSFriendListColumnShow* and the others), the sort is in
 //! pills (FriendsSortOrder), and a contact set can filter the list.
 
@@ -51,22 +51,8 @@ const RECEIVED: [(i32, &str, &str); 2] = [
     ),
 ];
 
-/// The friends tab: the list, and the sheet of the friend clicked.
+/// The friends tab: the list, and the sheet of the friend held.
 pub(super) fn tab(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleUi) {
-    let (now, held, secondary) = ui.input(|i| (i.time, i.pointer.primary_down(), i.pointer.secondary_down()));
-    if secondary {
-        st.pending_sheet = None;
-    }
-    if let Some((id, deadline)) = st.pending_sheet {
-        if !c.defer_sheet || (now >= deadline && !held) {
-            super::nearby::open_sheet(st, id);
-            // An inline sheet never widens the Conversations window.
-            st.sheet_grow = false;
-        } else {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_secs_f64((deadline - now).max(0.01)));
-        }
-    }
     super::split(ui, c, data, st, "people-friends-list", list, super::person_sheet);
 }
 
@@ -329,8 +315,6 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let p = c.p;
     let f = &line.friend;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), RICH_H), Sense::click_and_drag());
-    // dragged onto a conversation, a friend joins it
-    resp.dnd_set_drag_payload(crate::ui::call_invite::PersonDrag(f.id));
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -376,31 +360,20 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let color = crate::ui::colors::resident_name(c.world, &f.id, color);
     let cut = rows::names(ui, p, rect, left, end.names_right, &line.name, color, &line.status, line.set, None);
     ui.set_opacity(opacity);
-    if resp.clicked() || resp.drag_started() {
-        st.pending_sheet = None;
+    let action = if clicked_right {
+        rows::RowAction::default()
+    } else {
+        rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, f.id)
+    };
+    if action.sheet {
+        super::nearby::open_sheet(st, f.id);
     }
-    if !clicked_right && rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, f.id) {
-        if c.defer_sheet {
-            // FSFloaterContacts::onImButtonClicked remains the double-click
-            // action even when the inline sheet must replace this row.
-            let delay = ui.ctx().options(|o| o.input_options.max_double_click_delay);
-            st.pending_sheet = Some((f.id, ui.input(|i| i.time) + delay));
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs_f64(delay));
-        } else {
-            super::nearby::open_sheet(st, f.id);
-        }
-    }
-    // After a click on Contacts followed by two on this row, egui can
-    // count the latter as a triple click (its timer spans all widgets).
-    if resp.double_clicked() || resp.triple_clicked() {
-        st.pending_sheet = None;
+    if action.activate {
         c.actions.push(super::PeopleAction::OpenIm(f.id));
     }
     rows::person_menu(&resp, p, c.world, &st.sel, f.id);
     let on_names = resp.hover_pos().is_some_and(|at| at.x >= left && at.x <= end.names_right);
-    if on_names && (cut || line.full != line.name) {
-        resp.on_hover_text(&line.full);
-    }
+    rows::contact_tip(resp, (on_names && (cut || line.full != line.name)).then_some(line.full.as_str()));
 }
 
 /// Profile, IM, a teleport offer to a friend online, and the whole menu.
