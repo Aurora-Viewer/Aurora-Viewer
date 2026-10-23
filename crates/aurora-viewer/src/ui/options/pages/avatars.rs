@@ -103,6 +103,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(plate_click),
                     &choices,
                 );
+                cx.combo(
+                    tr!("ui-options-plate-shift-click"),
+                    tr!("ui-options-plate-shift-click-help"),
+                    &field!(plate_shift_click),
+                    &choices,
+                );
+                cx.combo(
+                    tr!("ui-options-plate-ctrl-click"),
+                    tr!("ui-options-plate-ctrl-click-help"),
+                    &field!(plate_ctrl_click),
+                    &choices,
+                );
             });
             // by relation (me, friends, blocked, Linden Lab) behind a switch,
             // off by default, for the plates and the classic tags alike;

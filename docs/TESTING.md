@@ -755,6 +755,13 @@ without the overlay. Rigged faces participate only when
 their transparency overlay is displayed (`alpha_rigged` too).
 `plate-hidden` opens the profile of another resident through an invisible
 Blend panel; `plate-wall` keeps the profile closed behind a solid wall.
+Append `-shift` or `-ctrl` to either plate mode to select the independent
+Shift action (IM) or Ctrl action (avatar menu); the plain action stays Profile.
+The modifier is released at frame 701, before a delayed GPU pick may finish.
+`plate-hidden-ctrl-shift` and `plate-hidden-alt` must run no plate action.
+Append `-none` before `-shift` or `-ctrl` to disable that gesture: it must not
+fall back to Profile. `AURORA_DEMO_OPTIONS=avatars:plates` reveals the three
+independent preference rows; both new actions default to Nothing.
 `worn-prim` and `worn-mesh` put a scripted attachment on another resident,
 without move/modify rights; both must log `demo touch_start: prim=975` and
 `demo touch_end: prim=975`, with `held=false` in the final result. The mesh
