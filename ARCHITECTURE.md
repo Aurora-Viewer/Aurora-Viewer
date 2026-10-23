@@ -2153,13 +2153,14 @@ speed of 1.2 m/s taking priority over run. Bridge 1.27 keeps water support durin
 Descend and caps speed directly from captured controls before the next viewer
 command. It releases for dry terrain, flight, seats, suspension or bridge loss.
 Movelock retains its normal anchor ownership. Ascent at the supported surface
-starts a four-metre, 1.6-second commanded jump in bridge 1.31 mode 13,
-following the avatar jump reference in `https://wiki.secondlife.com/wiki/Physics_Test`.
-A nonzero action ID
+starts a 2.5-metre, 1.25-second commanded jump in bridge 1.32 mode 13,
+tuned by human simulator feedback between the initial 1 m and native-sized 4 m
+targets. A nonzero action ID
 and jump height distinguish it from ordinary support; retransmission never
 renews the trajectory. Collision-aware targets preserve directional movement
-and walk/run speed. The viewer keeps support ownership through Jumping/Falling
-AO signals until actual landing (three-second timeout), preventing automatic
+and walk/run speed. The viewer keeps one continuous Jumping AO signal through
+ascent and descent until actual landing (three-second timeout), suppressing
+native Falling locally and for observers through the ordinary AO owner. This prevents automatic
 flight and repeated jumps from a held key. Crouching may start a jump, but a
 submerged avatar must first reach the surface. The bottom-toolbar `water_walk` button and Movement
 switch share this preference. Existing nonempty custom bars receive the button

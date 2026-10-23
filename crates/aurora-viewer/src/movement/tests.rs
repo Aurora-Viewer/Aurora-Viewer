@@ -140,7 +140,7 @@ fn water_walk_jump_keeps_motor_ownership_and_suppresses_automatic_flight_until_l
     for (ms, z, vz, pose) in [
         (100, 21.2, 2.0, crate::ao::State::Jumping),
         (450, 21.6, 0.0, crate::ao::State::Jumping),
-        (700, 21.2, -2.0, crate::ao::State::Falling),
+        (700, 21.2, -2.0, crate::ao::State::Jumping),
     ] {
         f.position.z = z;
         f.velocity.z = vz;
@@ -160,7 +160,7 @@ fn water_walk_jump_keeps_motor_ownership_and_suppresses_automatic_flight_until_l
 }
 
 #[test]
-fn water_walk_full_height_jump_keeps_ownership_until_the_longer_arc_lands() {
+fn water_walk_intermediate_height_jump_keeps_its_pose_until_the_arc_lands() {
     let now = Instant::now();
     let prefs = Preferences {
         water_walk: true,
@@ -179,13 +179,13 @@ fn water_walk_full_height_jump_keeps_ownership_until_the_longer_arc_lands() {
         ..Default::default()
     };
     let jump = runtime.update(&prefs, &f, &input, now).motion;
-    assert_eq!(jump.parameters, [5.13, f.height, 4.0]);
-    // Prescribed samples of a 4 m / 1.6 s arc, not a Havok simulation.
+    assert_eq!(jump.parameters, [5.13, f.height, 2.5]);
+    // Prescribed samples of a 2.5 m / 1.25 s arc, not a Havok simulation.
     for (ms, lift, velocity, pose) in [
-        (100, 0.9375, 8.75, crate::ao::State::Jumping),
-        (800, 4.0, 0.0, crate::ao::State::Jumping),
-        (1200, 3.0, -5.0, crate::ao::State::Falling),
-        (1500, 0.9375, -8.75, crate::ao::State::Falling),
+        (125, 0.9, 6.4, crate::ao::State::Jumping),
+        (625, 2.5, 0.0, crate::ao::State::Jumping),
+        (1000, 1.6, -4.8, crate::ao::State::Jumping),
+        (1125, 0.9, -6.4, crate::ao::State::Jumping),
     ] {
         f.position.z = surface + lift;
         f.velocity.z = velocity;
@@ -197,7 +197,7 @@ fn water_walk_full_height_jump_keeps_ownership_until_the_longer_arc_lands() {
     }
     f.position.z = surface;
     f.velocity.z = 0.0;
-    let landed = runtime.update(&prefs, &f, &input, now + Duration::from_millis(1700));
+    let landed = runtime.update(&prefs, &f, &input, now + Duration::from_millis(1400));
     assert_eq!(landed.motion, Motion::motor(13, 5.13, f.height));
     assert_eq!(runtime.water_walk.pose(), Some(crate::ao::State::Running));
 }

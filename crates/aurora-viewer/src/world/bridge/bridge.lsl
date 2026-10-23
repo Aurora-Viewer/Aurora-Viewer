@@ -1,10 +1,10 @@
-// Aurora LSL Bridge v1.31. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.32. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 // Mono's 64 KB holds this compiled controller too, with little to spare: the
 // read-only queries run in query.lsl, so a busy region cannot halt Movelock
 // with a Stack-Heap Collision. Keep new services out of this script.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.31";
+string VERSION = "1.32";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -504,10 +504,10 @@ applyMotion() {
         // controls before the next viewer command, including always-run.
         float lift = 0.0;
         if (!gWalkJumpFinished && gParameters.z > 0.0) {
-            // Match the ordinary avatar jump reference: about four metres
-            // over 1.6 s (wiki.secondlife.com/wiki/Physics_Test). HTTP
+            // Simulator feedback selects a 2.5 m / 1.25 s arc between the
+            // initial short jump and the ordinary avatar jump. HTTP
             // refreshes retain the original start time.
-            float phase = (llGetTime() - gWalkJumpStarted) / 1.6;
+            float phase = (llGetTime() - gWalkJumpStarted) / 1.25;
             if (phase >= 1.0) gWalkJumpFinished = TRUE;
             else lift = 4.0 * gParameters.z * phase * (1.0 - phase);
         }
@@ -794,7 +794,7 @@ default {
                 integer action = llList2Integer(parts, 9);
                 integer previousMode = gMode;
                 if (mode == 13) {
-                    if (action > 0 && parameters.z == 4.0) {
+                    if (action > 0 && parameters.z == 2.5) {
                         if (action != gWalkJumpAction) {
                             gWalkJumpAction = action;
                             gWalkJumpStarted = llGetTime();

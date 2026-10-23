@@ -76,11 +76,10 @@ impl Runtime {
             jump.risen |= frame.position.z > target + 0.2;
             let landed = jump.risen && frame.position.z <= target + 0.12 && frame.velocity.z <= 0.5;
             if !frame.locked && !landed && now.duration_since(jump.started) < Duration::from_secs(3) {
-                self.pose = Some(if jump.risen && frame.velocity.z < -0.2 {
-                    State::Falling
-                } else {
-                    State::Jumping
-                });
+                // Keep the same jump animation clock through descent. This
+                // supported arc returns to water, so a native fall signal
+                // must not interrupt the pose before actual contact.
+                self.pose = Some(State::Jumping);
                 return Some(jump.motion);
             }
             self.jump = None;
@@ -227,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn water_walk_jump_keeps_one_action_through_ascent_fall_and_landing() {
+    fn water_walk_jump_keeps_one_action_and_animation_through_descent_until_landing() {
         let now = Instant::now();
         let mut r = Runtime::default();
         let mut f = frame();
@@ -240,10 +239,11 @@ mod tests {
         };
         let jump = r.update(true, &f, &input, now).unwrap();
         assert_eq!(jump.mode, 13);
-        assert_eq!(jump.parameters, [3.2, f.height, 4.0]);
+        assert_eq!(jump.parameters, [3.2, f.height, 2.5]);
         assert!(jump.valid() && jump.action > 0);
         assert!(r.active());
-        assert_eq!(r.signal(now).unwrap().0, State::Jumping);
+        let (state, started) = r.signal(now).unwrap();
+        assert_eq!(state, State::Jumping);
         // A delayed simulator update must not release the launch command.
         assert_eq!(r.update(true, &f, &input, now + Duration::from_millis(400)), Some(jump));
         f.position.z += 0.7;
@@ -258,7 +258,9 @@ mod tests {
         assert_eq!(r.signal(later).unwrap().0, State::Jumping);
         f.velocity.z = -2.0;
         assert_eq!(r.update(true, &f, &input, later), Some(jump));
-        assert_eq!(r.signal(later).unwrap().0, State::Falling);
+        let (state, descending) = r.signal(later).unwrap();
+        assert_eq!(state, State::Jumping);
+        assert_eq!(descending.continuous_start, started.continuous_start);
         f.position.z = 20.95;
         let landed = now + Duration::from_millis(1400);
         let support = r.update(true, &f, &input, landed).unwrap();

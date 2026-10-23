@@ -309,6 +309,99 @@ fn water_walk_jump_fall_replacements_and_stock_fallback_release_native_signals()
 }
 
 #[test]
+fn water_walk_jump_suppresses_native_fall_through_descent_and_releases_on_contact_or_disable() {
+    let (_, mut set) = fixture();
+    set.states.insert(State::Jumping, set.states[&State::Running].clone());
+    let now = Instant::now();
+    for enabled in [false, true] {
+        for land in [false, true] {
+            let mut movement = crate::movement::water_walk::Runtime::default();
+            let mut physical = crate::movement::Frame {
+                position: glam::Vec3::new(40.0, 124.0, 20.9),
+                velocity: glam::Vec3::ZERO,
+                height: 1.8,
+                water: Some(20.0),
+                water_contact: None,
+                ground: Some(16.0),
+                flying: false,
+                can_fly: false,
+                seated: false,
+                suspended: false,
+                locked: false,
+                bridge_ready: true,
+                running: false,
+                obstacle: false,
+                landing: None,
+                on_ground: false,
+                jumping: false,
+            };
+            let input = crate::agent::MoveInput {
+                up: true,
+                ..Default::default()
+            };
+            movement.update(true, &physical, &crate::agent::MoveInput::default(), now);
+            let mut ao = Runtime::default();
+            let asset = if enabled {
+                step(&set, State::Jumping, 0)
+            } else {
+                State::Jumping.motion()
+            };
+            for (ms, lift, velocity) in [
+                (0, 0.0, 8.0),
+                (125, 0.9, 6.4),
+                (625, 2.5, 0.0),
+                (1000, 1.6, -4.8),
+                (1125, 0.9, -6.4),
+            ] {
+                let time = now + Duration::from_millis(ms);
+                physical.position.z = 20.9 + lift;
+                physical.velocity.z = velocity;
+                movement.update(true, &physical, &input, time);
+                let hold = movement.signal(time).expect("jump owns the entire supported arc");
+                assert_eq!(hold.0, State::Jumping);
+                assert_eq!(hold.1.continuous_start, now);
+                // Repeated simulator fall signals must stay hidden locally
+                // and stopped for observers, including below the apex.
+                let raw = [signal(State::Falling, time)];
+                let mut f = frame(&raw);
+                f.enabled = enabled;
+                f.water_walk_hold = Some(hold);
+                let (pose, commands) = ao.update(Some(&set), f, time, |_| true, |_| 0);
+                let jump = pose.iter().find(|a| a.id == asset).expect("jump pose");
+                assert_eq!(jump.continuous_start, now);
+                assert!(!pose.contains(&raw[0]));
+                assert!(!commands.contains(&(raw[0].id, true)));
+                if ms == 0 {
+                    assert!(commands.contains(&(raw[0].id, false)));
+                }
+            }
+            let time = now + Duration::from_millis(1400);
+            if land {
+                physical.position.z = 20.9;
+                physical.velocity.z = 0.0;
+            }
+            movement.update(land, &physical, &input, time);
+            let hold = movement.signal(time);
+            assert_eq!(hold.map(|(s, _)| s), land.then_some(State::Standing));
+            let raw = [signal(State::Falling, time)];
+            let mut f = frame(&raw);
+            f.enabled = false;
+            f.water_walk_hold = hold;
+            let (pose, commands) = ao.update(Some(&set), f, time, |_| true, |_| 0);
+            assert!(!pose.iter().any(|a| a.id == asset));
+            assert!(commands.contains(&(asset, false)));
+            if land {
+                assert!(pose.iter().any(|a| a.id == State::Standing.motion()));
+                assert!(!pose.contains(&raw[0]));
+            } else {
+                assert!(pose.contains(&raw[0]), "ordinary falling resumes after disabling water support");
+                assert!(commands.contains(&(raw[0].id, true)));
+            }
+        }
+    }
+}
+
+#[test]
 fn a_standalone_cannonball_slot_works_with_regular_ao_and_swimming_disabled() {
     let (_, mut set) = fixture();
     let config = set.states[&State::Running].clone();

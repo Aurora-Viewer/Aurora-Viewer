@@ -45,11 +45,11 @@ pub struct Command {
     pub motion: Motion,
 }
 
-/// Commanded water-walk arc, following the avatar jump reference (~3.98 m,
-/// 1.6 s) in https://wiki.secondlife.com/wiki/Physics_Test. Actual simulator
-/// motion still depends on the collision-aware motor.
-pub const WATER_WALK_JUMP_HEIGHT: f32 = 4.0;
-pub const WATER_WALK_JUMP_DURATION: f32 = 1.6;
+/// Commanded water-walk arc, tuned after simulator feedback to sit halfway
+/// between the initial 1 m jump and the ordinary avatar's roughly 4 m jump.
+/// Actual simulator motion still depends on the collision-aware motor.
+pub const WATER_WALK_JUMP_HEIGHT: f32 = 2.5;
+pub const WATER_WALK_JUMP_DURATION: f32 = 1.25;
 
 /// Motor configuration; LSL derives direction from its current control events.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -558,7 +558,7 @@ mod tests {
         let jump = Motion::water_walk_jump(5.13, 1.7);
         assert!(jump.valid());
         assert_eq!(jump.mode, 13);
-        assert_eq!(jump.parameters, [5.13, 1.7, 4.0]);
+        assert_eq!(jump.parameters, [5.13, 1.7, 2.5]);
         assert!((1..=i32::MAX as u32).contains(&jump.action));
         for invalid in [
             Motion { action: 0, ..jump },
@@ -568,7 +568,7 @@ mod tests {
                 ..jump
             },
             Motion {
-                parameters: [5.13, 1.7, 4.01],
+                parameters: [5.13, 1.7, 2.51],
                 ..jump
             },
             Motion {
