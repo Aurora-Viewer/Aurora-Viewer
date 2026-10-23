@@ -5392,6 +5392,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_BC7_CACHE=0` | BC7 without its disk cache |
 | `AURORA_RENDER_THREAD=0` | Frames drawn on the main thread |
 | `AURORA_FRAME_PRIORITY=normal` or `alt` | The frame's threads at normal priority, or both priorities alternately |
+| `AURORA_ALLOCATOR=system` | The system's memory allocator instead of mimalloc, as before |
 | `AURORA_EYE_RELATIVE=0` | Vertices of the objects and the terrain computed in region coordinates |
 | `AURORA_SHADOW_LEGACY=1` | Shadows drawn by the old path |
 | `AURORA_TANGENTS=vertex\|pixel\|derivative\|alt` | Tangent frame of the normal maps: the vertices' (default), per pixel, the former one, or vertex and pixel alternated each second |
@@ -5950,6 +5951,17 @@ What the inventory must show with these scenarios:
   in three, named `xmode=old` at the end of the `perf summary` line
   (`xmode=new` for the others): read `ft=` and `off_cpu:` per mode, on a
   machine that is busy with something else (a build, another viewer).
+- **`AURORA_ALLOCATOR=system`**: the process allocates with the system's
+  allocator (the Windows process heap), as before, instead of mimalloc
+  (`allocator.rs`). The choice holds for the whole run, read before
+  `main`; the log's first line says which one runs (`starting (windows
+  x86_64, mimalloc allocator)`). The system heap has one lock for every
+  thread: when the background jobs decode and build in a burst (the camera
+  turning in a dense place, an arrival), the main thread waits on it at
+  its allocations and frees, a frame of 25 to 110 ms with most of it off
+  the processor. To compare, alternate runs of both on a load scene
+  (`AURORA_DEMO_ARRIVAL=<folder>,net=20,n=12000,avatars=60,worn=8`) and read
+  the worst frame of each second (`max=`) and its `off_cpu:` segment.
 - **`AURORA_MSAA_PREPASS=0|alt`**: with MSAA, the scene pass has its own
   multisampled depth and cannot reuse that of the single-sample prepass. By
   default, a second prepass fills this depth just before (terrain and

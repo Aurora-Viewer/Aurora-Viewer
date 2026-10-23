@@ -68,6 +68,17 @@ serde_path_to_error = "0.1.20"
 # Apache-2.0 with the reference's zlib notice
 bevy_mikktspace = "1.0.0"
 fancy-regex = "0.19.2"
+# global allocator (allocator.rs): one heap per thread, so the main thread
+# no longer queues behind the background jobs on the system heap's lock; MIT.
+# mimalloc 2 (`v2`): with 3, the render thread lost 20 to 43 ms now and then
+# during arrivals (no such frame in 8 runs with 2, 4 in 8 runs with 3).
+# Held at these two versions: libmimalloc-sys 0.1.48 and later compile
+# mimalloc through a `.cc` file that cc passes to cl as `-Tp <file>`, which
+# sccache 0.18 (the shared build cache, AGENTS.md section 3) breaks
+# ("c1xx: cannot open source file '/WX-'"). Bump both once sccache handles it
+# (also in .github/dependabot.yml).
+mimalloc = { version = "=0.1.50", features = ["v2"] }
+libmimalloc-sys = "=0.1.47"
 
 # remembered login password and the GitHub authorization of crash reports
 # (Windows Credential Manager, macOS Keychain, Secret Service on Linux)
@@ -75,10 +86,15 @@ fancy-regex = "0.19.2"
 version = "4"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Globalization", "Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_WindowsProgramming", "Win32_System_Performance", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_IO", "Win32_System_RemoteDesktop", "Win32_System_Registry"] }
+windows-sys = { version = "0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_System_Threading", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_SystemInformation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_Globalization", "Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_ProcessStatus", "Win32_System_WindowsProgramming", "Win32_System_Performance", "Win32_System_Pipes", "Win32_Storage_FileSystem", "Win32_Security", "Win32_System_IO", "Win32_System_RemoteDesktop", "Win32_System_Registry", "Win32_System_Environment"] }
 # Windows notifications (system_notify.rs): the WinRT toast API, which
 # windows-sys does not cover; already in the tree through wgpu and cpal
 windows = { version = "0.62.2", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_System_Registry", "Win32_System_WinRT"] }
+
+[target.'cfg(unix)'.dependencies]
+# getenv without allocating, for the allocator's choice (allocator.rs); already
+# in the tree
+libc = "0.2.190"
 
 # icon and version block of aurora-viewer.exe (build.rs; runs rc.exe of the
 # Windows SDK). Without `toml`: nothing is read from Cargo.toml.

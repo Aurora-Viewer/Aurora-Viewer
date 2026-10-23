@@ -254,10 +254,11 @@ pub fn init() {
         log::error!("panic: {info}\n{bt}");
     }));
     log::info!(
-        "Aurora Viewer {} starting ({} {}), log: {}",
+        "Aurora Viewer {} starting ({} {}, {} allocator), log: {}",
         aurora_version::version(),
         std::env::consts::OS,
         std::env::consts::ARCH,
+        crate::allocator::name(),
         path.display()
     );
 }
