@@ -1080,12 +1080,19 @@ fn contacts_navigation_details_button_opens_sheet() {
                         v.this_pass
                             .widgets
                             .get_layer(row.layer_id)
-                            .filter(|w| w.sense.senses_click() && w.rect.size() == egui::vec2(26.0, 24.0) && row.rect.contains_rect(w.rect))
+                            .filter(|w| {
+                                w.sense.senses_click()
+                                    && w.rect.height() == 24.0
+                                    && w.rect.width() <= 26.0
+                                    && row.rect.contains_rect(w.rect)
+                            })
                             .map(|w| w.rect)
                             .collect()
                     });
                     buttons.sort_by(|a, b| a.top().total_cmp(&b.top()).then(a.left().total_cmp(&b.left())));
                     assert_eq!(buttons.len(), if online { 5 } else { 4 }, "all quick actions remain visible");
+                    assert_eq!(row.rect.height(), 42.0, "contact rows keep their height at every window width");
+                    assert!(buttons.iter().all(|button| button.center().y == row.rect.center().y));
                     let details = buttons[buttons.len() - 2].center();
                     h.click(details);
                     assert_eq!(

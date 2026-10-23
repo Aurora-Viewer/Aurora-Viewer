@@ -21,6 +21,8 @@ const PAD: f32 = 8.0;
 /// One quick action's button, and the room around them in their pill.
 pub(super) const BUTTON: Vec2 = Vec2::new(26.0, 24.0);
 const ACTIONS_PAD: f32 = 3.0;
+/// A stable clickable name beside the avatar and the hover strip.
+pub(super) const ACTION_NAMES_MIN: f32 = 32.0;
 /// Width of the "+2" of what does not fit.
 pub(super) const MORE_W: f32 = 24.0;
 /// Height of a toolbar (search, buttons).
@@ -210,8 +212,13 @@ pub(super) struct End {
 }
 
 pub(super) fn end(row: Rect, names_left: f32, widths: &[f32], gap: f32, fold: bool) -> End {
+    end_before(row, names_left + NAMES_MIN + NAMES_GAP, widths, gap, fold)
+}
+
+/// Keep the fixed right-side parts after a reserved horizontal strip.
+pub(super) fn end_before(row: Rect, minimum_left: f32, widths: &[f32], gap: f32, fold: bool) -> End {
     let right = row.right() - PAD;
-    let room = right - (names_left + NAMES_MIN + NAMES_GAP);
+    let room = right - minimum_left;
     let total = |k: usize| -> f32 { widths[..k].iter().sum::<f32>() + gap * k.saturating_sub(1) as f32 };
     let n = widths.len();
     let (shown, more) = if total(n) <= room {
@@ -261,76 +268,33 @@ pub(super) fn actions_width(n: usize) -> f32 {
     n as f32 * (BUTTON.x + ACTIONS_PAD) + ACTIONS_PAD
 }
 
-/// The same adaptive action strip in People and Conversations. Information
-/// at the right keeps its place; a narrow row reserves a separate strip.
-#[derive(Clone, Copy, Debug)]
-pub(super) struct ActionLayout {
-    pub columns: usize,
-    pub stacked: bool,
-    pub height: f32,
-    base_height: f32,
-    size: Vec2,
+/// Width of a single strip for the chosen button width.
+pub(super) fn actions_width_for(count: usize, button_width: f32) -> f32 {
+    count as f32 * (button_width + ACTIONS_PAD) + ACTIONS_PAD
 }
 
-impl ActionLayout {
-    pub fn new(base_height: f32, room: f32, inline_room: f32, count: usize, button: Vec2) -> Self {
-        let fitting = (1..=count)
-            .rev()
-            .find(|n| *n as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD <= room)
-            .unwrap_or(1);
-        let columns = if fitting < count {
-            fitting.min(count.div_ceil(2).max(1))
-        } else {
-            count.max(1)
-        };
-        let size = Vec2::new(
-            columns as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD,
-            count.div_ceil(columns) as f32 * (button.y + ACTIONS_PAD) + ACTIONS_PAD,
-        );
-        let stacked = count as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD > inline_room;
-        let height = if stacked {
-            base_height + size.y + 6.0
-        } else {
-            base_height.max(size.y)
-        };
-        Self {
-            columns,
-            stacked,
-            height,
-            base_height,
-            size,
-        }
-    }
-
-    pub fn identity(self, row: Rect) -> Rect {
-        Rect::from_min_size(row.min, Vec2::new(row.width(), self.base_height))
-    }
-
-    pub fn slot(self, row: Rect, right: f32) -> Rect {
-        let top = if self.stacked {
-            row.top() + self.base_height + ACTIONS_PAD
-        } else {
-            row.top()
-        };
-        let bottom = row.bottom() - if self.stacked { ACTIONS_PAD } else { 0.0 };
-        Rect::from_min_max(Pos2::new(right - self.size.x, top), Pos2::new(right, bottom))
-    }
+/// A single horizontal action strip inside the row, without changing its height.
+pub(super) fn actions_slot(row: Rect, left: f32, right: f32, count: usize, button: Vec2) -> Rect {
+    let width = count as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD;
+    Rect::from_min_max(Pos2::new((right - width).max(left), row.top()), Pos2::new(right, row.bottom()))
 }
 
-/// The pill and every full-size button, in visual reading order.
-pub(super) fn action_rects(slot: Rect, count: usize, columns: usize, button: Vec2) -> (Rect, Vec<Rect>) {
-    let columns = columns.max(1).min(count.max(1));
-    let size = Vec2::new(
-        columns as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD,
-        count.div_ceil(columns) as f32 * (button.y + ACTIONS_PAD) + ACTIONS_PAD,
+/// Keep every button on one line, tightening its hit area only
+/// when the usual size does not fit. Icons keep their usual size.
+pub(super) fn action_rects(slot: Rect, count: usize, button: Vec2) -> (Rect, Vec<Rect>) {
+    let count_f = count.max(1) as f32;
+    let button = Vec2::new(
+        button.x.min((slot.width() - ACTIONS_PAD * (count_f + 1.0)) / count_f).max(0.0),
+        button.y.min(slot.height() - 2.0 * ACTIONS_PAD).max(0.0),
     );
+    let size = Vec2::new(count as f32 * (button.x + ACTIONS_PAD) + ACTIONS_PAD, button.y + 2.0 * ACTIONS_PAD);
     let pill = Rect::from_min_size(Pos2::new(slot.right() - size.x, slot.center().y - size.y / 2.0), size);
     let cells = (0..count)
         .map(|i| {
             Rect::from_min_size(
                 Pos2::new(
-                    pill.left() + ACTIONS_PAD + (i % columns) as f32 * (button.x + ACTIONS_PAD),
-                    pill.top() + ACTIONS_PAD + (i / columns) as f32 * (button.y + ACTIONS_PAD),
+                    pill.left() + ACTIONS_PAD + i as f32 * (button.x + ACTIONS_PAD),
+                    pill.top() + ACTIONS_PAD,
                 ),
                 button,
             )
@@ -348,19 +312,7 @@ pub(super) fn actions(
     buttons: &[(&str, &str)],
     salt: impl std::hash::Hash + std::fmt::Debug,
 ) -> Vec<egui::Response> {
-    actions_wrapped(ui, p, slot, buttons, salt, buttons.len())
-}
-
-/// Keep every action at its usual size, wrapping inside the reserved slot.
-pub(super) fn actions_wrapped(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    slot: Rect,
-    buttons: &[(&str, &str)],
-    salt: impl std::hash::Hash + std::fmt::Debug,
-    columns: usize,
-) -> Vec<egui::Response> {
-    let (pill, cells) = action_rects(slot, buttons.len(), columns, BUTTON);
+    let (pill, cells) = action_rects(slot, buttons.len(), BUTTON);
     ui.painter()
         .rect_filled(pill, ui.visuals().widgets.inactive.corner_radius, p.raised);
     let id = ui.scope_id().with(salt);

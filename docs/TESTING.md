@@ -4278,10 +4278,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `crowd-hover`: `rows` and `crowd` with a friend under the pointer
   carrying every badge. In both densities every quick action stays visible
   at the right edge, replacing the time and distance during hover. Badges
-  stay to the left of inline actions and fold when necessary. Very narrow
-  rows reserve an action line below the name, wrapping when needed, so
-  hover does not move the list. The details action before More opens the
-  resident sheet.
+  stay to the left of the actions and fold when necessary. Row heights stay
+  at 42 points in rich density and 24 points in compact density, at every
+  width and with or without hover. Actions stay on one horizontal line;
+  names truncate and button widths tighten when needed, with unchanged
+  icon sizes. Name click targets remain stable when buttons appear. The
+  details action before More opens the resident sheet.
   `legacy`: the same
   residents in Firestorm's table, for this run only (the preference is
   not changed). Capture `crowd` at frame 900 or later: the profiles
@@ -4383,10 +4385,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   points it only selects the friend. Hovering shows a contact details
   button immediately before More; it opens the same sheet as a long press.
   Permission cells stay in the same right-aligned positions with or without
-  hover. Every quick action stays visible to their left. At narrow list
-  widths the group gets its own line below the name, wrapping into two rows
-  of full-size buttons when needed. The name and avatar stay visible and
-  clickable; height is reserved before hover so the list stays still.
+  hover. Every quick action stays visible to their left, on one horizontal
+  line. Rows always stay 42 points high while resizing in either direction.
+  Names truncate before the actions, whose widths tighten if necessary;
+  name and avatar click targets remain stable. Permission groups only show
+  when room remains for every action, independently of hover.
   Details remains before More.
   When the sheet replaces the list, clicking
   Contacts returns to the list just like the sheet's cross, keeping the

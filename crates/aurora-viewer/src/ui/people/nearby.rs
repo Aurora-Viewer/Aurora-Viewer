@@ -370,8 +370,7 @@ fn list_part(
                 let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(width, if compact { COMPACT_H } else { RICH_H }));
                 let count = 4 + usize::from(!row.friend && row.id != world.agent_id);
                 let badge_count = badges(p, row).len();
-                let end = right_end(bounds, names_left(bounds, compact), badge_count, Some(count), compact);
-                let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, end.height), Sense::click_and_drag());
+                let (rect, resp) = ui.allocate_exact_size(bounds.size(), Sense::click_and_drag());
                 if !ui.is_rect_visible(rect) {
                     continue;
                 }
@@ -386,11 +385,12 @@ fn list_part(
                 let pointer = resp.hover_pos();
                 let hot =
                     (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(row.id) || st.demo_hover == Some(row.id);
-                let end = if hot {
-                    end
-                } else {
-                    right_end(bounds, names_left(bounds, compact), badge_count, None, compact)
-                };
+                let mut end = right_end(rect, names_left(rect, compact), badge_count, Some(count), compact);
+                if !hot {
+                    let names_right = end.names_right;
+                    end = right_end(rect, names_left(rect, compact), badge_count, None, compact);
+                    end.names_right = end.names_right.min(names_right);
+                }
                 let tip = if compact {
                     paint_compact(ui, p, world, data, st, row, rect, &end, i, selected, hot, pointer, actions)
                 } else {
@@ -632,10 +632,9 @@ const BADGES_GAP: f32 = 8.0;
 const NAMES_GAP: f32 = 6.0;
 
 /// Quick actions replace the time and distance at the row's right edge.
-/// A very narrow row reserves a separate line for every full-size action.
+/// Every action stays on one line; narrowing the list never changes row height.
 #[derive(Debug)]
 pub(super) struct RightEnd {
-    pub height: f32,
     /// The first badges of the row's list, left to right.
     pub badges: Vec<Rect>,
     /// The "+2" of the others, and how many it stands for.
@@ -649,8 +648,8 @@ pub(super) struct RightEnd {
 }
 
 /// The right end of `row` for `badges` badges, its names starting at
-/// `names_left`; `actions` reserves every quick action before hover and
-/// replaces the time and distance while the row is under the pointer.
+/// `names_left`; `actions` replaces the time and distance while the row
+/// is under the pointer, without covering the avatar or changing row height.
 pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Option<usize>, compact: bool) -> RightEnd {
     let m = metrics(compact);
     let right = row.right() - m.pad;
@@ -662,27 +661,14 @@ pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Opti
             Pos2::new(dist.left() - 6.0, row.bottom()),
         )
     });
-    let layout = actions.map(|n| {
-        super::rows::ActionLayout::new(
-            row.height(),
-            right - row.left() - m.pad,
-            right - names_left - m.names_min - NAMES_GAP,
-            n,
-            m.button,
-        )
+    let actions = actions.map(|n| {
+        let left = (names_left + NAMES_GAP + super::rows::ACTION_NAMES_MIN).min(right - super::rows::actions_width_for(n, 14.0));
+        let slot = super::rows::actions_slot(row, left, right, n, m.button);
+        super::rows::action_rects(slot, n, m.button)
     });
-    let height = layout.map_or(row.height(), |l| l.height);
-    let actions = actions.zip(layout).map(|(n, layout)| {
-        let full = Rect::from_min_size(row.min, Vec2::new(row.width(), height));
-        super::rows::action_rects(layout.slot(full, right), n, layout.columns, m.button)
-    });
-    let zone = if !layout.is_some_and(|l| l.stacked)
-        && let Some((pill, _)) = &actions
-    {
-        pill.left()
-    } else {
-        seen.map_or(dist.left(), |s| s.left())
-    };
+    let zone = actions
+        .as_ref()
+        .map_or_else(|| seen.map_or(dist.left(), |s| s.left()), |(pill, _)| pill.left());
     let badges_right = zone - BADGES_GAP;
     let room = badges_right - (names_left + m.names_min + NAMES_GAP);
     let width = |k: usize| if k == 0 { 0.0 } else { k as f32 * m.badge + (k - 1) as f32 * m.gap };
@@ -710,7 +696,6 @@ pub(super) fn right_end(row: Rect, names_left: f32, badges: usize, actions: Opti
     rects.reverse();
     let first = rects.first().map(|r| r.left()).or(more.map(|(r, _)| r.left())).unwrap_or(zone);
     RightEnd {
-        height,
         badges: rects,
         more,
         seen: if actions.is_none() { seen } else { None },
@@ -777,7 +762,7 @@ fn names_left(rect: Rect, compact: bool) -> f32 {
 }
 
 /// A rich identity with badges. Quick actions replace the time and range
-/// at the right, using reserved lines only when the list is too narrow.
+/// at the right. Every list width keeps the same row height.
 #[allow(clippy::too_many_arguments)]
 fn paint_rich(
     ui: &mut egui::Ui,
@@ -1032,10 +1017,18 @@ mod tests {
                         Some(buttons.len()),
                         compact,
                     );
-                    let full = Rect::from_min_size(base.min, Vec2::new(width, end.height));
+                    let full = base;
                     let (pill, cells) = end.actions.as_ref().expect("every action has a slot");
                     assert_eq!(cells.len(), buttons.len());
                     assert!(cells.iter().all(|cell| full.contains_rect(*cell)));
+                    assert!(
+                        cells.iter().all(|cell| cell.center().y == base.center().y),
+                        "every action stays on one line"
+                    );
+                    assert!(
+                        cells.iter().all(|cell| cell.left() >= names_left(base, compact)),
+                        "the avatar remains clickable"
+                    );
                     assert_eq!(pill.right(), base.right() - metrics(compact).pad);
                     assert!(end.dist.is_none() && end.seen.is_none(), "actions replace the time and distance");
                     let info = cells[cells.len() - 2].center();
@@ -1121,13 +1114,15 @@ mod tests {
                             parts.push(*pill);
                             assert_eq!(buttons.len(), actions.unwrap_or(0));
                             assert!(buttons.iter().all(|b| pill.contains_rect(*b)), "buttons in their pill");
+                            assert!(buttons.iter().all(|b| b.width() >= 14.0), "icons retain their full width");
                             assert!(end.dist.is_none() && end.seen.is_none());
                             assert_eq!(
                                 pill.right(),
                                 row.right() - m.pad,
                                 "actions stay over the distance at the right edge"
                             );
-                            assert!(Rect::from_min_size(row.min, Vec2::new(row.width(), end.height)).contains_rect(*pill));
+                            assert!(row.contains_rect(*pill), "actions never need a taller row");
+                            assert!(buttons.iter().all(|button| button.center().y == row.center().y));
                         }
                         for (i, a) in parts.iter().enumerate() {
                             assert!(
