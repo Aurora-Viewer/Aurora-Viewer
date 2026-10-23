@@ -91,8 +91,9 @@ impl App {
             }
         }
         if self.frame_count == 700 {
-            self.alt = mode.starts_with("camera-");
-            self.ctrl = mode.ends_with("-ctrl");
+            self.alt = mode.starts_with("camera-") || mode.contains("-alt");
+            self.ctrl = mode.contains("-ctrl");
+            self.shift = mode.contains("-shift");
             log::info!("demo world click: mode={mode}, cursor={:?}", self.cursor_pos);
             let over_ui = self.ui_takes_pointer();
             log::info!("demo world click UI: over_ui={over_ui}");
@@ -100,6 +101,10 @@ impl App {
         }
         if self.frame_count == 701 {
             self.mouse_input(MouseButton::Left, false, false);
+            // Release modifiers before the deferred pick finishes: its
+            // captured press must still choose the original gesture.
+            self.ctrl = false;
+            self.shift = false;
         }
         if self.frame_count == 740 {
             self.alt = false;
@@ -255,6 +260,16 @@ impl App {
         }
         let point = if mode.starts_with("plate-") {
             self.settings.plate_click = crate::settings::PlateClick::Profile;
+            self.settings.plate_shift_click = if mode.contains("-none") {
+                crate::settings::PlateClick::Nothing
+            } else {
+                crate::settings::PlateClick::InstantMessage
+            };
+            self.settings.plate_ctrl_click = if mode.contains("-none") {
+                crate::settings::PlateClick::Nothing
+            } else {
+                crate::settings::PlateClick::Menu
+            };
             self.name_tags
                 .iter()
                 .filter(|t| t.id != self.world.agent_id)
@@ -275,7 +290,7 @@ impl App {
         let direction = (self.camera.position - point).normalize_or(-Vec3::X);
         let pos = point + direction * 2.0;
         let rotation = glam::Quat::from_rotation_arc(Vec3::X, direction);
-        let mut overlay = if mode == "plate-wall" {
+        let mut overlay = if mode.starts_with("plate-wall") {
             crate::demo::action_overlay(976, pos, rotation)
         } else {
             let alpha = match mode {

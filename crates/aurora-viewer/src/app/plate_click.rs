@@ -1,9 +1,6 @@
-//! What the pointer does with a name plate (the human's requests of
-//! 2026-10-14): the plate under it shows full ("Expand a plate on hover"),
-//! and a left click on another avatar's plate runs the action chosen in
-//! Preferences › Aurora › "Click on a plate", one of the entries of the
-//! avatar's menu, with the hand cursor of a clickable object. Firestorm has
-//! neither: a click on a name tag is a click on its avatar.
+//! Name plates expand on hover and offer independent plain, Shift and Ctrl
+//! left-click actions (Preferences › Avatars). These are deliberate Aurora
+//! additions; the Legacy Viewer treats a name-tag click as an avatar click.
 use super::*;
 use crate::settings::PlateClick;
 use crate::ui::context::{CtxAction, Target};
@@ -60,6 +57,18 @@ pub(super) fn plate_click_acts(action: PlateClick, plate: Option<Uuid>, me: Uuid
     action != PlateClick::Nothing && plate.is_some_and(|id| id != me)
 }
 
+/// Alt retains LLToolCamera's gestures; Ctrl+Shift retains the grab tool
+/// override of LLToolPie::getOverrideTool (indra/newview/lltoolpie.cpp).
+/// A disabled modified action does not fall back to the plain click.
+fn plate_click_choice(settings: &crate::settings::Settings, [alt, ctrl, shift]: [bool; 3]) -> PlateClick {
+    match (alt, ctrl, shift) {
+        (false, false, false) => settings.plate_click,
+        (false, false, true) => settings.plate_shift_click,
+        (false, true, false) => settings.plate_ctrl_click,
+        _ => PlateClick::Nothing,
+    }
+}
+
 /// The entry of the avatar's menu a plate click runs; the menu itself is
 /// opened apart.
 pub(super) fn plate_ctx_action(action: PlateClick, id: Uuid) -> Option<CtxAction> {
@@ -86,9 +95,10 @@ impl App {
 
     /// The action of a click on a plate: the setting, or the demo's.
     pub(super) fn plate_click_action(&self) -> PlateClick {
+        let mods = [self.alt || self.object_view, self.ctrl, self.shift];
         match demo_action() {
-            Some(action) if self.demo => action,
-            _ => self.settings.plate_click,
+            Some(action) if self.demo && mods == [false; 3] => action,
+            _ => plate_click_choice(&self.settings, mods),
         }
     }
 
@@ -137,10 +147,10 @@ impl App {
     }
 
     /// A left press on the world: on another avatar's plate with an action
-    /// chosen, the action runs and the world does not get the click. Alt,
-    /// Ctrl and Shift keep their meaning (camera, grab).
+    /// chosen for these modifiers, the action runs and takes the click.
+    /// Alt and combined Ctrl+Shift retain their camera/grab meaning.
     pub(super) fn plate_press(&mut self, tag: Option<(Uuid, Vec3)>) -> bool {
-        if self.alt || self.object_view || self.ctrl || self.shift || self.classic_name_tags() {
+        if self.classic_name_tags() {
             return false;
         }
         let action = self.plate_click_action();
@@ -210,6 +220,31 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plate_click_modifiers_choose_independently_and_preserve_camera_gestures() {
+        let settings = crate::settings::Settings {
+            plate_click: PlateClick::Profile,
+            plate_shift_click: PlateClick::InstantMessage,
+            plate_ctrl_click: PlateClick::Menu,
+            ..Default::default()
+        };
+        assert_eq!(plate_click_choice(&settings, [false, false, false]), PlateClick::Profile);
+        assert_eq!(plate_click_choice(&settings, [false, false, true]), PlateClick::InstantMessage);
+        assert_eq!(plate_click_choice(&settings, [false, true, false]), PlateClick::Menu);
+        assert_eq!(plate_click_choice(&settings, [false, true, true]), PlateClick::Nothing);
+        for ctrl in [false, true] {
+            for shift in [false, true] {
+                assert_eq!(plate_click_choice(&settings, [true, ctrl, shift]), PlateClick::Nothing);
+            }
+        }
+        let disabled = crate::settings::Settings {
+            plate_click: PlateClick::Profile,
+            ..Default::default()
+        };
+        assert_eq!(plate_click_choice(&disabled, [false, false, true]), PlateClick::Nothing);
+        assert_eq!(plate_click_choice(&disabled, [false, true, false]), PlateClick::Nothing);
+    }
 
     fn tag(n: u128, rect: egui::Rect) -> ui::hud::NameTag {
         ui::hud::NameTag {

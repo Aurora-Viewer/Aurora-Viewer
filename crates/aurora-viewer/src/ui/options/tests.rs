@@ -238,6 +238,8 @@ const BEFORE: &[&str] = &[
     "plates_hover_expand",
     "plates_friends_only_full",
     "plate_click",
+    "plate_shift_click",
+    "plate_ctrl_click",
     // Accessibility
     "color_blindness",
     "color_blindness_strength",
@@ -300,6 +302,9 @@ fn a_page_reset_leaves_the_other_pages_alone() {
         shadow_quality: 0,
         shadows: false,
         ui_scale: 1.4,
+        plate_click: crate::settings::PlateClick::Profile,
+        plate_shift_click: crate::settings::PlateClick::InstantMessage,
+        plate_ctrl_click: crate::settings::PlateClick::Menu,
         ..Settings::default()
     };
     s.lookat.style = crate::world::lookat::Style::Legacy;
@@ -331,7 +336,13 @@ fn a_page_reset_leaves_the_other_pages_alone() {
     assert_eq!(s.username, "kept");
     assert!(!s.inventory.sort.by_date, "other pages keep both inventory orders");
     assert!(s.inventory.received_sort.folders_by_name);
+    assert_eq!(s.plate_click, crate::settings::PlateClick::Profile);
+    assert_eq!(s.plate_shift_click, crate::settings::PlateClick::InstantMessage);
+    assert_eq!(s.plate_ctrl_click, crate::settings::PlateClick::Menu);
     reset_page_settings(Page::Avatars, &mut s);
+    assert_eq!(s.plate_click, d.plate_click);
+    assert_eq!(s.plate_shift_click, d.plate_shift_click);
+    assert_eq!(s.plate_ctrl_click, d.plate_ctrl_click);
     assert_eq!(s.lookat.head_yaw, d.lookat.head_yaw);
     reset_page_settings(Page::Inventory, &mut s);
     assert_eq!(s.inventory.sort, d.inventory.sort);

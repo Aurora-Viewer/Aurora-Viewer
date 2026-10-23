@@ -167,9 +167,9 @@ pub enum PlacesSort {
     Created,
 }
 
-/// What a left click on another avatar's name plate does (Preferences ›
-/// Interface; the human's request of 2026-10-14). Each one is an entry of
-/// the avatar's menu; nothing, the default, leaves the click to the world.
+/// What a plain, Shift or Ctrl left click on another avatar's name plate
+/// does (Preferences › Avatars). Each gesture chooses an avatar-menu action
+/// independently; Nothing, the default, leaves the click to the world.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PlateClick {
     #[default]
@@ -672,6 +672,8 @@ pub struct Settings {
     /// by default).
     pub plates_hover_expand: bool,
     pub plate_click: PlateClick,
+    pub plate_shift_click: PlateClick,
+    pub plate_ctrl_click: PlateClick,
     /// Profiles in Firestorm's tabbed window (Second Life, Feed, Favorites…)
     /// instead of the header and cards of `ui/profile/aurora.rs`; group
     /// profiles in the classic window too (`ui/group_profile.rs`).
@@ -1485,6 +1487,8 @@ impl Default for Settings {
             plates_friends_only_full: false,
             plates_hover_expand: true,
             plate_click: PlateClick::Nothing,
+            plate_shift_click: PlateClick::Nothing,
+            plate_ctrl_click: PlateClick::Nothing,
             chat_style: ChatStyle::Aurora,
             link_previews: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
@@ -2393,6 +2397,28 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn plate_click_preferences_preserve_old_settings_and_independent_choices() {
+        let old: super::Settings = serde_json::from_str(r#"{"plate_click":"Profile"}"#).expect("old plate setting");
+        assert_eq!(old.plate_click, super::PlateClick::Profile);
+        assert_eq!(old.plate_shift_click, super::PlateClick::Nothing);
+        assert_eq!(old.plate_ctrl_click, super::PlateClick::Nothing);
+        for action in super::PlateClick::ALL {
+            let original = super::Settings {
+                plate_click: super::PlateClick::Profile,
+                plate_shift_click: action,
+                plate_ctrl_click: super::PlateClick::Menu,
+                ..Default::default()
+            };
+            let bytes = serde_json::to_vec(&original).expect("synthetic plate choices");
+            let saved: super::Settings = serde_json::from_slice(&bytes).expect("read plate choices");
+            let saved = saved.sanitized();
+            assert_eq!(saved.plate_click, original.plate_click);
+            assert_eq!(saved.plate_shift_click, original.plate_shift_click);
+            assert_eq!(saved.plate_ctrl_click, original.plate_ctrl_click);
+        }
+    }
+
     #[test]
     fn water_choices_round_trip_and_quality_does_not_reset_effects() {
         let mut settings = super::WaterEffectsSettings {
