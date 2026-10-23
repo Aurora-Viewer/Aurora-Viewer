@@ -332,8 +332,6 @@ const AD_HOC: &str = "messages-filled";
 /// "Invisible": the eye of the right to see someone online, barred.
 const INVISIBLE: &str = "eye-off";
 
-/// Color of the online status: grey invisible, red do not disturb, violet
-/// away, orange automatic response, green available.
 /// The shape of our own status dot, as the others' (`presence::Shape`):
 /// hollow invisible, a bar in do not disturb, a crescent away.
 fn status_shape(m: &crate::world::status::StatusModes) -> super::presence::Shape {
@@ -512,13 +510,23 @@ fn status_menu_body(ui: &mut egui::Ui, p: &Palette, status: crate::world::status
         } else {
             0
         };
-        for (i, label, col) in [
-            (0, aurora_i18n::tr!("ui-bars-available"), p.success),
-            (1, aurora_i18n::tr!("common-away"), p.violet),
-            (2, aurora_i18n::tr!("common-do-not-disturb"), p.danger),
-            (3, aurora_i18n::tr!("ui-bars-invisible"), p.muted),
-        ] {
-            if menu::swatch_toggle(ui, p, col, label, current == i) && current != i {
+        for (i, label) in [
+            aurora_i18n::tr!("ui-bars-available"),
+            aurora_i18n::tr!("common-away"),
+            aurora_i18n::tr!("common-do-not-disturb"),
+            aurora_i18n::tr!("ui-bars-invisible"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // Preview each choice through the same shape and colour as the account dot.
+            let choice = crate::world::status::StatusModes {
+                away: i == 1,
+                dnd: i == 2,
+                invisible: i == 3,
+                ..Default::default()
+            };
+            if menu::status_toggle(ui, p, status_shape(&choice), status_color(p, &choice), label, current == i) && current != i {
                 m.away = i == 1;
                 m.dnd = i == 2;
                 m.invisible = i == 3;
