@@ -491,6 +491,7 @@ fn water_underside(surface:vec3<f32>,level:f32,incident:vec3<f32>,normal:vec3<f3
 }
 
 fn water_pixel(in: WaterOut) -> vec4<f32> {
+    if(water_excluded(in.world_pos)){discard;}
     if(water_fx_on(1u) || water_fx_on(16u)) {
         let depth=water_interface_depth(in.world_pos);
         // Single-sample interface coverage must also retain MSAA edge samples.
@@ -712,6 +713,21 @@ fn water_interface_depth(world:vec3<f32>)->f32 {
     // ordering retains their true distance, including millimetre crossings.
     let clip=frame.view_proj*vec4<f32>(world,1.0);
     return 1.0/(1.0+max(clip.w,0.0));
+}
+
+struct WaterMaskOut {
+    @location(0) color:vec4<f32>,
+    @builtin(frag_depth) depth:f32,
+};
+
+@fragment
+fn fs_water_mask(in:WaterOut)->WaterMaskOut {
+    return WaterMaskOut(vec4<f32>(1.0),water_interface_depth(in.world_pos));
+}
+
+@fragment
+fn fs_water_exclusion(in:VsOut)->WaterMaskOut {
+    return WaterMaskOut(vec4<f32>(0.0,0.0,0.0,1.0),water_interface_depth(in.world_pos));
 }
 
 @fragment

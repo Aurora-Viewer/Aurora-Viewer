@@ -21,8 +21,8 @@
 //! and it alone uses the queue.
 
 use crate::gpu_cull::{
-    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, BIN_SPOT, COUNT_PRE1, COUNT_PRE2, CullFrame, GpuCull,
-    MAIN_BINS, REGION_PRE1, REGION_PRE2, SPOT_SHADOWS, frame_flags,
+    BIN_PROBE, BIN_REFL_MIRROR, BIN_REFL_WATER, BIN_SHADOW, BIN_SHADOW_ALPHA, BIN_SPOT, BIN_WATER_EXCLUSION, COUNT_PRE1, COUNT_PRE2,
+    CullFrame, GpuCull, MAIN_BINS, REGION_PRE1, REGION_PRE2, SPOT_SHADOWS, frame_flags,
 };
 use crate::helpers::Helpers;
 use crate::light_tiles::{self, LightCulling, LightSets};
@@ -698,8 +698,9 @@ struct Targets {
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
-    /// Nearest actual wave interface, ordered by view distance even inside near.
+    /// Nearest water/exclusion surface, ordered by view distance even inside near.
     water_interface: wgpu::TextureView,
+    water_mask: wgpu::TextureView,
     scene_copy_tex: wgpu::Texture,
     scene_copy: wgpu::TextureView,
     /// G-buffer (normal, roughness, metallic) for SSR.
@@ -732,7 +733,8 @@ struct Pipelines {
     mask_2s: wgpu::RenderPipeline,
     water: wgpu::RenderPipeline,
     water_unclipped: Option<wgpu::RenderPipeline>,
-    water_interface: wgpu::RenderPipeline,
+    water_mask: wgpu::RenderPipeline,
+    water_exclusion: wgpu::RenderPipeline,
     blend: wgpu::RenderPipeline,
     /// Blended faces lit before their invisible fragments are dropped, for
     /// frames that ask for it ([`BlendDiscard::Alternate`] only).
@@ -935,7 +937,7 @@ const MARK_BLOOM_BEGIN: u32 = 21;
 const MARK_BLOOM_END: u32 = 22;
 /// The depth prepasses on their own, both counted in the first element:
 /// single-sample prepass with the occlusion culling, multisampled prepass.
-const GPU_DEPTH: [(u32, u32); 2] = [(MARK_SHADOWS_END, MARK_DEPTH_END), (MARK_SCENE_BEGIN, MARK_DEPTH_MSAA_END)];
+const GPU_DEPTH: [(u32, u32); 2] = [(MARK_SHADOWS_END, MARK_DEPTH_END), (MARK_WATER_INTERFACE_END, MARK_DEPTH_MSAA_END)];
 /// After the contact shadows, which follow the occlusion (written there
 /// when they are off): inside the effects' range from `MARK_SSAO_END` to
 /// `MARK_REFL_END`.
@@ -954,7 +956,7 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
         (MARK_SSAO_END, MARK_WATER_AIR_BEGIN),
         (MARK_WATER_AIR_END, MARK_REFL_END),
         (MARK_SCENE_A_END, MARK_COPY_END),
-        (MARK_WATER_INTERFACE_END, MARK_SSR_END),
+        (MARK_COPY_END, MARK_SSR_END),
     ],
     // terrain and sky
     &[(MARK_DEPTH_MSAA_END, MARK_SKY_END), (MARK_SKY_END, MARK_TERRAIN_END)],
@@ -967,7 +969,7 @@ const GPU_ELEMENTS: [&[(u32, u32)]; GpuElement::ALL.len()] = [
     // water
     &[
         (MARK_WATER_AIR_BEGIN, MARK_WATER_AIR_END),
-        (MARK_COPY_END, MARK_WATER_INTERFACE_END),
+        (MARK_SCENE_BEGIN, MARK_WATER_INTERFACE_END),
         (MARK_SSR_END, MARK_WATER_END),
     ],
     // blended faces and particles
@@ -1282,6 +1284,8 @@ struct Dummies {
 
 /// Frame bind groups (group 0) for the different passes.
 struct FrameGroups {
+    /// Water mask generation: no reads from the targets being written.
+    mask: wgpu::BindGroup,
     /// Prepass and scene pass A: no scene copy / depth reads.
     a: wgpu::BindGroup,
     /// Scene pass B: everything.
@@ -2136,6 +2140,7 @@ struct Ranges {
     mask: (u64, u32),
     mask_2s: (u64, u32),
     water: (u64, u32),
+    water_exclusion: (u64, u32),
     blend: (u64, u32),
     glow: (u64, u32),
     glow_alpha: (u64, u32),
@@ -2270,6 +2275,7 @@ impl Backend {
                 },
                 float_tex(19),
                 float_tex(21),
+                float_tex(23),
                 wgpu::BindGroupLayoutEntry {
                     binding: 22,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -2865,13 +2871,20 @@ impl Backend {
                 ..base("portable water depth clamp", "vs_water_unclipped", "fs_water_unclipped")
             })
         });
-        let water_interface = pipe(PipeDesc {
-            format: None,
+        // LLDrawPoolWaterExclusion::render: water wins until a nearer,
+        // front-facing exclusion surface replaces it. Independent of scene depth.
+        let water_mask = pipe(PipeDesc {
+            format: Some(wgpu::TextureFormat::R8Unorm),
             samples: 1,
             cull: None,
-            depth_write: true,
             depth_compare: wgpu::CompareFunction::Greater,
-            ..base("nearest water interface", "vs_water_unclipped", "fs_water_interface")
+            ..base("water mask", "vs_water_unclipped", "fs_water_mask")
+        });
+        let water_exclusion = pipe(PipeDesc {
+            format: Some(wgpu::TextureFormat::R8Unorm),
+            samples: 1,
+            depth_compare: wgpu::CompareFunction::Greater,
+            ..base("water exclusion", "vs_main", "fs_water_exclusion")
         });
         // LLDrawPoolAlpha "glow suppression": blended faces scale the glow
         // behind them by (1 - alpha)
@@ -3275,7 +3288,8 @@ impl Backend {
             mask_2s,
             water,
             water_unclipped,
-            water_interface,
+            water_mask,
+            water_exclusion,
             blend,
             blend_late,
             blend_depth,
@@ -3415,6 +3429,7 @@ impl Backend {
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         );
         let water_interface = make_view(device, "nearest water interface", w, h, DEPTH_FORMAT, 1, sampled).1;
+        let water_mask = make_view(device, "water exclusion mask", w, h, wgpu::TextureFormat::R8Unorm, 1, sampled).1;
         let (gbuf_msaa, gbuf) = if s.ssr {
             (
                 (samples > 1).then(|| make_view(device, "gbuffer msaa", w, h, GBUF_FORMAT, samples, att).1),
@@ -3490,6 +3505,7 @@ impl Backend {
             depth_msaa,
             depth_ss,
             water_interface,
+            water_mask,
             scene_copy_tex,
             scene_copy,
             gbuf_msaa,
@@ -3529,11 +3545,16 @@ impl Backend {
                   depth: &wgpu::TextureView,
                   contact: &wgpu::TextureView,
                   il: &wgpu::TextureView,
-                  sample_water: bool| {
+                  sample_water: bool,
+                  sample_mask: bool| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some(label),
                 layout,
                 entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 23,
+                        resource: wgpu::BindingResource::TextureView(if sample_mask { &t.water_mask } else { &dummies.white }),
+                    },
                     wgpu::BindGroupEntry {
                         binding: 0,
                         resource: buffer.as_entire_binding(),
@@ -3653,6 +3674,19 @@ impl Backend {
             .map(|i| &i.result)
             .unwrap_or(&dummies.black);
         FrameGroups {
+            mask: mk(
+                "frame mask",
+                frame_buffer,
+                &dummies.white,
+                &dummies.black,
+                &dummies.black,
+                &dummies.black,
+                &dummies.depth,
+                &dummies.black,
+                &dummies.black,
+                false,
+                false,
+            ),
             a: mk(
                 "frame a",
                 frame_buffer,
@@ -3664,6 +3698,7 @@ impl Backend {
                 contact,
                 il,
                 false,
+                true,
             ),
             b: mk(
                 "frame b",
@@ -3675,6 +3710,7 @@ impl Backend {
                 &t.depth_ss,
                 contact,
                 il,
+                true,
                 true,
             ),
             refl: [
@@ -3689,6 +3725,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     false,
+                    false,
                 ),
                 mk(
                     "frame mirror",
@@ -3700,6 +3737,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                     false,
                 ),
                 mk(
@@ -3713,6 +3751,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     false,
+                    false,
                 ),
                 mk(
                     "frame impostor 0",
@@ -3724,6 +3763,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                     false,
                 ),
                 mk(
@@ -3737,6 +3777,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     false,
+                    false,
                 ),
                 mk(
                     "frame HUD",
@@ -3748,6 +3789,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                     false,
                 ),
                 mk(
@@ -3761,6 +3803,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     false,
+                    false,
                 ),
                 mk(
                     "frame water exterior",
@@ -3773,6 +3816,7 @@ impl Backend {
                     &dummies.black,
                     &dummies.black,
                     false,
+                    false,
                 ),
                 mk(
                     "frame probe irradiance capture",
@@ -3784,6 +3828,7 @@ impl Backend {
                     &dummies.depth,
                     &dummies.black,
                     &dummies.black,
+                    false,
                     false,
                 ),
             ],
@@ -4672,9 +4717,6 @@ impl Backend {
         let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
         let near_radius = f.near * (1.0 + (f.fov_y * 0.5).tan().powi(2) * (1.0 + aspect * aspect)).sqrt();
         let water_near = (f.camera_pos.z - camera_water_level).abs() <= near_radius * 1.3 + wake_margin;
-        let water_layers = !lists.water.is_empty()
-            && self.settings.water_effects.enabled
-            && (self.settings.water_effects.waves || self.settings.water_effects.interactions);
         let do_water_refl = self.targets.water_refl.is_some() && !lists.water.is_empty() && above_water_possible;
         let air_view =
             self.targets.water_air.as_ref().filter(|_| !lists.water.is_empty()).and_then(|t| {
@@ -5207,6 +5249,7 @@ impl Backend {
             mask: push(cpu, &lists.mask),
             mask_2s: push(cpu, &lists.mask_two_sided),
             water: push(cpu, &lists.water),
+            water_exclusion: push(cpu, &lists.water_exclusion),
             blend: push(cpu, &lists.blend),
             glow: push(cpu, &lists.glow),
             glow_alpha: push(cpu, &lists.glow_alpha),
@@ -5224,13 +5267,14 @@ impl Backend {
             use crate::occlusion::{CullDraw, KIND_NONE, KIND_PREPASS, KIND_TESTED};
             let mut cull = std::mem::take(&mut self.cull_cpu);
             cull.clear();
-            let lists_kinds: [(&[DrawCmd], u32); 9] = [
+            let lists_kinds: [(&[DrawCmd], u32); 10] = [
                 (&lists.terrain, KIND_NONE),
                 (&lists.opaque, KIND_PREPASS),
                 (&lists.opaque_two_sided, KIND_PREPASS),
                 (&lists.mask, KIND_PREPASS),
                 (&lists.mask_two_sided, KIND_PREPASS),
                 (&lists.water, KIND_NONE),
+                (&lists.water_exclusion, KIND_NONE),
                 (&lists.blend, KIND_TESTED),
                 (&lists.glow, KIND_TESTED),
                 (&lists.glow_alpha, KIND_TESTED),
@@ -5356,7 +5400,7 @@ impl Backend {
             stats.triangles += d.index_count as u64 / 3;
         }
         stats.draws = lists.total() as u32;
-        if water_layers {
+        if !lists.water.is_empty() {
             stats.draws += lists.water.len() as u32;
             stats.triangles += lists.water.iter().map(|d| d.index_count as u64 / 3).sum::<u64>();
         }
@@ -5377,7 +5421,7 @@ impl Backend {
         if gpu.is_some() {
             // the GPU bins, read back a frame or two late
             let c = self.cull.last;
-            stats.draws += c.main_draws();
+            stats.draws += c.main_draws() + c.bins[BIN_WATER_EXCLUSION];
             stats.shadow_draws += c.shadow_draws();
             for k in 0..CASCADES {
                 stats.shadow.draws[k] += c.cascade_draws(k);
@@ -6006,6 +6050,43 @@ impl Backend {
             }),
         );
         mark(&mut encoder, MARK_SCENE_BEGIN);
+        // Keep water and exclusion depths separate from opaque objects. The
+        // same mask removes surface shading and above-water haze through a face.
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("water exclusion mask"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.targets.water_mask,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.targets.water_interface,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            bind_mesh(&mut pass, &self.groups.mask);
+            draw(&mut pass, &self.pipelines.water_mask, rg.water);
+            draw(&mut pass, &self.pipelines.water_exclusion, rg.water_exclusion);
+            draw_bin(
+                &mut pass,
+                Some(&self.pipelines.water_exclusion),
+                BIN_WATER_EXCLUSION,
+                BIN_WATER_EXCLUSION,
+            );
+        }
+        mark(&mut encoder, MARK_WATER_INTERFACE_END);
         let prepass_wanted = match msaa_prepass() {
             MsaaPrepass::On => true,
             MsaaPrepass::Off => false,
@@ -6200,28 +6281,7 @@ impl Backend {
         );
 
         mark(&mut encoder, MARK_COPY_END);
-        // Keep the closest displaced interface independently of opaque depth.
-        // Water cannot write scene depth: submerged blended faces must survive.
-        if water_layers {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("nearest water interface"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.targets.water_interface,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(0.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            bind_mesh(&mut pass, &self.groups.a);
-            draw(&mut pass, &self.pipelines.water_interface, rg.water);
-        }
-        mark(&mut encoder, MARK_WATER_INTERFACE_END);
+
         // ---- scene pass B: SSR, water, blended faces, particles. The
         // blended faces of rigged meshes come first and write depth
         // (`DrawLists::blend_depth`, LLDrawPoolAlpha::forwardRender(true)):

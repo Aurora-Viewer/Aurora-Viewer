@@ -150,6 +150,7 @@ const LIVE_MORPH_WEIGHTS: u32 = 208u;
 @group(0) @binding(20) var water_interface: texture_depth_2d;
 @group(0) @binding(21) var water_air_color: texture_2d<f32>;
 @group(0) @binding(22) var water_air_depth: texture_depth_2d;
+@group(0) @binding(23) var water_exclusion_mask: texture_2d<f32>;
 // GTAO's screen-space indirect light (gtao.rs), when SCREEN_INDIRECT
 @group(0) @binding(14) var il_tex: texture_2d<f32>;
 
@@ -1019,8 +1020,20 @@ fn camera_underwater() -> bool {
     return frame.camera_pos.z < camera_water_level();
 }
 
+// LLDrawPoolWaterExclusion: the nearest front-facing exclusion surface
+// hides water only when it is in front of the nearest water interface.
+fn water_excluded(world_pos:vec3<f32>) -> bool {
+    let clip=frame.view_proj*vec4<f32>(world_pos,1.0);
+    if(clip.w<=0.0){return false;}
+    let uv=clip.xy/clip.w*vec2<f32>(0.5,-0.5)+vec2<f32>(0.5);
+    let size=vec2<i32>(textureDimensions(water_exclusion_mask));
+    let pixel=clamp(vec2<i32>(uv*vec2<f32>(size)),vec2<i32>(0),size-vec2<i32>(1));
+    return textureLoad(water_exclusion_mask,pixel,0).r<0.5;
+}
+
 fn water_scene_light(world_pos:vec3<f32>) -> vec3<f32> {
     if(!water_fx_on(256u)) { return vec3<f32>(1.0); }
+    if(!camera_underwater() && water_excluded(world_pos)){return vec3<f32>(1.0);}
     // Attenuate environmental lighting, leaving emissive/fullbright sources
     // to lose their wavelengths along the view path only.
     let depth = max(frame.params.y-world_pos.z,0.0);
@@ -1041,6 +1054,7 @@ fn apply_air_fog(col:vec3<f32>,world_pos:vec3<f32>)->vec3<f32> {
 
 fn apply_fog(col: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     if(camera_underwater() || (water_fx_on(256u) && world_pos.z<camera_water_level())) {
+        if(!camera_underwater() && water_excluded(world_pos)){return apply_air_fog(col,world_pos);}
         let wf=water_fog_view(world_pos-frame.camera_pos.xyz,frame.water_normal.w);
         return col*wf.transmission+wf.color;
     }
@@ -2330,6 +2344,7 @@ fn water_fx_hash(p: vec2<f32>) -> vec2<f32> {
 const WATER_CAUSTIC_FILTER:vec2<f32>=vec2<f32>(0.4/256.0,0.4/256.0);
 fn water_caustics(pos:vec3<f32>,normal:vec3<f32>)->vec3<f32> {
     if(!water_fx_on(32u) || frame.misc.w>0.5){return vec3<f32>(0.0);}
+    if(!camera_underwater() && water_excluded(pos)){return vec3<f32>(0.0);}
     let bed=water_fx_bed(pos.xy);let depth=bed.y-pos.z;
     if(depth<0.03 || depth>18.0 || frame.sky_sun.z<0.05 || frame.sun_dir.w<0.01){return vec3<f32>(0.0);}
     let light=normalize(frame.sun_dir.xyz);

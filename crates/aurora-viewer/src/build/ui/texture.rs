@@ -21,7 +21,7 @@ use egui::RichText;
 use uuid::Uuid;
 
 /// IMG_ALPHA_GRAD: the diffuse of a "hide water" face.
-const IMG_ALPHA_GRAD: Uuid = Uuid::from_u128(0xe97cf410_8e61_7005_ec06_629eba4cd1fb);
+const IMG_ALPHA_GRAD: Uuid = aurora_prim::te::WATER_EXCLUSION_TEXTURE;
 /// Default normal map of the pickers.
 pub const DEFAULT_NORMAL: Uuid = Uuid::from_u128(0x85f28839_7a1c_b4e3_d71d_967792970a7b);
 /// Default specular map.

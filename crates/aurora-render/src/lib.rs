@@ -217,6 +217,7 @@ struct ProbeFrame {{view_proj:mat4x4<f32>}};
 @group(0) @binding(0) var<uniform> frame:ProbeFrame;
 struct VsIn {{@builtin(vertex_index) vertex:u32,@builtin(instance_index) layer:u32}};
 struct WaterOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>,@location(1) level:f32}};
+struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
 fn water_vertex(input:VsIn)->WaterOut {{
     let corners=array<vec2<f32>,6>(vec2<f32>(-100.0,-100.0),vec2<f32>(100.0,-100.0),vec2<f32>(100.0,100.0),
         vec2<f32>(-100.0,-100.0),vec2<f32>(100.0,100.0),vec2<f32>(-100.0,100.0));
@@ -224,6 +225,7 @@ fn water_vertex(input:VsIn)->WaterOut {{
     return WaterOut(frame.view_proj*vec4<f32>(world,1.0),world,20.0);
 }}
 fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);}}
+@vertex fn vs_exclusion(input:VsIn)->VsOut {{let water=water_vertex(input);return VsOut(water.clip,water.world_pos);}}
 {vertex}
 {fragment}
 "#
@@ -530,6 +532,206 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
         }
     }
 
+    #[test]
+    fn water_exclusion_mask_orders_real_surfaces_on_gpu() {
+        let _gpu = crate::test_gpu::lock();
+        let instance = wgpu::Instance::default();
+        let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default())).expect("GPU device");
+        let env = include_str!("shaders/env.wgsl");
+        let depth = &env[env.find("fn water_interface_depth(").expect("depth")..env.find("// Event history").expect("end")];
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("water exclusion regression"),
+            source: wgpu::ShaderSource::Wgsl(
+                format!(
+                    r#"
+struct Frame {{view_proj:mat4x4<f32>}};
+@group(0) @binding(0) var<uniform> frame:Frame;
+struct WaterOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
+struct VsOut {{@builtin(position) clip:vec4<f32>,@location(0) world_pos:vec3<f32>}};
+@vertex fn vertex(@builtin(vertex_index) v:u32,@builtin(instance_index) layer:u32)->WaterOut {{
+    let corners=array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0),vec2<f32>(3.0,-1.0),vec2<f32>(-1.0,3.0));
+    let w=1.0+f32(layer);
+    let world=vec3<f32>(corners[v]*w,w);
+    return WaterOut(vec4<f32>(corners[v],0.5,1.0),world);
+}}
+{depth}
+"#
+                )
+                .into(),
+            ),
+        });
+        let group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("water mask test"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[Some(&group_layout)],
+            immediate_size: 0,
+        });
+        let make_pipe = |entry: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vertex"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: Default::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth32Float,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::R8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let water = make_pipe("fs_water_mask");
+        let exclusion = make_pipe("fs_water_exclusion");
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut projection = glam::Mat4::IDENTITY;
+        projection.z_axis.w = 1.0;
+        projection.w_axis.w = 0.0;
+        queue.write_buffer(&uniform, 0, bytemuck::cast_slice(&projection.to_cols_array()));
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            }],
+        });
+        let (mask_texture, mask) = crate::renderer::make_view(
+            &device,
+            "exclusion mask",
+            8,
+            8,
+            wgpu::TextureFormat::R8Unorm,
+            1,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        );
+        let (_, depth_view) = crate::renderer::make_view(
+            &device,
+            "exclusion depth",
+            8,
+            8,
+            wgpu::TextureFormat::Depth32Float,
+            1,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 8 * 256,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        for exclusion_layer in [0, 2] {
+            for reverse in [false, true] {
+                let mut encoder = device.create_command_encoder(&Default::default());
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: None,
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &mask,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(0.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    pass.set_bind_group(0, &group, &[]);
+                    let draws = [(&water, 1), (&exclusion, exclusion_layer)];
+                    for i in if reverse { [1, 0] } else { [0, 1] } {
+                        let (pipe, layer) = draws[i];
+                        pass.set_pipeline(pipe);
+                        pass.draw(0..3, layer..layer + 1);
+                    }
+                }
+                encoder.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &mask_texture,
+                        mip_level: 0,
+                        origin: Default::default(),
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &readback,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(256),
+                            rows_per_image: Some(8),
+                        },
+                    },
+                    wgpu::Extent3d {
+                        width: 8,
+                        height: 8,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                queue.submit([encoder.finish()]);
+                readback.map_async(wgpu::MapMode::Read, .., |r| r.expect("mask readback"));
+                device.poll(wgpu::PollType::wait_indefinitely()).expect("GPU completion");
+                let pixels = readback.get_mapped_range(..).expect("mask pixels");
+                for y in 0..8 {
+                    assert!(
+                        pixels[y * 256..y * 256 + 8]
+                            .iter()
+                            .all(|p| *p == if exclusion_layer == 0 { 0 } else { 255 }),
+                        "only an exclusion in front of water wins, in either draw order"
+                    );
+                }
+                drop(pixels);
+                readback.unmap();
+            }
+        }
+    }
+
     /// Execute the production fog function, not a Rust mirror: distant targets
     /// beyond the same water exit must have identical attenuation/scattering.
     #[test]
@@ -544,7 +746,7 @@ fn water_pixel(surface:WaterOut)->vec4<f32> {{return vec4<f32>(0.0,0.0,1.0,1.0);
         let common = include_str!("shaders/common.wgsl");
         let start = common.find("fn camera_water_level(").expect("production waterline function");
         let function = &common[start..];
-        let end = function.find("\nfn water_scene_light(").expect("end of camera/fog functions");
+        let end = function.find("\n// LLDrawPoolWaterExclusion").expect("end of camera/fog functions");
         let optics = include_str!("shaders/env.wgsl");
         let dielectric = &optics[optics.find("fn water_dielectric(").expect("dielectric helper")
             ..optics.find("fn water_underside(").expect("end of dielectric")];

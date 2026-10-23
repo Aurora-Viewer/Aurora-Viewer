@@ -626,7 +626,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut W
             // FSPanelFace::onCommitHideWater
             let sel: Vec<(usize, u8)> = tool.sel_te(world);
             tool.edit_faces(world, |f, _, _| {
-                f.texture = uuid::Uuid::from_u128(0xe97cf410_8e61_7005_ec06_629eba4cd1fb);
+                f.texture = aurora_prim::te::WATER_EXCLUSION_TEXTURE;
                 f.bump_shiny_fullbright &= 0x20;
                 f.color[3] = 1.0;
             });
