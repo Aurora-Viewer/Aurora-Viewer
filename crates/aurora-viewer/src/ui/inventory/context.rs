@@ -5,6 +5,19 @@ use super::*;
 use crate::ui::menu;
 use crate::world::appearance::Action as Wear;
 
+/// LLInvFVBridge::getClipboardEntries / LLAssetType::lookupIsAssetIDKnowable
+/// (indra/newview/llinventorybridge.cpp, indra/llcommon/llassettype.cpp).
+/// An inventory item's UUID is not its asset UUID. Links have their own
+/// clipboard entries and must never expose their target item as an asset.
+fn exposes_asset_uuid(kind: i32) -> bool {
+    matches!(kind, 0 | 1 | 3 | 5 | 7 | 13 | 20 | 21 | 56 | 57 | 58 | 59)
+}
+
+fn copyable_asset_uuid(item: &aurora_net::inventory::InvItem) -> Option<Uuid> {
+    let full_perm = rules::COPY | rules::MODIFY | rules::TRANSFER;
+    (exposes_asset_uuid(item.asset_type) && item.owner_mask & full_perm == full_perm && !item.asset_id.is_nil()).then_some(item.asset_id)
+}
+
 fn entry(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, enabled: bool, action: InvAction, actions: &mut Vec<InvAction>) {
     if menu::item_if(ui, p, icon, label, enabled) {
         actions.push(action);
@@ -492,16 +505,21 @@ pub(super) fn show(
                     st.open_folder_window(id);
                 }
             } else if let Some(it) = item {
-                let knowable = !matches!(kind, 6 | 10 | 11 | 22 | 49)
-                    && it.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER;
-                if menu::item_if(
-                    ui,
-                    p,
-                    "copy-filled",
-                    aurora_i18n::tr!("ui-inventory-context-copy-object-uuid"),
-                    single && knowable && !it.asset_id.is_nil(),
-                ) {
-                    ui.ctx().copy_text(it.asset_id.to_string());
+                let asset = copyable_asset_uuid(it);
+                // Unlike the reference's disabled rows for these types,
+                // hide the action when no asset of this type can expose a UUID.
+                if exposes_asset_uuid(it.asset_type)
+                    && menu::item_tip(
+                        ui,
+                        p,
+                        "copy-filled",
+                        aurora_i18n::tr!("ui-inventory-context-copy-object-uuid"),
+                        single && asset.is_some(),
+                        aurora_i18n::tr!("inventory-copy-asset-uuid-help"),
+                    )
+                    && let Some(asset) = asset
+                {
+                    ui.ctx().copy_text(asset.to_string());
                 }
                 // listed for an object that is not worn (LLObjectBridge::buildContextMenu)
                 if kind == 6 && !worn {
@@ -975,6 +993,138 @@ mod tests {
             },
         ))
     }
+    #[test]
+    fn asset_uuid_copy_follows_legacy_types_permissions_and_available_assets() {
+        let full_perm = rules::COPY | rules::MODIFY | rules::TRANSFER;
+        let mut item = aurora_net::inventory::InvItem {
+            id: Uuid::from_u128(1),
+            asset_id: Uuid::from_u128(2),
+            owner_mask: full_perm,
+            ..Default::default()
+        };
+        for kind in -1..=60 {
+            item.asset_type = kind;
+            let allowed = [0, 1, 3, 5, 7, 13, 20, 21, 56, 57, 58, 59].contains(&kind);
+            assert_eq!(copyable_asset_uuid(&item), allowed.then_some(item.asset_id), "asset type {kind}");
+        }
+        item.asset_type = 0;
+        for missing in [rules::COPY, rules::MODIFY, rules::TRANSFER] {
+            item.owner_mask = full_perm & !missing;
+            assert_eq!(copyable_asset_uuid(&item), None, "missing permission {missing:x}");
+        }
+        item.owner_mask = full_perm;
+        item.asset_id = Uuid::nil();
+        assert_eq!(copyable_asset_uuid(&item), None);
+    }
+
+    #[test]
+    fn asset_uuid_menu_copies_the_asset_without_changing_the_inventory_clipboard() {
+        for (kind, mask, multiple, expected) in [
+            (0, u32::MAX, false, Some(true)),
+            (1, u32::MAX, false, Some(true)),
+            (7, u32::MAX, false, Some(true)),
+            (20, u32::MAX, false, Some(true)),
+            (56, u32::MAX, false, Some(true)),
+            (57, u32::MAX, false, Some(true)),
+            (2, u32::MAX, false, None),
+            (4, u32::MAX, false, None),
+            (6, u32::MAX, false, None),
+            (10, u32::MAX, false, None),
+            (12, u32::MAX, false, None),
+            (49, u32::MAX, false, None),
+            (-1, u32::MAX, false, None),
+            (0, !rules::TRANSFER, false, Some(false)),
+            (0, u32::MAX, true, Some(false)),
+        ] {
+            let ctx = egui::Context::default();
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let mut inv = Inventory::default();
+            crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+            let target = Uuid::from_u128(8104);
+            let item = inv.items.get_mut(&target).expect("demo texture");
+            item.asset_type = kind;
+            item.owner_mask = mask;
+            let asset = item.asset_id;
+            assert_ne!(asset, target);
+            let clipboard = vec![Uuid::from_u128(8100)];
+            let mut state = InventoryUi {
+                clipboard: clipboard.clone(),
+                cut: true,
+                selection: if multiple {
+                    HashSet::from([target, clipboard[0]])
+                } else {
+                    HashSet::from([target])
+                },
+                ..Default::default()
+            };
+            for _ in 0..4 {
+                menu_frame(&ctx, &inv, target, &mut state, Vec::new());
+            }
+            let output = menu_frame(&ctx, &inv, target, &mut state, Vec::new());
+            let pos = output
+                .shapes
+                .iter()
+                .find_map(|s| text_position(&s.shape, aurora_i18n::tr!("ui-inventory-context-copy-object-uuid")));
+            let Some(expected) = expected else {
+                assert!(pos.is_none(), "asset type {kind} never exposes a UUID");
+                continue;
+            };
+            let pos = pos.expect("asset UUID entry") + egui::vec2(4.0, 4.0);
+            let mut copied = Vec::new();
+            for pressed in [true, false] {
+                let output = menu_frame(
+                    &ctx,
+                    &inv,
+                    target,
+                    &mut state,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+                copied.extend(output.platform_output.commands.into_iter().filter_map(|cmd| {
+                    if let egui::OutputCommand::CopyText(text) = cmd {
+                        Some(text)
+                    } else {
+                        None
+                    }
+                }));
+            }
+            assert_eq!(
+                copied,
+                if expected { vec![asset.to_string()] } else { Vec::new() },
+                "type {kind}, multiple {multiple}"
+            );
+            assert_eq!(state.clipboard, clipboard);
+            assert!(state.cut);
+        }
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let mut inv = Inventory::default();
+        crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
+        inv.items.get_mut(&Uuid::from_u128(8113)).expect("demo link").asset_id = Uuid::from_u128(8104);
+        for target in [8000, 8113] {
+            let target = Uuid::from_u128(target);
+            let mut state = InventoryUi::default();
+            for _ in 0..4 {
+                menu_frame(&ctx, &inv, target, &mut state, Vec::new());
+            }
+            let output = menu_frame(&ctx, &inv, target, &mut state, Vec::new());
+            assert!(
+                !output
+                    .shapes
+                    .iter()
+                    .any(|s| { text_position(&s.shape, aurora_i18n::tr!("ui-inventory-context-copy-object-uuid")).is_some() }),
+                "folders and links have no asset UUID entry"
+            );
+        }
+    }
+
     #[test]
     fn landmark_menu_keeps_teleport_and_the_place_profile_from_places() {
         let ctx = egui::Context::default();
