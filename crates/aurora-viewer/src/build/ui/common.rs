@@ -7,6 +7,24 @@ use egui::{RichText, Vec2};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+// Same hierarchy as the resource monitor: body/controls 12, secondary 11,
+// section titles 13. Keep the theme's font families and global font scaling.
+pub(super) const BODY: f32 = 12.0;
+pub(super) const SMALL: f32 = 11.0;
+pub(super) const TITLE: f32 = 13.0;
+
+pub(super) fn typography(ui: &mut egui::Ui) {
+    let style = ui.style_mut();
+    for text in [egui::TextStyle::Body, egui::TextStyle::Button, egui::TextStyle::Monospace] {
+        if let Some(font) = style.text_styles.get_mut(&text) {
+            font.size = BODY;
+        }
+    }
+    if let Some(font) = style.text_styles.get_mut(&egui::TextStyle::Small) {
+        font.size = SMALL;
+    }
+}
+
 /// What a value control did this frame: changed (live) and / or must be
 /// sent (typed value, end of a drag).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -45,7 +63,7 @@ pub fn small(ui: &mut egui::Ui, p: &Palette, t: &str) -> egui::Response {
 /// Section title, in the violet of the brand.
 pub fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.add_space(4.0);
-    ui.label(RichText::new(title).size(12.0).strong().color(p.violet_light));
+    ui.label(RichText::new(title).size(TITLE).strong().color(p.violet_light));
     ui.add_space(1.0);
 }
 
@@ -241,6 +259,26 @@ pub fn swatch(
         match id.filter(|i| !i.is_nil()) {
             Some(tex) => {
                 wanted.insert(tex);
+                if crate::scene::textures::is_builtin_transparent(&tex) {
+                    let cell = 10.0;
+                    let pixels = rect.shrink(1.0);
+                    for y in 0..(pixels.height() / cell).ceil() as usize {
+                        for x in 0..(pixels.width() / cell).ceil() as usize {
+                            let tile =
+                                egui::Rect::from_min_size(pixels.min + Vec2::new(x as f32 * cell, y as f32 * cell), Vec2::splat(cell))
+                                    .intersect(pixels);
+                            // Checkerboard represents transparent image pixels.
+                            painter.rect_filled(tile, 0.0, if (x + y) % 2 == 0 { p.field } else { p.raised });
+                        }
+                    }
+                } else if tex == aurora_prim::te::BLANK_TEXTURE {
+                    // IMG_WHITE is an opaque white texture.
+                    painter.rect_filled(
+                        rect.shrink(1.0),
+                        ui.visuals().window_corner_radius,
+                        crate::ui::widgets::PICTURE_TINT,
+                    );
+                }
                 match images.get(&tex) {
                     Some(t) => {
                         painter.image(
@@ -254,7 +292,7 @@ pub fn swatch(
                             },
                         );
                     }
-                    None => {
+                    None if tex != aurora_prim::te::BLANK_TEXTURE && !crate::scene::textures::is_builtin_transparent(&tex) => {
                         painter.text(
                             rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -263,6 +301,7 @@ pub fn swatch(
                             p.muted,
                         );
                     }
+                    None => {}
                 }
             }
             None => {
@@ -302,10 +341,15 @@ pub fn swatch(
 /// LLColorSwatchCtrl: clicking opens the shared color dialog. The stored
 /// value is sRGB, not egui's linear-RGB color button input.
 pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str, size: f32, enabled: bool) -> egui::Response {
+    color_swatch_sized(ui, p, rgb, caption, Vec2::splat(size), enabled)
+}
+
+/// Rectangular variant for a labelled material row; it keeps the shared picker transaction.
+pub fn color_swatch_sized(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str, size: Vec2, enabled: bool) -> egui::Response {
     ui.vertical(|ui| {
         let response = ui
             .add_enabled_ui(enabled, |ui| {
-                let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::click());
+                let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
                 ui.painter()
                     .rect_filled(rect, ui.visuals().window_corner_radius, crate::ui::color_picker::color(rgb));
                 ui.painter().rect_stroke(
@@ -319,7 +363,7 @@ pub fn color_swatch(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption: &str
             .inner;
         if !caption.is_empty() {
             ui.add_sized(
-                [size, 14.0],
+                [size.x, 14.0],
                 egui::Label::new(RichText::new(caption).size(11.0).color(if enabled { p.muted } else { p.muted_dim })),
             );
         }

@@ -6,7 +6,7 @@ use aurora_net::RegionHandle;
 use aurora_net::objects::{ObjectUpdate, ParticleUpdate, TerseUpdate, TextureAnim};
 use aurora_prim::{ExtraParams, TextureEntry, VolumeParams};
 use glam::{Quat, Vec3, Vec4};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -45,6 +45,8 @@ pub struct RenderState {
     pub local_scale: Option<Vec3>,
     /// None applies to all faces, Some(face) overrides that face only.
     pub local_appearance: HashMap<Option<u8>, LocalAppearance>,
+    /// Temporary material-inspector display mode; no simulator state changes.
+    pub blinn_phong_preview: bool,
     /// Geometry cache key currently bound (and its LOD).
     pub geom: Option<crate::scene::GeomKey>,
     /// Geometry requested but not ready yet.
@@ -175,6 +177,9 @@ impl Object {
         value
     }
     pub fn visual_material(&self, face: usize) -> Option<Uuid> {
+        if self.render.blinn_phong_preview {
+            return None;
+        }
         match self.local_appearance(face) {
             Some(LocalAppearance::Texture(_)) => None,
             Some(LocalAppearance::Material(id)) => Some(id),
@@ -276,6 +281,7 @@ impl Object {
             self.render.local_volume = None;
             self.render.local_scale = None;
             self.render.local_appearance.clear();
+            self.render.blinn_phong_preview = false;
             self.foot_plane = None;
         }
         self.full_update_serial = self.full_update_serial.wrapping_add(1);
@@ -531,6 +537,8 @@ pub struct ObjectStore {
     free: Vec<usize>,
     by_key: FastMap<ObjKey, usize>,
     by_uuid: FastMap<Uuid, usize>,
+    /// Local BP display choices for this region visit; not saved in caches.
+    blinn_phong_previews: HashSet<Uuid>,
     /// parent key -> child indices
     children: FastMap<ObjKey, Vec<usize>>,
     count: usize,
@@ -573,6 +581,36 @@ pub struct ObjectStore {
 }
 
 impl ObjectStore {
+    pub fn set_blinn_phong_preview(&mut self, idx: usize, preview: bool) {
+        let Some(o) = self.get(idx) else { return };
+        if o.render.blinn_phong_preview == preview {
+            return;
+        }
+        let id = o.full_id;
+        if preview {
+            self.blinn_phong_previews.insert(id);
+        } else {
+            self.blinn_phong_previews.remove(&id);
+        }
+        if let Some(o) = self.get_mut(idx) {
+            o.render.blinn_phong_preview = preview;
+            o.material_dirty = true;
+        }
+    }
+
+    /// End the region visit without scanning every world object. UUIDs follow
+    /// simulator renumbering; removed/parked objects discard their choice too.
+    pub fn clear_material_previews(&mut self) {
+        for id in std::mem::take(&mut self.blinn_phong_previews) {
+            if let Some(idx) = self.index_of_uuid(&id)
+                && let Some(o) = self.get_mut(idx)
+            {
+                o.render.blinn_phong_preview = false;
+                o.material_dirty = true;
+            }
+        }
+    }
+
     /// Clock of a region, for `Object::predicted`.
     pub fn motion_time(&self, region: RegionHandle) -> f64 {
         self.motion_clocks.get(&region).copied().unwrap_or(0.0)
@@ -993,6 +1031,7 @@ impl ObjectStore {
                 && old != new
             {
                 self.by_uuid.remove(&old);
+                self.blinn_phong_previews.remove(&old);
                 self.by_uuid.insert(new, idx);
             }
             self.touch(idx);
@@ -1062,6 +1101,7 @@ impl ObjectStore {
     fn take_idx(&mut self, idx: usize) -> Option<(Object, Vec<usize>)> {
         self.unlink(idx);
         let obj = self.slots.get_mut(idx).and_then(|s| s.take())?;
+        self.blinn_phong_previews.remove(&obj.full_id);
         self.by_key.remove(&obj.key);
         if self.by_uuid.get(&obj.full_id) == Some(&idx) {
             self.by_uuid.remove(&obj.full_id);

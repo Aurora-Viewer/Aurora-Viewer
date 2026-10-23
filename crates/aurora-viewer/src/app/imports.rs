@@ -544,7 +544,7 @@ impl App {
         }
         if let Some(gfx) = &mut self.gfx {
             for asset in maps {
-                self.scene.textures.want_ui_image(&mut gfx.renderer, asset);
+                self.scene.textures.want_ui_image(&mut gfx.renderer, asset, &self.scene.jobs);
                 self.scene.textures.want_sculpt(&asset);
                 if let Some(pixels) = self.scene.textures.sculpt_map(&asset) {
                     self.imports.request_remote_map(asset, pixels, &self.scene.jobs, ctx);

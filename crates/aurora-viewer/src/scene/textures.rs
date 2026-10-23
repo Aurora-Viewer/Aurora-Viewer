@@ -910,6 +910,7 @@ pub struct TextureStreamer {
     /// Textures also wanted as egui images (profile pictures...): small CPU copies.
     ui_wanted: std::collections::HashSet<Uuid>,
     ui_ready: HashMap<Uuid, (u32, u32, Vec<u8>)>,
+    ui_previews: super::texture_ui::Images,
     pub stats: TextureStats,
     last_maintenance: Instant,
     /// Unused textures are evicted after this long (shortened by the
@@ -1101,6 +1102,7 @@ impl TextureStreamer {
             demo_source: None,
             ui_wanted: Default::default(),
             ui_ready: HashMap::new(),
+            ui_previews: Default::default(),
             stats: TextureStats::default(),
             last_maintenance: Instant::now(),
             evict_after: UNUSED_EVICT,
@@ -1582,11 +1584,18 @@ impl TextureStreamer {
     }
 
     /// Keep a texture resident and deliver a small RGBA copy for the UI.
-    pub fn want_ui_image(&mut self, renderer: &mut Renderer, id: Uuid) {
+    pub fn want_ui_image(&mut self, renderer: &mut Renderer, id: Uuid, jobs: &Jobs) {
         if id.is_nil() {
             return;
         }
         if self.ui_wanted.insert(id) {
+            // Reserved textures bypass asset streaming and therefore never
+            // reach the upload callback that normally prepares UI images.
+            if is_builtin_transparent(&id) || id == aurora_prim::te::BLANK_TEXTURE {
+                self.ui_ready
+                    .insert(id, (1, 1, if is_builtin_transparent(&id) { vec![0; 4] } else { vec![255; 4] }));
+                return;
+            }
             // procedural textures of the offline demo are never streamed
             if let Some((px, w, h)) = crate::demo::local_texture(&id) {
                 self.ui_ready.insert(id, (w, h, px));
@@ -1597,11 +1606,16 @@ impl TextureStreamer {
                 e.urgent = true;
             }
         }
+        if !self.ui_ready.contains_key(&id) {
+            let source = self.preview_source(&id);
+            self.ui_previews.request(id, source, jobs);
+        }
         self.note_usage(&id, 256.0);
     }
 
     /// Decoded UI copy, once available (taken by the caller).
     pub fn take_ui_image(&mut self, id: &Uuid) -> Option<(u32, u32, Vec<u8>)> {
+        self.ui_previews.poll(&mut self.ui_ready);
         self.ui_ready.remove(id)
     }
 

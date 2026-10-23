@@ -22,7 +22,9 @@ pub mod geom;
 pub mod grab;
 pub mod hud_drag;
 pub mod land;
+pub mod layout;
 pub mod manip;
+mod material_preview;
 pub mod materials;
 pub mod replace;
 pub mod script_queue;
@@ -62,6 +64,9 @@ pub const MAX_ATTACHMENT_DIST: f32 = 3.5;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct BuildSettings {
+    /// Personal compact inspector arrangement, independent of edited objects.
+    pub layout: layout::Layout,
+    pub transform_expanded: bool,
     /// Firestorm's ApplyColorImmediately and 32 saved color palette slots.
     pub color_picker: crate::ui::color_picker::Preferences,
     /// GridResolution (m).
@@ -318,6 +323,8 @@ mod hud_tests {
 impl Default for BuildSettings {
     fn default() -> Self {
         BuildSettings {
+            layout: layout::Layout::default(),
+            transform_expanded: true,
             color_picker: crate::ui::color_picker::Preferences::default(),
             grid_resolution: 0.5,
             grid_draw_size: 12.0,
@@ -434,6 +441,9 @@ pub struct Bounds {
 
 pub struct BuildTool {
     wheel_selection: cycle::Wheel,
+    /// Last inspected selection/mode; object display choices live in the world.
+    material_preview_selection: HashSet<Uuid>,
+    material_preview_mode: Option<bool>,
     /// The build floater is open (build mode).
     pub open: bool,
     pub tool: Tool,
@@ -509,6 +519,8 @@ impl Default for BuildTool {
     fn default() -> Self {
         BuildTool {
             wheel_selection: cycle::Wheel::default(),
+            material_preview_selection: HashSet::new(),
+            material_preview_mode: None,
             open: false,
             tool: Tool::Edit,
             edit_mode: EditMode::Move,
@@ -788,6 +800,7 @@ impl BuildTool {
         s.edit_linked = false;
         self.focus_mode = FocusMode::Zoom;
         self.grab_mode = GrabMode::Move;
+        self.update_material_preview(world, s);
     }
 
     // ---- selection
@@ -1409,6 +1422,7 @@ impl BuildTool {
         self.update_replacement(world, now);
         self.advance_bulk_permissions(world, now);
         self.advance_link(world, now);
+        self.update_material_preview(world, s);
         if !self.open {
             return;
         }

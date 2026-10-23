@@ -7243,6 +7243,9 @@ replace-recovery-incomplete = Récupération incomplète : { $reason } Vérifiez
 
 # Compact build workspace
 build-compact-title = Construire
+build-workspace-title = Construction
+build-workspace-object = OBJET
+build-workspace-tools = OUTILS
 build-compact-help = Ctrl+B : ouvrir / fermer ; Ctrl+1 à 5 : caméra, déplacer, modifier, créer, terrain.
 build-compact-transform = Transformer
 build-compact-shape = Forme
@@ -7323,9 +7326,9 @@ build-compact-prim-count = { $count ->
     [one] { $count } prim
    *[other] { $count } prims
     }
-build-compact-position = Position · m
-build-compact-size = Taille · m
-build-compact-rotation = Rotation · °
+build-compact-position = Position
+build-compact-size = Taille
+build-compact-rotation = Rotation
 build-compact-selection-snap = Sélection et accrochage
 build-compact-grid-unit = { $unit } m
 build-compact-copy-hint = Maj + glisser : copier
@@ -10379,3 +10382,35 @@ contact-visual-icon-36 = Idée
 contact-visual-icon-37 = Épingle
 contact-visual-icon-38 = Étiquette
 contact-visual-icon-39 = Identité
+
+# Personal construction layout
+build-layout-settings = Réglages de construction
+build-layout-ruler = Réglages de la règle
+build-layout-hidden = Options masquées
+build-layout-organize = Organiser les options…
+build-layout-finish = Terminer l’organisation
+build-layout-transform = Position, taille et rotation
+build-layout-manipulators = Bouger, pivoter, étirer et aligner
+build-layout-actions = Annuler, rétablir, lier, délier et dupliquer
+build-layout-export-notecard = Exporter dans une notecard
+build-layout-load-notecard = Recharger depuis une notecard
+build-layout-notecard-name = Réglages de construction
+build-layout-filter-notecards = Filtrer les notecards
+build-layout-no-notecards = Aucune notecard disponible.
+build-layout-invalid-notecard = Cette notecard de réglages de construction est invalide.
+build-layout-saved = Réglages exportés dans une notecard de l’inventaire.
+build-layout-loaded = Réglages de construction restaurés.
+build-layout-reload = Recharger
+build-layout-loading = Chargement des réglages…
+build-layout-drop-hidden = Déposer ici pour masquer
+build-layout-export = Exporter
+
+# Compact material layout
+build-material-surface = Surface
+build-material-relief-reflection = Relief et réflexion
+build-material-lighting = Réponse à la lumière
+build-material-placement = Placement des textures
+build-material-diffuse-tint = Teinte diffuse
+build-material-specular-tint = Teinte spéculaire
+build-material-base-tint = Teinte de base
+build-material-emissive-tint = Teinte émissive

@@ -1,6 +1,6 @@
 //! The build floater (LLFloaterTools, floater_tools.xml, Firestorm) in the
-//! Aurora skin: seven editing sections and five tools in one navigation
-//! rail. General holds object information and Rights holds permissions.
+//! Aurora skin: five editing sections and five tools in one navigation
+//! rail. General holds object information and ownership permissions.
 //! The active section supplies the title; edit selection/actions belong
 //! to the main panel. The title bar folds it away (FSToolboxExpanded).
 //! Also the build keyboard shortcuts
@@ -18,12 +18,16 @@ mod floaters;
 mod general;
 mod item_properties;
 mod keyboard;
+mod layout;
+mod notecards;
+pub use notecards::{loaded as layout_notecard_loaded, saved as layout_notecard_saved};
 mod mesh;
 mod object;
 mod replace;
 mod texture;
 mod texture_preview;
 mod tools;
+mod workspace;
 
 use super::{BuildSettings, BuildTool, EditMode, Tool};
 use crate::media::entry::ObjectMediaData;
@@ -55,6 +59,11 @@ pub struct Env<'a> {
 /// Something the floater asks the app to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
+    ExportLayoutNotecard {
+        name: String,
+        text: String,
+    },
+    LoadLayoutNotecard(Uuid),
     TransferTask(Box<super::task_inventory::TransferRequest>),
     /// Focus slider moved (LLAgentCamera::setCameraZoomFraction).
     ZoomFraction(f32),
@@ -131,7 +140,10 @@ pub enum Confirm {
 /// State of the floater kept between frames.
 #[derive(Default)]
 pub struct FloaterState {
+    pub layout: layout::State,
+    pub notecards: notecards::State,
     mesh_inspection: mesh::Inspection,
+    material_previews: crate::ui::texture_library::previews::Previews,
     pub color_picker: crate::ui::color_picker::ColorPicker,
     color_edit: Option<color::Session>,
     color_focused: bool,
@@ -195,6 +207,16 @@ const INSPECTOR_ID: &str = "build_tools_inspector_c3";
 /// Build shortcuts (menu_viewer.xml): Ctrl+B, Ctrl+1..5, delete, duplicate,
 /// link, edit linked parts, grid, undo...
 pub fn shortcuts(ctx: &egui::Context, tool: &mut BuildTool, world: &mut World, s: &mut BuildSettings) {
+    if tool.ui.layout.organizing || tool.ui.notecards.open.is_some() {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            if tool.ui.notecards.open.is_some() {
+                tool.ui.notecards.open = None;
+            } else if tool.ui.layout.drag.take().is_none() {
+                tool.ui.layout.organizing = false;
+            }
+        }
+        return;
+    }
     if contents_selection::shortcuts(ctx, tool, world) {
         return;
     }
@@ -256,6 +278,9 @@ pub fn show(
         tool.cancel_texture_picker(world, env);
         tool.cancel_color_picker(world);
         tool.commit_color_edit();
+        tool.ui.layout.open = false;
+        tool.ui.layout.organizing = false;
+        tool.ui.layout.drag = None;
         return false;
     }
     let before = s.clone();
@@ -290,10 +315,45 @@ pub fn show(
             Vec2::new(344.0, 500.0),
         );
     }
+    workspace::prepare(ctx, env.demo);
+    let preview = egui::Id::unique((INSPECTOR_ID, "compact-preview"));
+    if env.demo && !ctx.data(|d| d.get_temp::<bool>(preview).unwrap_or(false)) {
+        ctx.data_mut(|d| d.insert_temp(preview, true));
+        let mode = std::env::var("AURORA_DEMO_BUILD_TAB").unwrap_or_default();
+        if mode.split('+').any(|mode| mode == "folded") {
+            s.transform_expanded = false;
+        }
+    }
+    let width = egui::AreaState::load(ctx, egui::Id::unique(INSPECTOR_ID))
+        .and_then(|state| state.size)
+        .unwrap_or(workspace::DEFAULT_SIZE)
+        .x;
+    s.layout.normalize();
+    if matches!(tool.tab, 0 | 1) {
+        tool.tab = 6;
+    }
+    if tool.tool == Tool::Edit
+        && !s
+            .layout
+            .in_panel(crate::build::layout::Panel::Navigation)
+            .iter()
+            .any(|item| layout::section(*item) == Some(tool.tab))
+    {
+        tool.tab = s
+            .layout
+            .in_panel(crate::build::layout::Panel::Navigation)
+            .iter()
+            .find_map(|item| layout::section(*item))
+            .unwrap_or(6);
+    }
+    tool.ui.layout.targets.clear();
+    tool.ui.layout.zones.clear();
     let mut open = true;
     let mut toggle_sections = false;
+    let mut copy_uuid = false;
+    let mut toggle_settings = false;
     let (title_icon, title) = compact::window_heading(tool);
-    let mut floater = Floater::new(INSPECTOR_ID, title, egui::pos2(screen.left() + 12.0, 40.0), Vec2::new(344.0, 684.0))
+    let mut floater = Floater::new(INSPECTOR_ID, title, egui::pos2(screen.left() + 12.0, 40.0), workspace::DEFAULT_SIZE)
         .help(aurora_i18n::tr!("build-compact-help"))
         .framed_header(title_icon)
         .action(
@@ -304,14 +364,43 @@ pub fn show(
         .steady_size()
         .silent();
     floater.header_status = compact::object_status(tool, world, p);
-    floater.min_size = Vec2::new(344.0, 420.0);
+    floater.header_status_action = Some((
+        "clipboard-text-filled",
+        aurora_i18n::tr!("build-compact-uuid"),
+        aurora_i18n::tr!("build-ui-general-copy-object-keys-shift-all-parts"),
+        &mut copy_uuid,
+    ));
+    if !matches!(tool.tool, Tool::Edit | Tool::Create) {
+        floater = floater.action("settings-filled", aurora_i18n::tr!("build-layout-settings"), &mut toggle_settings);
+    }
+    floater.min_size = compact::minimum_size(tool, s);
     if !s.expanded {
-        if let Some(size) = ctx.data(|d| d.get_temp::<Vec2>(egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size"))) {
-            floater.default_size.x = size.x;
-        }
+        floater.default_size.x = ctx
+            .data(|d| d.get_temp::<Vec2>(egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size")))
+            .map_or(width, |size| size.x);
         floater = floater.auto_height();
     }
-    floater.show(ctx, p, &mut open, |ui| compact::body(ui, p, tool, world, s, mods, env));
+    floater.show(ctx, p, &mut open, |ui| {
+        common::typography(ui);
+        compact::body(ui, p, tool, world, s, mods, env);
+    });
+    if copy_uuid && !tool.selection.is_empty() {
+        ctx.copy_text(tool.copy_keys(world, s, mods.shift));
+    }
+    if toggle_settings {
+        tool.ui.layout.open = !tool.ui.layout.open;
+    }
+    if !tool.ui.layout.open {
+        tool.ui.layout.organizing = false;
+        tool.ui.layout.drag = None;
+    }
+    if tool.ui.grid_options_open {
+        tool.ui.layout.open = true;
+        tool.ui.grid_options_open = false;
+    }
+    layout::settings(ctx, p, tool, world, s, mods);
+    layout::finish(ctx, p, tool, s);
+    notecards::show(ctx, p, tool, world, s);
     contents_selection::finish_if_hidden_or_blurred(ctx, tool, world);
     if toggle_sections {
         let size_id = egui::Id::unique(INSPECTOR_ID).with("sections_expanded_size");

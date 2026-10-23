@@ -230,6 +230,8 @@ pub struct Floater<'a> {
     pub title: String,
     /// Optional compact state row within the title bar: glyph, label, theme role.
     pub header_status: Vec<(&'static str, String, Color32)>,
+    /// A text action at the right end of the secondary header row.
+    pub header_status_action: Option<(&'a str, &'a str, &'a str, &'a mut bool)>,
     /// A short muted text right after the title (a count of what the
     /// window holds).
     pub title_note: Option<String>,
@@ -281,6 +283,7 @@ impl<'a> Floater<'a> {
             id,
             title: title.into(),
             header_status: Vec::new(),
+            header_status_action: None,
             title_note: None,
             title_state: None,
             default_pos: pos,
@@ -646,7 +649,11 @@ impl<'a> Floater<'a> {
                             toggle_min = true;
                         }
                         for (icon, tip, clicked) in &mut self.actions {
-                            if title_button(ui, p, icon).on_hover_text(*tip).clicked() {
+                            let response = title_button(ui, p, icon).on_hover_text(*tip);
+                            #[cfg(test)]
+                            ui.ctx()
+                                .data_mut(|d| d.insert_temp(egui::Id::unique(("floater_action", self.id, *icon)), response.rect));
+                            if response.clicked() {
                                 **clicked = true;
                             }
                         }
@@ -683,17 +690,37 @@ impl<'a> Floater<'a> {
                         }
                     });
                 });
-                if !self.header_status.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(7.0, 2.0);
-                        for (name, label, color) in &self.header_status {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 3.0;
-                                glyph(ui, name, *color, 11.0);
-                                ui.label(RichText::new(label).size(9.0).color(*color));
+                if !self.header_status.is_empty() || self.header_status_action.is_some() {
+                    let status = |ui: &mut egui::Ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(7.0, 2.0);
+                            for (name, label, color) in &self.header_status {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 3.0;
+                                    glyph(ui, name, *color, 11.0);
+                                    ui.label(RichText::new(label).size(11.0).color(*color));
+                                });
+                            }
+                        });
+                    };
+                    if let Some((icon, label, tip, clicked)) = &mut self.header_status_action {
+                        ui.horizontal(|ui| {
+                            let width = (ui.available_width() - 65.0).max(1.0);
+                            ui.allocate_ui_with_layout(Vec2::new(width, 18.0), egui::Layout::top_down(egui::Align::Min), status);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui
+                                    .add(egui::Label::new(RichText::new(*label).size(12.0).color(p.violet_light)).sense(Sense::click()))
+                                    .on_hover_text(*tip)
+                                    .clicked()
+                                {
+                                    **clicked = true;
+                                }
+                                glyph(ui, icon, p.violet_light, 13.0);
                             });
-                        }
-                    });
+                        });
+                    } else {
+                        status(ui);
+                    }
                 }
                 title_row
             };

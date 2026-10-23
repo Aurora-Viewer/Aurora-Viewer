@@ -2010,6 +2010,14 @@ pub enum NetCommand {
         asset_type: i32,
         data: Vec<u8>,
     },
+    /// Create a named notecard, then upload its text after the matching
+    /// inventory callback. Uses UpdateNotecardAgentInventory, without a fee.
+    CreateNotecardItem {
+        request: Uuid,
+        parent: Uuid,
+        name: String,
+        data: Vec<u8>,
+    },
     /// A new environment settings item holding `data` (LLSettingsVOBase::
     /// createInventoryItem): CreateInventoryItem, then the asset through
     /// UpdateSettingsAgentInventory. Answered by `InventoryContentSaved`.

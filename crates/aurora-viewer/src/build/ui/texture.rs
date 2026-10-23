@@ -7,7 +7,7 @@
 //! Every value is read over the selected faces: when they differ the
 //! control shows a mixed value ("Multiple").
 
-use super::common::{Edit, check, color_swatch, combo, row, same, small, spin, swatch};
+use super::common::{Edit, check, combo, row, same, small, spin, swatch};
 use super::{Confirm, Env, FaceClip, PickTarget};
 use crate::build::materials::{GltfUpdate, MF_HAS_MEDIA};
 use crate::build::{BuildSettings, BuildTool, Tool};
@@ -414,9 +414,6 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
     ui.scope(|ui| {
         if tool.ui.tex_tab != 2 {
-            // Match the mockup's compact value fields while keeping Aurora's
-            // controls: the common edit footer must not hide repeats/metre.
-            ui.style_mut().override_font_id = Some(egui::FontId::proportional(11.0));
             ui.spacing_mut().interact_size.y = 22.0;
             ui.spacing_mut().button_padding = egui::vec2(4.0, 3.0);
         }
@@ -434,10 +431,103 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
 fn glow(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, sel: &[Sel]) {
     let (value, mixed) = same(sel.iter().map(|x| x.te.glow));
     let mut value = value.unwrap_or(0.0);
-    let width = (ui.available_width() - 59.0).max(65.0);
+    let width = ui.available_width() * 0.5;
+    let field_width = (ui.available_width() - width - ui.spacing().item_spacing.x).max(54.0);
     row(ui, p, aurora_i18n::tr!("build-ui-texture-glow"), width, |ui| {
-        if spin(ui, &mut value, 0.1, 0.0..=1.0, 3, 54.0, mixed).commit {
+        if spin(ui, &mut value, 0.1, 0.0..=1.0, 3, field_width, mixed).commit {
             tool.edit_faces(world, |f, _, _| f.glow = value);
+        }
+    });
+}
+
+/// The requested compact layout uses three legacy previews or two PBR maps per row.
+fn preview_size(ui: &egui::Ui, columns: usize) -> f32 {
+    ((ui.available_width() - 10.0 * (columns - 1) as f32) / columns as f32).clamp(32.0, if columns == 3 { 82.0 } else { 128.0 })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn material_tint(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    world: &mut World,
+    env: &mut Env,
+    label: &str,
+    target: super::ColorTarget,
+    rgb: [f32; 3],
+    enabled: bool,
+) {
+    let label_width = ui.available_width() * 0.5;
+    row(ui, p, label, label_width, |ui| {
+        let size = egui::vec2((ui.available_width() - 2.0).max(24.0), 26.0);
+        let response = super::common::color_swatch_sized(ui, p, rgb, "", size, enabled);
+        tool.color_swatch_response(world, env, target, rgb, response);
+    });
+}
+
+fn material_asset(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    tool: &mut BuildTool,
+    asset: Option<Uuid>,
+    mixed: bool,
+    model: Option<std::sync::Arc<aurora_render::preview::Model>>,
+    size: f32,
+) {
+    ui.vertical(|ui| {
+        ui.set_width(size);
+        ui.spacing_mut().item_spacing.y = 6.0;
+        let loading = model.is_none() && asset.is_some();
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique("build_material_model_ready"), model.is_some()));
+        let response = if let Some(model) = model {
+            aurora_render::preview::paint_hint(
+                ui,
+                ui.scope_id().with("build-material-preview"),
+                model,
+                crate::ui::texture_library::previews::view(p),
+                egui::Vec2::splat(size),
+            )
+        } else {
+            swatch(ui, p, &Default::default(), &mut Default::default(), None, "", size, false, true)
+        };
+        ui.painter().rect_stroke(
+            response.rect,
+            ui.visuals().window_corner_radius,
+            egui::Stroke::new(1.0, if response.hovered() { p.violet_light } else { p.raised }),
+            egui::StrokeKind::Inside,
+        );
+        if mixed || loading {
+            // Mixed selection belongs to the whole material, not its maps.
+            ui.painter().text(
+                response.rect.center(),
+                egui::Align2::CENTER_CENTER,
+                if mixed {
+                    aurora_i18n::tr!("build-ui-common-multiple")
+                } else {
+                    aurora_i18n::tr!("common-loading-2")
+                },
+                egui::FontId::proportional(super::common::SMALL),
+                p.ink,
+            );
+        }
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", "PbrMaterial".to_string())), response.rect));
+        let caption = aurora_i18n::tr!("build-ui-texture-material");
+        ui.add_sized(
+            [size, 16.0],
+            egui::Label::new(RichText::new(caption).size(super::common::SMALL).color(p.muted)).truncate(),
+        );
+        if response
+            .on_hover_text(asset.map_or_else(|| caption.to_string(), |id| id.to_string()))
+            .clicked()
+        {
+            tool.ui
+                .picker
+                .open_materials(aurora_i18n::tr!("build-ui-texture-choose-material"), asset.unwrap_or_default());
+            tool.ui.pick_target = Some(PickTarget::PbrMaterial);
         }
     });
 }
@@ -446,49 +536,28 @@ fn material_map(
     ui: &mut egui::Ui,
     p: &Palette,
     tool: &mut BuildTool,
-    world: &mut World,
     env: &mut Env,
     id: Option<Uuid>,
     mixed: bool,
     caption: &str,
     target: PickTarget,
     enabled: bool,
-    tint: Option<(super::ColorTarget, [f32; 3], bool)>,
+    size: f32,
 ) {
     ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.set_width(size);
+        ui.spacing_mut().item_spacing.y = 6.0;
         // A material asset is glTF, not an image: only its maps enter the image loader.
-        let image = if target == PickTarget::PbrMaterial { None } else { id };
-        let response = swatch(ui, p, env.images, &mut tool.ui.wanted_images, image, "", 38.0, mixed, enabled);
-        if target == PickTarget::PbrMaterial && id.is_some() {
-            ui.painter().text(
-                response.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "GLTF",
-                egui::FontId::proportional(10.0),
-                p.violet_light,
-            );
-        }
-        let mut tint_hovered = false;
-        if let Some((color_target, rgb, color_enabled)) = tint {
-            let rect = egui::Rect::from_min_size(response.rect.right_bottom() - egui::vec2(16.0, 16.0), egui::Vec2::splat(16.0));
-            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                let response = color_swatch(ui, p, rgb, "", 16.0, color_enabled);
-                tint_hovered = ui.input(|input| input.pointer.hover_pos().is_some_and(|point| rect.contains(point)));
-                tool.color_swatch_response(world, env, color_target, rgb, response);
-            });
-        }
-        let caption_width = if matches!(target, PickTarget::Diffuse | PickTarget::Normal | PickTarget::Specular) {
-            62.0
-        } else {
-            44.0
-        };
+        let response = swatch(ui, p, env.images, &mut tool.ui.wanted_images, id, "", size, mixed, enabled);
+        #[cfg(test)]
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(egui::Id::unique(("material_preview", format!("{target:?}"))), response.rect));
         ui.add_sized(
-            [caption_width, 12.0],
-            egui::Label::new(RichText::new(caption).size(10.0).color(p.muted)).truncate(),
+            [size, 16.0],
+            egui::Label::new(RichText::new(caption).size(super::common::SMALL).color(p.muted)).truncate(),
         )
         .on_hover_text(caption);
-        if response.on_hover_text(caption).clicked() && !tint_hovered {
+        if response.on_hover_text(caption).clicked() {
             match target {
                 PickTarget::PbrMaterial => tool
                     .ui
@@ -542,13 +611,13 @@ fn uv_controls(
                 (2, 71.0, aurora_i18n::tr!("build-ui-texture-rotation")),
             ] {
                 ui.allocate_ui_with_layout(egui::vec2(width, 78.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                    ui.label(RichText::new(title).size(10.0).color(p.muted));
+                    ui.label(RichText::new(title).size(super::common::SMALL).color(p.muted));
                     for (axis, name) in axes.iter().enumerate().take(if column == 2 { 1 } else { 2 }) {
                         let index = if column == 2 { 4 } else { column * 2 + axis };
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
                             if column != 2 {
-                                ui.label(RichText::new(*name).size(10.0).color(p.muted));
+                                ui.label(RichText::new(*name).size(super::common::SMALL).color(p.muted));
                             }
                             let (increment, range, d) = match column {
                                 0 => (0.1, -10000.0..=10000.0, decimals),
@@ -590,168 +659,141 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
     // effective material of the first face: base asset + override
     let first = sel[0];
     let over = BuildTool::gltf_override(world, first.idx, first.face);
-    let mut mat = asset
-        .and_then(|a| env.scene.materials.get(&a))
-        .map(|m| (*m).clone())
-        .unwrap_or_default();
+    let base = asset.and_then(|a| env.scene.materials.get(&a));
+    let loaded = base.is_some();
+    let mut mat = base.map(|m| (*m).clone()).unwrap_or_default();
     mat.apply_override(&over);
     let editable = has_all;
-    ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(egui::vec2(94.0, 160.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(94.0);
-            egui::Grid::new("pbr_map_grid").spacing(egui::vec2(6.0, 2.0)).show(ui, |ui| {
-                material_map(
-                    ui,
-                    p,
-                    tool,
-                    world,
-                    env,
-                    asset,
-                    asset_mixed,
-                    aurora_i18n::tr!("build-ui-texture-material"),
-                    PickTarget::PbrMaterial,
-                    true,
-                    None,
-                );
-                let bc = mat.base_color_factor;
-                let color = [
-                    super::common::linear_to_srgb(bc[0]),
-                    super::common::linear_to_srgb(bc[1]),
-                    super::common::linear_to_srgb(bc[2]),
-                ];
-                material_map(
-                    ui,
-                    p,
-                    tool,
-                    world,
-                    env,
-                    mat.base_color_texture,
-                    false,
-                    aurora_i18n::tr!("common-color"),
-                    PickTarget::PbrMap(0),
-                    editable,
-                    Some((super::ColorTarget::PbrBase, color, editable)),
-                );
-                ui.end_row();
-                material_map(
-                    ui,
-                    p,
-                    tool,
-                    world,
-                    env,
-                    mat.normal_texture,
-                    false,
-                    aurora_i18n::tr!("build-ui-texture-normal"),
-                    PickTarget::PbrMap(1),
-                    editable,
-                    None,
-                );
-                let ef = mat.emissive_factor;
-                let color = [
-                    super::common::linear_to_srgb(ef[0]),
-                    super::common::linear_to_srgb(ef[1]),
-                    super::common::linear_to_srgb(ef[2]),
-                ];
-                material_map(
-                    ui,
-                    p,
-                    tool,
-                    world,
-                    env,
-                    mat.emissive_texture,
-                    false,
-                    aurora_i18n::tr!("build-ui-texture-emissive"),
-                    PickTarget::PbrMap(3),
-                    editable,
-                    Some((super::ColorTarget::PbrEmissive, color, editable)),
-                );
-                ui.end_row();
-                material_map(
-                    ui,
-                    p,
-                    tool,
-                    world,
-                    env,
-                    mat.metallic_roughness_texture,
-                    false,
-                    "(O)RM",
-                    PickTarget::PbrMap(2),
-                    editable,
-                    None,
-                );
-            });
-        });
-        ui.vertical(|ui| {
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-            glow(ui, p, tool, world, sel);
-            if let Some(v) = check(ui, p, mat.double_sided, false, aurora_i18n::tr!("common-double-sided"), editable) {
-                tool.edit_gltf(world, sel, |o| o.double_sided = Some(v));
+    tool.ui.material_previews.poll();
+    let model = asset.filter(|_| loaded && !asset_mixed).and_then(|asset| {
+        tool.ui.material_previews.material_model(
+            asset,
+            std::sync::Arc::new(mat.clone()),
+            crate::imports::preview::MaterialShape::Sphere,
+            env.scene,
+            &mut tool.ui.wanted_images,
+            ui.ctx(),
+        )
+    });
+    let size = preview_size(ui, 3);
+    egui::Grid::new("pbr_map_grid")
+        .num_columns(3)
+        .spacing(egui::vec2(10.0, 10.0))
+        .show(ui, |ui| {
+            material_asset(ui, p, tool, asset, asset_mixed, model, size);
+            for (index, (id, caption, channel)) in [
+                (mat.base_color_texture, aurora_i18n::tr!("common-color"), 0),
+                (mat.normal_texture, aurora_i18n::tr!("build-ui-texture-normal"), 1),
+                (mat.emissive_texture, aurora_i18n::tr!("build-ui-texture-emissive"), 3),
+                (mat.metallic_roughness_texture, "(O)RM", 2),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                material_map(ui, p, tool, env, id, false, caption, PickTarget::PbrMap(channel), editable, size);
+                if (index + 2) % 3 == 0 {
+                    ui.end_row();
+                }
             }
-            ui.add_enabled_ui(editable, |ui| {
-                // LLPanelFace keeps its numeric controls inside the fixed panel.
-                // Scaled fonts can make DragValue wider than the nominal 54 pts;
-                // reserve its measured text, padding and increment buttons first.
-                let value_text = RichText::new(aurora_i18n::number_text("0.000")).text_style(ui.style().drag_value_text_style.clone());
-                let value_width = egui::WidgetText::from(value_text)
-                    .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
-                    .size()
-                    .x;
-                let field_width = (value_width + 2.0 * ui.spacing().button_padding.x + 13.0).max(54.0);
-                let width = (ui.available_width() - field_width - ui.spacing().item_spacing.x).max(0.0);
-                let bc = mat.base_color_factor;
-                let mut alpha = bc[3];
-                row(ui, p, aurora_i18n::tr!("common-alpha"), width, |ui| {
-                    if spin(ui, &mut alpha, 0.1, 0.0..=1.0, 3, field_width, false).commit {
-                        tool.edit_gltf(world, sel, |o| o.base_color_factor = Some([bc[0], bc[1], bc[2], alpha]));
-                    }
-                });
-                let modes = [
-                    (aurora_i18n::tr!("common-opaque"), AlphaMode::Opaque),
-                    (aurora_i18n::tr!("build-ui-texture-blend"), AlphaMode::Blend),
-                    (aurora_i18n::tr!("build-ui-texture-masking"), AlphaMode::Mask),
-                ];
-                row(ui, p, aurora_i18n::tr!("build-ui-texture-mode"), 45.0, |ui| {
-                    if let Some(mode) = combo(
-                        ui,
-                        "pbr_alpha_mode",
-                        Some(mat.alpha_mode),
-                        &modes,
-                        (ui.available_width() - 4.0).max(70.0),
-                        editable,
-                    ) {
-                        tool.edit_gltf(world, sel, |o| o.alpha_mode = Some(mode));
-                    }
-                });
-                if mat.alpha_mode == AlphaMode::Mask {
-                    let mut cutoff = mat.alpha_cutoff;
-                    row(ui, p, aurora_i18n::tr!("build-ui-texture-cut"), width, |ui| {
-                        if spin(ui, &mut cutoff, 0.1, 0.0..=1.0, 3, field_width, false).commit {
-                            tool.edit_gltf(world, sel, |o| o.alpha_cutoff = Some(cutoff));
-                        }
-                    });
-                }
-                for (name, value, metallic) in [
-                    (aurora_i18n::tr!("build-ui-texture-metallic"), mat.metallic_factor, true),
-                    (aurora_i18n::tr!("build-ui-texture-roughness"), mat.roughness_factor, false),
-                ] {
-                    let mut v = value;
-                    row(ui, p, name, width, |ui| {
-                        if spin(ui, &mut v, 0.1, 0.0..=1.0, 3, field_width, false).commit {
-                            tool.edit_gltf(world, sel, |o| {
-                                if metallic {
-                                    o.metallic_factor = Some(v)
-                                } else {
-                                    o.roughness_factor = Some(v)
-                                }
-                            });
-                        }
-                    });
+        });
+    ui.vertical(|ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+        super::common::section(ui, p, aurora_i18n::tr!("build-material-surface"));
+        for (label, target, color) in [
+            (
+                aurora_i18n::tr!("build-material-base-tint"),
+                super::ColorTarget::PbrBase,
+                [mat.base_color_factor[0], mat.base_color_factor[1], mat.base_color_factor[2]],
+            ),
+            (
+                aurora_i18n::tr!("build-material-emissive-tint"),
+                super::ColorTarget::PbrEmissive,
+                mat.emissive_factor,
+            ),
+        ] {
+            material_tint(
+                ui,
+                p,
+                tool,
+                world,
+                env,
+                label,
+                target,
+                color.map(super::common::linear_to_srgb),
+                editable,
+            );
+        }
+        glow(ui, p, tool, world, sel);
+        if let Some(v) = check(ui, p, mat.double_sided, false, aurora_i18n::tr!("common-double-sided"), editable) {
+            tool.edit_gltf(world, sel, |o| o.double_sided = Some(v));
+        }
+        ui.add_enabled_ui(editable, |ui| {
+            // LLPanelFace keeps its numeric controls inside the fixed panel.
+            // Scaled fonts can make DragValue wider than the nominal 54 pts;
+            // reserve its measured text, padding and increment buttons first.
+            let value_text = RichText::new(aurora_i18n::number_text("0.000")).text_style(ui.style().drag_value_text_style.clone());
+            let value_width = egui::WidgetText::from(value_text)
+                .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+                .size()
+                .x;
+            let field_width =
+                (value_width + 2.0 * ui.spacing().button_padding.x + 13.0).max(ui.available_width() * 0.5 - ui.spacing().item_spacing.x);
+            let width = (ui.available_width() - field_width - ui.spacing().item_spacing.x).max(0.0);
+            let bc = mat.base_color_factor;
+            let mut alpha = bc[3];
+            row(ui, p, aurora_i18n::tr!("common-alpha"), width, |ui| {
+                if spin(ui, &mut alpha, 0.1, 0.0..=1.0, 3, field_width, false).commit {
+                    tool.edit_gltf(world, sel, |o| o.base_color_factor = Some([bc[0], bc[1], bc[2], alpha]));
                 }
             });
+            let modes = [
+                (aurora_i18n::tr!("common-opaque"), AlphaMode::Opaque),
+                (aurora_i18n::tr!("build-ui-texture-blend"), AlphaMode::Blend),
+                (aurora_i18n::tr!("build-ui-texture-masking"), AlphaMode::Mask),
+            ];
+            row(ui, p, aurora_i18n::tr!("build-ui-texture-mode"), width, |ui| {
+                if let Some(mode) = combo(
+                    ui,
+                    "pbr_alpha_mode",
+                    Some(mat.alpha_mode),
+                    &modes,
+                    (ui.available_width() - 4.0).max(70.0),
+                    editable,
+                ) {
+                    tool.edit_gltf(world, sel, |o| o.alpha_mode = Some(mode));
+                }
+            });
+            if mat.alpha_mode == AlphaMode::Mask {
+                let mut cutoff = mat.alpha_cutoff;
+                row(ui, p, aurora_i18n::tr!("build-ui-texture-cut"), width, |ui| {
+                    if spin(ui, &mut cutoff, 0.1, 0.0..=1.0, 3, field_width, false).commit {
+                        tool.edit_gltf(world, sel, |o| o.alpha_cutoff = Some(cutoff));
+                    }
+                });
+            }
+            super::common::section(ui, p, aurora_i18n::tr!("build-material-lighting"));
+            for (name, value, metallic) in [
+                (aurora_i18n::tr!("build-ui-texture-metallic"), mat.metallic_factor, true),
+                (aurora_i18n::tr!("build-ui-texture-roughness"), mat.roughness_factor, false),
+            ] {
+                let mut v = value;
+                row(ui, p, name, width, |ui| {
+                    if spin(ui, &mut v, 0.1, 0.0..=1.0, 3, field_width, false).commit {
+                        tool.edit_gltf(world, sel, |o| {
+                            if metallic {
+                                o.metallic_factor = Some(v)
+                            } else {
+                                o.roughness_factor = Some(v)
+                            }
+                        });
+                    }
+                });
+            }
         });
     });
     ui.add_space(5.0);
     ui.scope(|ui| {
+        super::common::section(ui, p, aurora_i18n::tr!("build-material-placement"));
         // texture transforms
         ui.add_space(4.0);
         let mut ch = tool.ui.pbr_channel;
@@ -807,184 +849,188 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
     let spec = spec.filter(|n| !n.is_nil());
     let water = sel.iter().all(|x| is_hide_water(&x.te, legacy[0].as_ref()));
     let editable = !water;
+    let size = preview_size(ui, 3);
     ui.horizontal_top(|ui| {
-        ui.allocate_ui_with_layout(egui::vec2(62.0, 160.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(62.0);
-            let (col, _) = same(sel.iter().map(|x| [x.te.color[0], x.te.color[1], x.te.color[2]]));
-            material_map(
-                ui,
-                p,
-                tool,
-                world,
-                env,
-                tex,
-                tex_mixed,
-                aurora_i18n::tr!("build-ui-texture-diffuse"),
-                PickTarget::Diffuse,
-                editable,
-                Some((super::ColorTarget::Diffuse, col.unwrap_or([1.0; 3]), editable)),
-            );
-            material_map(
-                ui,
-                p,
-                tool,
-                world,
-                env,
+        ui.spacing_mut().item_spacing.x = 10.0;
+        for (id, mixed, caption, target) in [
+            (tex, tex_mixed, aurora_i18n::tr!("build-ui-texture-diffuse"), PickTarget::Diffuse),
+            (
                 normal,
                 normal_mixed,
                 aurora_i18n::tr!("build-ui-texture-normal"),
                 PickTarget::Normal,
-                editable,
-                None,
-            );
-            let sc = legacy[0].as_ref().map(|m| m.specular_color).unwrap_or([255; 4]);
-            let rgb = [sc[0] as f32 / 255.0, sc[1] as f32 / 255.0, sc[2] as f32 / 255.0];
-            material_map(
-                ui,
-                p,
-                tool,
-                world,
-                env,
+            ),
+            (
                 spec,
                 spec_mixed,
                 aurora_i18n::tr!("build-ui-texture-specular"),
                 PickTarget::Specular,
-                editable,
-                Some((super::ColorTarget::Specular, rgb, editable && spec.is_some())),
-            );
+            ),
+        ] {
+            material_map(ui, p, tool, env, id, mixed, caption, target, editable, size);
+        }
+    });
+    ui.vertical(|ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+        super::common::section(ui, p, aurora_i18n::tr!("build-material-surface"));
+        let (col, _) = same(sel.iter().map(|x| [x.te.color[0], x.te.color[1], x.te.color[2]]));
+        material_tint(
+            ui,
+            p,
+            tool,
+            world,
+            env,
+            aurora_i18n::tr!("build-material-diffuse-tint"),
+            super::ColorTarget::Diffuse,
+            col.unwrap_or([1.0; 3]),
+            editable,
+        );
+        let label_width = ui.available_width() * 0.5;
+        let field_width = (ui.available_width() - label_width - ui.spacing().item_spacing.x - 16.0).max(54.0);
+        let (fb, fb_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_FULLBRIGHT != 0));
+        if let Some(v) = check(
+            ui,
+            p,
+            fb.unwrap_or(false),
+            fb_mixed,
+            aurora_i18n::tr!("build-ui-texture-fullbright"),
+            editable,
+        ) {
+            tool.edit_faces(world, |f, _, _| {
+                f.bump_shiny_fullbright = if v {
+                    f.bump_shiny_fullbright | TEM_FULLBRIGHT
+                } else {
+                    f.bump_shiny_fullbright & !TEM_FULLBRIGHT
+                }
+            });
+        }
+        glow(ui, p, tool, world, sel);
+        let (alpha, alpha_mixed) = same(sel.iter().map(|x| x.te.color[3]));
+        let mut transp = (1.0 - alpha.unwrap_or(1.0)) * 100.0;
+        row(ui, p, aurora_i18n::tr!("build-ui-texture-transparency"), label_width, |ui| {
+            if spin(ui, &mut transp, 2.0, 0.0..=100.0, 0, field_width, alpha_mixed).commit {
+                let a = (100.0 - transp) / 100.0;
+                tool.edit_faces(world, |f, _, _| f.color[3] = a);
+            }
+            ui.label("%");
         });
-        ui.vertical(|ui| {
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-            let (fb, fb_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_FULLBRIGHT != 0));
-            if let Some(v) = check(
+        // alpha mode, mask cutoff
+        let has_alpha = tex.and_then(|t| env.scene.textures.has_alpha(&t)).unwrap_or(false);
+        let transp_zero = sel.iter().all(|x| x.te.color[3] >= 1.0);
+        let default_mode = if has_alpha { alpha_mode::BLEND } else { alpha_mode::NONE };
+        let (mode, mode_mixed) = same(
+            legacy
+                .iter()
+                .map(|m| m.as_ref().map(|m| m.diffuse_alpha_mode).unwrap_or(default_mode)),
+        );
+        let mode = if !transp_zero { Some(alpha_mode::BLEND) } else { mode };
+        row(ui, p, aurora_i18n::tr!("build-ui-texture-alpha-mode"), label_width, |ui| {
+            let current = if mode_mixed { None } else { mode };
+            if let Some(m) = combo(
                 ui,
-                p,
-                fb.unwrap_or(false),
-                fb_mixed,
-                aurora_i18n::tr!("build-ui-texture-fullbright"),
-                editable,
+                "bp_alpha_mode",
+                current,
+                &alpha_modes(),
+                field_width + 16.0,
+                editable && has_alpha && transp_zero,
             ) {
-                tool.edit_faces(world, |f, _, _| {
-                    f.bump_shiny_fullbright = if v {
-                        f.bump_shiny_fullbright | TEM_FULLBRIGHT
-                    } else {
-                        f.bump_shiny_fullbright & !TEM_FULLBRIGHT
-                    }
-                });
-            }
-            glow(ui, p, tool, world, sel);
-            let (alpha, alpha_mixed) = same(sel.iter().map(|x| x.te.color[3]));
-            let mut transp = (1.0 - alpha.unwrap_or(1.0)) * 100.0;
-            row(ui, p, aurora_i18n::tr!("build-ui-texture-transparency"), 100.0, |ui| {
-                if spin(ui, &mut transp, 2.0, 0.0..=100.0, 0, 52.0, alpha_mixed).commit {
-                    let a = (100.0 - transp) / 100.0;
-                    tool.edit_faces(world, |f, _, _| f.color[3] = a);
-                }
-                ui.label("%");
-            });
-            // alpha mode, mask cutoff
-            let has_alpha = tex.and_then(|t| env.scene.textures.has_alpha(&t)).unwrap_or(false);
-            let transp_zero = sel.iter().all(|x| x.te.color[3] >= 1.0);
-            let default_mode = if has_alpha { alpha_mode::BLEND } else { alpha_mode::NONE };
-            let (mode, mode_mixed) = same(
-                legacy
-                    .iter()
-                    .map(|m| m.as_ref().map(|m| m.diffuse_alpha_mode).unwrap_or(default_mode)),
-            );
-            let mode = if !transp_zero { Some(alpha_mode::BLEND) } else { mode };
-            row(ui, p, aurora_i18n::tr!("build-ui-texture-alpha-mode"), 72.0, |ui| {
-                let current = if mode_mixed { None } else { mode };
-                if let Some(m) = combo(
-                    ui,
-                    "bp_alpha_mode",
-                    current,
-                    &alpha_modes(),
-                    100.0,
-                    editable && has_alpha && transp_zero,
-                ) {
-                    tool.edit_legacy(env, world, sel, |x| x.diffuse_alpha_mode = m);
-                }
-            });
-            if mode == Some(alpha_mode::MASK) {
-                let (cut, cut_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.alpha_cutoff as i32).unwrap_or(127)));
-                let mut cut = cut.unwrap_or(127) as f32;
-                row(ui, p, aurora_i18n::tr!("build-ui-texture-mask-cutoff"), 100.0, |ui| {
-                    ui.add_enabled_ui(editable && mode == Some(alpha_mode::MASK), |ui| {
-                        if spin(ui, &mut cut, 1.0, 0.0..=255.0, 0, W, cut_mixed).commit {
-                            tool.edit_legacy(env, world, sel, |x| x.alpha_cutoff = cut as u8);
-                        }
-                    });
-                });
-            }
-
-            let (bump, bump_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_BUMP_MASK));
-            let mut items: Vec<(&str, u8)> = bumps().iter().enumerate().map(|(i, n)| (*n, i as u8)).collect();
-            let shown = if normal.is_some() {
-                items.push((aurora_i18n::tr!("build-ui-texture-use-texture"), BUMPY_TEXTURE));
-                Some(BUMPY_TEXTURE)
-            } else if bump_mixed {
-                None
-            } else {
-                bump
-            };
-            row(ui, p, aurora_i18n::tr!("build-ui-texture-bumpiness"), 72.0, |ui| {
-                if let Some(b) = combo(ui, "bumpiness", shown, &items, 100.0, editable)
-                    && b != BUMPY_TEXTURE
-                {
-                    tool.edit_faces(world, |f, _, _| {
-                        f.bump_shiny_fullbright = (f.bump_shiny_fullbright & !TEM_BUMP_MASK) | b
-                    });
-                    // a bump code replaces the normal map (FSPanelFace::sendBump)
-                    if normal.is_some() {
-                        tool.edit_legacy(env, world, sel, |m| m.normal_map = Uuid::nil());
-                    }
-                }
-            });
-            let (shiny, shiny_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright >> TEM_SHINY_SHIFT));
-            let mut items: Vec<(&str, u8)> = shines().iter().enumerate().map(|(i, n)| (*n, i as u8)).collect();
-            let shown = if spec.is_some() {
-                items.push((aurora_i18n::tr!("build-ui-texture-use-texture"), SHINY_TEXTURE));
-                Some(SHINY_TEXTURE)
-            } else if shiny_mixed {
-                None
-            } else {
-                shiny
-            };
-            row(ui, p, aurora_i18n::tr!("common-brightness"), 72.0, |ui| {
-                if let Some(v) = combo(ui, "shininess", shown, &items, 100.0, editable)
-                    && v != SHINY_TEXTURE
-                {
-                    tool.edit_faces(world, |f, _, _| {
-                        f.bump_shiny_fullbright = (f.bump_shiny_fullbright & !(3 << TEM_SHINY_SHIFT)) | (v << TEM_SHINY_SHIFT)
-                    });
-                    if spec.is_some() {
-                        tool.edit_legacy(env, world, sel, |m| m.specular_map = Uuid::nil());
-                    }
-                }
-            });
-
-            if spec.is_some() {
-                let (gl, gl_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_exp).unwrap_or(51)));
-                let (env_i, env_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.env_intensity).unwrap_or(0)));
-                let mut g = gl.unwrap_or(51) as f32;
-                let mut en = env_i.unwrap_or(0) as f32;
-                ui.add_enabled_ui(editable && spec.is_some(), |ui| {
-                    row(ui, p, aurora_i18n::tr!("build-ui-texture-shininess"), 100.0, |ui| {
-                        if spin(ui, &mut g, 1.0, 0.0..=255.0, 0, W, gl_mixed).commit {
-                            tool.edit_legacy(env, world, sel, |m| m.specular_exp = g as u8);
-                        }
-                    });
-                    row(ui, p, aurora_i18n::tr!("common-environment"), 100.0, |ui| {
-                        if spin(ui, &mut en, 1.0, 0.0..=255.0, 0, W, env_mixed).commit {
-                            tool.edit_legacy(env, world, sel, |m| m.env_intensity = en as u8);
-                        }
-                    });
-                });
+                tool.edit_legacy(env, world, sel, |x| x.diffuse_alpha_mode = m);
             }
         });
+        if mode == Some(alpha_mode::MASK) {
+            let (cut, cut_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.alpha_cutoff as i32).unwrap_or(127)));
+            let mut cut = cut.unwrap_or(127) as f32;
+            row(ui, p, aurora_i18n::tr!("build-ui-texture-mask-cutoff"), label_width, |ui| {
+                ui.add_enabled_ui(editable && mode == Some(alpha_mode::MASK), |ui| {
+                    if spin(ui, &mut cut, 1.0, 0.0..=255.0, 0, field_width, cut_mixed).commit {
+                        tool.edit_legacy(env, world, sel, |x| x.alpha_cutoff = cut as u8);
+                    }
+                });
+            });
+        }
+
+        super::common::section(ui, p, aurora_i18n::tr!("build-material-relief-reflection"));
+        let (bump, bump_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright & TEM_BUMP_MASK));
+        let mut items: Vec<(&str, u8)> = bumps().iter().enumerate().map(|(i, n)| (*n, i as u8)).collect();
+        let shown = if normal.is_some() {
+            items.push((aurora_i18n::tr!("build-ui-texture-use-texture"), BUMPY_TEXTURE));
+            Some(BUMPY_TEXTURE)
+        } else if bump_mixed {
+            None
+        } else {
+            bump
+        };
+        row(ui, p, aurora_i18n::tr!("build-ui-texture-bumpiness"), label_width, |ui| {
+            if let Some(b) = combo(ui, "bumpiness", shown, &items, field_width + 16.0, editable)
+                && b != BUMPY_TEXTURE
+            {
+                tool.edit_faces(world, |f, _, _| {
+                    f.bump_shiny_fullbright = (f.bump_shiny_fullbright & !TEM_BUMP_MASK) | b
+                });
+                // a bump code replaces the normal map (FSPanelFace::sendBump)
+                if normal.is_some() {
+                    tool.edit_legacy(env, world, sel, |m| m.normal_map = Uuid::nil());
+                }
+            }
+        });
+        let (shiny, shiny_mixed) = same(sel.iter().map(|x| x.te.bump_shiny_fullbright >> TEM_SHINY_SHIFT));
+        let mut items: Vec<(&str, u8)> = shines().iter().enumerate().map(|(i, n)| (*n, i as u8)).collect();
+        let shown = if spec.is_some() {
+            items.push((aurora_i18n::tr!("build-ui-texture-use-texture"), SHINY_TEXTURE));
+            Some(SHINY_TEXTURE)
+        } else if shiny_mixed {
+            None
+        } else {
+            shiny
+        };
+        row(ui, p, aurora_i18n::tr!("common-brightness"), label_width, |ui| {
+            if let Some(v) = combo(ui, "shininess", shown, &items, field_width + 16.0, editable)
+                && v != SHINY_TEXTURE
+            {
+                tool.edit_faces(world, |f, _, _| {
+                    f.bump_shiny_fullbright = (f.bump_shiny_fullbright & !(3 << TEM_SHINY_SHIFT)) | (v << TEM_SHINY_SHIFT)
+                });
+                if spec.is_some() {
+                    tool.edit_legacy(env, world, sel, |m| m.specular_map = Uuid::nil());
+                }
+            }
+        });
+
+        let sc = legacy[0].as_ref().map(|m| m.specular_color).unwrap_or([255; 4]);
+        let rgb = [sc[0] as f32 / 255.0, sc[1] as f32 / 255.0, sc[2] as f32 / 255.0];
+        material_tint(
+            ui,
+            p,
+            tool,
+            world,
+            env,
+            aurora_i18n::tr!("build-material-specular-tint"),
+            super::ColorTarget::Specular,
+            rgb,
+            editable && spec.is_some(),
+        );
+        if spec.is_some() {
+            let (gl, gl_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_exp).unwrap_or(51)));
+            let (env_i, env_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.env_intensity).unwrap_or(0)));
+            let mut g = gl.unwrap_or(51) as f32;
+            let mut en = env_i.unwrap_or(0) as f32;
+            ui.add_enabled_ui(editable && spec.is_some(), |ui| {
+                row(ui, p, aurora_i18n::tr!("build-ui-texture-shininess"), label_width, |ui| {
+                    if spin(ui, &mut g, 1.0, 0.0..=255.0, 0, field_width, gl_mixed).commit {
+                        tool.edit_legacy(env, world, sel, |m| m.specular_exp = g as u8);
+                    }
+                });
+                row(ui, p, aurora_i18n::tr!("common-environment"), label_width, |ui| {
+                    if spin(ui, &mut en, 1.0, 0.0..=255.0, 0, field_width, env_mixed).commit {
+                        tool.edit_legacy(env, world, sel, |m| m.env_intensity = en as u8);
+                    }
+                });
+            });
+        }
     });
     ui.add_space(5.0);
     ui.scope(|ui| {
+        super::common::section(ui, p, aurora_i18n::tr!("build-material-placement"));
         // UV of the diffuse / normal / specular maps
         ui.add_space(4.0);
         let mut ch = tool.ui.bp_channel;

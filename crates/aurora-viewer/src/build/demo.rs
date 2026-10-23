@@ -29,6 +29,8 @@
 //! the loading fade; capture at about +90 frames).
 //! `mode,object:<local_id>[,part,dx,dy]` selects a demo object directly,
 //! so an animated flexible shape needs no fixed screen click coordinate.
+//! `material-deselect,object:<local_id>` then closes the inspector to check
+//! that its last local material display choice survives deselection.
 //!
 //! `AURORA_DEMO_BUILD_TAB` shows a section: general | rights | object | transform |
 //! shape | features | texture | contents, the texture tab with `:pbr`, `:bp` or
@@ -53,6 +55,7 @@ pub enum Step {
     Face(usize, u8, bool),
     TexturePicker(bool),
     CloseView,
+    CloseEditor,
     CreateAt(Vec3),
     CreationPreview(usize),
     Delete,
@@ -154,6 +157,11 @@ pub fn apply_tab(tool: &mut BuildTool) {
     for extra in parts {
         match extra.trim() {
             "weights" => tool.ui.weights_open = true,
+            "settings" => tool.ui.layout.open = true,
+            "organize" => {
+                tool.ui.layout.open = true;
+                tool.ui.layout.organizing = true;
+            }
             "grid" => tool.ui.grid_options_open = true,
             "media" => tool.ui.media_settings = Some(super::ui::MediaSettingsState::new(None)),
             "permissions" => tool.ui.bulk_perms_open = true,
@@ -495,6 +503,7 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
     };
     match frame {
         215 => vec![Step::Open(t, m, land)],
+        280 if parts[0] == "material-deselect" => vec![Step::CloseEditor],
         220 if object.is_some() => object.into_iter().map(Step::Select).collect(),
         220 => vec![Step::Cursor(x, y), Step::Press],
         // land brush / selection: held (land: no release), others released

@@ -2352,6 +2352,14 @@ impl Session<'_> {
                     let _ = replies.send((callback, result));
                 });
             }
+            NetCommand::CreateNotecardItem {
+                request,
+                parent,
+                name,
+                data,
+            } => {
+                self.create_notecard_item(request, parent, name, data);
+            }
             NetCommand::CreateInventoryItem { parent, kind, name } => {
                 let (asset, inventory, subtype) = kind.types();
                 let mut m = CreateInventoryItem::default();

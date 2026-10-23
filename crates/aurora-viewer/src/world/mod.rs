@@ -840,6 +840,7 @@ impl World {
         if old == Some(handle) {
             return false;
         }
+        self.objects.clear_material_previews();
         self.inventory_retried.clear();
         if let Some(old) = old {
             let (ox, oy) = aurora_net::handle_to_origin(old);
