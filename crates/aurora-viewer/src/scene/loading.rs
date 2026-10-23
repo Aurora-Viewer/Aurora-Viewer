@@ -411,32 +411,32 @@ impl Scene {
             }
             let id = o.full_id;
             seen.push(id);
+            let s = loading.states.entry(id).or_insert_with(|| State::new(now));
+            // shown once, an avatar is never a cloud again: nothing below
+            // would be used, and what it wears was looked up here every
+            // frame (a club crowd wears hundreds of prims each)
+            if s.shown_once {
+                continue;
+            }
             let own = id == world.agent_id;
             let worn = world.objects.children_of(&o.key).len();
             // (ours is not compared with the simulator's list: `!isSelf()`)
             let announced = if own { 0 } else { world.announced_attachments(&id) };
-            let s = loading.states.entry(id).or_insert_with(|| State::new(now));
-            // the textures to hurry are only used until the avatar shows
-            let shown_before = s.shown_once;
-            let mut wanted = Vec::new();
-            let (done, total, missing) = self.avatar_load_parts(world, idx, (!shown_before).then_some(&mut wanted));
+            let (done, total, missing) = self.avatar_load_parts(world, idx, Some(&mut hurry));
             let t = s.tick(now, worn, announced, missing.is_empty());
             // (for the log: ours has no list to compare with)
             let listed = || if own { String::new() } else { format!(" of {announced} listed") };
             let own = if own { " (own)" } else { "" };
-            if !shown_before {
-                hurry.extend(wanted);
-                // diagnostic: still a cloud after a while
-                if !t.loaded && t.waited > REPORT_AFTER && !s.reported {
-                    s.reported = true;
-                    log::info!(
-                        "avatar {id}{own} still loading after {:.0} s: {done}/{total} parts, worn objects {worn}{} (waited for: {}), missing [{}]",
-                        t.waited,
-                        listed(),
-                        t.waiting,
-                        self.describe_missing(world, &missing)
-                    );
-                }
+            // diagnostic: still a cloud after a while
+            if !t.loaded && t.waited > REPORT_AFTER && !s.reported {
+                s.reported = true;
+                log::info!(
+                    "avatar {id}{own} still loading after {:.0} s: {done}/{total} parts, worn objects {worn}{} (waited for: {}), missing [{}]",
+                    t.waited,
+                    listed(),
+                    t.waiting,
+                    self.describe_missing(world, &missing)
+                );
             }
             if t.timed_out {
                 // shown by the time limit: what it was waiting for is the
@@ -739,6 +739,27 @@ mod tests {
         world.reset();
         scene.update_loading(&world, t0 + secs(30.0));
         assert!(scene.loading.states.is_empty());
+    }
+
+    #[test]
+    fn a_shown_avatar_is_not_a_cloud_again_when_a_part_goes_missing() {
+        let (world, mut scene, own, _) = cloud_self();
+        let id = world.agent_id;
+        let t0 = Instant::now();
+        scene.update_loading(&world, t0);
+        scene.update_loading(&world, t0 + secs(5.1));
+        assert!(!scene.loading_avatars().contains_key(&id));
+        // what it wears changes LOD: its geometry is pending again
+        let key = GeomKey::Mesh {
+            id: crate::demo::CLOUD_MESH,
+            lod: 3,
+        };
+        scene.gpu[worn(&world, own, 1)].wanted_geom = Some(key);
+        scene.geom_insert(key, GeomState::Pending);
+        assert!(!scene.avatar_complete(&world, own));
+        scene.update_loading(&world, t0 + secs(6.0));
+        assert!(!scene.loading_avatars().contains_key(&id));
+        assert!(!scene.loading.indices.contains(&own));
     }
 
     #[test]
