@@ -5401,6 +5401,7 @@ What the inventory must show with these scenarios:
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
 | `AURORA_WORN_RANK=avatar` | Meshes worn by other avatars downloaded in the rank of their avatar, not their own size (off by default) |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
+| `AURORA_PENDING_PARK=0` | Every object waiting for its geometry asked about by the sync's round, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
 | `AURORA_SYNC_SLOW=<ms>` | The steps of each frame whose scene sync is slower than `ms` |
 | `AURORA_MATERIAL_REBUILD=all` or `alt` | Every object using materials rebuilt at each material change, as before |
@@ -5905,6 +5906,14 @@ What the inventory must show with these scenarios:
     `cull_kb`, `journal_kb`, `r_resources`. To be combined with
     `AURORA_DEMO_CROWD=40,busy`, `AURORA_DEMO_ANIMESH=1` and
     `AURORA_DEMO_STREAM=12000,400`.
+- **`AURORA_PENDING_PARK=0`**: the objects whose geometry is not bound yet
+  are all asked about again by the sync, 2,048 a frame at most, as before.
+  By default those waiting for a geometry still being built or downloaded
+  leave that round until it is ready or dropped, and come back to it every
+  2 s in case (`scene/sync_sets.rs`). Compare `s_sync_list` over whole
+  runs with many meshes still downloading: `AURORA_DEMO_ARRIVAL=<folder>,
+  net=200,bw=8,n=6000,avatars=30,worn=6` (about 2,000 geometries pending
+  for a minute).
 - **`AURORA_SYNC_CHECK=1`**: one `sync check` line per second, in averages
   per frame: the objects listed by the sync according to what put them
   there (`moving`: what moves by itself and what follows it; `changed`:

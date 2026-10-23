@@ -1,6 +1,7 @@
 //! Object store: every prim, mesh and avatar known to the viewer.
 
 use super::motion::{self, Correction};
+use crate::fast_hash::FastMap;
 use aurora_net::RegionHandle;
 use aurora_net::objects::{ObjectUpdate, ParticleUpdate, TerseUpdate, TextureAnim};
 use aurora_prim::{ExtraParams, TextureEntry, VolumeParams};
@@ -528,10 +529,10 @@ impl ChangeFeed {
 pub struct ObjectStore {
     pub slots: Vec<Option<Object>>,
     free: Vec<usize>,
-    by_key: HashMap<ObjKey, usize>,
-    by_uuid: HashMap<Uuid, usize>,
+    by_key: FastMap<ObjKey, usize>,
+    by_uuid: FastMap<Uuid, usize>,
     /// parent key -> child indices
-    children: HashMap<ObjKey, Vec<usize>>,
+    children: FastMap<ObjKey, Vec<usize>>,
     count: usize,
     /// Removed objects whose GPU resources must be released by the scene.
     pub graveyard: Vec<Object>,
