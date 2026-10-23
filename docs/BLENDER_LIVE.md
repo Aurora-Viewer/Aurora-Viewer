@@ -85,10 +85,12 @@ off on each viewer launch, and changing accounts stops it.
 ## Manage objects and upload in Aurora
 
 Aurora's **Build → Blender Live** lists each source object by its Blender
-name, even if it spans several render batches. Uncheck an object to hide it
-temporarily; rechecking displays its latest geometry and materials. Select
-its name and use **Remove** to withdraw it from the list and avatar preview.
-Subsequent live revisions keep it removed. **Restore removed objects** brings
+name, even if it spans several render batches. The window separates
+**Connection**, **Objects** and **Plugins** with divider lines.
+Uncheck an object to hide it
+temporarily; rechecking displays its latest geometry and materials.
+**Remove meshes** withdraws all sources from the list and avatar preview.
+Subsequent live revisions keep them removed. **Restore removed objects** brings
 those sources back. These controls affect Aurora's local preview and do not
 change the synchronization list or scene in Blender.
 
@@ -97,7 +99,8 @@ reordering. Settings reset when a source stops being sent (for example, when
 disabled/removed in Blender), when stopping the bridge or changing accounts.
 Older plug-ins use names as their identity, so renaming starts a new entry.
 
-Select a source and click **Upload object…** to open a frozen snapshot in the
+Each object has its own **Import** button on its row, with no selection required.
+Click it to open a frozen snapshot of that object in the
 normal mesh importer. All its parts, weights, inverse binds, UVs, colors and
 image pixels belong to that draft; later live edits cannot alter a pending
 quote or upload. Existing drafts remain available, and the new draft is

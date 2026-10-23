@@ -180,7 +180,7 @@ fn blender_live_legacy_identity_survives_reordering_and_rejects_duplicate_explic
 }
 
 #[test]
-fn blender_live_object_buttons_remove_restore_and_open_upload_only_when_available() {
+fn blender_live_row_buttons_import_their_own_source_only_when_available() {
     let ctx = egui::Context::default();
     let theme = crate::theme::Theme::default();
     theme.apply(&ctx, 1.0);
@@ -190,8 +190,12 @@ fn blender_live_object_buttons_remove_restore_and_open_upload_only_when_availabl
         open: true,
         ..Default::default()
     };
-    live.receive(prepare(&triangle()).expect("source"));
-    let source = live.selected.expect("selected source");
+    let mut value = triangle();
+    let mut other = value["meshes"][0].clone();
+    other["name"] = "Other garment".into();
+    value["meshes"].as_array_mut().expect("meshes").push(other);
+    live.receive(prepare(&value).expect("sources"));
+    let sources: Vec<_> = live.snapshot.as_ref().expect("snapshot").sources.iter().map(|s| s.id).collect();
     let mut time = 0.0;
     let mut frame = |live: &mut Live, can_upload, events| {
         time += 1.0 / 60.0;
@@ -209,10 +213,10 @@ fn blender_live_object_buttons_remove_restore_and_open_upload_only_when_availabl
         out.textures_delta.clear();
         out
     };
-    let position = |out: &egui::FullOutput, label: &str| {
+    let positions = |out: &egui::FullOutput, label: &str| {
         out.shapes
             .iter()
-            .find_map(|s| {
+            .filter_map(|s| {
                 if let egui::Shape::Text(text) = &s.shape
                     && text.galley.text() == label
                 {
@@ -221,13 +225,13 @@ fn blender_live_object_buttons_remove_restore_and_open_upload_only_when_availabl
                     None
                 }
             })
-            .unwrap_or_else(|| panic!("missing button: {label}"))
+            .collect::<Vec<_>>()
     };
     for _ in 0..6 {
         frame(&mut live, true, vec![]);
     }
     let out = frame(&mut live, true, vec![]);
-    let remove = position(&out, aurora_i18n::tr!("common-remove"));
+    assert!(positions(&out, aurora_i18n::tr!("common-remove")).is_empty());
     let click = |pos, pressed| {
         vec![
             egui::Event::PointerMoved(pos),
@@ -239,25 +243,39 @@ fn blender_live_object_buttons_remove_restore_and_open_upload_only_when_availabl
             },
         ]
     };
-    frame(&mut live, true, click(remove, true));
-    frame(&mut live, true, click(remove, false));
-    assert!(live.state(source) == SourceState::Removed);
+    let clear = positions(&out, aurora_i18n::tr!("blender-live-clear"))[0];
+    frame(&mut live, true, click(clear, true));
+    frame(&mut live, true, click(clear, false));
+    assert!(sources.iter().all(|id| live.state(*id) == SourceState::Removed));
     let out = frame(&mut live, true, vec![]);
-    let restore = position(&out, aurora_i18n::tr!("blender-live-restore"));
+    assert!(positions(&out, aurora_i18n::tr!("blender-live-upload")).is_empty());
+    let restore = positions(&out, aurora_i18n::tr!("blender-live-restore"))[0];
     frame(&mut live, true, click(restore, true));
     frame(&mut live, true, click(restore, false));
-    assert!(live.state(source) == SourceState::Visible);
-    live.selected = Some(source);
+    assert!(sources.iter().all(|id| live.state(*id) == SourceState::Visible));
     let out = frame(&mut live, false, vec![]);
-    let upload = position(&out, aurora_i18n::tr!("blender-live-upload"));
-    frame(&mut live, false, click(upload, true));
-    frame(&mut live, false, click(upload, false));
+    let imports = positions(&out, aurora_i18n::tr!("blender-live-upload"));
+    assert_eq!(imports.len(), 2, "each source has its own row action");
+    for import in imports {
+        frame(&mut live, false, click(import, true));
+        frame(&mut live, false, click(import, false));
+    }
     assert!(live.upload_requested.is_none(), "busy importer cannot receive another draft");
+    live.set_state(sources[0], SourceState::Hidden);
+    live.selected = Some(sources[1]);
     let out = frame(&mut live, true, vec![]);
-    let upload = position(&out, aurora_i18n::tr!("blender-live-upload"));
-    frame(&mut live, true, click(upload, true));
-    frame(&mut live, true, click(upload, false));
-    assert_eq!(live.upload_requested, Some(source));
+    let imports = positions(&out, aurora_i18n::tr!("blender-live-upload"));
+    for (index, name) in ["Test garment", "Other garment"].into_iter().enumerate() {
+        let name_pos = positions(&out, name)[0];
+        assert!((name_pos.y - imports[index].y).abs() < 3.0, "import stays on its object's row");
+        frame(&mut live, true, click(imports[index], true));
+        frame(&mut live, true, click(imports[index], false));
+        assert_eq!(
+            live.upload_requested.take(),
+            Some(sources[index]),
+            "row import ignores the previous selection"
+        );
+    }
 }
 
 #[test]

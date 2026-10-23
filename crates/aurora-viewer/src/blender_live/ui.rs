@@ -20,8 +20,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
             .max_height(ui.available_height())
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.label(aurora_i18n::tr!("blender-live-description"));
-                ui.add_space(10.0);
+                section(ui, p, "link-filled", aurora_i18n::tr!("blender-live-connection"));
                 ui.horizontal(|ui| {
                     ui.label(aurora_i18n::tr!("blender-live-port"));
                     ui.add_enabled(!live.running(), egui::DragValue::new(&mut live.port).range(1024..=65535));
@@ -44,35 +43,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
                     } else if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-start")).clicked() {
                         start = true;
                     }
-                    if ui
-                        .add_enabled_ui(
-                            live.snapshot
-                                .as_ref()
-                                .is_some_and(|s| s.sources.iter().any(|s| live.state(s.id) != SourceState::Removed)),
-                            |ui| widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-clear")),
-                        )
-                        .inner
-                        .clicked()
-                        && let Some(snapshot) = &live.snapshot
-                    {
-                        let ids: Vec<_> = snapshot.sources.iter().map(|s| s.id).collect();
-                        for id in ids {
-                            live.set_state(id, SourceState::Removed);
-                        }
-                    }
                 });
-                ui.add_space(8.0);
-                ui.label(aurora_i18n::tr!(
-                    "blender-live-counts",
-                    objects =
-                        live.snapshot
-                            .as_ref()
-                            .map_or(0, |s| s.sources.iter().filter(|s| live.state(s.id) == SourceState::Visible).count()),
-                    triangles = live.triangles
-                ));
-                if let Some(revision) = live.revision {
-                    ui.label(aurora_i18n::tr!("blender-live-revision", revision = revision));
-                }
                 object_list(live, ui, p, can_upload);
                 let error = live
                     .error
@@ -81,7 +52,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
                 if let Some(error) = error {
                     ui.colored_label(p.danger, aurora_i18n::tr!("blender-live-error", error = error));
                 }
-                ui.add_space(8.0);
+                section(ui, p, "download-filled", aurora_i18n::tr!("blender-live-plugins"));
                 ui.label(aurora_i18n::tr!("blender-live-instructions"));
                 ui.add_enabled_ui(!live.addon.busy, |ui| {
                     widgets::radio_value(
@@ -116,9 +87,29 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
 }
 
 fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, can_upload: bool) {
-    ui.add_space(8.0);
-    widgets::section_header(ui, p, "cube", aurora_i18n::tr!("blender-live-objects"));
+    section(ui, p, "cube", aurora_i18n::tr!("blender-live-objects"));
     let sources = live.snapshot.as_ref().map(|s| s.sources.clone()).unwrap_or_default();
+    ui.horizontal_wrapped(|ui| {
+        ui.label(aurora_i18n::tr!(
+            "blender-live-counts",
+            objects = sources.iter().filter(|s| live.state(s.id) == SourceState::Visible).count(),
+            triangles = live.triangles
+        ));
+        if ui
+            .add_enabled_ui(sources.iter().any(|s| live.state(s.id) != SourceState::Removed), |ui| {
+                widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-clear"))
+            })
+            .inner
+            .clicked()
+        {
+            for source in &sources {
+                live.set_state(source.id, SourceState::Removed);
+            }
+        }
+    });
+    if let Some(revision) = live.revision {
+        ui.label(aurora_i18n::tr!("blender-live-revision", revision = revision));
+    }
     if sources.iter().all(|s| live.state(s.id) == SourceState::Removed) {
         ui.weak(aurora_i18n::tr!("blender-live-empty"));
     }
@@ -140,9 +131,12 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                         {
                             live.set_state(source.id, if visible { SourceState::Visible } else { SourceState::Hidden });
                         }
+                        let import_label = aurora_i18n::tr!("blender-live-upload");
+                        let import_width = widgets::action_button_fit(ui, "file-upload-filled", import_label);
+                        let name_width = (ui.available_width() - import_width - ui.spacing().item_spacing.x).max(1.0);
                         if ui
                             .add_sized(
-                                Vec2::new(ui.available_width(), 26.0),
+                                Vec2::new(name_width, 26.0),
                                 egui::Button::selectable(live.selected == Some(source.id), "")
                                     .left_text(&source.name)
                                     .truncate(),
@@ -152,51 +146,37 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                         {
                             live.selected = Some(source.id);
                         }
+                        if widgets::action_button_if(
+                            ui,
+                            p,
+                            "file-upload-filled",
+                            import_label,
+                            widgets::ActionKind::Primary,
+                            Vec2::new(import_width, 26.0),
+                            can_upload,
+                        )
+                        .clicked()
+                        {
+                            live.selected = Some(source.id);
+                            live.upload_requested = Some(source.id);
+                        }
                     });
                 });
             }
         });
-    ui.horizontal_wrapped(|ui| {
-        let selected = live
-            .selected
-            .is_some_and(|id| sources.iter().any(|s| s.id == id) && live.state(id) != SourceState::Removed);
-        if widgets::action_button_if(
-            ui,
-            p,
-            "file-upload-filled",
-            aurora_i18n::tr!("blender-live-upload"),
-            widgets::ActionKind::Primary,
-            Vec2::new(0.0, ui.spacing().interact_size.y),
-            selected && can_upload,
-        )
-        .clicked()
-        {
-            live.upload_requested = live.selected;
-        }
-        if widgets::action_button_if(
-            ui,
-            p,
-            "trash-filled",
-            aurora_i18n::tr!("common-remove"),
-            widgets::ActionKind::Flat,
-            Vec2::new(0.0, ui.spacing().interact_size.y),
-            selected,
-        )
-        .clicked()
-            && let Some(id) = live.selected
-        {
-            live.set_state(id, SourceState::Removed);
-        }
-        if sources.iter().any(|s| live.state(s.id) == SourceState::Removed)
-            && widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-restore")).clicked()
-        {
-            for source in &sources {
-                if live.state(source.id) == SourceState::Removed {
-                    live.set_state(source.id, SourceState::Visible);
-                }
+    if sources.iter().any(|s| live.state(s.id) == SourceState::Removed)
+        && widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-restore")).clicked()
+    {
+        for source in &sources {
+            if live.state(source.id) == SourceState::Removed {
+                live.set_state(source.id, SourceState::Visible);
             }
         }
-    });
-    ui.small(aurora_i18n::tr!("blender-live-list-help"));
-    ui.small(aurora_i18n::tr!("blender-live-upload-help"));
+    }
+}
+
+fn section(ui: &mut egui::Ui, p: &crate::theme::Palette, icon: &str, title: &str) {
+    ui.add_space(8.0);
+    widgets::divider(ui, p);
+    widgets::section_header(ui, p, icon, title);
 }

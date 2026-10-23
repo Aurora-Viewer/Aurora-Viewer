@@ -1738,9 +1738,11 @@ retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`
 objects using our avatar's skeleton. See [Blender Live](BLENDER_LIVE.md).
 `objects` adds a belt and neck band, starts the belt hidden and the band
-removed, and exposes Restore removed objects. Toggle the belt, select an
-object, remove it and restore the list; Upload object opens the ordinary mesh
-importer. `upload` opens that importer directly with a frozen shell draft.
+removed, and exposes Restore removed objects. Toggle the belt, clear the
+objects and restore the list; each row's Import button opens that object's
+ordinary mesh importer without selecting it first. Check the Connection,
+Objects and Plugins divider lines and the truncated names beside their
+Import buttons. `upload` opens the importer directly with a frozen shell draft.
 No fee or upload request is sent automatically. Check skin weights, LODs,
 physics, the source snapshot notice and the separate-PBR-upload notice.
 
