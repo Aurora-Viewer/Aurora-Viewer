@@ -346,6 +346,9 @@ pub struct DrawLists {
     pub hud_debug_blue: Vec<DrawCmd>,
     pub terrain: Vec<DrawCmd>,
     pub opaque: Vec<DrawCmd>,
+    /// Local creation hologram: depth tested, without writing pick depth,
+    /// casting shadows or entering reflections / probes.
+    pub creation_preview: Vec<DrawCmd>,
     pub opaque_two_sided: Vec<DrawCmd>,
     pub mask: Vec<DrawCmd>,
     pub mask_two_sided: Vec<DrawCmd>,
@@ -509,6 +512,7 @@ impl DrawLists {
         self.hud_debug_blue.clear();
         self.terrain.clear();
         self.opaque.clear();
+        self.creation_preview.clear();
         self.opaque_two_sided.clear();
         self.mask.clear();
         self.mask_two_sided.clear();
@@ -550,6 +554,7 @@ impl DrawLists {
             + self.hud_debug_blue.len()
             + self.terrain.len()
             + self.opaque.len()
+            + self.creation_preview.len()
             + self.opaque_two_sided.len()
             + self.mask.len()
             + self.mask_two_sided.len()

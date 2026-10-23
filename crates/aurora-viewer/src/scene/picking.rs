@@ -504,6 +504,21 @@ impl Scene {
         self.inventory_surface_among(world, ray, far, Some(candidates))
     }
 
+    /// LLToolPlacer::raycastForNewObjPos: visible surfaces, excluding flora
+    /// and avatars. Shared by the creation hologram and the actual click,
+    /// without sampling the hologram or waiting for GPU depth.
+    pub fn creation_surface(
+        &self,
+        world: &World,
+        ray: (Vec3, Vec3),
+        far: f32,
+        candidates: &mut Vec<usize>,
+    ) -> Option<(Vec3, Option<usize>)> {
+        self.pick.ray_candidates(ray, candidates);
+        candidates.retain(|&idx| world.objects.get(idx).is_some_and(|o| !o.is_avatar() && !o.is_tree()));
+        self.inventory_surface_among(world, ray, far, Some(candidates))
+    }
+
     fn inventory_surface_among(
         &self,
         world: &World,
@@ -2194,6 +2209,35 @@ pub(super) mod tests {
         let terrain = scene.inventory_surface(&world, down, 50.0, &mut candidates).unwrap();
         assert!(terrain.1.is_none());
         assert!((terrain.0.z - world.ground_height(terrain.0).unwrap()).abs() < 0.001);
+    }
+
+    #[test]
+    fn creation_placement_ignores_invisible_surfaces_and_never_targets_flora_or_avatars() {
+        let (mut world, mut scene, front, back) = scene_with_two_objects();
+        for idx in [front, back] {
+            scene.gpu[idx].center = world.objects.get(idx).unwrap().position;
+            scene.gpu[idx].radius = 1.0;
+            scene.pick.set(idx, super::super::hover::PickEntry::of(&scene.gpu[idx]));
+        }
+        let ray = (Vec3::new(0.0, 0.0, 50.0), Vec3::X);
+        let mut candidates = Vec::new();
+        assert_eq!(scene.creation_surface(&world, ray, 20.0, &mut candidates).unwrap().1, Some(front));
+        let pcode = world.objects.get(front).unwrap().pcode;
+        for code in [
+            aurora_prim::params::LL_PCODE_LEGACY_AVATAR,
+            aurora_prim::params::LL_PCODE_LEGACY_TREE,
+        ] {
+            world.objects.get_mut(front).unwrap().pcode = code;
+            assert_eq!(scene.creation_surface(&world, ray, 20.0, &mut candidates).unwrap().1, Some(back));
+        }
+        world.objects.get_mut(front).unwrap().pcode = pcode;
+        scene.gpu[front].faces[0].pass = Pass::Hidden;
+        assert_eq!(scene.creation_surface(&world, ray, 20.0, &mut candidates).unwrap().1, Some(back));
+        assert!(scene.creation_surface(&world, ray, 2.0, &mut candidates).is_none());
+        let down = (Vec3::new(140.0, 130.0, 60.0), -Vec3::Z);
+        let (point, target) = scene.creation_surface(&world, down, 50.0, &mut candidates).unwrap();
+        assert!(target.is_none());
+        assert!((point.z - world.ground_height(point).unwrap()).abs() < 0.001);
     }
 
     #[test]

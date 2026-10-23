@@ -5033,6 +5033,14 @@ impl App {
             .flatten();
         let (hit, target, ray) = if let Some((idx, point, ray)) = hud {
             (Some(point), Some(idx), ray)
+        } else if self.build.tool == crate::build::Tool::Create && !self.settings.build.copy_selection && !(self.shift || self.ctrl) {
+            let ray = self.build.cam.ray(x, y);
+            let mut candidates = std::mem::take(&mut self.scene.creation_preview.candidates);
+            let surface = self
+                .scene
+                .creation_surface(&self.world, ray, self.settings.draw_distance, &mut candidates);
+            self.scene.creation_preview.candidates = candidates;
+            (surface.map(|s| s.0), surface.and_then(|s| s.1), ray)
         } else if self.build.tool == crate::build::Tool::Edit && self.build.edit_mode == crate::build::EditMode::Face {
             // LLToolFace picks the current cursor ray. A delayed GPU depth
             // sample can still point at the previous object during Shift clicks.
@@ -6972,15 +6980,16 @@ impl App {
             };
             self.build
                 .update(&mut self.world, &self.settings.build, self.cursor_pos, over_ui, mods);
-            self.scene.selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
+            let mut selection_wire = self.build.wire_selection(&self.world, &self.settings.build);
             // another avatar's attachment the open menu is about, outlined
             // like a child prim of a selection (it cannot be selected)
             for idx in self.menu_outline() {
-                self.scene.selection_wire.entry(idx).or_insert(false);
+                selection_wire.entry(idx).or_insert(false);
             }
             for (idx, current) in self.inspect_outline() {
-                self.scene.selection_wire.entry(idx).or_insert(current);
+                selection_wire.entry(idx).or_insert(current);
             }
+            self.scene.set_wire_selection(&mut self.world, selection_wire);
             self.scene.selection_silhouettes = self.build.silhouette_selection(&self.world, &self.settings.build);
             let selected_faces = self.build.face_selection(&self.world, &self.settings.build);
             self.scene.set_face_selection(&mut self.world, selected_faces);
@@ -7133,6 +7142,28 @@ impl App {
             self.scene
                 .update_land_overlays(&mut gfx.renderer, &self.world, overlays, &self.palette);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
+            let preview = if (self.focused || self.demo && self.capture.is_some())
+                && !covered
+                && !self.camera.mouselook()
+                && !self.exit_prompt.open
+                && self.cursor_pos.0 >= 0.0
+                && self.cursor_pos.1 >= 0.0
+                && self.cursor_pos.0 < w as f32
+                && self.cursor_pos.1 < h as f32
+                && self.build.creation_preview_enabled(&self.settings.build, over_ui, mods)
+            {
+                let mut candidates = std::mem::take(&mut self.scene.creation_preview.candidates);
+                let ray = self.build.cam.ray(self.cursor_pos.0, self.cursor_pos.1);
+                let surface = self
+                    .scene
+                    .creation_surface(&self.world, ray, self.settings.draw_distance, &mut candidates);
+                self.scene.creation_preview.candidates = candidates;
+                surface.and_then(|(point, _)| crate::scene::creation_preview::Placement::new(&self.world, &self.settings.build, point))
+            } else {
+                None
+            };
+            self.scene.creation_preview.update(&mut gfx.renderer, preview);
+            self.scene.creation_preview.append(&mut self.scene.lists);
             let huds_shown = self.huds_shown();
             self.scene.build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown);
             self.frame_profile.lap(Lap::Lists);
@@ -9021,6 +9052,21 @@ impl App {
                             crate::build::Mods::default(),
                         );
                         self.flush_build();
+                    }
+                    crate::build::demo::Step::CreationPreview(shape) => {
+                        self.settings.build.create_shape = shape;
+                        self.settings.build.new_prim_size = [2.0; 3];
+                        self.settings.build.copy_selection = false;
+                        let point = self.world.agent.position + Vec3::new(5.0, 3.0, 0.0);
+                        let point = Vec3::new(point.x, point.y, crate::demo::floor_at(point.x, point.y));
+                        self.camera.set_view(
+                            point + Vec3::new(-4.0, -6.0, 3.0),
+                            point + Vec3::Z,
+                            &mut self.world.agent,
+                            &self.settings.camera,
+                        );
+                        self.panels.inventory = false;
+                        self.panels.chat = false;
                     }
                     crate::build::demo::Step::Delete => {
                         log::info!("demo build created selection: {:?}", self.build.selection);
@@ -13960,17 +14006,33 @@ impl ApplicationHandler for App {
                     None => {}
                 }
             }
-            if std::env::var("AURORA_DEMO_BUILD")
-                .is_ok_and(|v| v.starts_with("faces") || v.starts_with("shared") || v.starts_with("mesh-inspector"))
-            {
+            if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| {
+                v.starts_with("faces") || v.starts_with("shared") || v.starts_with("mesh-inspector") || v.starts_with("invisible-")
+            }) {
+                let invisible_manipulation = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("invisible-"));
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
                 let inspector = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector"));
-                let complex = inspector || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
-                let events = if complex {
+                let complex = inspector
+                    || invisible_manipulation
+                    || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
+                let mut events = if complex {
                     crate::demo::complex_face_selection_events()
                 } else {
                     crate::demo::face_selection_events(invisible)
                 };
+                if invisible_manipulation {
+                    for event in &mut events {
+                        if let aurora_net::NetEvent::ObjectUpdates { objects, .. } = event {
+                            for object in objects {
+                                if let Some(te) = object.texture_entry.as_mut() {
+                                    for face in &mut std::sync::Arc::make_mut(te).faces {
+                                        face.color[3] = 0.0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if complex && let Some(gfx) = &mut self.gfx {
                     if inspector {
                         let empty = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector-cycle-empty"));

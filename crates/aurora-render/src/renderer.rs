@@ -764,6 +764,7 @@ struct Pipelines {
     debug_wire: Option<wgpu::RenderPipeline>,
     /// Selection wireframes (SilhouetteParentColor / SilhouetteChildColor).
     select_root_wire: Option<wgpu::RenderPipeline>,
+    creation_preview: wgpu::RenderPipeline,
     select_child_wire: Option<wgpu::RenderPipeline>,
     selection_mask: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
@@ -2152,6 +2153,7 @@ struct Ranges {
     debug_green: (u64, u32),
     debug_yellow: (u64, u32),
     select_root: (u64, u32),
+    creation_preview: (u64, u32),
     select_child: (u64, u32),
     select_faces: (u64, u32),
     refl_water: (u64, u32),
@@ -2847,6 +2849,10 @@ impl Backend {
             gbuf: ssr,
             ..base("opaque", "vs_main", g("fs_opaque", "fs_opaque_g"))
         });
+        let creation_preview = pipe(PipeDesc {
+            depth_write: false,
+            ..base("creation hologram", "vs_main", "fs_opaque")
+        });
         let opaque_2s = pipe(PipeDesc {
             cull: None,
             gbuf: ssr,
@@ -3295,6 +3301,7 @@ impl Backend {
             },
         );
         Pipelines {
+            creation_preview,
             hud_opaque,
             hud_blend,
             hud_debug_red,
@@ -5367,6 +5374,7 @@ impl Backend {
         rg.debug_green = push(cpu, &lists.debug_green);
         rg.debug_yellow = push(cpu, &lists.debug_yellow);
         rg.select_root = push(cpu, &lists.select_root);
+        rg.creation_preview = push(cpu, &lists.creation_preview);
         rg.select_child = push(cpu, &lists.select_child);
         rg.select_faces = push(cpu, &lists.select_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
@@ -6333,6 +6341,9 @@ impl Backend {
         };
         // the other blended faces, the overlays and the particles
         let rest = |pass: &mut wgpu::RenderPass| {
+            // The local hologram leaves world depth and the SSR G-buffer
+            // untouched; transparent world faces still cover it normally.
+            draw(pass, &self.pipelines.creation_preview, rg.creation_preview);
             blended(pass, blend_pipe, n_depth, bn);
             // debug overlays (before the particles, which rebind vertex buffer 0)
             draw(pass, &self.pipelines.land_overlay, rg.land_overlay);
@@ -6384,6 +6395,7 @@ impl Backend {
             draw(&mut pass, water_pipe, rg.water);
             pass_mark(&mut pass, MARK_WATER_END);
             if glow_on {
+                draw(&mut pass, &self.pipelines.glow_max, rg.creation_preview);
                 if glow_skip & 2 == 0 {
                     draw(&mut pass, &self.pipelines.glow_max, rg.glow);
                 }

@@ -1180,6 +1180,19 @@ AO playback never queries these easing timings. The offline animation mock
 echoes batched starts/stops and preserves separate custom motions across native
 system-state changes. There is no bridge script change or new render pass.
 
+`scene/creation_preview.rs` owns the Create tool's render-only placement
+hologram (#854): each primitive's geometry is prepared once on rayon and
+cached in the GPU arena; pointer motion changes one draw record. The
+loading shader's explicit HOLOGRAM mode and fine wire-grid style remain
+active independently of the rez preference. Preview and click share
+`Scene::creation_surface`, using indexed visible triangles and terrain,
+without flora, avatars, invisible faces or GPU readbacks. A separate draw
+list and pipeline depth-test the preview without writing pick depth,
+casting shadows or entering reflection / probe captures. Logout clears
+its mesh and record allocations. Selected invisible meshes temporarily
+retain draw records for their wireframe; manipulation keeps the selection
+outlines visible.
+
 ## Life of a frame
 
 `joystick/` owns persisted NDOF settings, native input and the six-axis flycam

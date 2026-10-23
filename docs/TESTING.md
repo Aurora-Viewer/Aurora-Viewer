@@ -843,6 +843,20 @@ part A2, without passing over B or C. The `demo build cycle` lines of the
 log give the selections and check that the camera and the HUD zoom do not
 change during the gesture. Capture around frame 690 (start 600 by default).
 
+`AURORA_DEMO_BUILD=create-preview,640,430,0` opens Create directly and aims
+at nearby terrain without creating an object. The final index selects one
+of the 13 primitives (0 cube, 8 sphere, 10 torus); its size is 2 m for a
+readable capture around frame 700. Compare `AURORA_REZ_EFFECT=0` and `1`:
+both show the same animated loading hologram. Move the pointer, change the
+shape and new-prim size, hover the inspector and sky, hold Shift / Ctrl /
+Alt, then leave Create: only a valid creation hover shows the preview.
+The normal click must still create exactly one object on the surface.
+For persistent outlines, `invisible-move,object:99620,z,60,-30`,
+`invisible-rotate,object:99620,rz,60,0` and
+`invisible-stretch,object:99620,c7,60,-30` install an invisible torus linked
+to a mesh, frame it closely and hold the manipulation. Capture at frame
+700: both outlines remain visible with highlighting on.
+
 `AURORA_DEMO_BUILD=create-delete,object:118` creates a primitive at
 frame 625, selects it after the simulated reply and deletes it at frame 675.
 Screenshot at 660: new cube selected; at 700: cube gone and message about
