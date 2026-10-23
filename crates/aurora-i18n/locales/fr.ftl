@@ -6435,6 +6435,7 @@ extra-join-me = Join me!
 preferences-group-skin = Skin
 preferences-group-huds = HUDs
 hud-local-scale = Taille locale : { $percent } %
+hud-move-locked = Verrouiller le déplacement rapide
 hud-local-scale-reset = Revenir à 100 %
 hud-local-scale-forget = Oublier le réglage mémorisé
 hud-local-scale-help = Maintenez la touche des HUDs : clic gauche pour déplacer, molette pour changer la taille, Maj pour affiner. La taille est mémorisée sur ce PC par nom et créateur, pour ce compte. En édition d’un HUD, la molette sans cette touche zoome la vue de tous les HUDs.

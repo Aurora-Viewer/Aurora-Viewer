@@ -30,6 +30,7 @@ pub mod group_money;
 pub mod groups;
 pub mod home;
 pub mod hover_height;
+pub mod hud_lock;
 pub mod hud_scale;
 pub mod inventory;
 pub mod inventory_offers;
@@ -202,6 +203,7 @@ pub struct World {
     /// HUD zoom is local to the current session (LLAgentCamera).
     pub hud_zoom: f32,
     pub hud_scales: hud_scale::HudScales,
+    pub hud_locks: hud_lock::HudLocks,
     pub hover_height: hover_height::HoverHeight,
     /// The favourites in the account's order (`favorites.rs`).
     pub favorites: favorites::Favorites,
@@ -515,6 +517,7 @@ impl World {
             hud_aspect: 1.0,
             hud_zoom: 1.0,
             hud_scales: Default::default(),
+            hud_locks: Default::default(),
             hover_height: Default::default(),
             favorites: Default::default(),
             notification_history: Default::default(),
@@ -1688,6 +1691,7 @@ impl World {
                 self.calls.load_volumes(account.join(calls::VOLUMES_FILE));
                 self.tp_storage = tphistory::HistoryStorage::load(account.join(tphistory::TELEPORT_HISTORY_FILE));
                 self.hud_scales = hud_scale::HudScales::load(account.join(hud_scale::FILE));
+                self.hud_locks = hud_lock::HudLocks::load(account.join(hud_lock::FILE));
                 self.derender = derender::Derender::load(account.join(derender::FILE));
                 self.media_filter = crate::media::filter::MediaFilter::load(account.join(crate::media::filter::FILE));
                 self.aliases_synced = u64::MAX;

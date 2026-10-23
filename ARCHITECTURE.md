@@ -1725,6 +1725,18 @@ remains Aurora's initial choice.
 
 ## Data on the machine
 
+`world/hud_lock.rs` owns the per-account `hud_locks.json` inventory-item set
+and per-instance temporary HUD locks. Reads and atomic ordered writes run on
+one storage worker; late attachment metadata preserves toggles made before
+the stable item ID arrives. Both context menus share the checked movement
+lock action. It guards the direct held-key drag without changing server
+permissions, scripted touches, local size or deliberate build edits. Camera
+gestures continue through a movement-locked HUD. HUD picking uses the decoded
+texture pick masks and the existing transformed/animated UV path; editing
+and the displayed transparency overlay explicitly include invisible faces.
+The frame packet carries separate HUD red/blue transparency lists, rendered
+after HUD colour with their own projection/depth and single-sample pipelines.
+
 The local zoom specific to each HUD is held by `world/hud_scale.rs`: `hud_scales.json` profiles in the account folder, stable identity by inventory item UUID, with the attached object name and creator shared by new copies and temporary experience HUDs. Full ObjectProperties are requested with batched ObjectSelect / ObjectDeselect messages, preserving the user selection; failed requests retry at most once per ten seconds. Inventory labels remain legacy aliases, and inherited inventory fallback sizes yield to the common object identity when metadata arrives. Aliases are persisted and forgotten with the shared profile. Each inventory item retains its own size after reattachment or renaming, including before creator metadata arrives; old name / creator profiles are read and bound to items as they return. Writes are atomic on a helper thread and worn copies remain independent. Forgetting removes the selected item profile and the shared fallback while preserving the current visual size and other item profiles. `app/hud_drag.rs` reserves the wheel with the move key, draws the border / percentage and keeps a part of the HUD reachable. While editing with a HUD selection, the wheel without this key changes only `World::hud_zoom`, a projection common to all the HUDs, like LLAgentCamera; it comes before the media and the camera even in an empty area. This view zoom does not change the local factors or offsets. The root keeps its origin on screen; the linked offsets and the placement / picking matrices follow the uniform factor. The building tools convert the linked positions back, and the touch information sent to the server gets its original coordinates back. Server dimensions and positions are not changed by the zoom; the possible offset that keeps the HUD reachable stays local.
 
 ### Crash recovery

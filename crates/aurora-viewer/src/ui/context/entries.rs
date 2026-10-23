@@ -361,6 +361,13 @@ fn take_multiple_submenu(ui: &mut Builder, o: &super::ObjectFacts, id: Uuid) {
 /// menu_attachment_self.xml
 fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     if let Some(scale) = f.object.local_hud_scale {
+        ui.check(
+            "lock-filled",
+            aurora_i18n::tr!("hud-move-locked"),
+            f.object.hud_move_locked,
+            true,
+            CtxAction::SetHudMoveLock(key, !f.object.hud_move_locked),
+        );
         ui.info(
             "zoom-filled",
             &aurora_i18n::tr!("hud-local-scale", percent = format!("{:.0}", scale * 100.0)),
@@ -872,6 +879,30 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_move_lock_menu_is_checked_reversible_and_available_without_modify_permission() {
+        let key = ObjKey { region: 1, local_id: 2 };
+        let mut facts = Facts::default();
+        facts.object.local_hud_scale = Some(1.0);
+        for locked in [false, true] {
+            facts.object.hud_move_locked = locked;
+            let entries = world_menu(&Target::Attachment { key }, &facts, Vec3::ZERO);
+            let entry = entries
+                .iter()
+                .find(|entry| matches!(entry.kind, Kind::Action(CtxAction::SetHudMoveLock(..))))
+                .unwrap();
+            assert!(entry.enabled);
+            assert_eq!(entry.checked, Some(locked));
+            assert!(matches!(entry.kind, Kind::Action(CtxAction::SetHudMoveLock(k, value)) if k == key && value != locked));
+        }
+        facts.object.local_hud_scale = None;
+        assert!(
+            !world_menu(&Target::Attachment { key }, &facts, Vec3::ZERO)
+                .iter()
+                .any(|entry| matches!(entry.kind, Kind::Action(CtxAction::SetHudMoveLock(..))))
+        );
+    }
 
     /// Labels of a menu, `-` for a separator, `>` after a submenu.
     fn labels(entries: &[Entry]) -> Vec<String> {

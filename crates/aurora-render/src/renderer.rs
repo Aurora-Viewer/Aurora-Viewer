@@ -725,6 +725,8 @@ struct Targets {
 struct Pipelines {
     hud_opaque: wgpu::RenderPipeline,
     hud_blend: wgpu::RenderPipeline,
+    hud_debug_red: wgpu::RenderPipeline,
+    hud_debug_blue: wgpu::RenderPipeline,
     sky: wgpu::RenderPipeline,
     terrain: wgpu::RenderPipeline,
     opaque: wgpu::RenderPipeline,
@@ -2814,6 +2816,21 @@ impl Backend {
         };
         let hud_opaque = pipe(hud_desc("HUD opaque", None, true));
         let hud_blend = pipe(hud_desc("HUD blended", Some(wgpu::BlendState::ALPHA_BLENDING), false));
+        let hud_debug = |label, constants| {
+            pipe(PipeDesc {
+                fs: Some("fs_hud_debug"),
+                constants,
+                ..hud_desc(label, Some(wgpu::BlendState::ALPHA_BLENDING), false)
+            })
+        };
+        let hud_debug_red = hud_debug(
+            "HUD transparency red",
+            &[("debug_r", 1.0), ("debug_g", 0.0), ("debug_b", 0.0), ("debug_a", 0.35)],
+        );
+        let hud_debug_blue = hud_debug(
+            "HUD transparency blue",
+            &[("debug_r", 0.0), ("debug_g", 0.2), ("debug_b", 1.0), ("debug_a", 0.35)],
+        );
         let sky = pipe(PipeDesc {
             vb: Vb::None,
             cull: None,
@@ -3280,6 +3297,8 @@ impl Backend {
         Pipelines {
             hud_opaque,
             hud_blend,
+            hud_debug_red,
+            hud_debug_blue,
             sky,
             terrain,
             opaque,
@@ -5339,6 +5358,8 @@ impl Backend {
         let cpu = &mut self.indirect_cpu;
         let hud_opaque_range = push(cpu, &lists.hud_opaque);
         let hud_blend_range = push(cpu, &lists.hud_blend);
+        let hud_debug_red_range = push(cpu, &lists.hud_debug_red);
+        let hud_debug_blue_range = push(cpu, &lists.hud_debug_blue);
         let hud_select_faces_range = push(cpu, &lists.hud_select_faces);
         rg.debug_red = push(cpu, &lists.debug_red);
         rg.land_overlay = push(cpu, &lists.land_overlay);
@@ -6852,6 +6873,8 @@ impl Backend {
             bind_mesh(&mut pass, &self.groups.refl[5]);
             draw(&mut pass, &self.pipelines.hud_opaque, hud_opaque_range);
             draw(&mut pass, &self.pipelines.hud_blend, hud_blend_range);
+            draw(&mut pass, &self.pipelines.hud_debug_red, hud_debug_red_range);
+            draw(&mut pass, &self.pipelines.hud_debug_blue, hud_debug_blue_range);
         }
         if hud_select_faces_range.1 > 0
             && let (Some(selection), Some((_, _, depth))) = (&self.hud_selection, &self.hud_depth)

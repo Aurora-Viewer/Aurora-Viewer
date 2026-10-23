@@ -210,6 +210,7 @@ impl App {
         if let Some(root) = w.hud_root(idx).and_then(|i| w.objects.get(i)) {
             f.local_hud_scale = Some(w.hud_scales.scale(root.full_id));
             f.saved_hud_scale = w.hud_scales.has_profile(root.full_id);
+            f.hud_move_locked = w.hud_locks.locked(root.full_id);
         }
         self.object_menu_facts(idx, &mut f);
         f
@@ -235,6 +236,19 @@ impl App {
         match act {
             CtxAction::ResetHudScale(key) => self.reset_hud_scale(key, false),
             CtxAction::ForgetHudScale(key) => self.reset_hud_scale(key, true),
+            CtxAction::SetHudMoveLock(key, locked) => {
+                self.world.refresh_hud_scales();
+                if let Some(id) = self
+                    .world
+                    .objects
+                    .index_of(&key)
+                    .and_then(|idx| self.world.hud_root(idx))
+                    .and_then(|root| self.world.objects.get(root))
+                    .map(|o| o.full_id)
+                {
+                    self.world.hud_locks.set(id, locked);
+                }
+            }
             CtxAction::EditAttachment(key) => {
                 if let Some(idx) = self.world.objects.index_of(&key)
                     && crate::build::selectable(&self.world, idx)
