@@ -14493,6 +14493,16 @@ impl ApplicationHandler for App {
                 }
                 if let Some(id) = crate::world::inventory::demo::target(&view) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
+                    if let Some(item) = self.world.inventory.items.get_mut(&id) {
+                        if view == "uuid-restricted" {
+                            item.owner_mask &= !crate::world::inventory::actions::TRANSFER;
+                        } else if view == "uuid-missing" {
+                            item.asset_id = uuid::Uuid::nil();
+                        }
+                    }
+                    if view == "uuid-multi" {
+                        self.inventory_ui.selection.insert(uuid::Uuid::from_u128(8105));
+                    }
                     if view.starts_with("clipboard") {
                         if view == "clipboard-window" {
                             self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));

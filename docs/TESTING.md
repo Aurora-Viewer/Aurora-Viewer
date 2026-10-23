@@ -4994,6 +4994,14 @@ offline; the files and snapshots uploaded in demo stay offline.
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
   whatever Preferences › Aurora › Inventory says.
+- `uuid`, `uuid-restricted`, `uuid-missing`, `uuid-multi`: the texture's
+  context menu with Copy asset UUID enabled, disabled by a missing transfer
+  permission, disabled by an unavailable UUID, or disabled by multiple
+  selection. Capture at frame 700. In `uuid`, click the entry and paste into
+  a text field: it must be the asset UUID, not the inventory item's UUID.
+  Compare `object`, `script` and `link`: the entry must be absent because
+  these types never expose an asset UUID. These visibility rules apply to
+  both inventory layouts and folder windows through their shared menu.
 - `show-original`, `aurora-show-original`: minimize the inventory at frame
   650, then run an attachment's "Show in inventory" action at frame 750.
   Capture frames `700,850`: first the title bar alone, then the restored

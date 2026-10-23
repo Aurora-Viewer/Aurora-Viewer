@@ -302,6 +302,7 @@ pub fn target(view: &str) -> Option<Uuid> {
         | "move-folder"
         | "folder-window-search" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,
+        "uuid" | "uuid-restricted" | "uuid-missing" | "uuid-multi" => 8104,
         "object"
         | "properties"
         | "properties-no-mod"
