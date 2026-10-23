@@ -7014,8 +7014,15 @@ its camera keeps the full arc visible. Full `scripts/check.ps1` green: 4,586
 passed, zero failures, 27 ignored; scripts, formatting and Clippy clean. Both
 LSL scripts lint with zero errors/warnings. The new regression keeps motor/AO
 ownership through the prescribed 4 m apex and longer descent, then restores
-running support while ascent stays held. Native capture and human simulator
-acceptance of the increased height remain pending.
+running support while ascent stays held. The default dev executable was rebuilt
+with the height follow-up sources (version base `24aa2598`, committed as
+`57feec53`). Three native offline runs exit 0 without warnings/errors. Nine
+inspected captures cover `higher-water-jump-run` at frames 1275/1305/1338/1365/1410,
+`higher-water-jump-hold` at 798/870/1010 and the neighbouring crouch-walk at 760.
+The full arc stays in view and the held-key fixture remains supported after
+landing. Profile samples reflect shared desktop load, not an isolated speed
+comparison. Human simulator acceptance of the increased physical height and
+real inventory poses remains pending before PR.
 
 `water-walk-ui` and `swim-ui` also open the Movement tab for EN/FR control
 inspection, with only their corresponding water mode active.
