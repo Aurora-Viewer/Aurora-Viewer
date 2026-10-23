@@ -100,6 +100,21 @@ class AURORA_OT_ik_poles(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class AURORA_OT_knee_bend(bpy.types.Operator):
+    bl_idname = "aurora.correct_knee_bend"
+    bl_label = "Correct knee bend"
+    bl_description = "Make active knees bend toward their poles while keeping the foot targets fixed"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        try:
+            rigging.correct_knees(context, rigging.resolve(context))
+        except (ValueError, RuntimeError) as error:
+            self.report({"ERROR"}, tr(str(error)))
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
 class AURORA_OT_ik_switch(bpy.types.Operator):
     bl_idname = "aurora.switch_ik"
     bl_label = "Enable / disable IK"
@@ -283,6 +298,10 @@ def draw_ik(layout, context):
         for prefix, label in (("HAND", "Hands"), ("FOOT", "Feet")):
             box = layout.box()
             box.label(text=label)
+            if prefix == "FOOT":
+                row = box.row()
+                row.enabled = any(rigging.constraint(rig, "FOOT_" + side).influence > 0.5 for side in ("L", "R"))
+                row.operator("aurora.correct_knee_bend", icon="CON_KINEMATIC")
             for side, label in (("L", "Left"), ("R", "Right")):
                 key = prefix + "_" + side
                 enabled = rigging.constraint(rig, key).influence > 0.5
@@ -346,5 +365,5 @@ def draw_clean(layout, context):
     layout.operator("aurora.transfer_weights", text="Normalize to 4 weights", icon="BRUSH_DATA").clean = True
 
 
-CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_handles, AURORA_OT_ik_poles, AURORA_OT_ik_switch, AURORA_OT_ik_select,
+CLASSES = (AURORA_OT_bones, AURORA_OT_ik_setup, AURORA_OT_ik_handles, AURORA_OT_ik_poles, AURORA_OT_knee_bend, AURORA_OT_ik_switch, AURORA_OT_ik_select,
            AURORA_OT_pose_setup, AURORA_OT_pose_select, AURORA_OT_look_switch, AURORA_OT_look_center, AURORA_OT_transfer)

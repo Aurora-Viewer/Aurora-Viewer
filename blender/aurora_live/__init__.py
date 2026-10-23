@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 8, 4), "blender": (2, 93, 0),
+    "version": (0, 8, 5), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -402,6 +402,10 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Controls": "Contrôles", "Hand/foot IK, root/COG and eye targets": "IK des mains/pieds, Root/COG et cibles du regard",
     "Handle size": "Taille des poignées", "Refresh IK handles": "Actualiser les poignées IK",
     "Reposition poles": "Recaler les pôles",
+    "Correct knee bend": "Corriger la flexion",
+    "Make active knees bend toward their poles while keeping the foot targets fixed":
+        "Orienter les genoux actifs vers leurs pôles en gardant les cibles des pieds fixes",
+    "Enable foot IK before correcting knee bend": "Activez les IK des pieds avant de corriger la flexion",
     "Reposition elbow / knee poles": "Recaler les pôles des coudes / genoux",
     "Align poles with the current limb pose without rebuilding the rig":
         "Recaler les pôles sur la pose actuelle des membres sans reconstruire le squelette",

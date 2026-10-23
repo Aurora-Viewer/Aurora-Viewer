@@ -1,7 +1,7 @@
 """SL/Bento visibility and optional non-deforming hand/foot IK controls."""
 import math
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Vector
 from . import handles
 
 PARTS = (
@@ -196,19 +196,73 @@ def _pole(root, middle, end, direction, distance, follow_bend=True):
     return middle + direction.normalized() * distance
 
 
-def _align_pole(rig, key):
+def _aim(context, bone, direction):
+    matrix = bone.matrix.copy()
+    turn = (bone.tail - bone.head).rotation_difference(direction)
+    aimed = turn.to_matrix().to_4x4() @ matrix
+    aimed.translation = matrix.translation
+    bone.matrix = aimed
+    context.view_layer.update()
+
+
+def _seed_bend(context, root, middle, tip, pole):
+    # Solve the triangle in the pole plane before handing it to Blender.
+    # Shortest-arc rotations retain bone twist; rest data never changes.
+    upper, lower = (middle.head - root.head).length, (middle.tail - middle.head).length
+    axis = tip - root.head
+    if min(upper, lower, axis.length) < 1e-6:
+        raise ValueError("The IK chain has zero length")
+    gap = min((upper + lower) * 0.0005, min(upper, lower) * 0.1)
+    distance = max(abs(upper - lower) + gap, min(axis.length, upper + lower - gap))
+    axis.normalize()
+    toward = pole - root.head
+    toward -= axis * toward.dot(axis)
+    if toward.length < (upper + lower) * 1e-6:
+        toward = axis.orthogonal()
+    toward.normalize()
+    along = (upper * upper - lower * lower + distance * distance) / (2 * distance)
+    height = math.sqrt(max(0, upper * upper - along * along))
+    base = root.head.copy()
+    joint = base + axis * along + toward * height
+    _aim(context, root, joint - base)
+    _aim(context, middle, base + axis * distance - middle.head)
+
+
+def _align_pole(context, rig, key, reposition=True, preserve_pose=True):
     root, middle, _end = (rig.pose.bones[name] for name in chain(rig, key))
-    position = _pole(root.head.copy(), middle.head.copy(), middle.tail.copy(), *_pole_settings(rig, key, posed=True))
     pole = rig.pose.bones[control_name(key, True)]
-    matrix = pole.matrix.copy()
-    matrix.translation = position
-    pole.matrix = matrix
-    direction = (middle.tail - root.head).cross(position - root.head).cross(root.tail - root.head)
-    axis = (root.tail - root.head).normalized()
-    if direction.length > 1e-6:
-        x = root.matrix.to_3x3().col[0].normalized()
-        y = direction.normalized()
-        constraint(rig, key).pole_angle = -math.atan2(axis.dot(x.cross(y)), x.dot(y))
+    if reposition:
+        position = _pole(root.head.copy(), middle.head.copy(), middle.tail.copy(), *_pole_settings(rig, key, posed=True))
+        matrix = pole.matrix.copy()
+        matrix.translation = position
+        pole.matrix = matrix
+    else:
+        position = pole.matrix.translation.copy()
+    ik = constraint(rig, key)
+    tip = (rig.pose.bones[control_name(key)].matrix.translation.copy()
+           if ik.influence > 0.5 and not ik.mute else middle.tail.copy())
+    matrices = root.matrix.copy(), middle.matrix.copy()
+    muted = ik.mute
+    try:
+        ik.mute = True
+        context.view_layer.update()
+        if preserve_pose:
+            # Read/seed the unconstrained chain, not an already solved IK roll.
+            for bone, matrix in zip((root, middle), matrices):
+                bone.matrix = matrix
+                context.view_layer.update()
+        _seed_bend(context, root, middle, tip, position)
+        axis = (middle.tail - root.head).normalized()
+        bend = middle.head - root.head
+        bend -= axis * bend.dot(axis)
+        # IK_QJacobianSolver::ConstrainPoleVector uses X*cos(angle)+Z*sin(angle)
+        # as its up vector. Calibrate against the seeded bend, not the pole's
+        # world bearing; otherwise SL leg splay is retained during foot lifts.
+        basis = root.matrix.to_3x3()
+        ik.pole_angle = math.atan2(bend.dot(basis.col[2]), bend.dot(basis.col[0]))
+    finally:
+        ik.mute = muted
+        context.view_layer.update()
 
 
 def reposition_poles(context, rig):
@@ -219,8 +273,22 @@ def reposition_poles(context, rig):
         raise ValueError("Use Pose Position and leave Edit Mode to switch IK")
     context.view_layer.update()
     for key in LIMBS:
-        _align_pole(rig, key)
+        _align_pole(context, rig, key)
     context.view_layer.update()
+
+
+def correct_knees(context, rig):
+    editable(rig)
+    if not ready(rig):
+        raise ValueError("Create Aurora IK controls first")
+    if rig.data.pose_position != "POSE" or rig.mode == "EDIT":
+        raise ValueError("Use Pose Position and leave Edit Mode to switch IK")
+    keys = [key for key in ("FOOT_L", "FOOT_R") if constraint(rig, key).influence > 0.5 and not constraint(rig, key).mute]
+    if not keys:
+        raise ValueError("Enable foot IK before correcting knee bend")
+    context.view_layer.update()
+    for key in keys:
+        _align_pole(context, rig, key, reposition=False, preserve_pose=False)
 
 
 def setup(context, rig):
@@ -301,7 +369,7 @@ def setup(context, rig):
             rotation.target, rotation.subtarget = rig, control_name(key)
             rotation.owner_space = rotation.target_space = "POSE"
             rotation.influence = 0
-        rig["aurora_ik_version"] = 2
+        rig["aurora_ik_version"] = 3
         handles.apply(rig)
         context.view_layer.update()
     finally:
@@ -332,13 +400,7 @@ def set_ik(context, rig, key, enabled):
         target = matrices[2].copy()
         target.translation = middle.tail.copy()
         rig.pose.bones[control_name(key)].matrix = target
-        _align_pole(rig, key)
-        upper, lower = root.tail - root.head, middle.tail - middle.head
-        if upper.normalized().cross(lower.normalized()).length < 0.0001:
-            # SL's straight T-pose is a singular IK seed. A tiny local pose
-            # bend lets Blender solve subsequent target moves. Rest bones and
-            # the snapped endpoint stay unchanged; disabling bakes the result.
-            middle.matrix_basis = middle.matrix_basis @ Matrix.Rotation(0.001, 4, "X")
+        _align_pole(context, rig, key)
         ik.influence = rotation.influence = 1
     else:
         ik.influence = rotation.influence = 0

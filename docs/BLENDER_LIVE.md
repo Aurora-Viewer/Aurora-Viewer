@@ -77,8 +77,8 @@ is the minimum supported version; Blender 2.79 is not supported.
 Developers can build either format from the repository root:
 
 ```powershell
-python blender/package.py .scratch/aurora-live-mesh-0.8.4.zip
-python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.4-legacy.zip
+python blender/package.py .scratch/aurora-live-mesh-0.8.5.zip
+python blender/package.py --legacy .scratch/aurora-live-mesh-0.8.5-legacy.zip
 ```
 
 The extension ZIP has a root manifest and targets Blender 4.2+. The classic
@@ -184,7 +184,7 @@ in Blender 2.93–3.x). Creating controls again is idempotent. Use a simple,
 editable SL armature; limbs already constrained by another rigging tool are
 rejected before adding controls.
 
-Plug-in 0.8.4 gives IK controls clean, continuous custom-shape outlines:
+Plug-in 0.8.5 gives IK controls clean, continuous custom-shape outlines:
 rounded hand frames, slim foot platforms with a heel arc, rounded elbow
 diamonds and knee circles with small center marks. Left controls are teal;
 right controls are coral, with brighter selection states. Decorative cages,
@@ -207,7 +207,24 @@ height, about 0.6 thigh lengths away. Avatar facing is derived from SL joint
 geometry, so the native and -Y starter orientations behave consistently.
 The small sideways rest bend of SL legs no longer sends the poles across
 the body. When enabling IK on a clearly bent FK limb, its current bend plane
-is retained instead. Pole angles are recalculated to keep the current pose.
+is retained instead.
+
+The solver is initialized geometrically in the pole plane. Shortest-arc bone
+rotations retain twist, and the pole angle is measured from the actual seeded
+bend, matching Blender's
+[ConstrainPoleVector implementation](https://github.com/blender/blender/blob/v4.3.0/intern/iksolver/intern/IK_QJacobianSolver.cpp).
+Moving only a foot target upward now bends its knee toward its pole throughout
+the lift and return. The original SL neutral leg splay shifts slightly into
+that forward plane when IK is enabled (about 2.5 cm at the knee); ankle targets,
+SL rest matrices, weights and live export stay fixed. Already-bent FK poses
+retain their visible shape when switching to IK.
+
+For an older rig whose active knees still fold sideways, use **Controls >
+Feet > Correct knee bend**. It recalibrates only active foot IK chains, using
+their existing foot targets and pole positions. Those controls stay fixed
+while the knees return to the pole plane. This explicit correction updates
+the current pose and leaves animation keys untouched; file loading does not
+silently recalibrate existing rigs.
 
 For an existing rig, **Controls > Reposition poles** applies the corrected
 placement without rebuilding controls, editing rest bones or changing the
@@ -359,7 +376,7 @@ entries, and weight changes trigger a new capture.
 
 ## Live materials
 
-Plug-in **0.8.4 requires an Aurora viewer with live PBR support**. It recognizes the
+Plug-in **0.8.5 requires an Aurora viewer with live PBR support**. It recognizes the
 connected Principled BSDF of each material: base color, alpha, metallic,
 roughness, emission color/strength and backface culling. Older Principled
 input names and Separate RGB channel nodes are supported. Direct RGB/Value

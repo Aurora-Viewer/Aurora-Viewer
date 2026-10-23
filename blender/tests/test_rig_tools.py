@@ -193,7 +193,16 @@ class RigToolsTests(unittest.TestCase):
             with self.subTest(limb=key):
                 before = self.pose(key)
                 rigging.set_ik(bpy.context, self.rig, key, True)
-                self.assertPoseNear(before, self.pose(key))
+                after = self.pose(key)
+                if key.startswith("FOOT"):
+                    # Neutral SL leg splay is brought into the forward pole
+                    # plane, keeping the ankle fixed and avoiding a roll flip.
+                    self.assertPoseNear(before[2:], after[2:])
+                    self.assertLess((before[1].translation - after[1].translation).length, 0.035)
+                    for a, b in zip(before[:2], after[:2]):
+                        self.assertGreater(abs(a.to_quaternion().dot(b.to_quaternion())), 0.999)
+                else:
+                    self.assertPoseNear(before, after)
                 self.assertEqual([rigging.constraint(self.rig, k).influence for k in rigging.LIMBS],
                                  [float(k == key) for k in rigging.LIMBS])
                 target = self.rig.pose.bones[rigging.control_name(key)]
@@ -234,9 +243,15 @@ class RigToolsTests(unittest.TestCase):
                     ratio = offset.length / (middle.head - root.head).length
                     self.assertTrue(1.5 < ratio < 2.5 if key.startswith("HAND") else 0.4 < ratio < 0.8)
                     before = [rig.pose.bones[name].matrix.copy() for name in rigging.chain(rig, key)]
+                    pole_before = pole.head.copy()
                     rigging.set_ik(bpy.context, rig, key, True)
-                    self.assertPoseNear(before, [rig.pose.bones[name].matrix.copy() for name in rigging.chain(rig, key)])
-                    self.assertGreater((pole.head - middle.head).normalized().dot(desired), 0.9999)
+                    after = [rig.pose.bones[name].matrix.copy() for name in rigging.chain(rig, key)]
+                    if key.startswith("HAND"):
+                        self.assertPoseNear(before, after)
+                    else:
+                        self.assertPoseNear(before[2:], after[2:])
+                        self.assertLess((before[1].translation - after[1].translation).length, 0.035)
+                    self.assertLess((pole.head - pole_before).length, 1e-5)
 
     def test_existing_poles_can_be_repositioned_without_rebuilding_or_changing_the_pose(self):
         rigging.setup(bpy.context, self.rig)
@@ -271,6 +286,97 @@ class RigToolsTests(unittest.TestCase):
             self.assertFalse(bpy.context.scene.aurora_live.objects[0].enabled)
             self.assertEqual(selected, list(bpy.context.selected_objects))
             self.assertEqual(mode, bpy.context.object.mode)
+
+    def test_lifting_only_the_foot_keeps_each_knee_in_its_pole_plane(self):
+        for forward in ("NATIVE", "NEGATIVE_Y"):
+            rig, _shirt = starter.create(bpy.context, forward=forward)
+            rigging.setup(bpy.context, rig)
+            rig.data.bones["mKneeLeft"].name = "Custom left knee"
+            rig.rotation_euler = (0.2, -0.3, 0.5)
+            for key in ("FOOT_L", "FOOT_R"):
+                rigging.set_ik(bpy.context, rig, key, True)
+                root, middle, end = (rig.pose.bones[name] for name in rigging.chain(rig, key))
+                target = rig.pose.bones[rigging.control_name(key)]
+                pole = rig.pose.bones[rigging.control_name(key, True)]
+                initial = target.matrix.copy()
+                other_key = "FOOT_R" if key == "FOOT_L" else "FOOT_L"
+                other = [rig.pose.bones[name].matrix.copy() for name in rigging.chain(rig, other_key)]
+                for height in (0.02, 0.08, 0.2, 0.4, 0.6, 0.4, 0.2, 0.08, 0):
+                    with self.subTest(forward=forward, leg=key, height=height):
+                        matrix = initial.copy()
+                        matrix.translation.z += height
+                        target.matrix = matrix
+                        bpy.context.view_layer.update()
+                        axis = (middle.tail - root.head).normalized()
+                        bend = middle.head - root.head
+                        bend -= axis * bend.dot(axis)
+                        toward = pole.head - root.head
+                        toward -= axis * toward.dot(axis)
+                        self.assertGreater(bend.normalized().dot(toward.normalized()), 0.999)
+                        self.assertLess((middle.tail - matrix.translation).length, 0.001)
+                        self.assertGreater(abs(end.matrix.to_quaternion().dot(target.matrix.to_quaternion())), 0.999999)
+                        self.assertEqual(other, [rig.pose.bones[name].matrix.copy() for name in rigging.chain(rig, other_key)])
+
+    def test_correct_knee_bend_repairs_existing_twist_with_foot_targets_fixed(self):
+        rigging.setup(bpy.context, self.rig)
+        rest = {bone.name: bone.matrix_local.copy() for bone in self.rig.data.bones}
+        snapshot = exporter.snapshot([self.shirt], set(rest), 1)
+        for key in ("FOOT_L", "FOOT_R"):
+            rigging.set_ik(bpy.context, self.rig, key, True)
+            target = self.rig.pose.bones[rigging.control_name(key)]
+            matrix = target.matrix.copy()
+            matrix.translation.z += 0.3
+            target.matrix = matrix
+            rigging.constraint(self.rig, key).pole_angle += 0.9
+        bpy.context.view_layer.update()
+        targets = {key: self.rig.pose.bones[rigging.control_name(key)].matrix.copy() for key in ("FOOT_L", "FOOT_R")}
+        poles = {key: self.rig.pose.bones[rigging.control_name(key, True)].matrix.copy() for key in targets}
+        arms = {key: self.pose(key) for key in ("HAND_L", "HAND_R")}
+        self.assertEqual(bpy.ops.aurora.correct_knee_bend(), {"FINISHED"})
+        for key in targets:
+            root, middle, _end = (self.rig.pose.bones[name] for name in rigging.chain(self.rig, key))
+            axis = (middle.tail - root.head).normalized()
+            bend = middle.head - root.head
+            bend -= axis * bend.dot(axis)
+            toward = self.rig.pose.bones[rigging.control_name(key, True)].head - root.head
+            toward -= axis * toward.dot(axis)
+            self.assertGreater(bend.normalized().dot(toward.normalized()), 0.999)
+            self.assertLess((middle.tail - targets[key].translation).length, 0.001)
+            self.assertEqual(targets[key], self.rig.pose.bones[rigging.control_name(key)].matrix)
+            self.assertEqual(poles[key], self.rig.pose.bones[rigging.control_name(key, True)].matrix)
+            self.assertEqual(rigging.constraint(self.rig, key).influence, 1)
+        for key in arms:
+            self.assertEqual(arms[key], self.pose(key))
+        self.assertEqual(rest, {bone.name: bone.matrix_local.copy() for bone in self.rig.data.bones})
+        self.assertEqual(snapshot, exporter.snapshot([self.shirt], set(rest), 1))
+
+    def test_foot_target_keyframes_keep_the_bend_plane_with_a_rotated_cog(self):
+        rigging.setup(bpy.context, self.rig)
+        bpy.ops.aurora.create_pose_controls(kind="ROOT")
+        cog = self.rig.pose.bones["auroraPose.COG"]
+        cog.rotation_mode = "XYZ"
+        cog.rotation_euler.z = 0.4
+        bpy.context.view_layer.update()
+        for key in ("FOOT_L", "FOOT_R"):
+            rigging.set_ik(bpy.context, self.rig, key, True)
+            target = self.rig.pose.bones[rigging.control_name(key)]
+            initial = target.matrix.copy()
+            for frame, height in ((1, 0), (10, 0.2), (20, 0.4)):
+                matrix = initial.copy()
+                matrix.translation.z += height
+                target.matrix = matrix
+                target.keyframe_insert(data_path="location", frame=frame)
+        for frame in (1, 5, 10, 20, 10, 5, 1):
+            bpy.context.scene.frame_set(frame)
+            for key in ("FOOT_L", "FOOT_R"):
+                root, middle, _end = (self.rig.pose.bones[name] for name in rigging.chain(self.rig, key))
+                axis = (middle.tail - root.head).normalized()
+                bend = middle.head - root.head
+                bend -= axis * bend.dot(axis)
+                toward = self.rig.pose.bones[rigging.control_name(key, True)].head - root.head
+                toward -= axis * toward.dot(axis)
+                self.assertGreater(bend.normalized().dot(toward.normalized()), 0.999)
+                self.assertLess((middle.tail - self.rig.pose.bones[rigging.control_name(key)].head).length, 0.001)
 
     def test_widgets_have_distinct_outlines_and_preserve_solver_pose_and_export(self):
         rigging.setup(bpy.context, self.rig)

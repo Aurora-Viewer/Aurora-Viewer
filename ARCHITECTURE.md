@@ -34,9 +34,14 @@ in older APIs; Edit Mode visibility stays on `EditBone`. In Blender 5,
 Default poles use the avatar's geometric facing: behind elbows and ahead of
 each knee, at joint height, with separate arm/leg distances. Near-straight
 SL leg splay does not define the pole direction; deliberately bent FK limbs
-retain their bend plane. Switching and explicit pole repositioning calibrate
-the pole angle from the current pose. Existing files are never repositioned
-automatically, preserving authored pole poses and animation.
+retain their bend plane. Switching and explicit pole repositioning seed an
+analytic two-bone triangle in that plane using shortest-arc rotations, then
+calibrate the native solver's X/Z pole angle from the seeded bend. This avoids
+sideways knees during vertical foot lifts and stabilizes straight arms. Neutral
+SL leg splay moves slightly into the pole plane without changing rest bones
+or ankle targets. A separate corrective action recalibrates active legacy
+knees with targets/poles fixed. Existing files are never recalibrated or
+repositioned automatically, preserving authored control poses and keys.
 `handles.py` builds cached, unlinked custom-shape meshes with continuous edge
 outlines for IK hands, feet, elbows and knees: rounded frames/platforms and
 simple diamond/circle poles, without decorative cages or 3D lettering.
