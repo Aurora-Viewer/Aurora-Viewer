@@ -1743,6 +1743,8 @@ appear. Each row's Import button opens that object's
 ordinary mesh importer without selecting it first. Check the Connection,
 Objects and Plugins horizontal dividers and the truncated names beside their
 Import buttons. `upload` opens the importer directly with a frozen shell draft.
+Check that Connection status sits beside the title and its port, address and
+start/stop button stay on one line.
 No fee or upload request is sent automatically. Check skin weights, LODs,
 physics, the source snapshot notice and the separate-PBR-upload notice.
 

@@ -27,7 +27,8 @@ on a worker into the existing mesh draft, quote and confirmed upload workflow.
 Hidden/removed sources keep receiving edits, with no simulator traffic.
 The Blender Live floater separates connection, objects and plug-in controls
 with shared horizontal dividers in a brighter palette tone and plain section
-headings. Each source row imports its own snapshot directly;
+headings. Connection status shares its title row; port, loopback address and
+start/stop share a single control row. Each source row imports its own snapshot directly;
 visibility and bulk removal remain independent of import selection.
 `compat.py` maps renamed Principled sockets and uses bone collections in 4.0+
 or named pose groups and armature layers in 2.93–3.x. The mesh exporter reads

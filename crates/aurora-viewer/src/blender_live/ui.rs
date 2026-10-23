@@ -20,12 +20,6 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
             .max_height(ui.available_height())
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                section(ui, p, "link-filled", aurora_i18n::tr!("blender-live-connection"));
-                ui.horizontal(|ui| {
-                    ui.label(aurora_i18n::tr!("blender-live-port"));
-                    ui.add_enabled(!live.running(), egui::DragValue::new(&mut live.port).range(1024..=65535));
-                    ui.monospace("127.0.0.1");
-                });
                 let connected = live.server.as_ref().is_some_and(|server| server.shared.status.lock().connected);
                 let label = if connected {
                     aurora_i18n::tr!("blender-live-connected")
@@ -34,8 +28,15 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
                 } else {
                     aurora_i18n::tr!("blender-live-stopped")
                 };
-                ui.colored_label(if connected { p.violet_light } else { p.muted }, label);
+                section_divider(ui, p);
                 ui.horizontal(|ui| {
+                    widgets::section_header(ui, p, "link-filled", aurora_i18n::tr!("blender-live-connection"));
+                    ui.colored_label(if connected { p.violet_light } else { p.muted }, label);
+                });
+                ui.horizontal(|ui| {
+                    ui.label(aurora_i18n::tr!("blender-live-port"));
+                    ui.add_enabled(!live.running(), egui::DragValue::new(&mut live.port).range(1024..=65535));
+                    ui.monospace("127.0.0.1");
                     if live.running() {
                         if widgets::flat_button(ui, p, aurora_i18n::tr!("blender-live-stop")).clicked() {
                             live.stop();
@@ -167,8 +168,12 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
 }
 
 fn section(ui: &mut egui::Ui, p: &crate::theme::Palette, icon: &str, title: &str) {
+    section_divider(ui, p);
+    widgets::section_header(ui, p, icon, title);
+}
+
+fn section_divider(ui: &mut egui::Ui, p: &crate::theme::Palette) {
     ui.add_space(12.0);
     let divider_palette = crate::theme::Palette { raised: p.muted_dim, ..*p };
     widgets::divider(ui, &divider_palette);
-    widgets::section_header(ui, p, icon, title);
 }

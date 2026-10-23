@@ -10431,7 +10431,7 @@ build-material-emissive-tint = Teinte émissive
 
 blender-live-title = Blender Live
 blender-live-invalid-source = Identifiant d’objet live invalide ou en double.
-blender-live-connection = Connection
+blender-live-connection = Connexion
 blender-live-objects = Objets
 blender-live-plugins = Plugins
 blender-live-empty = Aucun objet dans cet aperçu.
