@@ -485,6 +485,29 @@ externally edited image in Blender; **Update now** also refreshes image caches.
 
 ## Rig and coordinate conventions
 
+### Send your shape to Blender
+
+With plug-in **0.9.0+** connected, use **Objects → Send shape to Blender** in
+Aurora's Blender Live window. Aurora requires the worn shape's resolved inventory item
+to belong to you and grant **Modify**. Missing inventory data or a no-modify
+shape disables the action; Copy/Transfer rights do not substitute for Modify.
+Rights, worn item and asset identity are checked again after loading and just
+before publishing. A shape change or revoked permission cancels pending work.
+
+Blender creates a **new collection** with the shape's 159-bone SL skeleton and
+a neutral rigged system-body reference (head, torso, legs, eyes and eyelashes).
+It retains the shape parameters on the new rig. Existing rigs, meshes, weights
+and synchronization-list entries remain intact. The reference faces -Y in
+Automatic mode and respects scene units and the 3D cursor. Object Mode is
+required; an import waiting in another mode expires after 30 seconds. The
+creation is undoable. Aurora reports success only after Blender imports it.
+
+This transfers the saved worn **shape**, not worn mesh bodies, heads, clothes,
+skin textures, animations or unsaved shape-editor changes. Use the reference
+to fit a garment or transfer its weights. It is not added to the live list
+automatically. Shape-specific bind matrices keep a garment rigged to this new
+skeleton from receiving the shape twice when previewed in Aurora.
+
 Use a Second Life compatible armature and its deform vertex groups (`mPelvis`,
 `mTorso`, `mChest`, Bento joints, supported aliases and collision volumes).
 An optional string custom property **`aurora_joint`** on a Blender bone maps
@@ -493,8 +516,8 @@ of silently attaching the mesh to the pelvis. Every vertex needs a positive
 bone weight. The four strongest influences are retained and normalized, as
 in Second Life mesh assets.
 
-**SL / Z up** is the default for an existing SL rig. If your rig faces Blender's
-negative Y direction, choose **Blender -Y forward**. Scene unit scale is
+**Automatic (Avastar / SL)** detects an existing SL rig's rest axes. Explicit
+**SL / Z up** and **Blender -Y forward** overrides remain available. Scene unit scale is
 converted to metres. The armature's placement and orientation in the Blender
 scene are removed; its authored scale, the mesh's relative transform, normals,
 mirrored winding, UV seams and material assignments are preserved.
@@ -567,7 +590,7 @@ can be opened normally and connected through the Aurora sidebar.
 TCP listens on IPv4 loopback only. The client sends the eight bytes
 `AURBLD1\n`. Aurora responds with one newline-terminated JSON object containing
 `protocol`, the supported `joints`, their inverse neutral `rest_axes` (column-major,
-translation removed), `features: ["pbr-materials", "source-ids"]`, and `max_bytes`. Every subsequent client
+translation removed), `features: ["pbr-materials", "source-ids", "shape-transfer"]`, and `max_bytes`. Every subsequent client
 message is a four-byte unsigned little-endian JSON byte count, then a UTF-8
 snapshot. Length zero is a heartbeat. The reply is newline-terminated JSON
 with `ok`, `revision` on success, or `error` on rejection. A success acknowledges
@@ -576,6 +599,18 @@ a connection; reconnecting starts a new revision sequence.
 Only an explicitly transient staging failure sets `retry: true` on a rejected
 reply; the client retries its newest snapshot after 0.5 seconds without needing
 another edit. Invalid content is retained as an error until edited or resent.
+
+Shape-capable clients explicitly negotiate with a framed
+`{"type":"features","features":["shape-transfer"]}` control. An explicitly
+authorized shape may then accompany one normal reply in `shape`, containing
+a transient request `id`, display name, shape parameters, canonical rest
+joints/inverse binds and neutral system-body geometry (maximum 8 MiB).
+The main-thread import answers with
+`{"type":"shape-result","id":"<request UUID>","error":null}` or an error.
+Controls are bounded to 4 KiB and never affect mesh revisions. Old clients
+receive no shape data. Pending sends are cleared on disconnect, not replayed.
+An optional `shape_cancel` request UUID in a reply clears a matching reference
+still waiting for Object Mode when authorization is revoked or the send expires.
 
 Snapshots have `protocol`, `revision` and `meshes`. Each mesh has `name`,
 `joints`, column-major `inverse_bind` matrices, and `faces`. The optional

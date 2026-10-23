@@ -233,16 +233,16 @@ def _tshirt(collection, rig, definitions, basis):
     return mesh
 
 
-def create(context, with_tshirt=True, forward=None):
+def create(context, with_tshirt=True, forward=None, definitions=None, collection_name="SL Avatar Starter"):
     """Create a new collection at the cursor; never reuse or overwrite a rig."""
-    definitions = joints()
+    definitions = definitions if definitions is not None else joints()
     forward = forward or context.scene.aurora_live.forward
     if forward == "AUTO":
         forward = "NEGATIVE_Y"
     basis = _basis(context, forward)
     selected = list(context.selected_objects)
     active = context.view_layer.objects.active
-    collection = bpy.data.collections.new("SL Avatar Starter")
+    collection = bpy.data.collections.new(collection_name)
     context.scene.collection.children.link(collection)
     for obj in selected:
         obj.select_set(False)

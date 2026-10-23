@@ -8,7 +8,7 @@ import time
 
 MAGIC = b"AURBLD1\n"
 MAX_BYTES = 64 * 1024 * 1024
-MAX_REPLY = 256 * 1024
+MAX_REPLY = 8 * 1024 * 1024 + 4096
 
 
 def wire_snapshot(snapshot, features):
@@ -29,6 +29,9 @@ class Client:
         self._connection = None
         self._joints = frozenset()
         self._rest_axes = {}
+        self._shape = None
+        self._shape_received = 0.0
+        self._shape_result = None
         self._status = "Connecting to Aurora…"
         self._thread = threading.Thread(target=self._run, name="Aurora Live", daemon=True)
         self._thread.start()
@@ -45,6 +48,36 @@ class Client:
     def rest_axes(self):
         with self._lock:
             return self._rest_axes
+
+    def take_shape(self, ready=True):
+        with self._lock:
+            if self._shape is not None and time.monotonic() - self._shape_received > 30:
+                identity = self._shape.get("id", "") if isinstance(self._shape, dict) else ""
+                self._shape_result = {"type": "shape-result", "id": identity,
+                                      "error": "Switch to Object Mode and send the shape again"}
+                self._shape = None
+                self._wake.set()
+            if not ready:
+                return None
+            value, self._shape = self._shape, None
+            return value
+
+    def shape_result(self, identity, error=None):
+        with self._lock:
+            self._shape_result = {"type": "shape-result", "id": identity, "error": error}
+        self._wake.set()
+
+    def _reply(self, reader):
+        reply = self._line(reader)
+        if isinstance(reply, dict) and "shape" in reply:
+            with self._lock:
+                self._shape = reply["shape"]
+                self._shape_received = time.monotonic()
+        if isinstance(reply, dict) and reply.get("shape_cancel"):
+            with self._lock:
+                if isinstance(self._shape, dict) and self._shape.get("id") == reply["shape_cancel"]:
+                    self._shape = None
+        return reply
 
     def close(self):
         self._stop.set()
@@ -68,7 +101,10 @@ class Client:
         line = stream.readline(MAX_REPLY + 1)
         if not line or len(line) > MAX_REPLY or not line.endswith(b"\n"):
             raise ValueError("Invalid Aurora response")
-        return json.loads(line)
+        value = json.loads(line)
+        if not isinstance(value, dict):
+            raise ValueError("Invalid Aurora response")
+        return value
 
     def _run(self):
         while not self._stop.is_set():
@@ -90,6 +126,10 @@ class Client:
                         with self._lock:
                             self._rest_axes = hello.get("rest_axes", {})
                         self._set_status("Connected to Aurora", hello["joints"])
+                        if "shape-transfer" in hello.get("features", []):
+                            payload = b'{"type":"features","features":["shape-transfer"]}'
+                            connection.sendall(struct.pack("<I", len(payload)) + payload)
+                            self._reply(reader)
                         sent = None
                         heartbeat = time.monotonic()
                         while not self._stop.is_set():
@@ -97,6 +137,12 @@ class Client:
                             self._wake.clear()
                             with self._lock:
                                 latest = self._latest
+                                result, self._shape_result = self._shape_result, None
+                            if result is not None:
+                                payload = json.dumps(result, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+                                connection.sendall(struct.pack("<I", len(payload)) + payload)
+                                self._reply(reader)
+                                heartbeat = time.monotonic()
                             if latest is not None and latest["revision"] != sent:
                                 payload = json.dumps(wire_snapshot(latest, hello.get("features", [])),
                                                      separators=(",", ":"), allow_nan=False).encode("utf-8")
@@ -105,7 +151,7 @@ class Client:
                                     sent = latest["revision"]
                                     continue
                                 connection.sendall(struct.pack("<I", len(payload)) + payload)
-                                reply = self._line(reader)
+                                reply = self._reply(reader)
                                 sent = latest["revision"]
                                 if reply.get("ok"):
                                     self._set_status("Connected · revision {}".format(sent))
@@ -117,7 +163,7 @@ class Client:
                                 heartbeat = time.monotonic()
                             elif time.monotonic() - heartbeat > 2.0:
                                 connection.sendall(b"\0\0\0\0")
-                                self._line(reader)
+                                self._reply(reader)
                                 heartbeat = time.monotonic()
             except (OSError, ValueError, TypeError) as error:
                 self._set_status("Waiting for Aurora: " + str(error), ())
@@ -125,3 +171,5 @@ class Client:
             finally:
                 with self._lock:
                     self._connection = None
+                    self._shape = None
+                    self._shape_result = None

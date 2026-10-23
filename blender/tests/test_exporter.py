@@ -167,7 +167,8 @@ class ExporterTests(unittest.TestCase):
 
     def test_live_handler_captures_edits_and_deletions_without_export_loop(self):
         captures = []
-        aurora_live._client = SimpleNamespace(state=lambda: ("Connected", {"mPelvis"}), rest_axes=lambda: {}, submit=captures.append, close=lambda: None)
+        aurora_live._client = SimpleNamespace(state=lambda: ("Connected", {"mPelvis"}), rest_axes=lambda: {}, take_shape=lambda ready=True: None,
+                                             submit=captures.append, close=lambda: None)
         aurora_live.tracking.add(bpy.context.scene, [self.mesh])
         aurora_live._dirty = True
         aurora_live._last_capture = 0.0

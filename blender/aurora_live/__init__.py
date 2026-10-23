@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 8, 8), "blender": (2, 93, 0),
+    "version": (0, 9, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
 }
@@ -14,11 +14,11 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
-from . import compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui
+from . import compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui, shape_transfer
 if _reloading:
     # Blender reloads the package during an in-place extension upgrade. Reload
     # dependencies first so the old exporter/client cannot survive that upgrade.
-    for _module in (compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui):
+    for _module in (compat, client, materials, weights, starter, exporter, tracking, handles, rigging, skinning, posing, tools_ui, shape_transfer):
         importlib.reload(_module)
 Client = client.Client
 
@@ -32,6 +32,7 @@ _force_capture = False
 _last_snapshot = None
 _error = ""
 _material_signature = ()
+_incoming_shape = None
 
 
 def _selected():
@@ -99,11 +100,23 @@ def _stop():
 
 def _tick():
     global _dirty, _revision, _last_capture, _exporting, _error, _material_signature, _object_signature
-    global _force_capture, _last_snapshot
+    global _force_capture, _last_snapshot, _incoming_shape
     if _client is None:
         return None
     status, supported = _client.state()
     scene = bpy.context.scene
+    _incoming_shape = _client.take_shape(ready=not bpy.context.object or bpy.context.object.mode == "OBJECT")
+    if _incoming_shape is not None:
+        identity = _incoming_shape.get("id", "") if isinstance(_incoming_shape, dict) else ""
+        try:
+            if bpy.ops.aurora.receive_shape("EXEC_DEFAULT", True) != {"FINISHED"}:
+                raise ValueError("Shape import was cancelled")
+            _client.shape_result(identity)
+            _request_capture()
+        except (ValueError, RuntimeError, KeyError, TypeError, OverflowError) as error:
+            _client.shape_result(identity, str(error)[:512])
+        finally:
+            _incoming_shape = None
     tracking.prune(scene)
     objects = tracking.active(scene)
     prefs = scene.aurora_live
@@ -167,6 +180,18 @@ def _weights_changed(context, objects):
     if _client:
         tracking.add(context.scene, objects)
         _request_capture()
+
+
+class AURORA_OT_receive_shape(bpy.types.Operator):
+    bl_idname = "aurora.receive_shape"
+    bl_label = "Receive avatar shape"
+    bl_options = {"REGISTER", "UNDO", "INTERNAL"}
+
+    def execute(self, context):
+        if _incoming_shape is None:
+            return {"CANCELLED"}
+        shape_transfer.apply(context, _incoming_shape)
+        return {"FINISHED"}
 
 
 class AURORA_PG_live(bpy.types.PropertyGroup):
@@ -380,7 +405,7 @@ def _draw_starter(layout, context):
     if context.mode != "OBJECT":
         layout.label(text="Switch to Object Mode to create a rig.", icon="INFO")
 
-_classes = tracking.CLASSES + (AURORA_PG_live, AURORA_OT_starter, AURORA_OT_weights, AURORA_OT_connect,
+_classes = tracking.CLASSES + (AURORA_PG_live, AURORA_OT_receive_shape, AURORA_OT_starter, AURORA_OT_weights, AURORA_OT_connect,
                              AURORA_OT_disconnect, AURORA_OT_refresh, AURORA_PT_live) + tools_ui.CLASSES
 
 _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator") for key, value in {
@@ -569,6 +594,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Send the latest enabled objects and materials immediately, even in manual mode":
         "Envoyer immédiatement les objets actifs et leurs matériaux, même en mode manuel",
     "Coordinates": "Coordonnées", "SL / Z up": "SL / Z vertical", "Blender -Y forward": "Blender -Y vers l’avant",
+    "Receive avatar shape": "Recevoir la shape de l’avatar",
     "Automatic (Avastar / SL)": "Automatique (Avastar / SL)",
     "Detect each rig's rest axes; create new rigs facing Blender -Y": "Détectez les axes de repos de chaque squelette ; les nouveaux rigs regardent vers −Y comme Avastar",
     "Enable Blender Live in Aurora first.": "Activez d’abord Blender Live dans Aurora.",

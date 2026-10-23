@@ -36,6 +36,54 @@ def snapshot(connection):
 
 
 class ClientTests(unittest.TestCase):
+    def test_shape_waiting_for_object_mode_expires_and_can_be_cancelled(self):
+        client = module.Client.__new__(module.Client)
+        client._lock = threading.Lock()
+        client._wake = threading.Event()
+        client._shape = {"id": "test-shape"}
+        client._shape_received = time.monotonic() - 31
+        client._shape_result = None
+        self.assertIsNone(client.take_shape(ready=False))
+        self.assertIsNone(client.take_shape())
+        self.assertEqual(client._shape_result["id"], "test-shape")
+        self.assertIsNotNone(client._shape_result["error"])
+        client._shape = {"id": "test-shape"}
+        client._shape_received = time.monotonic()
+        client._reply(io.BytesIO(b'{"ok":true,"shape_cancel":"test-shape"}\n'))
+        self.assertIsNone(client.take_shape())
+
+    def test_shape_transfer_negotiates_receives_large_data_and_confirms_main_thread_import(self):
+        received = []
+        identity = "00000000-0000-0000-0000-000000000123"
+        ready = threading.Event()
+
+        def server(listener):
+            with listener.accept()[0] as connection:
+                connection.settimeout(5)
+                self.assertEqual(receive(connection, 8), module.MAGIC)
+                connection.sendall(b'{"protocol":1,"joints":["mPelvis"],"features":["pbr-materials","shape-transfer"]}\n')
+                received.append(snapshot(connection))
+                payload = {"id": identity, "test_data": "x" * 300000}
+                connection.sendall(json.dumps({"ok": True, "shape": payload}).encode() + b"\n")
+                ready.set()
+                received.append(snapshot(connection))
+                connection.sendall(b'{"ok":true}\n')
+
+        client, thread, failures = self.serve(server)
+        self.assertTrue(ready.wait(3))
+        deadline = time.monotonic() + 3
+        payload = None
+        while payload is None and time.monotonic() < deadline:
+            payload = client.take_shape()
+            time.sleep(0.01)
+        self.assertEqual(payload["id"], identity)
+        self.assertEqual(len(payload["test_data"]), 300000)
+        self.assertIsNone(client.take_shape(), "one import per delivered request")
+        client.shape_result(identity)
+        self.finish(client, thread, failures)
+        self.assertEqual(received[0], {"type": "features", "features": ["shape-transfer"]})
+        self.assertEqual(received[1], {"type": "shape-result", "id": identity, "error": None})
+
     def test_source_identity_is_negotiated_without_mutating_the_capture(self):
         value = {"revision": 1, "meshes": [{"name": "Shirt", "source_id": "stable-id"}]}
         self.assertIs(module.wire_snapshot(value, ["pbr-materials", "source-ids"]), value)

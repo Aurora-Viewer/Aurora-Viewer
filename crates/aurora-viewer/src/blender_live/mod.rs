@@ -6,6 +6,7 @@ mod addon;
 mod demo;
 mod installer;
 pub mod protocol;
+pub(crate) mod shape;
 #[cfg(test)]
 mod tests;
 mod transport;
@@ -36,15 +37,19 @@ pub enum SourceState {
 #[derive(Default)]
 pub struct Status {
     pub connected: bool,
+    pub shape_capable: bool,
     pub received: u64,
     pub error: Option<String>,
 }
 
 #[derive(Default)]
-pub(super) struct Shared {
+pub(crate) struct Shared {
     pub stop: AtomicBool,
     pub status: Mutex<Status>,
     pub latest: Mutex<Option<protocol::Prepared>>,
+    pub shape: Mutex<Option<shape::Outgoing>>,
+    pub shape_ack: Mutex<Option<(Uuid, Option<String>)>>,
+    pub shape_cancel: Mutex<Option<Uuid>>,
 }
 
 struct Server {
@@ -71,6 +76,7 @@ pub struct Live {
     pub snapshot: Option<protocol::Prepared>,
     pub owner: Option<Uuid>,
     pub addon: addon::Addon,
+    pub shape: shape::State,
     pub(super) installer: installer::Installer,
     pub(super) installer_scan: bool,
     pub(super) installer_choose: bool,
@@ -97,6 +103,7 @@ impl Default for Live {
             snapshot: None,
             owner: None,
             addon: Default::default(),
+            shape: Default::default(),
             installer: Default::default(),
             installer_scan: false,
             installer_choose: false,
@@ -110,6 +117,18 @@ impl Default for Live {
     }
 }
 impl Live {
+    pub(crate) fn shape_connection(&self) -> Result<Arc<Shared>, String> {
+        let shared = self
+            .server
+            .as_ref()
+            .map(|server| &server.shared)
+            .filter(|shared| shared.status.lock().connected)
+            .ok_or_else(|| aurora_i18n::tr!("blender-shape-connect").to_owned())?;
+        if !shared.status.lock().shape_capable {
+            return Err(aurora_i18n::tr!("blender-shape-update-plugin").into());
+        }
+        Ok(shared.clone())
+    }
     pub fn state(&self, id: Uuid) -> SourceState {
         self.states.get(&id).copied().unwrap_or_default()
     }

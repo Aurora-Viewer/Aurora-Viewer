@@ -42,6 +42,10 @@ pub(super) fn start_listener(
                         worker.status.lock().error = Some(error.to_string());
                     }
                     worker.status.lock().connected = false;
+                    worker.status.lock().shape_capable = false;
+                    worker.shape.lock().take();
+                    worker.shape_ack.lock().take();
+                    worker.shape_cancel.lock().take();
                     ctx.request_repaint();
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(30)),
@@ -93,11 +97,12 @@ fn serve(
     }
     let mut joints: Vec<_> = supported.iter().collect();
     joints.sort();
-    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "features": ["pbr-materials", "source-ids"] });
+    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer"] });
     writeln!(stream, "{hello}")?;
     {
         let mut status = shared.status.lock();
         status.connected = true;
+        status.shape_capable = false;
         status.error = None;
     }
     ctx.request_repaint();
@@ -109,7 +114,7 @@ fn serve(
         read(stream, &mut len, shared, Duration::from_secs(10))?;
         let len = u32::from_le_bytes(len) as usize;
         if len == 0 {
-            writeln!(stream, "{{\"ok\":true}}")?;
+            reply(stream, shared, serde_json::json!({"ok": true}))?;
             continue;
         }
         if len > protocol::MAX_BYTES {
@@ -117,6 +122,11 @@ fn serve(
         }
         let mut bytes = vec![0; len];
         read(stream, &mut bytes, shared, Duration::from_secs(5))?;
+        if len <= 4096 && control(&bytes, shared) {
+            reply(stream, shared, serde_json::json!({"ok": true}))?;
+            ctx.request_repaint();
+            continue;
+        }
         let result = protocol::prepare_staged(&bytes, supported, pool, &images).and_then(|prepared| {
             if previous.is_some_and(|old| prepared.revision <= old) {
                 return Err(aurora_i18n::tr!("blender-live-invalid-revision").into());
@@ -145,8 +155,46 @@ fn serve(
                 serde_json::json!({ "ok": false, "error": error, "retry": retry })
             }
         };
-        writeln!(stream, "{reply}")?;
+        self::reply(stream, shared, reply)?;
         ctx.request_repaint();
     }
     Ok(())
+}
+
+fn control(bytes: &[u8], shared: &Shared) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Control {
+        #[serde(rename = "type")]
+        kind: String,
+        #[serde(default)]
+        features: Vec<String>,
+        id: Option<uuid::Uuid>,
+        error: Option<String>,
+    }
+    let Ok(control) = serde_json::from_slice::<Control>(bytes) else {
+        return false;
+    };
+    match control.kind.as_str() {
+        "features" => shared.status.lock().shape_capable = control.features.iter().any(|f| f == "shape-transfer"),
+        "shape-result" => {
+            if let Some(id) = control.id {
+                *shared.shape_ack.lock() = Some((id, control.error.map(|message| message.chars().take(512).collect())));
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn reply(stream: &mut TcpStream, shared: &Shared, mut reply: serde_json::Value) -> io::Result<()> {
+    let capable = shared.status.lock().shape_capable;
+    let shape = if capable { shared.shape.lock().take() } else { None };
+    if let Some(shape) = shape {
+        reply["shape"] = (*shape.data).clone();
+        reply["shape"]["id"] = serde_json::json!(shape.id);
+    }
+    if capable && let Some(id) = shared.shape_cancel.lock().take() {
+        reply["shape_cancel"] = serde_json::json!(id);
+    }
+    writeln!(stream, "{reply}")
 }

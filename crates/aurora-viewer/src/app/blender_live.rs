@@ -31,12 +31,18 @@ impl App {
     }
 
     pub(super) fn show_blender_live(&mut self, ctx: &egui::Context, palette: &Palette) {
+        self.blender_live.shape.blocked = crate::blender_live::shape::editable(&self.world)
+            .and_then(|_| self.blender_live.shape_connection())
+            .err();
         let can_upload = !self.imports.busy() && self.imports.pending_files.is_none() && self.imports.entries.len() < 512;
         if self.blender_live.show(ctx, palette, can_upload) {
             self.blender_live.start_requested = true;
         }
         if std::mem::take(&mut self.blender_live.save_addon) {
             self.blender_live.addon.save(&self.scene.jobs, ctx);
+        }
+        if std::mem::take(&mut self.blender_live.shape.requested) {
+            self.send_blender_shape();
         }
         let choose = std::mem::take(&mut self.blender_live.installer_choose);
         if std::mem::take(&mut self.blender_live.installer_scan) || choose {
@@ -70,6 +76,7 @@ impl App {
     }
 
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
+        self.update_blender_shape();
         if std::mem::take(&mut self.blender_live.start_requested) {
             self.blender_live.start(
                 self.blender_joints(),
@@ -107,8 +114,11 @@ impl App {
                 renderer.staging_pool(),
             );
             let mode = std::env::var("AURORA_DEMO_BLENDER_LIVE").unwrap_or_default();
+            if mode.starts_with("shape") {
+                self.demo_blender_shape(mode == "shape-readonly");
+            }
             match crate::blender_live::demo_fixture(&self.world.avatar_lib.rig, mode != "1") {
-                Ok(snapshot) => {
+                Ok(snapshot) if !mode.starts_with("shape") => {
                     self.blender_live.receive(snapshot);
                     self.blender_live.owner = Some(self.world.agent_id);
                     if mode == "objects" {
@@ -129,6 +139,7 @@ impl App {
                         self.blender_live.open = false;
                     }
                 }
+                Ok(_) => {}
                 Err(error) => self.blender_live.error = Some(error),
             }
         }

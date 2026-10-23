@@ -23,8 +23,12 @@ root = args.work.resolve()
 root.mkdir(parents=True, exist_ok=False)
 bridge = Path(__file__).resolve().parents[1] / "install_bridge.py"
 version = re.search(r'^version = "([^"]+)"', (bridge.parent / "aurora_live/blender_manifest.toml").read_text(), re.MULTILINE).group(1)
-previous = ".".join(str(v) for v in (*map(int, version.split(".")[:2]), int(version.split(".")[2]) - 1))
+major, minor, patch = map(int, version.split("."))
+previous = ".".join(map(str, (major, minor, patch - 1) if patch else
+                        (major, minor - 1, 0) if minor else (major - 1, 0, 0)))
 environment = dict(os.environ)
+(root / "tmp").mkdir()
+environment["TEMP"] = environment["TMP"] = str(root / "tmp")
 for kind, path in {"CONFIG": "config", "SCRIPTS": "scripts", "EXTENSIONS": "extensions", "RESOURCES": ""}.items():
     environment["BLENDER_USER_" + kind] = str(root / "profile" / path)
     (root / "profile" / path).mkdir(parents=True, exist_ok=True)

@@ -47,6 +47,17 @@ visibility and bulk removal remain independent of import selection.
 Plugins lists detected Blender versions and installed plug-in versions, with a
 per-installation Install/Update/Enable/Reinstall action. Manual ZIP export remains
 available in a collapsed section.
+`shape.rs` / `app/blender_shape.rs` authorize an explicit worn-shape transfer
+against the resolved COF target's current owner and Modify bit. Asset/item/rights
+are rechecked after download and worker preparation; other avatars and unknown
+rights fail closed. The worker deforms the bundled system body and all 159 joints
+from the shape asset alone. No attachment geometry or textures enter the payload.
+Negotiated `shape-transfer` controls carry one bounded reference over loopback;
+Blender confirms only after its main-thread undoable operator creates a new
+collection. Pending imports expire rather than interrupting Edit/Pose Mode.
+`shape_transfer.py` validates data before mutation and preserves existing rigs,
+weights and the live list. Shape-specific inverse binds cancel the transferred
+rest scale/offsets when sending meshes back, preventing double shape deformation.
 `compat.py` maps renamed Principled sockets and uses bone collections in 4.0+
 or named pose groups and armature layers in 2.93–3.x. The mesh exporter reads
 corner normals in 4.1+ and calculates split loop normals in older versions.

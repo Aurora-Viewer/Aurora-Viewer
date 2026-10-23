@@ -9,7 +9,7 @@ bone mapping uses the bone's optional `aurora_joint` string property.
 import math
 import bpy
 import numpy as np
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 from .materials import Capture
 
 MAX_CORNERS = 600_000
@@ -136,7 +136,20 @@ def _mesh(source, supported, forward, rest_axes, capture):
         for name in names:
             values = rest_axes.get(name)
             axes = Matrix([values[i:i+4] for i in range(0,16,4)]).transposed() if values else Matrix.Identity(4)
-            inverse_bind.append(_column_major(axes @ Matrix.Translation(-heads[name])))
+            source_bone = next(armature.data.bones[source_name] for source_name in weighted_bones if bone_names[source_name] == name)
+            if armature.get("aurora_shape_id"):
+                values = list(source_bone.get("aurora_shape_bind", ()))
+                reference = list(source_bone.get("aurora_shape_head", ()))
+                if len(values) != 16 or len(reference) != 3 or not all(math.isfinite(value) for value in values + reference):
+                    raise ValueError("Invalid transferred shape bind: " + name)
+                shaped = Matrix([values[i:i+4] for i in range(0, 16, 4)]).transposed()
+                if abs(shaped.determinant()) < 1e-8:
+                    raise ValueError("Invalid transferred shape bind: " + name)
+                # Cancel the transferred rest shape, including its scale, before
+                # Aurora applies the wearer's current shape and animation.
+                inverse_bind.append(_column_major(shaped @ Matrix.Translation(Vector(reference) - heads[name])))
+            else:
+                inverse_bind.append(_column_major(axes @ Matrix.Translation(-heads[name])))
         positions = np.empty(len(captured.vertices) * 3, dtype=np.float32)
         captured.vertices.foreach_get("co", positions)
         positions = np.einsum("ij,kj->ki", np.array(transform.to_3x3()), positions.reshape((-1, 3))) + np.array(transform.translation)

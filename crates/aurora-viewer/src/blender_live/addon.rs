@@ -12,6 +12,10 @@ const FILES: &[(&str, &[u8])] = &[
     ("client.py", include_bytes!("../../../../blender/aurora_live/client.py")),
     ("exporter.py", include_bytes!("../../../../blender/aurora_live/exporter.py")),
     ("starter.py", include_bytes!("../../../../blender/aurora_live/starter.py")),
+    (
+        "shape_transfer.py",
+        include_bytes!("../../../../blender/aurora_live/shape_transfer.py"),
+    ),
     ("weights.py", include_bytes!("../../../../blender/aurora_live/weights.py")),
     ("materials.py", include_bytes!("../../../../blender/aurora_live/materials.py")),
     ("tracking.py", include_bytes!("../../../../blender/aurora_live/tracking.py")),

@@ -33,6 +33,7 @@ mod movelock;
 // mod bug_report;
 mod avatar_health;
 mod blender_live;
+mod blender_shape;
 mod buy_currency;
 mod buy_land;
 mod chat_commands;
@@ -2474,10 +2475,14 @@ impl App {
             if crate::build::ui::layout_notecard_loaded(&mut self.build, &mut self.world, &mut self.settings.build, item, &result) {
                 self.settings.save();
             }
+            let blender_shape = self.blender_shape_loaded(item, asset, &result);
             if self.physics_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
             if self.shape_ui.loaded(&mut self.world, item, asset, &result) {
+                return;
+            }
+            if blender_shape {
                 return;
             }
             if self.ao_ui.import == Some(item) {

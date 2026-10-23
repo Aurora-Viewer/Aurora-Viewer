@@ -181,7 +181,27 @@ fn installer(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
 }
 
 fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, can_upload: bool) {
-    section(ui, p, "cube", aurora_i18n::tr!("blender-live-objects"));
+    section_divider(ui, p);
+    ui.horizontal_wrapped(|ui| {
+        widgets::section_header(ui, p, "cube", aurora_i18n::tr!("blender-live-objects"));
+        let enabled = live.shape.blocked.is_none() && !live.shape.busy();
+        let button = ui
+            .add_enabled_ui(enabled, |ui| widgets::flat_button(ui, p, aurora_i18n::tr!("blender-shape-send")))
+            .inner;
+        if button
+            .on_hover_text(aurora_i18n::tr!("blender-shape-tooltip"))
+            .on_disabled_hover_text(live.shape.blocked.as_deref().unwrap_or(aurora_i18n::tr!("blender-shape-sending")))
+            .clicked()
+        {
+            live.shape.requested = true;
+        }
+        if live.shape.busy() {
+            ui.weak(aurora_i18n::tr!("blender-shape-sending"));
+        }
+    });
+    if !live.shape.message.is_empty() {
+        ui.colored_label(if live.shape.error { p.danger } else { p.success }, &live.shape.message);
+    }
     let sources = live.snapshot.as_ref().map(|s| s.sources.clone()).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
         ui.label(aurora_i18n::tr!(

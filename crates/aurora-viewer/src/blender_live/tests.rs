@@ -343,3 +343,46 @@ fn blender_live_transport_handshake_errors_reconnect_and_latest_slot() {
     assert_eq!(shared.latest.lock().as_ref().expect("unchanged").revision, 3);
     drop(owner);
 }
+
+#[test]
+fn blender_live_shape_transport_requires_negotiation_and_confirms_import_separately() {
+    let listener = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("port");
+    let port = listener.local_addr().expect("address").port();
+    let shared = transport::start_listener(listener, supported(), Default::default(), egui::Context::default(), None).expect("server");
+    let owner = Server { shared: shared.clone() };
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect("connect");
+    stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+    stream.write_all(b"AURBLD1\n").expect("hello");
+    let mut reader = BufReader::new(stream.try_clone().expect("reader"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("hello");
+    let id = Uuid::from_u128(1234);
+    *shared.shape.lock() = Some(shape::Outgoing {
+        id,
+        data: Arc::new(serde_json::json!({"id": id, "name": "Test Shape"})),
+    });
+    stream.write_all(&0u32.to_le_bytes()).expect("old client heartbeat");
+    line.clear();
+    reader.read_line(&mut line).expect("reply");
+    assert!(!line.contains("shape"), "old plug-ins receive no shape data");
+    assert!(shared.shape.lock().is_some());
+    for message in [
+        serde_json::json!({"type":"features","features":["shape-transfer"]}),
+        serde_json::json!({"type":"shape-result","id":id,"error":null}),
+    ] {
+        let data = serde_json::to_vec(&message).expect("control");
+        stream.write_all(&(data.len() as u32).to_le_bytes()).expect("length");
+        stream.write_all(&data).expect("control");
+        line.clear();
+        reader.read_line(&mut line).expect("reply");
+        let reply: serde_json::Value = serde_json::from_str(&line).expect("reply JSON");
+        if message["type"] == "features" {
+            assert_eq!(reply["shape"]["id"], id.to_string());
+        } else {
+            assert!(reply.get("shape").is_none(), "no duplicate import on the acknowledgement");
+        }
+    }
+    assert_eq!(shared.shape_ack.lock().take(), Some((id, None)));
+    assert!(shared.latest.lock().is_none(), "shape controls never replace live mesh revisions");
+    drop(owner);
+}
