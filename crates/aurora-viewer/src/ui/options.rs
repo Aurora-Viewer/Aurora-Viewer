@@ -11,6 +11,7 @@ mod scale;
 
 pub use pages::privacy;
 pub(crate) use pages::sound::{ear_choice, noise_choice};
+pub(crate) use scale::keyboard as scale_keyboard;
 
 use super::fonts::SystemFont;
 use super::icons::Icons;

@@ -8,6 +8,30 @@ const MIN: f32 = 0.75;
 const MAX: f32 = 2.0;
 const NUMERIC_SPEED: f32 = 0.005;
 
+/// Consume egui's zoom shortcuts after the text fields, before its end-pass
+/// handler can change only the context. Like UIScaleFactor in
+/// LLViewerWindow::calcDisplayScale (llviewerwindow.cpp), every UI scale
+/// change must use the saved preference, including its limits.
+pub(crate) fn keyboard(ctx: &egui::Context, scale: &mut f32) -> bool {
+    use egui::gui_zoom::kb_shortcuts::{ZOOM_IN, ZOOM_IN_SECONDARY, ZOOM_OUT, ZOOM_RESET};
+
+    let before = *scale;
+    ctx.input_mut(|input| {
+        if input.consume_shortcut(&ZOOM_RESET) {
+            *scale = 1.0;
+        } else {
+            if input.consume_shortcut(&ZOOM_IN) || input.consume_shortcut(&ZOOM_IN_SECONDARY) {
+                *scale = ((*scale + 0.1) * 10.0).round() / 10.0;
+            }
+            if input.consume_shortcut(&ZOOM_OUT) {
+                *scale = ((*scale - 0.1) * 10.0).round() / 10.0;
+            }
+        }
+    });
+    *scale = scale.clamp(MIN, MAX);
+    *scale != before
+}
+
 // Keep the established limits while placing the default at the track's center.
 // Numeric editing always uses percentages, independently of this track mapping.
 fn track_position(scale: f32) -> f32 {
@@ -319,6 +343,90 @@ mod tests {
     use super::*;
     use crate::ui::numeric_drag::NumericDrag;
     use egui::{Context, Modifiers, PointerButton, Rect};
+
+    fn keyboard_frame(ctx: &Context, saved: &mut f32, key: egui::Key, modifiers: Modifiers) -> bool {
+        let events = [true, false]
+            .into_iter()
+            .map(|pressed| Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers,
+            })
+            .collect();
+        let mut changed = false;
+        let mut output = ctx.run_ui(
+            RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                changed |= keyboard(ui.ctx(), saved);
+            },
+        );
+        output.textures_delta.clear();
+        if changed {
+            ctx.set_zoom_factor(*saved);
+        }
+        let mut output = ctx.run_ui(RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        assert_eq!(ctx.zoom_factor(), *saved);
+        changed
+    }
+
+    #[test]
+    fn keyboard_scale_uses_the_saved_preference_and_its_limits() {
+        let ctx = Context::default();
+        let mut saved = 1.0;
+        for (key, expected) in [
+            (egui::Key::Plus, 1.1),
+            (egui::Key::Equals, 1.2),
+            (egui::Key::Minus, 1.1),
+            (egui::Key::Num0, 1.0),
+        ] {
+            assert!(keyboard_frame(&ctx, &mut saved, key, Modifiers::COMMAND));
+            assert_eq!(saved, expected);
+        }
+        for (key, limit) in [(egui::Key::Plus, MAX), (egui::Key::Minus, MIN)] {
+            for _ in 0..30 {
+                keyboard_frame(&ctx, &mut saved, key, Modifiers::COMMAND);
+            }
+            assert_eq!(saved, limit);
+            assert!(!keyboard_frame(&ctx, &mut saved, key, Modifiers::COMMAND));
+        }
+        assert!(keyboard_frame(&ctx, &mut saved, egui::Key::Num0, Modifiers::COMMAND));
+        assert!(!keyboard_frame(&ctx, &mut saved, egui::Key::Plus, Modifiers::NONE));
+        assert_eq!(saved, 1.0);
+    }
+
+    #[test]
+    fn keyboard_scale_leaves_consumed_shortcuts_to_the_field() {
+        let ctx = Context::default();
+        let mut saved = 1.0;
+        let event = Event::Key {
+            key: egui::Key::Plus,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::COMMAND,
+        };
+        let mut output = ctx.run_ui(
+            RawInput {
+                events: vec![event],
+                ..Default::default()
+            },
+            |ui| {
+                ui.input_mut(|input| input.consume_shortcut(&egui::gui_zoom::kb_shortcuts::ZOOM_IN));
+                assert!(!keyboard(ui.ctx(), &mut saved));
+            },
+        );
+        output.textures_delta.clear();
+        let mut output = ctx.run_ui(RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        assert_eq!(saved, 1.0);
+        assert_eq!(ctx.zoom_factor(), 1.0);
+    }
 
     struct Harness {
         ctx: Context,

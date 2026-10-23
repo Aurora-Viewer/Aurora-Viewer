@@ -3521,6 +3521,11 @@ failure. Grid validation and any paid upload are performed by the human.
   1.5× and back over 600 frames, repeating through the same setting action
   as the slider. Combine with `AURORA_PROFILE=1`, `AURORA_FPS_LIMIT=60` and
   captures at frames 600, 900 and 1200. It does not take the native pointer.
+  `1:scale-keys` reproduces issue #853: reset the scale at frame 600, use
+  Ctrl+Plus/Equals to reach 120%, then Ctrl+Minus to reach 80%, and toggle
+  window snapping after each change. Capture frames 700, 800, 960 and 1040:
+  each pair must keep the same scale before and after the unrelated option
+  changes. The log compares the saved and displayed scales. No native input.
   With `AURORA_DEMO_LOGIN` (for example `empty` or `cards`) the preferences
   open over the login screen, as its top right cogwheel does: every page
   works before login, and Chat › History says that the folder
