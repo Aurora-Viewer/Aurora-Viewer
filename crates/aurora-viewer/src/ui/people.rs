@@ -120,6 +120,8 @@ pub(super) struct Ctx<'a> {
     /// Group insignias.
     pub images: &'a HashMap<Uuid, egui::TextureHandle>,
     pub actions: &'a mut Vec<PeopleAction>,
+    /// Conversations exposes the inline contact sheet as a quick action.
+    pub contact_sheet_button: bool,
 }
 
 /// A tab's list side: (ui, context, radar, state, beside a sheet).
@@ -400,6 +402,7 @@ pub fn people_window(
                 friends: &mut *friends,
                 images: contacts.images,
                 actions: &mut actions,
+                contact_sheet_button: false,
             };
             match panels.people_tab {
                 TAB_NEARBY => {
@@ -501,6 +504,7 @@ pub fn friends_pane(
         friends: settings,
         images,
         actions: &mut actions,
+        contact_sheet_button: true,
     };
     friends::tab(ui, &mut c, data, st);
     for ask in std::mem::take(&mut st.asks) {

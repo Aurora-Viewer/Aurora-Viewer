@@ -330,8 +330,17 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     rows::face(ui, p, rect, selected, hot);
     let left = rows::picture(ui, p, c.world, rect, data.pics.get(&f.id), f.id, &line.name, false);
     // the right end, from the right edge: received, granted, quick actions
-    let buttons = hot.then(|| quick_actions(f));
-    let show_rights = c.contact_settings.column_permissions;
+    let buttons = hot.then(|| quick_actions(f, c.contact_sheet_button));
+    // In reduced Conversations layouts the explicit sheet action must
+    // remain reachable. The sheet itself also holds the rights.
+    let show_rights = c.contact_settings.column_permissions
+        && (!c.contact_sheet_button
+            || buttons.as_ref().is_none_or(|b| {
+                rows::end(rect, left, &[RECEIVED_W, GRANTED_W, rows::actions_width(b.len())], PARTS_GAP, false)
+                    .items
+                    .len()
+                    == 3
+            }));
     let mut widths = Vec::new();
     if show_rights {
         widths.extend([RECEIVED_W, GRANTED_W]);
@@ -376,14 +385,18 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     rows::contact_tip(resp, (on_names && (cut || line.full != line.name)).then_some(line.full.as_str()));
 }
 
-/// Profile, IM, a teleport offer to a friend online, and the whole menu.
-fn quick_actions(f: &Friend) -> Vec<(&'static str, &'static str)> {
+/// Profile, IM, a teleport offer to a friend online, the optional inline
+/// contact sheet, then the whole menu.
+fn quick_actions(f: &Friend, sheet_button: bool) -> Vec<(&'static str, &'static str)> {
     let mut b = vec![
         ("user-filled", aurora_i18n::tr!("common-view-profile")),
         ("message-circle-filled", aurora_i18n::tr!("ui-context-send-im")),
     ];
     if f.online {
         b.push(("send-filled", aurora_i18n::tr!("common-offer-teleport")));
+    }
+    if sheet_button {
+        b.push(("info-circle-filled", aurora_i18n::tr!("people-show-contact-sheet")));
     }
     b.push(("dots-filled", aurora_i18n::tr!("ui-chat-more")));
     b
@@ -399,6 +412,12 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, f: &Friend, 
             "user-filled" if resp.clicked() => c.actions.push(super::PeopleAction::Profile(f.id)),
             "message-circle-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OpenIm(f.id)),
             "send-filled" if resp.clicked() => c.actions.push(super::PeopleAction::OfferTeleport(f.id)),
+            "info-circle-filled" if resp.clicked() => {
+                st.sel = vec![f.id];
+                st.anchor = Some(f.id);
+                super::nearby::open_sheet(st, f.id);
+                st.sheet_grow = false;
+            }
             "dots-filled" => {
                 let (p, world) = (c.p, c.world);
                 menu_open = menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {

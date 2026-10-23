@@ -1033,6 +1033,68 @@ fn contacts_navigation_single_click_only_selects() {
     }
 }
 
+/// The explicit contact-details action stays immediately before More,
+/// including reduced layouts where permissions would crowd it out.
+#[test]
+fn contacts_navigation_details_button_opens_sheet() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        for width in [960.0, 700.0, 460.0] {
+            for online in [false, true] {
+                for permissions in [false, true] {
+                    let mut h = contacts_navigation(style, width);
+                    let id = Uuid::from_u128(0xF000);
+                    for friend in &mut h.world.social.friends {
+                        friend.online = online;
+                    }
+                    h.contacts_settings.column_permissions = permissions;
+                    let texts = h.settle();
+                    let name = painted(&texts, "Friend 00").rect.center();
+                    h.frame(vec![egui::Event::PointerMoved(name)]);
+                    h.settle();
+                    let hovered = h.frames.ctx.interaction_snapshot(|i| i.hovered.clone());
+                    let row = hovered
+                        .iter()
+                        .filter_map(|id| h.frames.ctx.read_response(*id))
+                        .filter(|r| r.sense.senses_drag() && r.rect.contains(name))
+                        .min_by(|a, b| a.rect.width().total_cmp(&b.rect.width()))
+                        .expect("the hovered friend row")
+                        .rect;
+                    // Locate the actual quick-action responses; the scroll
+                    // bar can change the row's width while it fades in.
+                    let mut buttons = HashMap::new();
+                    for x in (row.left() as i32..row.right() as i32).step_by(10) {
+                        h.frame(vec![egui::Event::PointerMoved(egui::pos2(x as f32, row.center().y))]);
+                        h.frame(Vec::new());
+                        let hovered = h.frames.ctx.interaction_snapshot(|i| i.hovered.clone());
+                        for response in hovered.iter().filter_map(|id| h.frames.ctx.read_response(*id)) {
+                            if response.sense.senses_click() && response.rect.size() == egui::vec2(26.0, 24.0) {
+                                buttons.insert(response.id, response.rect);
+                            }
+                        }
+                    }
+                    let mut buttons: Vec<_> = buttons.into_values().collect();
+                    buttons.sort_by(|a, b| a.left().total_cmp(&b.left()));
+                    assert_eq!(buttons.len(), if online { 5 } else { 4 }, "all quick actions remain available");
+                    let details = buttons[buttons.len() - 2].center();
+                    h.click(details);
+                    assert_eq!(
+                        h.people.sheet,
+                        Some(id),
+                        "{style:?} at {width}, online={online}, permissions={permissions}: the button before More opens the inline sheet"
+                    );
+                    assert_eq!(h.people.sel, vec![id]);
+                    assert!(h.actions.is_empty(), "details does not open a profile, IM or teleport offer");
+                    h.settle();
+                    h.click(h.rect(entry_id(Pinned::Contacts)).center());
+                    let texts = h.settle();
+                    assert_eq!(h.people.sheet, None);
+                    assert!(texts.iter().any(|t| t.source == "Friend 01"), "Contacts returns to the list");
+                }
+            }
+        }
+    }
+}
+
 /// The contact list shown in the workspace's Contacts tab fills the pane:
 /// inside a row of the layout it took one line's height and showed three
 /// friends of thirty (the human's report of 2026-10-16).
