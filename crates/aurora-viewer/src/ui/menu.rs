@@ -285,6 +285,8 @@ pub fn popup_at(ctx: &egui::Context, id: Id, pos: egui::Pos2, open: &mut bool, p
 enum Lead<'a> {
     /// A Tabler icon, by name.
     Icon(&'a str),
+    /// A presence mark, whose shape remains readable without its colour.
+    Status(super::presence::Shape, Color32),
     /// A picture in its own colours (an emoji), or a character when it has
     /// none.
     Picture(Option<&'a egui::TextureHandle>, &'a str),
@@ -341,8 +343,11 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
         return resp;
     }
     let painter = ui.painter();
+    let mut face = p.panel;
     if hot {
-        painter.rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.35));
+        let wash = p.violet.gamma_multiply(0.35);
+        painter.rect_filled(rect, ui.visuals().window_corner_radius, wash);
+        face = face.blend(wash);
     }
     let tint = if !enabled {
         p.muted_dim
@@ -354,6 +359,10 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
     let icon_rect = egui::Rect::from_center_size(rect.left_center() + Vec2::new(PAD + ICON * 0.5, 0.0), Vec2::splat(ICON));
     match lead {
         Lead::Icon(icon) => paint_icon(painter, icon, icon_rect, tint),
+        Lead::Status(shape, color) => {
+            // Cuts must be opaque, including over the hover wash (#744).
+            super::presence::paint_mark(painter, icon_rect.center(), ICON * 0.38, shape, color, face);
+        }
         Lead::Picture(Some(t), _) => {
             let size = t.size_vec2();
             let fit = egui::Rect::from_center_size(icon_rect.center(), size * (ICON / size.max_elem()));
@@ -562,13 +571,9 @@ pub fn swatch(ui: &mut Ui, p: &Palette, color: Color32, label: &str) -> bool {
     resp.clicked()
 }
 
-/// Color dot entry with a check mark, which leaves the menu open (one choice
-/// among several, like the availability of the status light); true when
-/// clicked.
-pub fn swatch_toggle(ui: &mut Ui, p: &Palette, color: Color32, label: &str, on: bool) -> bool {
-    let resp = row(ui, p, "", label, true, End::Check(on), false);
-    dot(ui, p, &resp, color);
-    resp.clicked()
+/// Presence entry with a check mark, leaving the menu open; true when clicked.
+pub fn status_toggle(ui: &mut Ui, p: &Palette, shape: super::presence::Shape, color: Color32, label: &str, on: bool) -> bool {
+    row_lead(ui, p, Lead::Status(shape, color), label, true, End::Check(on), false).clicked()
 }
 
 /// The color dot of a swatch row, in the icon column.
