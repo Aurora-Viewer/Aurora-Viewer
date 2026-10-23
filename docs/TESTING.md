@@ -2813,7 +2813,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_PREVIEWS=1\|states\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
-| `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan` | Open a picture over the demo conversation, fitted, animated, zoomed or panned |
+| `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
@@ -3711,7 +3711,7 @@ failure. Grid validation and any paid upload are performed by the human.
   title and picture come from YouTube. In the Legacy lines
   (`bubbles:legacy`) no card at all. Capture at frame 900 (1500 with
   `net`).
-- **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan`**: with `AURORA_DEMO_CONV`
+- **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy`**: with `AURORA_DEMO_CONV`
   and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture
   (`1`), or animated picture (`gif`); `zoom` starts at twice its fitted size,
   `pan` also moves it. The chat body dims, leaving its title bar reachable.
@@ -3726,6 +3726,16 @@ failure. Grid validation and any paid upload are performed by the human.
   detail up to 2048 pixels on opening, with the existing 8 MB download limit;
   on failure their cached preview remains available. GIFs keep their card's
   frame resolution and memory budget.
+  `window` opens the independent Image preview floater: move/resize it,
+  zoom/drag/reset, then close or minimize the chat; the image stays usable.
+  The new photo icon is first on the thumbnail, before browser, Copy and Hide.
+  `copy` scrolls to a loaded thumbnail as needed and clicks its actual Copy
+  button after frame 620; it does not open either enlargement. On Windows,
+  paste into an Explorer folder: a PNG is copied there, with transparency;
+  paste into an image editor: pixels remain available too. Source PNGs stay
+  in the viewer cache for later pastes, including after the image/viewer closes.
+  A GIF copies its first frame as a still PNG. The tooltip reports preparation,
+  success or failure. The copy demo replaces the system clipboard with its image.
 - **`AURORA_DEMO_PREVIEW_PLAY=card|window`**: with
   `AURORA_DEMO_CONV_PREVIEWS`, the first video card drawn plays by itself,
   in its card (wider, stop and window buttons under it) or in the player

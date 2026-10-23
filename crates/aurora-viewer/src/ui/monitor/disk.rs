@@ -22,6 +22,7 @@ fn folder_name(dir: &str) -> &'static str {
         "inventory" => tr!("monitor-http-inventory"),
         "sound" => tr!("monitor-http-sounds"),
         "settings" => tr!("monitor-http-environments"),
+        "clipboard-images" => tr!("ui-chat-preview-clipboard-cache"),
         _ => tr!("monitor-row-other"),
     }
 }

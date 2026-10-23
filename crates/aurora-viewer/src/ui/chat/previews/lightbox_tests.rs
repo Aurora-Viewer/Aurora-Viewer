@@ -224,3 +224,61 @@ fn close_accelerator_dismisses_the_image_before_its_conversation() {
         },
     );
 }
+
+#[test]
+fn hover_actions_copy_pixels_and_open_an_independent_image_window() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let url = "https://i.imgur.com/test.png";
+    let image = shown(&ctx);
+    let expected = image.copy.clone();
+    let mut pv = Previews {
+        demo: true,
+        demo_zoom: None,
+        ..Default::default()
+    };
+    pv.cache.insert(
+        url.into(),
+        crate::ui::chat::previews::Cached {
+            entry: Entry::Picture(image),
+            used: 0,
+        },
+    );
+    let mut frame = |events| {
+        let _ = ctx.run_ui(input(events), |ui| {
+            card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load)
+        });
+    };
+    frame(vec![]);
+    let copy = Pos2::new(269.0, 21.0);
+    frame(vec![egui::Event::PointerMoved(copy)]);
+    frame(vec![pointer(copy, true)]);
+    frame(vec![pointer(copy, false)]);
+    let copied = crate::ui::chat::previews::clipboard::take(&ctx).expect("Copy queues the picture, not its link");
+    assert_eq!(copied.size, expected.size);
+    assert_eq!(copied.pixels, expected.pixels);
+    assert!(!pv.enlarged());
+    assert!(!pv.image_window_open());
+    let window = Pos2::new(209.0, 21.0);
+    let mut frame = |events| {
+        let _ = ctx.run_ui(input(events), |ui| {
+            card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load)
+        });
+    };
+    frame(vec![egui::Event::PointerMoved(window)]);
+    frame(vec![pointer(window, true)]);
+    frame(vec![pointer(window, false)]);
+    assert!(pv.image_window_open());
+    assert!(!pv.enlarged(), "The new icon must not darken the conversation");
+    let _ = ctx.run_pass(input(vec![]), |ctx| {
+        pv.lightbox(ctx, &p, None); // the chat was closed
+        pv.player_window(ctx, &p);
+    });
+    assert!(pv.image_window_open(), "Closing the chat must keep the detached image");
+    let id = Id::unique("link_preview_image");
+    assert!(egui::AreaState::load(&ctx, id).is_some());
+    assert!(
+        ctx.memory(|m| m.areas().parent_layer(egui::LayerId::new(egui::Order::Middle, id)))
+            .is_none()
+    );
+}

@@ -25,8 +25,14 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
+mod clipboard;
 mod lightbox;
 use lightbox::Lightbox;
+
+/// Flush copied pictures after egui's final UI pass.
+pub fn clipboard_update(ctx: &egui::Context, output: &mut egui::PlatformOutput) {
+    clipboard::update(ctx, output);
+}
 
 /// Cards under one message at most.
 const MAX_CARDS: usize = 3;
@@ -189,6 +195,7 @@ pub struct Previews {
     revealed: HashSet<u64>,
     playing: Option<Playing>,
     lightbox: Option<Lightbox>,
+    image_window: Option<Lightbox>,
     /// Offline capture: enlarge the first still/GIF, optionally zoomed/panned.
     demo_zoom: Option<String>,
 }
@@ -215,6 +222,7 @@ impl Default for Previews {
             revealed: HashSet::new(),
             playing: None,
             lightbox: None,
+            image_window: None,
             demo_zoom: std::env::var("AURORA_DEMO_PREVIEW_ZOOM").ok(),
         }
     }
@@ -264,14 +272,22 @@ impl Previews {
         self.lightbox.is_some()
     }
 
+    pub fn image_window_open(&self) -> bool {
+        self.image_window.is_some()
+    }
+
     /// Before the conversation's editor and shortcuts receive keys.
     pub(super) fn lightbox_keys(&mut self, ctx: &egui::Context) {
+        let owner = egui::Id::unique("conversations");
         if self.enlarged()
             && ctx.memory(|m| m.top_modal_layer()).is_none()
             && (crate::ui::close_key::take(ctx, egui::Id::unique("conversations"))
-                || ctx.input_mut(|i| {
-                    i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::W)
-                }))
+                || (ctx
+                    .top_layer_id()
+                    .is_none_or(|layer| layer.id == owner || layer.id == owner.with("image_enlargement"))
+                    && ctx.input_mut(|i| {
+                        i.consume_key(egui::Modifiers::NONE, egui::Key::Escape) || i.consume_key(egui::Modifiers::COMMAND, egui::Key::W)
+                    })))
         {
             self.close_lightbox(ctx);
         }
@@ -296,7 +312,7 @@ impl Previews {
         }
     }
 
-    fn enlarge(&mut self, ctx: &egui::Context, url: &str, trusted_only: bool) {
+    fn enlarge(&mut self, ctx: &egui::Context, url: &str, trusted_only: bool, window: bool) {
         let Some(Cached {
             entry: Entry::Picture(shown),
             ..
@@ -323,7 +339,12 @@ impl Previews {
                 wake.request_repaint();
             }));
         }
-        self.lightbox = Some(view);
+        if window {
+            self.image_window = Some(view);
+            ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("link_preview_image")));
+        } else {
+            self.lightbox = Some(view);
+        }
     }
 
     /// Answers in, downloads out; the player of a card no longer drawn
@@ -355,7 +376,9 @@ impl Previews {
                 .cache
                 .iter()
                 .filter(|(url, c)| {
-                    !matches!(c.entry, Entry::Queued | Entry::Loading) && self.lightbox.as_ref().is_none_or(|view| &view.url != *url)
+                    !matches!(c.entry, Entry::Queued | Entry::Loading)
+                        && self.lightbox.as_ref().is_none_or(|view| &view.url != *url)
+                        && self.image_window.as_ref().is_none_or(|view| &view.url != *url)
                 })
                 .map(|(u, c)| (c.used, u.clone()))
                 .collect();
@@ -452,6 +475,9 @@ impl Previews {
     /// longer drawn (conversation closed or changed, scrolled away) stops.
     /// Every frame, from the app.
     pub fn player_window(&mut self, ctx: &egui::Context, p: &Palette) {
+        if self.image_window.as_mut().is_some_and(|view| view.window(ctx, p)) {
+            self.image_window = None;
+        }
         let pass = ctx.cumulative_pass_nr();
         if self.playing.as_ref().is_some_and(|v| !v.window && pass > v.drawn + 2) {
             self.playing = None;
@@ -528,6 +554,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
         return;
     };
     let mut enlarge = false;
+    let mut window = false;
     let resp = match (&cached.entry, target) {
         (Entry::Queued | Entry::Loading, Target::Picture) => placeholder(ui, p, Vec2::new(width, (width * 0.75).round())),
         (Entry::Queued | Entry::Loading, Target::Video(_)) => {
@@ -536,6 +563,13 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
         }
         (Entry::Picture(shown), _) => {
             let out = picture(ui, p, shown, width, blur);
+            if !blur && pv.demo && pv.demo_zoom.as_deref() == Some("copy") {
+                let visible = out.resp.rect.intersect(ui.clip_rect());
+                if visible.is_positive() {
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(egui::Id::unique("preview_copy_demo"), (out.resp.rect, visible)));
+                }
+            }
             match out.action {
                 Some(Action::Reveal) => {
                     pv.revealed.insert(k);
@@ -543,12 +577,22 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
                 Some(Action::Hide) => {
                     pv.hidden.insert(k);
                 }
-                Some(Action::Copy) => ui.ctx().copy_image((*shown.copy).clone()),
+                Some(Action::Copy) => clipboard::request(ui.ctx(), &shown.copy),
                 Some(Action::Open) => super::open_web_link(ui.ctx(), url),
                 Some(Action::Enlarge) => enlarge = true,
+                Some(Action::Window) => window = true,
                 None => {}
             }
-            enlarge |= !blur && pv.demo && pv.demo_zoom.as_ref().is_some_and(|mode| (mode == "gif") == shown.animated());
+            if !blur
+                && pv.demo
+                && pv
+                    .demo_zoom
+                    .as_ref()
+                    .is_some_and(|mode| mode != "copy" && (mode == "gif") == shown.animated())
+            {
+                window |= pv.demo_zoom.as_deref() == Some("window");
+                enlarge |= !window;
+            }
             out.resp
         }
         (Entry::Video { .. }, Target::Video(video)) => {
@@ -564,16 +608,68 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
         // not a picture, unavailable: the link stays a link
         _ => return,
     };
-    if enlarge {
-        pv.enlarge(ui.ctx(), url, trusted_only);
+    if enlarge || window {
+        pv.enlarge(ui.ctx(), url, trusted_only, window);
     }
     card_menu(&resp, p, pv, k, url);
+}
+
+/// Exercise the actual hovered Copy button, including platform clipboard delivery.
+pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    static COPY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*COPY.get_or_init(|| std::env::var("AURORA_DEMO_PREVIEW_ZOOM").is_ok_and(|mode| mode == "copy")) || !(620..=760).contains(&frame) {
+        return Vec::new();
+    }
+    let id = egui::Id::unique("preview_copy_demo");
+    let Some((rect, visible)) = ctx.data(|d| d.get_temp::<(egui::Rect, egui::Rect)>(id)) else {
+        return Vec::new();
+    };
+    let at = egui::pos2(rect.right() - 8.0 - BUTTON * 1.5 - 4.0, rect.top() + 8.0 + BUTTON * 0.5);
+    if !visible.contains(at) {
+        return if frame.is_multiple_of(30) {
+            ctx.data_mut(|d| d.insert_temp(id.with("scrolled"), frame));
+            vec![
+                egui::Event::PointerMoved(visible.center()),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, 260.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Wheel,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        } else {
+            Vec::new()
+        };
+    }
+    if ctx
+        .data(|d| d.get_temp::<u64>(id.with("scrolled")))
+        .is_some_and(|at| frame < at + 30)
+    {
+        return Vec::new();
+    }
+    let step = ctx.data(|d| d.get_temp::<usize>(id.with("step"))).unwrap_or(0);
+    if step >= 3 {
+        return Vec::new();
+    }
+    ctx.data_mut(|d| d.insert_temp(id.with("step"), step + 1));
+    let mut events = vec![egui::Event::PointerMoved(at)];
+    if step > 0 {
+        events.push(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed: step == 1,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    events
 }
 
 /// What the resident did on a picture.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
     Enlarge,
+    Window,
     Open,
     Copy,
     Hide,
@@ -673,19 +769,21 @@ fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, width: f32, blur: bool
     }
     // the buttons over the picture while the pointer is on it
     let hovered = ui.rect_contains_pointer(rect);
-    if hovered && rect.width() >= BUTTON * 3.0 + 24.0 {
-        let mut x = rect.right() - 8.0 - BUTTON;
+    let button = BUTTON.min((rect.width() - 28.0) / 4.0);
+    if hovered && button >= 18.0 {
+        let mut x = rect.right() - 8.0 - button;
         let y = rect.top() + 8.0;
         for (icon, tip, act) in [
             ("eye-off", aurora_i18n::tr!("ui-chat-preview-hide"), Action::Hide),
-            ("copy-filled", aurora_i18n::tr!("ui-chat-preview-copy"), Action::Copy),
+            ("copy-filled", clipboard::tip(ui.ctx(), &shown.copy), Action::Copy),
             ("external-link-filled", aurora_i18n::tr!("ui-chat-preview-open"), Action::Open),
+            ("photo-filled", aurora_i18n::tr!("ui-chat-preview-detach-image"), Action::Window),
         ] {
-            let b = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::splat(BUTTON));
+            let b = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::splat(button));
             if overlay_button(ui, p, b, icon, tip) {
                 action = Some(act);
             }
-            x -= BUTTON + 4.0;
+            x -= button + 4.0;
         }
     }
     if action.is_none() && resp.clicked() {
