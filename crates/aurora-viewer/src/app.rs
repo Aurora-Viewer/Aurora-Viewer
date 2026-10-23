@@ -302,6 +302,7 @@ pub struct App {
     mouse_mode: MouseMode,
     /// Build tools (selection, manipulators, create, terraform).
     build: crate::build::BuildTool,
+    ik_editor: crate::ik_edit::Editor,
     hud_drag: Option<crate::build::hud_drag::HudDrag>,
     interactions: crate::interaction::Interactions,
     cursors: crate::cursors::Cursors,
@@ -953,6 +954,7 @@ impl App {
             context_menu: None,
             mouse_mode: MouseMode::None,
             build: Default::default(),
+            ik_editor: Default::default(),
             hud_drag: None,
             interactions: Default::default(),
             cursors: crate::cursors::Cursors::with_palette(&palette),
@@ -2372,6 +2374,13 @@ impl App {
             return;
         }
         if let NetEvent::InventoryContentSaved { request, item, result } = ev {
+            if self.ik_editor.project_saving(request) {
+                if let Ok(saved) = &result {
+                    self.world.inventory.add_items(vec![saved.clone()]);
+                }
+                self.ik_editor.project_saved(&result);
+                return;
+            }
             if crate::build::ui::layout_notecard_saved(&mut self.build, request, &result) {
                 if let Ok(item) = result {
                     self.world.inventory.add_items(vec![item]);
@@ -2472,6 +2481,9 @@ impl App {
             return;
         }
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
+            if self.ik_editor.project_preview(&self.world, item, &result) {
+                return;
+            }
             if crate::build::ui::layout_notecard_loaded(&mut self.build, &mut self.world, &mut self.settings.build, item, &result) {
                 self.settings.save();
             }
@@ -2607,6 +2619,7 @@ impl App {
         }
         match ev {
             NetEvent::ObjectProperties(props) => {
+                self.world.ik_targets.on_properties(&props);
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.interactions.on_properties(&props);
@@ -3294,6 +3307,12 @@ impl App {
                 self.settings.texture_library.presentation.window(),
                 &mut self.panels.texture_library,
             ),
+            Action::IkEdit => {
+                if !self.ik_editor.open {
+                    self.ik_editor.toggle();
+                }
+                ui::widgets::open_floater(&self.egui_ctx, "ik-edit", &mut self.ik_editor.open);
+            }
             Action::Gestures => ui::widgets::toggle_floater(&self.egui_ctx, "gestures", &mut self.panels.gestures),
             Action::Minimap => self.panels.minimap = !self.panels.minimap,
             Action::WorldMap => ui::widgets::toggle_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map),
@@ -5102,6 +5121,28 @@ impl App {
     /// Run by `click`; false also when it stopped to ask for the depth under
     /// the cursor (`ClickWait::waiting`), to run again when it has come.
     fn build_mouse_down(&mut self) -> bool {
+        if self.ik_editor.open && !self.alt {
+            if self.ik_editor.picking {
+                let Some(picked) = self.click_pick() else {
+                    return true;
+                };
+                let (_, target) = self.scene.selection_pick(
+                    &self.world,
+                    picked.ray,
+                    picked.depth,
+                    true,
+                    self.settings.build.select_probes,
+                    self.settings.draw_distance,
+                );
+                if let Some(target) = target {
+                    self.ik_editor.picked_prim(&self.world, &self.build, target);
+                }
+                return true;
+            }
+            if !self.build.open {
+                return true;
+            }
+        }
         // Report Abuse's object picker takes the click (LLToolObjPicker)
         if self.report_abuse.picking {
             self.left_down = true;
@@ -6853,6 +6894,151 @@ impl App {
         self.update_bridge();
         self.update_region_restart();
         if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_HAND_IK").or_else(|_| std::env::var("AURORA_DEMO_IK_EDIT").map(|_| "1".into()))
+        {
+            crate::demo::hand_ik::tick(&mut self.world, &mut self.scene, self.frame_count, &mode);
+            if self.frame_count == 350 {
+                self.camera.demo_orbit(0.6, 0.15, Some(3.5), &self.settings.camera);
+                self.panels.chat = false;
+                self.panels.people = false;
+                self.panels.perf = false;
+            }
+        }
+        if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_IK_EDIT")
+        {
+            if mode == "shortcut" {
+                if matches!(self.frame_count, 420 | 520) {
+                    // Exercise the configurable command table, including a
+                    // second press that must keep the existing editor open.
+                    let ctrl = self.ctrl;
+                    self.ctrl = true;
+                    self.on_input(Input::key(KeyCode::KeyK), true);
+                    self.on_input(Input::key(KeyCode::KeyK), false);
+                    self.ctrl = ctrl;
+                    log::info!("demo IK shortcut: frame={}, open={}", self.frame_count, self.ik_editor.open);
+                }
+            } else {
+                self.ik_editor.demo_tick(&self.world, self.frame_count, &mode);
+            }
+            if mode.starts_with("build-") && self.frame_count == 450 {
+                // Exercise the actual menu transitions in both opening orders.
+                self.handle_actions(
+                    UiActions {
+                        bar: BarAction::Build(1),
+                        ..Default::default()
+                    },
+                    event_loop,
+                );
+                self.settings.build.edit_linked = true;
+                let root = crate::demo::action_id(crate::demo::hand_ik::ROOT);
+                if let Some(index) = self.world.objects.index_of_uuid(&root)
+                    && let Some(object) = self.world.objects.get_mut(index)
+                {
+                    object.update_flags |= ui::context::flags::OBJECT_MOVE | ui::context::flags::OBJECT_MODIFY;
+                }
+                for (local, name) in [(crate::demo::hand_ik::LEFT, "Left"), (crate::demo::hand_ik::RIGHT, "Right")] {
+                    let id = crate::demo::action_id(local);
+                    self.build.props.insert(
+                        id,
+                        aurora_net::build::ObjectProps {
+                            object_id: id,
+                            name: name.into(),
+                            ..Default::default()
+                        },
+                    );
+                }
+                if let Some(index) = self
+                    .world
+                    .objects
+                    .index_of_uuid(&crate::demo::action_id(crate::demo::hand_ik::LEFT))
+                {
+                    self.build.click_select(&mut self.world, &self.settings.build, Some(index), false);
+                    if mode == "build-moved" {
+                        let p = crate::scene::Scene::object_transform(&self.world, index, Instant::now(), 0).map(|t| t.0);
+                        self.build.set_transform(
+                            &mut self.world,
+                            &self.settings.build,
+                            p.map(|p| p + Vec3::Z * 0.08),
+                            None,
+                            None,
+                            true,
+                        );
+                    }
+                }
+                if mode == "build-before" {
+                    for _ in 0..2 {
+                        self.handle_actions(
+                            UiActions {
+                                bar: BarAction::IkEdit,
+                                ..Default::default()
+                            },
+                            event_loop,
+                        );
+                    }
+                }
+                if mode == "build-pick"
+                    && let Some(index) = self
+                        .world
+                        .objects
+                        .index_of_uuid(&crate::demo::action_id(crate::demo::hand_ik::RIGHT))
+                {
+                    self.ik_editor.picking = true;
+                    self.ik_editor.picked_prim(&self.world, &self.build, index);
+                }
+                crate::ui::widgets::place_floater(
+                    &self.egui_ctx,
+                    "build_tools_inspector_c3",
+                    egui::pos2(self.egui_ctx.content_rect().right() - 370.0, 80.0),
+                    egui::vec2(344.0, 684.0),
+                );
+            }
+            if mode.starts_with("build-") && self.frame_count == 600 {
+                log::info!(
+                    "demo concurrent IK/build: ik={}, build={}, selected={}",
+                    self.ik_editor.open,
+                    self.build.open,
+                    self.build.selection.len()
+                );
+            }
+        }
+        self.world.hand_contacts.relay_required = !self.demo;
+        if self.in_world()
+            && let Some(key) = self
+                .world
+                .update_ik_targets(self.ik_editor.link_target_definition(), &self.build.props, Instant::now())
+        {
+            for command in self.build.prim_properties_query(&self.world, key) {
+                if self.demo {
+                    for event in crate::demo::hand_ik::editor_reply(&command, self.frame_count, "") {
+                        match event {
+                            NetEvent::ObjectProperties(props) => {
+                                self.world.ik_targets.on_properties(&props);
+                                self.build.on_properties(props);
+                            }
+                            event => {
+                                self.world.apply(event);
+                            }
+                        }
+                    }
+                } else {
+                    self.send(command);
+                }
+            }
+        }
+        if self.in_world()
+            && let Some(command) = self.world.update_hand_contacts(Instant::now())
+        {
+            if self.demo {
+                let mode = std::env::var("AURORA_DEMO_IK_EDIT").unwrap_or_default();
+                for event in crate::demo::hand_ik::editor_reply(&command, self.frame_count, &mode) {
+                    self.world.apply(event);
+                }
+            } else {
+                self.send(command);
+            }
+        }
+        if self.demo
             && matches!(self.screen, Screen::World)
             && crate::demo::water::update(
                 &mut self.camera,
@@ -6970,6 +7156,14 @@ impl App {
             }
             // what carries an edited attachment stands still (pauseAssociatedAvatars)
             self.scene.paused_skeletons = crate::build::anim_pause::paused_skeletons(&self.world, &self.build.selection);
+            if self.world.teleporting && self.ik_editor.open {
+                self.ik_editor.toggle();
+            }
+            self.ik_editor.tick_project(&self.scene.jobs, &self.egui_ctx, &self.world);
+            self.ik_editor.tick_animations(&mut self.scene.anims, &mut self.world.inventory);
+            self.ik_editor
+                .tick_clip(&self.scene.jobs, &self.egui_ctx, self.world.avatar_lib.rig.clone());
+            self.scene.ik_edit = self.ik_editor.request();
             if self.demo && crate::demo::animation_edit_demo() && matches!(self.frame_count, 420 | 630 | 750 | 930) {
                 log::info!("demo animation edit: {} frozen skeletons", self.scene.paused_skeletons.len());
             }
@@ -7959,6 +8153,10 @@ impl App {
             }
             windows_ms += t.elapsed().as_secs_f32() * 1000.0;
         });
+        if self.ik_editor.take_binding_paste_request() {
+            let text = egui_state.clipboard_text().unwrap_or_default();
+            self.ik_editor.paste_binding(&self.world, &text);
+        }
         ui::chat::previews::clipboard_update(&ctx, &mut full.platform_output);
         // interface sounds of the widgets; the sounds are SL assets, loaded
         // once logged in
@@ -9798,6 +9996,9 @@ impl App {
             }
             BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(0.1, 1.0),
             BarAction::None => {}
+            BarAction::IkEdit => {
+                self.ik_editor.toggle();
+            }
             BarAction::Build(t) => {
                 match t {
                     1 => self.build.open_build(crate::build::Tool::Edit),
@@ -9810,6 +10011,7 @@ impl App {
                 self.flush_build();
             }
             BarAction::Logout => {
+                self.ik_editor.open = false;
                 self.want_scene_capture = true;
                 self.release_bridge();
                 self.net.send(NetCommand::Logout);
@@ -11245,6 +11447,10 @@ impl App {
                     camera_preset: self.settings.camera.preset,
                     interface_hidden: self.interface.hidden,
                     interface_keys: self.interface_keys(),
+                    ik_keys: self.settings.keybinds.get(Action::IkEdit)[0]
+                        .as_ref()
+                        .map(|b| b.label())
+                        .unwrap_or_default(),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
@@ -11541,6 +11747,36 @@ impl App {
                 t = self.ui_parts.lap(Part::UiBars, t);
                 // overlays
                 self.draw_hud_scale(&ctx);
+                self.ik_editor.sync_build(
+                    &self.world,
+                    &self.build,
+                    &self.settings.build,
+                    self.cursor_pos,
+                    crate::build::Mods {
+                        shift: self.shift,
+                        ctrl: self.ctrl,
+                        alt: self.alt,
+                    },
+                );
+                self.ik_editor.show(&ctx, &p, &self.world, projector);
+                self.ik_editor.request_object_data(&mut self.world, Instant::now());
+                self.build.out.extend(self.ik_editor.take_prim_requests());
+                self.build.out.extend(self.ik_editor.take_project_commands(self.world.agent_id));
+                if self
+                    .ik_editor
+                    .apply_prim_edit(&mut self.world, &mut self.build, &mut self.settings.build)
+                {
+                    self.settings.save();
+                }
+                for prepared in self.ik_editor.take_clip_imports() {
+                    self.imports.authored_animation(
+                        &self.world,
+                        &self.settings.inventory,
+                        prepared.name,
+                        prepared.bytes,
+                        prepared.animation,
+                    );
+                }
                 {
                     let mods = crate::build::Mods {
                         shift: self.shift,
@@ -15278,7 +15514,17 @@ impl ApplicationHandler for App {
                     // The key is the one egui reads, which the window takes.
                     let find_key = matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("f"));
                     let find_taken = pressed && self.ctrl && find_key && ui::find_shortcut::window_takes_it(&self.egui_ctx);
-                    if pressed && ((!resp.consumed && !typing) || shortcut || chat_pass) && !ke.repeat && !find_taken && !ui_shortcut {
+                    let script_command = pressed
+                        && self.ctrl
+                        && matches!(&ke.logical_key, winit::keyboard::Key::Character(c) if c.eq_ignore_ascii_case("k"))
+                        && ui::scripts::editor_focused(&self.egui_ctx);
+                    if pressed
+                        && ((!resp.consumed && !typing) || shortcut || chat_pass)
+                        && !ke.repeat
+                        && !find_taken
+                        && !script_command
+                        && !ui_shortcut
+                    {
                         self.on_input(Input::key(code), pressed);
                     }
                 }

@@ -40,6 +40,7 @@ mod gestures;
 mod graphics_presets;
 mod grids;
 mod hover_tips;
+mod ik_edit;
 mod imports;
 mod interaction;
 mod joystick;

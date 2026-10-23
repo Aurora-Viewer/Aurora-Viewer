@@ -26,6 +26,7 @@ pub mod layout;
 pub mod manip;
 mod material_preview;
 pub mod materials;
+mod property_query;
 pub mod replace;
 pub mod script_queue;
 #[cfg(test)]
@@ -772,6 +773,28 @@ impl BuildTool {
             (EditMode::Rotate, true, true) => EditMode::Stretch,
             (m, _, _) => m,
         }
+    }
+
+    /// Give object handles precedence over overlapping local pose handles.
+    /// Floaters still own their input; this only arbitrates the world overlays.
+    pub fn manipulator_at(&self, world: &World, settings: &BuildSettings, cursor: (f32, f32), mods: Mods) -> bool {
+        let mode = self.effective_mode(mods);
+        if !self.open
+            || self.tool != Tool::Edit
+            || !mode.is_manip()
+            || !manip::can_transform_selection(world, &self.selection, self.selection_linked, mode)
+        {
+            return false;
+        }
+        manip::frame(
+            world,
+            settings,
+            &self.selection,
+            self.selection_linked,
+            Instant::now(),
+            self.manip.grid_ref.as_ref(),
+        )
+        .is_some_and(|frame| self.manip.pick(&self.cam, &frame, mode, cursor).is_some())
     }
 
     pub fn open_build(&mut self, tool: Tool) {

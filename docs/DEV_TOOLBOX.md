@@ -52,6 +52,7 @@ English.
 | Disconnects or rubber-banding | Open N1, reproduce, press N2 then J3 | N1, N2, J3 | The region summary, the warnings | losses, last packet, simulator version |
 | Media or sound does not play | Turn M1 on, retry, press J3 | M1, J3 | The media lines and warnings | plugin and media state |
 | Any report, first message | Press J4 once | J4 | Version, hardware, settings | build, GPU vendor and driver, settings |
+| Scripted IK has no effect | Trigger the affected profile, press J8, then Copy | J8 | Local relay, definitions, accepted activations and target states | last_failure, complete_ack, active_packets, suppress_scripts, resolved/waiting links |
 | The viewer crashed | In the crash window, press Copy trace | — | The crash trace | top frames, panic message |
 
 How to read a copy:
@@ -101,6 +102,7 @@ text in Send a diagnostic), **live** (a text kept up to date there),
 | J5 | Copy a tool's output | copy | What P3, P4, P5, P6, O9 and M1 wrote in the last 60 s |
 | J6 | Open the logs folder | window | The folder of `aurora.log` |
 | J7 | Script errors | window | The script debug window |
+| J8 | IK state | copy | Local IK reception, activation, editor suppression and target resolution; no scene selection required |
 | L1 | Under the cursor | live | The prim last pointed at, every face; its button shows the face's pass and alpha |
 | L2 | Worn items of the target | live | Each attachment: prims, faces drawn and left out |
 | L3 | Live problems | live | The last 20 warnings |

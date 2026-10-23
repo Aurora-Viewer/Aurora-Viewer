@@ -402,6 +402,13 @@ impl App {
             "J3" => Some(warnings_text(50)),
             "J4" => Some(self.system_text(renderer)),
             "J5" => Some(tool_output_text()),
+            "J8" => {
+                let edit = self.ik_editor.request();
+                Some(
+                    self.world
+                        .describe_ik(edit.active, edit.suppress_script_ik, edit.goals.len(), Instant::now()),
+                )
+            }
             "N2" => Some(self.region_text()),
             "L1" => Some(self.cursor_text(renderer)),
             "L2" => Some(self.worn_text()),

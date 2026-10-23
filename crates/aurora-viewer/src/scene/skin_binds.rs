@@ -148,6 +148,7 @@ mod tests {
             default_world_inv: vec![Mat4::IDENTITY; joints],
             order: (0..joints).collect(),
             names: (0..joints).map(|j| (format!("j{j}"), j)).collect(),
+            canonical_names: (0..joints).map(|j| format!("j{j}")).collect(),
             pelvis: 0,
             tag_chain: Vec::new(),
             skin_points: Default::default(),

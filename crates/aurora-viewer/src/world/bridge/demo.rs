@@ -25,6 +25,7 @@ pub fn seed_queries(world: &mut World) {
 
 #[derive(Default)]
 pub struct Demo {
+    ik_generation: u128,
     scripts: Vec<TaskItem>,
     pub installed: bool,
     pub startup_stalled: bool,
@@ -149,9 +150,11 @@ impl Demo {
                     self.handshake(bridge, world)
                         .into_iter()
                         .chain(self.query_handshake(bridge, world))
+                        .chain(self.ik_handshake(bridge, world))
                         .collect(),
                 )
             }
+            NetCommand::ScriptDialogReply { channel: ik::CONTROL, .. } => Some(Vec::new()),
             NetCommand::AgentAnimationChanges { changes } if !world.agent_id.is_nil() => {
                 let mut anims: Vec<_> = world
                     .animations
@@ -262,15 +265,20 @@ impl Demo {
                 result: Ok(self.scripts.clone()),
             }]),
             NetCommand::Build(BuildCmd::RezScript { item, .. })
-                if [NAME, QUERY_NAME].contains(&item.name.as_str()) && self.scripts.iter().all(|s| s.name != item.name) =>
+                if [NAME, QUERY_NAME, ik::NAME].contains(&item.name.as_str()) && self.scripts.iter().all(|s| s.name != item.name) =>
             {
                 let mut script = (**item).clone();
                 script.item_id = Uuid::new_v4();
                 self.scripts.push(script);
                 Some(Vec::new())
             }
-            NetCommand::SaveScript { request, target, .. } if [bridge.upload, bridge.query_upload].contains(&Some(*request)) => {
+            NetCommand::SaveScript { request, target, .. }
+                if [bridge.upload, bridge.query_upload, bridge.ik.upload].contains(&Some(*request)) =>
+            {
                 self.installed = !failed;
+                if target.item == bridge.ik.script && !failed {
+                    self.ik_generation += 1;
+                }
                 Some(vec![NetEvent::ScriptSaved {
                     request: *request,
                     target: *target,
@@ -380,6 +388,17 @@ impl Demo {
             .replace("</auroraBridge>", "</auroraBridgeQuery>")
             .replace("/cap/11111111-", "/cap/22222222-")
             .replace(&Uuid::from_u128(42).to_string(), &Uuid::from_u128(43).to_string());
+        Some(NetEvent::Chat(chat))
+    }
+    pub fn ik_handshake(&self, bridge: &Bridge, world: &World) -> Option<NetEvent> {
+        let NetEvent::Chat(mut chat) = self.handshake(bridge, world)? else {
+            return None;
+        };
+        chat.message = format!(
+            "<auroraBridgeIK>{VERSION}|{}|{}</auroraBridgeIK>",
+            bridge.folder,
+            Uuid::from_u128(44 + self.ik_generation)
+        );
         Some(NetEvent::Chat(chat))
     }
     pub fn handshake(&self, bridge: &Bridge, world: &World) -> Option<NetEvent> {
