@@ -359,10 +359,13 @@ pub struct OptionsUi {
     pub cache_clearing: bool,
     /// Detected video memory (MB) and integrated GPU; set by the app.
     pub vram: (Option<u64>, bool),
-    /// The GPUs that can draw the viewer and the one in use; set by the app
-    /// once the renderer is up (the choice applies at the next start).
+    /// The GPUs that can draw the viewer, the one in use, and why the
+    /// dedicated one may not be drawing; set by the app as soon as the
+    /// renderer is created, so the login screen has them too (#894). The
+    /// choice applies at the next start.
     pub gpus: Vec<String>,
     pub gpu_in_use: String,
+    pub gpu_notice: Option<aurora_render::adapter_choice::Notice>,
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,

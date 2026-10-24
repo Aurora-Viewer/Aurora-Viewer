@@ -1073,3 +1073,34 @@ fn a_part_unticked_is_not_restored() {
     assert_eq!(s.draw_distance, Settings::default().draw_distance);
     assert!(!restored.parts.settings && restored.parts.layout);
 }
+
+/// Graphics › Fluidity › Graphics card (#894): the startup notice shows
+/// under the group's title, in the user's words, only when there is one.
+#[test]
+fn the_graphics_card_group_shows_the_startup_notice() {
+    use aurora_render::adapter_choice::Notice;
+    let fluidity = 5;
+    let no_discrete = aurora_i18n::tr!("ui-options-graphics-card-no-discrete").to_string();
+    let cannot_present = aurora_i18n::tr!("ui-options-graphics-card-cannot-present").to_string();
+    let group = aurora_i18n::tr!("ui-options-graphics-card-choice").to_string();
+    for (notice, shown) in [
+        (Some(Notice::NoDiscrete), Some(&no_discrete)),
+        (Some(Notice::DiscreteCannotPresent), Some(&cannot_present)),
+        (None, None),
+    ] {
+        let mut frames = Frames::new();
+        let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+        st.gpus = vec!["Intel(R) UHD Graphics".into(), "NVIDIA GeForce RTX 3060".into()];
+        st.gpu_in_use = "Intel(R) UHD Graphics".into();
+        st.gpu_notice = notice;
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Graphics, fluidity, Vec::new());
+        }
+        let shows = |text: &str| texts.iter().any(|t| t.source == text);
+        assert!(shows(&group), "the card choice is on the Fluidity tab");
+        for text in [&no_discrete, &cannot_present] {
+            assert_eq!(shows(text), shown == Some(text), "{text} with {notice:?}");
+        }
+    }
+}

@@ -6133,6 +6133,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's) |
 | `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
+| `AURORA_GPU_START_FAIL=1` | Start as if no graphics card could draw the window: the message the user gets then |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
@@ -6188,7 +6189,17 @@ What the inventory must show with these scenarios:
   `GPU adapter <n> chosen:` and why. When only an integrated GPU is listed
   on a PC that has a dedicated one, the NVIDIA Control Panel's "Preferred
   graphics processor" for `aurora-viewer.exe` hides it from Vulkan
-  (`VK_LAYER_NV_optimus`): the log says so.
+  (`VK_LAYER_NV_optimus`): the log says so, and Preferences › Graphics ›
+  Fluidity › Graphics card shows a note under its title (the same for a
+  dedicated card that cannot present). The list of that choice comes from
+  the renderer's own list as soon as it is created, so the login screen has
+  it too.
+- **`AURORA_GPU_START_FAIL=1`**: the renderer is not created, as when no
+  adapter can present or Vulkan is missing. Before #894's follow-up the
+  viewer exited silently in that case, its window still hidden (no crash
+  report: it is no crash); it now shows a native error box with what to try
+  and the log's path, then exits. Automated captures (`AURORA_CAPTURE`) skip
+  the box. The same box shows when the window itself cannot be created.
 - **`AURORA_BANDWIDTH_KBPS=<n>`**: the "Maximum bandwidth" of Preferences ›
   Network and cache for this launch, without changing the saved setting,
   from 100 to 10,000. A session first asks its simulator for one and a

@@ -1415,6 +1415,18 @@ cli-aurora-viewer = { "Aurora Viewer " }{ $version }
 cli-aurora-viewer-2 = { "Aurora Viewer " }{ $version }{ " - " }{ $t }
 common-aurora-viewer = { "Aurora Viewer " }{ $value0 }
 app-aurora-viewer-unable-to-initialize-vulkan = { "Aurora Viewer: unable to initialize Vulkan: " }{ $e }
+app-graphics-start-failed-title = Aurora Viewer cannot start
+app-graphics-start-failed =
+    Aurora Viewer could not open a graphics card to draw its window.
+
+    What to try:
+    • update the graphics card driver;
+    • on a PC with two graphics cards, check that both are enabled in Device Manager, and that the monitor is plugged into the card that should draw;
+    • restart the PC.
+
+    Details: { $e }
+
+    The log of this start: { $log }
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora does not have an animation overrider (AO) yet.
 cmdline-mod-use-hover-height-in-appearance = Adjust your avatar's hover height through Appearance → Hover Height.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora recommends against opening this link. If it asks you to log in or pay, it is very likely a scam: never give it your password or payment information.
@@ -4908,6 +4920,8 @@ ui-options-graphics-card-automatic = Automatic
 ui-options-graphics-card-help = Automatic takes the dedicated card first. Applied at the next start.
 ui-options-graphics-card-in-use = In use: { $name }.
 ui-options-graphics-card-choice = Card to use
+ui-options-graphics-card-no-discrete = Only the integrated graphics is visible to the viewer. On a PC with an NVIDIA card, set "Preferred graphics processor" to the NVIDIA card for aurora-viewer.exe in the NVIDIA Control Panel, then restart the PC if the card still does not show.
+ui-options-graphics-card-cannot-present = The dedicated card cannot draw the viewer's window: plug the monitor into the dedicated card's outputs, not the motherboard's.
 ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait = Vertical synchronization, frame rate limit, presentation, render thread wait
 build-ui-texture-synchronize-materials = Synchronize materials
 common-system = System

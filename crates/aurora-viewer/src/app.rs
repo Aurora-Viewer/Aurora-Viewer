@@ -55,6 +55,7 @@ mod env_day_editor;
 mod env_editor;
 mod external_links;
 mod gestures;
+mod graphics_start;
 mod hover_height;
 mod hover_tips;
 mod hud_drag;
@@ -7580,11 +7581,6 @@ impl App {
                     self.world.apply(ev);
                 }
             }
-            self.options_ui.vram = (gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
-            if self.options_ui.gpus.is_empty() {
-                self.options_ui.gpus = gfx.renderer.info.adapters.clone();
-                self.options_ui.gpu_in_use = gfx.renderer.info.name.clone();
-            }
             // Preferences › Debug › Detail levels: what the overlay labels
             self.lod_infos = if self.settings.debug.lod_info {
                 let range = ui::debug_overlay::RANGE;
@@ -13471,6 +13467,7 @@ impl ApplicationHandler for App {
             Ok(w) => Arc::new(w),
             Err(e) => {
                 log::error!("cannot create window: {e}");
+                graphics_start::report(&e.to_string(), capture);
                 event_loop.exit();
                 return;
             }
@@ -13483,7 +13480,14 @@ impl ApplicationHandler for App {
         // the GPU of Preferences › Graphics; AURORA_GPU=<number|name|auto>
         // overrides it for this launch (adapter_choice.rs)
         let gpu = std::env::var("AURORA_GPU").unwrap_or_else(|_| self.settings.gpu_adapter.clone());
-        let renderer = match Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu) {
+        // AURORA_GPU_START_FAIL=1: as if no card could draw, to see the
+        // message the user gets then (graphics_start.rs)
+        let created = if std::env::var_os("AURORA_GPU_START_FAIL").is_some() {
+            Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()))
+        } else {
+            Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)
+        };
+        let renderer = match created {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");
@@ -13491,6 +13495,9 @@ impl ApplicationHandler for App {
                     "{}",
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
                 );
+                // the window is still hidden: without this the viewer just
+                // vanished (#894)
+                graphics_start::report(&e.to_string(), capture);
                 event_loop.exit();
                 return;
             }
@@ -13524,6 +13531,13 @@ impl ApplicationHandler for App {
             self.settings.save();
         }
         renderer.apply_settings(self.settings.render_settings());
+        // what Preferences › Graphics shows of the GPUs, from the renderer's
+        // own list: here, not with the world's frames, so the login screen
+        // has it too (#894: only "Automatic" was offered before login)
+        self.options_ui.vram = (renderer.info.vram_mb, renderer.info.integrated);
+        self.options_ui.gpus = renderer.info.adapters.clone();
+        self.options_ui.gpu_in_use = renderer.info.name.clone();
+        self.options_ui.gpu_notice = renderer.info.notice;
         self.screen_rate.poll(&window, Instant::now());
         let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
         let egui_state = egui_winit::State::new(
