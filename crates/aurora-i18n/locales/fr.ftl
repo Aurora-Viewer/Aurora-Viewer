@@ -3433,6 +3433,8 @@ ui-notifications-hide-keep-in-bell = Masquer (reste dans la cloche)
 ui-notifications-open-conversation = Ouvrir la conversation
 ui-notifications-send-im = Envoyer un IM
 ui-notifications-bell-paused = Ne pas déranger : les notifications arrivent sans s'afficher
+ui-notifications-bell-dnd-on-hint = Clic droit : ne pas déranger
+ui-notifications-bell-dnd-off-hint = Clic droit : désactiver ne pas déranger
 ui-notifications-more = { $count ->
     [one] + { $count } autre — tout voir
    *[other] + { $count } autres — tout voir

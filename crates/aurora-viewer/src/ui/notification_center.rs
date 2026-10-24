@@ -4,8 +4,8 @@
 //! left, hovering pauses it), then folds back into the bell, whose count
 //! bounces. Clicking the bell opens the full list at the same place, with a
 //! "To do" tab and the persistent "History" (world/notification_history.rs).
-//! In do not disturb the bell is paused: nothing unrolls nor rings, everything
-//! still arrives in "To do". The Firestorm behaviour (toasts stacked apart from
+//! In do not disturb the bell is paused: nothing unrolls nor rings but the
+//! script menus (`dnd_shows`), everything still arrives in "To do". The Firestorm behaviour (toasts stacked apart from
 //! the bell) stays in `ui::notifications` as the Legacy style.
 
 use super::icons::Icons;
@@ -114,6 +114,14 @@ pub fn show_seconds(n: &Notification, message_seconds: f64) -> f64 {
     }
 }
 
+/// Shows in do not disturb as well: a script menu (#491). The Legacy Viewer
+/// opens its script floater whatever the status (LLScriptHandler::
+/// processNotification) and keeps only the other toasts back
+/// (LLScreenChannel::addToast).
+pub fn dnd_shows(n: &Notification) -> bool {
+    matches!(n.data, Data::Dialog { .. })
+}
+
 /// Rolls out as a card: what is listed, and a message kept out of the bell
 /// (`ToastPrefs::im_in_bell` off), whose card leaves with its time.
 fn card(n: &Notification) -> bool {
@@ -126,8 +134,9 @@ pub fn bell_count(list: &Notifications, c: &CenterUi) -> usize {
     list.listed().filter(|n| !n.read && !c.peek.iter().any(|p| p.id == n.id)).count()
 }
 
-/// Advance the cards: new arrivals unroll (unless the bell is paused, the
-/// view must stay clear or the list is open), time runs out unless the panel
+/// Advance the cards: new arrivals unroll (unless the bell is paused, a
+/// script menu excepted, the view must stay clear or the list is open), time
+/// runs out unless the panel
 /// is hovered, a card that ran out (or was answered) folds into the bell.
 /// Returns whether something moves (a repaint is needed).
 pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds: f64) -> bool {
@@ -148,7 +157,7 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
         }
     }
     for n in list.list.iter().filter(|n| n.id > c.last_seen && card(n)) {
-        if !n.read && !n.quiet && !m.dnd && !m.hidden && !m.open {
+        if !n.read && !n.quiet && (!m.dnd || dnd_shows(n)) && !m.hidden && !m.open {
             let total = show_seconds(n, message_seconds);
             c.peek.push(Peek {
                 id: n.id,
@@ -162,9 +171,12 @@ pub fn update(list: &Notifications, c: &mut CenterUi, m: Moment, message_seconds
     if let Some(last) = list.list.iter().map(|n| n.id).max() {
         c.last_seen = c.last_seen.max(last);
     }
-    if m.open || m.dnd || m.hidden {
-        // the list shows everything / the bell is paused: no card stays out
+    if m.open || m.hidden {
+        // the list shows everything / the view stays clear: no card stays out
         c.peek.clear();
+    } else if m.dnd {
+        // the bell is paused: only the script menus stay out (#491)
+        c.peek.retain(|p| p.pinned);
     }
     for p in c.peek.iter_mut() {
         let gone = !list.list.iter().any(|n| n.id == p.id && !n.read && card(n));
@@ -212,7 +224,8 @@ pub fn visible(c: &CenterUi) -> (Vec<Peek>, usize) {
 
 /// Bell at the right end of the navigation bar: red count (grey when paused),
 /// bounce when the count grows, a small ring; in do not disturb a grey bell
-/// with a moon. Returns whether it was clicked and its rectangle.
+/// with a moon. Returns its response: a click opens the center, a right
+/// click turns do not disturb on or off (#491).
 /// In an island of the Aurora bars (`island`): a slot of the island, the
 /// ringing bell while something waits, and the count in the violet of the
 /// Conversations button's (one counter for both, grey while paused).
@@ -226,7 +239,7 @@ pub fn bell(
     open: bool,
     dnd: bool,
     island: bool,
-) -> (bool, Rect) {
+) -> egui::Response {
     let now = ui.input(|i| i.time);
     let size = if island {
         Vec2::splat(super::bars::islands::SLOT)
@@ -287,7 +300,7 @@ pub fn bell(
     } else {
         aurora_i18n::tr!("notifications-unread-count", count = unread)
     };
-    (resp.on_hover_text(tip).clicked(), rect)
+    resp.on_hover_text(super::notifications::bell_tip(tip, dnd))
 }
 
 /// What a click in the center asks the app for, besides answering a card.

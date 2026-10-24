@@ -85,37 +85,56 @@ fn toast_seconds(n: &Notification, message_seconds: f64) -> f64 {
     }
 }
 
-/// Bell button with the unread count; returns true when clicked, in an
-/// island of the Aurora bars (`island`) or in Firestorm's top bar.
-pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: bool, island: bool) -> (bool, egui::Rect) {
+/// Bell button with the unread count, in an island of the Aurora bars
+/// (`island`) or in the Legacy Viewer's top bar; in do not disturb the
+/// paused bell of Aurora's center (`bell-z`, grey). Returns its response: a
+/// click opens the notifications, a right click turns do not disturb on or
+/// off (#491).
+pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: bool, dnd: bool, island: bool) -> egui::Response {
+    let tip = bell_tip(aurora_i18n::tr!("notifications-unread-count", count = unread), dnd);
     if island {
         let (rect, resp) = ui.allocate_exact_size(Vec2::splat(super::bars::islands::SLOT), egui::Sense::click());
         let hot = resp.hovered() || open;
         if hot {
             ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
         }
-        let icon = if unread > 0 { "bell-ringing-filled" } else { "bell-filled" };
+        let icon = if dnd {
+            "bell-z-filled"
+        } else if unread > 0 {
+            "bell-ringing-filled"
+        } else {
+            "bell-filled"
+        };
         if let Some(t) = icons.get(icon) {
             let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(16.0));
             ui.painter().image(
                 t.id(),
                 r,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                p.ink,
+                if dnd { p.muted } else { p.ink },
             );
         }
         if unread > 0 {
-            super::bars::islands::count(ui, p, rect, unread, 1.0, false);
+            super::bars::islands::count(ui, p, rect, unread, 1.0, dnd);
         }
-        let tip = aurora_i18n::tr!("notifications-unread-count", count = unread);
-        return (resp.on_hover_text(tip).clicked(), rect);
+        return resp.on_hover_text(tip);
     }
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(22.0, 20.0), egui::Sense::click());
     if resp.hovered() || open {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
-    let col = if unread > 0 || resp.hovered() || open { p.ink } else { p.muted };
-    let icon = if unread > 0 { "bell-ringing-filled" } else { "bell-filled" };
+    let col = if !dnd && (unread > 0 || resp.hovered() || open) {
+        p.ink
+    } else {
+        p.muted
+    };
+    let icon = if dnd {
+        "bell-z-filled"
+    } else if unread > 0 {
+        "bell-ringing-filled"
+    } else {
+        "bell-filled"
+    };
     if let Some(t) = icons.get(icon) {
         let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(16.0));
         ui.painter()
@@ -126,8 +145,28 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: 
         let anchor = rect.right_top() + Vec2::new(3.0, 0.0);
         super::widgets::unread_count(ui.painter(), p, anchor, unread, super::widgets::CountSize::Bar);
     }
-    let tip = aurora_i18n::tr!("notifications-unread-count", count = unread);
-    (resp.on_hover_text(tip).clicked(), rect)
+    resp.on_hover_text(tip)
+}
+
+/// The bell's tooltip: `main`, then what its right click does (#491).
+pub fn bell_tip(main: String, dnd: bool) -> String {
+    let hint = if dnd {
+        aurora_i18n::tr!("ui-notifications-bell-dnd-off-hint")
+    } else {
+        aurora_i18n::tr!("ui-notifications-bell-dnd-on-hint")
+    };
+    format!("{main}\n{hint}")
+}
+
+/// The online status a right click on the bell asks for (#491): do not
+/// disturb turned over, the rest as it is, applied like a choice of the
+/// status selector (`BarAction::SetStatus`) so that both and the server's
+/// animation stay in step.
+pub fn bell_dnd_toggled(status: crate::world::status::StatusModes) -> crate::world::status::StatusModes {
+    crate::world::status::StatusModes {
+        dnd: !status.dnd,
+        ..status
+    }
 }
 
 pub(super) fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
@@ -578,13 +617,15 @@ fn button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool, size
 }
 
 /// The toasts that new arrivals start and those that end. A toast-only
-/// notice (a friend online) leaves the list with its toast.
-fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_seconds: f64, hidden: bool) {
+/// notice (a friend online) leaves the list with its toast. In do not
+/// disturb (`dnd`) only the script menus toast, the others wait in the list
+/// (LLScreenChannel::addToast; #491).
+fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_seconds: f64, hidden: bool, dnd: bool) {
     // new arrivals become toasts (unless the list is open or the view must
     // stay clear, or they were already seen where they arrived: a card in
     // the conversation in sight)
     for n in list.list.iter().filter(|n| n.id > nui.last_seen) {
-        if !nui.open && !hidden && !n.read && !n.quiet {
+        if !nui.open && !hidden && !n.read && !n.quiet && (!dnd || super::notification_center::dnd_shows(n)) {
             nui.toasts.push((n.id, now + toast_seconds(n, message_seconds)));
         }
     }
@@ -592,9 +633,9 @@ fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_
         nui.last_seen = nui.last_seen.max(last);
     }
     nui.toasts.retain(|(id, until)| {
-        list.list
-            .iter()
-            .any(|n| n.id == *id && (*until > now || matches!(n.data, Data::Dialog { .. })))
+        list.list.iter().any(|n| {
+            n.id == *id && (*until > now || matches!(n.data, Data::Dialog { .. })) && (!dnd || super::notification_center::dnd_shows(n))
+        })
     });
     if nui.toasts.len() > MAX_TOASTS {
         let extra = nui.toasts.len() - MAX_TOASTS;
@@ -614,6 +655,7 @@ pub fn show(
     hist: &mut crate::world::notification_history::History,
     nui: &mut NotifUi,
     env: &mut ToastEnv<'_>,
+    dnd: bool,
 ) -> (Vec<(u64, Response)>, Vec<super::notification_center::Ask>) {
     let mut answers = Vec::new();
     let mut asks = Vec::new();
@@ -621,7 +663,7 @@ pub fn show(
     // Firestorm's toasts keep their own place: the islands' column is for
     // Aurora's center only (not kept for a later frame of it)
     nui.column = None;
-    update_toasts(list, nui, now, env.message_seconds, env.hidden);
+    update_toasts(list, nui, now, env.message_seconds, env.hidden, dnd);
 
     let anchor = nui.anchor.unwrap_or(egui::pos2(8.0, 60.0));
     if nui.open {
@@ -760,6 +802,20 @@ fn script_rows(count: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bell_right_click_turns_do_not_disturb_over_and_keeps_the_rest() {
+        let away = crate::world::status::StatusModes {
+            away: true,
+            autorespond: true,
+            reject_teleports: true,
+            ..Default::default()
+        };
+        let on = bell_dnd_toggled(away);
+        assert!(on.dnd);
+        assert_eq!(crate::world::status::StatusModes { dnd: false, ..on }, away);
+        assert_eq!(bell_dnd_toggled(on), away);
+    }
 
     #[test]
     fn script_rows_keep_original_indices_in_bottom_up_groups_of_three() {
@@ -956,17 +1012,17 @@ mod tests {
         let friend = list.push_presence(JANE, "Jane Doe is online.", true);
         let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
         let toast_only = list.push_message(JOHN, JOHN, "John Doe", "hi", false);
-        update_toasts(&mut list, &mut nui, 0.0, 30.0, false);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, false, false);
         assert_eq!(
             nui.toasts.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
             vec![friend, message, toast_only]
         );
         assert_eq!(list.unread(), 1, "the toast alone is not counted");
         // the friend's toast ends after TOAST_TIP, the messages' after 30 s
-        update_toasts(&mut list, &mut nui, TOAST_TIP + 1.0, 30.0, false);
+        update_toasts(&mut list, &mut nui, TOAST_TIP + 1.0, 30.0, false, false);
         assert!(!list.list.iter().any(|n| n.id == friend));
         assert!(list.list.iter().any(|n| n.id == message));
-        update_toasts(&mut list, &mut nui, 31.0, 30.0, false);
+        update_toasts(&mut list, &mut nui, 31.0, 30.0, false, false);
         assert!(nui.toasts.is_empty());
         assert_eq!(list.list.iter().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
         assert_eq!(list.unread(), 1);
@@ -980,9 +1036,37 @@ mod tests {
         let mut nui = NotifUi::default();
         list.push_presence(JANE, "Jane Doe is online.", true);
         let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
-        update_toasts(&mut list, &mut nui, 0.0, 30.0, true);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, true, false);
         assert!(nui.toasts.is_empty());
         assert_eq!(list.list.iter().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
+    }
+
+    /// In do not disturb only a script menu toasts (#491): a message waits in
+    /// the list, and a toast already out leaves when the status is set.
+    #[test]
+    fn do_not_disturb_toasts_only_script_menus() {
+        let mut list = Notifications::default();
+        let mut nui = NotifUi::default();
+        let early = list.push_message(JANE, JANE, "Jane Doe", "before", true);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, false, false);
+        assert_eq!(nui.toasts.iter().map(|t| t.0).collect::<Vec<_>>(), vec![early]);
+        let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
+        let menu = list.push(
+            Kind::Script,
+            "Fountain",
+            "Pick a colour",
+            Data::Dialog {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object: Uuid::from_u128(9),
+                object_name: "Fountain".into(),
+                own_object: false,
+                channel: -5,
+                buttons: vec!["Violet".into()],
+            },
+        );
+        update_toasts(&mut list, &mut nui, 1.0, 30.0, false, true);
+        assert_eq!(nui.toasts.iter().map(|t| t.0).collect::<Vec<_>>(), vec![menu]);
+        assert!(list.list.iter().any(|n| n.id == message));
     }
 
     /// Run the Conversations floater for a few frames.

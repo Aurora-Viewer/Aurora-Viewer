@@ -12533,10 +12533,11 @@ impl App {
                     }
                 }
                 // nothing over the view in mouselook or the photo's full frame;
-                // Firestorm's toasts wait in the bell in do not disturb too
+                // in do not disturb only the script menus come out, in both
+                // styles (#491)
                 let aurora = self.notifications_aurora();
                 let dnd = self.world.status.dnd;
-                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame() || (dnd && !aurora);
+                let toasts_hidden = self.camera.mouselook() || self.photo_full_frame();
                 self.world.notifications.aurora = aurora;
                 // #465: a friendship offer in the middle of the screen, before
                 // the toasts it replaces (AURORA_DEMO_FRIEND_PROMPT: on for the run)
@@ -12597,6 +12598,7 @@ impl App {
                         &mut self.world.notification_history,
                         &mut self.notif_ui,
                         &mut toast_env,
+                        dnd,
                     )
                 };
                 // the region restart over the toasts, under the open list

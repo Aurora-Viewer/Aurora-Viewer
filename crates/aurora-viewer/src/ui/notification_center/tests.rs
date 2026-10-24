@@ -275,6 +275,33 @@ fn a_script_menu_stays_out_until_answered() {
     assert!(c.peek[0].folding.is_some());
 }
 
+/// In do not disturb a script menu still rolls out and stays (#491), the
+/// other cards wait in the bell.
+#[test]
+fn do_not_disturb_rolls_out_only_script_menus() {
+    let mut list = Notifications::default();
+    let mut c = CenterUi::default();
+    let early = info(&mut list, "before");
+    update(&list, &mut c, at(0.0), 30.0);
+    assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), vec![early]);
+    info(&mut list, "Lune paid you L$50");
+    let menu = list.push(
+        Kind::Script,
+        "Fountain",
+        "Pick a colour",
+        Data::Dialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object: Uuid::from_u128(9),
+            object_name: "Fountain".into(),
+            own_object: false,
+            channel: -5,
+            buttons: vec!["Violet".into()],
+        },
+    );
+    update(&list, &mut c, Moment { dnd: true, ..at(0.1) }, 30.0);
+    assert_eq!(c.peek.iter().map(|p| p.id).collect::<Vec<_>>(), vec![menu]);
+}
+
 /// "Mark all read" empties the bell's count: the information leaves, a
 /// script menu and an offer stay in "To do", read.
 #[test]
