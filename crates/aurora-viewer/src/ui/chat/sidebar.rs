@@ -73,9 +73,10 @@ pub(super) fn paint_group_picture(ui: &egui::Ui, p: &Palette, rect: egui::Rect, 
 }
 
 /// The id of a control of the workspace by its name ("panel-mic",
-/// "head-call"…): the same every frame, for the tests to reach it.
+/// "head-call"…): the same every frame, for the tests to reach it; each
+/// window of its own has its own (`popout::window`).
 pub(super) fn control_id(name: &str) -> egui::Id {
-    egui::Id::unique(("conv_control", name))
+    egui::Id::unique(("conv_control", name, super::popout::window()))
 }
 
 /// The id of the column's search field.

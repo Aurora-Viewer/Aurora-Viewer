@@ -156,6 +156,64 @@ impl Popped {
     }
 }
 
+thread_local! {
+    /// The window drawing (`window`).
+    static WINDOW: std::cell::Cell<Option<Option<Uuid>>> = const { std::cell::Cell::new(None) };
+}
+
+/// A window of conversations: None for the Conversations window, the
+/// conversation of a window of its own.
+pub(super) type WindowKey = Option<Option<Uuid>>;
+
+/// The window being drawn: None for the Conversations window, the
+/// conversation of a window of its own while it draws. The ids of the
+/// pane's controls take it (`sidebar::control_id`, `classic_id`): the same
+/// conversation pane drawn in two windows in a frame never uses an id twice.
+pub(super) fn window() -> WindowKey {
+    WINDOW.with(std::cell::Cell::get)
+}
+
+/// One emoji picker open at a time: the windows share the picker's state
+/// (`emoji::Emoji`: its search, its tab, its field). Before the frame, the
+/// picker opened last stays and the others close.
+pub(super) fn one_picker(st: &mut ChatUi) {
+    let open: Vec<WindowKey> = st
+        .emoji_open
+        .then_some(None)
+        .into_iter()
+        .chain(st.popped.windows.iter().filter(|w| w.view.emoji_open).map(|w| Some(w.conversation)))
+        .collect();
+    let keep = open
+        .iter()
+        .copied()
+        .rfind(|w| Some(*w) != st.picker_window)
+        .or_else(|| open.first().copied());
+    for w in open.into_iter().filter(|w| Some(*w) != keep) {
+        match w {
+            None => st.emoji_open = false,
+            Some(c) => {
+                if let Some(other) = st.popped.windows.iter_mut().find(|o| o.conversation == c) {
+                    other.view.emoji_open = false;
+                }
+            }
+        }
+    }
+    st.picker_window = keep;
+}
+
+/// The emoji picker may draw in this frame: none drew yet. One opened by
+/// a click while another showed waits for the next frame, when
+/// `one_picker` has closed the other.
+pub(super) fn claim_picker(ctx: &egui::Context) -> bool {
+    let id = egui::Id::unique("conversation_emoji_picker_frame");
+    let frame = ctx.cumulative_pass_nr();
+    let free = ctx.data(|d| d.get_temp::<u64>(id)) != Some(frame);
+    if free {
+        ctx.data_mut(|d| d.insert_temp(id, frame));
+    }
+    free
+}
+
 /// `conversation:<uuid>`, or `conversation:nearby` for the nearby chat.
 pub(super) fn floater_id(conversation: Option<Uuid>) -> String {
     match conversation {
@@ -301,6 +359,7 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
         }
         floater.min_size = floater.min_size.max(MIN_SIZE);
         w.view.swap(st);
+        WINDOW.with(|cell| cell.set(Some(w.conversation)));
         floater.show(ctx, p, &mut open, |ui| {
             if style.workspace() {
                 let h = ui.available_height().max(MIN_SIZE.y - 40.0);
@@ -318,6 +377,7 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
                 });
             }
         });
+        WINDOW.with(|cell| cell.set(None));
         // the keyboard of the field drawn in this window
         let field = st.typing_field.take();
         w.view.swap(st);
@@ -376,6 +436,8 @@ mod tests {
         contacts_settings: crate::ui::contacts::ContactsSettings,
         gestures: crate::gestures::Manager,
         actions: Vec<ConvAction>,
+        /// The Conversations window is open.
+        main_open: bool,
     }
 
     impl Kit {
@@ -408,6 +470,7 @@ mod tests {
                 contacts_settings: Default::default(),
                 gestures: Default::default(),
                 actions: Vec::new(),
+                main_open: false,
             }
         }
 
@@ -415,7 +478,7 @@ mod tests {
             let icons = self.icons.get_or_insert_with(|| crate::ui::icons::Icons::load(ctx, None));
             let pics = HashMap::new();
             crate::ui::close_key::begin(ctx);
-            let mut open = false;
+            let mut open = self.main_open;
             self.actions.extend(super::super::show(
                 ctx,
                 p,
@@ -485,6 +548,82 @@ mod tests {
         kit.st.popped.pop_out(Some(JANE), false, false, false);
         kit.st.forget(JANE);
         assert!(!kit.st.popped.contains(Some(JANE)));
+    }
+
+    /// Whether a frame painted egui's warning of a widget id used twice.
+    fn clash(texts: &[crate::ui::widgets::elide_tests::Text]) -> bool {
+        texts
+            .iter()
+            .any(|t| t.source.contains("Double use of") || t.source.contains("First use of"))
+    }
+
+    /// The Conversations window and a window of its own, each with its find
+    /// and filter fields open, then each with the emoji picker: their
+    /// fields and controls have their own ids, one picker shows at a time
+    /// (the one opened last), and egui warns of no id used twice.
+    #[test]
+    fn two_windows_never_share_their_find_field_nor_their_emoji_picker() {
+        const BOB: Uuid = Uuid::from_u128(0xB);
+        let p = crate::theme::Theme::default().palette();
+        // the warning this test looks for does show in these frames
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        frames.ctx.options_mut(|o| o.warn_on_id_clash = true);
+        let mut texts = Vec::new();
+        for _ in 0..2 {
+            texts = frames.run(Vec::new(), |ui| {
+                let mut a = String::new();
+                let mut b = String::new();
+                ui.add(egui::TextEdit::singleline(&mut a).id(egui::Id::unique("same")));
+                ui.add(egui::TextEdit::singleline(&mut b).id(egui::Id::unique("same")));
+            });
+        }
+        assert!(clash(&texts), "a clash is seen");
+        for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+            let mut kit = Kit::new(style);
+            kit.world.conversation_line(
+                BOB,
+                crate::world::ChatLine {
+                    time: std::time::SystemTime::now(),
+                    from: "Bob".into(),
+                    text: "hello from Bob".into(),
+                    kind: crate::world::ChatKind::Im,
+                    source: BOB,
+                    origin: crate::world::Origin::Live,
+                },
+            );
+            kit.main_open = true;
+            kit.st.selected = Some(BOB);
+            for c in [Some(BOB), Some(JANE)] {
+                let search = kit.st.searches.entry(c).or_default();
+                search.open_find();
+                search.filter = Some(String::new());
+            }
+            let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+            frames.ctx.options_mut(|o| o.warn_on_id_clash = true);
+            crate::ui::widgets::place_floater(&frames.ctx, "conversations", egui::pos2(500.0, 40.0), egui::vec2(700.0, 500.0));
+            let run = |frames: &mut crate::ui::widgets::elide_tests::Frames, kit: &mut Kit, what: &str| {
+                for _ in 0..4 {
+                    let texts = frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+                    let clashes: Vec<_> = texts.iter().filter(|t| t.source.contains(" use of ")).map(|t| t.rect).collect();
+                    assert!(!clash(&texts), "{style:?}, {what}: no id used twice: {clashes:?}");
+                }
+            };
+            run(&mut frames, &mut kit, "find fields");
+            let field = |c: Option<Uuid>| frames.ctx.read_response(super::super::find::field_id(c)).map(|r| r.rect);
+            let (bob, jane) = (field(Some(BOB)), field(Some(JANE)));
+            assert!(bob.is_some() && jane.is_some(), "{style:?}: both find fields drawn: {bob:?} {jane:?}");
+            assert_ne!(bob, jane, "{style:?}: in their own windows");
+            // both pickers asked: the one of the window opened last stays
+            kit.st.emoji_open = true;
+            kit.st.popped.windows[0].view.emoji_open = true;
+            run(&mut frames, &mut kit, "both pickers asked");
+            assert!(!kit.st.emoji_open && kit.st.popped.windows[0].view.emoji_open, "{style:?}");
+            // the Conversations window's picker opened after: the other closes
+            kit.st.emoji_open = true;
+            run(&mut frames, &mut kit, "picker moved");
+            assert!(kit.st.emoji_open && !kit.st.popped.windows[0].view.emoji_open, "{style:?}");
+            assert!(kit.st.selected == Some(BOB) && kit.st.popped.contains(Some(JANE)));
+        }
     }
 
     /// "Detach" waits a frame and gives the field the keyboard; "Attach to

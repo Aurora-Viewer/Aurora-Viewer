@@ -202,6 +202,8 @@ pub struct ChatUi {
     pub own_windows: bool,
     /// The Conversations window was open last frame.
     main_open: bool,
+    /// The window whose emoji picker is open (`popout::one_picker`).
+    picker_window: Option<popout::WindowKey>,
 }
 
 /// What the column's resident picker starts.
@@ -896,9 +898,10 @@ fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>,
 }
 
 /// The id of a button of the window of tabs (Bubbles and Lines styles) by
-/// its icon ("send" for the send button).
+/// its icon ("send" for the send button); each window of its own has its
+/// own (`popout::window`).
 pub(crate) fn classic_id(icon: &str) -> egui::Id {
-    egui::Id::unique(("conv_classic", icon))
+    egui::Id::unique(("conv_classic", icon, popout::window()))
 }
 
 /// Tabler icon button of the conversation toolbar.
@@ -2321,6 +2324,7 @@ pub fn show(
         st.contacts = false;
     }
     let style = st.demo_style.unwrap_or(st.style);
+    popout::one_picker(st);
     // every entry of the window, whatever the column's search: it never
     // shows a conversation that is in its own window (`popout.rs`)
     let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)
@@ -2671,7 +2675,7 @@ fn classic_pane(
     // each conversation's own field (cursor, undo), like its draft
     let conv_input = egui::Id::unique(("conv_input", st.selected));
     let search = st.searches.entry(st.selected).or_default();
-    if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
+    if find::wants_shortcut(ui, &[conv_input, find::field_id(st.selected), find::filter_id(st.selected)]) {
         search.open_find();
     }
     // exactly what the input row takes under them: the spacing after
@@ -2759,10 +2763,11 @@ fn classic_pane(
     {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
     }
-    if st.emoji_open {
+    if st.emoji_open && popout::claim_picker(ui.ctx()) {
         let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
         let mut close = false;
-        egui::Area::new(egui::Id::unique("emoji_picker"))
+        // one per conversation: one in each window (`popout.rs`)
+        egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
             .fade_in(false)
             .order(egui::Order::Foreground)
             .pivot(egui::Align2::LEFT_BOTTOM)

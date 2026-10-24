@@ -266,14 +266,14 @@ pub(super) fn pane(
             ui.add_space(12.0);
             ui.add(
                 egui::TextEdit::singleline(q)
-                    .id(find::filter_id())
+                    .id(find::filter_id(st.selected))
                     .hint_text(aurora_i18n::tr!("ui-chat-filter"))
                     .desired_width(width - 24.0),
             );
         });
     }
     let conv_input = egui::Id::unique(("conv_input", st.selected));
-    if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
+    if find::wants_shortcut(ui, &[conv_input, find::field_id(st.selected), find::filter_id(st.selected)]) {
         search.open_find();
     }
     // (the find field is in the head's row: the messages keep their height)
