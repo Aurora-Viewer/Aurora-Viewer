@@ -712,7 +712,9 @@ fn line_job(
         font_id: egui::FontId::proportional(size - 3.0),
         ..Default::default()
     };
-    if times && !body_only {
+    // (a compact row paints its time on the text's baseline itself: a
+    // smaller section of the job sits on the bottom of the row, lower)
+    if times && !body_only && !compact {
         job.append(&format!("[{}] ", hhmm(line.time)), 0.0, small);
     }
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");

@@ -27,6 +27,8 @@ use egui::RichText;
 pub(super) const TEXT: f32 = 12.0;
 /// Side of the cube.
 const ICON: f32 = 13.0;
+/// Text size of the time.
+const TIME: f32 = 10.5;
 /// Between the cube, the time, the name and the text.
 const GAP: f32 = 5.0;
 /// Room kept at the right of a row.
@@ -68,8 +70,36 @@ pub(super) struct Place {
     pub time_column: Option<f32>,
 }
 
+/// Where the letters of a `size` text drawn as a label stand, from the top
+/// of its row: the baseline the time, the name and the icon of a row are
+/// set on (`widgets::galley_baseline` of a label laid out as egui lays the
+/// text's out). Each part set on its own row instead (a smaller time, a
+/// semi-bold name) sat up to 2 px off the text, the time lower.
+fn label_baseline(ui: &egui::Ui, size: f32) -> f32 {
+    let probe = egui::WidgetText::from(RichText::new("H").size(size)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    crate::ui::widgets::galley_baseline(ui.painter(), &probe)
+}
+
+/// The middle of the capitals of a `size` text standing on `baseline`: where
+/// a row's icon is centred.
+pub(super) fn caps_middle(painter: &egui::Painter, size: f32, baseline: f32) -> f32 {
+    let probe = painter.layout_no_wrap("H".into(), egui::FontId::proportional(size), egui::Color32::PLACEHOLDER);
+    baseline - crate::ui::widgets::ink_rect(&probe).height() / 2.0
+}
+
+/// The time of a compact row, laid out.
+pub(super) fn time_galley(painter: &egui::Painter, p: &crate::theme::Palette, line: &ChatLine) -> std::sync::Arc<egui::Galley> {
+    painter.layout_no_wrap(hhmm(line.time), egui::FontId::proportional(TIME), p.muted_dim)
+}
+
 /// One compact row.
 pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: Option<Mark>, place: Place, times: bool) {
+    use egui::emath::GuiRounding as _;
     let p = env.p;
     let world = env.world;
     let tone = if env.plain_history { None } else { history_tone(p, line.origin) };
@@ -79,27 +109,27 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
     // (a notice has no time, as everywhere)
     let notice = line.kind == ChatKind::System;
     let times = times && !notice;
+    let row_h = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(TEXT)));
+    // the text's first line stands there: everything beside it too
+    let baseline = top.round_to_pixels(ui.pixels_per_point()) + label_baseline(ui, TEXT);
     let row = ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let mut x = 0.0;
         if let Some(w) = place.time_column {
             ui.add_space(4.0);
-            let (r, _) = ui.allocate_exact_size(egui::vec2(w, 16.0), egui::Sense::hover());
+            let (r, _) = ui.allocate_exact_size(egui::vec2(w, row_h), egui::Sense::hover());
             if times {
-                ui.painter().text(
-                    egui::pos2(r.right(), r.top() + 8.5),
-                    egui::Align2::RIGHT_CENTER,
-                    hhmm(line.time),
-                    egui::FontId::proportional(10.5),
-                    p.muted_dim,
-                );
+                let galley = time_galley(ui.painter(), p, line);
+                let at = r.right() - galley.size().x;
+                crate::ui::widgets::paint_on_baseline(ui.painter(), galley, at, baseline, p.muted_dim);
             }
             x = 4.0 + w;
         }
         let icon_center = place.icon_center.max(x + GAP + ICON * 0.5);
         let text_left = place.text_left.max(icon_center + ICON * 0.5 + GAP);
-        let (lead, _) = ui.allocate_exact_size(egui::vec2(text_left - x, 16.0), egui::Sense::hover());
-        let icon = egui::Rect::from_center_size(egui::pos2(left + icon_center, lead.top() + 8.0), egui::Vec2::splat(ICON));
+        ui.allocate_exact_size(egui::vec2(text_left - x, row_h), egui::Sense::hover());
+        let middle = caps_middle(ui.painter(), TEXT, baseline);
+        let icon = egui::Rect::from_center_size(egui::pos2(left + icon_center, middle), egui::Vec2::splat(ICON));
         super::thread::paint_icon(ui.painter(), self::icon(world, line), icon, p.muted_dim);
         if !notice {
             let name = sender_name(world, env.own_name, line);
@@ -110,11 +140,21 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
             let cube = ui.interact(icon.expand(2.0), id, egui::Sense::click()).on_hover_text(&name);
             let color = tone.unwrap_or_else(|| crate::ui::colors::sender_color(line));
             let font = egui::FontId::new(TEXT, crate::ui::fonts::semibold(ui.ctx()));
-            let max = (ui.available_width() * 0.35).max(60.0);
-            let r =
-                ui.add(crate::ui::widgets::elided_label(ui, RichText::new(&name).font(font).color(color), max).sense(egui::Sense::click()));
+            let mut job = egui::text::LayoutJob::single_section(name.clone(), egui::TextFormat::simple(font, color));
+            job.wrap = egui::text::TextWrapping {
+                max_width: (ui.available_width() * 0.35).max(60.0),
+                max_rows: 1,
+                break_anywhere: true,
+                overflow_character: Some('…'),
+            };
+            let galley = ui.fonts_mut(|f| f.layout_job(job));
+            let (r, mut resp) = ui.allocate_exact_size(egui::vec2(galley.size().x, row_h), egui::Sense::click());
+            if galley.elided {
+                resp = resp.on_hover_text(&name);
+            }
+            crate::ui::widgets::paint_on_baseline(ui.painter(), galley, r.left(), baseline, color);
             if matches!(line.kind, ChatKind::Object(_)) && !line.source.is_nil() {
-                for r in [cube, r] {
+                for r in [cube, resp] {
                     object_sender(
                         &r.on_hover_cursor(egui::CursorIcon::PointingHand),
                         p,
@@ -127,7 +167,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, mark: 
             ui.add_space(GAP);
         }
         if times && place.time_column.is_none() {
-            ui.label(RichText::new(hhmm(line.time)).size(10.5).color(p.muted_dim));
+            let galley = time_galley(ui.painter(), p, line);
+            let (r, _) = ui.allocate_exact_size(egui::vec2(galley.size().x, row_h), egui::Sense::hover());
+            crate::ui::widgets::paint_on_baseline(ui.painter(), galley, r.left(), baseline, p.muted_dim);
             ui.add_space(GAP);
         }
         let (text, italics) = if notice { (&line.text[..], false) } else { body(line) };
@@ -151,7 +193,7 @@ fn body(line: &ChatLine) -> (&str, bool) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::world::Origin;
     use aurora_net::ChatType;
@@ -278,6 +320,152 @@ mod tests {
                 "{style:?}"
             );
             assert!(texts.iter().any(|(t, _)| t == "Demo Vendor"), "{style:?}: the name");
+        }
+    }
+
+    /// The texts a row paints, with where their flat-footed letters stand
+    /// on screen (the feet of "1", "H", "E", "L", "I", "T", "F", "M", "K"
+    /// as epaint draws them: round letters and digits overshoot the
+    /// baseline, OpenDyslexic's by a pixel).
+    pub(in crate::ui::chat) fn feet(shapes: &[egui::epaint::ClippedShape], pixels: f32) -> Vec<(String, f32)> {
+        use egui::emath::GuiRounding as _;
+        fn texts(shape: &egui::Shape, out: &mut Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.pos, t.galley.clone())),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        let mut shown = Vec::new();
+        for s in shapes {
+            texts(&s.shape, &mut shown);
+        }
+        let snap = |v: f32| (v * pixels).round() / pixels;
+        shown
+            .into_iter()
+            .filter_map(|(pos, g)| {
+                let pos = pos.round_to_pixels(pixels);
+                let row = g.rows.first()?;
+                let foot = row
+                    .row
+                    .glyphs
+                    .iter()
+                    .filter(|gl| "1HELITFMK".contains(gl.chr) && gl.uv_rect.size.y > 0.0)
+                    .map(|gl| pos.y + row.pos.y + snap(gl.pos.y + gl.uv_rect.offset.y) + gl.uv_rect.size.y)
+                    .fold(f32::MIN, f32::max);
+                (foot > f32::MIN).then(|| (g.text().to_owned(), foot))
+            })
+            .collect()
+    }
+
+    /// The human's report of 2026-10-24: the time of a compact row stood
+    /// lower than its text. The time, the name and the text stand on one
+    /// baseline, and the icon on the middle of the text's capitals, within
+    /// half a pixel, with the four built-in fonts at the scales 1, 1.25 and
+    /// 1.5, the time after the name or in its column.
+    #[test]
+    fn a_compact_rows_time_name_and_icon_stand_on_its_text() {
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        // flat-footed letters to measure (`feet`)
+        let mut said = line(ChatKind::Object(ChatType::Normal), "LIFT THE HELM");
+        said.from = "HELM KIT".into();
+        // 11:11 in Second Life time (15 January 2026, 19:11 UTC): a time of
+        // flat-footed digits
+        said.time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_768_504_260);
+        let time = hhmm(said.time);
+        assert_eq!(time, "11:11");
+        for font in [
+            crate::ui::fonts::INTER,
+            crate::ui::fonts::NOTO,
+            crate::ui::fonts::ROBOTO,
+            crate::ui::fonts::OPEN_DYSLEXIC,
+        ] {
+            for pixels in [1.0, 1.25, 1.5] {
+                for column in [None, Some(40.0)] {
+                    let ctx = egui::Context::default();
+                    let theme = crate::theme::Theme::default();
+                    theme.apply(&ctx, 1.0);
+                    crate::ui::fonts::apply(&ctx, font);
+                    ctx.set_pixels_per_point(pixels);
+                    let p = theme.palette();
+                    // (the icons drawn, `paint_icon`)
+                    let icons = crate::ui::icons::Icons::load(&ctx, None);
+                    let mut emoji = crate::ui::emoji::Emoji::load();
+                    let pics = std::collections::HashMap::new();
+                    let (mut names, mut wanted) = (std::collections::HashSet::new(), std::collections::HashSet::new());
+                    let mut out = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 200.0))),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            let mut env = LineEnv {
+                                p: &p,
+                                icons: &icons,
+                                emoji: &mut emoji,
+                                pics: &pics,
+                                world: &world,
+                                want_names: &mut names,
+                                wanted: &mut wanted,
+                                own_name: "Aurora Demo",
+                                plain_history: false,
+                                compact_automated: true,
+                                menu: None,
+                                bubbles: None,
+                                previews: None,
+                            };
+                            let place = Place {
+                                icon_center: 14.0,
+                                text_left: 26.0,
+                                time_column: column,
+                            };
+                            draw(ui, &mut env, &said, None, place, true);
+                        },
+                    );
+                    out.textures_delta.clear();
+                    let feet = feet(&out.shapes, pixels);
+                    let case = format!("font={font}, pixels={pixels}, column={column:?}");
+                    let foot = |text: &str| {
+                        feet.iter()
+                            .find(|(t, _)| t == text)
+                            .map(|(_, y)| *y)
+                            .unwrap_or_else(|| panic!("{case}: no {text}: {feet:?}"))
+                    };
+                    let body = foot("LIFT THE HELM");
+                    for other in ["HELM KIT", time.as_str()] {
+                        let y = foot(other);
+                        assert!(
+                            (y - body).abs() <= 0.5 + 1e-3,
+                            "{case}: {other} stands at {y} and the text at {body}"
+                        );
+                    }
+                    // the icon: its square mesh, on the middle of the text's
+                    // capitals (an "H" of the text's font, as drawn)
+                    let icon = out
+                        .shapes
+                        .iter()
+                        .filter_map(|c| match &c.shape {
+                            egui::Shape::Mesh(m) => {
+                                let r = egui::Rect::from_points(&m.vertices.iter().map(|v| v.pos).collect::<Vec<_>>());
+                                ((r.width() - ICON).abs() < 0.01 && (r.height() - ICON).abs() < 0.01).then_some(r)
+                            }
+                            _ => None,
+                        })
+                        .next()
+                        .unwrap_or_else(|| panic!("{case}: the icon is drawn"));
+                    let cap = {
+                        let probe =
+                            ctx.fonts_mut(|f| f.layout_no_wrap("H".into(), egui::FontId::proportional(TEXT), egui::Color32::PLACEHOLDER));
+                        crate::ui::widgets::ink_rect(&probe).height()
+                    };
+                    let caps_center = body - cap / 2.0;
+                    assert!(
+                        (icon.center().y - caps_center).abs() <= 0.5 + 1e-3,
+                        "{case}: the icon's middle {} against the capitals' {caps_center}",
+                        icon.center().y
+                    );
+                }
+            }
         }
     }
 
