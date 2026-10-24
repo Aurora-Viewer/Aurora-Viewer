@@ -848,6 +848,47 @@ pub fn previews_offline() -> bool {
     !*NET.get_or_init(|| std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok_and(|v| v == "net"))
 }
 
+/// AURORA_DEMO_GIFS: the GIF picker of the Conversations field (#932).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gifs {
+    /// `1` / `open`: open on GIPHY's trending, made here.
+    Open,
+    /// `klipy`: open on KLIPY's tab, a category searched.
+    Klipy,
+    /// `sent`: the first GIF sent, its preview under the message.
+    Sent,
+    /// `menu`: the GIF button's right-click menu open.
+    Menu,
+    /// `nokey`: the real settings, no key: no button.
+    NoKey,
+    /// `net`: open, the real services with the keys of Preferences.
+    Net,
+}
+
+impl Gifs {
+    /// The picker answers with the demo's GIFs, as if both services had a
+    /// key (the button shows).
+    pub fn made_here(self) -> bool {
+        !matches!(self, Gifs::NoKey | Gifs::Net)
+    }
+}
+
+pub fn gifs_scenario() -> Option<Gifs> {
+    static MODE: std::sync::OnceLock<Option<Gifs>> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| match std::env::var("AURORA_DEMO_GIFS").ok()?.trim() {
+        "1" | "open" => Some(Gifs::Open),
+        "klipy" => Some(Gifs::Klipy),
+        "sent" => Some(Gifs::Sent),
+        "menu" => Some(Gifs::Menu),
+        "nokey" => Some(Gifs::NoKey),
+        "net" => Some(Gifs::Net),
+        other => {
+            log::warn!("AURORA_DEMO_GIFS={other}: unknown");
+            None
+        }
+    })
+}
+
 /// AURORA_DEMO_CONV=bubbles[:busy|:group|:local|:legacy]: the
 /// Conversations window as a messenger (ui/chat/bubbles.rs). Without a
 /// suffix the conversation with an online friend, over two days; `busy` the

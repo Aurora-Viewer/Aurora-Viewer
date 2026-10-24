@@ -96,6 +96,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 });
             });
             link_previews(cx);
+            gifs(cx);
         }
         1 => notifications(cx),
         2 => keyword_alerts(cx),
@@ -316,6 +317,92 @@ fn videos(cx: &mut Cx) {
                 },
             );
         });
+    });
+}
+
+/// Where a key is made, for each service.
+const GIPHY_KEYS: &str = "https://developers.giphy.com/dashboard/";
+const KLIPY_KEYS: &str = "https://partner.klipy.com/";
+
+/// The GIF button of the conversations' field and its picker (#932,
+/// `gif_search.rs`): each user brings their own free key, so the group
+/// says how to get one; the button shows once a key is entered, unless
+/// the user hid it themselves.
+fn gifs(cx: &mut Cx) {
+    use crate::gif_search::{Provider, Rating};
+    use crate::ui::widgets;
+    use aurora_i18n::tr;
+    let p = cx.p;
+    cx.group(tr!("ui-options-gifs"), |cx| {
+        cx.note(tr!("ui-options-gifs-intro"));
+        cx.row(
+            tr!("ui-options-gifs-show"),
+            tr!("ui-options-gifs-show-hint"),
+            &field!(gifs.show_button),
+            |ui, s| {
+                let changed = toggle(ui, &p, &mut s.gifs.show_button);
+                if changed && !s.gifs.show_button {
+                    s.gifs.hidden_by_user = true;
+                }
+                changed
+            },
+        );
+        cx.track(&field!(gifs.hidden_by_user));
+        cx.choice(
+            tr!("ui-options-gifs-rating"),
+            tr!("ui-options-gifs-rating-hint"),
+            &field!(gifs.rating),
+            &[
+                (Rating::Strict, tr!("ui-options-gifs-rating-strict"), true),
+                (Rating::Moderate, tr!("ui-options-gifs-rating-moderate"), true),
+                (Rating::Relaxed, tr!("ui-options-gifs-rating-relaxed"), true),
+            ],
+        );
+        for provider in Provider::ALL {
+            let (steps, site) = match provider {
+                Provider::Giphy => (tr!("ui-options-gifs-steps-giphy"), GIPHY_KEYS),
+                Provider::Klipy => (tr!("ui-options-gifs-steps-klipy"), KLIPY_KEYS),
+            };
+            cx.note(steps);
+            let label = tr!("ui-options-gifs-key", service = provider.name());
+            let key_field = match provider {
+                Provider::Giphy => field!(gifs.giphy_key),
+                Provider::Klipy => field!(gifs.klipy_key),
+            };
+            cx.keywords("GIF").wide().row(&label, steps, &key_field, |ui, s| {
+                let key = match provider {
+                    Provider::Giphy => &mut s.gifs.giphy_key,
+                    Provider::Klipy => &mut s.gifs.klipy_key,
+                };
+                let changed = ui
+                    .add(
+                        egui::TextEdit::singleline(key)
+                            .password(true)
+                            .desired_width(super::super::COMBO_W)
+                            .hint_text(tr!("ui-options-gifs-key-placeholder")),
+                    )
+                    .changed();
+                if widgets::action_button(
+                    ui,
+                    &p,
+                    "external-link",
+                    tr!("ui-options-gifs-get-key"),
+                    widgets::ActionKind::Flat,
+                    egui::Vec2::new(0.0, 24.0),
+                )
+                .on_hover_text(site)
+                .clicked()
+                {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(site));
+                }
+                // a key entered shows the button, unless it was hidden
+                if changed {
+                    s.gifs.key_changed();
+                }
+                changed
+            });
+        }
+        cx.note(tr!("ui-options-gifs-storage"));
     });
 }
 

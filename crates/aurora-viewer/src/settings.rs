@@ -849,6 +849,9 @@ pub struct Settings {
     /// Pictures and videos under the links of the Conversations window
     /// (Preferences › Chat; `link_preview.rs`).
     pub link_previews: crate::link_preview::Settings,
+    /// The GIF button of the Conversations field and its picker
+    /// (Preferences › Chat; `gif_search.rs`).
+    pub gifs: crate::gif_search::Settings,
     /// The notification center's style (Preferences › Aurora).
     pub notifications_style: NotificationsStyle,
     /// The world map's layout (`ui/worldmap/overlay.rs` or the side panel).
@@ -1584,6 +1587,7 @@ impl Default for Settings {
             plate_ctrl_click: PlateClick::Nothing,
             chat_style: ChatStyle::Aurora,
             link_previews: Default::default(),
+            gifs: Default::default(),
             notifications_style: NotificationsStyle::Aurora,
             world_map_style: WorldMapStyle::Aurora,
             photo_window: PhotoWindowStyle::Aurora,

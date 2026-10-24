@@ -12,6 +12,7 @@ mod conv_menu;
 mod find;
 mod flash;
 pub use flash::{ButtonMenu, button_menu, nearby_flashes, nearby_out_of_sight};
+mod gif_picker;
 mod head;
 mod header;
 pub mod history;
@@ -109,6 +110,13 @@ pub struct ChatUi {
     /// Laid-out rows of each conversation.
     views: HashMap<Option<uuid::Uuid>, view::View>,
     pub emoji_open: bool,
+    /// The GIF picker of the conversation's field is open (one picker at a
+    /// time: opening it closes the emoji one, and the other way round).
+    pub gif_open: bool,
+    /// The GIF picker's search and tiles, shared by the windows like the
+    /// emoji picker's (`gif_picker.rs`); its settings given every frame by
+    /// the app.
+    pub gifs: gif_picker::GifPicker,
     /// The emoji picker of the chat island's field is open.
     pub bar_emoji_open: bool,
     /// The lines' style of the settings, given every frame by the app
@@ -2484,6 +2492,7 @@ pub fn show(
     }
     let style = st.demo_style.unwrap_or(st.style);
     popout::one_picker(st);
+    st.gifs.close_if_hidden(ctx.cumulative_pass_nr());
     // every entry of the window, whatever the column's search: it never
     // shows a conversation that is in its own window (`popout.rs`)
     let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)
@@ -2920,6 +2929,12 @@ fn classic_pane(
             emoji_btn = Some(b.rect);
             if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
                 st.emoji_open = !st.emoji_open;
+                st.gif_open = false;
+            }
+            // shown once a key is entered (Preferences › Chat › GIFs)
+            if st.gifs.usable() {
+                let b = tool_resp(ui, p, icons, "gif", st.gif_open).on_hover_text(aurora_i18n::tr!("ui-chat-gif"));
+                gif_picker::button(&b, p, st);
             }
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
@@ -2981,6 +2996,8 @@ fn classic_pane(
             ui.ctx().memory_mut(|m| m.request_focus(conv_input));
         }
     }
+    let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
+    gif_picker::popup(ui.ctx(), p, icons, st, anchor, 4.0, conv_input, ChatType::Normal, actions);
     if st.conv_focus_request {
         st.conv_focus_request = false;
         resp.request_focus();
@@ -3306,7 +3323,8 @@ fn line_extras(
 /// `AURORA_DEMO_BARS=chatname`: a click on a resident's name in the pills
 /// at frame 700 (its profile opens); `AURORA_DEMO_CONV_MENU`'s right click
 /// on a conversation of the list (`conv_menu`); `AURORA_DEMO_CONV_GIVE`'s
-/// inventory carried to an IM (`workspace`).
+/// inventory carried to an IM (`workspace`); `AURORA_DEMO_GIFS=menu`'s
+/// right click on the GIF button (`gif_picker`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let line_menu = line_menu::demo_events(ctx, frame);
     if !line_menu.is_empty() {
@@ -3327,6 +3345,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let menu = conv_menu::demo_events(ctx, frame);
     if !menu.is_empty() {
         return menu;
+    }
+    let gif_menu = gif_picker::demo_events(ctx, frame);
+    if !gif_menu.is_empty() {
+        return gif_menu;
     }
     if !super::bars::demo::get().click_name || !(700..=701).contains(&frame) {
         return Vec::new();
