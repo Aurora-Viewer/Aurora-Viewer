@@ -54,6 +54,11 @@ const TRUSTED: &[&str] = &[
     "redd.it",
     "prnt.sc",
     "prntscr.com",
+    // the GIF services of the Conversations field's GIF picker (#932,
+    // gif_search.rs): what it sends is a link to their media servers
+    // (media*.giphy.com, static*.klipy.com)
+    "giphy.com",
+    "klipy.com",
 ];
 
 /// URL shorteners and link hubs: the real destination is hidden.

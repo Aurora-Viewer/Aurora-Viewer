@@ -130,6 +130,12 @@ pub(super) fn show(
                         emoji_btn = Some(b.rect);
                         if b.clicked() {
                             st.emoji_open = !st.emoji_open;
+                            st.gif_open = false;
+                        }
+                        // shown once a key is entered (Preferences › Chat › GIFs)
+                        if st.gifs.usable() {
+                            let b = box_button(ui, p, "gif", aurora_i18n::tr!("ui-chat-gif"), st.gif_open);
+                            super::gif_picker::button(&b, p, st);
                         }
                         // narrow, only its icon. An IM has no attach button:
                         // inventory is given by dropping it on the
@@ -200,6 +206,9 @@ pub(super) fn show(
                     ui.ctx().memory_mut(|m| m.request_focus(conv_input));
                 }
             }
+            let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
+            let chat_type = st.volume.chat_type();
+            super::gif_picker::popup(ui.ctx(), p, icons, st, anchor, 8.0, conv_input, chat_type, actions);
             if st.conv_focus_request {
                 st.conv_focus_request = false;
                 resp.request_focus();

@@ -37,6 +37,7 @@ mod fast_hash;
 mod frame_par;
 mod frame_profile;
 mod gestures;
+mod gif_search;
 mod graphics_presets;
 mod grids;
 mod high_contrast;
