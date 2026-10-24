@@ -3,7 +3,7 @@ use super::*;
 use crate::{
     theme::Palette,
     ui::widgets,
-    world::poser_consent::{self, Status},
+    world::poser_consent,
 };
 
 impl App {
@@ -35,12 +35,9 @@ impl App {
             widgets::place_floater(
                 &self.egui_ctx,
                 "poser",
-                egui::pos2(if mode == "connected" { 800.0 } else { 650.0 }, 70.0),
-                egui::vec2(800.0, 736.0),
+                egui::pos2(if mode == "connected" { 780.0 } else { 650.0 }, 70.0),
+                egui::vec2(880.0, 760.0),
             );
-        }
-        if mode == "library" && self.frame_count == 451 {
-            widgets::size_floater(&self.egui_ctx, "poser", egui::vec2(1030.0, 736.0));
         }
         if mode == "animesh" && self.frame_count == 440 {
             let target = self
@@ -76,7 +73,7 @@ impl App {
                 self.world.poser_consent = consent;
                 if self.frame_count == 440 {
                     self.egui_ctx
-                        .data_mut(|d| d.insert_temp(egui::Id::unique("poser-people-open"), true));
+                        .data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
                 }
                 if self.frame_count == 490 && (mode == "consent-accept" || mode == "consent-withdraw") {
                     self.ik_editor.select_pose_subject(&self.world, peer);
@@ -119,6 +116,7 @@ impl App {
             consent.preferences.clone_from(&self.settings.pose_requests);
         }
         consent.sync(&self.world, Instant::now());
+        self.ik_editor.set_poser_bridge(self.bridge_runtime.query_endpoint().is_some());
         for command in consent.commands(self.bridge_runtime.query_endpoint()) {
             self.net.send(command);
         }
@@ -126,7 +124,20 @@ impl App {
     }
     pub(super) fn poser_consent_ui(&mut self, ctx: &egui::Context, p: &Palette) {
         let mut consent = std::mem::take(&mut self.world.poser_consent);
-        let mut choose = None;
+        // The requester sees every nearby avatar with Ask in the poser's
+        // subject menu; there is no capability probe.
+        for request in self.ik_editor.take_poser_requests() {
+            match request {
+                crate::ik_edit::poser::Request::Ask(peer) => {
+                    consent.request(&self.world, peer, Instant::now());
+                }
+                crate::ik_edit::poser::Request::Cancel(peer) => consent.cancel(peer),
+                crate::ik_edit::poser::Request::OpenPrivacy => {
+                    self.panels.settings = true;
+                    self.options_ui.open(crate::ui::options::Page::Privacy, 0);
+                }
+            }
+        }
         if let Some(request) = consent.incoming.front().copied() {
             let id = egui::Id::unique(("poser-consent-block", request.id));
             let mut block = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
@@ -189,60 +200,6 @@ impl App {
                     });
                 });
         }
-        // The requester sees every nearby avatar with Ask; there is no capability probe.
-        if self.ik_editor.poser_open() {
-            let id = egui::Id::unique("poser-people-open");
-            let mut open = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-            if open {
-                let floater = widgets::Floater::new(
-                    "poser-people",
-                    aurora_i18n::tr!("poser-other-avatars"),
-                    egui::pos2(600.0, 100.0),
-                    egui::vec2(410.0, 400.0),
-                );
-                floater.show(ctx, p, &mut open, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for (_, object) in self.world.objects.avatars() {
-                            let peer = object.full_id;
-                            if !poser_consent::nearby(&self.world, peer) {
-                                continue;
-                            }
-                            ui.horizontal(|ui| {
-                                ui.label(poser_consent::name(&self.world, peer));
-                                let status = consent.status(peer);
-                                let key = match status {
-                                    Status::Ask => "poser-consent-ask",
-                                    Status::Pending => "poser-consent-pending",
-                                    Status::Accepted => "poser-consent-ready",
-                                    Status::Refused => "poser-consent-refused",
-                                    Status::NoAnswer => "poser-consent-no-answer",
-                                };
-                                if ui
-                                    .add_enabled(
-                                        status != Status::Refused && status != Status::NoAnswer,
-                                        egui::Button::new(aurora_i18n::text(key)),
-                                    )
-                                    .clicked()
-                                {
-                                    match status {
-                                        Status::Ask => {
-                                            consent.request(&self.world, peer, Instant::now());
-                                        }
-                                        Status::Pending => consent.cancel(peer),
-                                        Status::Accepted => choose = Some(peer),
-                                        _ => {}
-                                    }
-                                }
-                            });
-                        }
-                    });
-                });
-            }
-            ctx.data_mut(|d| d.insert_temp(id, open));
-        }
         self.world.poser_consent = consent;
-        if let Some(peer) = choose {
-            self.ik_editor.select_pose_subject(&self.world, peer);
-        }
     }
 }

@@ -190,6 +190,9 @@ fn poser_bone_marker_drag_rotates_the_pose_without_creating_a_binding_or_ik_goal
         let proj = projector(frame.joints[bone].w_axis.truncate());
         let pointer = proj.project(frame.joints[bone].w_axis.truncate()).unwrap().0;
         let mut frames = Frames::new();
+        // the window minimized to its bar: the joint is in the middle of a
+        // screen narrower than the window and the drag happens in the world
+        crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
         let p = crate::theme::Theme::default().palette();
         let initial = editor.poser.sessions[&world.agent_id].pose.rotations[bone];
         let button = |pos, pressed| egui::Event::PointerButton {
@@ -396,7 +399,7 @@ fn poser_mirror_undo_hand_presets_reset_and_native_export_use_real_bento_channel
     session.history(true);
     assert!(session.edited(right));
     editor.poser.preset = 1;
-    editor.hand_preset(&rig, true);
+    editor.hand_preset(&rig, Some(true));
     let session = &editor.poser.sessions[&world.agent_id];
     assert!(session.edited(rig.names["mHandIndex1Left"]));
     let native = storage::native(&rig, &session.pose, &[], "Pose".into(), 4).unwrap();
@@ -484,76 +487,209 @@ fn poser_subjects_require_ownership_or_consent_and_losing_ownership_drops_only_t
     assert!(layers.contains_key(&world.agent_id));
     assert_eq!(editor.poser.subject, world.agent_id);
 }
+fn click(pos: egui::Pos2) -> Vec<egui::Event> {
+    vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        },
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]
+}
 #[test]
 fn poser_hand_tab_and_preset_apply_through_actual_pointer_events() {
     use crate::ui::widgets::elide_tests::{Frames, painted};
     let (world, mut editor) = fixture();
     let mut frames = Frames::new();
     let p = crate::theme::Theme::default().palette();
-    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(800.0, 736.0));
+    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
     let frame = editor.editor_frame(&world).unwrap();
     let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
     let mut texts = Vec::new();
     for _ in 0..3 {
         texts = frames.run(Vec::new(), &mut draw);
     }
-    let click = |pos| {
-        vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: true,
-                modifiers: egui::Modifiers::NONE,
-            },
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Primary,
-                pressed: false,
-                modifiers: egui::Modifiers::NONE,
-            },
-        ]
-    };
     let hands = painted(&texts, aurora_i18n::text("poser-hands")).rect.center();
     frames.run(click(hands), &mut draw);
     texts = frames.run(Vec::new(), &mut draw);
-    let apply = painted(&texts, aurora_i18n::text("poser-apply-left")).rect.center();
-    frames.run(click(apply), &mut draw);
+    // the left side is the default one: the preset reaches the left hand only
+    let relaxed = painted(&texts, aurora_i18n::text("poser-hand-relaxed")).rect.center();
+    frames.run(click(relaxed), &mut draw);
     assert_eq!(editor.poser.group, 2);
-    assert!(editor.poser.sessions[&world.agent_id].edited(world.avatar_lib.rig.names["mHandIndex1Left"]));
-    assert!(!editor.poser.sessions[&world.agent_id].edited(world.avatar_lib.rig.names["mHandIndex1Right"]));
+    let rig = &world.avatar_lib.rig;
+    assert!(editor.poser.sessions[&world.agent_id].edited(rig.names["mHandIndex1Left"]));
+    assert!(!editor.poser.sessions[&world.agent_id].edited(rig.names["mHandIndex1Right"]));
     let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
     let texts = frames.run(Vec::new(), &mut draw);
-    let apply = painted(&texts, aurora_i18n::text("poser-apply-right")).rect.center();
-    frames.run(click(apply), &mut draw);
-    assert!(editor.poser.sessions[&world.agent_id].edited(world.avatar_lib.rig.names["mHandIndex1Right"]));
+    let right = painted(&texts, aurora_i18n::text("poser-side-right")).rect.center();
+    frames.run(click(right), &mut draw);
+    let texts = frames.run(Vec::new(), &mut draw);
+    let fist = painted(&texts, aurora_i18n::text("poser-hand-fist")).rect.center();
+    frames.run(click(fist), &mut draw);
+    assert_eq!(editor.poser.side, Side::Right);
+    assert!(editor.poser.sessions[&world.agent_id].edited(rig.names["mHandIndex1Right"]));
+    // Mirror: one preset on both hands, one undo step
+    editor.poser.side = Side::Mirror;
+    let session = editor.poser.sessions.get_mut(&world.agent_id).unwrap();
+    session.history(false);
+    session.history(false);
+    assert!(!session.edited(rig.names["mHandIndex1Left"]));
+    let steps = session.undo.len();
+    editor.poser.preset = 2;
+    editor.hand_preset(rig, None);
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert_eq!(session.undo.len(), steps + 1);
+    assert!(session.edited(rig.names["mHandIndex1Left"]) && session.edited(rig.names["mHandIndex1Right"]));
+}
+#[test]
+fn poser_side_selector_chooses_the_edited_bone_and_mirror_is_the_symmetry() {
+    let (world, mut editor) = fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = Frame::new(&world).unwrap();
+    let left = rig.names["mElbowLeft"];
+    let right = rig.names["mElbowRight"];
+    editor.select_pose_bone(left, &rig, &frame);
+    editor.set_pose_side(Side::Right, &rig, &frame);
+    assert_eq!(editor.selected, Some(right), "the selected pair moves to the chosen side");
+    assert!(!editor.symmetry);
+    editor.set_pose_side(Side::Left, &rig, &frame);
+    assert_eq!(editor.selected, Some(left));
+    // a marker picked in the world shows its side in the selector
+    editor.select_pose_bone(right, &rig, &frame);
+    editor.follow_selected_side(&rig);
+    assert_eq!(editor.poser.side, Side::Right);
+    // Mirror keeps the selection and edits both sides
+    editor.select_pose_bone(left, &rig, &frame);
+    editor.set_pose_side(Side::Mirror, &rig, &frame);
+    assert_eq!(editor.selected, Some(left));
+    assert!(editor.symmetry);
+    editor.follow_selected_side(&rig);
+    assert_eq!(editor.poser.side, Side::Mirror, "Mirror stays as chosen");
+    let base = editor.poser.sessions[&world.agent_id].pose.clone();
+    editor.poser_transform(&rig, &frame, base.positions[left], Quat::from_rotation_z(0.5), true);
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(session.edited(left) && session.edited(right), "Mirror moves the counterpart too");
+    // Left alone: the counterpart stays
+    let (world, mut editor) = fixture();
+    let frame = Frame::new(&world).unwrap();
+    editor.select_pose_bone(left, &rig, &frame);
+    editor.set_pose_side(Side::Left, &rig, &frame);
+    let base = editor.poser.sessions[&world.agent_id].pose.clone();
+    editor.poser_transform(&rig, &frame, base.positions[left], Quat::from_rotation_z(0.5), true);
+    let session = &editor.poser.sessions[&world.agent_id];
+    assert!(session.edited(left) && !session.edited(right));
+}
+#[test]
+fn poser_finger_grid_maps_each_cell_to_the_chosen_side() {
+    let (world, _) = fixture();
+    let rig = &world.avatar_lib.rig;
+    for (stem, _) in bones::FINGERS {
+        for joint in 1..=3 {
+            for (side, suffix) in [(Side::Left, "Left"), (Side::Right, "Right"), (Side::Mirror, "Left")] {
+                let bone = bones::finger_bone(rig, stem, joint, side).unwrap();
+                assert_eq!(rig.canonical_names[bone], format!("{stem}{joint}{suffix}"));
+                assert_eq!(group(&rig.canonical_names[bone]), 2, "every cell is a Hands joint");
+            }
+        }
+    }
+}
+#[test]
+fn poser_whole_pose_actions_work_from_their_new_group() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (world, mut editor) = selected_fixture();
+    let rig = world.avatar_lib.rig.clone();
+    let frame = editor.editor_frame(&world).unwrap();
+    let base = editor.poser.sessions[&world.agent_id].pose.clone();
+    editor.poser_transform(&rig, &frame, base.positions[rig.names["mHead"]], Quat::from_rotation_z(0.4), true);
+    assert!(editor.poser.sessions[&world.agent_id].edited(rig.names["mHead"]));
+    let mut frames = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
+    let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frames.run(Vec::new(), &mut draw);
+    }
+    let reset = painted(&texts, aurora_i18n::text("ik-edit-reset-all")).rect.center();
+    frames.run(click(reset), &mut draw);
+    assert!((0..rig.len()).all(|b| !editor.poser.sessions[&world.agent_id].edited(b)), "Reset all is in the Whole pose group");
+    let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
+    let texts = frames.run(Vec::new(), &mut draw);
+    let t_pose = painted(&texts, aurora_i18n::text("poser-t-pose")).rect.center();
+    frames.run(click(t_pose), &mut draw);
+    assert_eq!(editor.poser.sessions[&world.agent_id].pose.rotations, rig.local_rot);
+    // the settings no longer hold Reset all, and open over the joint
+    editor.poser.settings_open = true;
+    let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
+    let texts = frames.run(Vec::new(), &mut draw);
+    assert!(texts.iter().any(|t| t.source == aurora_i18n::text("poser-settings-files").to_uppercase()));
+    assert_eq!(texts.iter().filter(|t| t.source == aurora_i18n::text("ik-edit-reset-all")).count(), 1);
+}
+#[test]
+fn poser_subject_menu_queues_consent_actions_for_the_app_and_waits_for_the_bridge() {
+    use crate::ui::widgets::elide_tests::{Frames, painted};
+    let (world, mut editor) = fixture();
+    let peer = demo::poser::PEER;
+    assert!(crate::world::poser_consent::nearby(&world, peer), "the fixture's peer stands nearby");
+    let mut frames = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
+    let frame = editor.editor_frame(&world).unwrap();
+    for bridge in [false, true] {
+        editor.set_poser_bridge(bridge);
+        let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
+        for _ in 0..3 {
+            frames.run(Vec::new(), &mut draw);
+        }
+        frames.ctx.data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
+        let mut texts = Vec::new();
+        for _ in 0..3 {
+            texts = frames.run(Vec::new(), &mut draw);
+        }
+        assert_eq!(
+            texts.iter().any(|t| t.source == aurora_i18n::text("poser-bridge-needed")),
+            !bridge,
+            "the menu says why Ask waits"
+        );
+        let ask = painted(&texts, aurora_i18n::text("poser-consent-ask")).rect.center();
+        frames.run(click(ask), &mut draw);
+        let requests = editor.take_poser_requests();
+        if bridge {
+            assert_eq!(requests, vec![Request::Ask(peer)]);
+        } else {
+            assert!(requests.is_empty(), "no request without the bridge");
+        }
+    }
 }
 #[test]
 fn poser_window_stays_steady_at_scaled_fonts_and_keeps_the_upload_footer_visible() {
-    crate::ui::widgets::steady_tests::assert_window_steady(
-        "poser",
-        &[egui::vec2(800.0, 736.0), egui::vec2(720.0, 480.0)],
-        aurora_i18n::text("poser-upload"),
-        selected_fixture,
-        |(world, editor), ctx, p| {
-            let frame = editor.editor_frame(world).unwrap();
-            editor.poser_ui(ctx, p, world, &frame);
-        },
-    );
-    crate::ui::widgets::steady_tests::assert_window_steady(
-        "poser",
-        &[egui::vec2(1030.0, 736.0), egui::vec2(950.0, 480.0)],
-        aurora_i18n::text("poser-upload"),
-        || {
-            let (world, mut editor) = selected_fixture();
-            editor.poser.library_open = true;
-            (world, editor)
-        },
-        |(world, editor), ctx, p| {
-            let frame = editor.editor_frame(world).unwrap();
-            editor.poser_ui(ctx, p, world, &frame);
-        },
-    );
+    for library in [false, true] {
+        for settings in [false, true] {
+            crate::ui::widgets::steady_tests::assert_window_steady(
+                "poser",
+                &[egui::vec2(880.0, 760.0), egui::vec2(720.0, 480.0)],
+                aurora_i18n::text("poser-upload"),
+                || {
+                    let (world, mut editor) = selected_fixture();
+                    editor.poser.library_open = library;
+                    editor.poser.settings_open = settings;
+                    (world, editor)
+                },
+                |(world, editor), ctx, p| {
+                    let frame = editor.editor_frame(world).unwrap();
+                    editor.poser_ui(ctx, p, world, &frame);
+                },
+            );
+        }
+    }
 }
 #[test]
 fn poser_bone_rows_and_xyz_controls_are_painted_inside_their_scroll_clips() {
@@ -589,12 +725,7 @@ fn poser_bone_rows_and_xyz_controls_are_painted_inside_their_scroll_clips() {
         theme.apply(&ctx, font);
         let p = theme.palette();
         crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
-        widgets::place_floater(
-            &ctx,
-            "poser",
-            egui::pos2(30.0, 30.0),
-            egui::vec2(if library { 1030.0 } else { 800.0 }, 736.0),
-        );
+        widgets::place_floater(&ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
         let frame = Frame::new(&world).unwrap();
         let mut shapes = Vec::new();
         for tick in 0..20 {
@@ -614,11 +745,13 @@ fn poser_bone_rows_and_xyz_controls_are_painted_inside_their_scroll_clips() {
         } else {
             Vec::new()
         };
-        if hands {
+        if library {
+            labels.push(aurora_i18n::text("poser-library"));
+        } else if hands {
             labels.extend([
-                aurora_i18n::text("poser-apply-left"),
-                aurora_i18n::text("poser-apply-right"),
-                aurora_i18n::text("poser-right-short"),
+                aurora_i18n::text("poser-hand-relaxed"),
+                aurora_i18n::text("poser-side-right"),
+                aurora_i18n::text("poser-finger-index"),
             ]);
         } else {
             labels.push(aurora_i18n::text("poser-bone-chest"));
