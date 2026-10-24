@@ -1094,6 +1094,30 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         ),
                         line(ago(5), &me, Uuid::nil(), ChatKind::Own, "https://youtube.com/shorts/DemoShort01"),
                     ]
+                } else if mode == "services" {
+                    // the pages of image services (#923), from saved
+                    // answers: a removed screenshot and a text post first
+                    // (no card), then a picture per service
+                    [
+                        "https://prnt.sc/removed1",
+                        "https://redd.it/demo02",
+                        "https://gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+                        "https://flic.kr/p/2nDemoAb",
+                        "https://imgur.com/a/DemoAlb",
+                        "https://prnt.sc/demo42",
+                        "https://www.reddit.com/r/AuroraDemo/comments/demo01/a_new_build/",
+                    ]
+                    .iter()
+                    .enumerate()
+                    .map(|(i, url)| {
+                        let (who, id, kind) = if i % 2 == 1 {
+                            (me.as_str(), Uuid::nil(), ChatKind::Own)
+                        } else {
+                            (name, friend, ChatKind::Im)
+                        };
+                        line(ago(9 - i as u64), who, id, kind, url)
+                    })
+                    .collect()
                 } else if mode == "states" {
                     vec![
                         line(ago(9), name, friend, ChatKind::Im, "https://i.imgur.com/loading-poster.png"),
