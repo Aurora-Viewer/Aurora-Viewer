@@ -3425,6 +3425,8 @@ ui-notifications-hide-keep-in-bell = Hide (keep in bell)
 ui-notifications-open-conversation = Open the conversation
 ui-notifications-send-im = Send an IM
 ui-notifications-bell-paused = Do not disturb: notifications arrive without showing
+ui-notifications-bell-dnd-on-hint = Right click: do not disturb
+ui-notifications-bell-dnd-off-hint = Right click: turn do not disturb off
 ui-notifications-more = { $count ->
     [one] + { $count } more — see all
    *[other] + { $count } more — see all

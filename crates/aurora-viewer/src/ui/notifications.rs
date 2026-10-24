@@ -85,37 +85,56 @@ fn toast_seconds(n: &Notification, message_seconds: f64) -> f64 {
     }
 }
 
-/// Bell button with the unread count; returns true when clicked, in an
-/// island of the Aurora bars (`island`) or in Firestorm's top bar.
-pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: bool, island: bool) -> (bool, egui::Rect) {
+/// Bell button with the unread count, in an island of the Aurora bars
+/// (`island`) or in the Legacy Viewer's top bar; in do not disturb the
+/// paused bell of Aurora's center (`bell-z`, grey). Returns its response: a
+/// click opens the notifications, a right click turns do not disturb on or
+/// off (#491).
+pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: bool, dnd: bool, island: bool) -> egui::Response {
+    let tip = bell_tip(aurora_i18n::tr!("notifications-unread-count", count = unread), dnd);
     if island {
         let (rect, resp) = ui.allocate_exact_size(Vec2::splat(super::bars::islands::SLOT), egui::Sense::click());
         let hot = resp.hovered() || open;
         if hot {
             ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
         }
-        let icon = if unread > 0 { "bell-ringing-filled" } else { "bell-filled" };
+        let icon = if dnd {
+            "bell-z-filled"
+        } else if unread > 0 {
+            "bell-ringing-filled"
+        } else {
+            "bell-filled"
+        };
         if let Some(t) = icons.get(icon) {
             let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(16.0));
             ui.painter().image(
                 t.id(),
                 r,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                p.ink,
+                if dnd { p.muted } else { p.ink },
             );
         }
         if unread > 0 {
-            super::bars::islands::count(ui, p, rect, unread, 1.0, false);
+            super::bars::islands::count(ui, p, rect, unread, 1.0, dnd);
         }
-        let tip = aurora_i18n::tr!("notifications-unread-count", count = unread);
-        return (resp.on_hover_text(tip).clicked(), rect);
+        return resp.on_hover_text(tip);
     }
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(22.0, 20.0), egui::Sense::click());
     if resp.hovered() || open {
         ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
     }
-    let col = if unread > 0 || resp.hovered() || open { p.ink } else { p.muted };
-    let icon = if unread > 0 { "bell-ringing-filled" } else { "bell-filled" };
+    let col = if !dnd && (unread > 0 || resp.hovered() || open) {
+        p.ink
+    } else {
+        p.muted
+    };
+    let icon = if dnd {
+        "bell-z-filled"
+    } else if unread > 0 {
+        "bell-ringing-filled"
+    } else {
+        "bell-filled"
+    };
     if let Some(t) = icons.get(icon) {
         let r = egui::Rect::from_center_size(rect.center(), Vec2::splat(16.0));
         ui.painter()
@@ -126,8 +145,28 @@ pub fn bell(ui: &mut egui::Ui, p: &Palette, icons: &Icons, unread: usize, open: 
         let anchor = rect.right_top() + Vec2::new(3.0, 0.0);
         super::widgets::unread_count(ui.painter(), p, anchor, unread, super::widgets::CountSize::Bar);
     }
-    let tip = aurora_i18n::tr!("notifications-unread-count", count = unread);
-    (resp.on_hover_text(tip).clicked(), rect)
+    resp.on_hover_text(tip)
+}
+
+/// The bell's tooltip: `main`, then what its right click does (#491).
+pub fn bell_tip(main: String, dnd: bool) -> String {
+    let hint = if dnd {
+        aurora_i18n::tr!("ui-notifications-bell-dnd-off-hint")
+    } else {
+        aurora_i18n::tr!("ui-notifications-bell-dnd-on-hint")
+    };
+    format!("{main}\n{hint}")
+}
+
+/// The online status a right click on the bell asks for (#491): do not
+/// disturb turned over, the rest as it is, applied like a choice of the
+/// status selector (`BarAction::SetStatus`) so that both and the server's
+/// animation stay in step.
+pub fn bell_dnd_toggled(status: crate::world::status::StatusModes) -> crate::world::status::StatusModes {
+    crate::world::status::StatusModes {
+        dnd: !status.dnd,
+        ..status
+    }
 }
 
 pub(super) fn kind_style(p: &Palette, kind: Kind) -> (&'static str, Color32) {
@@ -760,6 +799,20 @@ fn script_rows(count: usize) -> impl Iterator<Item = std::ops::Range<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bell_right_click_turns_do_not_disturb_over_and_keeps_the_rest() {
+        let away = crate::world::status::StatusModes {
+            away: true,
+            autorespond: true,
+            reject_teleports: true,
+            ..Default::default()
+        };
+        let on = bell_dnd_toggled(away);
+        assert!(on.dnd);
+        assert_eq!(crate::world::status::StatusModes { dnd: false, ..on }, away);
+        assert_eq!(bell_dnd_toggled(on), away);
+    }
 
     #[test]
     fn script_rows_keep_original_indices_in_bottom_up_groups_of_three() {

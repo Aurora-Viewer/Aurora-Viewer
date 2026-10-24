@@ -1414,7 +1414,8 @@ fn small(text: impl Into<String>, color: Color32) -> RichText {
 }
 
 /// The bell of the navigation bar: its count, its style (Preferences ›
-/// Aurora › Notifications) and do not disturb (Aurora's paused bell).
+/// Aurora › Notifications) and do not disturb (the paused bell, which a
+/// right click turns on and off, #491).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BellState {
     pub unread: usize,
@@ -1468,11 +1469,14 @@ pub fn top_bars(
                 }
                 // Firestorm's notification well: the bell next to the wolf
                 if !bell.aurora {
-                    let (clicked, rect) = super::notifications::bell(ui, p, icons, bell.unread, notif.open, false);
-                    notif.anchor = Some(rect.left_bottom());
-                    notif.bell = Some(rect);
-                    if clicked {
+                    let resp = super::notifications::bell(ui, p, icons, bell.unread, notif.open, bell.dnd, false);
+                    notif.anchor = Some(resp.rect.left_bottom());
+                    notif.bell = Some(resp.rect);
+                    if resp.clicked() {
                         notif.open = !notif.open;
+                    }
+                    if resp.secondary_clicked() {
+                        action = BarAction::SetStatus(super::notifications::bell_dnd_toggled(st.status));
                     }
                 }
                 // online status (away, do not disturb, automatic responses)
@@ -1506,12 +1510,14 @@ pub fn top_bars(
                     if bell.aurora {
                         // room for the count at the window's edge
                         ui.add_space(4.0);
-                        let (clicked, rect) =
-                            super::notification_center::bell(ui, p, icons, &notif.center, bell.unread, notif.open, bell.dnd, false);
-                        notif.anchor = Some(rect.left_bottom());
-                        notif.bell = Some(rect);
-                        if clicked {
+                        let resp = super::notification_center::bell(ui, p, icons, &notif.center, bell.unread, notif.open, bell.dnd, false);
+                        notif.anchor = Some(resp.rect.left_bottom());
+                        notif.bell = Some(resp.rect);
+                        if resp.clicked() {
                             notif.open = !notif.open;
+                        }
+                        if resp.secondary_clicked() {
+                            action = BarAction::SetStatus(super::notifications::bell_dnd_toggled(st.status));
                         }
                     }
                     let fps_col = if st.fps >= 50.0 {

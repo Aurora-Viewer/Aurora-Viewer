@@ -212,7 +212,8 @@ pub fn visible(c: &CenterUi) -> (Vec<Peek>, usize) {
 
 /// Bell at the right end of the navigation bar: red count (grey when paused),
 /// bounce when the count grows, a small ring; in do not disturb a grey bell
-/// with a moon. Returns whether it was clicked and its rectangle.
+/// with a moon. Returns its response: a click opens the center, a right
+/// click turns do not disturb on or off (#491).
 /// In an island of the Aurora bars (`island`): a slot of the island, the
 /// ringing bell while something waits, and the count in the violet of the
 /// Conversations button's (one counter for both, grey while paused).
@@ -226,7 +227,7 @@ pub fn bell(
     open: bool,
     dnd: bool,
     island: bool,
-) -> (bool, Rect) {
+) -> egui::Response {
     let now = ui.input(|i| i.time);
     let size = if island {
         Vec2::splat(super::bars::islands::SLOT)
@@ -287,7 +288,7 @@ pub fn bell(
     } else {
         aurora_i18n::tr!("notifications-unread-count", count = unread)
     };
-    (resp.on_hover_text(tip).clicked(), rect)
+    resp.on_hover_text(super::notifications::bell_tip(tip, dnd))
 }
 
 /// What a click in the center asks the app for, besides answering a card.

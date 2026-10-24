@@ -218,15 +218,20 @@ pub fn top(
     let bell_slot = Rect::from_center_size(bell_rect.center(), Vec2::splat(SLOT));
     area(&ctx, p, "bell", bell_rect, |ui| {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bell_slot));
-        let (clicked, rect) = if bell.aurora {
+        let resp = if bell.aurora {
             crate::ui::notification_center::bell(&mut child, p, icons, &notif.center, bell.unread, notif.open, bell.dnd, true)
         } else {
-            crate::ui::notifications::bell(&mut child, p, icons, bell.unread, notif.open, true)
+            crate::ui::notifications::bell(&mut child, p, icons, bell.unread, notif.open, bell.dnd, true)
         };
+        let rect = resp.rect;
         notif.anchor = Some(Pos2::new(rect.left(), bell_rect.bottom()));
         notif.bell = Some(Rect::from_min_max(rect.min, Pos2::new(rect.right(), bell_rect.bottom())));
-        if clicked {
+        if resp.clicked() {
             notif.open = !notif.open;
+        }
+        // do not disturb on or off (#491), as the status selector does
+        if resp.secondary_clicked() {
+            action = BarAction::SetStatus(crate::ui::notifications::bell_dnd_toggled(st.status));
         }
     });
     let (audio_action, readouts_hovered) = area(&ctx, p, "system", sys_rect, |ui| {
