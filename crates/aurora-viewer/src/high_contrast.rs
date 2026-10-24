@@ -1,4 +1,4 @@
-//! High contrast (Preferences › Accessibility › Contrast, #906): for poor
+//! High contrast (Preferences › Accessibility › Vision, #906): for poor
 //! vision, the interface's palette is replaced by a sober one of opaque
 //! black surfaces, white text and one light violet accent, whatever the
 //! skin's colours. The Legacy Viewer has no such option; this is Aurora's
