@@ -153,8 +153,21 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     }
     // (the current match's marker starts under the day)
     super::find::note_message(ui, ui.cursor().top(), None);
-    if line.kind == ChatKind::System {
+    let compact = super::object_row::compact_in(line, env);
+    if line.kind == ChatKind::System && !compact {
         system_pill(ui, env, line, mark);
+        return;
+    }
+    if compact {
+        // the cube under the senders' pictures, the name where the bubbles start
+        let inset = ui.spacing().item_spacing.x;
+        let place = super::object_row::Place {
+            icon_center: inset + PIC * 0.5,
+            text_left: inset + PIC + PIC_GAP,
+            time_column: None,
+        };
+        ui.add_space(if look.first { inset } else { 2.0 });
+        super::object_row::draw(ui, env, line, mark, place, true);
         return;
     }
     if let ChatKind::Invite(invite) = line.kind {
@@ -454,6 +467,8 @@ mod tests {
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",
                     plain_history: false,
+                    compact_automated: false,
+                    compact_notices: false,
                     menu: None,
                     bubbles: Some(true),
                     previews: None,

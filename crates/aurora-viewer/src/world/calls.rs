@@ -335,18 +335,7 @@ impl World {
     /// A line in the call's conversation (the notices Firestorm echoes to
     /// the IM window, LLVoiceChannelGroup::handleError).
     fn call_note(&mut self, conversation: Uuid, text: String) {
-        self.conversation_push(
-            conversation,
-            ChatLine {
-                time: SystemTime::now(),
-                from: String::new(),
-                text,
-                kind: ChatKind::System,
-                source: Uuid::nil(),
-                origin: Origin::Live,
-            },
-            false,
-        );
+        self.conversation_notice(conversation, text, super::notice_topics::Topic::Call);
     }
 
     /// "Only friends and groups can call or IM me" (VoiceCallsFriendsOnly):

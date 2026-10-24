@@ -67,7 +67,7 @@ impl World {
             } else {
                 aurora_i18n::tr!("world-region-alerts-scripts-dropped", old = old, new = new, diff = diff)
             };
-            self.system_message(text);
+            self.system_notice(text, crate::world::notice_topics::Topic::Region);
         }
     }
 

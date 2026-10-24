@@ -21,6 +21,23 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-chat-channel-hint"),
                     &field!(show_chat_channel),
                 );
+                // #475: objects' lines like the notices, off (not in the
+                // Legacy Viewer)
+                cx.toggle(
+                    tr!("ui-options-compact-automated-chat"),
+                    tr!("ui-options-compact-automated-chat-hint"),
+                    &field!(compact_automated_chat),
+                );
+                // the conversations' system lines too, off (greyed without
+                // the option)
+                let off = !cx.s.compact_automated_chat;
+                cx.subs(off, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-compact-im-system-lines"),
+                        tr!("ui-options-compact-im-system-lines-hint"),
+                        &field!(compact_im_system_lines),
+                    );
+                });
                 cx.toggle(
                     tr!("ui-options-chat-keep-focus"),
                     tr!("ui-options-chat-keep-focus-hint"),

@@ -247,7 +247,7 @@ impl App {
             },
             Command::ClearChat => {
                 self.world.clear_nearby_chat();
-                self.world.chat_unread = 0;
+                self.world.nearby_read();
             }
             Command::CopyCamera => {
                 // Focus 1 m ahead of the camera; Aurora's camera has no roll.

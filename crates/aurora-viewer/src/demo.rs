@@ -117,6 +117,10 @@ pub mod link;
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
 pub mod notifs;
+/// What objects say in the nearby chat among residents, as compact rows or
+/// not (AURORA_DEMO_OBJECT_CHAT).
+#[path = "demo_object_chat.rs"]
+pub mod object_chat;
 /// Objects' messages from near and far, filtered (AURORA_DEMO_OBJECT_IM).
 #[path = "demo_object_im.rs"]
 pub mod object_im;
@@ -4942,6 +4946,9 @@ pub fn events() -> Vec<NetEvent> {
     }
     if chat_lines_scenario().is_some() {
         ev.extend(chat_lines_events());
+    }
+    if object_chat::scene().is_some() {
+        ev.extend(object_chat::events(agent));
     }
     if let Some(scene) = aurora_scenario() {
         ev.extend(aurora_events(&scene));
