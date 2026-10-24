@@ -895,6 +895,7 @@ impl World {
         if show_progress {
             self.ui_sounds.push(UiSound::TeleportOut);
         }
+        self.get_off_for_teleport();
         // teleportCore: gObjectList.resetDerenderList()
         self.clear_temporary_derenders();
     }
@@ -4240,24 +4241,66 @@ impl World {
         }
         let mut ours = false;
         for i in seated {
-            let pose = crate::scene::Scene::object_transform_unshifted(self, i, now);
-            let Some(o) = self.objects.get(i) else {
-                continue;
-            };
-            let (agent, region) = (o.full_id == self.agent_id, o.key.region);
-            if agent {
-                // (while the seat is still known)
-                self.on_seat_parent_change(region, 0);
-                ours = true;
-            }
-            let origin = self.region_offset(region);
-            self.objects.detach(i);
-            if let (Some((pos, rot, _)), Some(origin), Some(o)) = (pose, origin, self.objects.get_mut(i)) {
-                o.position = pos - origin;
-                o.rotation = rot;
-            }
+            ours |= self.get_off(i, now);
         }
         ours
+    }
+
+    /// LLVOAvatar::getOffObject (indra/newview/llvoavatar.cpp, LGPL 2.1) of
+    /// the avatar at `i`: unparented where it is drawn, our own seat's
+    /// motions stopped while the seat is still known. True when it is ours.
+    fn get_off(&mut self, i: usize, now: Instant) -> bool {
+        let pose = crate::scene::Scene::object_transform_unshifted(self, i, now);
+        let Some(o) = self.objects.get(i) else {
+            return false;
+        };
+        let (ours, region) = (o.full_id == self.agent_id, o.key.region);
+        if ours {
+            self.on_seat_parent_change(region, 0);
+        }
+        let origin = self.region_offset(region);
+        self.objects.detach(i);
+        if let (Some((pos, rot, _)), Some(origin), Some(o)) = (pose, origin, self.objects.get_mut(i)) {
+            o.position = pos - origin;
+            o.rotation = rot;
+        }
+        ours
+    }
+
+    /// LLAgent::teleportCore (indra/newview/llagent.cpp, LGPL 2.1): "force
+    /// stand up and stop a sitting animation (if any), see MAINT-3969".
+    /// Every teleport we ask for gets our avatar off its seat here: the
+    /// simulator unseats it, but its later updates may be terse ones, which
+    /// carry no parent, and the old seat would hold the avatar seated after
+    /// the arrival. The seat's scripted camera lets go
+    /// (LLFollowCamMgr::setCameraActive) and the agent stands where it was
+    /// drawn. A sit on the ground has no parent and stays to the simulator.
+    fn get_off_for_teleport(&mut self) {
+        let Some(i) = self.objects.index_of_uuid(&self.agent_id) else {
+            return;
+        };
+        let Some(seat) = self
+            .objects
+            .get(i)
+            .filter(|o| o.is_avatar() && o.parent_id != 0)
+            .and_then(|o| self.objects.parent_of(o))
+        else {
+            return;
+        };
+        let mut root = seat;
+        while let Some(parent) = self.objects.get(root).and_then(|o| self.objects.parent_of(o)) {
+            root = parent;
+        }
+        self.release_linkset_camera(root, false);
+        self.get_off(i, Instant::now());
+        let pos = self
+            .objects
+            .get(i)
+            .and_then(|o| Some(o.position + self.region_offset(o.key.region)?));
+        if let Some(pos) = pos {
+            self.agent.get_off(pos);
+        }
+        log::info!("teleport: our avatar gets off its seat (teleportCore)");
     }
 
     /// Port of LLVOAvatar::getOffObject / LLVOAvatarSelf::stopMotionFromSource
@@ -4843,6 +4886,85 @@ mod motion_tests {
             objects: vec![avatar],
         });
         assert_eq!(world.animation_stops, vec![id]);
+    }
+
+    /// Seated on the fixture's seat with one of its motions playing and its
+    /// scripted camera on; the teleport of `remote` kind starts, then the
+    /// simulator's next update of us is a terse one (no parent).
+    fn teleport_from_seat(remote: bool) -> (World, Uuid) {
+        let (mut world, avatar, handle, root, _) = seated_fixture();
+        let motion = Uuid::from_u128(73);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(motion, 1)],
+            sources: vec![root],
+        });
+        camera_source(&mut world, handle, root, true);
+        assert!(world.agent.seated && world.scripted_camera.has_active());
+        world.begin_teleport(remote);
+        let idx = world.objects.index_of_uuid(&world.agent_id).expect("avatar exists");
+        let o = world.objects.get(idx).expect("avatar exists");
+        assert_eq!(o.parent_id, 0, "off the seat before the request leaves (teleportCore)");
+        assert!(!world.agent.seated && !world.agent.is_sitting());
+        assert!(!world.scripted_camera.has_active(), "the seat's camera lets go");
+        assert_eq!(world.animation_stops, vec![motion], "the seat's motion is stopped");
+        world.apply(NetEvent::TerseUpdates {
+            handle,
+            updates: vec![TerseUpdate {
+                local_id: avatar.local_id,
+                state: 0,
+                is_avatar: true,
+                foot_plane: None,
+                position: Vec3::new(40.0, 50.0, 30.0),
+                velocity: Vec3::ZERO,
+                acceleration: Vec3::ZERO,
+                rotation: glam::Quat::IDENTITY,
+                angular_velocity: Vec3::ZERO,
+                texture_entry: None,
+            }],
+        });
+        (world, root)
+    }
+
+    #[test]
+    fn a_local_teleport_from_a_seat_arrives_standing() {
+        let (mut world, _) = teleport_from_seat(false);
+        let handle = world.main_region.expect("region");
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: Vec3::new(40.0, 50.0, 30.0),
+            look_at: Vec3::X,
+        });
+        let idx = world.objects.index_of_uuid(&world.agent_id).expect("avatar exists");
+        let o = world.objects.get(idx).expect("avatar exists");
+        assert_eq!((o.parent_id, o.position), (0, Vec3::new(40.0, 50.0, 30.0)));
+        assert!(!world.agent.is_sitting());
+        assert_eq!(world.agent.position, Vec3::new(40.0, 50.0, 30.0));
+    }
+
+    #[test]
+    fn a_teleport_to_another_region_from_a_seat_leaves_it_too() {
+        let (world, root) = teleport_from_seat(true);
+        // the seat stays behind with nothing on it
+        let seat = world.objects.index_of_uuid(&root).expect("seat stays");
+        let key = world.objects.get(seat).expect("seat").key;
+        assert!(
+            world
+                .objects
+                .children_of(&key)
+                .iter()
+                .all(|&c| world.objects.get(c).is_some_and(|o| !o.is_avatar()))
+        );
+        assert!(!world.agent.is_sitting());
+    }
+
+    #[test]
+    fn a_teleport_while_standing_changes_nothing_of_the_seat_state() {
+        let (mut world, _) = teleport_fixture();
+        let before = world.agent.position;
+        world.begin_teleport(false);
+        assert!(world.animation_stops.is_empty() && !world.agent.is_sitting());
+        assert_eq!(world.agent.position, before);
     }
 
     #[test]

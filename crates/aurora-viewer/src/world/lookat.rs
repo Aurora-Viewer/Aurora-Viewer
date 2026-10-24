@@ -134,6 +134,41 @@ pub const HEAD_RANGE: std::ops::RangeInclusive<f32> = 0.0..=120.0;
 /// FSStaticEyesUUID: the priority 2 animation that holds the eyes still.
 pub const STATIC_EYES: Uuid = uuid::uuid!("592a9fb4-5e02-77bb-e1e5-da4d17d27336");
 
+/// What the simulator was asked about `STATIC_EYES` (update_static_eyes in
+/// llstartup.cpp and its setting's listener in llviewercontrol.cpp). The
+/// animation is the simulator's: a teleport or a crossing lands in a
+/// simulator that does not play it, so every arrival asks again
+/// (gAgent.addRegionChangedCallback(update_static_eyes)), local teleports
+/// too, which may unseat the avatar and reset its animations.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct StaticEyes {
+    sent: Option<bool>,
+}
+
+impl StaticEyes {
+    /// The request to send for the setting `want` (true: start, false:
+    /// stop), if any. Nothing is sent to stop what was never started.
+    pub fn request(&mut self, want: bool) -> Option<bool> {
+        match self.sent {
+            Some(sent) if sent == want => None,
+            None if !want => {
+                self.sent = Some(false);
+                None
+            }
+            _ => {
+                self.sent = Some(want);
+                Some(want)
+            }
+        }
+    }
+
+    /// An arrival (login, teleport, crossing): the simulator plays nothing
+    /// of ours any more.
+    pub fn on_arrival(&mut self) {
+        self.sent = None;
+    }
+}
+
 impl Settings {
     pub fn sanitized(mut self) -> Settings {
         let clamp = |v: f32, r: &std::ops::RangeInclusive<f32>, d: f32| if v.is_finite() { v.clamp(*r.start(), *r.end()) } else { d };
@@ -410,6 +445,25 @@ impl LookAts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn static_eyes_are_asked_again_after_every_arrival() {
+        let mut eyes = StaticEyes::default();
+        // the setting off: nothing to stop
+        assert_eq!(eyes.request(false), None);
+        // on: started once
+        assert_eq!(eyes.request(true), Some(true));
+        assert_eq!(eyes.request(true), None);
+        // a teleport (seated or not) or a crossing: the new simulator does
+        // not play it, so it is asked again while the setting stays on
+        eyes.on_arrival();
+        assert_eq!(eyes.request(true), Some(true));
+        assert_eq!(eyes.request(true), None);
+        // turned off: stopped once; an arrival with it off sends nothing
+        assert_eq!(eyes.request(false), Some(false));
+        eyes.on_arrival();
+        assert_eq!(eyes.request(false), None);
+    }
 
     #[test]
     fn priorities_and_timeouts() {
