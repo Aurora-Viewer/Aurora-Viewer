@@ -22,7 +22,11 @@ A dedicated thread validates, normalizes and encodes the latest snapshot;
 `app/blender_live.rs` maintains private objects in `world::objects::PREVIEW_REGION`.
 Rigged sources remain render-only attachments under our avatar. Static sources
 use ordinary normalized mesh geometry, with stable source/batch UUIDs and one
-editable local linkset per Blender source. `blender_live/objects.rs` owns their
+editable local linkset per independent Blender source. Negotiated `object-links`
+retains distinct parented static sources with one root and metre-based offsets;
+`blender_live/links.rs` owns hierarchy placement, reparenting, family bounds and
+parent resolution. Nested Blender parenting is flattened to a single mesh root.
+Each child remains editable through the ordinary linked-object build tools. `blender_live/objects.rs` owns their
 session placement, scale multipliers, world-origin rebasing, body/HUD attachment
 and derez state. Local tool commands are consumed before network/demo dispatch;
 right-click opens the selected source's Blender Live controls. These objects

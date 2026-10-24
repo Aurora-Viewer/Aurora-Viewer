@@ -268,14 +268,22 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                         let import_label = aurora_i18n::tr!("blender-live-upload");
                         let import_width = widgets::action_button_fit(ui, "file-upload-filled", import_label);
                         let name_width = (ui.available_width() - import_width - ui.spacing().item_spacing.x).max(1.0);
+                        let name = if let Some(link) = source.link {
+                            let root = sources.iter().find(|s| s.id == link.parent).map_or("", |s| s.name.as_str());
+                            aurora_i18n::tr!("blender-object-child", name = source.name.as_str(), root = root)
+                        } else if sources.iter().any(|s| s.link.is_some_and(|link| link.parent == source.id)) {
+                            aurora_i18n::tr!("blender-object-root", name = source.name.as_str())
+                        } else {
+                            source.name.clone()
+                        };
                         if ui
                             .add_sized(
                                 Vec2::new(name_width, 26.0),
                                 egui::Button::selectable(live.selected == Some(source.id), "")
-                                    .left_text(&source.name)
+                                    .left_text(&name)
                                     .truncate(),
                             )
-                            .on_hover_text(&source.name)
+                            .on_hover_text(&name)
                             .clicked()
                         {
                             live.selected = Some(source.id);
@@ -319,9 +327,21 @@ fn object_controls(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette
     };
     ui.add_space(8.0);
     ui.label(&source.name);
-    let attached = matches!(placement.location, Location::Attachment(_));
-    let present = placement.location != Location::Detached;
-    let status = match placement.location {
+    if let Some(link) = source.link {
+        let root = live
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.sources.iter().find(|s| s.id == link.parent))
+            .map_or("", |s| s.name.as_str());
+        ui.weak(aurora_i18n::tr!("blender-object-child-frame", root = root));
+    }
+    let location = live
+        .placements
+        .get(&live.linked_root(source.id))
+        .map_or(placement.location, |p| p.location);
+    let attached = matches!(location, Location::Attachment(_));
+    let present = live.source_present(source.id);
+    let status = match location {
         Location::World => aurora_i18n::tr!("blender-object-world").to_owned(),
         Location::Detached => aurora_i18n::tr!("blender-object-detached").to_owned(),
         Location::Attachment(point) => live
@@ -405,7 +425,8 @@ fn object_controls(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette
         });
         if changed {
             let mut position = Vec3::from_array(position);
-            if let Location::Attachment(point) = placement.location
+            if placement.parent.is_none()
+                && let Location::Attachment(point) = placement.location
                 && live.attach_choices.iter().any(|choice| choice.0 == point && !choice.1)
             {
                 position = position.clamp_length_max(crate::build::MAX_ATTACHMENT_DIST);

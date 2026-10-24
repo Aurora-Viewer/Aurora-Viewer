@@ -6,6 +6,7 @@ mod addon;
 mod demo;
 pub(crate) mod import;
 mod installer;
+mod links;
 pub mod objects;
 pub mod protocol;
 pub(crate) mod shape;
@@ -204,10 +205,11 @@ impl Live {
         snapshot.sources.retain(|s| self.state(s.id) == SourceState::Visible);
         snapshot.meshes.retain(|m| {
             self.state(m.source) == SourceState::Visible
+                && self.state(self.linked_root(m.source)) == SourceState::Visible
                 && (m.skin.is_some()
                     || self
                         .placements
-                        .get(&m.source)
+                        .get(&self.linked_root(m.source))
                         .is_none_or(|p| p.location != objects::Location::Detached))
         });
         snapshot.triangles = snapshot

@@ -4,6 +4,7 @@ import json
 import sys
 import unittest
 import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,45 @@ from aurora_live import exporter
 
 
 class ExporterTests(unittest.TestCase):
+    def test_parented_static_sources_keep_separate_meshes_root_and_relative_origins(self):
+        from aurora_live.client import wire_snapshot
+        self.mesh.modifiers.clear()
+        self.mesh.parent = None
+        self.mesh.location = (20, 30, 40)
+        self.mesh.rotation_euler.z = 0.5
+        self.mesh.scale = (2, 1, 3)
+        child = self.mesh.copy()
+        child.data = self.mesh.data.copy()
+        bpy.context.collection.objects.link(child)
+        child.parent = self.mesh
+        child.location = (1, 2, -1)
+        grandchild = child.copy()
+        grandchild.data = child.data.copy()
+        bpy.context.collection.objects.link(grandchild)
+        grandchild.parent = child
+        grandchild.location = (2, 1, 0)
+        bpy.context.view_layer.update()
+        ids = {obj.as_pointer(): str(uuid.uuid4()) for obj in (self.mesh, child, grandchild)}
+        value = exporter.snapshot([grandchild, child, self.mesh], set(), 1, source_ids=ids)
+        self.assertEqual(len(value["meshes"]), 3)
+        self.assertNotIn("link", value["meshes"][2])
+        for obj, mesh in zip((grandchild, child), value["meshes"]):
+            self.assertEqual(mesh["source_id"], ids[obj.as_pointer()])
+            self.assertEqual(mesh["link"]["parent"], ids[self.mesh.as_pointer()])
+            expected = obj.matrix_world.translation - self.mesh.matrix_world.translation
+            self.assertLess((Vector(mesh["link"]["offset"]) - expected).length, 1e-5)
+        with self.assertRaisesRegex(ValueError, "linked objects"):
+            wire_snapshot(value, ["source-ids", "static-meshes"])
+        self.assertEqual(wire_snapshot(value, ["source-ids", "static-meshes", "object-links"]), value)
+        # A paused or unselected parent is not a dangling wire reference.
+        single = exporter.snapshot([child], set(), 2, source_ids=ids)
+        self.assertNotIn("link", single["meshes"][0])
+        bpy.context.scene.unit_settings.scale_length = 0.1
+        scaled = exporter.snapshot([child, self.mesh], set(), 3, forward="NEGATIVE_Y", source_ids=ids)
+        expected = exporter.coordinate_basis(None, "NEGATIVE_Y").to_3x3() @ (child.matrix_world.translation - self.mesh.matrix_world.translation) * 0.1
+        self.assertLess((Vector(scaled["meshes"][0]["link"]["offset"]) - expected).length, 1e-5)
+        bpy.context.scene.unit_settings.scale_length = 1
+
     def test_static_mesh_evaluates_modifiers_without_weights_and_ignores_scene_translation(self):
         self.mesh.modifiers.clear()
         self.mesh.vertex_groups.clear()

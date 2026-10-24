@@ -11178,3 +11178,8 @@ inventory-menu-editor-open = Ouvrir / Téléporter
 inventory-menu-editor-gesture = Activer / Désactiver le geste
 inventory-menu-editor-protect = Verrouiller / Déverrouiller le dossier
 inventory-menu-editor-detach = Enlever / Détacher
+
+blender-live-invalid-link = Parentage d’objet live invalide.
+blender-object-root = { $name } (root)
+blender-object-child = { $name } — lié à { $root }
+blender-object-child-frame = Position et rotation relatives au root : { $root }

@@ -15,6 +15,18 @@ from aurora_live import starter, tracking
 
 
 class TrackingTests(unittest.TestCase):
+    def test_ancestor_changes_schedule_an_automatic_static_update(self):
+        self.other.modifiers.clear()
+        parent = bpy.data.objects.new("Static parent", None)
+        bpy.context.collection.objects.link(parent)
+        self.other.parent = parent
+        tracking.add(bpy.context.scene, [self.other])
+        with patch.object(aurora_live, "_client", self.fake):
+            self.tick()
+            aurora_live._dirty = False
+            aurora_live._changed(bpy.context.scene, SimpleNamespace(updates=[SimpleNamespace(id=SimpleNamespace(original=parent))]))
+            self.assertTrue(aurora_live._dirty)
+
     def test_connect_bootstraps_a_static_selection_and_sends_it(self):
         bpy.context.scene.aurora_live.objects.clear()
         self.other.modifiers.clear()

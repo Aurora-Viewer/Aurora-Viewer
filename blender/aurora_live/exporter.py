@@ -208,6 +208,15 @@ def _mesh(source, supported, forward, rest_axes, capture, include_slots=False):
 
 
 def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, source_ids=None):
+    valid = []
+    for source in objects:
+        try:
+            if source.name in bpy.data.objects and source.type == "MESH":
+                valid.append(source)
+        except ReferenceError:
+            pass
+    objects = valid
+    static = {source.as_pointer(): source for source in objects if armature_for(source) is None}
     meshes = []
     capture = Capture()
     for source in objects:
@@ -219,6 +228,19 @@ def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, sourc
             mesh = _mesh(source, supported, forward, rest_axes or {}, capture)
             if source_ids and source.as_pointer() in source_ids:
                 mesh["source_id"] = source_ids[source.as_pointer()]
+                if source.as_pointer() in static:
+                    # SL linksets have one mesh root, even for nested Blender
+                    # parents. Keep distinct sources and their authored spacing.
+                    root, parent = None, source.parent
+                    while parent is not None:
+                        if parent.as_pointer() in static and parent.as_pointer() in source_ids:
+                            root = parent
+                        parent = parent.parent
+                    if root is not None:
+                        basis = coordinate_basis(None, "NATIVE" if forward == "AUTO" else forward)
+                        offset = basis.to_3x3() @ (source.matrix_world.translation - root.matrix_world.translation)
+                        mesh["link"] = {"parent": source_ids[root.as_pointer()],
+                                        "offset": list(offset * bpy.context.scene.unit_settings.scale_length)}
             meshes.append(mesh)
     if len(meshes) > 32:
         raise ValueError("Select at most 32 mesh objects")

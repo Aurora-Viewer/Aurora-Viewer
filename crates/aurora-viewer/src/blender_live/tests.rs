@@ -51,6 +51,8 @@ fn blender_live_static_sources_have_normalized_geometry_without_a_skin() {
     let mut live = Live::default();
     live.receive(prepared);
     let placement = objects::Placement {
+        parent: None,
+        offset: glam::Vec3::ZERO,
         location: objects::Location::Detached,
         position: glam::Vec3::ZERO,
         rotation: glam::Quat::IDENTITY,
@@ -95,6 +97,239 @@ fn blender_live_static_sources_reject_accidental_skin_data() {
 }
 fn prepare(value: &serde_json::Value) -> Result<protocol::Prepared, String> {
     protocol::prepare(&serde_json::to_vec(value).expect("JSON"), &supported())
+}
+
+fn linked_objects() -> serde_json::Value {
+    let mut value = static_triangle();
+    let mut child = value["meshes"][0].clone();
+    value["meshes"][0]["source_id"] = serde_json::json!(Uuid::from_u128(1));
+    value["meshes"][0]["name"] = "Parent mesh".into();
+    child["source_id"] = serde_json::json!(Uuid::from_u128(2));
+    child["name"] = "Child mesh".into();
+    child["link"] = serde_json::json!({"parent":Uuid::from_u128(1),"offset":[1.0,0.0,-1.0]});
+    child["faces"] = serde_json::json!(vec![child["faces"][0].clone(); 9]);
+    value["meshes"].as_array_mut().expect("meshes").insert(0, child);
+    value
+}
+
+#[test]
+fn blender_live_linked_sources_validate_parentage_and_install_roots_before_children() {
+    let value = linked_objects();
+    let snapshot = prepare(&value).expect("linked meshes");
+    assert_eq!(snapshot.sources.len(), 2);
+    assert_eq!(snapshot.meshes.len(), 3, "child batches remain one source");
+    assert_eq!(snapshot.sources[0].id, Uuid::from_u128(1));
+    assert_eq!(snapshot.sources[1].link.expect("child").parent, snapshot.sources[0].id);
+    assert_eq!(snapshot.meshes[0].source, snapshot.sources[0].id);
+    for parent in [Uuid::nil(), Uuid::from_u128(2), Uuid::from_u128(3)] {
+        let mut bad = value.clone();
+        bad["meshes"][0]["link"]["parent"] = serde_json::json!(parent);
+        assert!(prepare(&bad).is_err());
+    }
+    let mut cycle = value.clone();
+    cycle["meshes"][1]["link"] = serde_json::json!({"parent":Uuid::from_u128(2),"offset":[0,0,0]});
+    assert!(prepare(&cycle).is_err());
+    let mut excessive = value.clone();
+    excessive["meshes"][0]["link"]["offset"] = serde_json::json!([0, 0, 65537]);
+    assert!(prepare(&excessive).is_err());
+    let mut rigged = value;
+    rigged["meshes"][1] = triangle()["meshes"][0].clone();
+    rigged["meshes"][1]["source_id"] = serde_json::json!(Uuid::from_u128(1));
+    assert!(prepare(&rigged).is_err(), "rigged sources cannot be static roots");
+}
+
+#[test]
+fn blender_live_linked_meshes_are_individually_editable_and_follow_the_root() {
+    use crate::{
+        build::{BuildSettings, BuildTool},
+        scene::Scene,
+        world::World,
+    };
+    use glam::{Quat, Vec3};
+    let root = Uuid::from_u128(1);
+    let child = Uuid::from_u128(2);
+    let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    let avatar = world
+        .objects
+        .get(world.objects.index_of_uuid(&world.agent_id).expect("avatar"))
+        .expect("avatar")
+        .key;
+    let mut live = Live::default();
+    let mut value = linked_objects();
+    let snapshot = prepare(&value).expect("snapshot");
+    live.receive(snapshot.clone());
+    live.prepare_placements(&snapshot, &world);
+    assert_eq!(live.placements[&child].position, Vec3::new(1.0, 0.0, -1.0));
+    let mut roots = HashMap::new();
+    let mut parts = HashMap::<Uuid, usize>::new();
+    for (i, mesh) in snapshot.meshes.iter().enumerate() {
+        let part = parts.entry(mesh.source).or_default();
+        let p = live.placements[&mesh.source];
+        let mut object = crate::demo::hud::object(31, false);
+        object.full_id = Uuid::from_u128(100 + i as u128);
+        object.local_id = 1 + i as u32;
+        object.state = 0;
+        object.scale = p.size * p.scale;
+        object.position = if *part == 0 { p.position } else { Vec3::ZERO };
+        object.rotation = p.rotation;
+        object.update_flags |= crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_MODIFY;
+        let id = object.full_id;
+        let index = world
+            .objects
+            .upsert_preview(live.preview_parent(mesh.source, *part, false, avatar, &roots), object);
+        if *part == 0 {
+            roots.insert(mesh.source, world.objects.get(index).expect("object").key);
+        }
+        live.instances.insert((mesh.source, *part), id);
+        *part += 1;
+    }
+    let ri = world.objects.index_of(&roots[&root]).expect("root");
+    let ci = world.objects.index_of(&roots[&child]).expect("child");
+    assert_eq!(crate::build::root_of(&world, ci), ri);
+    let mut build = BuildTool::default();
+    let mut settings = BuildSettings::default();
+    build.click_select(&mut world, &settings, Some(ci), false);
+    assert_eq!(build.selection, [roots[&root]], "normal click selects the linked set root");
+    settings.edit_linked = true;
+    build.click_select(&mut world, &settings, Some(ci), false);
+    assert_eq!(build.selection, [roots[&child]]);
+    let now = std::time::Instant::now();
+    let initial = Scene::object_transform(&world, ci, now, 0).expect("child transform").0;
+    build.set_transform(&mut world, &settings, Some(initial + Vec3::Y), None, None, true);
+    live.capture_placements(&mut world);
+    assert!(live.placements[&child].position.abs_diff_eq(Vec3::new(1.0, 1.0, -1.0), 1e-5));
+    let root_placement = live.placements[&root];
+    live.place_object(
+        root,
+        objects::Action::Transform {
+            position: root_placement.position,
+            rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            scale: Vec3::splat(2.0),
+        },
+        &world,
+    );
+    live.apply_transform(root, &mut world);
+    let p = Scene::object_transform(&world, ci, now, 0).expect("rotated child").0;
+    assert!(p.abs_diff_eq(root_placement.position + Vec3::new(-2.0, 2.0, -2.0), 1e-4));
+    value["revision"] = 2.into();
+    value["meshes"][0]["name"] = "Renamed child".into();
+    let update = prepare(&value).expect("update");
+    live.receive(update.clone());
+    live.prepare_placements(&update, &world);
+    assert!(live.placements[&child].position.abs_diff_eq(Vec3::new(2.0, 2.0, -2.0), 1e-5));
+    live.place_object(child, objects::Action::Attach(31), &world);
+    assert_eq!(live.placements[&root].location, objects::Location::Attachment(31));
+    assert_eq!(live.preview_parent(root, 0, false, avatar, &roots), Some(avatar));
+    assert_eq!(live.preview_parent(child, 0, false, avatar, &roots), Some(roots[&root]));
+    live.place_object(child, objects::Action::Detach, &world);
+    assert!(live.visible_snapshot().expect("snapshot").meshes.is_empty());
+    live.receive(update.clone());
+    assert!(
+        live.visible_snapshot().expect("snapshot").meshes.is_empty(),
+        "a revision cannot rez a detached family"
+    );
+    live.place_object(child, objects::Action::Rez, &world);
+    assert_eq!(live.visible_snapshot().expect("snapshot").meshes.len(), 3);
+    live.set_state(root, SourceState::Hidden);
+    assert!(live.visible_snapshot().expect("snapshot").meshes.is_empty());
+}
+
+#[test]
+fn blender_live_unparenting_preserves_world_placement_and_drop_supports_the_complete_family() {
+    use glam::{Quat, Vec3};
+    let mut world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    let mut value = linked_objects();
+    let mut snapshot = prepare(&value).expect("snapshot");
+    // Unit cubes make the complete-family vertical bounds explicit.
+    for mesh in &mut snapshot.meshes {
+        mesh.size = Vec3::ONE;
+    }
+    let root = Uuid::from_u128(1);
+    let child = Uuid::from_u128(2);
+    let mut live = Live::default();
+    live.receive(snapshot.clone());
+    live.prepare_placements(&snapshot, &world);
+    assert!((live.floor_offset(root) - 1.5).abs() < 1e-5);
+    let p = live.placements[&root];
+    live.place_object(
+        root,
+        objects::Action::Transform {
+            position: p.position,
+            rotation: Quat::from_rotation_z(0.5),
+            scale: Vec3::splat(2.0),
+        },
+        &world,
+    );
+    assert!((live.floor_offset(root) - 3.0).abs() < 1e-5);
+    let root_before = live.placements[&root];
+    let child_before = live.placements[&child];
+    value["meshes"][0].as_object_mut().expect("mesh").remove("link");
+    let mut update = prepare(&value).expect("unparented");
+    for mesh in &mut update.meshes {
+        mesh.size = Vec3::ONE;
+    }
+    live.receive(update.clone());
+    live.prepare_placements(&update, &world);
+    let after = live.placements[&child];
+    assert_eq!(after.parent, None);
+    assert!(
+        after
+            .position
+            .abs_diff_eq(root_before.position + root_before.rotation * child_before.position, 1e-5)
+    );
+    assert!(after.rotation.abs_diff_eq(root_before.rotation * child_before.rotation, 1e-5));
+    assert_eq!(live.linked_root(child), child);
+    // Re-link, detach the family, then unparent while it is absent. Metadata
+    // updates must not revive either source, including hidden members.
+    let linked = prepare(&linked_objects()).expect("relinked");
+    live.receive(linked.clone());
+    live.prepare_placements(&linked, &world);
+    live.place_object(root, objects::Action::Detach, &world);
+    live.receive(update.clone());
+    live.prepare_placements(&update, &world);
+    assert!(live.visible_snapshot().expect("snapshot").meshes.is_empty());
+}
+
+#[test]
+fn blender_live_link_geometry_updates_keep_child_edits_and_compensate_root_center_changes() {
+    use glam::Vec3;
+    let world = crate::world::World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    let root = Uuid::from_u128(1);
+    let child = Uuid::from_u128(2);
+    let mut snapshot = prepare(&linked_objects()).expect("snapshot");
+    let mut live = Live::default();
+    live.receive(snapshot.clone());
+    live.prepare_placements(&snapshot, &world);
+    live.placements.get_mut(&child).expect("child").position += Vec3::Y * 2.0;
+    let before = live.placements[&root].position + live.placements[&child].position;
+    snapshot
+        .sources
+        .iter_mut()
+        .find(|s| s.id == child)
+        .expect("source")
+        .link
+        .as_mut()
+        .expect("link")
+        .offset[1] += 1.0;
+    for mesh in &mut snapshot.meshes {
+        mesh.center += if mesh.source == root { Vec3::Z } else { Vec3::X };
+    }
+    live.receive(snapshot.clone());
+    live.prepare_placements(&snapshot, &world);
+    let after = live.placements[&root].position + live.placements[&child].position;
+    assert!(after.abs_diff_eq(before + Vec3::X + Vec3::Y, 1e-5));
+    live.prepare_placements(&snapshot, &world);
+    assert_eq!(
+        live.placements[&root].position + live.placements[&child].position,
+        after,
+        "no idle drift"
+    );
 }
 
 #[test]
@@ -370,6 +605,8 @@ fn blender_live_static_controls_request_derez_rez_and_hud_attachment_for_the_sel
     live.placements.insert(
         source,
         objects::Placement {
+            parent: None,
+            offset: glam::Vec3::ZERO,
             location: objects::Location::World,
             position: glam::Vec3::ZERO,
             rotation: glam::Quat::IDENTITY,

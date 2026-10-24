@@ -107,8 +107,17 @@ impl App {
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
         self.blender_live.capture_placements(&mut self.world);
         if let Some((source, action)) = self.blender_live.object_action.take() {
+            let source = if matches!(
+                action,
+                crate::blender_live::objects::Action::Transform { .. } | crate::blender_live::objects::Action::Edit
+            ) {
+                source
+            } else {
+                self.blender_live.linked_root(source)
+            };
             if matches!(action, crate::blender_live::objects::Action::Edit) {
                 if let Some(idx) = self.blender_live.root(source).and_then(|id| self.world.objects.index_of_uuid(&id)) {
+                    self.settings.build.edit_linked = self.blender_live.linked_root(source) != source;
                     self.build.open_build(crate::build::Tool::Edit);
                     self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
                     self.flush_build();
@@ -125,14 +134,14 @@ impl App {
                         position.z.max(self.world.agent.position.z)
                     });
                 self.blender_live.place_object(source, action, &self.world);
+                let floor_offset = self.blender_live.floor_offset(source);
                 if matches!(
                     action,
                     crate::blender_live::objects::Action::Rez | crate::blender_live::objects::Action::Drop
                 ) && let Some(placement) = self.blender_live.placements.get_mut(&source)
                     && let Some(floor) = self.scene.preview_floor(&self.world, placement.position, ceiling)
                 {
-                    placement.position.z =
-                        floor + (glam::Mat3::from_quat(placement.rotation).abs() * (placement.size * placement.scale)).z * 0.5;
+                    placement.position.z = floor + floor_offset;
                 }
                 if matches!(action, crate::blender_live::objects::Action::Transform { .. }) {
                     self.blender_live.apply_transform(source, &mut self.world);
@@ -201,7 +210,7 @@ impl App {
                 self.demo_blender_shape(mode == "shape-readonly");
             }
             let fixture = if mode.starts_with("static") {
-                crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig)
+                crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig, mode.starts_with("static-linked"))
             } else {
                 crate::blender_live::demo_fixture(&self.world.avatar_lib.rig, mode != "1")
             };
@@ -244,18 +253,33 @@ impl App {
             && let Some(source) = self.blender_live.selected
         {
             use crate::blender_live::objects::Action;
+            let source = if mode == "static-linked-child" {
+                self.blender_live
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.sources.iter().find(|s| s.link.is_some()))
+                    .map_or(source, |s| s.id)
+            } else {
+                source
+            };
+            self.blender_live.selected = Some(source);
             let action = match mode.as_str() {
-                "static-hud" => Action::Attach(31),
-                "static-attached" => Action::Attach(6),
-                "static-detached" => Action::Detach,
+                "static-hud" | "static-linked-hud" => Action::Attach(31),
+                "static-attached" | "static-linked-attached" => Action::Attach(6),
+                "static-detached" | "static-linked-detached" => Action::Detach,
                 _ => Action::Edit,
             };
-            if mode == "static"
+            if matches!(mode.as_str(), "static" | "static-linked" | "static-linked-child")
                 && let Some(placement) = self.blender_live.placements.get(&source)
             {
+                let position = if let Some(parent) = placement.parent.and_then(|id| self.blender_live.placements.get(&id)) {
+                    parent.position + parent.rotation * placement.position
+                } else {
+                    placement.position
+                };
                 self.camera.set_view(
-                    placement.position + Vec3::new(3.0, -3.0, 2.0),
-                    placement.position,
+                    position + Vec3::new(3.0, -3.0, 2.0),
+                    position,
                     &mut self.world.agent,
                     &self.settings.camera,
                 );
@@ -279,7 +303,7 @@ impl App {
         if let Some(snapshot) = self.blender_live.snapshot.as_ref()
             && (Some(snapshot.revision) != self.blender_live.revision || missing)
             && self.world.objects.index_of_uuid(&self.world.agent_id).is_some()
-            && let Some(snapshot) = self.blender_live.visible_snapshot()
+            && let Some(snapshot) = self.blender_live.snapshot.clone()
         {
             self.install_blender_snapshot(snapshot, renderer);
         }
@@ -320,6 +344,27 @@ impl App {
     }
 
     fn install_blender_snapshot(&mut self, snapshot: Prepared, renderer: &mut aurora_render::Renderer) {
+        // Hidden and derezzed sources also retain their current hierarchy.
+        let initial: Vec<_> = snapshot
+            .sources
+            .iter()
+            .filter(|source| !source.rigged() && source.link.is_none() && !self.blender_live.placements.contains_key(&source.id))
+            .map(|source| source.id)
+            .collect();
+        self.blender_live.prepare_placements(&snapshot, &self.world);
+        for source in initial {
+            let offset = self.blender_live.floor_offset(source);
+            if let Some(placement) = self.blender_live.placements.get_mut(&source)
+                && let Some(floor) = self
+                    .scene
+                    .preview_floor(&self.world, placement.position, self.world.agent.position.z)
+            {
+                placement.position.z = floor + offset;
+            }
+        }
+        let Some(snapshot) = self.blender_live.visible_snapshot() else {
+            return;
+        };
         if !self.scene.install_preview_images(&snapshot.images, renderer) {
             return;
         }
@@ -348,19 +393,7 @@ impl App {
             let key = (mesh.source, *part);
             *part += 1;
             let rigged = mesh.skin.is_some();
-            let initial = !self.blender_live.placements.contains_key(&mesh.source);
-            let placement = (!rigged).then(|| {
-                let mut placement = self.blender_live.update_bounds(mesh.source, mesh.size, mesh.center, &self.world);
-                if initial
-                    && let Some(floor) = self
-                        .scene
-                        .preview_floor(&self.world, placement.position, self.world.agent.position.z)
-                {
-                    placement.position.z = floor + mesh.size.z * 0.5;
-                    self.blender_live.placements.insert(mesh.source, placement);
-                }
-                placement
-            });
+            let placement = (!rigged).then(|| self.blender_live.placements[&mesh.source]);
             self.scene.install_preview_materials(mesh.id, &mesh.materials);
             let extra = ExtraParams {
                 render_materials: mesh
@@ -408,12 +441,7 @@ impl App {
                 crate::blender_live::objects::Location::Attachment(point) => Some(point),
                 _ => None,
             });
-            let root_parent = if rigged || attachment.is_some() { Some(parent) } else { None };
-            let object_parent = if rigged || key.1 == 0 {
-                root_parent
-            } else {
-                roots.get(&mesh.source).copied()
-            };
+            let object_parent = self.blender_live.preview_parent(mesh.source, key.1, rigged, parent, &roots);
             let position = placement.map_or(Vec3::ZERO, |p| if key.1 == 0 { p.position } else { Vec3::ZERO });
             let rotation = placement.map_or(Quat::IDENTITY, |p| if key.1 == 0 { p.rotation } else { Quat::IDENTITY });
             let update = ObjectUpdate {
@@ -424,7 +452,9 @@ impl App {
                 state: if rigged {
                     1
                 } else {
-                    attachment.filter(|_| key.1 == 0).unwrap_or(0)
+                    attachment
+                        .filter(|_| key.1 == 0 && placement.is_some_and(|p| p.parent.is_none()))
+                        .unwrap_or(0)
                 }
                 .rotate_left(4),
                 crc: 0,

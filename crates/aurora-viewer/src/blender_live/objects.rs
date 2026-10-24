@@ -199,6 +199,9 @@ mod tests {
 
 #[derive(Clone, Copy)]
 pub struct Placement {
+    /// Linked sources retain their own geometry and editable local transform.
+    pub parent: Option<Uuid>,
+    pub offset: Vec3,
     pub location: Location,
     pub position: Vec3,
     pub rotation: Quat,
@@ -242,14 +245,15 @@ impl Live {
         let mut resized = Vec::new();
         for (&source, placement) in &mut self.placements {
             if self.placement_dirty.contains(&source) {
-                if placement.location == Location::World {
+                if placement.parent.is_none() && placement.location == Location::World {
                     placement.position += shift;
                 }
                 continue;
             }
             let root = self.instances.get(&(source, 0)).and_then(|id| world.objects.index_of_uuid(id));
             if let Some(index) = root {
-                if placement.location == Location::World
+                if placement.parent.is_none()
+                    && placement.location == Location::World
                     && shift != Vec3::ZERO
                     && let Some(object) = world.objects.get_mut(index)
                 {
@@ -264,7 +268,7 @@ impl Live {
                     resized.push(source);
                 }
                 placement.scale = scale;
-            } else if placement.location == Location::World {
+            } else if placement.parent.is_none() && placement.location == Location::World {
                 placement.position += shift;
             }
         }
@@ -278,6 +282,8 @@ impl Live {
             let mut position = world.agent.position + world.agent.body_rotation() * Vec3::new(2.0, 0.0, 0.0);
             position.z = world.ground_height(position).unwrap_or(world.agent.position.z - 1.0) + size.z * 0.5;
             Placement {
+                parent: None,
+                offset: Vec3::ZERO,
                 location: Location::World,
                 position,
                 rotation: Quat::IDENTITY,
@@ -306,9 +312,10 @@ impl Live {
     pub fn apply_transform(&mut self, source: Uuid, world: &mut World) {
         let Some(placement) = self.placements.get(&source) else { return };
         for (&(id, part), object) in &self.instances {
-            if id != source {
+            if id != source && self.placements.get(&id).is_none_or(|p| p.parent != Some(source)) {
                 continue;
             }
+            let placement = self.placements.get(&id).unwrap_or(placement);
             if let Some(object) = world.objects.index_of_uuid(object).and_then(|idx| world.objects.get_mut(idx)) {
                 if part == 0 {
                     object.position = placement.position;
@@ -322,6 +329,25 @@ impl Live {
     }
 
     pub fn place_object(&mut self, source: Uuid, action: Action, world: &World) {
+        let source = if matches!(action, Action::Transform { .. } | Action::Edit) {
+            source
+        } else {
+            self.linked_root(source)
+        };
+        if let Action::Transform { scale, position, rotation } = action
+            && let Some(old) = self.placements.get(&source)
+            && scale.is_finite()
+            && scale.min_element() > 0.0
+            && position.is_finite()
+            && rotation.is_finite()
+            && rotation.length_squared() >= 1e-12
+        {
+            let ratio = scale / old.scale;
+            for child in self.placements.values_mut().filter(|p| p.parent == Some(source)) {
+                child.position *= ratio;
+                child.scale *= ratio;
+            }
+        }
         let Some(placement) = self.placements.get_mut(&source) else {
             return;
         };
@@ -338,9 +364,6 @@ impl Live {
                     placement.position = world.agent.position + world.agent.body_rotation() * Vec3::new(2.0, 0.0, 0.0);
                     placement.rotation = Quat::IDENTITY;
                 }
-                let dimensions = placement.size * placement.scale;
-                let rotated = glam::Mat3::from_quat(placement.rotation).abs() * dimensions;
-                placement.position.z = world.ground_height(placement.position).unwrap_or(world.agent.position.z - 1.0) + rotated.z * 0.5;
                 placement.location = Location::World;
                 self.states.insert(source, SourceState::Visible);
             }
@@ -368,6 +391,16 @@ impl Live {
                 placement.scale = scale;
             }
             Action::Edit => return,
+        }
+        if matches!(action, Action::Rez | Action::Drop) {
+            let offset = self.floor_offset(source);
+            if let Some(placement) = self.placements.get_mut(&source) {
+                placement.position.z = world.ground_height(placement.position).unwrap_or(world.agent.position.z - 1.0) + offset;
+            }
+        }
+        let location = self.placements[&source].location;
+        for child in self.placements.values_mut().filter(|p| p.parent == Some(source)) {
+            child.location = location;
         }
         self.placement_dirty.insert(source);
         self.revision = None;

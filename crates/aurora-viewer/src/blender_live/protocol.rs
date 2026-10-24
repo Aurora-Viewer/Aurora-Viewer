@@ -32,6 +32,8 @@ pub struct Mesh {
     pub name: String,
     #[serde(default)]
     pub source_id: Option<Uuid>,
+    #[serde(default)]
+    pub link: Option<Link>,
     pub joints: Vec<String>,
     /// Column-major inverse binds in metres, in SL's Z-up coordinate frame.
     pub inverse_bind: Vec<[f32; 16]>,
@@ -71,8 +73,18 @@ pub struct Prepared {
 pub struct PreparedSource {
     pub id: Uuid,
     pub name: String,
+    pub link: Option<Link>,
     /// Immutable import input, shared with a draft when Upload is selected.
     pub scene: Arc<Scene>,
+}
+
+/// Static object origins in the same baked coordinate frame as the vertices.
+/// Parentage is flattened to one root, matching LLSelectMgr's linkset family.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Link {
+    pub parent: Uuid,
+    pub offset: [f32; 3],
 }
 impl PreparedSource {
     pub fn rigged(&self) -> bool {
@@ -307,9 +319,26 @@ pub(super) fn prepare_snapshot(
         sources.push(PreparedSource {
             id: source,
             name: mesh.name,
+            link: mesh.link,
             scene: Arc::new(scene),
         });
     }
+    for source in &sources {
+        if let Some(link) = source.link
+            && (source.rigged()
+                || link.parent == source.id
+                || !Vec3::from_array(link.offset).is_finite()
+                || Vec3::from_array(link.offset).abs().max_element() > 65536.0
+                || !sources
+                    .iter()
+                    .any(|parent| parent.id == link.parent && parent.link.is_none() && !parent.rigged()))
+        {
+            return Err(aurora_i18n::tr!("blender-live-invalid-link").into());
+        }
+    }
+    // Parents are installed before children independently of Blender list order.
+    sources.sort_by_key(|source| source.link.is_some());
+    meshes.sort_by_key(|mesh| sources.iter().position(|source| source.id == mesh.source));
     Ok(Prepared {
         revision: snapshot.revision,
         meshes,

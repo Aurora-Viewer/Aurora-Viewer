@@ -7,15 +7,27 @@ and see the result without saving or uploading. The preview is local: other
 residents do not see it, and it does not create inventory items or charge an
 upload fee.
 
-## Static objects (plug-in 0.12.0)
+## Static objects (plug-in 0.13.0)
 
 Blender Live accepts rigged and non-rigged mesh selections, including a mixture
 in the same synchronization list. Connect with the selection or use **Add
 selected meshes**. A static mesh needs neither an armature nor vertex weights;
 shape keys, geometry modifiers, UVs and live materials still work. Geometry is
 expressed in metres, retaining authored rotation/scale and ignoring the object's
-Blender scene translation. An existing rig without valid weights remains an
+Blender scene translation; linked children retain their offsets from the root. An existing rig without valid weights remains an
 error rather than silently turning into a static object.
+
+Parented static meshes stay **separate objects in one linked set**. Add the
+parent and children to the synchronization list: the highest synchronized mesh
+parent is the **root**, and Aurora preserves each mesh's relative position,
+rotation and size. Nested parents are flattened to the same root, including
+intermediate empty objects. The source list identifies the root and names each
+child's root. Select the root to edit the set together, or select a child and
+click **Edit** to enable the normal **Edit linked** tools for that mesh. Rez,
+drop, derez, body/HUD attachment and detach apply to the complete set, even when
+requested from a child. Unparenting in Blender creates independent previews and
+preserves their current placement. Paused or absent parents are not referenced.
+This requires plug-in 0.13.0 and the viewer's `object-links` capability.
 
 Static objects initially appear on the floor two metres in front of your
 avatar. Select the source in Aurora's **Blender Live** window to **Edit**, **Drop
@@ -728,6 +740,15 @@ palette still requires valid positive weights. The optional
 synchronization entry, never a grid asset. The add-on sends it only when the
 viewer advertises `source-ids`; older viewers continue to receive v1 meshes
 without that field. Older add-ons work with name-based identity.
+The optional `object-links` feature adds `link: {parent, offset}` to a static
+mesh. `parent` is a synchronized, unskinned root source UUID; `offset` is the
+child origin minus root origin, in metres in the same baked coordinate frame
+as its vertices. Each source keeps its own geometry and identity. Roots have
+no link, and the exporter flattens nested parenting. Missing, cyclic, rigged,
+self and excessive-offset links are rejected before installation. The worker
+orders roots before children independently of the synchronization-list order.
+A peer without this feature receives a clear update error for linked scenes.
+
 A face contains
 linear RGBA `color`, `vertices` and triangle `indices`; a vertex has `position`,
 `normal`, `uv`, four `joints` indices and four `weights`. `meshes: []` removes

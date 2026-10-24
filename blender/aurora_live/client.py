@@ -14,6 +14,8 @@ MAX_REPLY = 8 * 1024 * 1024 + 4096
 def wire_snapshot(snapshot, features):
     if "static-meshes" not in features and any(mesh.get("joints") == [] for mesh in snapshot.get("meshes", [])):
         raise ValueError("Update Aurora Viewer to preview non-rigged meshes")
+    if not {"object-links", "source-ids"}.issubset(features) and any(mesh.get("link") for mesh in snapshot.get("meshes", [])):
+        raise ValueError("Update Aurora Viewer to preview linked objects")
     if "source-ids" in features or "meshes" not in snapshot:
         return snapshot
     # v1 peers without this optional capability reject unknown mesh fields.

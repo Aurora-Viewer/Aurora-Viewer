@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 12, 0), "blender": (2, 93, 0),
+    "version": (0, 13, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
@@ -48,6 +48,10 @@ def _changed(_scene, depsgraph):
     for obj in tracking.active(bpy.context.scene):
         try:
             watched.update((obj, obj.data))
+            parent = obj.parent
+            while parent:
+                watched.add(parent)
+                parent = parent.parent
             armature = obj.find_armature()
             if armature:
                 watched.update((armature, armature.data))
@@ -617,6 +621,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Missing object": "Objet manquant", "{enabled} / {total} enabled": "{enabled} / {total} actifs",
     "Add selected meshes to start syncing.": "Ajoutez la sélection pour commencer.",
     "Update Aurora Viewer to preview non-rigged meshes": "Mettez Aurora Viewer à jour pour prévisualiser les maillages non riggés",
+    "Update Aurora Viewer to preview linked objects": "Mettez Aurora Viewer à jour pour prévisualiser les objets liés",
     "Select one or more rigged meshes first": "Sélectionnez d’abord un ou plusieurs maillages riggés",
     "Update now": "Mettre à jour maintenant", "Aurora port": "Port Aurora",
     "Automatic updates": "Mise à jour automatique", "Interval (seconds)": "Intervalle (secondes)",
