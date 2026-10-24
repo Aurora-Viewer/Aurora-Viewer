@@ -23,13 +23,16 @@ mesh becomes the **root**; if the active object is rigged, the first static
 entry is used. Each mesh keeps its own geometry, materials, relative position,
 rotation and size. Rigged meshes stay outside these static linksets.
 
-In Blender's synchronization list, check the entries to operate on. **Group**
-groups the checked static entries, using the highlighted entry as root when it
-is checked. **Ungroup** makes checked entries independent. Highlight any member
-and click **Make root** to change the root of its complete linkset. These
-operations do not change Blender parents or object transforms. Removing or
-ungrouping a root promotes a remaining member. Groups survive save/load,
-renaming, list reordering and Undo/Redo.
+With plug-in **0.14.1+**, click a name in Blender's synchronization list to select
+it. **Ctrl-click** (Cmd-click on macOS) adds or removes individual entries;
+**Shift-click** selects a range in the displayed order. **Group** groups only
+the selected static entries, using the active selected entry as root.
+**Ungroup** on a selected root makes its entire linkset independent. On selected
+children, it detaches only those children and keeps the other members linked.
+Select any member and click **Make root** to change the root of its complete
+linkset. These operations do not change Blender parents or object transforms.
+Removing a root from the list promotes a remaining member. Groups survive
+save/load, renaming, list reordering and Undo/Redo.
 
 Existing entries without an explicit group still follow Blender parenting:
 the highest synchronized static mesh parent is the root, including through
@@ -158,11 +161,13 @@ existing entries and their enabled/paused state. You can prepare the list before
 connecting. If it is empty, **Connect to Aurora** adds the current mesh selection
 for convenience; an existing list is used independently of the current selection.
 
-Each row has a grouping-selection checkbox, a synchronization chain toggle and
-a remove button. Turning synchronization off removes the object from the
+Each row has a selectable name, a synchronization chain toggle and a remove
+button. Selected names are highlighted; the counter below the list shows the
+selection size. Turning synchronization off removes the object from the
 Aurora preview while retaining its list entry. Turning it back on sends its
-latest geometry, weights and materials. Grouping checkboxes only select entries
-for Group/Ungroup; they do not change the preview. The remove button
+latest geometry, weights and materials. Clicking a name only selects entries
+for the list actions; it does not change the preview or the scene's 3D selection.
+Paused entries can also be selected and grouped. The remove button
 removes the entry and its preview, preserving the Blender object. Disabling or
 removing every entry sends an empty preview. Add/remove and grouping support Undo/Redo.
 Renaming updates the displayed name and keeps the same object reference.

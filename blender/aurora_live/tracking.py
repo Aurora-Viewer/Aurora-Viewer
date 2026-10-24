@@ -25,7 +25,7 @@ def prune(scene):
     missing = [index for index, entry in enumerate(prefs.objects) if not valid(scene, entry.object)]
     for index in reversed(missing):
         prefs.objects.remove(index)
-    prefs.object_index = min(prefs.object_index, max(0, len(prefs.objects) - 1))
+    prefs.object_index = min(prefs.object_index, len(prefs.objects) - 1)
     repaired = normalize_groups(scene)
     if missing or repaired:
         changed()
@@ -131,6 +131,30 @@ def marked(scene):
     return [entry for entry in scene.aurora_live.objects if entry.marked and is_static(scene, entry.object)]
 
 
+def select_entry(scene, index, extend=False, range_select=False):
+    prefs = scene.aurora_live
+    if not 0 <= index < len(prefs.objects) or not valid(scene, prefs.objects[index].object):
+        return False
+    source_ids(scene)
+    if range_select:
+        order = [item[0] for item in rows(scene)]
+        anchor = next((i for i, entry in enumerate(prefs.objects) if entry.source_id == prefs.selection_anchor), index)
+        start, end = sorted((order.index(anchor), order.index(index)))
+        selected = set(order[start:end + 1])
+        for i, entry in enumerate(prefs.objects):
+            entry.marked = i in selected or (extend and entry.marked)
+    elif extend:
+        prefs.objects[index].marked = not prefs.objects[index].marked
+        prefs.selection_anchor = prefs.objects[index].source_id
+    else:
+        for i, entry in enumerate(prefs.objects):
+            entry.marked = i == index
+        prefs.selection_anchor = prefs.objects[index].source_id
+    prefs.object_index = index if prefs.objects[index].marked else next(
+        (i for i, entry in enumerate(prefs.objects) if entry.marked), -1)
+    return True
+
+
 def set_group(entries, root):
     group_id = str(uuid.uuid4()) if len(entries) > 1 else ""
     for entry in entries:
@@ -153,9 +177,16 @@ def regroup(scene, entries, root=None):
     return True
 
 
-def ungroup(scene, entries):
+def ungroup(scene, entries, whole_roots=False):
     selected = {entry.object.as_pointer() for entry in entries}
-    for family in families(scene):
+    current = families(scene)
+    if whole_roots:
+        for family in current:
+            if family[0].object.as_pointer() in selected:
+                selected.update(entry.object.as_pointer() for entry in family)
+        entries = [entry for entry in scene.aurora_live.objects if is_static(scene, entry.object)
+                   and entry.object.as_pointer() in selected]
+    for family in current:
         remaining = [entry for entry in family if entry.object.as_pointer() not in selected]
         if len(remaining) != len(family) and remaining:
             set_group(remaining, remaining[0])
@@ -189,6 +220,8 @@ def add(scene, objects, root=None):
                 prefs.object_index = index
         chosen = next((entry for entry in entries if entry.object == root), None)
         regroup(scene, entries, chosen)
+        source_ids(scene)
+        prefs.selection_anchor = prefs.objects[prefs.object_index].source_id
         changed()
     return added
 
@@ -203,8 +236,7 @@ class AURORA_PG_sync_object(bpy.types.PropertyGroup):
     group_id: StringProperty(options={"HIDDEN"})
     group_root: BoolProperty(default=False, options={"HIDDEN"})
     independent: BoolProperty(default=False, options={"HIDDEN"})
-    marked: BoolProperty(name="Select for grouping", default=False, options={"SKIP_SAVE"},
-                         description="Select this entry for Group and Ungroup")
+    marked: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
     name: StringProperty(get=lambda self: self.object.name if self.object else "")
     enabled: BoolProperty(name="Synchronize", default=True, update=changed,
                           description="Include this object in Aurora's live preview")
@@ -234,10 +266,28 @@ def focused(context):
     return None
 
 
+class AURORA_OT_pick(bpy.types.Operator):
+    bl_idname = "aurora.live_pick"
+    bl_label = "Select synchronized object"
+    bl_description = "Click to select; Ctrl-click to toggle; Shift-click to select a range"
+    bl_options = {"INTERNAL"}
+    index: IntProperty(default=0, min=0)
+    extend: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+    range_select: BoolProperty(default=False, options={"HIDDEN", "SKIP_SAVE"})
+
+    def invoke(self, context, event):
+        self.extend = event.ctrl or event.oskey
+        self.range_select = event.shift
+        return self.execute(context)
+
+    def execute(self, context):
+        return {"FINISHED"} if select_entry(context.scene, self.index, self.extend, self.range_select) else {"CANCELLED"}
+
+
 class AURORA_OT_group(bpy.types.Operator):
     bl_idname = "aurora.live_group"
     bl_label = "Group"
-    bl_description = "Group checked entries; the highlighted entry becomes the root"
+    bl_description = "Group selected entries; the active selected entry becomes the root"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -251,7 +301,7 @@ class AURORA_OT_group(bpy.types.Operator):
 class AURORA_OT_ungroup(bpy.types.Operator):
     bl_idname = "aurora.live_ungroup"
     bl_label = "Ungroup"
-    bl_description = "Make checked entries independent without changing Blender parenting"
+    bl_description = "Ungroup selected children, or the whole linkset when its root is selected"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -259,7 +309,7 @@ class AURORA_OT_ungroup(bpy.types.Operator):
         return bool(marked(context.scene))
 
     def execute(self, context):
-        ungroup(context.scene, marked(context.scene))
+        ungroup(context.scene, marked(context.scene), whole_roots=True)
         return {"FINISHED"}
 
 
@@ -295,7 +345,7 @@ class AURORA_OT_remove(bpy.types.Operator):
         if is_static(context.scene, entry.object):
             ungroup(context.scene, [entry])
         prefs.objects.remove(self.index)
-        prefs.object_index = min(prefs.object_index, max(0, len(prefs.objects) - 1))
+        prefs.object_index = min(prefs.object_index, len(prefs.objects) - 1)
         normalize_groups(context.scene)
         changed()
         return {"FINISHED"}
@@ -309,10 +359,9 @@ class AURORA_UL_sync_objects(bpy.types.UIList):
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index=0, flt_flag=0):
         row = layout.row(align=True)
-        row.prop(item, "marked", text="")
         row.prop(item, "enabled", text="", icon="LINKED" if item.enabled else "UNLINKED", emboss=False)
         label = row.row()
-        label.enabled = item.enabled
+        label.operator_context = "INVOKE_DEFAULT"
         if valid(context.scene, item.object):
             _index, _root, number, count = next(value for value in rows(context.scene) if value[0] == index)
             name = item.object.name
@@ -322,11 +371,14 @@ class AURORA_UL_sync_objects(bpy.types.UIList):
                 else:
                     label.label(text="", icon="BLANK1")
                     name = pgettext_iface("#{number} · {name}").format(number=number, name=name)
-            label.label(text=name, icon="OBJECT_ORIGIN" if count > 1 and number == 1 else "MESH_DATA", translate=False)
+            button = label.operator("aurora.live_pick", text=name,
+                                    icon="OBJECT_ORIGIN" if count > 1 and number == 1 else "MESH_DATA",
+                                    depress=item.marked, translate=False)
+            button.index = index
         else:
             label.label(text="Missing object", icon="ERROR")
         row.operator("aurora.live_remove", text="", icon="X", emboss=False).index = index
 
 
-CLASSES = (AURORA_PG_sync_object, AURORA_OT_selection, AURORA_OT_group, AURORA_OT_ungroup, AURORA_OT_root,
+CLASSES = (AURORA_PG_sync_object, AURORA_OT_selection, AURORA_OT_pick, AURORA_OT_group, AURORA_OT_ungroup, AURORA_OT_root,
            AURORA_OT_remove, AURORA_UL_sync_objects)

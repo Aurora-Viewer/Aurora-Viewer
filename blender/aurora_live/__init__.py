@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora LiveMesh", "author": "Aurora Viewer contributors",
-    "version": (0, 14, 0), "blender": (2, 93, 0),
+    "version": (0, 14, 1), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
@@ -13,7 +13,7 @@ import time
 import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
-from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
+from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 from . import compat, client, materials, weights, starter, exporter, lods, tracking, handles, rigging, skinning, posing, tools_ui, shape_apply, shape_transfer
 if _reloading:
     # Blender reloads the package during an in-place extension upgrade. Reload
@@ -78,6 +78,8 @@ def _load_pre(_unused):
 @persistent
 def _refresh_handles(_unused=None):
     for scene in bpy.data.scenes:
+        if not any(entry.marked for entry in scene.aurora_live.objects):
+            scene.aurora_live.object_index = -1
         for entry in scene.aurora_live.objects:
             lods.initialize(entry)
     for obj in list(bpy.data.objects):
@@ -219,7 +221,8 @@ class AURORA_OT_receive_shape(bpy.types.Operator):
 class AURORA_PG_live(bpy.types.PropertyGroup):
     show_lods: BoolProperty(name="Import / LOD", default=False)
     objects: CollectionProperty(type=tracking.AURORA_PG_sync_object)
-    object_index: IntProperty(default=0, min=0)
+    object_index: IntProperty(default=-1, min=-1, options={"SKIP_SAVE"})
+    selection_anchor: StringProperty(default="", options={"SKIP_SAVE"})
     rig: PointerProperty(name="Avatar rig", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "ARMATURE")
     weight_source: PointerProperty(name="Weight source", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "MESH")
     transfer_method: EnumProperty(name="Weight mapping", items=[
@@ -401,7 +404,8 @@ def _draw_live(layout, context):
         row.operator("aurora.live_group", icon="LINKED")
         row.operator("aurora.live_ungroup", icon="UNLINKED")
         layout.operator("aurora.live_root", icon="OBJECT_ORIGIN")
-        layout.label(text=pgettext_iface("{enabled} / {total} enabled").format(
+        layout.label(text=pgettext_iface("{selected} selected · {enabled}/{total} enabled").format(
+            selected=sum(entry.marked for entry in prefs.objects),
             enabled=len(tracking.active(context.scene)), total=len(prefs.objects)), translate=False)
     else:
         layout.label(text="Add selected meshes to start syncing.")
@@ -619,13 +623,15 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Add the current selection without replacing listed objects or enabling paused entries":
         "Ajouter la sélection sans remplacer les objets listés ni réactiver les objets en pause",
     "Synchronized objects": "Objets synchronisés", "Synchronize": "Synchroniser",
-    "Select for grouping": "Sélectionner pour grouper",
-    "Select this entry for Group and Ungroup": "Sélectionner cet objet pour Grouper et Dégrouper",
+    "Select synchronized object": "Sélectionner un objet synchronisé",
+    "Click to select; Ctrl-click to toggle; Shift-click to select a range":
+        "Cliquer pour sélectionner ; Ctrl-clic pour ajouter ou retirer ; Maj-clic pour sélectionner une plage",
+    "{selected} selected · {enabled}/{total} enabled": "{selected} sélectionnés · {enabled}/{total} actifs",
     "Group": "Grouper", "Ungroup": "Dégrouper", "Make root": "Définir root",
-    "Group checked entries; the highlighted entry becomes the root":
-        "Grouper les objets cochés ; la ligne active devient le root",
-    "Make checked entries independent without changing Blender parenting":
-        "Rendre les objets cochés indépendants sans changer leur parenté Blender",
+    "Group selected entries; the active selected entry becomes the root":
+        "Grouper les objets sélectionnés ; la ligne active sélectionnée devient le root",
+    "Ungroup selected children, or the whole linkset when its root is selected":
+        "Dégrouper les enfants sélectionnés, ou tout le linkset lorsque son root est sélectionné",
     "Use the highlighted entry as the root of its linkset": "Utiliser la ligne active comme root de son linkset",
     "Root #1 · {name}": "Root #1 · {name}", "#{number} · {name}": "#{number} · {name}",
     "Invalid LiveMesh grouping": "Groupement LiveMesh invalide",

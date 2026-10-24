@@ -42,8 +42,12 @@ no references or pending jobs. `blender/aurora_live/` is the shared Blender 2.93
 implementation, with main-thread rest capture, a separate socket worker and a
 single latest-snapshot mailbox. `tracking.py` stores scene-owned synchronization
 groups independently of Blender parents: multi-add chooses the active static
-root, marked entries support Group/Ungroup, and Make root reassigns a complete
-family. Removing a root promotes a member. Group IDs, root flags and explicit
+root, transient row selection supports click/Ctrl/Cmd/Shift in display order,
+and Make root reassigns a complete family. Group uses only selected entries;
+Ungroup expands a selected root to its entire family, otherwise detaching only
+selected children. Removing a root from the list promotes a member. Stable
+source IDs anchor range selection across reordering without retaining deleted
+objects. Group IDs, root flags and explicit
 independence survive save/load and Undo/Redo; their signature schedules updates
 even when RNA callbacks are not replayed. `exporter.static_roots` resolves both
 explicit groups and inherited parenting into the existing flat `object-links`

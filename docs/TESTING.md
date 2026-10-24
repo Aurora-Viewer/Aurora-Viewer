@@ -1852,12 +1852,17 @@ objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
 
 Blender's synchronization-list linksets are exercised by
 `blender --background --factory-startup --python-exit-code 1 --python blender/tests/test_groups.py`.
-It covers unparented multi-add, active and highlighted roots, partial regrouping,
-Ungroup overriding Blender parents, root removal/promotion, mixed rigged/static
-selections, stable source identities, coordinate units, save/load, Undo/Redo and
+It covers unparented multi-add, active roots, plain/Ctrl/Shift row selection,
+range ordering and stable anchors, partial regrouping, whole-family root
+Ungroup, selective child Ungroup across multiple families, Blender parent
+overrides, root removal/promotion, paused and mixed rigged/static selections,
+stable source identities, coordinate units, save/load, Undo/Redo and
 automatic/manual update behavior. Check the native Blender list visually too:
-grouping checkboxes, synchronization chain icons, root-first ordering and the
-Group/Ungroup/Make root row must remain usable in English and French.
+click names, Ctrl/Cmd-click two separate rows, Shift-click a displayed range,
+then Group only that selection. Ungroup a root alone and several children
+without the root. Selection highlights, the selected count, synchronization
+chain icons, root-first ordering and Group/Ungroup/Make root must remain usable
+in English and French without changing Blender's 3D selection.
 `objects` adds a belt and neck band, starts the belt hidden and the band
 removed. Toggle the belt and clear the objects; no restore button should
 appear. Each row's Import button opens that object's

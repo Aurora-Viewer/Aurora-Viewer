@@ -175,7 +175,7 @@ def prepare(context, request, supported, axes):
 
 def draw(layout, context):
     prefs = context.scene.aurora_live
-    if not prefs.objects or prefs.object_index >= len(prefs.objects):
+    if not 0 <= prefs.object_index < len(prefs.objects):
         return
     entry = prefs.objects[prefs.object_index]
     layout.prop(prefs, "show_lods", text="Import / LOD", icon="MOD_DECIM")

@@ -57,6 +57,13 @@ class GroupTests(unittest.TestCase):
             if entry.object == focus:
                 bpy.context.scene.aurora_live.object_index = index
 
+    def pick(self, obj, extend=False, range_select=False):
+        index = next(index for index, entry in enumerate(self.scene.aurora_live.objects) if entry.object == obj)
+        self.assertEqual(bpy.ops.aurora.live_pick(index=index, extend=extend, range_select=range_select), {"FINISHED"})
+
+    def selected(self):
+        return {entry.object for entry in self.scene.aurora_live.objects if entry.marked}
+
     def snapshot(self, **kwargs):
         scene = bpy.context.scene
         return exporter.snapshot(tracking.active(scene), {"mPelvis", "mChest"}, 1,
@@ -133,13 +140,113 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(bpy.ops.aurora.live_ungroup(), {"FINISHED"})
         self.assert_links({a: None, b: None, c: a})
 
-    def test_ungrouping_the_root_promotes_a_remaining_member(self):
+    def test_ungrouping_the_root_splits_its_complete_family(self):
         a, b, c, _d = self.objects
         self.add(a, b, c, root=a)
         self.mark(a)
         bpy.ops.aurora.live_ungroup()
-        self.assert_links({a: None, b: None, c: b})
-        self.assertTrue(self.entry(b).group_root)
+        self.assert_links({a: None, b: None, c: None})
+
+    def test_row_click_and_ctrl_click_group_only_the_selected_subset(self):
+        a, b, c, d = self.objects
+        self.add(a, b, c, d, root=a)
+        self.pick(b)
+        self.assertEqual(self.selected(), {b})
+        self.assertFalse(bpy.ops.aurora.live_group.poll())
+        self.pick(d, extend=True)
+        self.assertEqual(self.selected(), {b, d})
+        bpy.ops.aurora.live_group()
+        self.assert_links({a: None, b: d, c: a, d: None})
+
+    def test_ctrl_click_toggles_entries_and_can_clear_the_selection(self):
+        a, b, c, d = self.objects
+        self.add(a, b, c, d)
+        self.pick(b)
+        self.pick(d, extend=True)
+        self.pick(b, extend=True)
+        self.assertEqual(self.selected(), {d})
+        self.assertEqual(tracking.focused(bpy.context).object, d)
+        self.pick(d, extend=True)
+        self.assertFalse(self.selected())
+        self.assertEqual(self.scene.aurora_live.object_index, -1)
+        self.assertFalse(bpy.ops.aurora.live_group.poll())
+        self.assertFalse(bpy.ops.aurora.live_ungroup.poll())
+
+    def test_shift_click_uses_display_order_with_a_root_reordered_to_the_top(self):
+        a, b, c, d = self.objects
+        self.add(a, b, c, d, root=c)
+        self.pick(c)
+        self.pick(b, range_select=True)
+        self.assertEqual(self.selected(), {c, a, b})
+        self.pick(d)
+        self.pick(b, extend=True)
+        self.pick(c, extend=True, range_select=True)
+        self.assertEqual(self.selected(), {a, b, c, d})
+
+    def test_range_anchor_survives_backing_list_reordering(self):
+        a, b, c, d = self.objects
+        self.add(a, b, c, d, root=a)
+        self.pick(b)
+        self.scene.aurora_live.objects.move(1, 3)
+        self.pick(d, range_select=True)
+        self.assertEqual(self.selected(), {b, d})
+
+    def test_paused_entries_can_be_selected_and_grouped_without_resuming(self):
+        a, b, c, d = self.objects
+        self.add(a, b, c, d)
+        self.entry(b).enabled = False
+        self.pick(b)
+        self.pick(c, extend=True)
+        bpy.ops.aurora.live_group()
+        self.assertFalse(self.entry(b).enabled)
+        self.assertEqual(self.entry(b).group_id, self.entry(c).group_id)
+        self.assert_links({a: None, c: None, d: a})
+
+    def test_ungroup_selected_children_preserves_the_root_and_unselected_children(self):
+        a, b, c, d = self.objects
+        self.add(a, b, c, d, root=a)
+        ids = tracking.source_ids(self.scene)
+        self.pick(b)
+        self.pick(c, extend=True)
+        bpy.ops.aurora.live_ungroup()
+        self.assert_links({a: None, b: None, c: None, d: a})
+        self.assertEqual(tracking.source_ids(self.scene), ids)
+
+    def test_ungroup_selected_root_does_not_affect_other_linksets(self):
+        a, b, c, d = self.objects
+        self.add(a, b, root=a)
+        self.add(c, d, root=c)
+        self.pick(a)
+        bpy.ops.aurora.live_ungroup()
+        self.assert_links({a: None, b: None, c: None, d: c})
+
+    def test_ungroup_mixed_root_and_child_selection_uses_each_family_role(self):
+        a, b, c, d = self.objects
+        bpy.ops.mesh.primitive_cube_add(size=0.5)
+        e = bpy.context.object
+        self.add(a, b, root=a)
+        self.add(c, d, e, root=c)
+        self.pick(a)
+        self.pick(d, extend=True)
+        bpy.ops.aurora.live_ungroup()
+        self.assert_links({a: None, b: None, c: None, d: None, e: c})
+
+    def test_list_selection_leaves_scene_selection_and_preview_updates_alone(self):
+        a, b, c, _d = self.objects
+        self.add(a, b, c, root=a)
+        scene_selection = set(bpy.context.selected_objects)
+        scene_active = bpy.context.view_layer.objects.active
+        with patch.object(aurora_live, "_client", self.fake_client()):
+            aurora_live._force_capture = True
+            self.tick()
+            aurora_live._dirty = False
+            self.pick(b)
+            self.pick(c, extend=True)
+            with patch.object(exporter, "snapshot", wraps=exporter.snapshot) as capture:
+                self.tick()
+                capture.assert_not_called()
+        self.assertEqual(set(bpy.context.selected_objects), scene_selection)
+        self.assertEqual(bpy.context.view_layer.objects.active, scene_active)
 
     def test_ungroup_overrides_blender_parenting_and_readding_does_not_regroup(self):
         a, b, c, _d = self.objects
