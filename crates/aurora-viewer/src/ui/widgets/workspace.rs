@@ -697,14 +697,14 @@ mod tests {
             ] {
                 let mut output = None;
                 for _ in 0..6 {
-                    output = Some(ctx.run_ui(
+                    output = Some(crate::ui::login::test_output(ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(screen),
                             events: vec![egui::Event::PointerMoved(egui::pos2(x, 100.0))],
                             ..Default::default()
                         },
                         |_ui| organization_drag_preview(&ctx, &p, egui::Id::unique("changing_drag_title"), title),
-                    ));
+                    )));
                 }
                 let output = output.unwrap();
                 let drawn = output.shapes.iter().find_map(|shape| text(&shape.shape, title)).unwrap();

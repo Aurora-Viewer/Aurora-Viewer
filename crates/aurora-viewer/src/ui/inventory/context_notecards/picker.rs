@@ -280,7 +280,7 @@ mod tests {
         }
         fn frame(&mut self, events: Vec<egui::Event>) {
             let p = crate::theme::Theme::default().palette();
-            let _ = self.ctx.run_ui(
+            let _ = crate::ui::login::test_output(self.ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0))),
                     events,
@@ -289,7 +289,7 @@ mod tests {
                 |ui| {
                     context_notecards::show(ui.ctx(), &p, &mut self.inv, &mut self.state, &self.prefs, &mut self.commands);
                 },
-            );
+            ));
         }
         fn click(&mut self, key: impl std::hash::Hash + std::fmt::Debug) {
             let pos = self

@@ -1508,56 +1508,58 @@ mod tests {
             let p = crate::theme::Theme::default().palette();
             let mut prefs = super::super::menu_layout::Preferences::default();
             prefs.profiles.insert("shared".into(), std::mem::take(&mut self.profile));
-            let output = self.ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0))),
-                    focused: events
-                        .iter()
-                        .rev()
-                        .find_map(|event| {
-                            if let Event::WindowFocused(focused) = event {
-                                Some(*focused)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(true),
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    let target = ui.interact(
-                        egui::Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(50.0, 24.0)),
-                        Id::unique("custom_menu_target"),
-                        Sense::click(),
-                    );
-                    if target.secondary_clicked() {
-                        self.open = true;
-                    }
-                    menu::popup_at(
-                        ui.ctx(),
-                        Id::unique("custom_menu_test"),
-                        Pos2::new(100.0, 70.0),
-                        &mut self.open,
-                        &p,
-                        |ui| {
-                            self.state
-                                .prepare(ui.ctx(), Uuid::from_u128(1), ui.layer_id().id, "shared", &mut prefs);
-                            if let Some(choice) = show(
-                                ui,
-                                &p,
-                                Uuid::from_u128(1),
-                                "shared",
-                                &self.entries,
-                                prefs.profiles.get_mut("shared").unwrap(),
-                                &mut self.state,
-                            ) {
-                                self.commands.push(choice);
-                            }
-                        },
-                    );
-                    self.state.finish_inventory_frame(ui.ctx(), &mut prefs);
-                },
+            let output = crate::ui::login::test_output(
+                self.ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(1000.0, 800.0))),
+                        focused: events
+                            .iter()
+                            .rev()
+                            .find_map(|event| {
+                                if let Event::WindowFocused(focused) = event {
+                                    Some(*focused)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(true),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let target = ui.interact(
+                            egui::Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(50.0, 24.0)),
+                            Id::unique("custom_menu_target"),
+                            Sense::click(),
+                        );
+                        if target.secondary_clicked() {
+                            self.open = true;
+                        }
+                        menu::popup_at(
+                            ui.ctx(),
+                            Id::unique("custom_menu_test"),
+                            Pos2::new(100.0, 70.0),
+                            &mut self.open,
+                            &p,
+                            |ui| {
+                                self.state
+                                    .prepare(ui.ctx(), Uuid::from_u128(1), ui.layer_id().id, "shared", &mut prefs);
+                                if let Some(choice) = show(
+                                    ui,
+                                    &p,
+                                    Uuid::from_u128(1),
+                                    "shared",
+                                    &self.entries,
+                                    prefs.profiles.get_mut("shared").unwrap(),
+                                    &mut self.state,
+                                ) {
+                                    self.commands.push(choice);
+                                }
+                            },
+                        );
+                        self.state.finish_inventory_frame(ui.ctx(), &mut prefs);
+                    },
+                ),
             );
             self.shapes = output.shapes;
             self.profile = prefs.profiles.remove("shared").unwrap();
