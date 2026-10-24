@@ -209,9 +209,10 @@ fn contacts_pane(ui: &mut egui::Ui, p: &Palette, pane: egui::Rect, content: impl
 /// about these.
 const CONTACTS_MARGIN: egui::Vec2 = egui::vec2(12.0, 10.0);
 
-/// The conversation shown, at the right of the column.
+/// The conversation shown, at the right of the column, or alone in its
+/// own window (`popout.rs`).
 #[allow(clippy::too_many_arguments)]
-fn pane(
+pub(super) fn pane(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &crate::ui::icons::Icons,
@@ -563,9 +564,10 @@ pub(super) struct NewLines {
     seen: HashMap<Option<Uuid>, u64>,
     /// The "New" line of each: above this line's number.
     at: HashMap<Option<Uuid>, u64>,
-    /// The conversation in sight, the frame it was last, and whether the
-    /// viewer had the focus then.
-    present: Option<(Option<Uuid>, u64, bool)>,
+    /// The conversations in sight (one per window: the Conversations
+    /// window's, those in their own, `popout.rs`), the frame each was last,
+    /// and whether the viewer had the focus then.
+    present: HashMap<Option<Uuid>, (u64, bool)>,
 }
 
 impl NewLines {
@@ -585,8 +587,11 @@ impl NewLines {
     /// for a conversation not yet seen since the login.
     pub(super) fn frame(&mut self, conv: Option<Uuid>, frame: u64, looked: bool, first: u64, lines: &VecDeque<ChatLine>, unread: usize) {
         let next = first + lines.len() as u64;
-        let stayed = matches!(self.present, Some((c, f, _)) if c == conv && (f == frame || f + 1 == frame));
-        let refocused = looked && matches!(self.present, Some((_, _, false)));
+        // (gone from sight before the last frame: no longer present)
+        self.present.retain(|_, (f, _)| *f + 1 >= frame);
+        let was = self.present.get(&conv).copied();
+        let stayed = was.is_some();
+        let refocused = looked && matches!(was, Some((_, false)));
         if !stayed || refocused {
             let from = self
                 .seen
@@ -609,7 +614,7 @@ impl NewLines {
         if looked {
             self.seen.insert(conv, next);
         }
-        self.present = Some((conv, frame, looked));
+        self.present.insert(conv, (frame, looked));
     }
 }
 

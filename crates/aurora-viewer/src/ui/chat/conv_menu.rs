@@ -7,7 +7,8 @@
 //! conversation, so both stay the same) and the rows the conversation item
 //! adds to it; a group Close, its call, the transcript and the group's
 //! actions; a conference Close, its call and the transcript; the nearby
-//! chat its transcript.
+//! chat its transcript. Each one first "Detach" into its own window, or
+//! "Attach to Conversations" when it has one (`popout.rs`).
 
 use super::sidebar::{self, Kind};
 use super::{ChatUi, ConvAction, close_tip};
@@ -39,6 +40,8 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
             act(CtxAction::ShowHistory(conversation));
         }
     };
+    // in its own window, or back into Conversations (`popout.rs`)
+    super::popout::menu_row(ui, p, actions, conversation);
     // CONV_SESSION_NEARBY: its transcript only
     let Some(id) = conversation else {
         history(ui);

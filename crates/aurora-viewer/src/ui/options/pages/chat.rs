@@ -40,6 +40,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-show-contacts-tab-hint"),
                     &field!(show_contacts_tab),
                 );
+                // FSChatWindow: separate IM windows (0) or the tabbed one (1,
+                // the default)
+                cx.toggle(
+                    tr!("ui-options-conversations-own-windows"),
+                    tr!("ui-options-conversations-own-windows-hint"),
+                    &field!(conversations_own_windows),
+                );
                 // FSSendTypingState: the IM_TYPING notices of a conversation
                 // with one resident (LLIMModel::sendTypingState)
                 cx.toggle(

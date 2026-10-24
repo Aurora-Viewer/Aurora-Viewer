@@ -196,6 +196,9 @@ struct Entry<'a> {
     in_call: bool,
     /// The violet wash of a conversation with news (`flash.rs`), 0 for none.
     flash: f32,
+    /// The conversation is in its own window (`popout.rs`): a mark where
+    /// the unread count goes.
+    popped: bool,
 }
 
 struct Picked {
@@ -296,6 +299,7 @@ pub(super) fn show(
                     ringing: false,
                     in_call: false,
                     flash: 0.0,
+                    popped: false,
                 };
                 if entry(ui, p, &e, rail, entry_id(Pinned::Contacts)).resp.clicked() {
                     if docked {
@@ -322,6 +326,7 @@ pub(super) fn show(
                     ringing: false,
                     in_call: false,
                     flash: 0.0,
+                    popped: st.popped.contains(None),
                 };
                 let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
                 super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
@@ -388,6 +393,7 @@ pub(super) fn show(
                         ringing: world.calls.invite_for(&id).is_some(),
                         in_call: st.conversation_voice_indicator && (world.call_of(&id).is_some() || world.call_launched(&id).is_some()),
                         flash,
+                        popped: st.popped.contains(Some(id)),
                     };
                     let picked = entry(ui, p, &e, rail, entry_id(Pinned::Conversation(id)));
                     if reveal == Some(id) {
@@ -434,6 +440,7 @@ pub(super) fn show(
                             ringing: false,
                             in_call: false,
                             flash: 0.0,
+                            popped: false,
                         };
                         if entry(ui, p, &e, rail, egui::Id::unique(("conversation_start", id))).resp.clicked() {
                             st.side_filter.clear();
@@ -453,6 +460,7 @@ pub(super) fn show(
                     ringing: false,
                     in_call: false,
                     flash: 0.0,
+                    popped: false,
                 };
                 if entry(ui, p, &e, rail, egui::Id::unique("conversation_find")).resp.clicked() {
                     st.start_picker(super::Start::Im);
@@ -702,6 +710,11 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
             );
             right = count.rect.left() - 4.0;
             count.paint(ui.painter());
+        }
+        if e.popped && e.unread == 0 {
+            let r = egui::Rect::from_center_size(egui::pos2(rect.right() - 12.0, rect.center().y), egui::Vec2::splat(15.0));
+            super::popout::paint_mark(ui, p, r);
+            right = r.left() - 3.0;
         }
         if e.in_call {
             let r = egui::Rect::from_center_size(egui::pos2(right - 8.0, rect.center().y), egui::Vec2::splat(15.0));

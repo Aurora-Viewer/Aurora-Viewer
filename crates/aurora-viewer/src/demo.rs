@@ -792,6 +792,24 @@ pub fn bubbles_scenario() -> Option<Bubbles> {
     })
 }
 
+/// `AURORA_DEMO_CONV_POPOUT=1|option` (with `AURORA_DEMO_CONV=aurora…` or
+/// `bubbles…`): conversations in their own windows (#717).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Popout {
+    /// The friend's IM and the Aurora Builders group popped out by hand.
+    Hand,
+    /// The option on, and the group opened as from a notification.
+    Option,
+}
+
+pub fn popout_scenario() -> Option<Popout> {
+    match std::env::var("AURORA_DEMO_CONV_POPOUT").ok()?.trim() {
+        "option" => Some(Popout::Option),
+        "" | "0" => None,
+        _ => Some(Popout::Hand),
+    }
+}
+
 /// The conversation of the scenario shown in the window.
 pub fn bubbles_conversation(view: Bubbles) -> Option<Uuid> {
     match view {

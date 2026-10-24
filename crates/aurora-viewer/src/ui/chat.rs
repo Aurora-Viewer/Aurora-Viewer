@@ -21,6 +21,7 @@ mod latest;
 mod line_menu;
 mod members;
 mod offer_card;
+mod popout;
 pub mod previews;
 mod reorder;
 pub(crate) mod select;
@@ -194,6 +195,13 @@ pub struct ChatUi {
     /// The pictures and videos under links (`previews.rs`), their settings
     /// given every frame by the app.
     pub previews: previews::Previews,
+    /// The conversations in their own windows (`popout.rs`).
+    popped: popout::Popped,
+    /// The conversations asked for open in their own window (Preferences ›
+    /// Chat, off), given every frame by the app.
+    pub own_windows: bool,
+    /// The Conversations window was open last frame.
+    main_open: bool,
 }
 
 /// What the column's resident picker starts.
@@ -236,6 +244,31 @@ impl ChatUi {
         self.views.remove(&Some(conversation));
         self.drafts.remove(&Some(conversation));
         self.input_history.remove(&Some(conversation));
+        self.popped.remove(Some(conversation));
+    }
+
+    /// "Detach": `conversation` in its own window, its field taking the
+    /// keyboard, from the next frame (the Conversations window drew it in
+    /// this one).
+    fn pop_out(&mut self, conversation: Option<uuid::Uuid>) {
+        self.popped.pop_out(conversation, self.members_open, self.stage_mini, true);
+        self.popped.hold(conversation);
+    }
+
+    /// "Attach to Conversations": the window of `conversation` closes, and
+    /// the Conversations window, opened if closed, shows it.
+    fn dock_back(&mut self, ctx: &egui::Context, conversation: Option<uuid::Uuid>, open: &mut bool) {
+        if self.popped.remove(conversation) {
+            self.select_tab(conversation);
+            self.reveal = conversation;
+            super::notifications::open_conversations(ctx, open);
+        }
+    }
+
+    /// `AURORA_DEMO_CONV_POPOUT`: `conversation` in its own window, at `pos`.
+    pub fn demo_pop_out(&mut self, ctx: &egui::Context, conversation: Option<uuid::Uuid>, pos: egui::Pos2, size: egui::Vec2) {
+        self.popped.pop_out(conversation, self.members_open, self.stage_mini, false);
+        demo_place_window(ctx, conversation, pos, size);
     }
 
     /// What is typed in a conversation's field (None = nearby chat).
@@ -243,8 +276,12 @@ impl ChatUi {
         self.drafts.entry(conversation).or_default()
     }
 
-    /// Show a tab of the window and give its field the keyboard.
+    /// Show a tab of the window and give its field the keyboard; a
+    /// conversation in its own window raises that window instead.
     fn select_tab(&mut self, conversation: Option<uuid::Uuid>) {
+        if self.popped.raise(conversation, true) {
+            return;
+        }
         self.selected = conversation;
         self.show_profile = false;
         self.contacts = false;
@@ -844,6 +881,10 @@ pub enum ConvAction {
     SetOutputDevice(String),
     /// List the audio outputs again (their menu opens).
     ListOutputDevices,
+    /// Pop a conversation out into its own window, or dock it back (None:
+    /// the nearby chat; `popout.rs`). Done by `show` before it returns.
+    PopOut(Option<uuid::Uuid>),
+    DockBack(Option<uuid::Uuid>),
 }
 
 use super::widgets::initials;
@@ -2259,7 +2300,18 @@ pub fn show(
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
     if let Some(f) = world.social.focus_im.take() {
-        st.open(f);
+        let conversation = (!f.is_nil()).then_some(f);
+        if popout::opens_in_own_window(&st.popped, conversation, st.own_windows) {
+            // the keyboard asked of the Conversations window goes to its own
+            let focus = std::mem::take(&mut st.conv_focus_request);
+            st.popped.pop_out(conversation, st.members_open, st.stage_mini, focus);
+            // and the Conversations window, opened for it, stays closed
+            if !st.main_open {
+                *open = false;
+            }
+        } else {
+            st.open(f);
+        }
     }
     let docked = !contacts_settings.torn_off;
     if !show_contacts_tab && st.contacts {
@@ -2269,13 +2321,23 @@ pub fn show(
         st.contacts = false;
     }
     let style = st.demo_style.unwrap_or(st.style);
-    // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`)
+    // every entry of the window, whatever the column's search: it never
+    // shows a conversation that is in its own window (`popout.rs`)
+    let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)
+        .chain(st.reorder.sessions(world).into_iter().map(|(id, _)| Some(id)))
+        .collect();
+    if !st.contacts {
+        st.selected = popout::main_selection(&mut st.popped, st.selected, &entries);
+    }
+    // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`),
+    // over the entries without a window of their own
     if *open && !enlarged {
-        let order = if style.workspace() {
+        let mut order = if style.workspace() {
             sidebar::tab_order(world, st)
         } else {
             keys::legacy_order(world, st)
         };
+        order.retain(|c| !st.popped.contains(*c));
         keys::handle(ctx, st, &order, &mut actions);
     }
     let title = match st.selected {
@@ -2287,6 +2349,7 @@ pub fn show(
     };
     let own_name = world.own_name();
     let mut tear_off = false;
+    let mut detach = false;
     let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size())
         .attention(conversations_waiting(world))
         .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
@@ -2294,7 +2357,11 @@ pub fn show(
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
+    } else if entries.iter().any(|c| *c != st.selected && !st.popped.contains(*c)) {
+        // and for the conversation shown, while another stays in the window
+        floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut detach);
     }
+    popout::share(ctx, &st.popped);
     if style.workspace() {
         floater = floater.flush_body();
     }
@@ -2362,6 +2429,9 @@ pub fn show(
                     0.0,
                 )
                 .resp;
+                if st.popped.contains(None) && !local_shown && world.chat_unread == 0 && !ui.rect_contains_pointer(local.rect) {
+                    popout::paint_mark(ui, p, trailing_slot(local.rect));
+                }
                 conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
                 conv_menu::attach(&local, p, world, &mut actions, None);
                 if local.clicked() {
@@ -2411,6 +2481,9 @@ pub fn show(
                             entry.resp.scroll_to_me(None);
                             st.reveal = None;
                         }
+                        if st.popped.contains(Some(other)) && unread == 0 && !ui.rect_contains_pointer(entry.resp.rect) {
+                            popout::paint_mark(ui, p, trailing_slot(entry.resp.rect));
+                        }
                         conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
                         conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
                         st.reorder.row(world, other, &entry.resp);
@@ -2443,6 +2516,37 @@ pub fn show(
     if tear_off {
         actions.push(ConvAction::Contacts(super::contacts::ContactsAction::ToggleTornOff));
     }
+    if detach {
+        actions.push(ConvAction::PopOut(st.selected));
+    }
+    // popped out or docked back from the title bar and the entries' menus;
+    // a window popped out now draws from the next frame, the window above
+    // having drawn its conversation in this one
+    actions.retain(|a| match a {
+        ConvAction::PopOut(c) => {
+            st.pop_out(*c);
+            false
+        }
+        ConvAction::DockBack(c) => {
+            st.dock_back(ctx, *c, open);
+            false
+        }
+        _ => true,
+    });
+    if !st.contacts {
+        st.selected = popout::main_selection(&mut st.popped, st.selected, &entries);
+    }
+    let env = popout::Env {
+        p,
+        icons,
+        emoji,
+        pics,
+        images,
+        gestures,
+        style,
+    };
+    popout::show(ctx, env, world, st, &mut actions);
+    st.main_open = *open;
     // the column's "+" and search: one resident for an IM, several for a
     // conference (LLAvatarActions::startIM / startConference)
     if let Some(residents) = st.picker.show(ctx, p, world) {
@@ -2454,7 +2558,9 @@ pub fn show(
         st.side_filter.clear();
     }
     // our typing notices to the resident written to (FSFloaterIM::setTyping)
-    let field = st.typing_field.take().filter(|_| st.send_typing && *open).unwrap_or(typing::Field {
+    // (the field of the Conversations window or of a window of its own: only
+    // a drawn one leaves its frame)
+    let field = st.typing_field.take().filter(|_| st.send_typing).unwrap_or(typing::Field {
         to: None,
         typed: false,
         empty: true,
@@ -2747,7 +2853,23 @@ pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
     let minimized = ctx
         .data_mut(|d| d.get_persisted::<bool>(egui::Id::unique(("conversations", "minimized"))))
         .unwrap_or(false);
-    !st.contacts && st.selected.is_none() && !minimized
+    (!st.contacts && st.selected.is_none() && !minimized) || popout::in_sight(ctx, &st.popped).any(|c| c.is_none())
+}
+
+/// A demo's window of its own for `conversation`, at `pos` (whatever the
+/// cascade or a previous run would give it).
+pub fn demo_place_window(ctx: &egui::Context, conversation: Option<uuid::Uuid>, pos: egui::Pos2, size: egui::Vec2) {
+    super::widgets::place_floater(ctx, &popout::floater_id(conversation), pos, size);
+}
+
+/// The conversations in sight (None: the nearby chat): the one the
+/// Conversations window shows while `main_open` and not minimized, and
+/// those of the windows of their own not minimized (FSFloaterIM::getVisible:
+/// a torn-off floater is visible on its own).
+pub fn conversations_in_sight(ctx: &egui::Context, st: &ChatUi, main_open: bool) -> Vec<Option<uuid::Uuid>> {
+    let minimized = super::widgets::floater_minimized(ctx, "conversations");
+    let main = (main_open && !minimized).then_some(st.selected);
+    main.into_iter().chain(popout::in_sight(ctx, &st.popped)).collect()
 }
 
 /// The sender of a bubble line: the avatar's profile picture (initials while
