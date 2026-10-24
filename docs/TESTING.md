@@ -5860,7 +5860,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
-| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music` or `list` | Media filter question or list |
+| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
@@ -6069,7 +6069,13 @@ What the inventory must show with these scenarios:
   list and the answers stay in memory: no run changes the demo account's
   `medialist.xml`, and an answer does not save the profile. `AURORA_DEMO_MEDIA=<https URL>` or
   `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
-  profile's filter is on.
+  profile's filter is on. `worn` puts media on `media.example.com` on the
+  object worn on our back (that of `AURORA_DEMO_WORN`), `hud` on a worn HUD
+  screen: no question, as "Trust my worn items" is on (the log has no
+  `media filter: asking about` line). `worn-ask` / `hud-ask` turn that
+  option off for the run, and the question comes; `worn-blocked` /
+  `hud-blocked` put the site in the list as blocked: refused without a
+  question, told in the local chat.
 - **`AURORA_DEMO_SOUND=1|hud`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
