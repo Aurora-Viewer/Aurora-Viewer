@@ -6368,8 +6368,11 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
             for f in &mut t.faces {
                 f.texture = TEX_HAIR;
             }
+            // the inner layer attached last (the greatest local id), so
+            // that it is drawn first, as a hair made for the Legacy Viewer
+            // (blend_order.rs)
             let mut worn = prim(
-                200_000 + k as u32 * 64 + layer,
+                200_000 + k as u32 * 64 + (demo.layers - 1 - layer),
                 Vec3::ZERO,
                 Quat::IDENTITY,
                 Vec3::splat(0.1),

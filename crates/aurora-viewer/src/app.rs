@@ -9910,11 +9910,12 @@ impl App {
                 aurora_render::frame_priority::set_raised(!old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
-            // AURORA_RIGGED_BLEND=alt: the rigged blended faces writing
-            // depth from 1/255 (#499) one second in three
+            // AURORA_RIGGED_BLEND=alt: the rigged blended faces drawn as
+            // before #935 (their depth where half covered, then their
+            // colour) one second in three
             if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
                 let old = self.sync_alt.is_multiple_of(3);
-                crate::scene::blend_order::set_write_now(old);
+                crate::scene::blend_order::set_old_now(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
