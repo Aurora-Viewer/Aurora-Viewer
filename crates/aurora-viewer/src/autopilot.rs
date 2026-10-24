@@ -642,6 +642,13 @@ pub fn avatar_target(world: &crate::world::World, id: uuid::Uuid, own_height: f3
     })
 }
 
+/// Calibration measures time to 90% speed, whereas coasting distance is
+/// velocity times the exponential time constant. Keep a conservative seed
+/// until reports are learned, independently of drawable prediction.
+pub fn flight_response(calibration: &crate::own_motion::Calibration, rtt: f32) -> f32 {
+    calibration.delay(rtt) + (calibration.ramp(crate::own_motion::Mode::Fly) / std::f32::consts::LN_10).max(0.5)
+}
+
 pub fn can_takeoff(world: &crate::world::World) -> bool {
     use crate::world::land::{AgentRights, owned_by_agent, powers};
     // LLAgent::canFly: parcel owners and the owning group's flight managers
@@ -1083,7 +1090,8 @@ mod tests {
                         received = reports.pop_front().unwrap().1;
                     }
                     let physical = received.1 + received.2 * (now - received.0);
-                    let step = pilot.step_moving(physical, received.2, yaw, dt, ping + 0.6, 16.0);
+                    let response = flight_response(&crate::own_motion::Calibration::default(), ping);
+                    let step = pilot.step_moving(physical, received.2, yaw, dt, response, 16.0);
                     assert!(step.finish.is_none(), "fps={fps}, ping={ping}, frame={frame}, {step:?}");
                     assert_eq!(step.flags & control::AT_NEG, 0);
                     yaw += step.yaw;

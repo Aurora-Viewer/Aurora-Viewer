@@ -258,7 +258,7 @@ impl App {
             |link| link.cfg.ping + link.cfg.jitter,
         );
         let calibration = &self.world.agent.prediction.calibration;
-        let response = calibration.delay(rtt) + calibration.ramp(crate::own_motion::Mode::Fly).max(0.25);
+        let response = autopilot::flight_response(calibration, rtt);
         let step = ap.step_moving(
             steering,
             self.world.agent.velocity,

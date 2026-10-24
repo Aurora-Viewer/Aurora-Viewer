@@ -366,11 +366,13 @@ when unfocused") is ignored during a screenshot.
   `run` follows a running target, walking at 1200 and stopping at 1500;
   milestone logs show temporary running enabled, then restored. `flight-brake`
   approaches a hovering target 35 m farther away. Combine it with
-  `AURORA_DEMO_LINK=300,jitter=40,aurora` or `300,jitter=40,firestorm` and
+  `AURORA_DEMO_LINK=300,jitter=40,aurora,native-flight` or
+  `300,jitter=40,firestorm,native-flight` and
   capture after frame 4400: the follower must settle near the target without
   repeated crossings. The delayed native demo exercises the network/prediction
-  path; the deterministic regression also adds full-speed flight inertia,
-  which the immediate offline physics does not model.
+  path; `native-flight` adds full-speed flight and inertia to that simulator.
+  Use `AURORA_DEMO_LINK=0,native-flight` with the other flight scenarios too.
+  The deterministic regression additionally covers different frame rates.
   Logs include our flight state, landing phase and altitude. A stationary
   hover must cause takeoff; jump/fall or missing signals must not cause a
   spurious flight change. Takeoff respects region, parcel and RLVa permissions.
@@ -543,7 +545,7 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
-- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
+- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace][,native-flight]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
   avatar with the demo's rules and its reports (terse updates of our
@@ -558,7 +560,11 @@ when unfocused") is ignored during a screenshot.
   frame show whether the walk comes back after a stop); `aurora` / `firestorm`
   force the movement for the run without touching the saved choice;
   without them, the choice of Preferences applies and can be switched
-  while walking. The log says, for each press and release of a walking
+  while walking. `native-flight` opts into a 16 m/s flight model with a
+  0.5 s velocity ramp, coasting after release and full speed despite NUDGE.
+  It makes avatar-navigation braking tests exercise native flight inertia;
+  ground movement and the default demo physics keep their existing behavior.
+  The log says, for each press and release of a walking
   key, `demo link: the drawn avatar moved N ms after the press` and
   `… stopped N ms after the release, D m on (P m travelled)`, and
   `own motion learned: …` (the speeds, ramps and delay the prediction
