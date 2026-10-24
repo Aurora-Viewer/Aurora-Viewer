@@ -153,22 +153,43 @@ pub fn complete(inv: &Inventory, folder: Uuid) -> bool {
 
 /// Only the relevant folders and link targets are fetched, including retry.
 pub fn prepare(inv: &mut Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<NetCommand> {
-    let mut folders: Vec<_> = [cof(inv), system_folder(inv, FT_MY_OUTFITS), base(inv)]
-        .into_iter()
-        .flatten()
-        .collect();
-    if let Some(my) = system_folder(inv, FT_MY_OUTFITS) {
-        folders.extend(inv.folders.get(&my).into_iter().flat_map(|f| &f.children).copied());
-    }
+    let folders = prepare_folders(inv);
     let mut missing: HashSet<_> = worn.iter().filter(|id| !inv.items.contains_key(id)).copied().collect();
     for id in &folders {
         inv.request(*id);
-        for l in folder_links(inv, *id) {
-            if !l.folder && !l.target.is_nil() && !inv.items.contains_key(&l.target) {
-                missing.insert(l.target);
-            }
-        }
+        missing.extend(missing_targets(inv, *id));
     }
+    fetch_items(missing, agent)
+}
+
+/// The folders Appearance keeps loaded: the Current Outfit, My Outfits, the
+/// worn outfit and every outfit of My Outfits.
+pub fn prepare_folders(inv: &Inventory) -> Vec<Uuid> {
+    let my = system_folder(inv, FT_MY_OUTFITS);
+    let mut folders: Vec<_> = [cof(inv), my, base(inv)].into_iter().flatten().collect();
+    if let Some(my) = my {
+        folders.extend(inv.folders.get(&my).into_iter().flat_map(|f| &f.children).copied());
+    }
+    folders
+}
+
+/// The originals of a folder's item links that the inventory does not hold
+/// yet: the targets `folder_links` would list without an item, read without
+/// copying the links (a wardrobe of thousands of outfits is walked whenever
+/// the inventory changes).
+pub fn missing_targets(inv: &Inventory, folder: Uuid) -> impl Iterator<Item = Uuid> + '_ {
+    inv.folders
+        .get(&folder)
+        .into_iter()
+        .flat_map(|f| &f.items)
+        .filter_map(|id| inv.items.get(id))
+        .filter(move |it| it.parent == folder && it.asset_type == 24 && !it.asset_id.is_nil())
+        .map(|it| it.asset_id)
+        .filter(|target| !inv.items.contains_key(target))
+}
+
+/// One FetchInventory2 request for these items, none when there are none.
+pub fn fetch_items(missing: HashSet<Uuid>, agent: Uuid) -> Vec<NetCommand> {
     if missing.is_empty() {
         Vec::new()
     } else {
@@ -941,6 +962,115 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, cof, &current);
 }
 
+/// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]`: the number of generated
+/// outfits added to the Appearance demo (a large wardrobe), 0 without it.
+pub fn demo_outfit_count() -> usize {
+    std::env::var("AURORA_DEMO_OUTFITS")
+        .ok()
+        .and_then(|v| v.split(',').next().and_then(|n| n.trim().parse().ok()))
+        .unwrap_or(0)
+}
+
+/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`).
+pub fn demo_outfit_mode(mode: &str) -> bool {
+    std::env::var("AURORA_DEMO_OUTFITS").is_ok_and(|v| v.split(',').skip(1).any(|m| m.trim() == mode))
+}
+
+/// A large wardrobe for the Appearance demo: `count` outfits with generated
+/// names, 20 to 60 links each to a pool of generated clothes, objects and
+/// body parts, and a thumbnail (never loaded offline) on one in four.
+pub fn seed_demo_many(inv: &mut Inventory, agent: Uuid, count: usize) {
+    use super::inventory::Folder;
+    let Some(my) = system_folder(inv, FT_MY_OUTFITS) else {
+        return;
+    };
+    const STYLES: [&str; 10] = [
+        "Casual", "Formal", "Beach", "Winter", "Club", "Gothic", "Office", "Sport", "Party", "Lounge",
+    ];
+    const KINDS: [&str; 6] = ["Night", "Day", "Look", "Style", "Fit", "Set"];
+    let pool: Vec<InvItem> = (0..480u128)
+        .map(|i| {
+            let (asset_type, inv_type, name) = match i % 8 {
+                0 => (13, 18, "Body part"),
+                1..=4 => (5, 18, "Clothing"),
+                _ => (6, 6, "Attachment"),
+            };
+            InvItem {
+                id: Uuid::from_u128(1_900_000 + i),
+                parent: inv.root,
+                name: format!("{name} {i:03}"),
+                asset_type,
+                inv_type,
+                creator: agent,
+                owner: agent,
+                base_mask: 0x7fffffff,
+                owner_mask: 0x7fffffff,
+                ..Default::default()
+            }
+        })
+        .collect();
+    inv.add_items(pool.clone());
+    let mut contents = Vec::with_capacity(count);
+    let mut outfits = Vec::with_capacity(count);
+    for i in 0..count {
+        let id = Uuid::from_u128(2_000_000 + i as u128);
+        let name = format!("{} {} {:04}", STYLES[i % STYLES.len()], KINDS[(i / 7) % KINDS.len()], i);
+        inv.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent: my,
+                    name,
+                    type_default: FT_OUTFIT,
+                    version: 1,
+                    thumbnail: if i % 4 == 0 {
+                        Uuid::from_u128(3_000_000 + i as u128)
+                    } else {
+                        Uuid::nil()
+                    },
+                    ..Default::default()
+                },
+                children: Vec::new(),
+                items: Vec::new(),
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        outfits.push(id);
+        let links = 20 + (i * 7) % 41;
+        let items = (0..links)
+            .map(|k| {
+                let target = &pool[(i * 31 + k * 13) % pool.len()];
+                InvItem {
+                    id: Uuid::from_u128(4_000_000 + (i as u128) * 64 + k as u128),
+                    parent: id,
+                    name: target.name.clone(),
+                    asset_type: 24,
+                    inv_type: target.inv_type,
+                    asset_id: target.id,
+                    creator: agent,
+                    owner: agent,
+                    base_mask: 0x7fffffff,
+                    owner_mask: 0x7fffffff,
+                    ..Default::default()
+                }
+            })
+            .collect();
+        contents.push(aurora_net::inventory::FolderContents {
+            folder_id: id,
+            owner_id: agent,
+            version: 2,
+            folders: Vec::new(),
+            items,
+        });
+    }
+    if let Some(f) = inv.folders.get_mut(&my) {
+        f.children.extend(outfits);
+    }
+    inv.apply(contents);
+}
+
 /// Replay a folder response with repeated links and originals from other parents.
 pub fn seed_duplicate_response(inv: &mut Inventory, agent: Uuid) {
     for folder in [Uuid::from_u128(704), Uuid::from_u128(701)] {
@@ -1577,5 +1707,30 @@ mod tests {
             .is_err()
         );
         assert_eq!(folder_links(&inv, cof(&inv).expect("COF")), before);
+    }
+
+    /// `missing_targets` reads the links in place; it finds what the copied
+    /// `folder_links` would: item links whose original is not there.
+    #[test]
+    fn missing_targets_are_the_item_links_without_their_original() {
+        let mut inv = Inventory::default();
+        let agent = Uuid::from_u128(1);
+        seed_demo(&mut inv, agent);
+        seed_demo_many(&mut inv, agent, 20);
+        for i in (0..480u128).step_by(37) {
+            inv.items.remove(&Uuid::from_u128(1_900_000 + i));
+        }
+        let mut any = false;
+        for id in prepare_folders(&inv) {
+            let expected: HashSet<_> = folder_links(&inv, id)
+                .into_iter()
+                .filter(|l| !l.folder && !inv.items.contains_key(&l.target))
+                .map(|l| l.target)
+                .collect();
+            let found: HashSet<_> = missing_targets(&inv, id).collect();
+            any |= !found.is_empty();
+            assert_eq!(found, expected, "folder {id}");
+        }
+        assert!(any, "some originals are missing");
     }
 }
