@@ -218,6 +218,42 @@ fn a_repeated_hotkey_plays_the_gesture_at_each_press() {
     assert!(!Manager::repeat_triggers(0xac));
 }
 
+/// A clap (a sound, short waits, the sound again) pressed again before its
+/// end starts over at once and keeps its rhythm from the new press (#915).
+/// The app steps playing gestures at every frame, as LLAppViewer::idle
+/// does: stepped with a half-second poll, its 0.3 s waits lasted 0.5 s.
+#[test]
+fn a_clap_pressed_again_starts_over_on_its_own_rhythm() {
+    let mut m = Manager::default();
+    let now = Instant::now();
+    let id = Uuid::from_u128(1);
+    let sound = Uuid::from_u128(2);
+    let clap = || Step::Sound {
+        name: String::new(),
+        asset: sound,
+        flags: 0,
+    };
+    let wait = || Step::Wait {
+        seconds: 0.3,
+        flags: WAIT_TIME,
+    };
+    let g = Gesture {
+        key: 0xa7,
+        steps: vec![clap(), wait(), clap(), wait(), clap()],
+        ..Default::default()
+    };
+    let at = |ms| now + Duration::from_millis(ms);
+    m.play(id, g.clone(), Some(0xa7));
+    assert_eq!(m.tick(now, &BTreeSet::new()), [Effect::Sound(sound)]);
+    assert!(m.tick(at(250), &BTreeSet::new()).is_empty());
+    m.play(id, g, Some(0xa7));
+    assert_eq!(m.tick(at(250), &BTreeSet::new()), [Effect::Sound(sound)], "the press plays at once");
+    assert!(m.tick(at(400), &BTreeSet::new()).is_empty(), "the first wait starts over too");
+    assert_eq!(m.tick(at(560), &BTreeSet::new()), [Effect::Sound(sound)]);
+    assert_eq!(m.tick(at(870), &BTreeSet::new()), [Effect::Sound(sound)]);
+    assert!(!m.is_playing(id));
+}
+
 #[test]
 fn animation_wait_timeout_and_key_release() {
     let mut m = Manager::default();
