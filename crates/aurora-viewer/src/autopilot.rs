@@ -150,8 +150,10 @@ pub struct AutoPilot {
     /// A persistent follow keeps its pilot while resting near the leader.
     pub leader: Option<uuid::Uuid>,
     pub flying: bool,
+    pub avatar_flight: Option<FlightTarget>,
     waiting: bool,
     previous_position: Vec3,
+    landing_offset: Vec3,
 }
 
 /// The finish callback of a walk: run when it ends within its stop
@@ -179,6 +181,20 @@ pub struct Step {
     pub finish: Option<Finish>,
 }
 
+/// A known locomotion mode and the altitude at which our physical centre
+/// would rest on the target's support. Missing animation signals retain the
+/// last known mode; a jump or an unloaded AO is not a landing command.
+#[derive(Debug, Clone, Copy)]
+pub struct FlightTarget {
+    pub flying: Option<bool>,
+    pub landing_height: f32,
+}
+
+pub struct AvatarTarget {
+    pub position: Vec3,
+    pub flight: FlightTarget,
+}
+
 impl AutoPilot {
     /// startAutoPilotGlobal without a stop distance: the square root of the
     /// distance, 0.5 m at least. Never flying (walkToClickedLocation).
@@ -194,8 +210,10 @@ impl AutoPilot {
             on_arrival: None,
             leader: None,
             flying: false,
+            avatar_flight: None,
             waiting: false,
             previous_position: from,
+            landing_offset: Vec3::ZERO,
         }
     }
 
@@ -217,6 +235,10 @@ impl AutoPilot {
             stop_distance: 2.0,
             leader,
             flying,
+            avatar_flight: Some(FlightTarget {
+                flying: None,
+                landing_height: target.z,
+            }),
             ..Self::start(from, target, false, now)
         }
     }
@@ -224,17 +246,78 @@ impl AutoPilot {
     pub fn shift(&mut self, delta: Vec3) {
         self.target += delta;
         self.previous_position += delta;
+        if let Some(flight) = &mut self.avatar_flight {
+            flight.landing_height += delta.z;
+        }
+    }
+
+    pub fn observe_flight(&mut self, observed: FlightTarget, position: Vec3) {
+        let Some(flight) = &mut self.avatar_flight else { return };
+        let changed = observed.flying.is_some() && observed.flying != flight.flying;
+        if observed.flying.is_some() {
+            flight.flying = observed.flying;
+        }
+        flight.landing_height = observed.landing_height;
+        if changed {
+            self.landing_offset = Vec3::ZERO;
+            if observed.flying == Some(false) && self.flying {
+                let away = (position - self.target).with_z(0.0);
+                if away.length_squared() < 1.0 {
+                    // A leader can move directly under us. Move beside them
+                    // before descending rather than landing on their head.
+                    self.landing_offset = away.normalize_or(Vec3::NEG_X) * (self.stop_distance - 0.2).max(1.0);
+                }
+            }
+            self.reset_progress(position);
+        }
+    }
+
+    pub fn wants_flight(&self) -> bool {
+        self.avatar_flight.is_some_and(|f| f.flying == Some(true))
+    }
+
+    pub fn landing(&self) -> bool {
+        self.flying && self.avatar_flight.is_some_and(|f| f.flying == Some(false))
+    }
+
+    pub fn set_flying(&mut self, flying: bool, position: Vec3) {
+        if self.flying != flying {
+            self.flying = flying;
+            self.reset_progress(position);
+        }
+    }
+
+    fn reset_progress(&mut self, position: Vec3) {
+        self.waiting = false;
+        self.no_progress = 0.0;
+        self.previous_position = position;
+        self.target_dist = self.distance(self.goal() - position);
+    }
+
+    fn goal(&self) -> Vec3 {
+        if self.landing() {
+            (self.target + self.landing_offset).with_z(self.avatar_flight.map_or(self.target.z, |f| f.landing_height))
+        } else {
+            self.target
+        }
+    }
+
+    fn landing_radius(&self) -> f32 {
+        if self.landing_offset == Vec3::ZERO {
+            self.stop_distance
+        } else {
+            0.5
+        }
     }
 
     fn distance(&self, delta: Vec3) -> f32 {
         if self.flying { delta.length() } else { delta.truncate().length() }
     }
 
-    /// Ended where it was going: within the stop distance of the target,
-    /// on the ground plane (Aurora's walk does not fly up to a target
-    /// above the avatar, as startAutoPilotGlobal may).
+    /// Ground arrival uses XY; flight uses XYZ. A landing must finish on
+    /// confirmed support before proximity alone can end the approach.
     pub fn reached(&self, position: Vec3) -> bool {
-        self.distance(self.target - position) <= self.stop_distance
+        !self.landing() && self.distance(self.target - position) <= self.stop_distance
     }
 
     /// One frame of LLAgent::autoPilot from the avatar's place and heading,
@@ -245,12 +328,14 @@ impl AutoPilot {
             flags: control::STOP,
             finish,
         };
-        if !position.is_finite() || !self.target.is_finite() || !yaw.is_finite() || !dt.is_finite() {
+        if !position.is_finite() || !self.target.is_finite() || !self.goal().is_finite() || !yaw.is_finite() || !dt.is_finite() {
             return stop(Some(Finish::NoProgress));
         }
         let dt = dt.clamp(0.0, 0.1);
         let at = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
-        let delta = self.target - position;
+        let landing = self.landing();
+        let delta = self.goal() - position;
+        let xy_distance = delta.truncate().length();
         let target_dist = self.distance(delta);
         if self.reached(position) {
             self.no_progress = 0.0;
@@ -281,7 +366,20 @@ impl AutoPilot {
         if self.no_progress > MAX_TIME_NO_PROGRESS {
             return stop(Some(Finish::NoProgress));
         }
-        let direction = Vec3::new(delta.x, delta.y, 0.0).normalize_or_zero();
+        let horizontal_stop = if landing && self.landing_offset != Vec3::ZERO {
+            0.5
+        } else if self.flying && self.avatar_flight.is_some() {
+            (self.stop_distance - 0.1).max(0.5)
+        } else if self.flying {
+            0.5
+        } else {
+            0.0
+        };
+        let direction = if self.flying && xy_distance <= horizontal_stop {
+            Vec3::ZERO
+        } else {
+            Vec3::new(delta.x, delta.y, 0.0).normalize_or_zero()
+        };
         let angle = if direction == Vec3::ZERO {
             0.0
         } else {
@@ -296,21 +394,37 @@ impl AutoPilot {
             0
         };
         let slow_distance = (self.stop_distance + if self.flying { 5.0 } else { 2.0 }).max(3.0);
-        if at.dot(direction) > 0.9 && delta.truncate().length() > if self.flying { 0.5 } else { 0.0 } {
-            flags |= if self.flying && target_dist <= slow_distance {
+        if at.dot(direction) > 0.9 && xy_distance > horizontal_stop {
+            flags |= if self.flying && xy_distance <= slow_distance {
                 control::NUDGE_AT_POS
             } else {
                 control::AT_POS
             };
-            if target_dist > slow_distance {
+            if xy_distance > slow_distance {
                 flags |= control::FAST_AT;
             }
         }
-        if self.flying && delta.z.abs() > 0.5 {
+        let vertical_tolerance = if landing { 0.1 } else { 0.5 };
+        // Descend only near the landed leader. Otherwise crossing a lower
+        // roof or the edge of a raised platform could end flight too soon.
+        let descend_radius = if self.landing_offset == Vec3::ZERO {
+            self.landing_radius() + 1.0
+        } else {
+            self.landing_radius()
+        };
+        if self.flying && delta.z.abs() > vertical_tolerance && (delta.z > 0.0 || !landing || xy_distance <= descend_radius) {
             flags |= if delta.z > 0.0 { control::UP_POS } else { control::UP_NEG };
             if delta.z.abs() > 6.0 {
                 flags |= control::FAST_UP;
             }
+        }
+        if landing && xy_distance <= self.landing_radius() && delta.z <= 0.5 {
+            // Keep descending through the final arrival radius until the
+            // simulator reports our own contact. Never dive below the
+            // target's support if the nearby platform does not extend here.
+            // Allow the final quarter metre for body-size/contact tolerance;
+            // stopping above it could prevent the support report entirely.
+            flags = if delta.z <= 0.25 { control::UP_NEG } else { control::STOP };
         }
         Step {
             yaw: turn,
@@ -332,6 +446,105 @@ pub fn avatar_position(world: &crate::world::World, id: uuid::Uuid) -> Option<Ve
     crate::scene::Scene::object_transform_unshifted(world, idx, Instant::now())
         .map(|(p, _, _)| p)
         .filter(|p| p.is_finite())
+}
+
+/// Flight signals are the simulator's locomotion states from
+/// llanimationstates.cpp / LLVOAvatar::processAnimationStateChanges. Read
+/// the received signals, independently of local AO animation substitution.
+fn flight_from_signals(seated: bool, signals: impl Iterator<Item = uuid::Uuid>) -> Option<bool> {
+    use crate::ao::State;
+    if seated {
+        return Some(false);
+    }
+    let mut grounded = false;
+    let mut airborne = false;
+    for id in signals {
+        match State::from_motion(id) {
+            Some(State::Flying | State::FlyingSlow | State::FlyingUp | State::FlyingDown | State::Hovering) => return Some(true),
+            Some(
+                State::Standing
+                | State::Walking
+                | State::Running
+                | State::Crouching
+                | State::CrouchWalk
+                | State::Landing
+                | State::SoftLanding
+                | State::StandingUp
+                | State::Sitting
+                | State::GroundSit,
+            ) => grounded = true,
+            Some(State::Jumping | State::PreJumping | State::Falling) => airborne = true,
+            _ => {}
+        }
+    }
+    if grounded && !airborne { Some(false) } else { None }
+}
+
+pub fn avatar_target(world: &crate::world::World, id: uuid::Uuid, own_height: f32) -> Option<AvatarTarget> {
+    let position = avatar_position(world, id)?;
+    let o = world.objects.get(world.objects.index_of_uuid(&id)?)?;
+    if !o.scale.z.is_finite() || o.scale.z <= 0.0 || !own_height.is_finite() || own_height <= 0.0 {
+        return None;
+    }
+    let feet = position.z - o.scale.z * 0.5;
+    let local = position - world.region_offset(o.key.region)?;
+    let contact = o
+        .foot_plane
+        .filter(|p| p.is_finite() && p.z > 0.1 && o.parent_id == 0)
+        .map(|p| (p.w - p.x * local.x - p.y * local.y - 0.05) / p.z)
+        .filter(|z| z.is_finite() && (feet - z).abs() <= 0.5);
+    let terrain = world.ground_height(position).filter(|z| z.is_finite() && (feet - z).abs() <= 0.5);
+    let support = match (contact, terrain) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (a, b) => a.or(b),
+    };
+    let flying =
+        flight_from_signals(o.parent_id != 0, world.animations.get(&id).into_iter().flatten().map(|a| a.id)).or(support.map(|_| false));
+    Some(AvatarTarget {
+        position,
+        flight: FlightTarget {
+            flying,
+            landing_height: support.unwrap_or(feet) + own_height * 0.5 + 0.05,
+        },
+    })
+}
+
+pub fn can_takeoff(world: &crate::world::World) -> bool {
+    use crate::world::land::{AgentRights, owned_by_agent, powers};
+    // LLAgent::canFly: parcel owners and the owning group's flight managers
+    // may fly despite ALLOW_FLY, but region and restraint rules still apply.
+    let rights = AgentRights {
+        id: world.agent_id,
+        groups: &world.groups.groups,
+    };
+    !world.agent.is_sitting()
+        && !world.rlva.has("fly")
+        && world
+            .main()
+            .and_then(|r| r.info.as_ref())
+            .is_some_and(|r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
+        && world.parcel.as_ref().is_some_and(|p| {
+            p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0
+                || (!world.agent_id.is_nil() && owned_by_agent(p, &rights, powers::LAND_ALLOW_FLY))
+        })
+}
+
+/// LLAgent::propagate / World::auto_land use physical support, not the
+/// prediction's lead. The target landing does not turn off our FLY flag
+/// in midair, and our arrival radius does not leave us hovering forever.
+pub fn land_near_target(world: &mut crate::world::World, pilot: &mut AutoPilot) -> bool {
+    if !pilot.landing() || (pilot.goal() - world.agent.server_pos).truncate().length() > pilot.landing_radius() {
+        return false;
+    }
+    world.auto_land(&crate::agent::MoveInput {
+        down: true,
+        ..Default::default()
+    });
+    if !world.agent.flying {
+        pilot.set_flying(false, world.agent.position);
+        return true;
+    }
+    false
 }
 
 /// Where a teleport by double click goes (teleportToClickedLocation then
@@ -610,6 +823,293 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn flight_observation_includes_stationary_hover_and_does_not_mistake_jumps_for_flight() {
+        use crate::ao::State;
+        for state in [
+            State::Flying,
+            State::FlyingSlow,
+            State::FlyingUp,
+            State::FlyingDown,
+            State::Hovering,
+        ] {
+            assert_eq!(flight_from_signals(false, [state.motion()].into_iter()), Some(true));
+            assert_eq!(flight_from_signals(true, [state.motion()].into_iter()), Some(false), "seated wins");
+            assert_eq!(
+                flight_from_signals(false, [State::Standing.motion(), state.motion()].into_iter()),
+                Some(true)
+            );
+        }
+        for state in [
+            State::Standing,
+            State::Walking,
+            State::Landing,
+            State::SoftLanding,
+            State::GroundSit,
+        ] {
+            assert_eq!(flight_from_signals(false, [state.motion()].into_iter()), Some(false));
+        }
+        for state in [State::Jumping, State::PreJumping, State::Falling] {
+            assert_eq!(flight_from_signals(false, [state.motion()].into_iter()), None);
+        }
+        assert_eq!(flight_from_signals(false, [uuid::Uuid::from_u128(123)].into_iter()), None);
+        assert_eq!(flight_from_signals(false, std::iter::empty()), None);
+    }
+
+    #[test]
+    fn flight_changes_restart_a_resting_follow_and_unknown_signals_keep_its_mode() {
+        let mut pilot = AutoPilot::avatar(Vec3::ZERO, Vec3::X, Some(uuid::Uuid::from_u128(7)), false, Instant::now());
+        pilot.observe_flight(
+            FlightTarget {
+                flying: Some(false),
+                landing_height: 0.0,
+            },
+            Vec3::ZERO,
+        );
+        assert_eq!(pilot.step(Vec3::ZERO, 0.0, FRAME).flags, control::STOP);
+        pilot.target.z = 6.0;
+        pilot.observe_flight(
+            FlightTarget {
+                flying: Some(true),
+                landing_height: 6.0,
+            },
+            Vec3::ZERO,
+        );
+        assert!(pilot.wants_flight());
+        pilot.set_flying(true, Vec3::ZERO);
+        assert_ne!(pilot.step(Vec3::ZERO, 0.0, FRAME).flags & control::UP_POS, 0);
+        pilot.observe_flight(
+            FlightTarget {
+                flying: None,
+                landing_height: 6.0,
+            },
+            Vec3::ZERO,
+        );
+        assert!(pilot.wants_flight(), "missing signals cannot command a landing");
+        pilot.observe_flight(
+            FlightTarget {
+                flying: Some(false),
+                landing_height: 0.0,
+            },
+            Vec3::Z,
+        );
+        assert!(pilot.landing());
+        let step = pilot.step(Vec3::Z, 0.0, FRAME);
+        assert_eq!(step.finish, None, "proximity cannot finish a landing while still flying");
+        assert_eq!(step.flags, control::UP_NEG);
+        pilot.set_flying(false, Vec3::ZERO);
+        assert_eq!(pilot.step(Vec3::ZERO, 0.0, FRAME).flags, control::STOP);
+        pilot.observe_flight(
+            FlightTarget {
+                flying: Some(true),
+                landing_height: 6.0,
+            },
+            Vec3::ZERO,
+        );
+        assert!(pilot.wants_flight(), "follow survives landing and a second takeoff");
+    }
+
+    #[test]
+    fn landing_approaches_before_descending_and_does_not_dive_below_missing_support() {
+        let from = Vec3::Z * 10.0;
+        let mut pilot = AutoPilot::avatar(from, Vec3::X * 10.0, None, true, Instant::now());
+        pilot.observe_flight(
+            FlightTarget {
+                flying: Some(false),
+                landing_height: 1.0,
+            },
+            from,
+        );
+        let step = pilot.step(from, 0.0, FRAME);
+        assert_eq!(step.flags & control::UP_NEG, 0, "do not land far from the target");
+        assert_ne!(step.flags & control::AT_POS, 0);
+        let near = Vec3::new(8.5, 0.0, 10.0);
+        assert_eq!(pilot.step(near, 0.0, FRAME).flags, control::UP_NEG);
+        let at_floor = near.with_z(1.05);
+        assert_eq!(pilot.step(at_floor, 0.0, FRAME).flags, control::UP_NEG);
+        assert_eq!(pilot.step(at_floor, 0.0, FRAME).finish, None);
+        assert_eq!(pilot.step(near.with_z(0.7), 0.0, FRAME).flags, control::STOP);
+    }
+
+    #[test]
+    fn flight_preserves_lateral_clearance_and_landing_moves_beside_an_overhead_leader() {
+        let mut pilot = AutoPilot::avatar(Vec3::ZERO, Vec3::new(1.85, 0.0, 6.0), None, true, Instant::now());
+        pilot.observe_flight(
+            FlightTarget {
+                flying: Some(true),
+                landing_height: 6.0,
+            },
+            Vec3::ZERO,
+        );
+        let step = pilot.step(Vec3::ZERO, 0.0, FRAME);
+        assert_eq!(
+            step.flags,
+            control::UP_POS,
+            "climb without moving into the leader's horizontal space"
+        );
+        pilot.target = Vec3::ZERO;
+        let above = Vec3::Z * 10.0;
+        pilot.observe_flight(
+            FlightTarget {
+                flying: Some(false),
+                landing_height: 1.0,
+            },
+            above,
+        );
+        assert!(pilot.landing_offset.truncate().length() >= 1.0);
+        let step = pilot.step(above, std::f32::consts::PI, FRAME);
+        assert_eq!(step.flags & control::UP_NEG, 0, "move aside before descending");
+        assert_ne!(step.flags & (control::AT_POS | control::NUDGE_AT_POS), 0);
+        assert_eq!(
+            step.flags & control::FAST_AT,
+            0,
+            "vertical separation cannot speed up a short lateral approach"
+        );
+        let beside = pilot.goal().with_z(10.0);
+        assert_eq!(pilot.step(beside, std::f32::consts::PI, FRAME).flags, control::UP_NEG);
+    }
+
+    fn landing_fixture() -> (crate::world::World, AutoPilot) {
+        use crate::{demo, scene::avatar::AvatarLibrary, world::World};
+        use aurora_net::NetEvent;
+        let handle = aurora_net::origin_to_handle(256000, 256000);
+        let mut world = World::new(std::sync::Arc::new(AvatarLibrary::load()));
+        world.agent_id = demo::DEMO_AGENT;
+        world.main_region = Some(handle);
+        let mut own = demo::action_avatar(false);
+        own.position = Vec3::new(10.0, 10.0, 101.0);
+        own.scale.z = 1.8;
+        own.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, 100.0));
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![own.clone()],
+        });
+        world.apply(NetEvent::AgentMovementComplete {
+            handle,
+            position: own.position,
+            look_at: Vec3::X,
+        });
+        world.agent.flying = true;
+        let mut pilot = AutoPilot::avatar(own.position, own.position + Vec3::X, Some(demo::DEMO_LOUP), true, Instant::now());
+        pilot.observe_flight(
+            FlightTarget {
+                flying: Some(false),
+                landing_height: 100.95,
+            },
+            own.position,
+        );
+        (world, pilot)
+    }
+
+    #[test]
+    fn landing_waits_for_our_physical_contact_near_the_leader_including_on_a_platform() {
+        let (mut world, mut pilot) = landing_fixture();
+        let base = world.agent.server_pos;
+        // Rendering/prediction can appear to have arrived before physics.
+        world.agent.position = base;
+        world.agent.server_pos = base + Vec3::Z * 6.0;
+        assert!(!land_near_target(&mut world, &mut pilot));
+        assert!(world.agent.flying);
+        world.agent.server_pos = base + Vec3::X * 10.0;
+        assert!(
+            !land_near_target(&mut world, &mut pilot),
+            "physical contact far away is insufficient"
+        );
+        world.agent.server_pos = base;
+        world.agent.position = base + Vec3::Z * 3.0;
+        assert!(land_near_target(&mut world, &mut pilot));
+        assert!(!world.agent.flying && !pilot.flying);
+        assert!(pilot.leader.is_some());
+        assert_eq!(world.agent.server_pos, base);
+    }
+
+    #[test]
+    fn target_height_accounts_for_different_avatar_sizes_and_preserves_platform_contact() {
+        use crate::demo;
+        use aurora_net::NetEvent;
+        let (mut world, _) = landing_fixture();
+        let mut target = demo::action_avatar(false);
+        target.local_id = 9001;
+        target.full_id = demo::DEMO_LOUP;
+        target.position = Vec3::new(11.0, 10.0, 100.5);
+        target.scale.z = 1.0;
+        target.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, 100.0));
+        world.apply(NetEvent::ObjectUpdates {
+            handle: world.main_region.unwrap(),
+            objects: vec![target],
+        });
+        let observed = avatar_target(&world, demo::DEMO_LOUP, 2.0).unwrap();
+        assert_eq!(observed.flight.flying, Some(false));
+        assert!((observed.flight.landing_height - 101.0).abs() < 0.001);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: demo::DEMO_LOUP,
+            anims: vec![(crate::own_motion::ANIM_HOVER, 1)],
+            sources: Vec::new(),
+        });
+        assert_eq!(avatar_target(&world, demo::DEMO_LOUP, 2.0).unwrap().flight.flying, Some(true));
+    }
+
+    #[test]
+    fn automatic_takeoff_obeys_region_parcel_sitting_and_fly_restrictions() {
+        use crate::{demo, scene::avatar::AvatarLibrary, world::World};
+        use aurora_net::NetEvent;
+        let mut world = World::new(std::sync::Arc::new(AvatarLibrary::load()));
+        assert!(!can_takeoff(&world), "wait for region flight policy");
+        world.agent_id = demo::DEMO_AGENT;
+        let info = demo::events()
+            .into_iter()
+            .find_map(|e| match e {
+                NetEvent::RegionHandshake(info) => Some(info),
+                _ => None,
+            })
+            .unwrap();
+        world.main_region = Some(info.handle);
+        world.apply(NetEvent::RegionHandshake(info.clone()));
+        assert!(!can_takeoff(&world), "wait for parcel flight policy");
+        world.parcel = Some(std::sync::Arc::new(aurora_net::ParcelInfo {
+            flags: aurora_net::parcel_flags::ALLOW_FLY,
+            ..Default::default()
+        }));
+        assert!(can_takeoff(&world));
+        world.agent.seated = true;
+        assert!(!can_takeoff(&world));
+        world.agent.seated = false;
+        let mut blocked = (*info).clone();
+        blocked.region_flags |= aurora_net::region_flags::BLOCK_FLY;
+        world.apply(NetEvent::RegionHandshake(std::sync::Arc::new(blocked)));
+        assert!(!can_takeoff(&world));
+        world.apply(NetEvent::RegionHandshake(info.clone()));
+        world.parcel = Some(std::sync::Arc::new(aurora_net::ParcelInfo::default()));
+        assert!(!can_takeoff(&world));
+        std::sync::Arc::make_mut(world.parcel.as_mut().unwrap()).owner_id = world.agent_id;
+        assert!(can_takeoff(&world), "parcel owner may fly");
+        let group = uuid::Uuid::from_u128(746);
+        std::sync::Arc::make_mut(world.parcel.as_mut().unwrap()).owner_id = group;
+        world.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Flight managers".into(),
+            insignia: uuid::Uuid::nil(),
+            powers: 0,
+            accept_notices: false,
+            list_in_profile: false,
+            contribution: 0,
+        });
+        assert!(!can_takeoff(&world), "membership alone does not grant flight");
+        world.groups.groups[0].powers = crate::world::land::powers::LAND_ALLOW_FLY;
+        assert!(can_takeoff(&world), "owning group's flight power allows flight");
+        let mut blocked = (*info).clone();
+        blocked.region_flags |= aurora_net::region_flags::BLOCK_FLY;
+        world.apply(NetEvent::RegionHandshake(std::sync::Arc::new(blocked)));
+        assert!(!can_takeoff(&world), "region restriction takes precedence over group powers");
+        world.apply(NetEvent::RegionHandshake(info));
+        world.groups.groups.clear();
+        std::sync::Arc::make_mut(world.parcel.as_mut().unwrap()).flags = aurora_net::parcel_flags::ALLOW_FLY;
+        assert!(can_takeoff(&world));
+        world.rlva.configure(true);
+        world.rlva_console_input("@fly=n");
+        assert!(!can_takeoff(&world));
     }
 
     #[test]

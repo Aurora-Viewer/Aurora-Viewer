@@ -5538,6 +5538,7 @@ impl App {
         if !self.world.agent.flying && self.world.rlva.has("fly") {
             return;
         }
+        self.stop_autopilot(true);
         self.release_native_movelock();
         self.movement_runtime.cancel_water_exit();
         self.world.agent.flying = !self.world.agent.flying;
