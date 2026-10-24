@@ -1849,6 +1849,15 @@ The listener accepts the Blender extension on port 17655. Check that live
 retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`
 objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
+
+Blender's synchronization-list linksets are exercised by
+`blender --background --factory-startup --python-exit-code 1 --python blender/tests/test_groups.py`.
+It covers unparented multi-add, active and highlighted roots, partial regrouping,
+Ungroup overriding Blender parents, root removal/promotion, mixed rigged/static
+selections, stable source identities, coordinate units, save/load, Undo/Redo and
+automatic/manual update behavior. Check the native Blender list visually too:
+grouping checkboxes, synchronization chain icons, root-first ordering and the
+Group/Ungroup/Make root row must remain usable in English and French.
 `objects` adds a belt and neck band, starts the belt hidden and the band
 removed. Toggle the belt and clear the objects; no restore button should
 appear. Each row's Import button opens that object's

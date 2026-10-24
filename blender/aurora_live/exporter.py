@@ -207,7 +207,31 @@ def _mesh(source, supported, forward, rest_axes, capture, include_slots=False):
         bpy.context.view_layer.update()
 
 
-def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, source_ids=None):
+def static_roots(objects, overrides=None):
+    """Resolve explicit LiveMesh groups and inherited Blender parents to one root."""
+    static = {obj.as_pointer(): obj for obj in objects if armature_for(obj) is None}
+    parents = {}
+    for key, obj in static.items():
+        if overrides is not None and key in overrides:
+            parent = overrides[key]
+        else:
+            parent = obj.parent
+            while parent is not None and parent.as_pointer() not in static:
+                parent = parent.parent
+        parents[key] = parent.as_pointer() if parent is not None and parent.as_pointer() in static else None
+    roots = {}
+    for key in static:
+        chain, current = set(), key
+        while parents[current] is not None:
+            if current in chain:
+                raise ValueError("Invalid LiveMesh grouping")
+            chain.add(current)
+            current = parents[current]
+        roots[key] = static[current]
+    return roots
+
+
+def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, source_ids=None, link_roots=None):
     valid = []
     for source in objects:
         try:
@@ -216,7 +240,7 @@ def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, sourc
         except ReferenceError:
             pass
     objects = valid
-    static = {source.as_pointer(): source for source in objects if armature_for(source) is None}
+    roots = static_roots(objects, link_roots)
     meshes = []
     capture = Capture()
     for source in objects:
@@ -228,15 +252,9 @@ def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, sourc
             mesh = _mesh(source, supported, forward, rest_axes or {}, capture)
             if source_ids and source.as_pointer() in source_ids:
                 mesh["source_id"] = source_ids[source.as_pointer()]
-                if source.as_pointer() in static:
-                    # SL linksets have one mesh root, even for nested Blender
-                    # parents. Keep distinct sources and their authored spacing.
-                    root, parent = None, source.parent
-                    while parent is not None:
-                        if parent.as_pointer() in static and parent.as_pointer() in source_ids:
-                            root = parent
-                        parent = parent.parent
-                    if root is not None:
+                root = roots.get(source.as_pointer())
+                if root is not None and root != source:
+                    if root.as_pointer() in source_ids:
                         basis = coordinate_basis(None, "NATIVE" if forward == "AUTO" else forward)
                         offset = basis.to_3x3() @ (source.matrix_world.translation - root.matrix_world.translation)
                         mesh["link"] = {"parent": source_ids[root.as_pointer()],

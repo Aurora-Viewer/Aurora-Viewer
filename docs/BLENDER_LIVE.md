@@ -17,20 +17,33 @@ expressed in metres, retaining authored rotation/scale and ignoring the object's
 Blender scene translation; linked children retain their offsets from the root. An existing rig without valid weights remains an
 error rather than silently turning into a static object.
 
-Parented static meshes stay **separate objects in one linked set**. Add the
-parent and children to the synchronization list: the highest synchronized mesh
-parent is the **root**, and Aurora preserves each mesh's relative position,
-rotation and size. Nested parents are flattened to the same root, including
-intermediate empty objects. The source list groups the linked prims under one
+With plug-in **0.14.0+**, adding several static meshes at once creates **one
+linkset**, even when they have no Blender parents. The active selected static
+mesh becomes the **root**; if the active object is rigged, the first static
+entry is used. Each mesh keeps its own geometry, materials, relative position,
+rotation and size. Rigged meshes stay outside these static linksets.
+
+In Blender's synchronization list, check the entries to operate on. **Group**
+groups the checked static entries, using the highlighted entry as root when it
+is checked. **Ungroup** makes checked entries independent. Highlight any member
+and click **Make root** to change the root of its complete linkset. These
+operations do not change Blender parents or object transforms. Removing or
+ungrouping a root promotes a remaining member. Groups survive save/load,
+renaming, list reordering and Undo/Redo.
+
+Existing entries without an explicit group still follow Blender parenting:
+the highest synchronized static mesh parent is the root, including through
+intermediate empties. Explicit grouping overrides this hierarchy; Ungroup also
+keeps parented meshes independent in Aurora. The source list groups the prims under one
 root, numbered #1, #2 and onward, with an object/prim counter matching the build
 tools. Clicking Edit uses the whole linkset by default. Enable **Edit linked parts**
 in the normal build tools or object context menu to select a child alone.
 All static draw prims, including extra material batches, are direct children
 of the same root rather than nested objects. Rez, drop, derez, body/HUD attachment
 and detach apply to the complete set, even when
-requested from a child. Unparenting in Blender creates independent previews and
-preserves their current placement. Paused or absent parents are not referenced.
-This requires plug-in 0.13.0 and the viewer's `object-links` capability.
+requested from a child. Unparenting inherited groups or using Ungroup creates
+independent previews and preserves their current placement. Paused or absent
+roots are not referenced. Linksets require the viewer's `object-links` capability.
 
 Static objects initially appear on the floor two metres in front of your
 avatar. Select the source in Aurora's **LiveMesh** window to **Edit**, **Drop
@@ -44,7 +57,7 @@ same controls for body attachments and HUDs. Right-clicking any prim opens the
 ordinary object context menu, with Edit, Edit linked parts, Inspect and supported
 local attachment/removal actions.
 Inspect shows one object with its separate root and linked prims. Link/unlink
-authoring remains in Blender, which supplies the synchronized parentage. Numeric
+authoring remains in Blender's synchronization list. Numeric
 position, rotation and size are also available below the source list; attachment
 positions use the attachment point's local frame. Dropping a body attachment
 retains its current orientation and horizontal location, resting its rotated
@@ -145,11 +158,13 @@ existing entries and their enabled/paused state. You can prepare the list before
 connecting. If it is empty, **Connect to Aurora** adds the current mesh selection
 for convenience; an existing list is used independently of the current selection.
 
-Each row has a synchronization checkbox and a remove button. Unchecking an
-object removes it from the Aurora preview while retaining its list entry.
-Rechecking sends its latest geometry, weights and materials. The remove button
+Each row has a grouping-selection checkbox, a synchronization chain toggle and
+a remove button. Turning synchronization off removes the object from the
+Aurora preview while retaining its list entry. Turning it back on sends its
+latest geometry, weights and materials. Grouping checkboxes only select entries
+for Group/Ungroup; they do not change the preview. The remove button
 removes the entry and its preview, preserving the Blender object. Disabling or
-removing every entry sends an empty preview. Add/remove support Undo/Redo.
+removing every entry sends an empty preview. Add/remove and grouping support Undo/Redo.
 Renaming updates the displayed name and keeps the same object reference.
 Deleted objects are pruned at the next live tick or list operation.
 
@@ -158,7 +173,7 @@ connection and restores that file's saved list. During a connection, switching
 scenes schedules the new scene's enabled entries according to its update settings.
 **Update now** also retries the current enabled objects after an error. List
 changes respect the update mode and interval; in manual mode, click **Update now**
-to publish additions, pauses, resumptions or removals.
+to publish additions, pauses, resumptions, removals or grouping changes.
 
 The add-on reconnects automatically when Aurora becomes available again,
 resending its latest snapshot. Disconnecting Blender leaves the last good
@@ -750,7 +765,8 @@ The optional `object-links` feature adds `link: {parent, offset}` to a static
 mesh. `parent` is a synchronized, unskinned root source UUID; `offset` is the
 child origin minus root origin, in metres in the same baked coordinate frame
 as its vertices. Each source keeps its own geometry and identity. Roots have
-no link, and the exporter flattens nested parenting. Missing, cyclic, rigged,
+no link, and the exporter flattens explicit LiveMesh groups and inherited
+Blender parenting to the same format. Missing, cyclic, rigged,
 self and excessive-offset links are rejected before installation. The worker
 orders roots before children independently of the synchronization-list order.
 A peer without this feature receives a clear update error for linked scenes.

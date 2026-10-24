@@ -2,7 +2,7 @@
 
 bl_info = {
     "name": "Aurora LiveMesh", "author": "Aurora Viewer contributors",
-    "version": (0, 13, 1), "blender": (2, 93, 0),
+    "version": (0, 14, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
@@ -139,7 +139,7 @@ def _tick():
     prefs = scene.aurora_live
     # Polling also sees Undo/Redo, scene switches and names changed while idle.
     membership = (scene.as_pointer(), scene.unit_settings.scale_length, prefs.forward,
-                  tuple((obj.as_pointer(), obj.name) for obj in objects))
+                  tuple((obj.as_pointer(), obj.name) for obj in objects), tracking.signature(scene))
     if membership != _object_signature:
         _object_signature = membership
         _request_capture()
@@ -158,7 +158,8 @@ def _tick():
         try:
             if painting:
                 materials.invalidate()
-            value = exporter.snapshot(objects, supported, _revision + 1, prefs.forward, _client.rest_axes(), tracking.source_ids(scene))
+            value = exporter.snapshot(objects, supported, _revision + 1, prefs.forward, _client.rest_axes(),
+                                      tracking.source_ids(scene), tracking.link_roots(scene))
             # Texture painting can change pixels without a depsgraph event.
             # Compare the prepared payload, sharing its buffers with the worker,
             # so idle paint ticks and unrelated notifications send no revisions.
@@ -277,7 +278,7 @@ class AURORA_OT_connect(bpy.types.Operator):
         global _client, _force_capture
         tracking.prune(context.scene)
         if not context.scene.aurora_live.objects:
-            tracking.add(context.scene, _selected())
+            tracking.add(context.scene, _selected(), context.view_layer.objects.active)
         _stop()
         _request_capture()
         _force_capture = True
@@ -396,6 +397,10 @@ def _draw_live(layout, context):
     layout.operator("aurora.live_selection", icon="ADD")
     if prefs.objects:
         layout.template_list("AURORA_UL_sync_objects", "", prefs, "objects", prefs, "object_index", rows=4, maxrows=8)
+        row = layout.row(align=True)
+        row.operator("aurora.live_group", icon="LINKED")
+        row.operator("aurora.live_ungroup", icon="UNLINKED")
+        layout.operator("aurora.live_root", icon="OBJECT_ORIGIN")
         layout.label(text=pgettext_iface("{enabled} / {total} enabled").format(
             enabled=len(tracking.active(context.scene)), total=len(prefs.objects)), translate=False)
     else:
@@ -614,6 +619,16 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Add the current selection without replacing listed objects or enabling paused entries":
         "Ajouter la sélection sans remplacer les objets listés ni réactiver les objets en pause",
     "Synchronized objects": "Objets synchronisés", "Synchronize": "Synchroniser",
+    "Select for grouping": "Sélectionner pour grouper",
+    "Select this entry for Group and Ungroup": "Sélectionner cet objet pour Grouper et Dégrouper",
+    "Group": "Grouper", "Ungroup": "Dégrouper", "Make root": "Définir root",
+    "Group checked entries; the highlighted entry becomes the root":
+        "Grouper les objets cochés ; la ligne active devient le root",
+    "Make checked entries independent without changing Blender parenting":
+        "Rendre les objets cochés indépendants sans changer leur parenté Blender",
+    "Use the highlighted entry as the root of its linkset": "Utiliser la ligne active comme root de son linkset",
+    "Root #1 · {name}": "Root #1 · {name}", "#{number} · {name}": "#{number} · {name}",
+    "Invalid LiveMesh grouping": "Groupement LiveMesh invalide",
     "Include this object in Aurora's live preview": "Inclure cet objet dans l’aperçu live Aurora",
     "Remove from synchronization": "Retirer de la synchronisation",
     "Remove this entry from Aurora's preview list; keep the Blender object":

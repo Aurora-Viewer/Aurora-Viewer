@@ -40,7 +40,14 @@ existing draw objects retain their geometry while replacement meshes load.
 triangle picker (including elevated floors), and retires obsolete assets as soon as their geometry has
 no references or pending jobs. `blender/aurora_live/` is the shared Blender 2.93+
 implementation, with main-thread rest capture, a separate socket worker and a
-single latest-snapshot mailbox. Per-scene automatic/manual settings gate dirty
+single latest-snapshot mailbox. `tracking.py` stores scene-owned synchronization
+groups independently of Blender parents: multi-add chooses the active static
+root, marked entries support Group/Ungroup, and Make root reassigns a complete
+family. Removing a root promotes a member. Group IDs, root flags and explicit
+independence survive save/load and Undo/Redo; their signature schedules updates
+even when RNA callbacks are not replayed. `exporter.static_roots` resolves both
+explicit groups and inherited parenting into the existing flat `object-links`
+format. Per-scene automatic/manual settings gate dirty
 captures at a seconds-based interval, including membership changes; an explicit
 refresh captures immediately or waits for the handshake. Initial connections
 always capture. Comparing prepared content suppresses identical automatic
