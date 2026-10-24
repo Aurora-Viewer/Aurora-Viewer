@@ -5,6 +5,7 @@
 //! the frame packet) and `renderer` (the passes, run by the render thread
 //! of `render_thread`); see main_thread.rs for who owns what.
 
+pub mod adapter_choice;
 pub mod arena;
 pub mod bc7;
 mod bloom;
@@ -48,6 +49,7 @@ mod ui_glass;
 mod ui_world;
 pub mod upload;
 pub mod vram;
+pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;

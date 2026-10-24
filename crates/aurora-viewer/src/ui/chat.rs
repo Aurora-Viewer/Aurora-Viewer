@@ -21,6 +21,7 @@ mod latest;
 mod line_menu;
 mod members;
 mod offer_card;
+mod popout;
 pub mod previews;
 mod reorder;
 pub(crate) mod select;
@@ -197,6 +198,15 @@ pub struct ChatUi {
     pub previews: previews::Previews,
     /// The duration asked before a group chat's snooze (`snooze.rs`).
     snooze: Option<snooze::Prompt>,
+    /// The conversations in their own windows (`popout.rs`).
+    popped: popout::Popped,
+    /// The conversations asked for open in their own window (Preferences ›
+    /// Chat, off), given every frame by the app.
+    pub own_windows: bool,
+    /// The Conversations window was open last frame.
+    main_open: bool,
+    /// The window whose emoji picker is open (`popout::one_picker`).
+    picker_window: Option<popout::WindowKey>,
 }
 
 /// What the column's resident picker starts.
@@ -245,6 +255,31 @@ impl ChatUi {
         self.views.remove(&Some(conversation));
         self.drafts.remove(&Some(conversation));
         self.input_history.remove(&Some(conversation));
+        self.popped.remove(Some(conversation));
+    }
+
+    /// "Detach": `conversation` in its own window, its field taking the
+    /// keyboard, from the next frame (the Conversations window drew it in
+    /// this one).
+    fn pop_out(&mut self, conversation: Option<uuid::Uuid>) {
+        self.popped.pop_out(conversation, self.members_open, self.stage_mini, true);
+        self.popped.hold(conversation);
+    }
+
+    /// "Attach to Conversations": the window of `conversation` closes, and
+    /// the Conversations window, opened if closed, shows it.
+    fn dock_back(&mut self, ctx: &egui::Context, conversation: Option<uuid::Uuid>, open: &mut bool) {
+        if self.popped.remove(conversation) {
+            self.select_tab(conversation);
+            self.reveal = conversation;
+            super::notifications::open_conversations(ctx, open);
+        }
+    }
+
+    /// `AURORA_DEMO_CONV_POPOUT`: `conversation` in its own window, at `pos`.
+    pub fn demo_pop_out(&mut self, ctx: &egui::Context, conversation: Option<uuid::Uuid>, pos: egui::Pos2, size: egui::Vec2) {
+        self.popped.pop_out(conversation, self.members_open, self.stage_mini, false);
+        demo_place_window(ctx, conversation, pos, size);
     }
 
     /// What is typed in a conversation's field (None = nearby chat).
@@ -252,8 +287,12 @@ impl ChatUi {
         self.drafts.entry(conversation).or_default()
     }
 
-    /// Show a tab of the window and give its field the keyboard.
+    /// Show a tab of the window and give its field the keyboard; a
+    /// conversation in its own window raises that window instead.
     fn select_tab(&mut self, conversation: Option<uuid::Uuid>) {
+        if self.popped.raise(conversation, true) {
+            return;
+        }
         self.selected = conversation;
         self.show_profile = false;
         self.contacts = false;
@@ -871,6 +910,10 @@ pub enum ConvAction {
     SetOutputDevice(String),
     /// List the audio outputs again (their menu opens).
     ListOutputDevices,
+    /// Pop a conversation out into its own window, or dock it back (None:
+    /// the nearby chat; `popout.rs`). Done by `show` before it returns.
+    PopOut(Option<uuid::Uuid>),
+    DockBack(Option<uuid::Uuid>),
 }
 
 use super::widgets::initials;
@@ -882,9 +925,10 @@ fn avatar_pic(ui: &mut egui::Ui, p: &Palette, pic: Option<&egui::TextureHandle>,
 }
 
 /// The id of a button of the window of tabs (Bubbles and Lines styles) by
-/// its icon ("send" for the send button).
+/// its icon ("send" for the send button); each window of its own has its
+/// own (`popout::window`).
 pub(crate) fn classic_id(icon: &str) -> egui::Id {
-    egui::Id::unique(("conv_classic", icon))
+    egui::Id::unique(("conv_classic", icon, popout::window()))
 }
 
 /// Tabler icon button of the conversation toolbar.
@@ -2295,7 +2339,18 @@ pub fn show(
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
     if let Some(f) = world.social.focus_im.take() {
-        st.open(f);
+        let conversation = (!f.is_nil()).then_some(f);
+        if popout::opens_in_own_window(&st.popped, conversation, st.own_windows) {
+            // the keyboard asked of the Conversations window goes to its own
+            let focus = std::mem::take(&mut st.conv_focus_request);
+            st.popped.pop_out(conversation, st.members_open, st.stage_mini, focus);
+            // and the Conversations window, opened for it, stays closed
+            if !st.main_open {
+                *open = false;
+            }
+        } else {
+            st.open(f);
+        }
     }
     let docked = !contacts_settings.torn_off;
     if !show_contacts_tab && st.contacts {
@@ -2305,13 +2360,24 @@ pub fn show(
         st.contacts = false;
     }
     let style = st.demo_style.unwrap_or(st.style);
-    // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`)
+    popout::one_picker(st);
+    // every entry of the window, whatever the column's search: it never
+    // shows a conversation that is in its own window (`popout.rs`)
+    let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)
+        .chain(st.reorder.sessions(world).into_iter().map(|(id, _)| Some(id)))
+        .collect();
+    if !st.contacts {
+        st.selected = popout::main_selection(&mut st.popped, st.selected, &entries);
+    }
+    // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`),
+    // over the entries without a window of their own
     if *open && !enlarged {
-        let order = if style.workspace() {
+        let mut order = if style.workspace() {
             sidebar::tab_order(world, st)
         } else {
             keys::legacy_order(world, st)
         };
+        order.retain(|c| !st.popped.contains(*c));
         keys::handle(ctx, st, &order, &mut actions);
     }
     let title = match st.selected {
@@ -2323,6 +2389,7 @@ pub fn show(
     };
     let own_name = world.own_name();
     let mut tear_off = false;
+    let mut detach = false;
     let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size())
         .attention(conversations_waiting(world))
         .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
@@ -2330,7 +2397,11 @@ pub fn show(
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
+    } else if entries.iter().any(|c| *c != st.selected && !st.popped.contains(*c)) {
+        // and for the conversation shown, while another stays in the window
+        floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut detach);
     }
+    popout::share(ctx, &st.popped);
     if style.workspace() {
         floater = floater.flush_body();
     }
@@ -2398,6 +2469,9 @@ pub fn show(
                     0.0,
                 )
                 .resp;
+                if st.popped.contains(None) && !local_shown && world.chat_unread == 0 && !ui.rect_contains_pointer(local.rect) {
+                    popout::paint_mark(ui, p, trailing_slot(local.rect));
+                }
                 conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
                 conv_menu::attach(&local, p, world, &mut actions, None);
                 if local.clicked() {
@@ -2447,6 +2521,9 @@ pub fn show(
                             entry.resp.scroll_to_me(None);
                             st.reveal = None;
                         }
+                        if st.popped.contains(Some(other)) && unread == 0 && !ui.rect_contains_pointer(entry.resp.rect) {
+                            popout::paint_mark(ui, p, trailing_slot(entry.resp.rect));
+                        }
                         conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
                         conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
                         st.reorder.row(world, other, &entry.resp);
@@ -2471,253 +2548,7 @@ pub fn show(
                 return;
             }
             // ---- conversation pane
-            ui.vertical(|ui| {
-                // a resident dropped on it joins it (LLFloaterIMSession::
-                // handleDragAndDrop, DAD_PERSON / DAD_CALLINGCARD)
-                if let Some(conversation) = st.selected {
-                    let pane = ui.available_rect_before_wrap();
-                    let zone = ui.interact(pane, ui.scope_id().with("person_drop"), egui::Sense::hover());
-                    if zone.dnd_hover_payload::<super::call_invite::PersonDrag>().is_some() {
-                        ui.painter().rect_stroke(
-                            pane,
-                            ui.visuals().window_corner_radius,
-                            egui::Stroke::new(1.5, p.violet),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-                    if let Some(person) = zone.dnd_release_payload::<super::call_invite::PersonDrag>() {
-                        actions.push(ConvAction::AddPeople(conversation, vec![person.0]));
-                    }
-                }
-                // who the conversation is with, and its actions
-                header::show(ui, p, icons, pics, world, st, &mut actions);
-                ui.add_space(4.0);
-                // the call of this conversation, while it is in progress
-                if let Some(call) = st.selected.and_then(|s| world.call_of(&s)) {
-                    call::strip(ui, p, icons, pics, world, call, st, &mut actions);
-                    ui.add_space(4.0);
-                } else if let Some(invite) = st.selected.and_then(|s| world.calls.invite_for(&s)) {
-                    call::ringing(ui, p, world, invite, &mut actions);
-                    ui.add_space(4.0);
-                }
-                // profile card
-                if let (true, Some(Some(info))) = (st.show_profile, st.selected.map(|s| world.groups.sessions.get(&s))) {
-                    // participants of a group / conference session
-                    egui::Frame::new()
-                        .fill(p.field)
-                        .corner_radius(ui.visuals().window_corner_radius)
-                        .inner_margin(egui::Margin::same(6))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            let mut names: Vec<(uuid::Uuid, String, bool)> = info
-                                .participants
-                                .iter()
-                                .map(|id| {
-                                    st.wanted_names.insert(*id);
-                                    (*id, world.social.name_of(id), info.moderators.contains(id))
-                                })
-                                .collect();
-                            names.sort_by_key(|(_, n, _)| n.to_lowercase());
-                            if names.is_empty() {
-                                ui.label(
-                                    RichText::new(aurora_i18n::tr!("ui-chat-loading-participants"))
-                                        .size(11.5)
-                                        .color(p.muted),
-                                );
-                            }
-                            egui::ScrollArea::vertical().max_height(90.0).show(ui, |ui| {
-                                ui.horizontal_wrapped(|ui| {
-                                    for (id, n, moderator) in names {
-                                        let t = RichText::new(n).size(12.0).color(if moderator { p.violet_light } else { p.ink });
-                                        let r = ui.add(egui::Label::new(t).sense(egui::Sense::click()));
-                                        name_menu(&r, p, world, id);
-                                        let tip = if moderator {
-                                            aurora_i18n::tr!("ui-chat-moderator-click-profile")
-                                        } else {
-                                            aurora_i18n::tr!("ui-chat-click-profile")
-                                        };
-                                        if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
-                                            actions.push(ConvAction::Profile(id));
-                                        }
-                                        ui.add_space(8.0);
-                                    }
-                                });
-                            });
-                        });
-                    ui.add_space(4.0);
-                }
-                let input_h = INPUT_H;
-                // Ctrl+F opens the find field of the conversation shown (in
-                // the head's row), when the keyboard is in this window, or
-                // nowhere with the pointer over it
-                // each conversation's own field (cursor, undo), like its draft
-                let conv_input = egui::Id::unique(("conv_input", st.selected));
-                let search = st.searches.entry(st.selected).or_default();
-                if find::wants_shortcut(ui, &[conv_input, find::field_id(), find::filter_id()]) {
-                    search.open_find();
-                }
-                // exactly what the input row takes under them: the spacing after
-                // the lines, the 4 points before the row and the row itself (a
-                // row that overflows makes the resizable window grow every frame)
-                let lines_h = (ui.available_height() - input_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
-                let mut to_field = ToField::Nothing;
-                egui::Frame::new()
-                    .fill(p.field)
-                    .corner_radius(ui.visuals().window_corner_radius)
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        mark_read(world, st.selected);
-                        let w: &World = world;
-                        let style = line_style(st.demo_style.unwrap_or(st.style), st.selected.map(|id| w.is_group_session(&id)));
-                        let lines = Lines {
-                            icons,
-                            emoji,
-                            pics,
-                            world: w,
-                            own_name: &own_name,
-                            height: lines_h,
-                        };
-                        to_field = conversation_lines(ui, p, lines, st, Rows::Classic(style));
-                    });
-                match to_field {
-                    ToField::Nothing => {}
-                    ToField::Focus => st.conv_focus_request = true,
-                    ToField::Text(t) => {
-                        st.drafts.entry(st.selected).or_default().push_str(&t);
-                        st.conv_focus_request = true;
-                    }
-                }
-                let strip_top = ui.min_rect().bottom();
-                ui.add_space(4.0);
-                // input + emoji
-                let hint = match st.selected {
-                    None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
-                    Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
-                };
-                let mut emoji_btn = None;
-                let mut send_clicked = false;
-                let mut draft = std::mem::take(st.draft_mut(st.selected));
-                let resp = ui
-                    .horizontal(|ui| {
-                        // the edges of the lines above, half the theme's spacing between
-                        ui.spacing_mut().item_spacing.x *= 0.5;
-                        let b = tool_resp(ui, p, icons, "mood-smile-filled", st.emoji_open);
-                        emoji_btn = Some(b.rect);
-                        if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
-                            st.emoji_open = !st.emoji_open;
-                        }
-                        // leave exactly the send button + spacing (else the row overflows
-                        // and the resizable window grows every frame)
-                        let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
-                        let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
-                        let nav = super::emoji::codes::keys(ui, conv_input);
-                        let mut output = emoji.text_field(ui, &mut draft, |edit| {
-                            edit.id(conv_input)
-                                .hint_text(hint)
-                                .desired_width(field_w)
-                                .min_size(egui::vec2(field_w, INPUT_H))
-                                .align(egui::Align2::LEFT_CENTER)
-                        });
-                        if recalled {
-                            output.response.mark_changed();
-                        }
-                        super::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
-                        if st.selected.is_none() {
-                            completion::complete(ui, &mut output, &mut draft, gestures);
-                        }
-                        let has_text = !draft.trim().is_empty();
-                        send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
-                        output.response
-                    })
-                    .inner;
-                // the strip between the lines and the field: egui reaches
-                // both from it (interact_radius), it keeps the normal cursor
-                // unless a drag goes through it
-                if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
-                    && pos.y > strip_top
-                    && pos.y < resp.rect.top()
-                    && ui.min_rect().x_range().contains(pos.x)
-                    && !ui.input(|i| i.pointer.any_down())
-                {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
-                }
-                if st.emoji_open {
-                    let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
-                    let mut close = false;
-                    egui::Area::new(egui::Id::unique("emoji_picker"))
-                        .fade_in(false)
-                        .order(egui::Order::Foreground)
-                        .pivot(egui::Align2::LEFT_BOTTOM)
-                        .fixed_pos(anchor - egui::vec2(0.0, 4.0))
-                        .show(ui.ctx(), |ui| {
-                            super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
-                                ui.set_width(300.0);
-                                let picked = emoji.picker(ui, p, icons);
-                                if let Some(c) = picked.chosen {
-                                    draft.push(c);
-                                    close = !ui.input(|i| i.modifiers.shift);
-                                }
-                                close |= picked.escape;
-                            });
-                        });
-                    if close {
-                        st.emoji_open = false;
-                        ui.ctx().memory_mut(|m| m.request_focus(conv_input));
-                    }
-                }
-                if st.conv_focus_request {
-                    st.conv_focus_request = false;
-                    resp.request_focus();
-                    cursor_to_end(ui.ctx(), conv_input, &draft);
-                }
-                let mut sent = false;
-                if send_clicked
-                    || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt))
-                {
-                    let text = draft.trim().to_owned();
-                    if !text.is_empty() {
-                        sent = true;
-                        st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
-                        match st.selected {
-                            None => {
-                                let (channel, message) = parse_channel(&text);
-                                actions.push(ConvAction::Local(OutgoingChat {
-                                    message,
-                                    channel,
-                                    // Ctrl+Enter shouts, Shift+Enter whispers (like the chat bar)
-                                    chat_type: ui.input(|i| {
-                                        if i.modifiers.ctrl {
-                                            ChatType::Shout
-                                        } else if i.modifiers.shift {
-                                            ChatType::Whisper
-                                        } else {
-                                            ChatType::Normal
-                                        }
-                                    }),
-                                }));
-                            }
-                            Some(to) => actions.push(ConvAction::Im { to, text }),
-                        }
-                    }
-                    draft.clear();
-                    resp.request_focus();
-                }
-                st.typing_field = Some(typing::Field {
-                    to: st.selected.filter(|id| !world.is_group_session(id) && (resp.has_focus() || sent)),
-                    typed: resp.changed(),
-                    empty: draft.trim().is_empty(),
-                    sent,
-                });
-                if st.selected.is_none() {
-                    let said = typing::says_aloud(&draft, st.type_during_emote);
-                    st.local_field(&resp, said, sent);
-                }
-                if !draft.is_empty() {
-                    *st.draft_mut(st.selected) = draft;
-                } else {
-                    st.drafts.remove(&st.selected);
-                }
-            });
+            ui.vertical(|ui| classic_pane(ui, p, icons, emoji, pics, gestures, world, st, &mut actions, h, &own_name));
         });
         bounds
     });
@@ -2725,6 +2556,37 @@ pub fn show(
     if tear_off {
         actions.push(ConvAction::Contacts(super::contacts::ContactsAction::ToggleTornOff));
     }
+    if detach {
+        actions.push(ConvAction::PopOut(st.selected));
+    }
+    // popped out or docked back from the title bar and the entries' menus;
+    // a window popped out now draws from the next frame, the window above
+    // having drawn its conversation in this one
+    actions.retain(|a| match a {
+        ConvAction::PopOut(c) => {
+            st.pop_out(*c);
+            false
+        }
+        ConvAction::DockBack(c) => {
+            st.dock_back(ctx, *c, open);
+            false
+        }
+        _ => true,
+    });
+    if !st.contacts {
+        st.selected = popout::main_selection(&mut st.popped, st.selected, &entries);
+    }
+    let env = popout::Env {
+        p,
+        icons,
+        emoji,
+        pics,
+        images,
+        gestures,
+        style,
+    };
+    popout::show(ctx, env, world, st, &mut actions);
+    st.main_open = *open;
     // the column's "+" and search: one resident for an IM, several for a
     // conference (LLAvatarActions::startIM / startConference)
     if let Some(residents) = st.picker.show(ctx, p, world) {
@@ -2736,7 +2598,9 @@ pub fn show(
         st.side_filter.clear();
     }
     // our typing notices to the resident written to (FSFloaterIM::setTyping)
-    let field = st.typing_field.take().filter(|_| st.send_typing && *open).unwrap_or(typing::Field {
+    // (the field of the Conversations window or of a window of its own: only
+    // a drawn one leaves its frame)
+    let field = st.typing_field.take().filter(|_| st.send_typing).unwrap_or(typing::Field {
         to: None,
         typed: false,
         empty: true,
@@ -2746,6 +2610,270 @@ pub fn show(
         actions.push(ConvAction::Typing { to, typing });
     }
     actions
+}
+
+/// The conversation shown at the right of the tabs (the Bubbles and
+/// Legacy styles), or alone in its own window (`popout.rs`): who it is
+/// with and its actions, its call, the participants, its lines and its
+/// field (FSFloaterIM, FSFloaterNearbyChat).
+#[allow(clippy::too_many_arguments)]
+fn classic_pane(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    icons: &super::icons::Icons,
+    emoji: &mut super::emoji::Emoji,
+    pics: &HashMap<uuid::Uuid, egui::TextureHandle>,
+    gestures: &crate::gestures::Manager,
+    world: &mut World,
+    st: &mut ChatUi,
+    actions: &mut Vec<ConvAction>,
+    h: f32,
+    own_name: &str,
+) {
+    // a resident dropped on it joins it (LLFloaterIMSession::
+    // handleDragAndDrop, DAD_PERSON / DAD_CALLINGCARD)
+    if let Some(conversation) = st.selected {
+        let pane = ui.available_rect_before_wrap();
+        let zone = ui.interact(pane, ui.scope_id().with("person_drop"), egui::Sense::hover());
+        if zone.dnd_hover_payload::<super::call_invite::PersonDrag>().is_some() {
+            ui.painter().rect_stroke(
+                pane,
+                ui.visuals().window_corner_radius,
+                egui::Stroke::new(1.5, p.violet),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if let Some(person) = zone.dnd_release_payload::<super::call_invite::PersonDrag>() {
+            actions.push(ConvAction::AddPeople(conversation, vec![person.0]));
+        }
+    }
+    // who the conversation is with, and its actions
+    header::show(ui, p, icons, pics, world, st, actions);
+    ui.add_space(4.0);
+    // the call of this conversation, while it is in progress
+    if let Some(call) = st.selected.and_then(|s| world.call_of(&s)) {
+        call::strip(ui, p, icons, pics, world, call, st, actions);
+        ui.add_space(4.0);
+    } else if let Some(invite) = st.selected.and_then(|s| world.calls.invite_for(&s)) {
+        call::ringing(ui, p, world, invite, actions);
+        ui.add_space(4.0);
+    }
+    // profile card
+    if let (true, Some(Some(info))) = (st.show_profile, st.selected.map(|s| world.groups.sessions.get(&s))) {
+        // participants of a group / conference session
+        egui::Frame::new()
+            .fill(p.field)
+            .corner_radius(ui.visuals().window_corner_radius)
+            .inner_margin(egui::Margin::same(6))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let mut names: Vec<(uuid::Uuid, String, bool)> = info
+                    .participants
+                    .iter()
+                    .map(|id| {
+                        st.wanted_names.insert(*id);
+                        (*id, world.social.name_of(id), info.moderators.contains(id))
+                    })
+                    .collect();
+                names.sort_by_key(|(_, n, _)| n.to_lowercase());
+                if names.is_empty() {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-chat-loading-participants"))
+                            .size(11.5)
+                            .color(p.muted),
+                    );
+                }
+                egui::ScrollArea::vertical().max_height(90.0).show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        for (id, n, moderator) in names {
+                            let t = RichText::new(n).size(12.0).color(if moderator { p.violet_light } else { p.ink });
+                            let r = ui.add(egui::Label::new(t).sense(egui::Sense::click()));
+                            name_menu(&r, p, world, id);
+                            let tip = if moderator {
+                                aurora_i18n::tr!("ui-chat-moderator-click-profile")
+                            } else {
+                                aurora_i18n::tr!("ui-chat-click-profile")
+                            };
+                            if r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked() {
+                                actions.push(ConvAction::Profile(id));
+                            }
+                            ui.add_space(8.0);
+                        }
+                    });
+                });
+            });
+        ui.add_space(4.0);
+    }
+    let input_h = INPUT_H;
+    // Ctrl+F opens the find field of the conversation shown (in
+    // the head's row), when the keyboard is in this window, or
+    // nowhere with the pointer over it
+    // each conversation's own field (cursor, undo), like its draft
+    let conv_input = egui::Id::unique(("conv_input", st.selected));
+    let search = st.searches.entry(st.selected).or_default();
+    if find::wants_shortcut(ui, &[conv_input, find::field_id(st.selected), find::filter_id(st.selected)]) {
+        search.open_find();
+    }
+    // exactly what the input row takes under them: the spacing after
+    // the lines, the 4 points before the row and the row itself (a
+    // row that overflows makes the resizable window grow every frame)
+    let lines_h = (ui.available_height() - input_h - 4.0 - ui.spacing().item_spacing.y - 1.0).clamp(60.0, h);
+    let mut to_field = ToField::Nothing;
+    egui::Frame::new()
+        .fill(p.field)
+        .corner_radius(ui.visuals().window_corner_radius)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            mark_read(world, st.selected);
+            let w: &World = world;
+            let style = line_style(st.demo_style.unwrap_or(st.style), st.selected.map(|id| w.is_group_session(&id)));
+            let lines = Lines {
+                icons,
+                emoji,
+                pics,
+                world: w,
+                own_name,
+                height: lines_h,
+            };
+            to_field = conversation_lines(ui, p, lines, st, Rows::Classic(style));
+        });
+    match to_field {
+        ToField::Nothing => {}
+        ToField::Focus => st.conv_focus_request = true,
+        ToField::Text(t) => {
+            st.drafts.entry(st.selected).or_default().push_str(&t);
+            st.conv_focus_request = true;
+        }
+    }
+    let strip_top = ui.min_rect().bottom();
+    ui.add_space(4.0);
+    // input + emoji
+    let hint = match st.selected {
+        None => aurora_i18n::tr!("ui-chat-to-local-chat").to_owned(),
+        Some(id) => aurora_i18n::tr!("ui-chat-at", value0 = world.session_title(&id).to_string()),
+    };
+    let mut emoji_btn = None;
+    let mut send_clicked = false;
+    let mut draft = std::mem::take(st.draft_mut(st.selected));
+    let resp = ui
+        .horizontal(|ui| {
+            // the edges of the lines above, half the theme's spacing between
+            ui.spacing_mut().item_spacing.x *= 0.5;
+            let b = tool_resp(ui, p, icons, "mood-smile-filled", st.emoji_open);
+            emoji_btn = Some(b.rect);
+            if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
+                st.emoji_open = !st.emoji_open;
+            }
+            // leave exactly the send button + spacing (else the row overflows
+            // and the resizable window grows every frame)
+            let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
+            let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
+            let nav = super::emoji::codes::keys(ui, conv_input);
+            let mut output = emoji.text_field(ui, &mut draft, |edit| {
+                edit.id(conv_input)
+                    .hint_text(hint)
+                    .desired_width(field_w)
+                    .min_size(egui::vec2(field_w, INPUT_H))
+                    .align(egui::Align2::LEFT_CENTER)
+            });
+            if recalled {
+                output.response.mark_changed();
+            }
+            super::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
+            if st.selected.is_none() {
+                completion::complete(ui, &mut output, &mut draft, gestures);
+            }
+            let has_text = !draft.trim().is_empty();
+            send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
+            output.response
+        })
+        .inner;
+    // the strip between the lines and the field: egui reaches
+    // both from it (interact_radius), it keeps the normal cursor
+    // unless a drag goes through it
+    if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+        && pos.y > strip_top
+        && pos.y < resp.rect.top()
+        && ui.min_rect().x_range().contains(pos.x)
+        && !ui.input(|i| i.pointer.any_down())
+    {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+    }
+    if st.emoji_open && popout::claim_picker(ui.ctx()) {
+        let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
+        let mut close = false;
+        // one per conversation: one in each window (`popout.rs`)
+        egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
+            .fade_in(false)
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .fixed_pos(anchor - egui::vec2(0.0, 4.0))
+            .show(ui.ctx(), |ui| {
+                super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
+                    ui.set_width(300.0);
+                    let picked = emoji.picker(ui, p, icons);
+                    if let Some(c) = picked.chosen {
+                        draft.push(c);
+                        close = !ui.input(|i| i.modifiers.shift);
+                    }
+                    close |= picked.escape;
+                });
+            });
+        if close {
+            st.emoji_open = false;
+            ui.ctx().memory_mut(|m| m.request_focus(conv_input));
+        }
+    }
+    if st.conv_focus_request {
+        st.conv_focus_request = false;
+        resp.request_focus();
+        cursor_to_end(ui.ctx(), conv_input, &draft);
+    }
+    let mut sent = false;
+    if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt)) {
+        let text = draft.trim().to_owned();
+        if !text.is_empty() {
+            sent = true;
+            st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
+            match st.selected {
+                None => {
+                    let (channel, message) = parse_channel(&text);
+                    actions.push(ConvAction::Local(OutgoingChat {
+                        message,
+                        channel,
+                        // Ctrl+Enter shouts, Shift+Enter whispers (like the chat bar)
+                        chat_type: ui.input(|i| {
+                            if i.modifiers.ctrl {
+                                ChatType::Shout
+                            } else if i.modifiers.shift {
+                                ChatType::Whisper
+                            } else {
+                                ChatType::Normal
+                            }
+                        }),
+                    }));
+                }
+                Some(to) => actions.push(ConvAction::Im { to, text }),
+            }
+        }
+        draft.clear();
+        resp.request_focus();
+    }
+    st.typing_field = Some(typing::Field {
+        to: st.selected.filter(|id| !world.is_group_session(id) && (resp.has_focus() || sent)),
+        typed: resp.changed(),
+        empty: draft.trim().is_empty(),
+        sent,
+    });
+    if st.selected.is_none() {
+        let said = typing::says_aloud(&draft, st.type_during_emote);
+        st.local_field(&resp, said, sent);
+    }
+    if !draft.is_empty() {
+        *st.draft_mut(st.selected) = draft;
+    } else {
+        st.drafts.remove(&st.selected);
+    }
 }
 
 /// The violet outline of the Conversations floater (#293) waits for what the
@@ -2764,7 +2892,23 @@ pub fn local_chat_shown(ctx: &egui::Context, st: &ChatUi) -> bool {
     let minimized = ctx
         .data_mut(|d| d.get_persisted::<bool>(egui::Id::unique(("conversations", "minimized"))))
         .unwrap_or(false);
-    !st.contacts && st.selected.is_none() && !minimized
+    (!st.contacts && st.selected.is_none() && !minimized) || popout::in_sight(ctx, &st.popped).any(|c| c.is_none())
+}
+
+/// A demo's window of its own for `conversation`, at `pos` (whatever the
+/// cascade or a previous run would give it).
+pub fn demo_place_window(ctx: &egui::Context, conversation: Option<uuid::Uuid>, pos: egui::Pos2, size: egui::Vec2) {
+    super::widgets::place_floater(ctx, &popout::floater_id(conversation), pos, size);
+}
+
+/// The conversations in sight (None: the nearby chat): the one the
+/// Conversations window shows while `main_open` and not minimized, and
+/// those of the windows of their own not minimized (FSFloaterIM::getVisible:
+/// a torn-off floater is visible on its own).
+pub fn conversations_in_sight(ctx: &egui::Context, st: &ChatUi, main_open: bool) -> Vec<Option<uuid::Uuid>> {
+    let minimized = super::widgets::floater_minimized(ctx, "conversations");
+    let main = (main_open && !minimized).then_some(st.selected);
+    main.into_iter().chain(popout::in_sight(ctx, &st.popped)).collect()
 }
 
 /// The sender of a bubble line: the avatar's profile picture (initials while

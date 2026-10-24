@@ -80,7 +80,25 @@ mod window_hold;
 mod window_show;
 mod world;
 
+/// Hybrid-GPU hints (#894): on a PC with an integrated and a dedicated GPU,
+/// the NVIDIA (Optimus) and AMD (PowerXpress) drivers run a program that
+/// exports these on the dedicated one. The Legacy Viewer exports the same
+/// (llgl.cpp). Under Vulkan the NVIDIA driver may not read them; the
+/// renderer's own choice (`aurora_render::adapter_choice`) does the rest.
+/// build.rs adds them to the export table (MSVC).
+#[cfg(all(windows, target_env = "msvc"))]
+mod gpu_hints {
+    #[unsafe(no_mangle)]
+    #[used]
+    pub static NvOptimusEnablement: u32 = 1;
+    #[unsafe(no_mangle)]
+    #[used]
+    pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
+}
+
 fn main() -> anyhow::Result<()> {
+    // SAFETY: the first line of main, before any other thread starts.
+    let vulkan_layers_off = unsafe { aurora_render::vulkan_layers::disable() };
     if aurora_updater::install::run_helper()? {
         return Ok(());
     }
@@ -107,6 +125,13 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    if !vulkan_layers_off.is_empty() {
+        let names: Vec<_> = vulkan_layers_off.iter().map(|l| l.name).collect();
+        log::info!(
+            "Vulkan layers kept out of the viewer (they crash at startup, #901): {} (AURORA_VULKAN_LAYERS=keep loads them)",
+            names.join(", ")
+        );
+    }
 
     let result = run_viewer();
     if let Err(error) = &result {

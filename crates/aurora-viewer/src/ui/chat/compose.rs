@@ -175,10 +175,11 @@ pub(super) fn show(
                     .inner
                 });
             let resp = field.inner;
-            if st.emoji_open {
+            if st.emoji_open && super::popout::claim_picker(ui.ctx()) {
                 let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
                 let mut close = false;
-                egui::Area::new(egui::Id::unique("emoji_picker"))
+                // one per conversation: one in each window (`popout.rs`)
+                egui::Area::new(egui::Id::unique(("emoji_picker", st.selected)))
                     .fade_in(false)
                     .order(egui::Order::Foreground)
                     .pivot(egui::Align2::LEFT_BOTTOM)
