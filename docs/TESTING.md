@@ -2088,7 +2088,20 @@ That ignored test creates and removes its own isolated profile.
 
 `AURORA_DEMO_GROUNDING` places our avatar on a solid ramp (`slope`) or
 different-height steps (`steps`). `landing` starts with a synthetic standing-up
-clip on the ramp.
+clip on the ramp. The fixture hides the system skirt to expose both knees
+and ankles. Append `-legacy` (or `-off`) to select automatic native
+motion placement instead of Aurora. The native pass uses the emulated
+simulator foot plane and terrain only: on separate steps it follows the common
+plane, while Aurora follows each exact support. Compare `slope-front-legacy`
+and `slope-front`, then `steps-front-legacy` and `steps-front`.
+Append `-ao` to publish the same standing clip under a custom AO identity: native
+placement must leave it alone, while Aurora can still adapt its contacts.
+`landing-front-legacy` retains the authored leg bend and adapts the pelvis;
+`landing-front` uses Aurora's independent terrain correction.
+`-legacy-transition` starts in native mode, enables Aurora at frames 660/720,
+and returns to native at 666/750; ordinary `-transition` runs the reverse.
+Check the first toggle frame and frames after 0.5 s for continuity and a full
+return. Explicit contacts and IK Edit must keep control in either mode.
 The “Also while moving” preference defaults off. Append `-moving` to enable
 it in a grounding demo; compare `steps-front-motion` with
 `steps-front-motion-moving` at the same frames. Movement releases placement
@@ -2103,7 +2116,7 @@ and chairs must never acquire standing placement.
 The avatar is placed only once: walk, strafe, turn, crouch, fly or jump with
 the normal controls, then stop on either support. Jumps
 trigger recovery on actual return to the surface; walking uses the demo's
-normal gait clips. Append `-off` to compare the original keyframes, or
+normal gait clips. Append `-off` to compare native motion placement, or
 `-motion` for an automated side-step/stop/return/jump input sequence. Compare
 `slope-lift` with `slope-lift-off` (or `steps-lift` with `steps-lift-off`):
 the stand alternately raises each foot.
@@ -2111,7 +2124,7 @@ The raised leg must keep its authored clearance over the terrain, while the othe
 keeps its support. If a swing foot intersects a step, only the necessary
 upward correction should prevent penetration; it must not be forced down to
 the floor. `steps-front-walk` and `steps-reach-front-walk` use an independently
-authored walk with explicit stance/flight paths; `-off` exposes its source.
+authored walk with explicit stance/flight paths; `-off` selects native standing correction for this synthetic standing clip.
 On flat support, adaptation should retain that source animation. During real
 movement across a step, inspect the rendered body rather than its correction
 offset: a sudden change of the physical centre must not pop the body upward.
@@ -2133,7 +2146,7 @@ correction-height limit.
 `steps-range-reach-front` uses a 0.9 m upper support: the saved correction
 limit starts at 0.4 m, then changes to 1 m at frame 900. Compare frames 850
 and 950, and inspect the live slider in Preferences › Aurora › Animations
-(`AURORA_DEMO_OPTIONS=13:animations`). Feet and body must respect the limit;
+(`AURORA_DEMO_OPTIONS=avatars/3`). Feet and body must respect the limit;
 supports beyond it may remain out of reach. Ordinary modes use 0.4 m.
 `steps-rise-front-lift` must retain this height while either foot lifts and
 replants. An intentional crouch (normal downward control) must retain its
@@ -2143,7 +2156,7 @@ fixture moves west to keep the frontal camera outside the plaza deck): each
 knee must bend forward on its own side, including when either step is higher,
 and must not turn a nearly straight leg inward across the other knee. Inspect
 each foot's height and orientation, knee bending, and the recovery's return
-upright. Toggle Preferences › Aurora › Animations › Keep feet on the ground
+upright. Toggle Preferences › Avatars › Animations › Use Aurora foot placement
 without restarting: corrections enter and leave smoothly, and should behave
 alike at 30, 60 and 144 fps. Imported animation previews and higher-priority AO poses
 of priority 5/6 must retain control. These fixtures never connect to a grid.
