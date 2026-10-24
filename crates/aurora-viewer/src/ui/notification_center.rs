@@ -12,10 +12,10 @@ use super::icons::Icons;
 use super::notifications::{self as cards, NotifUi, ToastEnv};
 use crate::settings::PresencePosition;
 use crate::theme::Palette;
+use crate::world::World;
 use crate::world::chat_log::format::Slt;
 use crate::world::notification_history::{self as history, Entry, Follow, History, Outcome};
 use crate::world::notifications::{Data, Notification, Notifications, Response};
-use crate::world::worldmap::RegionRatings;
 use egui::{Rect, RichText, Vec2};
 
 /// Width of the panel under the bell (the mockup's 360 px), with
@@ -319,7 +319,7 @@ pub fn show(
     ctx: &egui::Context,
     p: &Palette,
     icons: &Icons,
-    ratings: &RegionRatings,
+    world: &World,
     list: &mut Notifications,
     hist: &mut History,
     nui: &mut NotifUi,
@@ -404,9 +404,9 @@ pub fn show(
             super::widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
                 ui.set_width(inner);
                 if nui.open {
-                    full_list(ui, p, icons, ratings, list, hist, nui, env, dnd, &mut answers, &mut asks);
+                    full_list(ui, p, icons, world, list, hist, nui, env, dnd, &mut answers, &mut asks);
                 } else {
-                    rolled_out(ui, p, icons, ratings, list, nui, env, now, &mut answers);
+                    rolled_out(ui, p, icons, world, list, nui, env, now, &mut answers);
                 }
             });
         });
@@ -454,7 +454,7 @@ fn rolled_out(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
-    ratings: &RegionRatings,
+    world: &World,
     list: &mut Notifications,
     nui: &mut NotifUi,
     env: &mut ToastEnv<'_>,
@@ -478,7 +478,7 @@ fn rolled_out(
             child.set_clip_rect(Rect::from_min_size(top, Vec2::new(width + 12.0, full_h * keep)).intersect(ui.clip_rect()));
             child.multiply_opacity(keep);
         }
-        let r = center_card(&mut child, p, icons, ratings, env, &mut nui.wanted_pics, n);
+        let r = center_card(&mut child, p, icons, world, env, &mut nui.wanted_pics, n);
         let card = child.min_rect();
         nui.center.heights.insert(peek.id, card.height());
         // the time left, a fine violet bar along the card's bottom
@@ -518,7 +518,7 @@ fn full_list(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
-    ratings: &RegionRatings,
+    world: &World,
     list: &mut Notifications,
     hist: &mut History,
     nui: &mut NotifUi,
@@ -628,14 +628,14 @@ fn full_list(
                     let pinned = |n: &Notification| matches!(n.data, Data::RegionRestart);
                     for first in [true, false] {
                         for n in list.list.iter_mut().rev().filter(|n| !n.transient && pinned(n) == first) {
-                            if let Some(r) = center_card(ui, p, icons, ratings, env, &mut nui.wanted_pics, n) {
+                            if let Some(r) = center_card(ui, p, icons, world, env, &mut nui.wanted_pics, n) {
                                 answers.push((n.id, r));
                             }
                         }
                     }
                 });
         }
-        Tab::History => history_list(ui, p, icons, hist, &mut nui.center.query, max_h, asks, &nui.privacy),
+        Tab::History => history_list(ui, p, icons, world, hist, &mut nui.center.query, max_h, asks, &nui.privacy),
     }
 }
 
@@ -660,6 +660,7 @@ pub(super) fn history_list(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
+    world: &World,
     hist: &mut History,
     query: &mut String,
     max_h: f32,
@@ -699,7 +700,7 @@ pub(super) fn history_list(
                     ui.label(RichText::new(day.to_uppercase()).size(10.5).strong().color(p.muted_dim));
                     last_day = Some(day);
                 }
-                if let Some(follow) = history_card(ui, p, icons, &e) {
+                if let Some(follow) = history_card(ui, p, icons, world, &e) {
                     if follow == Follow::Restore {
                         if let Some(e) = hist.take(index) {
                             asks.push(Ask::Follow(e));
@@ -717,7 +718,7 @@ fn center_card(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
-    ratings: &RegionRatings,
+    world: &World,
     env: &mut ToastEnv<'_>,
     wanted: &mut std::collections::HashSet<uuid::Uuid>,
     n: &mut Notification,
@@ -732,7 +733,7 @@ fn center_card(
         if matches!(n.data, Data::Message { .. }) {
             cards::person_card(ui, p, icons, env, wanted, n, false)
         } else {
-            cards::card(ui, p, icons, ratings, n, false, true)
+            cards::card(ui, p, icons, world, n, false, true)
         }
     });
     if !read {
@@ -921,7 +922,7 @@ fn follow_label(f: &Follow) -> Option<&'static str> {
 }
 
 /// A greyed card of the history: its state, and the useful action left.
-fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, e: &Entry) -> Option<Follow> {
+fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, world: &World, e: &Entry) -> Option<Follow> {
     let mut out = None;
     let (icon, accent) = cards::look_style(p, e.look);
     egui::Frame::new()
@@ -945,7 +946,7 @@ fn history_card(ui: &mut egui::Ui, p: &Palette, icons: &Icons, e: &Entry) -> Opt
                         ui.label(RichText::new(hhmm(e.time)).size(10.5).color(p.muted_dim));
                     });
                     if !e.body.is_empty() {
-                        cards::text::show(ui, p, &e.body, &e.name_links, 12.0, p.muted, false, true);
+                        super::chat::text_with_links(ui, p, world, &e.body, &e.name_links, 12.0, p.muted);
                     }
                     ui.horizontal(|ui| {
                         egui::Frame::new()

@@ -175,11 +175,14 @@ impl App {
         }
     }
 
-    /// The names the app links of the texts wait for: groups
+    /// The names the app links of the texts wait for: avatars, groups
     /// (UUIDGroupNameRequest), experiences, parcels (ParcelInfoRequest,
     /// once each, as LLUrlEntryParcel::sendParcelInfoRequest).
     pub(super) fn ask_app_link_names(&mut self) {
         let wanted = ui::chat::take_app_link_wants();
+        for id in wanted.agents {
+            self.world.social.want_name(id);
+        }
         for id in wanted.groups {
             self.world.land.group_name(&id, &self.world.groups.groups);
         }

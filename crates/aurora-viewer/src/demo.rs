@@ -4926,6 +4926,25 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         return ev;
     }
     let menu = menu.unwrap_or_default();
+    // `links` (#898): a menu whose text names residents, a group and a
+    // place by their secondlife:///app links, as listing scripts write them
+    if menu == "links" {
+        let message = format!(
+            "{}\n#1 secondlife:///app/agent/{DEMO_FRIEND}/about\n#2 secondlife:///app/agent/{DEMO_GIVER}/about\n\
+             #3 secondlife:///app/group/{DEMO_GROUP1}/about\n#4 secondlife:///app/region/Aurora%20D%C3%A9mo/128/128/25",
+            aurora_i18n::tr!("demo-pick-a-resident")
+        );
+        ev.push(NetEvent::ScriptDialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object_id: Uuid::from_u128(0xF1),
+            object_name: aurora_i18n::tr!("demo-resident-picker").into(),
+            owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),
+            message,
+            channel: -4243,
+            buttons: ["1", "2", "3", "4"].map(str::to_owned).to_vec(),
+        });
+        return ev;
+    }
     let (object_name, message, buttons) = if !menu.is_empty() {
         let mut buttons = [
             aurora_i18n::tr!("status-close"),
