@@ -23,9 +23,12 @@
 //! `on_accent` is the skin's (white) while it reads at least as well on
 //! the new accent as on the skin's own, else the skin's navy.
 //!
-//! The state colours, the links' teal and the brand gradient's teal stay
-//! the skin's. The high contrast palette (`crate::high_contrast`) ignores
-//! these choices: its colours are measured for poor vision.
+//! The state colours (danger, success, warn, amber, rose) and the links'
+//! teal keep their hue but move in lightness, like the text, to read 4.5:1
+//! on a chosen background; so do the configurable colours of the chat
+//! (`on_panel`, read by `ui::colors::text`). The high contrast palette
+//! (`crate::high_contrast`) ignores these choices: its colours are
+//! measured for poor vision.
 //!
 //! The choice is process-wide (`set`), read where the palette is built
 //! (`Theme::palette_for`), before the colour blindness adaptation.
@@ -58,6 +61,9 @@ static CURRENT: RwLock<InterfaceColors> = RwLock::new(InterfaceColors {
 });
 /// The skin's palette of the last build, for the page's swatches.
 static SKIN: Mutex<Option<Palette>> = Mutex::new(None);
+/// The chosen panel of the last build (`None`: the skin's), and the chat
+/// colours already moved onto it.
+static PANEL: Mutex<Option<(Color32, Vec<(Color32, Color32)>)>> = Mutex::new(None);
 
 /// The colours the interface uses from now on (the palette is built again
 /// by its users).
@@ -110,7 +116,37 @@ pub fn apply(skin: Palette, colors: &InterfaceColors) -> Palette {
     if let Ok(mut s) = SKIN.lock() {
         *s = Some(skin);
     }
-    derive(skin, colors).0
+    let p = derive(skin, colors).0;
+    if let Ok(mut panel) = PANEL.lock() {
+        let wanted = (p.panel != skin.panel).then_some(p.panel);
+        if panel.as_ref().map(|(c, _)| *c) != wanted {
+            *panel = wanted.map(|c| (c, Vec::new()));
+        }
+    }
+    p
+}
+
+/// A configurable text colour (the chat's: messages, names, links) moved
+/// in lightness, its hue kept, until it reads 4.5:1 on the chosen panel;
+/// itself with the skin's panel or in high contrast.
+pub fn on_panel(c: Color32) -> Color32 {
+    if crate::high_contrast::current() {
+        return c;
+    }
+    let Ok(mut panel) = PANEL.lock() else { return c };
+    let Some((ground, seen)) = panel.as_mut() else { return c };
+    if let Some((_, out)) = seen.iter().find(|(k, _)| *k == c) {
+        return *out;
+    }
+    let [r, g, b, a] = c.to_srgba_unmultiplied();
+    let moved = readable(Color32::from_rgb(r, g, b), *ground, TEXT);
+    let out = Color32::from_rgba_unmultiplied(moved.r(), moved.g(), moved.b(), a);
+    // a handful of colours: the chat's settings and the contact sets'
+    if seen.len() > 64 {
+        seen.clear();
+    }
+    seen.push((c, out));
+    out
 }
 
 /// What the readability rules would move for `colors` over the skin.
@@ -142,6 +178,14 @@ pub fn derive(skin: Palette, colors: &InterfaceColors) -> (Palette, Adjusted) {
         }
         p.muted = readable(Along::of(skin.ink, skin.panel, skin.muted).on(p.ink, p.panel), p.panel, TEXT);
         p.muted_dim = readable(Along::of(skin.ink, skin.panel, skin.muted_dim).on(p.ink, p.panel), p.panel, UI);
+        // the states and the links keep their hue, in the lightness that
+        // reads on the new panel: they colour text as well as dots and
+        // badges, so the text minimum (the skin's already reach it)
+        if p.panel != skin.panel {
+            for c in [&mut p.danger, &mut p.success, &mut p.warn, &mut p.amber, &mut p.rose, &mut p.teal] {
+                *c = readable(*c, p.panel, TEXT);
+            }
+        }
     }
     let wanted = colors.accent.map(rgb);
     if wanted.is_some() || surface.is_some() {

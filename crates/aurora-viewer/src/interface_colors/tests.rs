@@ -266,3 +266,63 @@ fn the_demo_variable_reads_the_three_colours() {
     assert_eq!(c.text, rgba("#FCE7F3"));
     assert_eq!(parse("accent:#14B8A6").surface, None);
 }
+
+/// On any chosen background, light or dark, the states and the links read
+/// 4.5:1 (they colour text too) and keep their hue; on the skin's they are
+/// the skin's (`the_skin_bases_give_back_the_skin`).
+#[test]
+fn states_and_links_read_on_any_background() {
+    let s = skin();
+    for panel in sweep() {
+        let (p, _) = derive(
+            s,
+            &InterfaceColors {
+                surface: some(panel),
+                ..Default::default()
+            },
+        );
+        for (name, c, was) in [
+            ("danger", p.danger, s.danger),
+            ("success", p.success, s.success),
+            ("warn", p.warn, s.warn),
+            ("amber", p.amber, s.amber),
+            ("rose", p.rose, s.rose),
+            ("teal", p.teal, s.teal),
+        ] {
+            assert!(contrast(c, panel) >= TEXT, "{name} {c:?} on {panel:?}");
+            let ([_, cc, h], [_, _, hw]) = (lch(lab(c)), lch(lab(was)));
+            if cc > 0.03 {
+                assert!((h - hw).sin().abs() < 0.15, "{name} {c:?} keeps the hue of {was:?}");
+            }
+        }
+    }
+    // a pale pink background darkens them, a near-black one keeps them
+    let (light, _) = derive(
+        s,
+        &InterfaceColors {
+            surface: rgba("#FCE7F3"),
+            ..Default::default()
+        },
+    );
+    assert!(luminance(light.danger) < luminance(s.danger) && luminance(light.teal) < luminance(s.teal));
+    let (dark, _) = derive(
+        s,
+        &InterfaceColors {
+            surface: rgba("#101014"),
+            ..Default::default()
+        },
+    );
+    assert_eq!((dark.danger, dark.success, dark.teal), (s.danger, s.success, s.teal));
+}
+
+/// A chat colour moved onto a light background (`on_panel`'s rule) keeps
+/// its hue and reads.
+#[test]
+fn chat_colours_move_onto_a_light_background() {
+    let ground = hex("#FCE7F3");
+    for c in ["#5EEAD4", "#E8EDFB", "#9AA6C6", "#4ADE80", "#FCD34D"] {
+        let moved = readable(hex(c), ground, TEXT);
+        assert!(contrast(moved, ground) >= TEXT, "{c} → {moved:?}");
+    }
+    assert_eq!(readable(hex("#5EEAD4"), skin().panel, TEXT), hex("#5EEAD4"));
+}

@@ -14,6 +14,9 @@ from Preferences › Appearance › Skin › Interface colours
 background (`panel`) and the text (`ink`), and the other accent, surface
 and text roles follow from those three. So never pick a role for its
 violet: a teal or pink accent, or a light background, must still read.
+On a chosen background the states and `teal` move in lightness to read
+4.5:1, their hue kept; a configured chat colour goes through
+`ui::colors::text` for the same reason.
 
 ### Brand colours
 

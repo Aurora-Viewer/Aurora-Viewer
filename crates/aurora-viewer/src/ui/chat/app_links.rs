@@ -281,9 +281,9 @@ pub(super) fn link(ui: &mut egui::Ui, p: &Palette, world: &World, url: &str, lin
     let text = filtered.as_ref();
     let k = super::super::colors::get();
     let color = if let AppLink::Agent { id, .. } = link {
-        super::super::colors::resident_name(world, id, super::super::colors::c(k.chat_slurl))
+        super::super::colors::resident_name(world, id, super::super::colors::text(k.chat_slurl))
     } else {
-        super::super::colors::c(k.chat_slurl)
+        super::super::colors::text(k.chat_slurl)
     };
     let r = super::action_marker::link(ui, super::action_marker::Action::app(link), text, size, color, None);
     menu(&r, p, world, url, link, text);
