@@ -2,9 +2,9 @@
 
 bl_info = {
     "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 11, 0), "blender": (2, 93, 0),
+    "version": (0, 12, 0), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
-    "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
+    "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
 
 _reloading = "bpy" in globals()
@@ -273,7 +273,7 @@ class AURORA_OT_connect(bpy.types.Operator):
         global _client, _force_capture
         tracking.prune(context.scene)
         if not context.scene.aurora_live.objects:
-            tracking.add(context.scene, [obj for obj in _selected() if obj.find_armature() is not None])
+            tracking.add(context.scene, _selected())
         _stop()
         _request_capture()
         _force_capture = True
@@ -616,6 +616,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
         "Retirer cette entrée de la liste d’aperçu Aurora ; conserver l’objet Blender",
     "Missing object": "Objet manquant", "{enabled} / {total} enabled": "{enabled} / {total} actifs",
     "Add selected meshes to start syncing.": "Ajoutez la sélection pour commencer.",
+    "Update Aurora Viewer to preview non-rigged meshes": "Mettez Aurora Viewer à jour pour prévisualiser les maillages non riggés",
     "Select one or more rigged meshes first": "Sélectionnez d’abord un ou plusieurs maillages riggés",
     "Update now": "Mettre à jour maintenant", "Aurora port": "Port Aurora",
     "Automatic updates": "Mise à jour automatique", "Interval (seconds)": "Intervalle (secondes)",

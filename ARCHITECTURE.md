@@ -19,12 +19,18 @@ while preserving unrelated add-ons/settings. Manually
 selected executables are stored in `blender-installations.json` under Aurora's
 configuration directory. Existing Blender windows are never restarted or closed.
 A dedicated thread validates, normalizes and encodes the latest snapshot;
-`app/blender_live.rs` maintains render-only attachments under
-our avatar in `world::objects::PREVIEW_REGION`. These have no simulator identity
-or edit/touch target. Arrival cleanup excludes these private roots from stale
+`app/blender_live.rs` maintains private objects in `world::objects::PREVIEW_REGION`.
+Rigged sources remain render-only attachments under our avatar. Static sources
+use ordinary normalized mesh geometry, with stable source/batch UUIDs and one
+editable local linkset per Blender source. `blender_live/objects.rs` owns their
+session placement, scale multipliers, world-origin rebasing, body/HUD attachment
+and derez state. Local tool commands are consumed before network/demo dispatch;
+right-click opens the selected source's Blender Live controls. These objects
+have no simulator identity or touch action. Arrival cleanup excludes these private roots from stale
 simulator attachments. Normal GPU skinning supplies animations and avatar shape;
 existing draw objects retain their geometry while replacement meshes load.
-`scene/blender_live.rs` retires obsolete assets as soon as their geometry has
+`scene/blender_live.rs` resolves local rez/drop support through the shared
+triangle picker (including elevated floors), and retires obsolete assets as soon as their geometry has
 no references or pending jobs. `blender/aurora_live/` is the shared Blender 2.93+
 implementation, with main-thread rest capture, a separate socket worker and a
 single latest-snapshot mailbox. Per-scene automatic/manual settings gate dirty

@@ -1,10 +1,48 @@
 # Blender Live Mesh
 
-Blender Live sends your rigged mesh edits to your own animated avatar in
-Aurora. You can sculpt, move vertices, paint weights, edit UVs, adjust shape
-keys and geometry modifiers, and see the result without saving or uploading.
-The preview is local: other residents do not see it, and it does not create
-inventory items or charge an upload fee.
+Blender Live sends rigged mesh edits to your own animated avatar and static
+mesh edits to local world objects or attachments in Aurora. You can sculpt,
+move vertices, paint weights, edit UVs, adjust shape keys and geometry modifiers,
+and see the result without saving or uploading. The preview is local: other
+residents do not see it, and it does not create inventory items or charge an
+upload fee.
+
+## Static objects (plug-in 0.12.0)
+
+Blender Live accepts rigged and non-rigged mesh selections, including a mixture
+in the same synchronization list. Connect with the selection or use **Add
+selected meshes**. A static mesh needs neither an armature nor vertex weights;
+shape keys, geometry modifiers, UVs and live materials still work. Geometry is
+expressed in metres, retaining authored rotation/scale and ignoring the object's
+Blender scene translation. An existing rig without valid weights remains an
+error rather than silently turning into a static object.
+
+Static objects initially appear on the floor two metres in front of your
+avatar. Select the source in Aurora's **Blender Live** window to **Edit**, **Drop
+to ground**, **Derez**, **Attach to** a body point or **Attach to HUD**. **Detach**
+removes a worn preview; **Rez** brings it back. Derez/detach keep the source in
+the list and subsequent Blender edits never rez it automatically. The visible
+checkbox remains independent. **Stop** clears all session previews and placement.
+
+**Edit** uses the normal Aurora translation, rotation and size tools, with the
+same controls for body attachments and HUDs. Right-clicking the static object
+opens its source's Blender Live controls and selects it for editing. Numeric
+position, rotation and size are also available below the source list; attachment
+positions use the attachment point's local frame. Dropping a body attachment
+retains its current orientation and horizontal location, resting its rotated
+bounds on the supporting floor or terrain below it. Elevated platforms and
+skybox floors are picked from scene geometry. Dropping a HUD places it in front of the avatar.
+
+Placement survives renaming, source reordering and live geometry/material
+updates. Size edits act as a multiplier over subsequent Blender dimensions.
+Render batches for extra materials stay part of one local source. Import/LOD
+preparation also accepts static sources, through the existing explicit importer.
+The optional `static-meshes` handshake feature protects older viewers: update
+Aurora if the plug-in reports it cannot preview non-rigged meshes.
+
+These objects remain local previews visible only in your viewer. They are not
+uploaded, saved in grid inventory or simulated by the server; no physics or
+script is started. Rigged sources continue to follow the avatar as before.
 
 ## Install and connect
 
@@ -683,6 +721,9 @@ and acknowledgements do not advance or replace live mesh revisions.
 
 Snapshots have `protocol`, `revision` and `meshes`. Each mesh has `name`,
 `joints`, column-major `inverse_bind` matrices, and `faces`. The optional
+`static-meshes` capability permits empty `joints` and `inverse_bind` arrays;
+all static vertex joint indices and weights must be zero. A nonempty joint
+palette still requires valid positive weights. The optional
 `source_id` is a non-null UUID unique within a snapshot, identifying a scene's
 synchronization entry, never a grid asset. The add-on sends it only when the
 viewer advertises `source-ids`; older viewers continue to receive v1 meshes

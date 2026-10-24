@@ -6,6 +6,7 @@ mod addon;
 mod demo;
 pub(crate) mod import;
 mod installer;
+pub mod objects;
 pub mod protocol;
 pub(crate) mod shape;
 #[cfg(test)]
@@ -14,6 +15,7 @@ mod transport;
 mod ui;
 
 pub use demo::fixture as demo_fixture;
+pub use demo::static_fixture as demo_static_fixture;
 
 use parking_lot::Mutex;
 use std::{
@@ -93,6 +95,13 @@ pub struct Live {
     pub states: HashMap<Uuid, SourceState>,
     pub selected: Option<Uuid>,
     pub upload_requested: Option<Uuid>,
+    pub placements: HashMap<Uuid, objects::Placement>,
+    pub instances: HashMap<(Uuid, usize), Uuid>,
+    pub object_action: Option<(Uuid, objects::Action)>,
+    pub world_origin: Option<(u32, u32)>,
+    pub next_local_id: u32,
+    pub attach_choices: Vec<(u8, bool, String)>,
+    pub placement_dirty: HashSet<Uuid>,
 }
 impl Default for Live {
     fn default() -> Self {
@@ -121,6 +130,13 @@ impl Default for Live {
             states: HashMap::new(),
             selected: None,
             upload_requested: None,
+            placements: HashMap::new(),
+            instances: HashMap::new(),
+            object_action: None,
+            world_origin: None,
+            next_local_id: 1,
+            attach_choices: Vec::new(),
+            placement_dirty: HashSet::new(),
         }
     }
 }
@@ -161,6 +177,14 @@ impl Live {
 
     pub fn receive(&mut self, snapshot: protocol::Prepared) -> Option<protocol::Prepared> {
         self.states.retain(|id, _| snapshot.sources.iter().any(|source| source.id == *id));
+        // Pausing a Blender entry temporarily omits it from the wire. Keep a
+        // bounded session history so resuming cannot rez a detached source.
+        self.placements
+            .retain(|id, _| !snapshot.sources.iter().any(|source| source.id == *id && source.rigged()));
+        if self.placements.len() > 512 {
+            self.placements
+                .retain(|id, _| snapshot.sources.iter().any(|source| source.id == *id));
+        }
         if self
             .selected
             .is_none_or(|id| !snapshot.sources.iter().any(|s| s.id == id) || self.state(id) == SourceState::Removed)
@@ -178,8 +202,21 @@ impl Live {
     pub fn visible_snapshot(&self) -> Option<protocol::Prepared> {
         let mut snapshot = self.snapshot.clone()?;
         snapshot.sources.retain(|s| self.state(s.id) == SourceState::Visible);
-        snapshot.meshes.retain(|m| self.state(m.source) == SourceState::Visible);
-        snapshot.triangles = snapshot.sources.iter().flat_map(|s| &s.scene.models).map(|m| m.triangles()).sum();
+        snapshot.meshes.retain(|m| {
+            self.state(m.source) == SourceState::Visible
+                && (m.skin.is_some()
+                    || self
+                        .placements
+                        .get(&m.source)
+                        .is_none_or(|p| p.location != objects::Location::Detached))
+        });
+        snapshot.triangles = snapshot
+            .sources
+            .iter()
+            .filter(|s| snapshot.meshes.iter().any(|m| m.source == s.id))
+            .flat_map(|s| &s.scene.models)
+            .map(|m| m.triangles())
+            .sum();
         let textures: HashSet<_> = snapshot
             .meshes
             .iter()

@@ -1271,6 +1271,9 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        if self.blender_live.local_command(&cmd, &self.world) {
+            return;
+        }
         self.world.rlva_configure(self.settings.rlva_enabled);
         self.world.rlva.preferences.clone_from(&self.settings.rlva);
         if !self.settings.rlva_enabled {

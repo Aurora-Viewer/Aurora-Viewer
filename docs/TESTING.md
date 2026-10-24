@@ -1810,7 +1810,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, prepared LOD import and permission-gated shape transfer |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, static object placement, LOD import and shape transfer |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
@@ -1829,6 +1829,12 @@ To check with these scenarios:
 
 `AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell
 on our animated avatar, through the production protocol and GPU skinning.
+`static` adds an editable unrigged green object on the terrain and selects it
+for the standard build tools. `static-hud` attaches it at HUD Center;
+`static-attached` attaches it to the right hand; `static-detached` removes its
+draw object while retaining the source row. Check numeric/gizmo transforms,
+body/HUD menus, detach/rez, source visibility and geometry updates, with the
+rigged shell remaining on the avatar.
 The listener accepts the Blender extension on port 17655. Check that live
 retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`

@@ -15,6 +15,17 @@ from aurora_live import starter, tracking
 
 
 class TrackingTests(unittest.TestCase):
+    def test_connect_bootstraps_a_static_selection_and_sends_it(self):
+        bpy.context.scene.aurora_live.objects.clear()
+        self.other.modifiers.clear()
+        self.other.vertex_groups.clear()
+        self.select(self.other)
+        with patch.object(aurora_live, "Client", return_value=self.fake):
+            self.assertEqual(bpy.ops.aurora.live_connect(), {"FINISHED"})
+            self.assertEqual(tracking.active(bpy.context.scene), [self.other])
+            self.tick()
+            self.assertEqual(self.sent[-1]["meshes"][0]["joints"], [])
+
     def test_source_identity_survives_rename_pause_reorder_and_repairs_duplicated_ids(self):
         scene = bpy.context.scene
         tracking.add(scene, [self.shirt, self.other])

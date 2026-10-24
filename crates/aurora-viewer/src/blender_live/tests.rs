@@ -18,6 +18,81 @@ fn triangle() -> serde_json::Value {
 fn supported() -> HashSet<String> {
     HashSet::from(["mPelvis".into()])
 }
+
+fn static_triangle() -> serde_json::Value {
+    let mut value = triangle();
+    value["meshes"][0]["joints"] = serde_json::json!([]);
+    value["meshes"][0]["inverse_bind"] = serde_json::json!([]);
+    for vertex in value["meshes"][0]["faces"][0]["vertices"].as_array_mut().expect("vertices") {
+        vertex["weights"] = serde_json::json!([0, 0, 0, 0]);
+    }
+    value
+}
+
+#[test]
+fn blender_live_static_sources_have_normalized_geometry_without_a_skin() {
+    let mut value = static_triangle();
+    let source = Uuid::new_v4();
+    value["meshes"][0]["source_id"] = serde_json::json!(source);
+    // More than eight surfaces must remain one editable source.
+    value["meshes"][0]["faces"] = serde_json::Value::Array(vec![value["meshes"][0]["faces"][0].clone(); 9]);
+    let prepared = prepare(&value).expect("static source");
+    assert_eq!(prepared.meshes.len(), 2);
+    assert_eq!(prepared.sources.len(), 1);
+    assert!(!prepared.sources[0].rigged());
+    assert!(prepared.sources[0].scene.models.iter().all(|model| model.skin.is_none()));
+    assert!(
+        prepared
+            .meshes
+            .iter()
+            .all(|mesh| mesh.source == source && mesh.skin.is_none() && mesh.header.skin.is_none())
+    );
+    assert_eq!(prepared.meshes[0].size, prepared.meshes[1].size);
+    let mut live = Live::default();
+    live.receive(prepared);
+    let placement = objects::Placement {
+        location: objects::Location::Detached,
+        position: glam::Vec3::ZERO,
+        rotation: glam::Quat::IDENTITY,
+        scale: glam::Vec3::ONE,
+        size: glam::Vec3::ONE,
+        center: glam::Vec3::ZERO,
+    };
+    live.placements.insert(source, placement);
+    assert!(live.visible_snapshot().expect("snapshot").meshes.is_empty());
+    value["revision"] = 2.into();
+    value["meshes"][0]["name"] = "Renamed object".into();
+    live.receive(prepare(&value).expect("new revision"));
+    assert_eq!(live.placements[&source].location, objects::Location::Detached);
+    assert!(
+        live.visible_snapshot().expect("snapshot").meshes.is_empty(),
+        "updates never rez a derezzed source"
+    );
+    live.receive(prepare(&serde_json::json!({"protocol":1,"revision":3,"meshes":[]})).expect("paused source"));
+    live.receive(prepare(&value).expect("resumed source"));
+    assert_eq!(
+        live.placements[&source].location,
+        objects::Location::Detached,
+        "pause/resume retains the local placement"
+    );
+}
+
+#[test]
+fn blender_live_static_sources_reject_accidental_skin_data() {
+    for field in ["weights", "joints"] {
+        let mut value = static_triangle();
+        value["meshes"][0]["faces"][0]["vertices"][0][field] = serde_json::json!([1, 0, 0, 0]);
+        assert!(prepare(&value).is_err());
+    }
+    let mut mixed = static_triangle();
+    mixed["meshes"]
+        .as_array_mut()
+        .expect("meshes")
+        .push(triangle()["meshes"][0].clone());
+    let prepared = prepare(&mixed).expect("mixed scene");
+    assert!(!prepared.sources[0].rigged());
+    assert!(prepared.sources[1].rigged());
+}
 fn prepare(value: &serde_json::Value) -> Result<protocol::Prepared, String> {
     protocol::prepare(&serde_json::to_vec(value).expect("JSON"), &supported())
 }
@@ -27,7 +102,7 @@ fn blender_live_round_trip_keeps_skin_and_materials() {
     let prepared = prepare(&triangle()).expect("valid mesh");
     assert_eq!(prepared.revision, 1);
     assert_eq!(prepared.triangles, 1);
-    assert_eq!(prepared.meshes[0].skin.joint_names, ["mPelvis"]);
+    assert_eq!(prepared.meshes[0].skin.as_ref().expect("skin").joint_names, ["mPelvis"]);
     assert_eq!(prepared.meshes[0].colors, [[0.3, 0.2, 0.8, 1.0]]);
     let mesh = &prepared.meshes[0];
     let range = mesh.header.lods[3].expect("high LOD");
@@ -277,6 +352,99 @@ fn blender_live_row_buttons_import_their_own_source_only_when_available() {
             "row import ignores the previous selection"
         );
     }
+}
+
+#[test]
+fn blender_live_static_controls_request_derez_rez_and_hud_attachment_for_the_selected_source() {
+    let ctx = egui::Context::default();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    crate::ui::fonts::apply(&ctx, crate::ui::fonts::DEFAULT);
+    let palette = theme.palette();
+    let mut live = Live {
+        open: true,
+        ..Default::default()
+    };
+    live.receive(prepare(&static_triangle()).expect("source"));
+    let source = live.selected.expect("selected");
+    live.placements.insert(
+        source,
+        objects::Placement {
+            location: objects::Location::World,
+            position: glam::Vec3::ZERO,
+            rotation: glam::Quat::IDENTITY,
+            scale: glam::Vec3::ONE,
+            size: glam::Vec3::ONE,
+            center: glam::Vec3::ZERO,
+        },
+    );
+    live.instances.insert((source, 0), Uuid::new_v4());
+    live.attach_choices = vec![(6, false, "Right hand".into()), (31, true, "HUD center".into())];
+    let mut time = 0.0;
+    let mut frame = |live: &mut Live, events| {
+        time += 1.0 / 60.0;
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1200.0))),
+                time: Some(time),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                super::ui::show(live, ui.ctx(), &palette, true);
+            },
+        );
+        out.textures_delta.clear();
+        out
+    };
+    let position = |out: &egui::FullOutput, label: &str| {
+        out.shapes
+            .iter()
+            .find_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape
+                    && text.galley.text() == label
+                {
+                    Some(text.pos + text.galley.size() * 0.5)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| panic!("missing control {label}"))
+    };
+    let click = |pos, pressed| {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    for _ in 0..6 {
+        frame(&mut live, vec![]);
+    }
+    let out = frame(&mut live, vec![]);
+    let at = position(&out, aurora_i18n::tr!("blender-object-derez"));
+    frame(&mut live, click(at, true));
+    frame(&mut live, click(at, false));
+    assert!(matches!(live.object_action.take(), Some((id, objects::Action::Derez)) if id == source));
+    live.placements.get_mut(&source).expect("placement").location = objects::Location::Detached;
+    let out = frame(&mut live, vec![]);
+    let at = position(&out, aurora_i18n::tr!("blender-object-rez"));
+    frame(&mut live, click(at, true));
+    frame(&mut live, click(at, false));
+    assert!(matches!(live.object_action.take(), Some((id, objects::Action::Rez)) if id == source));
+    let out = frame(&mut live, vec![]);
+    let at = position(&out, aurora_i18n::tr!("common-attach-to-hud"));
+    frame(&mut live, click(at, true));
+    frame(&mut live, click(at, false));
+    let out = frame(&mut live, vec![]);
+    let at = position(&out, "HUD center");
+    frame(&mut live, click(at, true));
+    frame(&mut live, click(at, false));
+    assert!(matches!(live.object_action.take(), Some((id, objects::Action::Attach(31))) if id == source));
 }
 
 #[test]

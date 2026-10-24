@@ -182,7 +182,11 @@ impl Scene {
         [(drawn.blend, true), (drawn.opaque, false)].into_iter().find_map(|(hit, blend)| {
             let hit = hit?;
             let (idx, face) = self.record_object(hit.record)?;
-            if world.objects.get(idx).is_some_and(|o| o.is_client_preview()) {
+            if world
+                .objects
+                .get(idx)
+                .is_some_and(|o| o.is_client_preview() && !o.is_editable_preview())
+            {
                 return None;
             }
             let through = gesture == Gesture::Touch && !build_open && self.touch_passes_through(world, idx);

@@ -60,6 +60,18 @@ impl App {
         let Some((picked, point)) = self.menu_pick() else {
             return;
         };
+        if let Some(source) = picked
+            .and_then(|idx| self.world.objects.get(idx))
+            .filter(|object| object.is_editable_preview())
+            .and_then(|object| self.blender_live.source_for_object(object.full_id))
+        {
+            self.context_menu = None;
+            self.build.release_menu_selection(&self.world);
+            self.blender_live.open = true;
+            self.blender_live.selected = Some(source);
+            self.blender_live.object_action = Some((source, crate::blender_live::objects::Action::Edit));
+            return;
+        }
         // the previous menu's selection goes, as deselectUnused would
         self.build.release_menu_selection(&self.world);
         let me = self.world.agent_id;

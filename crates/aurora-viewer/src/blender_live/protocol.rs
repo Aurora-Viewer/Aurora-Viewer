@@ -74,6 +74,11 @@ pub struct PreparedSource {
     /// Immutable import input, shared with a draft when Upload is selected.
     pub scene: Arc<Scene>,
 }
+impl PreparedSource {
+    pub fn rigged(&self) -> bool {
+        self.scene.models.iter().any(|model| model.skin.is_some())
+    }
+}
 
 #[derive(Clone)]
 pub struct PreparedMesh {
@@ -82,7 +87,10 @@ pub struct PreparedMesh {
     pub name: String,
     pub data: Arc<Vec<u8>>,
     pub header: aurora_assets::MeshHeader,
-    pub skin: Arc<aurora_assets::SkinInfo>,
+    pub skin: Option<Arc<aurora_assets::SkinInfo>>,
+    /// All render batches of a source share the same normalization bounds.
+    pub size: Vec3,
+    pub center: Vec3,
     pub colors: Vec<[f32; 4]>,
     pub materials: Vec<Option<(Uuid, aurora_assets::material::PbrMaterial)>>,
 }
@@ -144,7 +152,7 @@ pub(super) fn prepare_snapshot(
         }
         let mut scene = Scene::default();
         let count = mesh.joints.len();
-        if count == 0 || count > 110 || count != mesh.inverse_bind.len() {
+        if count > 110 || count != mesh.inverse_bind.len() {
             return Err(aurora_i18n::tr!("blender-live-invalid-joints").into());
         }
         let mut names = HashSet::new();
@@ -186,12 +194,16 @@ pub(super) fn prepare_snapshot(
             let mut vertices = Vec::with_capacity(surface.vertices.len());
             for v in surface.vertices {
                 let sum: f32 = v.weights.iter().sum();
+                let invalid_skin = if count == 0 {
+                    v.weights != [0.0; 4] || v.joints != [0; 4]
+                } else {
+                    sum <= 0.000001 || v.joints.iter().any(|j| *j as usize >= count)
+                };
                 if !sum.is_finite()
-                    || sum <= 0.000001
+                    || invalid_skin
                     || v.weights.iter().any(|w| *w < 0.0)
                     || !Vec3::from_array(v.normal).is_finite()
                     || Vec3::from_array(v.normal).length_squared() < 1e-12
-                    || v.joints.iter().any(|j| *j as usize >= count)
                 {
                     return Err(aurora_i18n::tr!("blender-live-invalid-weights").into());
                 }
@@ -200,7 +212,11 @@ pub(super) fn prepare_snapshot(
                     normal: Vec3::from_array(v.normal).normalize_or_zero().to_array(),
                     uv: v.uv,
                     joints: v.joints,
-                    weights: v.weights.map(|weight| weight / sum),
+                    weights: if count == 0 {
+                        [0.0; 4]
+                    } else {
+                        v.weights.map(|weight| weight / sum)
+                    },
                 });
             }
             let material = colors.len();
@@ -231,7 +247,7 @@ pub(super) fn prepare_snapshot(
                 name: mesh.name.clone(),
                 submodel: part as u32,
                 faces: chunk.to_vec(),
-                skin: Some(Skin {
+                skin: (count != 0).then(|| Skin {
                     names: mesh.joints.clone(),
                     inverse_bind: inverse_bind.clone(),
                     alternate_bind: Vec::new(),
@@ -260,24 +276,30 @@ pub(super) fn prepare_snapshot(
                 None,
                 &import_mesh::process::Physics::default(),
                 encode::Options {
-                    skin: true,
+                    skin: count != 0,
                     ..Default::default()
                 },
             )
             .map_err(|e| e.to_string())?;
             let header = aurora_assets::parse_mesh_header(&data).map_err(|e| e.to_string())?;
-            let skin = header
-                .skin
-                .and_then(|range| aurora_assets::mesh::section_bytes(&data, range))
-                .ok_or("Missing prepared skin")
-                .and_then(|bytes| aurora_assets::decode_skin(bytes).map_err(|_| "Invalid prepared skin"))?;
+            let skin = if count == 0 {
+                None
+            } else {
+                let bytes = header
+                    .skin
+                    .and_then(|range| aurora_assets::mesh::section_bytes(&data, range))
+                    .ok_or("Missing prepared skin")?;
+                Some(Arc::new(aurora_assets::decode_skin(bytes).map_err(|_| "Invalid prepared skin")?))
+            };
             meshes.push(PreparedMesh {
                 id: Uuid::new_v4(),
                 source,
                 name: mesh.name.clone(),
                 data: Arc::new(data),
                 header,
-                skin: Arc::new(skin),
+                skin,
+                size,
+                center,
                 colors,
                 materials,
             });
