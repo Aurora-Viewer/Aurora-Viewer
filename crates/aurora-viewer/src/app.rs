@@ -7551,6 +7551,10 @@ impl App {
                 }
             }
             self.options_ui.vram = (gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
+            if self.options_ui.gpus.is_empty() {
+                self.options_ui.gpus = gfx.renderer.info.adapters.clone();
+                self.options_ui.gpu_in_use = gfx.renderer.info.name.clone();
+            }
             // Preferences › Debug › Detail levels: what the overlay labels
             self.lod_infos = if self.settings.debug.lod_info {
                 let range = ui::debug_overlay::RANGE;
@@ -13400,7 +13404,10 @@ impl ApplicationHandler for App {
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;
         }
-        let renderer = match Renderer::new(window.clone(), size.width, size.height, self.settings.vsync) {
+        // the GPU of Preferences › Graphics; AURORA_GPU=<number|name|auto>
+        // overrides it for this launch (adapter_choice.rs)
+        let gpu = std::env::var("AURORA_GPU").unwrap_or_else(|_| self.settings.gpu_adapter.clone());
+        let renderer = match Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu) {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");

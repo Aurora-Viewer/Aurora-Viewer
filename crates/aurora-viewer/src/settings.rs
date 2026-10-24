@@ -460,6 +460,10 @@ pub struct Settings {
     pub start_location: String,
     pub start_region: String,
     pub draw_distance: f32,
+    /// The GPU to draw with (Preferences › Graphics; #894): empty for the
+    /// automatic choice (discrete first), or the adapter's name; read at
+    /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
+    pub gpu_adapter: String,
     pub vsync: bool,
     pub shadows: bool,
     pub force_midday: bool,
@@ -1388,6 +1392,7 @@ impl Default for Settings {
             start_location: "last".into(),
             start_region: String::new(),
             draw_distance: 96.0,
+            gpu_adapter: String::new(),
             vsync: false,
             shadows: true,
             force_midday: false,
