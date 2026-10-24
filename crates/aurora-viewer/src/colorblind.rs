@@ -302,13 +302,20 @@ pub fn palette(mut p: Palette, v: Vision) -> Palette {
         Deficiency::Mono => {
             // the meaningful colours on a ladder of lightness, away from the
             // surfaces (lighter over dark surfaces, darker over light ones)
+            // (in high contrast, a ladder whose lowest rung still reads 7:1
+            // on the black panels: crate::high_contrast)
             let dark = luminance(linear(p.panel)) < 0.5;
+            let rungs = match (p.high_contrast, dark) {
+                (true, _) => [75.0, 66.0, 83.0, 91.0, 98.0],
+                (false, true) => [48.0, 61.0, 72.0, 83.0, 94.0],
+                (false, false) => [62.0, 50.0, 40.0, 30.0, 20.0],
+            };
             let ladder: [(&mut Color32, f32); 5] = [
-                (&mut p.muted_dim, if dark { 48.0 } else { 62.0 }),
-                (&mut p.danger, if dark { 61.0 } else { 50.0 }),
-                (&mut p.warn, if dark { 72.0 } else { 40.0 }),
-                (&mut p.success, if dark { 83.0 } else { 30.0 }),
-                (&mut p.amber, if dark { 94.0 } else { 20.0 }),
+                (&mut p.muted_dim, rungs[0]),
+                (&mut p.danger, rungs[1]),
+                (&mut p.warn, rungs[2]),
+                (&mut p.success, rungs[3]),
+                (&mut p.amber, rungs[4]),
             ];
             for (c, l) in ladder {
                 move_to(c, [lightness_to_luminance(l); 3]);

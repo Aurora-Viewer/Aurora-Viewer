@@ -352,6 +352,9 @@ pub struct LookAts {
     pub requests: Vec<(u8, Option<Uuid>, DVec3)>,
     /// Last avatar heard in local chat (LLAgent::mLastChatterID).
     pub last_chatter: Option<Uuid>,
+    /// Our avatar looks straight ahead, head and eyes: no target at all
+    /// (PrivateLocalLookAtTarget), set by the app each frame (`gaze`).
+    pub own_ahead: bool,
 }
 
 impl Default for LookAts {
@@ -361,7 +364,38 @@ impl Default for LookAts {
             remote: HashMap::new(),
             requests: Vec::new(),
             last_chatter: None,
+            own_ahead: false,
         }
+    }
+}
+
+/// How an avatar's head and eyes take its look-at target this frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Gaze {
+    /// No look-at known for it: the motions keep what they had.
+    Unknown,
+    /// Toward the target.
+    At(Target),
+    /// "None" (clearLookAtTarget): the head stops following (HEAD_ROT
+    /// stops), the eyes keep the last point (LookAtPoint stays set).
+    Cleared,
+    /// Straight ahead, head and eyes.
+    Ahead,
+}
+
+/// The gaze of an avatar from its look-at target (`None`: none received).
+/// `ahead`: our own avatar with PrivateLocalLookAtTarget. The Legacy Viewer
+/// only turns our target into "none" there, so the head stops and the eyes
+/// stay on the last point until a restart; Aurora brings both back straight
+/// ahead, as the setting says (the head eases back, the random eye
+/// movements go on). Deliberate difference, the human's report of
+/// 2026-10-24.
+pub fn gaze(target: Option<Target>, ahead: bool) -> Gaze {
+    match target {
+        _ if ahead => Gaze::Ahead,
+        None => Gaze::Unknown,
+        Some(t) if t.kind == NONE => Gaze::Cleared,
+        Some(t) => Gaze::At(t),
     }
 }
 
@@ -430,6 +464,42 @@ mod tests {
         assert_eq!(o.target.kind, FREELOOK);
         o.update(t0 + Duration::from_secs_f32(2.5));
         assert_eq!(o.target.kind, NONE);
+    }
+
+    /// Turning "no look-at target, even for me" on: our target is cleared
+    /// at once and the others are told (LOOKAT_TARGET_CLEAR), even over a
+    /// focus that never times out, and our head and eyes look ahead instead
+    /// of staying on the last point. Off again: the cursor is followed.
+    #[test]
+    fn no_local_target_clears_ours_and_looks_ahead() {
+        let t0 = Instant::now();
+        let me = Uuid::from_u128(1);
+        let mut l = LookAts::default();
+        let cursor = Target {
+            kind: FOCUS,
+            object: None,
+            offset: DVec3::new(130.0, 120.0, 25.0),
+        };
+        assert!(l.own.set(cursor.kind, cursor.object, cursor.offset, t0));
+        l.own.sent(t0);
+        assert_eq!(gaze(Some(l.own.target), l.own_ahead), Gaze::At(cursor));
+        // the setting turns on: "none" alone cannot replace a focus
+        assert!(!l.own.set(NONE, Some(me), DVec3::ZERO, t0));
+        assert!(l.own.set(CLEAR, None, DVec3::ZERO, t0));
+        l.own_ahead = true;
+        assert_eq!(l.own.target, Target::NONE);
+        assert!(l.own.needs_send);
+        assert_eq!(outgoing(l.own.target, me, false, true), Some(Target::NONE));
+        // then "none" holds frame after frame, head and eyes ahead
+        assert!(l.own.set(NONE, Some(me), DVec3::ZERO, t0));
+        assert_eq!(gaze(Some(l.own.target), l.own_ahead), Gaze::Ahead);
+        // off again: the cursor's target is taken and followed
+        l.own_ahead = false;
+        assert!(l.own.set(FREELOOK, Some(me), DVec3::X, t0));
+        assert!(matches!(gaze(Some(l.own.target), l.own_ahead), Gaze::At(t) if t.kind == FREELOOK));
+        // another avatar's "none" keeps the Legacy Viewer's way
+        assert_eq!(gaze(Some(Target::NONE), false), Gaze::Cleared);
+        assert_eq!(gaze(None, false), Gaze::Unknown);
     }
 
     #[test]

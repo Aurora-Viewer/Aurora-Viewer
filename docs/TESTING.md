@@ -342,7 +342,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_POINTER=<points>` | Moves, clicks or holds the pointer over the interface |
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
-| `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave[,x,y]` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off |
+| `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave[,x,y]\|ahead` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off; `ahead`: our eyes come back straight when the look-at is turned off |
 | `AURORA_DEMO_POINTING=1\|release\|private\|remote\|remote-release\|aim` | Editing arm and gun targeting, driven by local selection or received point-at effects |
 | `AURORA_DEMO_KEYBOARD=<layout>` | Default movement and letter shortcut keys according to the layout |
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
@@ -703,6 +703,11 @@ when unfocused") is ignored during a screenshot.
   `own,x,y,side` also turns the camera beside our head from frame 300,
   aimed at a point in front of the face, which we then look at: the line
   leaves from between the eyes (capture at frame 420).
+  **`AURORA_DEMO_LOOKAT=ahead`**: from frame 300 the camera in front of our
+  face and our eyes on a point far to our left (a focus), then from frame
+  500 Privacy › "Send no target at all, not even to me" on (in memory): head
+  and eyes come back straight ahead (captures at frames 480 and 640),
+  instead of the eyes staying on the last point.
   **`AURORA_DEMO_LOOKAT=targets`**: `own`, and from frame 240 every other avatar looking
   somewhere new every 120 frames (focus and select points, the next avatar's
   eyes, free look, mouselook: one colour per type). With
@@ -3242,6 +3247,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
+| `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
@@ -4072,6 +4078,14 @@ failure. Grid validation and any paid upload are performed by the human.
   their shape (a disc online, a crescent away, a barred disc in do not
   disturb, a hollow ring offline): combine with `AURORA_DEMO_CONV=bubbles:busy`,
   `AURORA_DEMO_PEOPLE=rows` or `AURORA_DEMO_CONTACTS=friends`.
+- **`AURORA_DEMO_CONTRAST=1|0`**: the high contrast palette for this run,
+  as Preferences › Accessibility › Contrast does, without touching the
+  saved settings (`0` forces it off on a profile that has it on). What to
+  look for: opaque black windows and bars (no glass), white text, light
+  grey secondary text, a light grey border around buttons, fields, windows
+  and the bar islands, black text on the light violet accent; combine with
+  `AURORA_DEMO_OPTIONS=14` (the Accessibility page) or
+  `AURORA_DEMO_COLORBLIND`, which applies after it.
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Appearance ›

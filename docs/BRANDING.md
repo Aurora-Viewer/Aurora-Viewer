@@ -65,7 +65,11 @@ dragging a handle switch to `violet_light`, like any selection.
   (notifications, volume, emoji, media controls, local chat bubbles, pie
   menu), under a dark tint. A soft shadow and a thin border separate the
   surface from the world; the fields stay calm and readable. A skin with
-  `panel_alpha = 255` keeps opaque surfaces without this blur. Outside a
+  `panel_alpha = 255` keeps opaque surfaces without this blur. The high
+  contrast palette of Preferences › Accessibility (`high_contrast.rs`) is
+  opaque too, and gives buttons, fields, windows, islands and dividers a
+  light border: a new border goes through `widgets::border_stroke` so that
+  it follows. Outside a
   window, a surface is drawn with `widgets::overlay`. An already positioned
   scene label uses `widgets::paint_world_label`, with a lighter tint and
   shaded scene blur to keep its text readable. With no world behind, as on

@@ -371,6 +371,9 @@ pub struct App {
     look_at_fades: ui::lookat_targets::Fades,
     /// Offline demo: eye tracking on without touching the saved settings.
     demo_look_at: bool,
+    /// AURORA_DEMO_LOOKAT=ahead: "no look-at target, even for me" turned
+    /// on (in memory) from frame 500.
+    demo_look_ahead: bool,
     /// AURORA_DEMO_LOOKAT=targets: the crosshairs shown, every avatar
     /// looking somewhere.
     demo_look_at_targets: bool,
@@ -761,6 +764,18 @@ fn wanted_vision(settings: &Settings) -> crate::colorblind::Vision {
     crate::colorblind::Vision::new(settings.color_blindness, settings.color_blindness_strength)
 }
 
+/// Whether the interface takes the high contrast palette: the
+/// preferences', or in demo mode `AURORA_DEMO_CONTRAST` (a capture's, never
+/// saved).
+fn wanted_high_contrast(settings: &Settings) -> bool {
+    if std::env::var_os("AURORA_DEMO").is_some()
+        && let Some(on) = crate::high_contrast::demo_override()
+    {
+        return on;
+    }
+    settings.high_contrast
+}
+
 /// Test overrides of the settings (used by automated captures): the
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
@@ -846,6 +861,7 @@ impl App {
         crate::link_trust::configure(&settings.trusted_sites);
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
+        crate::high_contrast::set(wanted_high_contrast(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
@@ -993,6 +1009,7 @@ impl App {
             hover_tips: Default::default(),
             look_at_fades: Default::default(),
             demo_look_at: false,
+            demo_look_ahead: false,
             demo_look_at_targets: false,
             look_focus: None,
             look_cursor: (0.0, 0.0),
@@ -3647,7 +3664,7 @@ impl App {
         let mut s = self.settings.lookat;
         if self.demo_look_at {
             s.private = false;
-            s.private_local = false;
+            s.private_local = self.demo_look_ahead;
         }
         if self.demo_look_at_targets {
             s.show_targets = true;
@@ -3705,6 +3722,14 @@ impl App {
         let me = self.world.agent_id;
         let prefs = self.look_at_settings();
         let privacy = (prefs.private, prefs.private_local);
+        // no target even for us (PrivateLocalLookAtTarget) turned on: the
+        // last one is cleared at once (LOOKAT_TARGET_CLEAR, which a focus
+        // that never times out would otherwise outlive), and head and eyes
+        // look ahead (lookat::gaze)
+        if prefs.private_local && self.look_at_privacy.is_some_and(|(_, was)| !was) {
+            self.world.look_at.own.set(lookat::CLEAR, None, glam::DVec3::ZERO, now);
+        }
+        self.world.look_at.own_ahead = prefs.private_local;
         if self.look_at_privacy.is_some_and(|was| was != privacy) {
             if prefs.private && prefs.private_local {
                 // nothing is sent any more: the others stop showing our
@@ -8450,10 +8475,12 @@ impl App {
             if self.settings.vsync != vsync {
                 gfx.renderer.set_vsync(self.settings.vsync);
             }
-            // a new colour blindness: the palette again, at once
+            // a new colour blindness or contrast: the palette again, at once
             let vision = wanted_vision(&self.settings);
-            if vision != crate::colorblind::current() {
+            let high_contrast = wanted_high_contrast(&self.settings);
+            if vision != crate::colorblind::current() || high_contrast != crate::high_contrast::current() {
                 crate::colorblind::set(vision);
+                crate::high_contrast::set(high_contrast);
                 self.palette = self.skin.theme.palette();
                 self.cursors.set_palette(&self.palette);
             }
@@ -9342,6 +9369,28 @@ impl App {
             // ",side": from frame 300 the camera beside our head, aimed at a
             // point in front of the face (which we then look at: a focus),
             // to see where the line leaves the head
+            // "ahead": from frame 300 the camera in front of our face, our
+            // eyes on a point far to our left (a focus, which never times
+            // out), then from frame 500 "no look-at target, even for me":
+            // head and eyes come back straight ahead
+            if mode == "ahead" {
+                self.demo_look_ahead = self.frame_count >= 500;
+                if (300..500).contains(&self.frame_count)
+                    && let (Some(eyes), Some((mx, my))) = (
+                        self.scene.eyes_world(&self.world, &self.world.agent_id, Instant::now()),
+                        self.world.main_origin(),
+                    )
+                {
+                    let rot = self.world.agent.body_rotation();
+                    if self.frame_count == 300 {
+                        self.camera
+                            .set_view(eyes + rot * Vec3::X * 0.7, eyes, &mut self.world.agent, &self.settings.camera);
+                    }
+                    let p = eyes + rot * Vec3::new(1.0, 2.5, 0.0);
+                    let g = glam::DVec3::new(mx as f64 + p.x as f64, my as f64 + p.y as f64, p.z as f64);
+                    self.world.look_at.own.set(crate::world::lookat::FOCUS, None, g, Instant::now());
+                }
+            }
             if value.ends_with(",side")
                 && self.frame_count == 300
                 && let Some(eyes) = self.scene.eyes_world(&self.world, &self.world.agent_id, Instant::now())

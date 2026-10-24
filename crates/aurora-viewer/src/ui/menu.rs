@@ -55,7 +55,7 @@ fn rows_id() -> Id {
 /// Menu style: the popup and sub-menu frames (`Frame::menu`) are built
 /// from it, so every level gets the panel color and border.
 fn style(p: &Palette) -> egui::style::StyleModifier {
-    let (fill, border) = (p.panel, p.raised);
+    let (fill, border) = (p.panel, frame_border(p));
     egui::style::StyleModifier::new(move |s| {
         egui::containers::menu::menu_style(s);
         s.spacing.item_spacing = Vec2::ZERO;
@@ -64,6 +64,12 @@ fn style(p: &Palette) -> egui::style::StyleModifier {
         s.visuals.window_stroke = Stroke::new(1.0, border);
         s.visuals.menu_corner_radius = s.visuals.window_corner_radius;
     })
+}
+
+/// The border of the menus' frames: the raised neutral, or the light one of
+/// high contrast (`widgets::border_stroke`).
+fn frame_border(p: &Palette) -> Color32 {
+    crate::ui::widgets::border_stroke(p, Stroke::new(1.0, p.raised)).color
 }
 
 /// The rectangle and corner radius of a stock pop-up frame in `shape`: the
@@ -109,7 +115,7 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
                 continue;
             }
             list.mutate_shape(egui::layers::ShapeIdx(0), |first| {
-                if let Some((rect, radius)) = stock_frame(&first.shape, faces, p.raised) {
+                if let Some((rect, radius)) = stock_frame(&first.shape, faces, frame_border(p)) {
                     let frame = std::mem::replace(&mut first.shape, egui::Shape::Noop);
                     let mut shapes = vec![frame];
                     if p.panel_alpha < 255 {

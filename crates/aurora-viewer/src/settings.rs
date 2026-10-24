@@ -817,6 +817,10 @@ pub struct Settings {
     pub color_blindness: crate::colorblind::Deficiency,
     /// How strongly (0–1, 1 by default: the full correction).
     pub color_blindness_strength: f32,
+    /// Preferences › Accessibility › Contrast: the high contrast palette
+    /// (`crate::high_contrast`, #906) instead of the skin's colours, off by
+    /// default.
+    pub high_contrast: bool,
     /// Firestorm's camera and movement windows (floater_camera.xml,
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
@@ -1545,6 +1549,7 @@ impl Default for Settings {
             reduce_motion: false,
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,
+            high_contrast: false,
             classic_controls: false,
             camera_shots: Vec::new(),
             plates_friends_only_full: false,
