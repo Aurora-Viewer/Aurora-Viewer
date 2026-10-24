@@ -575,7 +575,7 @@ fn who(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, group: bool) {
     let link = ui.add(egui::Link::new(
         RichText::new(name)
             .size(12.0)
-            .color(super::colors::c(super::colors::get().chat_slurl)),
+            .color(super::colors::text(super::colors::get().chat_slurl)),
     ));
     if !group && link.clicked() {
         super::profile::request_open(ui.ctx(), id);
