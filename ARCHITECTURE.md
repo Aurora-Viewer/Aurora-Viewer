@@ -1429,6 +1429,11 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-render/src/adapter_choice.rs` | Which GPU the renderer opens (#894): every Vulkan adapter listed with its type, memory and whether it can present, then tried in order (the one asked for by `AURORA_GPU` or Preferences › Graphics, then discrete before integrated, the most video memory first), the next one if one fails to open; the log hint when only an integrated GPU is visible. The hybrid-GPU exports `NvOptimusEnablement` / `AmdPowerXpressRequestHighPerformance` are in aurora-viewer's `main.rs` (export table: `build.rs`) |
 | `aurora-render/src/vulkan_layers.rs` | Third-party implicit Vulkan layers kept out of the process (Overwolf's, which crash in `vkCreateInstance`, #901): their manifests' disable variables set at the start of `main`, before any thread; `AURORA_VULKAN_LAYERS=keep` to load them |
 
+`scene/sounds.rs` keeps attached HUD sounds at the audio listener, including
+linked HUD prims, following `LLAudioSourceVO::update`. They share the Sfx
+channel and normal attached-sound lifecycle; HUD coordinates never enter
+world panning or attenuation. Triggered sounds retain their world positions.
+
 `aurora-audio/src/processing.rs` owns Sonora/WebRTC AEC3, AGC2, noise suppression
 and high-pass processing. Device callbacks only queue microphone samples and
 bounded 10 ms stereo reference blocks tapped after the final mixer gains.

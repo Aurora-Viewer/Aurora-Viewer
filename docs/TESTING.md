@@ -5831,7 +5831,7 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music` or `list` | Media filter question or list |
-| `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
+| `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
@@ -6040,11 +6040,15 @@ What the inventory must show with these scenarios:
   `medialist.xml`, and an answer does not save the profile. `AURORA_DEMO_MEDIA=<https URL>` or
   `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
   profile's filter is on.
-- **`AURORA_DEMO_SOUND=1`**: world sounds (looping chime) and interface
+- **`AURORA_DEMO_SOUND=1|hud`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
   The wind sound is silent too, unless this or `AURORA_DEMO_WIND` is set.
+  With `hud`, the chime loops on a linked HUD prim instead of the world
+  objects. Move the camera away or turn it: the chime stays centered at the
+  same volume. Effects volume and mute still control it; hiding the HUDs
+  does not stop their sounds.
 - **`AURORA_DEMO_WIND=<x>,<y>[,fly]`**: the demo region gets a uniform wind
   of x, y m/s (default `3,2`; LLWind::getVelocity doubles it, as on the
   grid), and with `fly` our avatar arrives flying. The wind noise plays on

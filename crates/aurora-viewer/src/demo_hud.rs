@@ -76,6 +76,20 @@ pub fn events() -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
+/// AURORA_DEMO_SOUND=hud: a linked HUD prim loops at the listener,
+/// independently of camera distance, as LLAudioSourceVO::update does.
+pub fn sound_events(sound: Uuid) -> Vec<NetEvent> {
+    let mut events = events();
+    events.push(NetEvent::AttachedSound {
+        object: u(CHILD as u128),
+        sound,
+        owner: DEMO_AGENT,
+        gain: 0.4,
+        flags: 1,
+    });
+    events
+}
+
 const MAT_DOUBLE_OPAQUE: Uuid = Uuid::from_u128(8260);
 const MAT_DOUBLE_BLEND: Uuid = Uuid::from_u128(8261);
 const MAT_DOUBLE_MASK: Uuid = Uuid::from_u128(8262);
