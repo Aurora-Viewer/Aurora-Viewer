@@ -386,6 +386,8 @@ impl App {
         } else {
             self.stop_autopilot(true);
             self.autopilot = Some(walk);
+            self.autopilot_stop_pending = false;
+            self.autopilot_flags = 0;
         }
     }
 

@@ -335,6 +335,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
+| `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
@@ -347,6 +348,53 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
 ### Details
+
+- **`AURORA_DEMO_AVATAR_TRAVEL=<mode>`**: at frame 600, `menu` opens
+  the violet wolf's avatar menu; the other modes dispatch Go to or Follow. `go`
+  keeps the initial destination and ends within 2 m; `follow` keeps the
+  leader, rests near it, then resumes after the wolf moves 6 m at frame 1500
+  (the wolf also moves in `go`, but the pilot stays finished).
+  `follow-menu` shows the active follow's menu at 1400. `manual`, `escape`,
+  `stop` and `lost` start a follow, then cancel it at 1500 through the movement
+  controls, Escape's reset action, Stop following or target removal respectively.
+  `flight` follows the wolf through takeoff at 900, landing at 1500, a
+  second takeoff at 2100 and landing at 2700. Capture at 1400, 2000, 2600
+  and 3200; flight must follow the leader and remain active after each landing.
+  `go-flight` starts Go to with an already-flying target and ends nearby in flight.
+  `go-flight-late` delays the hover animation until frame 620, after Go to
+  started at 600: it must still take off while keeping its fixed destination.
+  `run` follows a running target, walking at 1200 and stopping at 1500;
+  milestone logs show temporary running enabled, then restored. `flight-brake`
+  approaches a hovering target 35 m farther away. Combine it with
+  `AURORA_DEMO_LINK=300,jitter=40,aurora,native-flight` or
+  `300,jitter=40,firestorm,native-flight` and
+  capture after frame 4400: the follower must stop beside the target at its
+  height after one continuous burn per axis, with no final approach impulses
+  or repeated crossings. The delayed native demo exercises the network/prediction
+  path; `native-flight` adds full-speed flight and inertia to that simulator.
+  Use `AURORA_DEMO_LINK=0,native-flight` with the other flight scenarios too.
+  The deterministic regression additionally covers different frame rates,
+  short/high-latency approaches, ascent/descent, height alignment and one burn
+  per axis. A nearby stationary hover must remain still; a leader moving away
+  horizontally or vertically must restart the follow.
+  Logs include our flight state, landing phase, altitude and height error. A stationary
+  hover must cause takeoff; jump/fall or missing signals must not cause a
+  spurious flight change. Takeoff respects region, parcel and RLVa permissions.
+  Capture the menu at 620 and the final follow at 2450; milestone distances,
+  active state and control flags are logged. With the native menu, verify
+  Rejoindre/Go to, Suivre/Follow and Arrêter de suivre/Stop following in both
+  languages, on the avatar and its worn objects, and in resident lists.
+  On the grid, the human checks a moving resident, stable arrival, a target
+  sitting on an object, manual movement/Escape, target departure, a region
+  crossing and flight changes: start on the ground, let the leader take off,
+  hover, land, walk and take off again; repeat on a raised platform. We descend
+  near the landed leader and clear flight only on our own physical support,
+  never merely on the leader's landing signal or our predicted arrival.
+  Repeat Go to on an airborne resident, follow a runner who walks/stops,
+  then approach a stationary flyer from 30 m or more: our avatar must brake
+  once beside the target at the same height, then remain there without small
+  approach impulses or passing back and forth through the target.
+  These actions do not route around walls.
 
 - **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle|sit-ground`**:
   opens the hover-height floater at frame 600. A number sets the height;
@@ -502,7 +550,7 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
-- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
+- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace][,native-flight]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
   avatar with the demo's rules and its reports (terse updates of our
@@ -517,7 +565,11 @@ when unfocused") is ignored during a screenshot.
   frame show whether the walk comes back after a stop); `aurora` / `firestorm`
   force the movement for the run without touching the saved choice;
   without them, the choice of Preferences applies and can be switched
-  while walking. The log says, for each press and release of a walking
+  while walking. `native-flight` opts into a 16 m/s flight model with a
+  0.5 s velocity ramp, coasting after release and full speed despite NUDGE.
+  It makes avatar-navigation braking tests exercise native flight inertia;
+  ground movement and the default demo physics keep their existing behavior.
+  The log says, for each press and release of a walking
   key, `demo link: the drawn avatar moved N ms after the press` and
   `… stopped N ms after the release, D m on (P m travelled)`, and
   `own motion learned: …` (the speeds, ramps and delay the prediction

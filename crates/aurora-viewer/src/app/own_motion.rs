@@ -196,7 +196,7 @@ impl App {
             None => self.net.stats.ping_avg_ms.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0,
         };
         let intent = if on {
-            let flags = self.world.agent.control_flags(&self.input, mouselook) | self.autopilot_flags;
+            let flags = self.autopilot_controls(self.world.agent.control_flags(&self.input, mouselook));
             Intent::from_flags(flags, self.world.agent.yaw, self.running())
         } else {
             None
