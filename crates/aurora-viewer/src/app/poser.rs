@@ -1,10 +1,6 @@
 //! Consent transport and UI remain independent of whether the editor is open.
 use super::*;
-use crate::{
-    theme::Palette,
-    ui::widgets,
-    world::poser_consent,
-};
+use crate::{theme::Palette, ui::widgets, world::poser_consent};
 
 impl App {
     pub(super) fn poser_demo(&mut self, mode: &str) {

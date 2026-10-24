@@ -259,8 +259,15 @@ impl Editor {
                             }
                         }
                         Status::Accepted => {
-                            if widgets::action_button(ui, p, "check", aurora_i18n::text("poser-consent-ready"), widgets::ActionKind::Primary, size)
-                                .clicked()
+                            if widgets::action_button(
+                                ui,
+                                p,
+                                "check",
+                                aurora_i18n::text("poser-consent-ready"),
+                                widgets::ActionKind::Primary,
+                                size,
+                            )
+                            .clicked()
                             {
                                 pick = Some(peer);
                             }

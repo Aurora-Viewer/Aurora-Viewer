@@ -620,7 +620,10 @@ fn poser_whole_pose_actions_work_from_their_new_group() {
     }
     let reset = painted(&texts, aurora_i18n::text("ik-edit-reset-all")).rect.center();
     frames.run(click(reset), &mut draw);
-    assert!((0..rig.len()).all(|b| !editor.poser.sessions[&world.agent_id].edited(b)), "Reset all is in the Whole pose group");
+    assert!(
+        (0..rig.len()).all(|b| !editor.poser.sessions[&world.agent_id].edited(b)),
+        "Reset all is in the Whole pose group"
+    );
     let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
     let texts = frames.run(Vec::new(), &mut draw);
     let t_pose = painted(&texts, aurora_i18n::text("poser-t-pose")).rect.center();
@@ -630,15 +633,25 @@ fn poser_whole_pose_actions_work_from_their_new_group() {
     editor.poser.settings_open = true;
     let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
     let texts = frames.run(Vec::new(), &mut draw);
-    assert!(texts.iter().any(|t| t.source == aurora_i18n::text("poser-settings-files").to_uppercase()));
-    assert_eq!(texts.iter().filter(|t| t.source == aurora_i18n::text("ik-edit-reset-all")).count(), 1);
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.source == aurora_i18n::text("poser-settings-files").to_uppercase())
+    );
+    assert_eq!(
+        texts.iter().filter(|t| t.source == aurora_i18n::text("ik-edit-reset-all")).count(),
+        1
+    );
 }
 #[test]
 fn poser_subject_menu_queues_consent_actions_for_the_app_and_waits_for_the_bridge() {
     use crate::ui::widgets::elide_tests::{Frames, painted};
     let (world, mut editor) = fixture();
     let peer = demo::poser::PEER;
-    assert!(crate::world::poser_consent::nearby(&world, peer), "the fixture's peer stands nearby");
+    assert!(
+        crate::world::poser_consent::nearby(&world, peer),
+        "the fixture's peer stands nearby"
+    );
     let mut frames = Frames::new();
     let p = crate::theme::Theme::default().palette();
     crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
@@ -649,7 +662,9 @@ fn poser_subject_menu_queues_consent_actions_for_the_app_and_waits_for_the_bridg
         for _ in 0..3 {
             frames.run(Vec::new(), &mut draw);
         }
-        frames.ctx.data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
+        frames
+            .ctx
+            .data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
         let mut texts = Vec::new();
         for _ in 0..3 {
             texts = frames.run(Vec::new(), &mut draw);

@@ -131,8 +131,11 @@ impl Editor {
             let galley = ui.painter().layout_no_wrap(status.to_string(), font, p.ink);
             let (pill, _) = ui.allocate_exact_size(egui::vec2(galley.size().x + 30.0, 24.0), Sense::hover());
             ui.painter().rect_filled(pill, ui.visuals().window_corner_radius, p.bar);
-            ui.painter()
-                .circle_filled(egui::pos2(pill.left() + 12.0, pill.center().y), 4.0, if enabled { p.teal } else { p.muted_dim });
+            ui.painter().circle_filled(
+                egui::pos2(pill.left() + 12.0, pill.center().y),
+                4.0,
+                if enabled { p.teal } else { p.muted_dim },
+            );
             let text = widgets::row_text_origin(ui.painter(), &galley, pill.left() + 22.0, pill.center().y);
             ui.painter().galley(text, galley, p.ink);
             let notice = aurora_i18n::text("poser-visible-you");
@@ -253,8 +256,20 @@ impl Editor {
                 let options = widgets::action_button(ui, p, "chevron-down", "", widgets::ActionKind::Primary, egui::vec2(26.0, 28.0))
                     .on_hover_text(aurora_i18n::text("poser-save-options"));
                 menu::dropdown(&options, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
-                    menu::toggle(ui, p, "file-upload-filled", aurora_i18n::text("poser-also-bvh"), &mut self.poser.also_bvh);
-                    menu::toggle(ui, p, "accessible-filled", aurora_i18n::text("poser-unlock-pelvis"), &mut self.poser.unlock_pelvis);
+                    menu::toggle(
+                        ui,
+                        p,
+                        "file-upload-filled",
+                        aurora_i18n::text("poser-also-bvh"),
+                        &mut self.poser.also_bvh,
+                    );
+                    menu::toggle(
+                        ui,
+                        p,
+                        "accessible-filled",
+                        aurora_i18n::text("poser-unlock-pelvis"),
+                        &mut self.poser.unlock_pelvis,
+                    );
                     menu::separator(ui, p);
                     ui.horizontal(|ui| {
                         ui.add_space(8.0);
@@ -425,7 +440,11 @@ impl Editor {
         if let Some(path) = load {
             self.poser.storage.job = Some(storage::Job::Load(Some(path), LoadMode::All, self.poser.subject));
         }
-        ui.label(egui::RichText::new(aurora_i18n::text("poser-library-hint")).size(11.5).color(p.muted));
+        ui.label(
+            egui::RichText::new(aurora_i18n::text("poser-library-hint"))
+                .size(11.5)
+                .color(p.muted),
+        );
     }
     /// The settings, grouped, over the joint panel (the gear of the title).
     fn pose_settings_ui(&mut self, ui: &mut egui::Ui, p: &Palette) {
@@ -461,6 +480,10 @@ impl Editor {
             ui.add(egui::DragValue::new(&mut self.poser.priority).range(0..=6));
         });
         ui.add_space(8.0);
-        ui.label(egui::RichText::new(aurora_i18n::text("poser-format-limits")).size(11.5).color(p.muted));
+        ui.label(
+            egui::RichText::new(aurora_i18n::text("poser-format-limits"))
+                .size(11.5)
+                .color(p.muted),
+        );
     }
 }

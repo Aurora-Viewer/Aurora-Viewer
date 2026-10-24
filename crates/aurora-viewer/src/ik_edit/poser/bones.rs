@@ -166,12 +166,16 @@ const DOT: f32 = 3.0;
 fn stretched_choice(ui: &mut egui::Ui, p: &Palette, selected: &mut usize, options: &[(&str, &str)]) -> bool {
     let height = 28.0;
     let (track, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::hover());
-    ui.painter().rect_filled(track, ui.visuals().widgets.inactive.corner_radius, p.field);
+    ui.painter()
+        .rect_filled(track, ui.visuals().widgets.inactive.corner_radius, p.field);
     let inner = track.shrink(2.0);
     let width = inner.width() / options.len().max(1) as f32;
     let mut changed = false;
     for (i, (label, tip)) in options.iter().enumerate() {
-        let rect = egui::Rect::from_min_size(egui::pos2(inner.left() + width * i as f32, inner.top()), egui::vec2(width, inner.height()));
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(inner.left() + width * i as f32, inner.top()),
+            egui::vec2(width, inner.height()),
+        );
         let response = ui.interact(rect, ui.scope_id().with(("poser-side", i)), Sense::click());
         let on = *selected == i;
         if on || response.hovered() {
@@ -269,7 +273,14 @@ impl Editor {
             let label = aurora_i18n::text("poser-avatar-position");
             if filter.is_empty() || label.to_lowercase().contains(&filter) {
                 let edited = self.subject_edited(rig.pelvis) && self.poser.transform == 1;
-                if self.joint_row(ui, p, label, self.selected == Some(rig.pelvis) && self.poser.transform == 1, edited, "mPelvis") {
+                if self.joint_row(
+                    ui,
+                    p,
+                    label,
+                    self.selected == Some(rig.pelvis) && self.poser.transform == 1,
+                    edited,
+                    "mPelvis",
+                ) {
                     self.select_pose_bone(rig.pelvis, rig, frame);
                     self.poser.transform = 1;
                     self.tool = Tool::Move;
@@ -325,7 +336,11 @@ impl Editor {
                 Side::Mirror => both.iter().any(|b| self.subject_edited(*b)),
                 _ => self.subject_edited(bone),
             };
-            let names = both.iter().map(|b| rig.canonical_names[*b].as_str()).collect::<Vec<_>>().join(" · ");
+            let names = both
+                .iter()
+                .map(|b| rig.canonical_names[*b].as_str())
+                .collect::<Vec<_>>()
+                .join(" · ");
             if self.joint_row(ui, p, &label(&base), selected, edited, &names) {
                 self.select_pose_bone(bone, rig, frame);
             }
@@ -350,7 +365,8 @@ impl Editor {
         );
         if edited {
             let dot = if selected { p.on_accent } else { p.violet_light };
-            ui.painter().circle_filled(egui::pos2(rect.right() - 10.0, rect.center().y), DOT, dot);
+            ui.painter()
+                .circle_filled(egui::pos2(rect.right() - 10.0, rect.center().y), DOT, dot);
         }
         response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
         response.on_hover_text(tip).clicked()
@@ -416,15 +432,24 @@ impl Editor {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(label_w, CELL_H), Sense::hover());
-                widgets::paint_elided(ui, name, egui::pos2(rect.left(), rect.center().y), label_w - 4.0, egui::FontId::proportional(12.5), p.ink);
+                widgets::paint_elided(
+                    ui,
+                    name,
+                    egui::pos2(rect.left(), rect.center().y),
+                    label_w - 4.0,
+                    egui::FontId::proportional(12.5),
+                    p.ink,
+                );
                 for joint in 1..=3 {
                     let Some(bone) = finger_bone(rig, stem, joint, self.poser.side) else {
                         ui.allocate_exact_size(egui::vec2(cell_w, CELL_H), Sense::hover());
                         continue;
                     };
                     let other = self.mirrors.counterpart(bone);
-                    let selected = self.selected == Some(bone) || self.poser.side == Side::Mirror && self.selected.is_some() && self.selected == other;
-                    let edited = self.subject_edited(bone) || self.poser.side == Side::Mirror && other.is_some_and(|o| self.subject_edited(o));
+                    let selected =
+                        self.selected == Some(bone) || self.poser.side == Side::Mirror && self.selected.is_some() && self.selected == other;
+                    let edited =
+                        self.subject_edited(bone) || self.poser.side == Side::Mirror && other.is_some_and(|o| self.subject_edited(o));
                     let (rect, response) = ui.allocate_exact_size(egui::vec2(cell_w, CELL_H), Sense::click());
                     let face = if selected {
                         p.violet

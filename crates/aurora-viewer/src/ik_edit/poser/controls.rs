@@ -258,20 +258,16 @@ impl Editor {
                         edited = true;
                     }
                 }
-                ui.allocate_ui_with_layout(
-                    egui::vec2(TRACKBALL, 30.0),
-                    egui::Layout::top_down(egui::Align::Center),
-                    |ui| {
-                        ui.set_width(TRACKBALL);
-                        ui.label(
-                            egui::RichText::new(aurora_i18n::text(
-                                ["poser-ball-rotation", "poser-ball-position", "poser-ball-scale"][self.poser.transform.min(2)],
-                            ))
-                            .size(11.0)
-                            .color(p.muted_dim),
-                        );
-                    },
-                );
+                ui.allocate_ui_with_layout(egui::vec2(TRACKBALL, 30.0), egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.set_width(TRACKBALL);
+                    ui.label(
+                        egui::RichText::new(aurora_i18n::text(
+                            ["poser-ball-rotation", "poser-ball-position", "poser-ball-scale"][self.poser.transform.min(2)],
+                        ))
+                        .size(11.0)
+                        .color(p.muted_dim),
+                    );
+                });
             });
             ui.vertical(|ui| {
                 ui.add_space(TRACKBALL / 2.0 - 60.0);
