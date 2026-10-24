@@ -596,7 +596,7 @@ pub(crate) fn text_with_links(
                 Seg::Text(t) => plain(ui, t),
                 Seg::Url(u) => web_link(ui, p, u, u, size),
                 Seg::Slurl(u) => {
-                    select::label(ui, RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
+                    select::label(ui, RichText::new(u).size(size).color(super::colors::text(k.chat_slurl))).on_hover_text(u);
                 }
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
                 Seg::Labelled(label, inner) => match *inner {
