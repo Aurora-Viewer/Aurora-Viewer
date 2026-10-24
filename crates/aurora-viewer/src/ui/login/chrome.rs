@@ -93,6 +93,18 @@ pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sideb
                 action = LoginAction::Preferences;
             }
         });
+    // Left of it, the way to a larger, more readable interface before the
+    // first login: Preferences › Accessibility.
+    egui::Area::new(Id::unique("login_accessibility"))
+        .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-63.0, 20.0))
+        .show(ctx, |ui| {
+            if widgets::action_button(ui, p, "accessible-filled", "", ActionKind::Flat, Vec2::splat(30.0))
+                .on_hover_text(aurora_i18n::tr!("login-accessibility"))
+                .clicked()
+            {
+                action = LoginAction::Accessibility;
+            }
+        });
     egui::Area::new(Id::unique("login_quit"))
         .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-25.0, -20.0))
         .show(ctx, |ui| {

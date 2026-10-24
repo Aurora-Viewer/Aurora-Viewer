@@ -744,6 +744,21 @@ fn ui_font(settings: &Settings) -> String {
         .unwrap_or_else(|| settings.font.clone())
 }
 
+/// The login screen keeps one shortcut of the viewer: the preferences
+/// (Ctrl+P unless rebound), as the Legacy Viewer's login menu does
+/// (menu_login.xml, "Preferences..." on control|P).
+fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
+    matches!(screen, Screen::Login) && action == Some(Action::Preferences)
+}
+
+/// A Ctrl / Alt shortcut of the viewer still works while a text field has
+/// the focus, as the Legacy Viewer's menu accelerators go before the focused
+/// field (LLViewerWindow::handleKey); the field keeps its own editing
+/// shortcuts (copy, paste, undo, words...).
+fn shortcut_while_typing(typing: bool, ctrl: bool, alt: bool, code: KeyCode, bound: bool) -> bool {
+    typing && (ctrl || alt) && !crate::keybinds::is_text_edit_key(code) && bound
+}
+
 /// The interface scale, or AURORA_UI_SCALE for this launch (brought into
 /// the range of the Preferences, 0.75–2).
 fn ui_scale(settings: &Settings) -> f32 {
@@ -3304,6 +3319,10 @@ impl App {
         let action = self.settings.keybinds.update_held_input(&mut self.down, &input, pressed, mods);
         if let Some(group) = self.run_group(&input) {
             self.walk_tap(group, pressed && action.is_none());
+        }
+        if pressed && login_shortcut(&self.screen, action) {
+            ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+            return;
         }
         if !pressed || !self.in_world() {
             return;
@@ -10069,6 +10088,10 @@ impl App {
             LoginAction::ReportBug => self.open_issue_chooser(),
             LoginAction::Quit => self.request_exit(),
             LoginAction::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
+            LoginAction::Accessibility => {
+                ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+                self.options_ui.open(ui::options::Page::Accessibility, 0);
+            }
             LoginAction::None | LoginAction::Login => {}
         }
         // the line first, then the typing stop it brings (sendChat, then
@@ -15791,15 +15814,15 @@ impl ApplicationHandler for App {
                         return;
                     }
                     // Ctrl / Alt shortcuts of the viewer still work while a text
-                    // field has the focus (chat bar...), as Firestorm's menu
-                    // accelerators go before the focused field
-                    // (LLViewerWindow::handleKey); the field keeps its own
-                    // editing shortcuts (copy, paste, undo, words...)
+                    // field has the focus (chat bar, login fields...)
                     let shortcut = pressed
-                        && typing
-                        && (self.ctrl || self.alt)
-                        && !crate::keybinds::is_text_edit_key(code)
-                        && self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some();
+                        && shortcut_while_typing(
+                            typing,
+                            self.ctrl,
+                            self.alt,
+                            code,
+                            self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some(),
+                        );
                     // Ctrl+F belongs to the window with its own find when the
                     // script editor is active, the keyboard is in a conversation, or the
                     // pointer over a conversation with the keyboard nowhere:
@@ -15980,6 +16003,39 @@ mod tests {
     use super::{RightGesture, capture_files, frame_cap};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    /// Ctrl+P opens the preferences from the login screen, a login field
+    /// focused or not, as in the world; it types no "p" in the field.
+    #[test]
+    fn ctrl_p_opens_the_preferences_from_the_login_screen() {
+        use super::{Screen, login_shortcut, shortcut_while_typing};
+        use crate::keybinds::{Action, Input, Mods};
+        use winit::keyboard::KeyCode;
+        let bindings = Settings::default().keybinds;
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let action = bindings.triggered(&Input::key(KeyCode::KeyP), ctrl);
+        assert_eq!(action, Some(Action::Preferences), "Ctrl+P is the preferences' shortcut");
+        assert_eq!(bindings.triggered(&Input::key(KeyCode::KeyP), Mods::default()), None);
+        // a field focused: the key still reaches the viewer's shortcuts
+        assert!(shortcut_while_typing(true, true, false, KeyCode::KeyP, action.is_some()));
+        // the fields keep their own editing shortcuts (Ctrl+C, Ctrl+V…)
+        assert!(!shortcut_while_typing(true, true, false, KeyCode::KeyV, true));
+        // a plain P while typing is the field's
+        assert!(!shortcut_while_typing(true, false, false, KeyCode::KeyP, false));
+        assert!(login_shortcut(&Screen::Login, action));
+        // the other shortcuts wait for the world
+        assert!(!login_shortcut(&Screen::Login, Some(Action::Fly)));
+        assert!(!login_shortcut(&Screen::World, action), "in the world, the usual path opens them");
+        assert!(!login_shortcut(
+            &Screen::Loading {
+                since: std::time::Instant::now()
+            },
+            action
+        ));
+    }
 
     #[test]
     fn right_click_tolerates_small_straight_and_diagonal_motion() {

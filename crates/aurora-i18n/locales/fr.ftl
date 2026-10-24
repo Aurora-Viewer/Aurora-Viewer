@@ -152,6 +152,7 @@ toolbar-command-360-snapshot = Photo 360°
 toolbar-command-omnifilter = Omnifiltre
 toolbar-command-avatar-align = Alignement de l’avatar
 toolbar-command-face-nearest = Face à l’avatar le plus proche
+login-accessibility = Accessibilité : taille de l’interface, taille du texte, contraste… (Préférences)
 login-accounts-title = Choisissez votre compte
 login-accounts-first-title = Ajoutez votre premier compte
 login-accounts-last-place = Dernier lieu visité
