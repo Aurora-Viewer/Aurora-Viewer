@@ -387,7 +387,10 @@ fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: b
         ui.available_width().max(natural)
     };
     let text_height = galley.size().y.max(keys.as_ref().map_or(0.0, |keys| keys.size().y));
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max(text_height + 6.0)), sense);
+    // a whole number of points: a font with a tall line (OpenDyslexic)
+    // makes the row taller than ROW_H, and a fractional height left its
+    // letters 0.6 px off its middle at 1.25
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max((text_height + 6.0).ceil())), sense);
     let hot = enabled && (resp.hovered() || open);
     track(ui, hot && resp.hovered());
     if !ui.is_rect_visible(rect) {

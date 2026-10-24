@@ -6302,7 +6302,8 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_GLYPHS=1` or to isolate a font problem. The log says
   `system fallback fonts: off`.
 - **`AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>`**: the interface
-  font (`Inter`, `Noto Sans`, `Roboto` or `system:<path of a .ttf>`) and
+  font (`Inter`, `Noto Sans`, `Roboto`, `OpenDyslexic` or
+  `system:<path of a .ttf>`) and
   scale (0.75 to 2) of this launch, without touching Preferences ›
   Fonts / Interface: to capture one screen with every font and scale in a
   row. Give the window the scale too (`AURORA_WINDOW_SIZE="2304,1296"` at

@@ -38,9 +38,11 @@ fn font(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
     cx.group(tr!("ui-options-font"), |cx| {
-        // the bundled fonts side by side; a font of the system below
+        // the bundled fonts side by side, across both columns (four names,
+        // and OpenDyslexic draws wide); a font of the system below
         let builtins: Vec<&'static str> = fonts::BUILTINS.iter().map(|b| b.name).collect();
-        cx.keywords(&builtins.join(" "))
+        cx.wide()
+            .keywords(&builtins.join(" "))
             .row_with(tr!("ui-options-bundled-fonts"), "", &field!(font), |ui, s, _, r| {
                 let options: Vec<(String, bool)> = builtins
                     .iter()

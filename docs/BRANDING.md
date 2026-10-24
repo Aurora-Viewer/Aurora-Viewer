@@ -240,9 +240,10 @@ dragging a handle switch to `violet_light`, like any selection.
   (edge of a rail, boundary between two panes) takes
   `widgets::divider_stroke`. Never `ui.separator()`, and no line between
   buttons or the elements of a toolbar.
-- **Typography.** Inter (regular, semi-bold) by default; Noto Sans and
-  Roboto, each with its own semi-bold face, as the other embedded choices
-  of Preferences › Fonts. No other font without a reason. Every text
+- **Typography.** Inter (regular, semi-bold) by default; Noto Sans,
+  Roboto and OpenDyslexic (an accessibility choice for readers with
+  dyslexia), each with its own semi-bold or bold face, as the other
+  embedded choices of Preferences › Fonts. No other font without a reason. Every text
   follows the chosen font: semi-bold through `fonts::semibold`, monospace
   only for code-like text (script editor, UUIDs, keys, colour codes, URLs,
   paths, versions), and an arrow or a caret is a Tabler icon, never a
