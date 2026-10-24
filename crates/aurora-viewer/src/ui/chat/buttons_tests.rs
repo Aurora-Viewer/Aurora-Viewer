@@ -19,6 +19,42 @@ const GROUP: Uuid = Uuid::from_u128(0x6E);
 const MEETING: Uuid = Uuid::from_u128(0xC0);
 const ALL: [ChatStyle; 4] = [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy];
 
+#[test]
+fn teleport_invitation_paints_one_destination_in_every_style() {
+    use crate::world::teleport_invites::{Answer, Invite, InviteKind, Place, Rating};
+    for style in ALL {
+        let mut h = H::new(style);
+        let message = "Join me\r\nhttp://maps.secondlife.com/secondlife/Aurora%20Demo/135/88/24";
+        h.world.teleport_invites.list.push(Invite {
+            id: 1,
+            from: JANE,
+            kind: InviteKind::Offer {
+                lure: Uuid::from_u128(1),
+                place: Some(Place {
+                    grid: (1000, 1000),
+                    pos: glam::Vec3::new(133.0, 88.0, 25.0),
+                    region: Some("Aurora Demo".into()),
+                }),
+                godlike: false,
+            },
+            message: message.into(),
+            rating: Rating::Allowed,
+            answer: Answer::Pending,
+            notification: 0,
+        });
+        h.world.conversation_line(JANE, line("Jane", JANE, ChatKind::Invite(1), message));
+        h.open(Some(JANE));
+        h.settle();
+        let occurrences: usize = h.texts.iter().map(|t| t.source.matches("Aurora Demo (").count()).sum();
+        assert_eq!(occurrences, 1, "{style:?}: the destination is painted once");
+        assert!(
+            h.texts.iter().any(|t| t.source.contains("Join me")),
+            "{style:?}: the sender's text stays"
+        );
+        assert_eq!(h.world.teleport_invites.get(1).unwrap().message, message);
+    }
+}
+
 fn line(from: &str, source: Uuid, kind: ChatKind, text: &str) -> ChatLine {
     ChatLine {
         time: std::time::SystemTime::now(),

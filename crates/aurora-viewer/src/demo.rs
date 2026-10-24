@@ -1709,7 +1709,7 @@ pub fn lure_events(scene: LureScene, agent: Uuid) -> Vec<NetEvent> {
     let invitation = format!(
         "{}\r\n{}",
         aurora_i18n::tr!("demo-come-see-the-lagoon-at-sunset"),
-        crate::slurl::make(aurora_i18n::tr!("common-aurora-demo"), glam::Vec3::new(128.0, 130.0, 25.0))
+        crate::slurl::make(aurora_i18n::tr!("common-aurora-demo"), glam::Vec3::new(130.0, 130.0, 24.0))
     );
     match scene {
         LureScene::Offer | LureScene::OfferCard | LureScene::CardAnswered | LureScene::NotificationAnswered | LureScene::Legacy => {
