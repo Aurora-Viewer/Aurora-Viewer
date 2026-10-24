@@ -333,6 +333,28 @@ pub struct ShadowCaster {
     pub alpha: bool,
 }
 
+/// How the blended faces of rigged meshes (`DrawLists::blend_depth`) write
+/// depth.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RiggedBlendDepth {
+    /// From 1/255 of alpha as they are drawn, into the scene depth, as the
+    /// Legacy Viewer (LLDrawPoolAlpha::forwardRender(true), #499).
+    #[default]
+    Write,
+    /// Only where at least half covered, in a depth pass before their
+    /// colour, which is then drawn without depth (#556). A layer of mesh
+    /// hair drawn first is then hidden behind every strand of the layers
+    /// over it that is half covered or more: a strand at 70 % shows what
+    /// lies behind the hair through it, not the layer under it (#935).
+    HalfCovered,
+    /// From 1/255 as they are drawn, as the Legacy Viewer, but into a copy
+    /// of the scene depth: the layers of one hair compose as their creator
+    /// drew them for the Legacy Viewer (#935). The scene depth then takes
+    /// them only where at least half covered, so that the glass, water and
+    /// particles drawn after them are not hidden by a soft fringe (#556).
+    Layered,
+}
+
 /// Visible draws for a frame, built by the world.
 #[derive(Default)]
 pub struct DrawLists {
@@ -364,10 +386,8 @@ pub struct DrawLists {
     /// behind it (eyelashes) whatever the order of the two objects
     /// (LLDrawPoolAlpha::render: forwardRender(true) first, depth written).
     pub blend_depth: usize,
-    /// The depth of those rigged faces is written only where they are at
-    /// least half covered (a depth pass with that alpha test, then their
-    /// colour without depth); otherwise from 1/255, as the Legacy Viewer.
-    pub blend_depth_alpha_test: bool,
+    /// How those rigged faces write their depth.
+    pub blend_depth_mode: RiggedBlendDepth,
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
@@ -480,7 +500,7 @@ impl DrawLists {
         self.blend.clone_from(&src.blend);
         self.blend_glow.clone_from(&src.blend_glow);
         self.blend_depth = src.blend_depth;
-        self.blend_depth_alpha_test = src.blend_depth_alpha_test;
+        self.blend_depth_mode = src.blend_depth_mode;
         self.shadow_casters.clone_from(&src.shadow_casters);
         self.reflection.clone_from(&src.reflection);
         self.probe.clone_from(&src.probe);
@@ -521,7 +541,7 @@ impl DrawLists {
         self.water_exclusion.clear();
         self.blend.clear();
         self.blend_depth = 0;
-        self.blend_depth_alpha_test = false;
+        self.blend_depth_mode = RiggedBlendDepth::default();
         self.shadow_casters.clear();
         self.reflection.clear();
         self.probe.clear();

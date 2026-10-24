@@ -387,6 +387,9 @@ pub struct ObjGpu {
     pub rigged: bool,
     /// Skeleton bound to the face records (changes on attachment / flag updates).
     pub skeleton_owner: Option<Uuid>,
+    /// Rigged: where its blended faces come among those of its skeleton
+    /// (`blend_order::RigOrder`).
+    pub rig_order: Option<blend_order::RigOrder>,
     pub mat_generation: u64,
     /// Geometry faces the records were built for (fully transparent faces
     /// get no record, so `faces` can be shorter).
@@ -3195,6 +3198,9 @@ impl Scene {
         }
         // (after the faces: a rigged mesh gets its skin bindings with them)
         let posed = self.posed_of(renderer, Some(geom_key), posed_rest);
+        let rig_order = skeleton_owner
+            .filter(|_| rigged)
+            .map(|(_, skeleton)| blend_order::RigOrder::of(world, idx, skeleton));
         let g = &mut self.gpu[idx];
         g.center = center;
         g.radius = radius;
@@ -3204,6 +3210,7 @@ impl Scene {
         g.wide = g.wide.filter(|_| posed.is_some());
         g.rigged = rigged;
         g.skeleton_owner = skeleton_owner.map(|p| p.0);
+        g.rig_order = rig_order;
         g.is_avatar = false;
         g.hud = hud;
         if let Some(o) = world.objects.get_mut_untracked(idx) {
@@ -4231,7 +4238,11 @@ impl Scene {
             // textures as the Legacy Viewer sizes them, finer near the camera
             // and in the middle of the view
             let px = texture_importance::texture_pixels(view, g.center, g.radius, in_view && boost_textures);
-            let blend_d = (g.center - view.eye).length();
+            // a rigged mesh's blended faces take their place among those of
+            // its skeleton, by the skeleton's distance (`blend_order`)
+            let rig = g.rig_order.filter(|_| g.rigged);
+            let blend_center = rig.and_then(|r| self.gpu.get(r.skeleton as usize)).map_or(g.center, |s| s.center);
+            let blend_d = (blend_center - view.eye).length();
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
                 let cmd = f.cmd.with_bounds(sc, sr);
@@ -4328,6 +4339,9 @@ impl Scene {
                         cmd,
                         glow: f.glow,
                         rigged: g.rigged,
+                        object: idx as u32,
+                        face: f.te_index,
+                        rig,
                     }),
                     _ if !full => {}
                     Pass::Opaque => l.opaque.push(cmd),
@@ -4378,9 +4392,12 @@ impl Scene {
                 cmd: *c,
                 glow: false,
                 rigged: false,
+                object: u32::MAX,
+                face: 0,
+                rig: None,
             }));
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
-        self.lists.blend_depth_alpha_test = blend_order::depth_alpha_test();
+        self.lists.blend_depth_mode = blend_order::depth_mode();
         self.lists.blend.extend(self.blend_tmp.iter().map(|e| e.cmd));
         self.lists.blend_glow.extend(self.blend_tmp.iter().map(|e| e.glow));
         self.lists.shadow_casters.extend(result.casters);

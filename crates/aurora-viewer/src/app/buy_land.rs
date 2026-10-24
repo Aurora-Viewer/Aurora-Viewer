@@ -225,7 +225,8 @@ impl App {
                         self.on_app_event(e);
                     }
                 }
-                self.world.system_message(aurora_i18n::tr!("demo-buy-land-bought"));
+                self.world
+                    .system_notice(aurora_i18n::tr!("demo-buy-land-bought"), crate::world::notice_topics::Topic::Region);
                 true
             }
             _ => false,

@@ -85,6 +85,9 @@ pub enum LoginAction {
     CheckUpdates,
     /// The cogwheel: the preferences window over the login screen.
     Preferences,
+    /// The accessibility button beside it: the preferences on their
+    /// Accessibility page.
+    Accessibility,
 }
 
 /// Animated aurora background (also behind the loading screens without a
@@ -737,8 +740,9 @@ pub fn show(
         }
     } else if info.can_check_updates {
         egui::Area::new(egui::Id::unique("login_check_updates"))
-            // left of the preferences cogwheel of `chrome::footer`
-            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-63.0, 20.0))
+            // left of the accessibility button and the preferences cogwheel
+            // of `chrome::footer`
+            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-101.0, 20.0))
             .show(&ctx, |ui| {
                 if super::widgets::flat_button_sized(ui, p, aurora_i18n::tr!("update-check"), Vec2::new(190.0, 30.0))
                     .on_hover_text(aurora_i18n::tr!("update-check-hint"))
@@ -1022,6 +1026,40 @@ mod tests {
                 modifiers: Default::default(),
             }]);
             assert!(matches!(action, LoginAction::Preferences), "{size:?}");
+
+            // the accessibility button, just left of it, opens their
+            // Accessibility page
+            let access = rect("login_accessibility").expect("the accessibility button");
+            assert!(
+                access.right() < cog.left() && cog.left() - access.right() <= 12.0 && (access.center().y - cog.center().y).abs() < 1.0,
+                "{size:?}: left of the cogwheel ({access:?}, {cog:?})"
+            );
+            assert_eq!(access.size(), cog.size(), "{size:?}: the cogwheel's size");
+            for other in ["login_check_updates", "login_news", "login_version", "login_area"] {
+                if let Some(r) = rect(other) {
+                    assert!(
+                        !r.intersects(access),
+                        "{size:?}: {other} {r:?} under the accessibility button {access:?}"
+                    );
+                }
+            }
+            let pos = access.center();
+            frame(vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                },
+            ]);
+            let action = frame(vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: Default::default(),
+            }]);
+            assert!(matches!(action, LoginAction::Accessibility), "{size:?}");
         }
     }
 

@@ -61,6 +61,9 @@ pub mod collisions;
 /// (AURORA_DEMO_CONFERENCE).
 #[path = "demo_conference.rs"]
 pub mod conference;
+/// The Conversations button flashing (AURORA_DEMO_CONV_BUTTON).
+#[path = "demo_conv_button.rs"]
+pub mod conv_button;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
@@ -114,6 +117,10 @@ pub mod link;
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
 pub mod notifs;
+/// What objects say in the nearby chat among residents, as compact rows or
+/// not (AURORA_DEMO_OBJECT_CHAT).
+#[path = "demo_object_chat.rs"]
+pub mod object_chat;
 /// Objects' messages from near and far, filtered (AURORA_DEMO_OBJECT_IM).
 #[path = "demo_object_im.rs"]
 pub mod object_im;
@@ -4981,6 +4988,9 @@ pub fn events() -> Vec<NetEvent> {
     if chat_lines_scenario().is_some() {
         ev.extend(chat_lines_events());
     }
+    if object_chat::scene().is_some() {
+        ev.extend(object_chat::events(agent));
+    }
     if let Some(scene) = aurora_scenario() {
         ev.extend(aurora_events(&scene));
     }
@@ -6409,8 +6419,11 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
             for f in &mut t.faces {
                 f.texture = TEX_HAIR;
             }
+            // the inner layer attached last (the greatest local id), so
+            // that it is drawn first, as a hair made for the Legacy Viewer
+            // (blend_order.rs)
             let mut worn = prim(
-                200_000 + k as u32 * 64 + layer,
+                200_000 + k as u32 * 64 + (demo.layers - 1 - layer),
                 Vec3::ZERO,
                 Quat::IDENTITY,
                 Vec3::splat(0.1),

@@ -190,6 +190,13 @@ impl Drag {
         rect
     }
 
+    /// `rect` (this frame's [`Self::rect`], snapped) for a window whose body
+    /// keeps `ratio` (width over height) and which adds `chrome` around it
+    /// (its title bar): see [`aspect_rect`].
+    pub(super) fn keep_aspect(self, rect: Rect, ratio: f32, chrome: Vec2) -> Rect {
+        aspect_rect(self.start, rect, self.edge, ratio, chrome, self.minimum, self.bounds)
+    }
+
     pub(super) fn prepare(ctx: &Context, window: Id, minimum: Vec2) -> Option<Self> {
         let mut drag = ctx.data_mut(|data| data.get_temp::<Self>(window.with("floater_resize")));
         if drag.is_some() && ctx.input(|input| !input.pointer.primary_down() && !input.pointer.primary_released()) {
@@ -247,6 +254,49 @@ impl Drag {
             }
         });
     }
+}
+
+/// The rect of a window that keeps its body at `ratio` (width over height),
+/// `chrome` around it, while `edge` drags it from `start` to `rect`, at
+/// every frame of the drag (#941): a side drives the other dimension, a
+/// corner follows the axis the pointer changed the most (relative to the
+/// size it started from). The edges opposite the dragged ones stay where
+/// they were; a side grows the other dimension away from the window's top
+/// or left. The size stays between `minimum` and the room `bounds` leaves
+/// on the sides that move, both taken on the ratio.
+fn aspect_rect(start: Rect, rect: Rect, edge: Edge, ratio: f32, chrome: Vec2, minimum: Vec2, bounds: Rect) -> Rect {
+    let ratio = ratio.clamp(0.2, 5.0);
+    let body = (rect.size() - chrome).max(Vec2::splat(1.0));
+    let (from_width, from_height) = (body.x, body.y * ratio);
+    let width = match (edge.left() || edge.right(), edge.top() || edge.bottom()) {
+        (true, false) => from_width,
+        (false, true) => from_height,
+        _ => {
+            let begun = (start.size() - chrome).max(Vec2::splat(1.0));
+            if (body.x / begun.x - 1.0).abs() >= (body.y / begun.y - 1.0).abs() {
+                from_width
+            } else {
+                from_height
+            }
+        }
+    };
+    let room_x = if edge.left() {
+        start.right() - bounds.left()
+    } else {
+        bounds.right() - start.left()
+    };
+    let room_y = if edge.top() {
+        start.bottom() - bounds.top()
+    } else {
+        bounds.bottom() - start.top()
+    };
+    let most = (room_x - chrome.x).min((room_y - chrome.y) * ratio).max(1.0);
+    let least = (minimum.x - chrome.x).max((minimum.y - chrome.y) * ratio).min(most);
+    let width = width.clamp(least, most);
+    let size = Vec2::new(width, width / ratio) + chrome;
+    let x = if edge.left() { start.right() - size.x } else { start.left() };
+    let y = if edge.top() { start.bottom() - size.y } else { start.top() };
+    Rect::from_min_size(pos2(x, y), size)
 }
 
 /// The edges and corners that resize the window of `response`, and their
@@ -705,6 +755,195 @@ mod tests {
             let point = egui::pos2(window.right() - 0.5, window.top() + t);
             let hits = Edge::ALL.iter().filter(|edge| edge.hit_rect(window).contains(point)).count();
             assert_eq!(hits, 1, "{t}");
+        }
+    }
+
+    /// The body's width over height of a window `rect` with `chrome`.
+    fn body_ratio(rect: Rect, chrome: Vec2) -> f32 {
+        (rect.width() - chrome.x) / (rect.height() - chrome.y)
+    }
+
+    #[test]
+    fn a_window_of_fixed_shape_keeps_it_whatever_edge_drags_it() {
+        let bounds = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0));
+        let chrome = egui::vec2(0.0, 32.0);
+        let minimum = egui::vec2(220.0, 120.0);
+        for ratio in [16.0 / 9.0, 4.0 / 3.0, 9.0 / 16.0, 21.0 / 9.0] {
+            let width = if ratio < 1.0 { 300.0 } else { 480.0 };
+            let start = Rect::from_min_size(egui::pos2(600.0, 300.0), egui::vec2(width, width / ratio) + chrome);
+            for edge in Edge::ALL {
+                for delta in [
+                    egui::vec2(90.0, 20.0),
+                    egui::vec2(-60.0, -15.0),
+                    egui::vec2(10.0, 140.0),
+                    egui::vec2(-5.0, -120.0),
+                ] {
+                    let drag = Drag {
+                        start,
+                        edge,
+                        minimum,
+                        delta,
+                        bounds,
+                    };
+                    let rect = drag.keep_aspect(drag.rect(), ratio, chrome);
+                    assert!(
+                        (body_ratio(rect, chrome) - ratio).abs() < 1e-3,
+                        "edge {} by {delta:?} at {ratio}: {rect:?}",
+                        edge as u8
+                    );
+                    // the opposite edges stay; a side grows the other way from the top or left
+                    let anchor_x = if edge.left() { rect.right() } else { rect.left() };
+                    let anchor_y = if edge.top() { rect.bottom() } else { rect.top() };
+                    assert_eq!(anchor_x, if edge.left() { start.right() } else { start.left() });
+                    assert_eq!(anchor_y, if edge.top() { start.bottom() } else { start.top() });
+                    assert!(bounds.contains_rect(rect.shrink(0.01)), "{rect:?}");
+                    assert!(rect.width() >= minimum.x - 0.01 && rect.height() >= minimum.y - 0.01);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_side_drives_the_other_dimension_and_a_corner_its_larger_change() {
+        let bounds = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1920.0, 1080.0));
+        let chrome = egui::vec2(0.0, 30.0);
+        let start = Rect::from_min_size(egui::pos2(400.0, 200.0), egui::vec2(480.0, 300.0));
+        let drag = |edge, delta| {
+            let drag = Drag {
+                start,
+                edge,
+                minimum: egui::vec2(220.0, 120.0),
+                delta,
+                bounds,
+            };
+            drag.keep_aspect(drag.rect(), 16.0 / 9.0, chrome)
+        };
+        // the width dragged 160 wider: 90 taller, the vertical motion ignored
+        assert_eq!(drag(Edge::Right, egui::vec2(160.0, 40.0)).size(), egui::vec2(640.0, 390.0));
+        // the height dragged 90 taller: 160 wider
+        assert_eq!(drag(Edge::Bottom, egui::vec2(-30.0, 90.0)).size(), egui::vec2(640.0, 390.0));
+        // a corner: +160 in width is +33 %, +27 in height +10 %: the width leads
+        assert_eq!(drag(Edge::RightBottom, egui::vec2(160.0, 27.0)).size(), egui::vec2(640.0, 390.0));
+        // +16 in width is +3 %, +90 in height +33 %: the height leads
+        assert_eq!(drag(Edge::LeftTop, egui::vec2(-16.0, -90.0)).size(), egui::vec2(640.0, 390.0));
+    }
+
+    #[test]
+    fn a_window_of_fixed_shape_stops_at_its_minimum_and_at_the_screen_on_the_ratio() {
+        let bounds = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0));
+        let chrome = egui::vec2(0.0, 30.0);
+        let minimum = egui::vec2(220.0, 120.0);
+        // 21:9: the minimum width (220) leads, the height follows it
+        let wide = Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(630.0, 300.0));
+        let small = Drag {
+            start: wide,
+            edge: Edge::Right,
+            minimum,
+            delta: egui::vec2(-2000.0, 0.0),
+            bounds,
+        };
+        let small = small.keep_aspect(small.rect(), 21.0 / 9.0, chrome);
+        assert!((small.width() - 220.0).abs() < 0.01 && (body_ratio(small, chrome) - 21.0 / 9.0).abs() < 1e-3);
+        // 9:16: the minimum height (120) leads, the width follows it
+        let tall = Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(270.0, 510.0));
+        let small = Drag {
+            start: tall,
+            edge: Edge::Bottom,
+            minimum,
+            delta: egui::vec2(0.0, -2000.0),
+            bounds,
+        };
+        let small = small.keep_aspect(small.rect(), 9.0 / 16.0, chrome);
+        assert!(small.width() >= 219.99 && (body_ratio(small, chrome) - 9.0 / 16.0).abs() < 1e-3);
+        // widened past the screen's height: it stops where the bottom meets it
+        let grow = Drag {
+            start: Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(480.0, 300.0)),
+            edge: Edge::Right,
+            minimum,
+            delta: egui::vec2(2000.0, 0.0),
+            bounds,
+        };
+        let big = grow.keep_aspect(grow.rect(), 16.0 / 9.0, chrome);
+        assert!((big.bottom() - 720.0).abs() < 0.01 && (body_ratio(big, chrome) - 16.0 / 9.0).abs() < 1e-3);
+    }
+
+    /// The video player window (#941): dragged by a side or a corner over
+    /// several frames, its picture keeps its shape at every frame, not only
+    /// once the pointer lets go.
+    #[test]
+    fn a_floater_of_fixed_shape_keeps_it_at_every_frame_of_a_drag() {
+        let ratio = 16.0 / 9.0;
+        for edge in [Edge::Right, Edge::Bottom, Edge::RightBottom, Edge::LeftTop, Edge::Left, Edge::Top] {
+            let ctx = Context::default();
+            let mut frame = 0;
+            let mut chrome = egui::vec2(0.0, 30.0);
+            let mut show = |events: Vec<egui::Event>, chrome: &mut Vec2| {
+                frame += 1;
+                let palette = crate::theme::Theme::default().palette();
+                let mut body = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
+                        time: Some(frame as f64 / 60.0),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        body = Floater::new(
+                            "aspect_fixture",
+                            aurora_i18n::tr!("ui-chat-preview-player"),
+                            egui::pos2(500.0, 300.0),
+                            egui::vec2(480.0, 300.0),
+                        )
+                        .silent()
+                        .flush_body()
+                        .keep_aspect(ratio, *chrome)
+                        .show(ui.ctx(), &palette, &mut true, |ui| {
+                            let size = ui.available_size();
+                            ui.allocate_space(size);
+                            size
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                let outer = ctx.memory(|memory| memory.area_rect(Id::unique("aspect_fixture")).unwrap());
+                if let Some(body) = body {
+                    *chrome = outer.size() - body;
+                }
+                outer
+            };
+            let mut rect = show(vec![], &mut chrome);
+            for _ in 0..8 {
+                rect = show(vec![], &mut chrome);
+            }
+            let grip = edge.hit_rect(rect).center();
+            show(vec![egui::Event::PointerMoved(grip)], &mut chrome);
+            show(
+                vec![egui::Event::PointerButton {
+                    pos: grip,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                }],
+                &mut chrome,
+            );
+            let outward = egui::vec2(if edge.left() { -1.0 } else { 1.0 }, if edge.top() { -1.0 } else { 1.0 });
+            let mut sizes = Vec::new();
+            for step in [12.0, 37.0, 80.0, 141.0, 60.0, -40.0] {
+                let pointer = grip + outward * egui::vec2(step, step * 0.4);
+                let rect = show(vec![egui::Event::PointerMoved(pointer)], &mut chrome);
+                assert!(
+                    (body_ratio(rect, chrome) - ratio).abs() * (rect.height() - chrome.y) <= 1.0,
+                    "edge {} step {step}: {rect:?} (chrome {chrome:?}) is stretched",
+                    edge as u8
+                );
+                sizes.push(rect.size());
+            }
+            assert!(
+                sizes.windows(2).any(|pair| pair[0] != pair[1]),
+                "edge {}: the drag resized it",
+                edge as u8
+            );
         }
     }
 

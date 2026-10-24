@@ -294,6 +294,9 @@ pub(super) struct Cx<'a> {
     rows_seen: usize,
     /// The rows of the group are greyed (`greyed`).
     greyed: bool,
+    /// Another page's rows drawn here too (`borrow`): the settings they
+    /// edit; the page's other rows, groups and notes are skipped.
+    pick: Option<Vec<&'static str>>,
     #[cfg(test)]
     pub collected: Vec<(Page, &'static str)>,
     /// A setting changed (the app saves and applies them).
@@ -352,6 +355,7 @@ impl<'a> Cx<'a> {
             counts: Counts::default(),
             rows_seen: 0,
             greyed: false,
+            pick: None,
             #[cfg(test)]
             collected: Vec::new(),
             changed: false,
@@ -412,9 +416,35 @@ impl<'a> Cx<'a> {
         self
     }
 
+    /// The rows of another page's tab that edit `paths`, drawn here as well
+    /// (Accessibility gathers settings that live on other pages). They are
+    /// that page's own declarations, so the same setting, help, modified
+    /// dot and control; only drawn: the search, the modified view, the
+    /// counts and the resets reach them on their page, a setting keeping
+    /// one page. They show in the order of that page, without its cogs.
+    pub fn borrow(&mut self, page: Page, tab: usize, paths: &[&'static str]) {
+        if self.mode != Mode::Show || self.pick.is_some() {
+            return;
+        }
+        self.pick = Some(paths.to_vec());
+        super::pages::draw(self, page, tab);
+        self.pick = None;
+        self.last = None;
+        self.parent = None;
+    }
+
     /// A titled group of rows: a small-caps title and its line, then the
     /// rows in two columns.
     pub fn group(&mut self, title: &str, body: impl FnOnce(&mut Self)) {
+        if self.pick.is_some() {
+            // a borrowed row joins the group it is shown in
+            let before = std::mem::replace(&mut self.group, title.to_owned());
+            body(self);
+            self.group = before;
+            self.greyed = false;
+            self.last = None;
+            return;
+        }
         self.end_block();
         self.end_line();
         let before = std::mem::replace(&mut self.group, title.to_owned());
@@ -436,7 +466,7 @@ impl<'a> Cx<'a> {
 
     /// A line of text under the group's title (shown on the page only).
     pub fn note(&mut self, text: &str) {
-        if self.mode != Mode::Show {
+        if self.mode != Mode::Show || self.pick.is_some() {
             return;
         }
         self.end_block();
@@ -496,6 +526,13 @@ impl<'a> Cx<'a> {
         self.rows_seen += 1;
         let id = self.row_id(label);
         self.last = Some((id, label.to_owned(), next.unfolded));
+        if let Some(pick) = &self.pick {
+            let mut paths = Vec::new();
+            t.paths(&mut paths);
+            if !paths.iter().any(|p| pick.contains(p)) {
+                return false;
+            }
+        }
         let modified = t.modified(self.s, self.d);
         match self.mode {
             Mode::Reset => {
@@ -564,6 +601,9 @@ impl<'a> Cx<'a> {
         };
         let before = self.parent.replace(Parent { label, off, id });
         match self.mode {
+            // borrowed: a row behind a cog shows on its own, greyed while
+            // its parent is off
+            Mode::Show if self.pick.is_some() => body(self),
             Mode::Count if unfolded => body(self),
             Mode::Count => {
                 // the number shown on the cog, and whether to dim it (the

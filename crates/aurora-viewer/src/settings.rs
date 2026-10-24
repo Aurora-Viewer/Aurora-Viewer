@@ -581,6 +581,13 @@ pub struct Settings {
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
     pub show_chat_channel: bool,
+    /// What objects say in the nearby chat on one small row like the
+    /// viewer's notices (#475, off by default; Preferences > Chat). Not in
+    /// the Legacy Viewer.
+    pub compact_automated_chat: bool,
+    /// With it, the system lines of the conversations (calls, automatic
+    /// replies) too (off, the human's choice of 2026-10-24).
+    pub compact_im_system_lines: bool,
     /// The local chat bar keeps the keyboard after a message is sent; Enter
     /// on the empty bar gives it back to the world (the Legacy Viewer's
     /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
@@ -620,6 +627,10 @@ pub struct Settings {
     /// lit until it is opened; minimized, its bar flashes instead
     /// (FSNotifyIMFlash, on).
     pub flash_conversations_button: bool,
+    /// A resident's line of nearby chat flashes it too, while the window is
+    /// closed (FSNotifyNearbyChatFlash, on); the button's right-click menu
+    /// turns it off, IMs and group chats keep flashing.
+    pub flash_conversations_nearby: bool,
     /// Flash the taskbar button when a message, an offer or a mention
     /// arrives while the window is not in front (FSFlashOnMessage; on here,
     /// off in the Legacy Viewer: the point of #680 is not to miss them).
@@ -809,7 +820,8 @@ pub struct Settings {
     pub collisions: crate::world::collisions::Settings,
     /// "Reduce animations": the interface's pulses, shakes and spinners
     /// stand still (the region restart alert, the rez effect, the bounce of
-    /// a hovered name plate).
+    /// a hovered name plate), and egui's transitions end at once
+    /// (`theme::apply_motion`).
     pub reduce_motion: bool,
     /// Preferences › Accessibility › Colour blindness: the interface's
     /// colours adapted to a colour vision deficiency (`crate::colorblind`),
@@ -817,7 +829,7 @@ pub struct Settings {
     pub color_blindness: crate::colorblind::Deficiency,
     /// How strongly (0–1, 1 by default: the full correction).
     pub color_blindness_strength: f32,
-    /// Preferences › Accessibility › Contrast: the high contrast palette
+    /// Preferences › Accessibility › Vision: the high contrast palette
     /// (`crate::high_contrast`, #906) instead of the skin's colours, off by
     /// default.
     pub high_contrast: bool,
@@ -1476,6 +1488,8 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             show_chat_channel: false,
+            compact_automated_chat: false,
+            compact_im_system_lines: false,
             chat_keep_focus: true,
             show_contacts_tab: true,
             conversations_own_windows: false,
@@ -1486,6 +1500,7 @@ impl Default for Settings {
             typing_chevron: false,
             flash_unread_conversations: true,
             flash_conversations_button: true,
+            flash_conversations_nearby: true,
             flash_on_message: true,
             flash_on_object_im: true,
             flash_on_script_dialog: false,
