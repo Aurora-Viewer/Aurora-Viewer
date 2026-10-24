@@ -289,6 +289,17 @@ impl Theme {
     }
 }
 
+/// "Reduce animations" (Preferences › Accessibility): egui's own
+/// transitions (windows and menus fading in, sections unrolling, switches
+/// sliding) end at once; egui's duration otherwise. Checked every frame,
+/// since `Theme::apply` (a skin reload) restores egui's style.
+pub fn apply_motion(ctx: &egui::Context, reduce: bool) {
+    let wanted = if reduce { 0.0 } else { egui::Style::default().animation_time };
+    if ctx.global_style().animation_time != wanted {
+        ctx.all_styles_mut(|s| s.animation_time = wanted);
+    }
+}
+
 /// The size of the text fields: egui 0.37 makes them as high as a button
 /// (`interact_size`, 26 points here) with a button's padding; they keep egui
 /// 0.36's, 4 × 2 points around their text (stroke included) and no minimum
@@ -311,6 +322,23 @@ impl egui::theme::StyleProvider<egui::widget_style::TextEditStyle> for FieldSize
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// "Reduce animations" ends egui's transitions at once, and gives
+    /// them back their duration when it is turned off, a skin reload in
+    /// between included.
+    #[test]
+    fn reduced_motion_ends_egui_transitions() {
+        let ctx = egui::Context::default();
+        let normal = egui::Style::default().animation_time;
+        assert!(normal > 0.0);
+        apply_motion(&ctx, true);
+        assert_eq!(ctx.global_style().animation_time, 0.0);
+        Theme::default().apply(&ctx, 1.0);
+        apply_motion(&ctx, true);
+        assert_eq!(ctx.global_style().animation_time, 0.0, "again after a skin reload");
+        apply_motion(&ctx, false);
+        assert_eq!(ctx.global_style().animation_time, normal);
+    }
 
     #[test]
     fn hex_parsing() {

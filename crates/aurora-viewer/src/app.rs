@@ -8515,6 +8515,7 @@ impl App {
             // In particular, never fsync the crash snapshot during a drag.
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
+        crate::theme::apply_motion(&self.egui_ctx, self.settings.reduce_motion);
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
             crate::crash::update(&self.skin.theme, &self.settings);

@@ -1104,3 +1104,99 @@ fn the_graphics_card_group_shows_the_startup_notice() {
         }
     }
 }
+
+/// Accessibility gathers rows of other pages: each one is drawn there, and
+/// only there besides its own page (the search and the counts keep it on
+/// its page).
+#[test]
+fn the_accessibility_page_shows_the_settings_of_other_pages() {
+    use aurora_i18n::tr;
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Accessibility, 0, Vec::new());
+    }
+    let shows = |key: &str| texts.iter().any(|t| t.source == key);
+    for key in [
+        tr!("ui-options-interface-scale"),
+        tr!("ui-options-text-size"),
+        tr!("ui-options-bundled-fonts"),
+        tr!("ui-options-high-contrast"),
+        tr!("ui-options-name-distance"),
+        tr!("ui-options-accent-color"),
+        tr!("ui-options-surface-color"),
+        tr!("ui-options-text-color"),
+        tr!("ui-options-color-vision"),
+        tr!("ui-options-chat-bubble-duration"),
+        tr!("ui-options-toast-duration"),
+        tr!("ui-options-reduce-motion"),
+        tr!("ui-options-flash-unread"),
+        tr!("ui-options-dof-enable"),
+        tr!("ui-options-perceptual-volume"),
+        tr!("ui-options-interface-sounds"),
+        tr!("voice-show-visualizers"),
+        tr!("ui-options-video-subtitles"),
+    ] {
+        assert!(shows(key), "{key} on Accessibility");
+    }
+    // the other rows of those pages stay on them
+    for key in [
+        tr!("ui-options-system-fonts"),
+        tr!("ui-options-show-time"),
+        tr!("ui-options-dof-edit"),
+        tr!("voice-show-self"),
+        tr!("ui-options-all-interface-colors"),
+    ] {
+        assert!(!shows(key), "{key} stays on its page");
+    }
+
+    // a setting keeps one page for the search and the modified counts
+    s.font_scale = 1.2;
+    s.audio.perceptual_volume = !s.audio.perceptual_volume;
+    let c = counts(&mut s, "");
+    assert_eq!(c.modified(Page::Accessibility), 0);
+    assert_eq!(c.modified(Page::Appearance), 1);
+    assert_eq!(c.modified(Page::Sound), 1);
+    let found = counts(&mut s, &cx::fold(tr!("ui-options-text-size")));
+    assert_eq!(found.hits(Page::Accessibility), 0);
+    assert!(found.hits(Page::Appearance) >= 1);
+}
+
+/// A row shown on Accessibility edits its page's setting: its modified dot
+/// puts that setting back, and the page's reset leaves it to its page.
+#[test]
+fn a_borrowed_row_edits_the_setting_of_its_page() {
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    s.flash_unread_conversations = !s.flash_unread_conversations;
+    s.audio.perceptual_volume = !s.audio.perceptual_volume;
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Accessibility, 0, Vec::new());
+    }
+    for key in [
+        aurora_i18n::tr!("ui-options-flash-unread"),
+        aurora_i18n::tr!("ui-options-perceptual-volume"),
+    ] {
+        let label = texts
+            .iter()
+            .find(|t| t.source == key)
+            .unwrap_or_else(|| panic!("the row {key}"))
+            .rect;
+        for events in click(egui::pos2(label.left() - 8.0, label.center().y)) {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Accessibility, 0, events);
+        }
+    }
+    let d = Settings::default();
+    assert_eq!(s.flash_unread_conversations, d.flash_unread_conversations);
+    assert_eq!(s.audio.perceptual_volume, d.audio.perceptual_volume);
+    assert!(r.changed);
+
+    // the Accessibility reset puts back its own rows only
+    s.font_scale = 1.2;
+    s.reduce_motion = true;
+    reset_page_settings(Page::Accessibility, &mut s);
+    assert!(!s.reduce_motion);
+    assert_eq!(s.font_scale, 1.2, "the text size is reset with Appearance");
+}
