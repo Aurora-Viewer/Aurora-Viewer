@@ -4108,8 +4108,8 @@ impl App {
         }
         let now = self.egui_ctx.input(|i| i.time);
         for m in std::mem::take(&mut w.im_messages) {
-            let front = self.focused
-                && ((self.panels.chat && self.chat_ui.selected == Some(m.session)) || in_sight.contains(&Some(m.session)));
+            let front =
+                self.focused && ((self.panels.chat && self.chat_ui.selected == Some(m.session)) || in_sight.contains(&Some(m.session)));
             if !dnd && let Some(s) = ui.im_sound(m, front) {
                 w.ui_sounds.push(s);
             }
@@ -11959,7 +11959,8 @@ impl App {
                     let group = Some(crate::demo::DEMO_GROUP1);
                     match mode {
                         crate::demo::Popout::Hand => {
-                            self.chat_ui.demo_pop_out(&ctx, Some(crate::demo::DEMO_FRIEND), egui::pos2(40.0, 60.0), size);
+                            self.chat_ui
+                                .demo_pop_out(&ctx, Some(crate::demo::DEMO_FRIEND), egui::pos2(40.0, 60.0), size);
                             self.chat_ui.demo_pop_out(&ctx, group, egui::pos2(40.0, 420.0), size);
                         }
                         crate::demo::Popout::Option => {

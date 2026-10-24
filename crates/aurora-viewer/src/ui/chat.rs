@@ -2789,9 +2789,7 @@ fn classic_pane(
         cursor_to_end(ui.ctx(), conv_input, &draft);
     }
     let mut sent = false;
-    if send_clicked
-        || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt))
-    {
+    if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt)) {
         let text = draft.trim().to_owned();
         if !text.is_empty() {
             sent = true;
