@@ -611,7 +611,10 @@ mod tests {
             run(&mut frames, &mut kit, "find fields");
             let field = |c: Option<Uuid>| frames.ctx.read_response(super::super::find::field_id(c)).map(|r| r.rect);
             let (bob, jane) = (field(Some(BOB)), field(Some(JANE)));
-            assert!(bob.is_some() && jane.is_some(), "{style:?}: both find fields drawn: {bob:?} {jane:?}");
+            assert!(
+                bob.is_some() && jane.is_some(),
+                "{style:?}: both find fields drawn: {bob:?} {jane:?}"
+            );
             assert_ne!(bob, jane, "{style:?}: in their own windows");
             // both pickers asked: the one of the window opened last stays
             kit.st.emoji_open = true;
