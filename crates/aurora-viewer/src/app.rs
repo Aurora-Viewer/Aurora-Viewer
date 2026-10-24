@@ -802,6 +802,8 @@ impl App {
     pub fn new() -> anyhow::Result<App> {
         // found on a background thread while the rest starts
         ui::fonts::fallback::start();
+        // the regional 12 / 24 hours and time zone of the bars' clock, read once
+        ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
         aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
@@ -4095,9 +4097,10 @@ impl App {
                 || (self.demo && crate::demo::toasts::mode().is_some_and(|m| matches!(m.as_str(), "bell" | "click" | "minimized"))),
         };
         // a conversation in sight: its tab shown in the Conversations window
-        // (FSFloaterIM visible), whether or not the viewer has the focus
+        // or its own window (FSFloaterIM visible), whether or not the viewer
+        // has the focus
         let minimized = crate::ui::widgets::floater_minimized(&self.egui_ctx, "conversations");
-        let shown = (self.panels.chat && !minimized).then_some(self.chat_ui.selected).flatten();
+        let in_sight = crate::ui::chat::conversations_in_sight(&self.egui_ctx, &self.chat_ui, self.panels.chat);
         // the Conversations button goes out once the window is shown
         // (FSFloaterIMContainer::setVisible), or with its preference off
         let flash = &mut self.chat_ui.button_flash;
@@ -4107,7 +4110,8 @@ impl App {
         }
         let now = self.egui_ctx.input(|i| i.time);
         for m in std::mem::take(&mut w.im_messages) {
-            let front = self.focused && self.panels.chat && self.chat_ui.selected == Some(m.session);
+            let front =
+                self.focused && ((self.panels.chat && self.chat_ui.selected == Some(m.session)) || in_sight.contains(&Some(m.session)));
             if !dnd && let Some(s) = ui.im_sound(m, front) {
                 w.ui_sounds.push(s);
             }
@@ -4115,7 +4119,7 @@ impl App {
             if self.settings.flash_conversations_button && (!self.panels.chat || minimized) && w.message_flashes_conversations(&m) {
                 self.chat_ui.button_flash.message(now, !self.panels.chat);
             }
-            w.notify_message(&m, shown == Some(m.session));
+            w.notify_message(&m, in_sight.contains(&Some(m.session)));
             w.message_attention(&m);
         }
         w.acknowledge_read_messages();
@@ -11514,7 +11518,17 @@ impl App {
                     own_pic: self.avatar_pics.get(&self.world.agent_id),
                     recent: if classic_bars { Vec::new() } else { self.recent_places() },
                     favorites: &favorites,
-                    system_island: self.settings.system_island,
+                    system_island: if self.demo {
+                        let (demo, s) = (ui::bars::demo::get(), self.settings.system_island);
+                        crate::settings::SystemIsland {
+                            clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
+                            clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
+                            clock_format: demo.clock_format.unwrap_or(s.clock_format),
+                            ..s
+                        }
+                    } else {
+                        self.settings.system_island
+                    },
                     net_stats: if self.demo {
                         ui::bars::demo::get().net_stats.unwrap_or(self.settings.show_net_stats)
                     } else {
@@ -11986,6 +12000,29 @@ impl App {
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
                 self.chat_ui.flash_unread = self.settings.flash_unread_conversations;
+                self.chat_ui.own_windows = self.settings.conversations_own_windows
+                    || (self.demo && crate::demo::popout_scenario() == Some(crate::demo::Popout::Option));
+                // AURORA_DEMO_CONV_POPOUT: at frame 640, the friend's IM and
+                // the group popped out, or the group opened with the option
+                // on, their windows at the left of the Conversations window
+                if self.demo
+                    && self.frame_count == 640
+                    && let Some(mode) = crate::demo::popout_scenario()
+                {
+                    let size = egui::vec2(394.0, 332.0);
+                    let group = Some(crate::demo::DEMO_GROUP1);
+                    match mode {
+                        crate::demo::Popout::Hand => {
+                            self.chat_ui
+                                .demo_pop_out(&ctx, Some(crate::demo::DEMO_FRIEND), egui::pos2(40.0, 60.0), size);
+                            self.chat_ui.demo_pop_out(&ctx, group, egui::pos2(40.0, 420.0), size);
+                        }
+                        crate::demo::Popout::Option => {
+                            self.world.social.focus_im = group;
+                            ui::chat::demo_place_window(&ctx, group, egui::pos2(40.0, 60.0), size);
+                        }
+                    }
+                }
                 // the cards under links, their videos played by the media
                 // plugins' browser
                 self.chat_ui.previews.settings.clone_from(&self.settings.link_previews);
@@ -12183,6 +12220,8 @@ impl App {
                         ui::chat::ConvAction::ListOutputDevices => {
                             self.options_ui.output_devices = aurora_audio::output_devices();
                         }
+                        // done by the window before it returns
+                        ui::chat::ConvAction::PopOut(_) | ui::chat::ConvAction::DockBack(_) => {}
                     }
                 }
                 self.panels.chat = open;
@@ -12520,16 +12559,16 @@ impl App {
                 }
                 // a teleport invitation or an inventory offer whose card is in
                 // sight needs no toast (LLOfferHandler: a toast only when the
-                // IM floater is closed)
-                if self.panels.chat
-                    && let Some(open) = self.chat_ui.selected
-                {
+                // IM floater is closed; or its own window, `popout.rs`)
+                let mut open: Vec<uuid::Uuid> = self.chat_ui.selected.filter(|_| self.panels.chat).into_iter().collect();
+                open.extend(ui::chat::conversations_in_sight(&ctx, &self.chat_ui, false).into_iter().flatten());
+                if !open.is_empty() {
                     let seen: Vec<u64> = self
                         .world
                         .teleport_invites
                         .pending_notifications()
                         .chain(self.world.inventory_offers.pending_notifications())
-                        .filter(|(_, from)| *from == open)
+                        .filter(|(_, from)| open.contains(from))
                         .map(|(n, _)| n)
                         .collect();
                     for n in self.world.notifications.list.iter_mut().filter(|n| seen.contains(&n.id)) {

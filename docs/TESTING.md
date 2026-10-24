@@ -3213,7 +3213,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
@@ -3248,6 +3248,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_POPOUT=1\|option` | Conversations in their own windows: the friend's IM and a group popped out, or a group opened with the option on (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
@@ -4136,6 +4137,22 @@ failure. Grid validation and any paid upload are performed by the human.
   (`aurora:conference`): Close, Hang up during its call, the transcript;
   `local`: the transcript only. The transcript rows are greyed in the demo
   (no transcript folder).
+- **`AURORA_DEMO_CONV_POPOUT=1|option`** (#717): with an `AURORA_DEMO_CONV`
+  scenario (`aurora`, `aurora:compact`, `bubbles` or `bubbles:legacy`), at
+  frame 640: `1` pops the friend's IM (Nova) and the Aurora Builders group
+  out into their own windows, at the left of the screen, one above the
+  other; `option` turns Preferences › Chat › "Open conversations in their
+  own window" on for the run (not saved) and opens Aurora Builders as a
+  notification would, in its own window at the top left, the
+  Conversations window keeping its conversation. Capture at frame 760 with
+  `AURORA_FPS_LIMIT=60`. What to see: each window with its head, lines and
+  field, the "Attach to Conversations" button in its title bar; the column
+  (or the tabs) keeps their entries with the "Detach" icon where the unread
+  count goes; the Conversations window shows another conversation and its
+  title bar a "Detach" button (none when the nearby chat alone is left
+  there). With `AURORA_DEMO_CONV_MENU=im` and `1`: the friend's menu starts
+  with "Attach to Conversations"; without `AURORA_DEMO_CONV_POPOUT`, with
+  "Detach".
 - **`AURORA_DEMO_CONV_EMOJI=1`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy`, the friend's
   conversation holds two more messages of emoji alone: Nova's three
@@ -4752,7 +4769,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   controls), `sysperf` / `sysnet` (Performance opened from the island at
   frame 300, by its frame rate / its network: the full view 8 px under the
   island, its left and right edges on the island's, down to the work
-  area's bottom; the compact view where it stands). In demo the network's graphs show a synthetic minute of
+  area's bottom; the compact view where it stands); the clock (#453):
+  `clocklocal` (local time instead of the saved time, so a click on the
+  clock does not change it in that run), `noseconds` (without its
+  seconds), `clock12` / `clock24` (12 / 24 hours instead of the saved
+  format; Auto writes the `clock:` log line at startup with the system's
+  12 or 24 hours). In demo the network's graphs show a synthetic minute of
   traffic (about 1.2 Mb/s in, waves), no packet lost. The hidden interface:
   `hidden` (hidden at frame 600 as Alt+Shift+U does: the bars and the
   windows go, the hint at the top in the middle for 6 s; with `legacy`,

@@ -187,7 +187,7 @@ pub(super) fn show(
             search.find = None;
         } else {
             search.open_find();
-            ui.ctx().memory_mut(|m| m.request_focus(find::field_id()));
+            ui.ctx().memory_mut(|m| m.request_focus(find::field_id(selected)));
         }
     }
     match (selected, who.kind) {
@@ -250,7 +250,7 @@ pub(super) fn show(
         let view = views.entry(selected).or_default();
         if let Some(search) = searches.get_mut(&selected)
             && let Some(f) = search.find.as_mut()
-            && find::field(ui, p, field, p.bar, f, view, false)
+            && find::field(ui, p, field, p.bar, f, view, false, selected)
         {
             // the head comes back, the keyboard goes to the message field
             search.find = None;
