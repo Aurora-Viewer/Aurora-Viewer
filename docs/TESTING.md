@@ -1271,10 +1271,15 @@ Transaction windows, with the same variable:
   the next owner.
 - `buy-empty`: offers contents that cannot be sold and disables the purchase.
 
-**`AURORA_DEMO_DIALOG=12|4|long`** — llDialog menu of twelve answers in
+**`AURORA_DEMO_DIALOG=12|4|long|links`** — llDialog menu of twelve answers in
 three columns, arranged from the bottom to the top like Firestorm; `4`: four
 answers, to check the incomplete last row; `long`: long label truncated,
 with the full text on hover. Block and Ignore buttons under the menu.
+`links` (#898): a menu whose text lists two residents and a group by their
+`secondlife:///app/.../about` links and a region by its `app/region` link;
+they show as names (a person or group mark before them, the region with its
+badge), clickable. With `AURORA_DEMO_NOTIFS=legacy` and a capture before
+frame 700, the same menu in the Legacy toasts.
 
 **`AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`** — script of the build
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
