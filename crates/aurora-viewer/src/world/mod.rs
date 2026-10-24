@@ -911,6 +911,9 @@ impl World {
 
     /// Offset of a region's origin relative to the render origin (main region).
     pub fn region_offset(&self, h: RegionHandle) -> Option<Vec3> {
+        if h == objects::PREVIEW_REGION {
+            return Some(Vec3::ZERO);
+        }
         let (mx, my) = self.main_origin()?;
         let (x, y) = aurora_net::handle_to_origin(h);
         Some(Vec3::new(x as f32 - mx as f32, y as f32 - my as f32, 0.0))

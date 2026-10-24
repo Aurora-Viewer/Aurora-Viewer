@@ -365,6 +365,8 @@ fn emoji_picker(
 /// closed or minimized, as Firestorm flashes its Conversations button
 /// (LLIMMgr, flashCommand). A click shows the newest unread conversation,
 /// else the local chat; on that conversation already, it closes the window.
+/// With the nearby chat in its own window and nothing unread, it shows and
+/// hides that window alone (#910).
 fn conversations_button(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -375,8 +377,13 @@ fn conversations_button(
     button: Rect,
 ) {
     let minimized = crate::ui::widgets::floater_minimized(ui.ctx(), "conversations");
-    let shown = panels.chat && !minimized;
     let target = row.latest_unread.filter(|_| row.unread > 0);
+    let apart = chat.nearby_apart() && target.is_none();
+    let shown = if apart {
+        chat.nearby_window_shown(ui.ctx())
+    } else {
+        panels.chat && !minimized
+    };
     let on_target = shown
         && match target {
             Some(id) => chat.selected == Some(id),
@@ -417,14 +424,20 @@ fn conversations_button(
         );
         super::islands::count(ui, p, slot, row.unread, 1.0, false);
     }
-    let name = aurora_i18n::tr!("ui-bars-nearby-chat-and-conversations");
+    let name = if apart {
+        aurora_i18n::tr!("common-nearby-chat")
+    } else {
+        aurora_i18n::tr!("ui-bars-nearby-chat-and-conversations")
+    };
     let tip = if row.unread > 0 {
         aurora_i18n::tr!("ui-bars-unread", value0 = name.to_string(), unread = row.unread.to_string()).to_string()
     } else {
         name.to_string()
     };
     if resp.on_hover_text(tip).clicked() {
-        if on_target {
+        if apart {
+            chat.toggle_nearby_window(ui.ctx());
+        } else if on_target {
             crate::ui::widgets::toggle_floater(ui.ctx(), "conversations", &mut panels.chat);
         } else {
             open_conversations(ui.ctx(), panels, chat, target);

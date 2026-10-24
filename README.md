@@ -351,9 +351,10 @@ The texture memory budget is set automatically from the detected VRAM.
   playback, editing, chat triggers and shortcuts; mouselook zoom on the
   right button and script controls for weapons and HUDs; a built-in AO with
   swimming and water walking.
-- **[Blender Live Mesh](docs/BLENDER_LIVE.md)** — an optional Blender 2.93+
-  plug-in previews geometry, weight and shape-key edits on your own animated
-  avatar through a local connection, without uploading assets.
+- **[LiveMesh](docs/BLENDER_LIVE.md)** — an optional Blender 2.93+
+  plug-in previews geometry, weight and shape-key edits through a local
+  connection, without uploading assets. Rigged meshes follow your avatar;
+  static objects can be placed in the world, edited, or attached to the body/HUD.
 - **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
   sky, water and day-cycle editors, world sounds, parcel music and media
   on prims, with Aurora's downloadable media plugins pack.

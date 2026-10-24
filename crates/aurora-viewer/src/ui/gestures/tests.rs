@@ -260,8 +260,47 @@ fn the_manager_keeps_its_size() {
     );
 }
 
-/// An editor keeps its size with a wait step chosen, a save under way and
-/// a message, its tallest footer.
+/// A key that a build shortcut keeps says so under the shortcut (#915):
+/// Ctrl+B always, Ctrl+Z only while the build tools are open, F8 never.
+#[test]
+fn the_editor_warns_about_a_key_the_build_tools_keep() {
+    let taken = |key, mask| super::editor::shortcut_taken(key, mask);
+    assert_eq!(
+        taken(b'B', 1).as_deref(),
+        Some(aurora_i18n::tr!("gesture-shortcut-taken", shortcut = "Ctrl+B").as_ref())
+    );
+    assert_eq!(
+        taken(b'Z', 1).as_deref(),
+        Some(aurora_i18n::tr!("gesture-shortcut-taken-building", shortcut = "Ctrl+Z").as_ref())
+    );
+    assert_eq!(taken(0xa8, 0), None);
+    assert_eq!(taken(b'Z', 0), None);
+    let mut f = Fixture::new();
+    f.editor();
+    let id = Uuid::from_u128(8106);
+    let g = f
+        .state
+        .editors
+        .get_mut(&id)
+        .expect("editor")
+        .definition
+        .as_mut()
+        .expect("definition");
+    g.key = b'B';
+    g.mask = 1;
+    let warning = taken(b'B', 1).expect("Ctrl+B is taken");
+    fn has(shape: &egui::Shape, text: &str) -> bool {
+        match shape {
+            egui::Shape::Text(t) => t.galley.text() == text,
+            egui::Shape::Vec(shapes) => shapes.iter().any(|s| has(s, text)),
+            _ => false,
+        }
+    }
+    assert!(f.draw(Vec::new()).1.iter().any(|s| has(&s.shape, &warning)), "the warning is drawn");
+}
+
+/// An editor keeps its size with a wait step chosen, a save under way, a
+/// message and the shortcut warning, its tallest content.
 #[test]
 fn the_editor_keeps_its_size() {
     let (inv, manager) = Fixture::library();
@@ -276,6 +315,8 @@ fn the_editor_keeps_its_size() {
             state.open(&inv, id);
             let editor = state.editors.get_mut(&id).expect("editor");
             editor.loaded(Gesture {
+                key: b'B',
+                mask: 1,
                 steps: vec![Step::Wait { seconds: 1.0, flags: 0 }],
                 ..Default::default()
             });

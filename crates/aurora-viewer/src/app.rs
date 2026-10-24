@@ -1272,6 +1272,9 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        if self.blender_live.local_command(&cmd, &self.world) {
+            return;
+        }
         self.world.rlva_configure(self.settings.rlva_enabled);
         self.world.rlva.preferences.clone_from(&self.settings.rlva);
         if !self.settings.rlva_enabled {
@@ -6731,6 +6734,9 @@ impl App {
         self.frame_profile.lap(Lap::Events);
         self.poll_ao();
         self.sync_static_eyes();
+        if self.in_world() {
+            self.step_gestures();
+        }
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
             self.last_social_poll = Instant::now();
             self.poll_names();
@@ -8088,7 +8094,7 @@ impl App {
         if self.demo
             && self.capture.is_some()
             && (ui::color_picker::demo::mode().is_some()
-                || self.chat_ui.demo_reorder
+                || self.chat_ui.demo_reorder.is_some()
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
@@ -12362,7 +12368,7 @@ impl App {
                             self.options_ui.output_devices = aurora_audio::output_devices();
                         }
                         // done by the window before it returns
-                        ui::chat::ConvAction::PopOut(_) | ui::chat::ConvAction::DockBack(_) => {}
+                        ui::chat::ConvAction::PopOut(_) | ui::chat::ConvAction::DockBack(_) | ui::chat::ConvAction::PopOutAt(..) => {}
                     }
                 }
                 self.panels.chat = open;
@@ -15382,9 +15388,11 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.chat_ui.demo_menu = Some(kind.trim().to_owned());
             }
-            if std::env::var_os("AURORA_DEMO_CONV_REORDER").is_some() {
+            // AURORA_DEMO_CONV_REORDER=1|hold|out|nearby: an entry of the
+            // list dragged (with AURORA_DEMO_CONV)
+            if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_REORDER") {
                 self.panels.chat = true;
-                self.chat_ui.demo_reorder = true;
+                self.chat_ui.demo_reorder = Some(ui::chat::ReorderDemo::parse(&mode));
             }
             // AURORA_DEMO_KEYWORDS: the alerts on for the run, with the
             // Conversations window open on the nearby chat
@@ -15718,16 +15726,19 @@ impl ApplicationHandler for App {
                     let mods = self.mods();
                     let build_keyboard =
                         self.in_world() && !self.egui_ctx.egui_wants_keyboard_input() && !egui::Popup::is_any_open(&self.egui_ctx);
-                    let ui_shortcut = pressed
-                        && crate::build::ui::Shortcut::take_native_key(
-                            &ke.logical_key,
-                            code,
-                            mods,
-                            self.build.open,
-                            build_keyboard,
-                            &mut self.down,
-                        )
-                        .is_some();
+                    let build_shortcut = pressed
+                        .then(|| {
+                            crate::build::ui::Shortcut::take_native_key(
+                                &ke.logical_key,
+                                code,
+                                mods,
+                                self.build.open,
+                                build_keyboard,
+                                &mut self.down,
+                            )
+                        })
+                        .flatten();
+                    let ui_shortcut = build_shortcut.is_some();
                     let command_key = pressed && self.settings.keybinds.triggered(&input, mods).is_some();
                     if ui_shortcut || command_key {
                         self.down.remove(&input);
@@ -15746,7 +15757,7 @@ impl ApplicationHandler for App {
                         self.gesture_state.manager.release(Some(key));
                     }
                     if pressed
-                        && !ui_shortcut
+                        && !build_shortcut.is_some_and(|s| s.takes_gesture_key(self.build.open))
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()

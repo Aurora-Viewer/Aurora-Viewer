@@ -18,6 +18,18 @@ def counts(bundle):
 
 
 class LodTests(unittest.TestCase):
+    def test_static_lods_need_no_armature_weights_or_temporary_rig(self):
+        self.high.modifiers.clear()
+        self.high.vertex_groups.clear()
+        before = set(bpy.data.objects), set(bpy.data.meshes)
+        bundle = self.prepare()
+        self.assertEqual((set(bpy.data.objects), set(bpy.data.meshes)), before)
+        self.assertGreater(counts(bundle)[3], counts(bundle)[0])
+        for level in bundle["levels"]:
+            self.assertEqual(level["mesh"]["joints"], [])
+            self.assertEqual(level["mesh"]["inverse_bind"], [])
+            self.assertTrue(all(v["weights"] == [0.0] * 4 for face in level["mesh"]["faces"] for v in face["vertices"]))
+
     @classmethod
     def setUpClass(cls):
         aurora_live.register()
