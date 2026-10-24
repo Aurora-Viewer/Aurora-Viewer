@@ -1418,6 +1418,18 @@ cli-aurora-viewer = { "Aurora Viewer " }{ $version }
 cli-aurora-viewer-2 = { "Aurora Viewer " }{ $version }{ " - " }{ $t }
 common-aurora-viewer = { "Aurora Viewer " }{ $value0 }
 app-aurora-viewer-unable-to-initialize-vulkan = { "Aurora Viewer: impossible d'initialiser Vulkan : " }{ $e }
+app-graphics-start-failed-title = Aurora Viewer ne peut pas démarrer
+app-graphics-start-failed =
+    Aurora Viewer n'a pu ouvrir aucune carte graphique pour dessiner sa fenêtre.
+
+    À essayer :
+    • mettre à jour le pilote de la carte graphique ;
+    • sur un PC à deux cartes graphiques, vérifier qu'elles sont toutes deux activées dans le Gestionnaire de périphériques, et que l'écran est branché sur la carte qui doit dessiner ;
+    • redémarrer le PC.
+
+    Détails : { $e }
+
+    Le journal de ce démarrage : { $log }
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora n'a pas encore d'animation overrider (AO).
 cmdline-mod-use-hover-height-in-appearance = Ajustez la hauteur de survol de votre avatar dans Apparence → Hauteur de survol.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni vos informations de paiement.
@@ -4928,6 +4940,8 @@ ui-options-graphics-card-automatic = Automatique
 ui-options-graphics-card-help = Automatique prend d'abord la carte dédiée. Appliqué au prochain démarrage.
 ui-options-graphics-card-in-use = En cours : { $name }.
 ui-options-graphics-card-choice = Carte à utiliser
+ui-options-graphics-card-no-discrete = Seule la carte graphique intégrée est visible par le viewer. Sur un PC avec une carte NVIDIA, choisissez la carte NVIDIA comme « Processeur graphique préféré » pour aurora-viewer.exe dans le panneau de configuration NVIDIA, puis redémarrez le PC si elle n'apparaît toujours pas.
+ui-options-graphics-card-cannot-present = La carte dédiée ne peut pas dessiner la fenêtre du viewer : branchez l'écran sur les sorties de la carte dédiée, pas sur celles de la carte mère.
 ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait = Synchronisation verticale, limite d'images/s, présentation, attente du thread de rendu
 build-ui-texture-synchronize-materials = Synchroniser les matériaux
 common-system = Système

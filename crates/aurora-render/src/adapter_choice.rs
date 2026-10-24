@@ -126,18 +126,42 @@ pub fn plan(candidates: &[Candidate], wanted: &Wanted) -> Plan {
     Plan { order: auto, reason }
 }
 
-/// A note for the log when the automatic choice may not be what the user
-/// expects: no discrete GPU shown, or one that cannot present.
-pub fn hint(candidates: &[Candidate]) -> Option<&'static str> {
+/// Why the automatic choice may not be what the user expects. The log
+/// says it at startup, and Preferences › Graphics › Graphics card shows it,
+/// since a tester on a hybrid PC could not tell why the integrated GPU drew
+/// the viewer (#894).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Notice {
+    /// Only an integrated GPU is visible to Vulkan.
+    NoDiscrete,
+    /// A discrete GPU is visible but cannot present to the window.
+    DiscreteCannotPresent,
+}
+
+impl Notice {
+    pub fn log_line(self) -> &'static str {
+        match self {
+            Notice::NoDiscrete => {
+                "no discrete GPU visible to Vulkan: on a hybrid PC the NVIDIA Control Panel's \
+                 \"Preferred graphics processor\" for aurora-viewer.exe (VK_LAYER_NV_optimus) can hide it, \
+                 and a driver left in that state until the PC restarts; \
+                 Windows › Graphics settings do not apply to Vulkan"
+            }
+            Notice::DiscreteCannotPresent => {
+                "the discrete GPU cannot present to the viewer's window (is the monitor plugged into the motherboard?)"
+            }
+        }
+    }
+}
+
+/// The notice for these adapters, if any: no discrete GPU shown, or one
+/// that cannot present.
+pub fn hint(candidates: &[Candidate]) -> Option<Notice> {
     let discrete = candidates.iter().filter(|c| c.kind == Kind::Discrete);
     if discrete.clone().count() == 0 {
-        candidates.iter().any(|c| c.kind == Kind::Integrated).then_some(
-            "no discrete GPU visible to Vulkan: on a hybrid PC the NVIDIA Control Panel's \
-             \"Preferred graphics processor\" for aurora-viewer.exe (VK_LAYER_NV_optimus) can hide it; \
-             Windows › Graphics settings do not apply to Vulkan",
-        )
+        candidates.iter().any(|c| c.kind == Kind::Integrated).then_some(Notice::NoDiscrete)
     } else if discrete.clone().all(|c| !c.surface) {
-        Some("the discrete GPU cannot present to the viewer's window (is the monitor plugged into the motherboard?)")
+        Some(Notice::DiscreteCannotPresent)
     } else {
         None
     }
@@ -180,7 +204,7 @@ mod tests {
         let p = plan(&list, &Wanted::parse("rtx"));
         assert_eq!(p.order, vec![0]);
         assert_eq!(p.reason, Reason::WantedMissing);
-        assert!(hint(&list).is_some_and(|h| h.contains("cannot present")));
+        assert_eq!(hint(&list), Some(Notice::DiscreteCannotPresent));
     }
 
     #[test]
@@ -202,6 +226,25 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_gpu_that_is_gone_falls_back_to_the_automatic_choice() {
+        // #894: the card chosen in Preferences disabled in Device Manager,
+        // or hidden by the driver: the viewer still starts, on what is left
+        let only_intel = [c("Intel(R) UHD Graphics", Kind::Integrated, Some(128), true)];
+        let p = plan(&only_intel, &Wanted::parse("NVIDIA GeForce RTX 3060 Laptop GPU"));
+        assert_eq!((p.order, p.reason), (vec![0], Reason::WantedMissing));
+        let only_nvidia = [c("NVIDIA GeForce RTX 3060 Laptop GPU", Kind::Discrete, Some(6144), true)];
+        let p = plan(&only_nvidia, &Wanted::parse("Intel(R) UHD Graphics"));
+        assert_eq!((p.order, p.reason), (vec![0], Reason::WantedMissing));
+    }
+
+    #[test]
+    fn no_adapter_that_can_present_leaves_nothing_to_try() {
+        let list = [c("NVIDIA GeForce RTX 3060", Kind::Discrete, Some(6144), false)];
+        assert!(plan(&list, &Wanted::Auto).order.is_empty());
+        assert!(plan(&[], &Wanted::Auto).order.is_empty());
+    }
+
+    #[test]
     fn parse_reads_auto_numbers_and_names() {
         assert_eq!(Wanted::parse(""), Wanted::Auto);
         assert_eq!(Wanted::parse("Auto"), Wanted::Auto);
@@ -212,7 +255,8 @@ mod tests {
     #[test]
     fn hint_when_only_an_integrated_gpu_is_seen() {
         let list = [c("Intel(R) Graphics", Kind::Integrated, Some(512), true)];
-        assert!(hint(&list).is_some_and(|h| h.contains("NV_optimus")));
+        assert_eq!(hint(&list), Some(Notice::NoDiscrete));
+        assert!(Notice::NoDiscrete.log_line().contains("NV_optimus"));
         let list = [c("NVIDIA GeForce RTX 4090", Kind::Discrete, Some(24138), true)];
         assert_eq!(hint(&list), None);
     }

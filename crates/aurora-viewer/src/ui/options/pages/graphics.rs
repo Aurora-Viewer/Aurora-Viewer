@@ -74,6 +74,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
 fn graphics_card(cx: &mut Cx) {
     use aurora_i18n::tr;
     cx.group(tr!("ui-options-graphics-card"), |cx| {
+        // why the dedicated card may not be the one drawing, the startup
+        // log's notice in words a user can act on
+        use aurora_render::adapter_choice::Notice;
+        match cx.st.gpu_notice {
+            Some(Notice::NoDiscrete) => cx.note(tr!("ui-options-graphics-card-no-discrete")),
+            Some(Notice::DiscreteCannotPresent) => cx.note(tr!("ui-options-graphics-card-cannot-present")),
+            None => {}
+        }
         let in_use = tr!("ui-options-graphics-card-in-use", name = cx.st.gpu_in_use.clone());
         let hint = format!("{} {in_use}", tr!("ui-options-graphics-card-help"));
         cx.row_with(

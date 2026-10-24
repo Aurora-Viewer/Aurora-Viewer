@@ -797,6 +797,7 @@ mod tests {
             vram_mb: Some(8192),
             integrated: false,
             adapters: vec!["Test GPU".into()],
+            notice: None,
         };
         let data = PerfData::default();
         for tab in super::super::monitor::Tab::ALL {
