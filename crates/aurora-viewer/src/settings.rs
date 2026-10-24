@@ -585,6 +585,11 @@ pub struct Settings {
     /// Show Contacts in Conversations (Preferences > Chat, on by default as
     /// the Legacy Viewer's always-present entry; it can be hidden there).
     pub show_contacts_tab: bool,
+    /// The conversations asked for (a name's menu, a toast, the bell, a
+    /// call) open in their own window instead of the Conversations window,
+    /// the nearby chat excepted (#717; the Legacy Viewer's separate IM
+    /// windows, FSChatWindow 0; off, its tabbed window by default).
+    pub conversations_own_windows: bool,
     /// Tell the resident of a conversation that we are typing
     /// (FSSendTypingState, on by default; Preferences > Chat).
     pub send_typing_state: bool,
@@ -1452,6 +1457,7 @@ impl Default for Settings {
             show_chat_channel: false,
             chat_keep_focus: true,
             show_contacts_tab: true,
+            conversations_own_windows: false,
             send_typing_state: true,
             play_typing_anim: true,
             type_during_emote: false,
