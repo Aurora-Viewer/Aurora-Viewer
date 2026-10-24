@@ -275,6 +275,9 @@ pub struct Floater<'a> {
     /// Once shown, only its edges resize it: its body is laid out in its
     /// exact rect and cut at its edges (see `steady_size`).
     pub steady_size: bool,
+    /// Resized by its edges, its body keeps this width over height, the
+    /// window adding the second value around it (see `keep_aspect`).
+    pub aspect: Option<(f32, Vec2)>,
     cascade: Option<CascadeGroup>,
     partial_outside: bool,
 }
@@ -304,6 +307,7 @@ impl<'a> Floater<'a> {
             compact_minimized: None,
             flush_body: false,
             steady_size: false,
+            aspect: None,
             cascade: None,
             partial_outside: false,
         }
@@ -392,6 +396,14 @@ impl<'a> Floater<'a> {
     /// body is laid out in its exact rect instead, cut at its edges.
     pub fn steady_size(mut self) -> Self {
         self.steady_size = true;
+        self
+    }
+
+    /// Resized by its edges, the body keeps `ratio` (width over height) at
+    /// every frame of the drag, `chrome` being what the window adds around
+    /// it (its title bar): a video player never stretches (#941).
+    pub fn keep_aspect(mut self, ratio: f32, chrome: Vec2) -> Self {
+        self.aspect = Some((ratio, chrome));
         self
     }
 
@@ -556,10 +568,15 @@ impl<'a> Floater<'a> {
         let room = super::layout::move_area(ctx);
         // the edge dragged snaps to the other windows and to the work area
         let resized = resize_drag.map(|drag| {
-            on_pixels(
+            let rect = on_pixels(
                 ctx,
                 super::layout::resizing(ctx, p, window_id, drag.rect(), drag.edges(), drag.minimum()),
-            )
+            );
+            // a window of fixed shape: the snapped rect brought back to it
+            match self.aspect {
+                Some((ratio, chrome)) => on_pixels(ctx, drag.keep_aspect(rect, ratio, chrome)),
+                None => rect,
+            }
         });
         let size = egui::AreaState::load(ctx, window_id)
             .and_then(|s| s.size)
