@@ -361,6 +361,16 @@ when unfocused") is ignored during a screenshot.
   second takeoff at 2100 and landing at 2700. Capture at 1400, 2000, 2600
   and 3200; flight must follow the leader and remain active after each landing.
   `go-flight` starts Go to with an already-flying target and ends nearby in flight.
+  `go-flight-late` delays the hover animation until frame 620, after Go to
+  started at 600: it must still take off while keeping its fixed destination.
+  `run` follows a running target, walking at 1200 and stopping at 1500;
+  milestone logs show temporary running enabled, then restored. `flight-brake`
+  approaches a hovering target 35 m farther away. Combine it with
+  `AURORA_DEMO_LINK=300,jitter=40,aurora` or `300,jitter=40,firestorm` and
+  capture after frame 4400: the follower must settle near the target without
+  repeated crossings. The delayed native demo exercises the network/prediction
+  path; the deterministic regression also adds full-speed flight inertia,
+  which the immediate offline physics does not model.
   Logs include our flight state, landing phase and altitude. A stationary
   hover must cause takeoff; jump/fall or missing signals must not cause a
   spurious flight change. Takeoff respects region, parcel and RLVa permissions.
@@ -374,6 +384,9 @@ when unfocused") is ignored during a screenshot.
   hover, land, walk and take off again; repeat on a raised platform. We descend
   near the landed leader and clear flight only on our own physical support,
   never merely on the leader's landing signal or our predicted arrival.
+  Repeat Go to on an airborne resident, follow a runner who walks/stops,
+  then approach a stationary flyer from 30 m or more: our avatar must brake
+  and remain nearby instead of passing back and forth through the target.
   These actions do not route around walls.
 
 - **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle|sit-ground`**:

@@ -149,11 +149,17 @@ pub struct AutoPilot {
     pub on_arrival: Option<Arrival>,
     /// A persistent follow keeps its pilot while resting near the leader.
     pub leader: Option<uuid::Uuid>,
+    /// Also retained by Go to, so a late animation packet can enable flight
+    /// without turning its fixed destination into a persistent follow.
+    pub subject: Option<uuid::Uuid>,
     pub flying: bool,
     pub avatar_flight: Option<FlightTarget>,
     waiting: bool,
     previous_position: Vec3,
     landing_offset: Vec3,
+    target_velocity: Vec3,
+    horizontal_thrust: FlightThrust,
+    vertical_thrust: FlightThrust,
 }
 
 /// The finish callback of a walk: run when it ends within its stop
@@ -193,6 +199,44 @@ pub struct FlightTarget {
 pub struct AvatarTarget {
     pub position: Vec3,
     pub flight: FlightTarget,
+    pub velocity: Vec3,
+    pub running: bool,
+}
+
+/// LLAgent::autoPilot pulses flight because native flight retains inertia;
+/// NUDGE alone does not bound its speed. Each short approach impulse is
+/// followed by enough coast time to observe its result over the link.
+#[derive(Debug, Clone, Default)]
+struct FlightThrust {
+    remaining: f32,
+}
+
+impl FlightThrust {
+    fn advance(&mut self, gap: f32, closing: f32, speed: f32, response: f32, dt: f32) -> bool {
+        if gap <= 0.0 {
+            self.remaining = 0.0;
+            return false;
+        }
+        if self.remaining < 0.0 {
+            self.remaining = (self.remaining + dt).min(0.0);
+            return false;
+        }
+        if closing > 0.1 && closing * response + 0.15 >= gap {
+            self.remaining = -response;
+            return false;
+        }
+        if gap > (speed * response).max(1.0) {
+            return true;
+        }
+        if self.remaining == 0.0 {
+            self.remaining = (gap / (2.0 * speed)).clamp(0.05, 0.15);
+        }
+        self.remaining -= dt;
+        if self.remaining <= 0.0 {
+            self.remaining = -2.0 * response;
+        }
+        true
+    }
 }
 
 impl AutoPilot {
@@ -209,11 +253,15 @@ impl AutoPilot {
             started: now,
             on_arrival: None,
             leader: None,
+            subject: None,
             flying: false,
             avatar_flight: None,
             waiting: false,
             previous_position: from,
             landing_offset: Vec3::ZERO,
+            target_velocity: Vec3::ZERO,
+            horizontal_thrust: FlightThrust::default(),
+            vertical_thrust: FlightThrust::default(),
         }
     }
 
@@ -234,6 +282,7 @@ impl AutoPilot {
         Self {
             stop_distance: 2.0,
             leader,
+            subject: leader,
             flying,
             avatar_flight: Some(FlightTarget {
                 flying: None,
@@ -272,6 +321,19 @@ impl AutoPilot {
         }
     }
 
+    pub fn observe_avatar(&mut self, observed: AvatarTarget, position: Vec3) {
+        if self.leader.is_some() {
+            self.target = observed.position;
+            self.target_velocity = observed.velocity;
+            let run_distance = self.stop_distance + if self.run { 0.5 } else { 1.0 };
+            self.run = observed.running
+                && !self.flying
+                && observed.flight.flying != Some(true)
+                && (self.target - position).truncate().length() > run_distance;
+        }
+        self.observe_flight(observed.flight, position);
+    }
+
     pub fn wants_flight(&self) -> bool {
         self.avatar_flight.is_some_and(|f| f.flying == Some(true))
     }
@@ -292,6 +354,8 @@ impl AutoPilot {
         self.no_progress = 0.0;
         self.previous_position = position;
         self.target_dist = self.distance(self.goal() - position);
+        self.horizontal_thrust = FlightThrust::default();
+        self.vertical_thrust = FlightThrust::default();
     }
 
     fn goal(&self) -> Vec3 {
@@ -317,12 +381,20 @@ impl AutoPilot {
     /// Ground arrival uses XY; flight uses XYZ. A landing must finish on
     /// confirmed support before proximity alone can end the approach.
     pub fn reached(&self, position: Vec3) -> bool {
-        !self.landing() && self.distance(self.target - position) <= self.stop_distance
+        let awaiting_flight =
+            self.avatar_flight.is_some_and(|f| f.flying.is_none()) && (self.target.z - position.z).abs() > self.stop_distance;
+        !awaiting_flight && !self.landing() && self.distance(self.target - position) <= self.stop_distance
     }
 
     /// One frame of LLAgent::autoPilot from the avatar's place and heading,
     /// `dt` seconds after the last (1 / gFPSClamped).
+    #[cfg(test)]
     pub fn step(&mut self, position: Vec3, yaw: f32, dt: f32) -> Step {
+        self.step_moving(position, Vec3::ZERO, yaw, dt, 0.0, 16.0)
+    }
+
+    pub fn step_moving(&mut self, position: Vec3, velocity: Vec3, yaw: f32, dt: f32, response: f32, fly_speed: f32) -> Step {
+        let response = if response.is_finite() { response.clamp(0.0, 2.5) } else { 0.0 };
         let stop = |finish| Step {
             yaw: 0.0,
             flags: control::STOP,
@@ -363,8 +435,23 @@ impl AutoPilot {
         self.no_progress = if progress { 0.0 } else { self.no_progress + dt };
         self.previous_position = position;
         self.target_dist = target_dist;
-        if self.no_progress > MAX_TIME_NO_PROGRESS {
+        let stall_limit = if self.flying && response > 0.0 {
+            MAX_TIME_NO_PROGRESS.max(response * 4.0 + 1.0)
+        } else {
+            MAX_TIME_NO_PROGRESS
+        };
+        if self.no_progress > stall_limit {
             return stop(Some(Finish::NoProgress));
+        }
+        if !self.flying
+            && self.avatar_flight.is_some_and(|f| f.flying.is_none())
+            && delta.z.abs() > self.stop_distance
+            && xy_distance <= self.stop_distance
+        {
+            // Do not complete Go to underneath an airborne target while its
+            // animation packet is still in flight. Wait without walking loops;
+            // the normal stall deadline still bounds missing information.
+            return stop(None);
         }
         let horizontal_stop = if landing && self.landing_offset != Vec3::ZERO {
             0.5
@@ -425,6 +512,44 @@ impl AutoPilot {
             // Allow the final quarter metre for body-size/contact tolerance;
             // stopping above it could prevent the support report entirely.
             flags = if delta.z <= 0.25 { control::UP_NEG } else { control::STOP };
+        }
+        let mut turn = turn;
+        if self.flying && self.avatar_flight.is_some() && response > 0.0 {
+            let response = response.clamp(0.1, 2.5);
+            let relative = if velocity.is_finite() {
+                velocity - self.target_velocity
+            } else {
+                Vec3::ZERO
+            };
+            let closing = relative.truncate().dot(delta.truncate().normalize_or_zero()).max(0.0);
+            let horizontal = control::AT_POS | control::NUDGE_AT_POS | control::FAST_AT;
+            if !self
+                .horizontal_thrust
+                .advance(xy_distance - horizontal_stop, closing, fly_speed.max(1.0), response, dt)
+            {
+                flags &= !horizontal;
+                if closing > 0.1 || xy_distance <= horizontal_stop {
+                    flags &= !(control::YAW_POS | control::YAW_NEG);
+                    turn = 0.0;
+                }
+            }
+            // Leave the final landing contact to World::auto_land. Elsewhere
+            // the same braking envelope applies to upward/downward inertia.
+            let contact = landing && xy_distance <= self.landing_radius() && delta.z.abs() <= 0.5;
+            if !contact
+                && !self.vertical_thrust.advance(
+                    delta.z.abs() - vertical_tolerance,
+                    (relative.z * delta.z.signum()).max(0.0),
+                    4.0,
+                    response,
+                    dt,
+                )
+            {
+                flags &= !(control::UP_POS | control::UP_NEG | control::FAST_UP);
+            }
+            if flags == 0 {
+                flags = control::STOP;
+            }
         }
         Step {
             yaw: turn,
@@ -502,6 +627,14 @@ pub fn avatar_target(world: &crate::world::World, id: uuid::Uuid, own_height: f3
         flight_from_signals(o.parent_id != 0, world.animations.get(&id).into_iter().flatten().map(|a| a.id)).or(support.map(|_| false));
     Some(AvatarTarget {
         position,
+        velocity: if o.velocity.is_finite() { o.velocity } else { Vec3::ZERO },
+        running: world
+            .animations
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .any(|a| crate::ao::State::from_motion(a.id) == Some(crate::ao::State::Running))
+            || (o.velocity.is_finite() && o.velocity.truncate().length() > 4.0),
         flight: FlightTarget {
             flying,
             landing_height: support.unwrap_or(feet) + own_height * 0.5 + 0.05,
@@ -694,6 +827,13 @@ mod tests {
     fn avatar_arrival_ignores_ground_height_and_never_turns_or_moves_at_rest() {
         for z in [-20.0, 0.0, 20.0] {
             let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::new(2.0, 0.0, z), None, false, Instant::now());
+            ap.observe_flight(
+                FlightTarget {
+                    flying: Some(false),
+                    landing_height: z,
+                },
+                Vec3::ZERO,
+            );
             assert_eq!(
                 ap.step(Vec3::ZERO, 2.0, FRAME),
                 Step {
@@ -792,6 +932,13 @@ mod tests {
             let mut position = Vec3::ZERO;
             let mut yaw = 0.0;
             let mut ap = AutoPilot::avatar(position, Vec3::new(-8.0, -6.0, 5.0), None, false, Instant::now());
+            ap.observe_flight(
+                FlightTarget {
+                    flying: Some(false),
+                    landing_height: 5.0,
+                },
+                position,
+            );
             let mut arrived = false;
             for _ in 0..(fps as usize * 20) {
                 let s = ap.step(position, yaw, dt);
@@ -856,6 +1003,154 @@ mod tests {
         }
         assert_eq!(flight_from_signals(false, [uuid::Uuid::from_u128(123)].into_iter()), None);
         assert_eq!(flight_from_signals(false, std::iter::empty()), None);
+    }
+
+    #[test]
+    fn one_shot_approach_accepts_late_flight_without_changing_its_destination() {
+        let destination = Vec3::new(1.0, 0.0, 6.0);
+        let mut pilot = AutoPilot::avatar(Vec3::ZERO, destination, None, false, Instant::now());
+        pilot.subject = Some(uuid::Uuid::from_u128(7));
+        assert!(!pilot.reached(Vec3::ZERO));
+        assert_eq!(pilot.step(Vec3::ZERO, 0.0, FRAME).flags, control::STOP);
+        assert_eq!(pilot.step(Vec3::ZERO, 0.0, FRAME).finish, None);
+        pilot.observe_avatar(
+            AvatarTarget {
+                position: Vec3::new(20.0, 0.0, 6.0),
+                flight: FlightTarget {
+                    flying: Some(true),
+                    landing_height: 6.0,
+                },
+                velocity: Vec3::X * 5.0,
+                running: false,
+            },
+            Vec3::ZERO,
+        );
+        assert!(pilot.wants_flight());
+        assert_eq!(pilot.target, destination);
+        assert!(pilot.leader.is_none());
+    }
+
+    #[test]
+    fn ground_follow_matches_running_but_slows_near_the_leader_and_during_flight() {
+        let mut pilot = AutoPilot::avatar(Vec3::ZERO, Vec3::X * 10.0, Some(uuid::Uuid::from_u128(7)), false, Instant::now());
+        let target = |running, flying| AvatarTarget {
+            position: Vec3::X * 10.0,
+            flight: FlightTarget {
+                flying: Some(flying),
+                landing_height: 0.0,
+            },
+            velocity: Vec3::X * 5.0,
+            running,
+        };
+        pilot.observe_avatar(target(true, false), Vec3::ZERO);
+        assert!(pilot.run);
+        pilot.observe_avatar(target(true, false), Vec3::X * 8.0);
+        assert!(!pilot.run, "slow the last metres");
+        pilot.observe_avatar(target(false, false), Vec3::ZERO);
+        assert!(!pilot.run, "walking target restores walking");
+        pilot.observe_avatar(target(true, true), Vec3::ZERO);
+        assert!(!pilot.run, "flight does not keep a temporary run");
+    }
+
+    #[test]
+    fn flight_arrival_brakes_with_delayed_reports_and_inertia_instead_of_orbiting() {
+        use std::collections::VecDeque;
+        for fps in [30, 60, 144] {
+            for (ping, initial_yaw) in [(0.1, 0.0), (0.3, 0.0), (0.6, 0.0), (0.3, std::f32::consts::PI)] {
+                let dt = 1.0 / fps as f32;
+                let destination = Vec3::new(35.0, 8.0, 6.0);
+                let mut pilot = AutoPilot::avatar(Vec3::ZERO, destination, Some(uuid::Uuid::from_u128(7)), true, Instant::now());
+                pilot.observe_flight(
+                    FlightTarget {
+                        flying: Some(true),
+                        landing_height: 6.0,
+                    },
+                    Vec3::ZERO,
+                );
+                let (mut position, mut velocity, mut yaw) = (Vec3::ZERO, Vec3::ZERO, initial_yaw);
+                let mut commands = VecDeque::new();
+                let mut reports = VecDeque::new();
+                let mut received = (0.0, Vec3::ZERO, Vec3::ZERO);
+                let mut commanded = Vec3::ZERO;
+                let mut last_send = -1.0;
+                let mut arrived_at = None;
+                let mut last_motion = 0.0;
+                let mut previous_side = -1.0_f32;
+                let mut crossings = 0;
+                for frame in 0..fps * 60 {
+                    let now = frame as f32 * dt;
+                    while reports.front().is_some_and(|(at, _)| *at <= now) {
+                        received = reports.pop_front().unwrap().1;
+                    }
+                    let physical = received.1 + received.2 * (now - received.0);
+                    let step = pilot.step_moving(physical, received.2, yaw, dt, ping + 0.6, 16.0);
+                    assert!(step.finish.is_none(), "fps={fps}, ping={ping}, frame={frame}, {step:?}");
+                    assert_eq!(step.flags & control::AT_NEG, 0);
+                    yaw += step.yaw;
+                    // Twenty AgentUpdates/s; NUDGE deliberately has full native
+                    // flight speed. The old immediate demo hid this inertia.
+                    if now - last_send >= 0.05 - 1e-4 {
+                        let horizontal = if step.flags & (control::AT_POS | control::NUDGE_AT_POS) != 0 {
+                            Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 16.0
+                        } else {
+                            Vec3::ZERO
+                        };
+                        let vertical = if step.flags & control::UP_POS != 0 {
+                            4.0
+                        } else if step.flags & control::UP_NEG != 0 {
+                            -4.0
+                        } else {
+                            0.0
+                        };
+                        commands.push_back((now + ping * 0.5, horizontal + Vec3::Z * vertical));
+                        last_send = now;
+                    }
+                    while commands.front().is_some_and(|(at, _)| *at <= now) {
+                        commanded = commands.pop_front().unwrap().1;
+                    }
+                    velocity += (commanded - velocity) * (1.0 - (-dt / 0.5).exp());
+                    position += velocity * dt;
+                    let side = (position - destination).dot(destination);
+                    if side * previous_side < 0.0 {
+                        crossings += 1;
+                    }
+                    previous_side = side;
+                    reports.push_back((now + ping * 0.5, (now, position, velocity)));
+                    if position.distance(destination) <= 2.0 && arrived_at.is_none() {
+                        arrived_at = Some(now);
+                    }
+                    if commanded.length() > 0.01 {
+                        last_motion = now;
+                    }
+                }
+                assert!(arrived_at.is_some(), "never arrived: fps={fps}, ping={ping}, position={position:?}");
+                assert!(
+                    crossings <= 1,
+                    "repeated passes through the target: fps={fps}, ping={ping}, crossings={crossings}"
+                );
+                assert!(
+                    position.distance(destination) <= 3.0,
+                    "fps={fps}, ping={ping}, position={position:?}"
+                );
+                assert!(
+                    velocity.length() < 0.01 && last_motion < 50.0,
+                    "kept correcting: fps={fps}, ping={ping}, last_motion={last_motion}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn flight_impulse_coasting_does_not_disable_the_obstacle_timeout() {
+        let mut pilot = AutoPilot::avatar(Vec3::ZERO, Vec3::X * 5.0, Some(uuid::Uuid::from_u128(7)), true, Instant::now());
+        let mut finish = None;
+        for _ in 0..600 {
+            finish = pilot.step_moving(Vec3::ZERO, Vec3::ZERO, 0.0, FRAME, 0.8, 16.0).finish;
+            if finish.is_some() {
+                break;
+            }
+        }
+        assert_eq!(finish, Some(Finish::NoProgress));
     }
 
     #[test]

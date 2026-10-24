@@ -122,13 +122,17 @@ impl App {
             return;
         };
         let mut pilot = AutoPilot::avatar(agent.position, target.position, follow.then_some(id), agent.flying, Instant::now());
-        pilot.observe_flight(target.flight, agent.position);
+        pilot.subject = Some(id);
+        pilot.observe_avatar(target, agent.position);
         self.stop_autopilot(true);
         self.world.following_avatar = pilot.leader;
         self.autopilot = Some(pilot);
         self.autopilot_stop_pending = false;
         self.autopilot_flags = 0;
         self.release_native_movelock();
+        if self.autopilot.as_ref().is_some_and(|ap| ap.run) {
+            self.sync_run();
+        }
     }
 
     /// The demo feeds the pilot's flags into local physics as keys. Remove
@@ -211,15 +215,18 @@ impl App {
             return;
         }
         let (position, yaw) = (agent.position, agent.yaw);
-        if let Some(id) = self.autopilot.as_ref().and_then(|ap| ap.leader) {
+        let was_running = self.running();
+        if let Some(id) = self.autopilot.as_ref().and_then(|ap| ap.subject) {
             let Some(target) = autopilot::avatar_target(&self.world, id, self.pelvis_to_foot() * 2.0) else {
                 self.stop_autopilot(true);
                 return;
             };
             if let Some(ap) = &mut self.autopilot {
-                ap.target = target.position;
-                ap.observe_flight(target.flight, position);
+                ap.observe_avatar(target, position);
             }
+        }
+        if self.running() != was_running {
+            self.sync_run();
         }
         if !self.world.agent.flying && self.autopilot.as_ref().is_some_and(|ap| ap.wants_flight()) {
             if !autopilot::can_takeoff(&self.world) {
@@ -236,11 +243,30 @@ impl App {
         };
         ap.set_flying(self.world.agent.flying, position);
         autopilot::land_near_target(&mut self.world, ap);
-        // The prediction's lead must not brake a descent before physics
-        // reaches its support. Landing steers from the same physical reports
-        // that World::auto_land uses to confirm contact.
-        let steering = if ap.landing() { self.world.agent.server_pos } else { position };
-        let step = ap.step(steering, yaw, dt.clamp(1e-3, 0.1));
+        // Fly from physical extrapolation, independently of drawable damping
+        // and prediction lead. Landing uses actual reports, as World::auto_land
+        // does, so a predicted arrival cannot brake descent before contact.
+        let steering = if ap.landing() {
+            self.world.agent.server_pos
+        } else if ap.flying {
+            self.world.agent.predicted_position()
+        } else {
+            position
+        };
+        let rtt = self.demo_link.as_ref().map_or_else(
+            || self.net.stats.ping_avg_ms.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0,
+            |link| link.cfg.ping + link.cfg.jitter,
+        );
+        let calibration = &self.world.agent.prediction.calibration;
+        let response = calibration.delay(rtt) + calibration.ramp(crate::own_motion::Mode::Fly).max(0.25);
+        let step = ap.step_moving(
+            steering,
+            self.world.agent.velocity,
+            yaw,
+            dt.clamp(1e-3, 0.1),
+            response,
+            calibration.speed(crate::own_motion::Mode::Fly),
+        );
         let run = ap.run;
         self.world.agent.yaw += step.yaw;
         self.autopilot_flags = step.flags;
@@ -352,7 +378,7 @@ impl App {
         let id = crate::demo::DEMO_LOUP;
         let frame = self.frame_count;
         let flight = match (mode.as_str(), frame) {
-            ("flight", 900) | ("go-flight", 590) => Some(Some(6.0)),
+            ("flight", 900) | ("go-flight" | "go-flight-late" | "flight-brake", 590) => Some(Some(6.0)),
             ("flight", 1500 | 2700) => Some(None),
             ("flight", 2100) => Some(Some(4.0)),
             _ => None,
@@ -366,6 +392,12 @@ impl App {
                 o.velocity = Vec3::ZERO;
                 o.acceleration = Vec3::ZERO;
                 o.foot_plane = height.is_none().then_some(Vec3::Z.extend(floor));
+                if mode == "flight-brake" {
+                    o.position.x += 35.0;
+                } else if mode == "go-flight-late" {
+                    o.position.x = self.world.agent.position.x + 1.0;
+                    o.position.y = self.world.agent.position.y;
+                }
             }
             self.world.apply(NetEvent::AvatarAnimations {
                 avatar: id,
@@ -379,9 +411,58 @@ impl App {
                 )],
                 sources: Vec::new(),
             });
+            if mode == "go-flight-late" {
+                self.world.animations.remove(&id);
+            }
+        }
+        if frame == 620 && mode == "go-flight-late" {
+            self.world.apply(NetEvent::AvatarAnimations {
+                avatar: id,
+                anims: vec![(crate::own_motion::ANIM_HOVER, frame as i32)],
+                sources: Vec::new(),
+            });
+        }
+        if mode == "run" && matches!(frame, 590 | 1200 | 1500) {
+            let current = autopilot::avatar_position(&self.world, id);
+            if let Some(o) = self.world.objects.index_of_uuid(&id).and_then(|idx| self.world.objects.get(idx)) {
+                let velocity = Vec3::X
+                    * match frame {
+                        590 => 5.13,
+                        1200 => 3.2,
+                        _ => 0.0,
+                    };
+                let update = aurora_net::objects::TerseUpdate {
+                    local_id: o.key.local_id,
+                    state: o.state,
+                    is_avatar: true,
+                    foot_plane: o.foot_plane,
+                    position: current.unwrap_or(o.position),
+                    velocity,
+                    acceleration: Vec3::ZERO,
+                    rotation: o.rotation,
+                    angular_velocity: Vec3::ZERO,
+                    texture_entry: None,
+                };
+                self.world.apply(NetEvent::TerseUpdates {
+                    handle: o.key.region,
+                    updates: vec![update],
+                });
+            }
+            self.world.apply(NetEvent::AvatarAnimations {
+                avatar: id,
+                anims: vec![(
+                    match frame {
+                        590 => crate::own_motion::ANIM_RUN,
+                        1200 => crate::own_motion::ANIM_WALK,
+                        _ => crate::own_motion::ANIM_STAND,
+                    },
+                    frame as i32,
+                )],
+                sources: Vec::new(),
+            });
         }
         if frame == 600 && mode != "menu" {
-            self.on_ctx_action(if matches!(mode.as_str(), "go" | "go-flight") {
+            self.on_ctx_action(if matches!(mode.as_str(), "go" | "go-flight" | "go-flight-late") {
                 ui::context::CtxAction::GoToAvatar(id)
             } else {
                 ui::context::CtxAction::FollowAvatar(id)
@@ -427,16 +508,21 @@ impl App {
         if frame == 1502 && mode == "manual" {
             self.controls_held.retain(|a| *a != Action::Forward);
         }
-        if matches!(frame, 601 | 901 | 1400 | 1501 | 2000 | 2101 | 2400 | 2600 | 2701 | 3200) {
+        if matches!(
+            frame,
+            601 | 901 | 1201 | 1400 | 1501 | 2000 | 2101 | 2400 | 2600 | 2701 | 3200 | 4400
+        ) {
             let distance = autopilot::avatar_position(&self.world, id).map(|p| (p - self.world.agent.position).truncate().length());
             log::info!(
-                "demo avatar travel: mode={mode}, frame={frame}, distance={distance:?}, active={}, following={}, flying={}, landing={}, altitude={:.3}, flags={:#x}",
+                "demo avatar travel: mode={mode}, frame={frame}, distance={distance:?}, active={}, following={}, flying={}, landing={}, altitude={:.3}, flags={:#x}, running={}, speed={:.3}",
                 self.autopilot.is_some(),
                 self.world.following_avatar.is_some(),
                 self.world.agent.flying,
                 self.autopilot.as_ref().is_some_and(|ap| ap.landing()),
                 self.world.agent.position.z,
-                self.autopilot_flags
+                self.autopilot_flags,
+                self.running(),
+                self.world.agent.velocity.length(),
             );
         }
     }
