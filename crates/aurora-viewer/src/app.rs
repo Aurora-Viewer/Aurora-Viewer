@@ -8026,7 +8026,7 @@ impl App {
         if self.demo
             && self.capture.is_some()
             && (ui::color_picker::demo::mode().is_some()
-                || self.chat_ui.demo_reorder
+                || self.chat_ui.demo_reorder.is_some()
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
@@ -12279,7 +12279,7 @@ impl App {
                             self.options_ui.output_devices = aurora_audio::output_devices();
                         }
                         // done by the window before it returns
-                        ui::chat::ConvAction::PopOut(_) | ui::chat::ConvAction::DockBack(_) => {}
+                        ui::chat::ConvAction::PopOut(_) | ui::chat::ConvAction::DockBack(_) | ui::chat::ConvAction::PopOutAt(..) => {}
                     }
                 }
                 self.panels.chat = open;
@@ -15281,9 +15281,11 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.chat_ui.demo_menu = Some(kind.trim().to_owned());
             }
-            if std::env::var_os("AURORA_DEMO_CONV_REORDER").is_some() {
+            // AURORA_DEMO_CONV_REORDER=1|hold|out|nearby: an entry of the
+            // list dragged (with AURORA_DEMO_CONV)
+            if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_REORDER") {
                 self.panels.chat = true;
-                self.chat_ui.demo_reorder = true;
+                self.chat_ui.demo_reorder = Some(ui::chat::ReorderDemo::parse(&mode));
             }
             // AURORA_DEMO_KEYWORDS: the alerts on for the run, with the
             // Conversations window open on the nearby chat

@@ -3331,7 +3331,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_POPOUT=1\|option` | Conversations in their own windows: the friend's IM and a group popped out, or a group opened with the option on (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
@@ -4136,18 +4136,26 @@ failure. Grid validation and any paid upload are performed by the human.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
-- **`AURORA_DEMO_CONV_REORDER=1`**: with `AURORA_DEMO_CONV=aurora`
-  (also `aurora:compact` or `aurora:narrow`),
-  synthetic pointer events drag the first conversation after the next of
-  its category. Captures simulate logical focus without activating the
-  native window or taking the user's keyboard. Capture frames 690, 740 and 800 at `AURORA_FPS_LIMIT=60`
-  for the initial order, insertion marker and completed move. Manually
-  check upward/downward moves within private messages, groups and
-  conferences; reject drops across categories, on pinned entries and
-  outside the list; Escape cancels. A small pointer movement remains a
-  click. Check filtering, edge scrolling, close buttons, menus and switching
-  chat styles. Order lasts while those conversations remain open; closing
-  and reopening a conversation appends it again. No grid is needed.
+- **`AURORA_DEMO_CONV_REORDER=1|hold|out|nearby`**: with
+  `AURORA_DEMO_CONV=aurora` (also `aurora:compact`, `aurora:narrow` or
+  `legacy`), synthetic pointer events drag the first conversation after the
+  next of its category (pressed at frame 701, moved until frame 720, let go
+  at frame 760). Captures simulate logical focus without activating the
+  native window or taking the user's keyboard. Capture frames 690, 740 and
+  800 at `AURORA_FPS_LIMIT=60` for the initial order, the ghost under the
+  pointer with the entries moved apart where it lands, and the completed
+  move. `hold` never lets go: the ghost and the gap stay. `out` drops the
+  first conversation at the left of the Conversations window and `nearby`
+  the nearby chat (#910): its own window opens where the ghost was let go,
+  the ghost shows the Detach mark while it is outside the window. With
+  `nearby`, the chat island's button then shows and hides the nearby chat's
+  window alone. Manually check upward/downward moves within private
+  messages, groups and conferences; reject drops across categories and on
+  pinned entries; a drop inside the window but off the list does nothing;
+  Escape cancels. A small pointer movement remains a click. Check
+  filtering, edge scrolling, close buttons, menus and switching chat
+  styles. Order lasts while those conversations remain open; closing and
+  reopening a conversation appends it again. No grid is needed.
 
 - **`AURORA_DEMO_CONV_GIVE=away|over|many|drop|give`**: with `AURORA_DEMO_CONV=aurora`
   (also `aurora:compact` or `aurora:narrow`), an inventory drag starts at

@@ -338,33 +338,19 @@ fn ghost(ctx: &egui::Context, p: &Palette, icons: &Icons, view: &View) {
     let (Some(fav), Some(pointer)) = (view.list.iter().find(|f| f.item == dragged.0), ctx.pointer_interact_pos()) else {
         return;
     };
-    egui::Area::new(Id::unique("bars_favorites_ghost"))
-        .order(egui::Order::Tooltip)
-        .interactable(false)
-        .fade_in(false)
-        .fixed_pos(pointer + Vec2::new(-30.0, 10.0))
-        .show(ctx, |ui| {
-            let name = ui.painter().layout_no_wrap(fav.name.clone(), semibold(ui, 12.0), p.on_accent);
-            let size = Vec2::new(10.0 + PILL_THUMB + 6.0 + name.size().x + 10.0, 28.0);
-            let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-            let radius = ui.visuals().window_corner_radius;
-            ui.painter().add(
-                egui::epaint::Shadow {
-                    offset: [0, 8],
-                    blur: 24,
-                    spread: 0,
-                    color: p.navy.gamma_multiply(0.5),
-                }
-                .as_shape(rect, radius),
-            );
-            ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.85));
-            let t = Rect::from_min_size(
-                Pos2::new(rect.left() + 10.0, rect.center().y - PILL_THUMB / 2.0),
-                Vec2::splat(PILL_THUMB),
-            );
-            thumb(ui, p, icons, t, fav, crate::ui::widgets::inner_radius(ui.visuals()));
-            crate::ui::widgets::paint_ink_left(ui.painter(), name, Pos2::new(t.right() + 6.0, rect.center().y), p.on_accent);
-        });
+    crate::ui::widgets::drag_ghost(ctx, p, "bars_favorites_ghost", pointer + Vec2::new(-30.0, 10.0), |ui| {
+        let name = ui.painter().layout_no_wrap(fav.name.clone(), semibold(ui, 12.0), p.on_accent);
+        let size = Vec2::new(10.0 + PILL_THUMB + 6.0 + name.size().x + 10.0, 28.0);
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let radius = ui.visuals().window_corner_radius;
+        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.85));
+        let t = Rect::from_min_size(
+            Pos2::new(rect.left() + 10.0, rect.center().y - PILL_THUMB / 2.0),
+            Vec2::splat(PILL_THUMB),
+        );
+        thumb(ui, p, icons, t, fav, crate::ui::widgets::inner_radius(ui.visuals()));
+        crate::ui::widgets::paint_ink_left(ui.painter(), name, Pos2::new(t.right() + 6.0, rect.center().y), p.on_accent);
+    });
 }
 
 /// While a favourite is dragged over `zone`: the marker, and its new rank

@@ -468,15 +468,20 @@ fn conversation_drag_stays_in_its_category_and_keeps_pinned_entries() {
 }
 
 #[test]
-fn conversation_drag_cancels_outside_and_with_escape_and_works_in_the_rail() {
+fn conversation_drag_pops_out_outside_cancels_with_escape_and_works_in_the_rail() {
     let mut h = Harness::new(ChatStyle::Compact);
     crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(460.0, 500.0));
     let original = [JANE, BOB];
     let ids = |h: &Harness| h.st.reorder.sessions(&h.world).into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+    // dropped outside the window: in its own window there, the order kept
     let from = h.conversation_rect(JANE).center();
-    let outside = egui::pos2(1200.0, 800.0);
+    let outside = egui::pos2(1000.0, 700.0);
     h.drag_conversation(from, outside, Harness::drop_at(outside));
+    h.settle();
     assert_eq!(ids(&h), original);
+    assert!(h.st.popped.contains(Some(JANE)), "the rail's entry popped out");
+    h.st.popped.remove(Some(JANE));
+    h.settle();
     let from = h.conversation_rect(JANE).center();
     let to = h.conversation_rect(BOB).center() + egui::vec2(0.0, 5.0);
     h.drag_conversation(
@@ -588,10 +593,173 @@ fn conversation_drag_scrolls_to_conversations_below_the_viewport() {
     );
 }
 
+/// Dropped outside the Conversations window, an entry's conversation opens
+/// in its own window where the entry was let go, its top left corner where
+/// the ghost's was (#910), in the workspace and the tabs.
+#[test]
+fn an_entry_dropped_outside_opens_its_window_where_it_was_let_go() {
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        h.world.social.names.insert(JANE, "Jane".into());
+        h.world.social.names.insert(BOB, "Bob".into());
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(500.0, 40.0), egui::vec2(700.0, 500.0));
+        h.settle();
+        let jane = h.conversation_rect(JANE);
+        let from = jane.center();
+        let to = egui::pos2(160.0, 300.0);
+        h.drag_conversation(from, to, Vec::new());
+        let ghost = h
+            .frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique("conversation_drag_ghost")))
+            .expect("the ghost is drawn while held");
+        assert!(ghost.contains(to), "{style:?}: under the pointer");
+        // where the entry was taken
+        if style.workspace() {
+            assert!((ghost.min - (to - (from - jane.min))).length() < 1.0, "{style:?}: {ghost:?}");
+        }
+        h.frame(Harness::drop_at(to));
+        h.settle();
+        assert!(h.st.popped.contains(Some(JANE)), "{style:?}");
+        assert_eq!(
+            h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [JANE, BOB],
+            "{style:?}: the order is kept"
+        );
+        let window = h
+            .frames
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::unique(super::super::popout::floater_id(Some(JANE)).as_str())))
+            .expect("its window is drawn");
+        assert!(
+            (window.min - ghost.min).length() < 2.0,
+            "{style:?}: the window at {:?}, the ghost was at {:?}",
+            window.min,
+            ghost.min
+        );
+        assert!(h.actions.is_empty(), "{style:?}: no network action");
+    }
+}
+
+/// A drop in the window but off the list (the messages) changes nothing.
+#[test]
+fn a_drop_in_the_window_off_the_list_does_nothing() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(300.0, 40.0), egui::vec2(800.0, 560.0));
+    h.settle();
+    let from = h.conversation_rect(JANE).center();
+    let messages = egui::pos2(800.0, 300.0);
+    h.drag_conversation(from, messages, Harness::drop_at(messages));
+    h.settle();
+    assert!(!h.st.popped.contains(Some(JANE)));
+    assert_eq!(
+        h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        [JANE, BOB]
+    );
+}
+
+/// While an entry is held over its new place, the entries move apart
+/// there; Escape closes the gap and moves nothing.
+#[test]
+fn the_entries_move_apart_where_the_dragged_one_lands() {
+    let mut h = Harness::new(ChatStyle::Aurora);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(300.0, 40.0), egui::vec2(800.0, 560.0));
+    h.settle();
+    let jane = h.conversation_rect(JANE);
+    let bob = h.conversation_rect(BOB);
+    // Bob taken up above Jane, held there
+    h.drag_conversation(bob.center(), egui::pos2(jane.center().x, jane.top() + 6.0), Vec::new());
+    for _ in 0..20 {
+        h.frame(Vec::new());
+    }
+    let moved = h.rect(entry_id(Pinned::Conversation(JANE)));
+    assert!(
+        (moved.top() - bob.top()).abs() < 1.0,
+        "Jane moved down by a whole entry, to Bob's place: {moved:?} from {jane:?}"
+    );
+    h.frame(key(egui::Key::Escape, egui::Modifiers::NONE));
+    for _ in 0..20 {
+        h.frame(Vec::new());
+    }
+    assert_eq!(h.rect(entry_id(Pinned::Conversation(JANE))).top(), jane.top(), "the gap closed");
+    h.frame(Harness::drop_at(jane.center()));
+    h.settle();
+    assert_eq!(
+        h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+        [JANE, BOB]
+    );
+}
+
+/// The nearby chat drags out of the window into its own (#910); the chat
+/// island's button then shows and hides that window alone.
+#[test]
+fn the_nearby_chat_drags_out_and_its_button_shows_and_hides_it() {
+    for style in [ChatStyle::Aurora, ChatStyle::Legacy] {
+        let mut h = Harness::new(style);
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(500.0, 40.0), egui::vec2(700.0, 500.0));
+        h.settle();
+        let local = if style.workspace() {
+            h.rect(entry_id(Pinned::Local))
+        } else {
+            let texts = h.settle();
+            painted(&texts, aurora_i18n::tr!("common-nearby-chat")).rect
+        };
+        let to = egui::pos2(160.0, 300.0);
+        h.drag_conversation(local.center(), to, Harness::drop_at(to));
+        h.settle();
+        assert!(h.st.nearby_apart(), "{style:?}");
+        assert!(h.st.nearby_window_shown(&h.frames.ctx), "{style:?}");
+        let ctx = h.frames.ctx.clone();
+        let in_sight = |h: &Harness| super::super::conversations_in_sight(&ctx, &h.st, false).contains(&None);
+        assert!(in_sight(&h), "{style:?}");
+        // put away: the window is not drawn, the nearby chat out of sight
+        h.st.toggle_nearby_window(&ctx);
+        h.settle();
+        assert!(!h.st.nearby_window_shown(&ctx) && h.st.nearby_apart(), "{style:?}");
+        assert!(!in_sight(&h), "{style:?}");
+        let window = egui::Id::unique(super::super::popout::floater_id(None).as_str());
+        let drawn = |h: &Harness| {
+            h.frames
+                .ctx
+                .memory(|m| m.areas().visible_last_frame(&egui::LayerId::new(egui::Order::Middle, window)))
+        };
+        assert!(!drawn(&h), "{style:?}");
+        // shown back
+        h.st.toggle_nearby_window(&ctx);
+        h.settle();
+        assert!(h.st.nearby_window_shown(&ctx) && drawn(&h), "{style:?}");
+        // the nearby chat cannot move among the conversations
+        assert_eq!(
+            h.st.reorder.sessions(&h.world).iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [JANE, BOB],
+            "{style:?}"
+        );
+    }
+}
+
+#[test]
+fn conversation_reorder_demo_drags_out_of_the_window() {
+    for (demo, popped) in [
+        (super::super::ReorderDemo::Out, Some(JANE)),
+        (super::super::ReorderDemo::Nearby, None),
+    ] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.st.demo_reorder = Some(demo);
+        crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(500.0, 60.0), egui::vec2(700.0, 560.0));
+        h.settle();
+        for frame in 700..=760 {
+            let events = super::super::reorder::demo_events(&h.frames.ctx, frame);
+            h.frame(events);
+        }
+        h.settle();
+        assert!(h.st.popped.contains(popped), "{demo:?}");
+    }
+}
+
 #[test]
 fn conversation_reorder_demo_uses_the_current_window_position() {
     let mut h = Harness::new(ChatStyle::Aurora);
-    h.st.demo_reorder = true;
+    h.st.demo_reorder = Some(super::super::ReorderDemo::Drop);
     h.settle();
     crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(100.0, 60.0), egui::vec2(800.0, 560.0));
     h.settle();
