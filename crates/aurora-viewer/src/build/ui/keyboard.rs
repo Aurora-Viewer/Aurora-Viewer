@@ -80,6 +80,35 @@ impl Shortcut {
         Some(command)
     }
 
+    /// Whether the shortcut keeps its key from the gestures. Menu
+    /// accelerators go before gestures, but a disabled menu item lets its
+    /// key through (LLViewerWindow::handleKey, LLMenuItemCallGL::
+    /// handleAcceleratorKey): Undo / Redo only take Ctrl+Z / Ctrl+Y while
+    /// there is an edit to undo, here while the build tools are open.
+    pub fn takes_gesture_key(self, open: bool) -> bool {
+        open || !matches!(self, Self::History(_))
+    }
+
+    /// The build shortcut that keeps a gesture's key (Second Life KEY and
+    /// MASK) from playing it in the world: `always`, or only while the
+    /// build tools are open. For the gesture editor's warning.
+    pub fn for_gesture_key(key: u8, mask: u32, open: bool) -> Option<Self> {
+        let name = match key {
+            0x86 => "Escape".to_owned(),
+            0x88 => "Delete".to_owned(),
+            // a press always gives the capital letter (keys::from_event)
+            b'a'..=b'z' => return None,
+            33..=126 => char::from(key).to_string(),
+            _ => return None,
+        };
+        let mods = Mods {
+            ctrl: mask == 1,
+            shift: mask == 4,
+            alt: false,
+        };
+        Self::from_key(Key::from_name(&name)?, mods, open).filter(|s| s.takes_gesture_key(open))
+    }
+
     pub(super) fn run(self, tool: &mut BuildTool, world: &mut World, settings: &mut BuildSettings) {
         match self {
             Self::History(_) if !tool.open => {}
@@ -121,5 +150,61 @@ impl Shortcut {
             Self::SnapXy => tool.snap_xy_to_grid(world, settings),
             Self::SelectPart { next, include } => tool.select_next_part(world, settings, next, include),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gestures::keys;
+
+    /// Every gesture shortcut the editor offers that a build shortcut keeps,
+    /// as the Legacy Viewer's menus keep them (#915): Undo / Redo only while
+    /// the build tools are open, Build and its tools always.
+    #[test]
+    fn the_build_shortcuts_keep_these_gesture_keys() {
+        let taken = |open: bool| -> Vec<String> {
+            keys::choices()
+                .flat_map(|key| [0, 4, 1].map(|mask| (key, mask)))
+                .filter(|&(key, mask)| Shortcut::for_gesture_key(key, mask, open).is_some())
+                .map(|(key, mask)| keys::shortcut(key, mask))
+                .collect()
+        };
+        assert_eq!(taken(false), ["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+B"]);
+        let mut building = taken(true);
+        building.sort();
+        let shift = aurora_i18n::tr!("keybinds-shift-2");
+        let mut expected: Vec<String> = [
+            "Ctrl+,", "Ctrl+.", "Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5", "Ctrl+B", "Ctrl+D", "Ctrl+L", "Ctrl+Y", "Ctrl+Z", "G",
+        ]
+        .map(String::from)
+        .into_iter()
+        .chain([format!("{shift}G"), format!("{shift}X"), keys::label(0x86), keys::label(0x88)])
+        .collect();
+        expected.sort();
+        assert_eq!(building, expected);
+    }
+
+    /// The real key path agrees: Ctrl+Z is an editing shortcut in any
+    /// layout, but it keeps its key from the gestures only while the build
+    /// tools are open; Ctrl+B always opens them.
+    #[test]
+    fn undo_leaves_its_key_to_the_gestures_while_the_build_tools_are_closed() {
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        for (letter, code) in [("z", KeyCode::KeyZ), ("z", KeyCode::KeyW), ("y", KeyCode::KeyY)] {
+            let key = NativeKey::Character(letter.into());
+            let mut down = HashSet::new();
+            let shortcut = Shortcut::take_native_key(&key, code, ctrl, false, true, &mut down).expect("editing shortcut");
+            assert!(matches!(shortcut, Shortcut::History(_)));
+            assert!(!shortcut.takes_gesture_key(false), "Ctrl+{letter} with the build tools closed");
+            assert!(shortcut.takes_gesture_key(true), "Ctrl+{letter} while building");
+        }
+        let mut down = HashSet::new();
+        let build = Shortcut::take_native_key(&NativeKey::Character("b".into()), KeyCode::KeyB, ctrl, false, true, &mut down);
+        assert_eq!(build, Some(Shortcut::ToggleBuild));
+        assert!(Shortcut::ToggleBuild.takes_gesture_key(false));
     }
 }

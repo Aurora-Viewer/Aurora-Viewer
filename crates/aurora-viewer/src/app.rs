@@ -6664,6 +6664,9 @@ impl App {
         self.frame_profile.lap(Lap::Events);
         self.poll_ao();
         self.sync_static_eyes();
+        if self.in_world() {
+            self.step_gestures();
+        }
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
             self.last_social_poll = Instant::now();
             self.poll_names();
@@ -15631,16 +15634,19 @@ impl ApplicationHandler for App {
                     let mods = self.mods();
                     let build_keyboard =
                         self.in_world() && !self.egui_ctx.egui_wants_keyboard_input() && !egui::Popup::is_any_open(&self.egui_ctx);
-                    let ui_shortcut = pressed
-                        && crate::build::ui::Shortcut::take_native_key(
-                            &ke.logical_key,
-                            code,
-                            mods,
-                            self.build.open,
-                            build_keyboard,
-                            &mut self.down,
-                        )
-                        .is_some();
+                    let build_shortcut = pressed
+                        .then(|| {
+                            crate::build::ui::Shortcut::take_native_key(
+                                &ke.logical_key,
+                                code,
+                                mods,
+                                self.build.open,
+                                build_keyboard,
+                                &mut self.down,
+                            )
+                        })
+                        .flatten();
+                    let ui_shortcut = build_shortcut.is_some();
                     let command_key = pressed && self.settings.keybinds.triggered(&input, mods).is_some();
                     if ui_shortcut || command_key {
                         self.down.remove(&input);
@@ -15659,7 +15665,7 @@ impl ApplicationHandler for App {
                         self.gesture_state.manager.release(Some(key));
                     }
                     if pressed
-                        && !ui_shortcut
+                        && !build_shortcut.is_some_and(|s| s.takes_gesture_key(self.build.open))
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()

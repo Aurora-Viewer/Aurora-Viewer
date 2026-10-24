@@ -27,6 +27,20 @@ pub(super) fn step_label(step: &Step) -> String {
     }
 }
 
+/// Why a gesture key cannot play the gesture: a build shortcut keeps it,
+/// always or while the build tools are open.
+pub(super) fn shortcut_taken(key: u8, mask: u32) -> Option<String> {
+    use crate::build::ui::Shortcut;
+    let shortcut = keys::shortcut(key, mask);
+    if Shortcut::for_gesture_key(key, mask, false).is_some() {
+        Some(aurora_i18n::tr!("gesture-shortcut-taken", shortcut = shortcut.as_str()))
+    } else if Shortcut::for_gesture_key(key, mask, true).is_some() {
+        Some(aurora_i18n::tr!("gesture-shortcut-taken-building", shortcut = shortcut.as_str()))
+    } else {
+        None
+    }
+}
+
 fn flag(ui: &mut egui::Ui, p: &Palette, flags: &mut u32, bit: u32, label: &str) {
     let mut value = *flags & bit != 0;
     if widgets::checkbox(ui, p, &mut value, label).changed() {
@@ -182,6 +196,13 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, inv: &Inventory, manager: &
                         })
                     });
                     ui.end_row();
+                    // The Legacy Viewer's menu shortcuts silently win over
+                    // a gesture key: say so when one is chosen (#915).
+                    if let Some(taken) = shortcut_taken(g.key, g.mask) {
+                        ui.label("");
+                        ui.add(egui::Label::new(RichText::new(taken).color(p.warn)).wrap());
+                        ui.end_row();
+                    }
                 });
                 widgets::section_header(ui, p, "library-filled", aurora_i18n::tr!("gesture-library"));
                 ui.add_enabled_ui(modifiable, |ui| {
