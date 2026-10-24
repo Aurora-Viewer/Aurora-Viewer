@@ -1036,27 +1036,52 @@ pub(crate) fn mentions(text: &str, agent: &uuid::Uuid) -> bool {
     text.contains("/mention") && segments(text).iter().any(|s| matches!(s, Seg::Mention(id) if id == agent))
 }
 
-/// A message as plain text, for a system notification: agents by their
-/// name (a mention with its "@"), places by their label, labelled links by
-/// their text, other links as written.
-pub(crate) fn plain_text(text: &str, name: impl Fn(&uuid::Uuid) -> Option<String>) -> String {
-    fn piece(seg: &Seg<'_>, name: &dyn Fn(&uuid::Uuid) -> Option<String>, out: &mut String) {
+/// A message as plain text, for a system notification or a short preview:
+/// agents by their name (a mention with its "@"), places by their label,
+/// app commands by `app` (their label, `app_links::label`), labelled links
+/// by their text, web links as written.
+pub(crate) fn plain_text(
+    text: &str,
+    name: impl Fn(&uuid::Uuid) -> Option<String>,
+    app: impl Fn(&str, &crate::slapp::AppLink) -> String,
+) -> String {
+    let mut out = String::with_capacity(text.len());
+    for seg in segments(text) {
         match seg {
-            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) | Seg::App(t, _) => out.push_str(t),
+            Seg::Text(t) | Seg::Url(t) | Seg::Slurl(t) => out.push_str(t),
+            Seg::App(u, link) => out.push_str(&app(u, &link)),
             Seg::Place(_, place) => out.push_str(&place.label),
             Seg::Mention(id) => {
                 out.push('@');
-                out.push_str(&name(id).unwrap_or_else(|| id.to_string()));
+                out.push_str(&name(&id).unwrap_or_else(|| id.to_string()));
             }
-            Seg::Agent(id) => out.push_str(&name(id).unwrap_or_else(|| id.to_string())),
-            Seg::Labelled(label, _) => out.push_str(label),
+            Seg::Agent(id) => out.push_str(&name(&id).unwrap_or_else(|| id.to_string())),
+            Seg::Labelled(label, _) => out.push_str(&label),
         }
     }
-    let mut out = String::with_capacity(text.len());
-    for seg in segments(text) {
-        piece(&seg, &name, &mut out);
-    }
     out
+}
+
+/// The label of an app command, for the texts drawn outside the chat (a
+/// system notification).
+pub(crate) fn app_label(world: &World, url: &str, link: &crate::slapp::AppLink) -> String {
+    app_links::label(world, &mut HashSet::new(), url, link)
+}
+
+/// A message with its links shown as in the conversation, in plain text,
+/// for the previews that cut it short (a conversation's last line in the
+/// list, a message's card, #947): avatars by their name ("…" until it comes,
+/// asked at the end of the frame), places, app commands and labelled links
+/// by their label. The preview cuts the result, never a link's address in
+/// its middle, as the Legacy Viewer's toasts show the labels of their text
+/// (`parse_urls`, LLTextBase::appendTextImpl) before eliding it.
+pub(crate) fn resolved_text(world: &World, text: &str) -> String {
+    let name = |id: &uuid::Uuid| {
+        app_links::want_agents([*id]);
+        Some(world.social.name_of(id))
+    };
+    let text = plain_text(text, name, |u, link| app_label(world, u, link));
+    world.rlva_filter_text(&text).into_owned()
 }
 
 fn segments(text: &str) -> Vec<Seg<'_>> {
@@ -3817,12 +3842,43 @@ mod tests {
         assert!(!mentions(&t, &jane), "an about link is not a mention");
         assert!(!mentions(&format!("secondlife:///app/agent/{me}/about"), &me));
         let name = |id: &uuid::Uuid| (*id == me).then(|| "Aurora Demo".to_owned());
+        let app = |_: &str, _: &crate::slapp::AppLink| "Demo Group".to_owned();
         assert_eq!(
-            plain_text(&t, name),
+            plain_text(&t, name, app),
             format!("@Aurora Demo see {jane} at https://example.org"),
             "an unknown name keeps its id, a web link its address"
         );
-        assert_eq!(plain_text("[https://example.org the site] now", name), "the site now");
+        assert_eq!(plain_text("[https://example.org the site] now", name, app), "the site now");
+        let g = uuid::Uuid::from_u128(7);
+        assert_eq!(
+            plain_text(&format!("join secondlife:///app/group/{g}/about!"), name, app),
+            "join Demo Group!",
+            "an app command shows its label (#947)"
+        );
+    }
+
+    /// The previews read a message as the conversation shows it: names,
+    /// groups and places by their labels, "…" while a name is asked (#947).
+    #[test]
+    fn a_preview_shows_the_labels_of_the_links() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (lune, unknown, group) = (
+            uuid::Uuid::from_u128(0x61),
+            uuid::Uuid::from_u128(0x62),
+            uuid::Uuid::from_u128(0x63),
+        );
+        world.social.names.insert(lune, "Lune Étoilée".into());
+        world.land.group_names.insert(group, "Cercle des Brumes".into());
+        let text = format!(
+            "secondlife:///app/agent/{lune}/about, secondlife:///app/agent/{lune}/mention et \
+             secondlife:///app/agent/{unknown}/about à secondlife:///app/group/{group}/about \
+             http://maps.secondlife.com/secondlife/Pinède/1/2/3 [https://example.org le site] https://example.org/x"
+        );
+        assert_eq!(
+            resolved_text(&world, &text),
+            "Lune Étoilée, @Lune Étoilée et … à Cercle des Brumes Pinède (1,2,3) le site https://example.org/x"
+        );
+        assert_eq!(resolved_text(&world, "plain words"), "plain words");
     }
 
     #[test]

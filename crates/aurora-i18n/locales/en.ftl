@@ -1875,6 +1875,7 @@ ui-chat-applink-blocked-tip = This action is not allowed from this link
 ui-chat-applink-unsupported-tip = This link is not supported
 ui-chat-applink-unsupported-label = Unsupported link
 demo-applinks-pasted = Before { $link }, after.
+demo-applinks-preview = { $who } is with { $group } at { $place }.
 ui-chat-applink-wear-label = Wear inventory folder
 ui-chat-applink-show-map-for = Show Map for { $place }
 ui-chat-applink-experience-untitled = (untitled experience)

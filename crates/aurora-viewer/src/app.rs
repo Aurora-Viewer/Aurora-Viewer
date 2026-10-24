@@ -14598,7 +14598,11 @@ impl ApplicationHandler for App {
                 self.panels.places = false;
                 self.panels.people = false;
                 self.panels.chat = true;
-                self.chat_ui.open(crate::demo::DEMO_NOVA);
+                // `preview`: Tess's conversation stays out of sight, so its
+                // message gets a card and both column entries show it (#947)
+                if !crate::demo::applinks_preview_scene() {
+                    self.chat_ui.open(crate::demo::DEMO_NOVA);
+                }
                 ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(480.0, 380.0), egui::vec2(640.0, 380.0));
                 if crate::demo::applinks_actions_scene() {
                     self.panels.inventory = false;

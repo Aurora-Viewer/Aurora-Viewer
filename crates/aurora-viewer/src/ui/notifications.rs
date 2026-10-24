@@ -191,6 +191,17 @@ pub(super) fn look_style(p: &Palette, look: crate::world::notification_history::
     kind_style(p, Kind::of_look(look))
 }
 
+/// The start of a message on its card: its links by their labels first,
+/// then cut, so never inside an address (#947).
+fn message_excerpt(world: &World, body: &str) -> String {
+    let body = super::chat::resolved_text(world, body);
+    let mut text: String = body.chars().take(MESSAGE_CHARS).collect();
+    if body.chars().count() > MESSAGE_CHARS {
+        text.push('…');
+    }
+    text
+}
+
 /// The card of a friend online / offline or of the messages of a
 /// conversation: their picture, the name, the start of the last message.
 /// Clicking the card opens the conversation (`Notification::opens`), its
@@ -199,6 +210,7 @@ pub(super) fn person_card(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
+    world: &World,
     env: &mut ToastEnv<'_>,
     wanted: &mut HashSet<Uuid>,
     n: &Notification,
@@ -253,10 +265,7 @@ pub(super) fn person_card(
                     });
                 });
                 if !n.body.is_empty() {
-                    let mut text: String = n.body.chars().take(MESSAGE_CHARS).collect();
-                    if n.body.chars().count() > MESSAGE_CHARS {
-                        text.push('…');
-                    }
+                    let text = message_excerpt(world, &n.body);
                     name_hover = name_hover.or(text::person_body(ui, p, env.emoji, &text, &n.name_links));
                 }
             });
@@ -744,7 +753,7 @@ pub fn show(
                                 // newest first
                                 for n in list.list.iter_mut().rev().filter(|n| !n.transient) {
                                     let r = if matches!(n.data, Data::Message { .. }) {
-                                        person_card(ui, p, icons, env, &mut nui.wanted_pics, n, false)
+                                        person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, false)
                                     } else {
                                         card(ui, p, icons, world, n, false, false)
                                     };
@@ -777,7 +786,7 @@ pub fn show(
                 for id in ids.into_iter().rev() {
                     if let Some(n) = list.list.iter_mut().find(|n| n.id == id) {
                         let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
-                            person_card(ui, p, icons, env, &mut nui.wanted_pics, n, true)
+                            person_card(ui, p, icons, world, env, &mut nui.wanted_pics, n, true)
                         } else {
                             card(ui, p, icons, world, n, true, false)
                         };
@@ -1118,5 +1127,22 @@ mod tests {
         open_conversations(&ctx, &mut open);
         frames(&ctx, &mut open, 4);
         assert!(open && !super::super::widgets::floater_minimized(&ctx, "conversations"));
+    }
+
+    /// A message card shows the labels of its links and cuts after them,
+    /// never inside an address (#947).
+    #[test]
+    fn a_message_card_shows_link_labels_and_cuts_after_them() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (lune, group) = (Uuid::from_u128(0x51), Uuid::from_u128(0x52));
+        world.social.names.insert(lune, "Lune Étoilée".into());
+        world.land.group_names.insert(group, "Cercle des Brumes".into());
+        let body = format!("ask secondlife:///app/agent/{lune}/about about secondlife:///app/group/{group}/about");
+        assert_eq!(message_excerpt(&world, &body), "ask Lune Étoilée about Cercle des Brumes");
+        // the cut counts the labels, not the addresses
+        let long = format!("{} secondlife:///app/agent/{lune}/about", "é".repeat(MESSAGE_CHARS - 5));
+        let cut = message_excerpt(&world, &long);
+        assert_eq!(cut.chars().count(), MESSAGE_CHARS + 1, "{cut}");
+        assert!(cut.ends_with(" Lune…") && !cut.contains("secondlife:"), "{cut}");
     }
 }

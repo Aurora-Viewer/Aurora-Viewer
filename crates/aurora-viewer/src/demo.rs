@@ -1709,10 +1709,25 @@ pub fn applinks_actions_scene() -> bool {
     std::env::var("AURORA_DEMO_APPLINKS").is_ok_and(|mode| mode == "actions")
 }
 
+/// `AURORA_DEMO_APPLINKS=preview`: a short message with an avatar, a group
+/// and a place link, whose previews (the Conversations column, the
+/// message's card) must show the names, not the addresses (#947).
+pub fn applinks_preview_scene() -> bool {
+    std::env::var("AURORA_DEMO_APPLINKS").is_ok_and(|mode| mode == "preview")
+}
+
 /// The text of `applinks_scene`; `item` is an item of the demo inventory
 /// (its id and name) for the inventory link.
 pub fn applinks_text(item: Option<(Uuid, String)>) -> String {
     let app = "secondlife:///app";
+    if applinks_preview_scene() {
+        return aurora_i18n::tr!(
+            "demo-applinks-preview",
+            who = format!("{app}/agent/{DEMO_LOUP}/about"),
+            group = format!("{app}/group/{DEMO_GROUP2}/about"),
+            place = format!("{app}/teleport/Aurora%20Demo/128/128/25")
+        );
+    }
     if applinks_actions_scene() {
         // Identical labels make the action marker carry the distinction;
         // custom labels must never be able to disguise the actual command.

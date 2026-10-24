@@ -287,6 +287,7 @@ mod tests {
             list.link_name(notification, "Jane Doe", NameTarget::Avatar(id));
             let pics = HashMap::new();
             let mut wanted = HashSet::new();
+            let world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
             let mut time = 0.0;
             let mut frame = |events| {
                 time += 0.1;
@@ -308,7 +309,7 @@ mod tests {
                             presence_at: Default::default(),
                             classic_bars: false,
                         };
-                        answer = person_card(ui, &p, &icons, &mut env, &mut wanted, &list.list[0], false);
+                        answer = person_card(ui, &p, &icons, &world, &mut env, &mut wanted, &list.list[0], false);
                     },
                 );
                 out.textures_delta.clear();

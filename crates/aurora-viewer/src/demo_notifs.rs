@@ -129,7 +129,12 @@ pub fn events(frame: u64, agent: Uuid) -> Vec<NetEvent> {
             "Nova Exemple",
             0,
             Uuid::nil(),
-            aurora_i18n::tr!("demo-toast-hello"),
+            // AURORA_DEMO_APPLINKS=preview: its links on the card (#947)
+            &if super::applinks_preview_scene() {
+                super::applinks_text(None)
+            } else {
+                aurora_i18n::tr!("demo-toast-hello").to_owned()
+            },
             b"",
         )],
         1190 => vec![NetEvent::FriendsOnline {

@@ -1878,6 +1878,7 @@ ui-chat-applink-blocked-tip = Action non autorisée depuis ce lien
 ui-chat-applink-unsupported-tip = Ce lien n'est pas pris en charge
 ui-chat-applink-unsupported-label = Lien non pris en charge
 demo-applinks-pasted = Avant { $link }, après.
+demo-applinks-preview = { $who } est avec { $group } à { $place }.
 ui-chat-applink-wear-label = Porter le dossier de l'inventaire
 ui-chat-applink-show-map-for = Afficher la carte pour { $place }
 ui-chat-applink-experience-untitled = (expérience sans titre)

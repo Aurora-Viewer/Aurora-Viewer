@@ -867,10 +867,12 @@ fn an_inline_place_menu_holds_its_containing_message() {
         h.world
             .conversation_line(GROUP, line("Jane", JANE, ChatKind::Im, &format!("Look here: {url}")));
         h.open(Some(GROUP));
+        // the link in the thread, not the column's preview of the line,
+        // which reads its label too (#947)
         let link = h
             .texts
             .iter()
-            .find(|t| t.source.contains("Aurora Demo ("))
+            .find(|t| t.source.contains("Aurora Demo (") && !t.source.contains("Look here"))
             .expect("place badge")
             .source
             .clone();

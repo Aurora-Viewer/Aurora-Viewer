@@ -142,9 +142,15 @@ impl App {
         if !notifies(&self.settings, forced, !self.attention.behind, self.world.status.dnd) {
             return;
         }
-        let names = &self.world.social.avatar_names;
-        let name = |id: &uuid::Uuid| names.complete(id);
-        let title = body_text(&crate::ui::chat::plain_text(&notice.title, name));
+        let world = &self.world;
+        let name = |id: &uuid::Uuid| world.social.avatar_names.complete(id);
+        // a label still waiting for its name keeps the address: the
+        // notification is not drawn again once it comes (#947)
+        let app = |url: &str, link: &crate::slapp::AppLink| match crate::ui::chat::app_label(world, url, link) {
+            label if label == "…" => crate::slapp::unescape(url),
+            label => label,
+        };
+        let title = body_text(&crate::ui::chat::plain_text(&notice.title, name, app));
         if title.is_empty() {
             return;
         }
@@ -152,7 +158,7 @@ impl App {
             log::info!("system notification dropped by the throttle");
             return;
         }
-        let body = body_text(&crate::ui::chat::plain_text(&notice.body, name));
+        let body = body_text(&crate::ui::chat::plain_text(&notice.body, name, app));
         log::info!("system notification shown ({})", kind_of(notice.open));
         let st = &mut self.attention;
         st.next_id += 1;

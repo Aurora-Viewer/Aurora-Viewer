@@ -498,20 +498,20 @@ fn local_sub(world: &World, st: &ChatUi) -> String {
 }
 
 /// The last message of a conversation in a few words: "Name: text", ours
-/// "You: text", an emote as it reads.
+/// "You: text", an emote as it reads; its links by their labels, as in the
+/// conversation (#947), the entry eliding the result.
 fn preview(world: &World, line: &crate::world::ChatLine, named: bool) -> String {
     let own = world.own_name();
     let name = super::sender_name(world, &own, line);
     let (text, _) = super::line_body(line, &name);
-    let text = world.rlva_filter_text(&text).into_owned();
+    let text = super::resolved_text(world, &text);
     let text: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
     if emote || line.kind.is_notice() {
         text
     } else if line.kind == crate::world::ChatKind::Own {
         aurora_i18n::tr!("ui-chat-preview-you", text = text.as_str()).to_owned()
-    } else if named {
-        let first = name.split_whitespace().next().unwrap_or(&name);
+    } else if named && let Some(first) = name.split_whitespace().next() {
         format!("{first} : {text}")
     } else {
         text
