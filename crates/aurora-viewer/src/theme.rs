@@ -107,6 +107,11 @@ pub struct Palette {
     /// may give them a dark one.
     pub on_accent: Color32,
     pub panel_alpha: u8,
+    /// The high contrast palette of Preferences › Accessibility
+    /// (`crate::high_contrast`): buttons, fields, windows, islands and
+    /// dividers then get a light border (`muted_dim`), which the usual look
+    /// leaves out.
+    pub high_contrast: bool,
 }
 
 impl Palette {
@@ -120,14 +125,20 @@ impl Palette {
 }
 
 impl Theme {
-    /// The colors, adapted to the colour blindness chosen in the
-    /// preferences (`crate::colorblind`).
+    /// The colors, those of the high contrast palette instead of the skin's
+    /// when it is chosen (`crate::high_contrast`), adapted to the colour
+    /// blindness chosen in the preferences (`crate::colorblind`).
     pub fn palette(&self) -> Palette {
         self.palette_for(crate::colorblind::current())
     }
 
     pub fn palette_for(&self, vision: crate::colorblind::Vision) -> Palette {
-        crate::colorblind::palette(self.skin_palette(), vision)
+        let base = if crate::high_contrast::current() {
+            crate::high_contrast::palette()
+        } else {
+            self.skin_palette()
+        };
+        crate::colorblind::palette(base, vision)
     }
 
     /// The colors as the skin writes them.
@@ -155,6 +166,7 @@ impl Theme {
             indigo_light: hex(&self.indigo_light),
             on_accent: hex(&self.on_accent),
             panel_alpha: self.panel_alpha,
+            high_contrast: false,
         }
     }
 
@@ -225,7 +237,25 @@ impl Theme {
         w.active.corner_radius = br;
         w.active.expansion = 0.0;
 
+        // High contrast (#906): every button, field and window shows a light
+        // border (3:1 at least against the black panels), the hovered and
+        // pressed ones a white one, and the pressed face is the light accent,
+        // so its text takes `on_accent`.
+        if p.high_contrast {
+            let border = Stroke::new(1.0, p.muted_dim);
+            w.noninteractive.bg_stroke = border;
+            w.inactive.bg_stroke = border;
+            w.hovered.bg_stroke = Stroke::new(1.0, p.ink);
+            w.active.bg_stroke = Stroke::new(1.0, p.ink);
+            w.active.fg_stroke = Stroke::new(1.0, p.on_accent);
+        }
+
         w.open = w.hovered;
+        if p.high_contrast {
+            v.window_stroke = Stroke::new(1.0, p.muted_dim);
+            v.window_shadow = egui::Shadow::NONE;
+            v.popup_shadow = egui::Shadow::NONE;
+        }
 
         let mut style = egui::Style {
             visuals: v,

@@ -1,6 +1,7 @@
 //! Preferences › Accessibility (Aurora's own page; the Legacy Viewer has
-//! no colour blindness option): the colour vision the interface adapts to
-//! (`crate::colorblind`, #418) with a preview of the status dots, the
+//! no colour blindness option): the high contrast palette
+//! (`crate::high_contrast`, #906), the colour vision the interface adapts
+//! to (`crate::colorblind`, #418) with a preview of the status dots, the
 //! reduced motion, and the ways to a larger interface.
 
 use super::super::Page;
@@ -12,6 +13,13 @@ use egui::{RichText, Sense, Vec2};
 pub fn page(cx: &mut Cx) {
     use aurora_i18n::tr;
     let p = cx.p;
+    cx.group(tr!("ui-options-contrast"), |cx| {
+        cx.toggle(
+            tr!("ui-options-high-contrast"),
+            tr!("ui-options-high-contrast-help"),
+            &field!(high_contrast),
+        );
+    });
     cx.group(tr!("ui-options-color-blindness"), |cx| {
         cx.note(tr!("ui-options-color-blindness-help"));
         let choices: Vec<(Deficiency, &str)> = Deficiency::ALL.iter().map(|d| (*d, d.label())).collect();

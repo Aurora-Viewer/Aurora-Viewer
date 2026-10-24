@@ -16,6 +16,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
             use aurora_i18n::tr;
             let p = cx.p;
             cx.group(tr!("extra-skin"), |cx| {
+                cx.link(
+                    tr!("ui-options-high-contrast"),
+                    tr!("ui-options-high-contrast-skin"),
+                    super::super::Page::Accessibility.name(),
+                    super::super::Page::Accessibility,
+                    0,
+                );
                 cx.note(tr!("ui-options-customize-colors-icons-and-the-toolbar-in"));
                 cx.below().row(tr!("ui-options-skin-folder"), "", &Nothing, |ui, _| {
                     let dir = crate::settings::config_dir().join("skins").join("aurora");

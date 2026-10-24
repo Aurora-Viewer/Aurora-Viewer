@@ -535,7 +535,7 @@ pub(crate) fn island_shape(ctx: &egui::Context, p: &Palette, rect: egui::Rect) -
     let visuals = &ctx.global_style().visuals;
     let radius = visuals.window_corner_radius;
     let shadow = visuals.window_shadow.as_shape(rect, radius);
-    let border = Stroke::new(1.0, p.ink.gamma_multiply(0.07));
+    let border = super::border_stroke(p, Stroke::new(1.0, p.ink.gamma_multiply(0.07)));
     let face = if p.panel_alpha < 255 {
         let alpha = (f32::from(p.panel_alpha) * ISLAND_TINT).round() as u8;
         let tint = Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), alpha);
@@ -564,7 +564,7 @@ pub(crate) fn overlay_frame(ctx: &egui::Context, p: &Palette) -> egui::Frame {
             p.panel.b(),
             p.panel_alpha,
         ))
-        .stroke(Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6)))
+        .stroke(super::border_stroke(p, Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6))))
         .corner_radius(visuals.window_corner_radius)
         .shadow(visuals.window_shadow)
 }
