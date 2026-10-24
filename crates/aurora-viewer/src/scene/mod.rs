@@ -734,6 +734,7 @@ pub struct Scene {
     /// selected (build/anim_pause.rs), set by the app each frame.
     pub paused_skeletons: HashSet<Uuid>,
     pub ik_edit: ik::EditRequest,
+    pub poser: HashMap<Uuid, Arc<crate::ik_edit::poser::SubjectPose>>,
     /// Follow receipt clocks instead of the Legacy Viewer's activation / pause clock.
     pub synchronize_animations: bool,
     pub ground_avatar_feet: bool,
@@ -1342,6 +1343,7 @@ impl Scene {
             movement_preview: None,
             paused_skeletons: HashSet::new(),
             ik_edit: ik::EditRequest::default(),
+            poser: HashMap::new(),
             synchronize_animations: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
@@ -4605,6 +4607,7 @@ impl Scene {
                 .copied()
                 .collect();
             for id in gone {
+                world.avatar_models.remove(&id);
                 if let Some(slot) = self.palette_slots.remove(&id) {
                     self.palette_free.push(slot);
                 }
@@ -4615,6 +4618,7 @@ impl Scene {
         let n = self.palette_count as usize * anim::PALETTE_JOINTS;
         if n == 0 {
             world.avatar_poses.clear();
+            world.avatar_models.clear();
             return completed;
         }
         if self.palettes.len() != n {
@@ -4688,6 +4692,12 @@ impl Scene {
             });
             motions.control = control;
             motions.point = point;
+            let model =
+                Self::object_transform(world, idx, now, 0).map(|(p, q, _)| anchors::skeleton_model(world, &self.meshes, idx, p, q, 1.0));
+            if let Some(model) = model {
+                world.avatar_models.insert(owner, model);
+            }
+            motions.poser = self.poser.get(&owner).zip(model).map(|(pose, model)| (pose.clone(), model));
             motions.sitting = !control && world.objects.get(idx).is_some_and(|o| o.parent_id != 0);
             let preview = if owner == world.agent_id && !self.ik_edit.active {
                 world.animation_preview_clock
@@ -4697,6 +4707,8 @@ impl Scene {
             let pose_now = preview.map_or(now, |(_, _, sample)| sample);
             motions.set_preview_clock(preview.map(|(id, start, _)| (Some(id), start)));
             motions.set_synchronized(self.synchronize_animations);
+            // The static layer freezes the displayed pose, while normal motion
+            // clocks keep running so Stop restores the current animation phase.
             motions.set_paused(
                 self.paused_skeletons.contains(&owner) || (owner == world.agent_id && self.ik_edit.active),
                 now,
@@ -4744,6 +4756,7 @@ impl Scene {
             // due (impostors.rs); its animations above still start and stop
             // on time
             if !every_frame
+                && motions.poser.is_none()
                 && owner != world.agent_id
                 && world.avatar_poses.contains_key(&owner)
                 && let Some(a) = self.far_avatars.get(&idx)
@@ -4809,7 +4822,8 @@ impl Scene {
             } else {
                 motions.evaluate(&rig, *pose_now, Some(base), chunk);
             }
-            if !motions.ik.has_external_targets()
+            if motions.poser.is_none()
+                && !motions.ik.has_external_targets()
                 && let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref())
             {
                 job.run(physics_rig, &rig, now, chunk);

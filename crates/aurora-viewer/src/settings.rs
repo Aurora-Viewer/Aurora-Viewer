@@ -648,6 +648,8 @@ pub struct Settings {
     /// Global RLVa opt-in. Session restrictions are never persisted.
     pub rlva_enabled: bool,
     pub rlva: crate::world::rlva::preferences::Preferences,
+    pub pose_requests: crate::world::poser_consent::Preferences,
+    pub poser: crate::ik_edit::poser::Config,
     /// Automatic responses and the kept online status modes.
     pub autoresponse: crate::world::status::AutoResponse,
     /// The chat bar as a command line (FSCmdLine*, Preferences › Chat ›
@@ -1443,6 +1445,8 @@ impl Default for Settings {
             anti_spam: Default::default(),
             rlva_enabled: false,
             rlva: Default::default(),
+            pose_requests: Default::default(),
+            poser: Default::default(),
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             keywords: Default::default(),

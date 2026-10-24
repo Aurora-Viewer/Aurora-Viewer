@@ -89,7 +89,7 @@ impl State {
 
 /// Inverse of Rig::world_with: parent scale affects offsets, never inherited
 /// rotations or child scale (LLXformMatrix). The avatar model is removed first.
-fn local_pose(rig: &Rig, frame: &Frame) -> Option<(ik::LocalPose, Vec<Vec3>)> {
+pub(super) fn local_pose(rig: &Rig, frame: &Frame) -> Option<(ik::LocalPose, Vec<Vec3>)> {
     let inverse = frame.model.inverse();
     let matrices: Vec<_> = frame
         .joints
@@ -127,6 +127,10 @@ impl Editor {
             || self.graph.definition.bindings.iter().any(|b| rig.names.get(&b.bone) == Some(&bone))
     }
     pub(super) fn commit_manipulation(&mut self, rig: &Rig, frame: &Frame, rotate: bool) {
+        if self.poser.active {
+            self.commit_poser_manipulation(rig, frame, rotate);
+            return;
+        }
         let Some(bone) = self.selected else { return };
         if self.pose_constrained(rig, bone) || self.clip.waiting_source() {
             self.commit();

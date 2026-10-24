@@ -1,4 +1,5 @@
-//! Read-only counterparts of getZOffsets/getScriptInfo in the Legacy Viewer
+//! Query services and explicit photo-posing consent relay. Read-only services
+//! correspond to getZOffsets/getScriptInfo in the Legacy Viewer
 //! (fsradar.cpp and fs_resources/EBEDD1D2-*.lsltxt, originally LGPL 2.1).
 //! They never consume the movement sequence or refresh its watchdog.
 use super::{Endpoint, gone_failure, http, transport_failure, valid_url};
@@ -12,9 +13,40 @@ const MAX_REPLY: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Query {
+    Pose { request: Uuid, kind: PoseKind, target: Uuid },
     Altitudes(Vec<Uuid>),
     ScriptInfo(Uuid),
     ObjectInfo(Uuid),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PoseKind {
+    Request,
+    Accept,
+    Refuse,
+    Cancel,
+    Withdraw,
+}
+impl PoseKind {
+    pub fn wire(self) -> &'static str {
+        match self {
+            Self::Request => "request",
+            Self::Accept => "accept",
+            Self::Refuse => "refuse",
+            Self::Cancel => "cancel",
+            Self::Withdraw => "withdraw",
+        }
+    }
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "request" => Self::Request,
+            "accept" => Self::Accept,
+            "refuse" => Self::Refuse,
+            "cancel" => Self::Cancel,
+            "withdraw" => Self::Withdraw,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,6 +96,7 @@ pub struct ObjectInfo {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reply {
+    Pose,
     Altitudes(Vec<Altitude>),
     ScriptInfo(ScriptInfo),
     ObjectInfo(Box<ObjectInfo>),
@@ -72,6 +105,7 @@ pub enum Reply {
 impl Query {
     pub fn valid(&self) -> bool {
         match self {
+            Self::Pose { request, target, .. } => !request.is_nil() && !target.is_nil(),
             Self::Altitudes(ids) => {
                 !ids.is_empty()
                     && ids.len() <= MAX_AVATARS
@@ -83,6 +117,7 @@ impl Query {
     }
     fn body(&self, token: Uuid) -> String {
         match self {
+            Self::Pose { request, kind, target } => format!("query|{token}|pose|{},{request},{target}", kind.wire()),
             Self::Altitudes(ids) => format!(
                 "query|{token}|altitudes|{}",
                 ids.iter().map(Uuid::to_string).collect::<Vec<_>>().join(",")
@@ -98,6 +133,7 @@ impl Query {
         let value: Value = serde_json::from_slice(bytes).ok()?;
         let values = value.as_array()?;
         match self {
+            Self::Pose { .. } => values.is_empty().then_some(Reply::Pose),
             Self::Altitudes(requested) => {
                 if values.len() > requested.len() * 2 || values.len() % 2 != 0 {
                     return None;

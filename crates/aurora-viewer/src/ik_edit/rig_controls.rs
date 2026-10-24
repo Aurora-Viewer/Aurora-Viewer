@@ -119,6 +119,10 @@ impl Mirrors {
                     format!("{stem}Left")
                 } else if let Some(stem) = name.strip_prefix("L_") {
                     format!("R_{stem}")
+                } else if let Some(stem) = name.strip_prefix("LEFT_") {
+                    format!("RIGHT_{stem}")
+                } else if let Some(stem) = name.strip_prefix("RIGHT_") {
+                    format!("LEFT_{stem}")
                 } else {
                     let stem = name.strip_prefix("R_")?;
                     format!("L_{stem}")

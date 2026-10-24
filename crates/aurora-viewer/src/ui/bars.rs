@@ -22,6 +22,7 @@ use egui::{Color32, RichText, Vec2};
 #[derive(Default)]
 pub enum BarAction {
     IkEdit,
+    Poser,
     CheckUpdates,
     ReportBug,
     /// Help › Report Abuse (LLFloaterReporter::showFromMenu).
@@ -1087,6 +1088,9 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
 }
 
 fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str) {
+    if menu::item(ui, p, "wand", aurora_i18n::tr!("poser-title")) {
+        *action = BarAction::Poser;
+    }
     if menu::item_keys(ui, p, "bone-filled", aurora_i18n::tr!("ik-edit-title"), ik_keys) {
         *action = BarAction::IkEdit;
     }
@@ -1697,6 +1701,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         }
         "build" => return BarAction::Build(0),
         "ik_edit" => return BarAction::IkEdit,
+        "poser" => return BarAction::Poser,
         "profile" => return BarAction::MyProfile,
         "reporter" => return BarAction::ReportAbuse,
         "teleport_history" => return BarAction::TeleportHistory,

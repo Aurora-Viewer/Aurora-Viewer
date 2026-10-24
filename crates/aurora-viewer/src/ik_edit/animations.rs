@@ -390,7 +390,7 @@ fn frame_controls(ui: &mut egui::Ui, frame: &mut u32, last: u32) {
 
 impl Editor {
     pub fn tick_animations(&mut self, streamer: &mut AnimStreamer, inv: &mut Inventory) {
-        if self.open {
+        if self.open && !self.poser.active {
             if self.project.picking_notecard()
                 && let Some(root) = actions::system(inv, 7)
             {

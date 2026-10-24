@@ -1,16 +1,19 @@
-// Aurora LSL Bridge read-only services v1.33: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge query and posing-consent services v1.34: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.33";
+string VERSION = "1.34";
 string gURL;
 key gToken;
 key gURLRequest;
 key gOwner;
 integer DISCOVERY_CHANNEL = -184735219;
 integer gListener;
+integer gPoseListener;
+integer POSE_CHANNEL = -184735220;
+list gPosePeers;
 integer gPaired;
 float gNextHello;
 
@@ -29,10 +32,25 @@ initialize() {
     llListenRemove(gListener);
     // Same owner-filtered, root-addressed probe as the movement controller.
     gListener = llListen(DISCOVERY_CHANNEL, "", gOwner, "auroraHello|" + (string)llGetKey());
+    llListenRemove(gPoseListener);
+    gPoseListener = llListen(POSE_CHANNEL, "", NULL_KEY, "");
+    gPosePeers = [];
     requestURL();
 }
 query(key request, string kind, string targets) {
-    if (kind == "altitudes") {
+    if (kind == "pose") {
+        list fields = llParseStringKeepNulls(targets, [","], []);
+        string action = llList2String(fields, 0);
+        key nonce = llList2Key(fields, 1);
+        key target = llList2Key(fields, 2);
+        if (llGetListLength(fields) != 3 || !nonce || !target || target == gOwner
+            || llListFindList(["request", "accept", "refuse", "cancel", "withdraw"], [action]) < 0) {
+            llHTTPResponse(request, 400, "invalid"); return;
+        }
+        // Explicit commands only: no advertisement, discovery or viewer probe.
+        llRegionSayTo(target, POSE_CHANNEL, "pose1|" + (string)nonce + "|" + action + "|" + (string)target);
+        llHTTPResponse(request, 200, "[]");
+    } else if (kind == "altitudes") {
         // Comma-separated 36-character keys, read at a fixed stride.
         integer length = llStringLength(targets);
         integer count = (length + 1) / 37;
@@ -85,6 +103,9 @@ default {
         else {
             gPaired = FALSE;
             llListenRemove(gListener);
+            llListenRemove(gPoseListener);
+            gPoseListener = 0;
+            gPosePeers = [];
             gListener = 0;
             llSetTimerEvent(0.0);
             llReleaseURL(gURL);
@@ -101,6 +122,31 @@ default {
         }
     }
     listen(integer channel, string name, key sender, string message) {
+        if (channel == POSE_CHANNEL) {
+            if (!llGetAttached() || !gPaired || llStringLength(message) > 130) return;
+            list fields = llParseStringKeepNulls(message, ["|"], []);
+            if (llGetListLength(fields) != 4 || llList2String(fields, 0) != "pose1" || llList2Key(fields, 3) != gOwner) return;
+            key nonce = llList2Key(fields, 1);
+            string action = llList2String(fields, 2);
+            if (!nonce || llListFindList(["request", "accept", "refuse", "cancel", "withdraw"], [action]) < 0) return;
+            key peer = llGetOwnerKey(sender);
+            if (!peer || peer == sender || peer == gOwner) return;
+            list attached = llGetObjectDetails(sender, [OBJECT_ATTACHED_POINT]);
+            if (llGetListLength(attached) != 1 || llList2Integer(attached, 0) <= 0) return;
+            if (action == "request") {
+                integer at = llListFindList(gPosePeers, [peer]);
+                integer now = llGetUnixTime();
+                if (at >= 0) {
+                    if (now - llList2Integer(gPosePeers, at + 1) < 5) return;
+                    gPosePeers = llDeleteSubList(gPosePeers, at, at + 1);
+                }
+                if (llGetListLength(gPosePeers) >= 64) gPosePeers = llDeleteSubList(gPosePeers, 0, 1);
+                gPosePeers += [peer, now];
+            }
+            // Authenticated owner identity, never a claimed avatar from the payload.
+            llOwnerSay("<auroraPose>" + (string)nonce + "|" + action + "|" + (string)peer + "</auroraPose>");
+            return;
+        }
         if (!llGetAttached() || sender != gOwner || llGetTime() < gNextHello) return;
         gNextHello = llGetTime() + 5.0;
         // Once probed, a replaced URL is announced without waiting for the viewer.

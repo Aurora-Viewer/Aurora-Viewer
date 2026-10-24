@@ -18,7 +18,7 @@ const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.33";
+const VERSION: &str = "1.34";
 const DISCOVERY_CHANNEL: i32 = -184735219;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
@@ -1142,6 +1142,7 @@ impl Bridge {
                     && [
                         "<auroraBridge>",
                         "<auroraBridgeQuery>",
+                        "<auroraPose>",
                         "<auroraMoveLock>",
                         "<auroraBridgeError>",
                         "<auroraBridgeStatus>",
@@ -1167,6 +1168,19 @@ impl Bridge {
                             Err(_) => {}
                         }
                     } else if chat.source_id == self.object {
+                        if chat.message.starts_with("<auroraPose>")
+                            && self.available()
+                            && world
+                                .objects
+                                .index_of_uuid(&self.object)
+                                .and_then(|i| world.objects.get(i))
+                                .is_some_and(|o| Some(o.key.region) == world.main_region)
+                        {
+                            let mut consent = std::mem::take(&mut world.poser_consent);
+                            consent.sync(world, now);
+                            consent.receive(world, &chat.message, now);
+                            world.poser_consent = consent;
+                        }
                         if let Some(boot) = boot_status(&chat.message, self.folder)
                             && world
                                 .worn_attachment(&self.item)

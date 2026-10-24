@@ -34,6 +34,7 @@ $pages = @(
     @{ Section = 'For testers'; Page = 'Hand-contacts'; Title = 'Motorcycle hand contacts'; Source = 'docs/HAND_CONTACTS.md' }
     @{ Section = 'For testers'; Page = 'IK-Edit'; Title = 'IK Edit and bone contacts'; Source = 'docs/IK_EDIT.md' }
     @{ Section = 'For testers'; Page = 'Animation-creation'; Title = 'Create native animations'; Source = 'docs/ANIMATION_CREATION.md' }
+    @{ Section = 'For testers'; Page = 'Poser'; Title = 'Local photo poser'; Source = 'docs/POSER.md' }
     @{ Section = 'For testers'; Page = 'Dev-Toolbox'; Title = 'Dev Toolbox'; Source = 'docs/DEV_TOOLBOX.md' }
     @{ Section = 'Contributing'; Page = 'Guide-for-humans'; Title = 'Guide for humans'; Source = 'HUMANS.md' }
     @{ Section = 'Contributing'; Page = 'Test-options'; Title = 'Test options and profiling'; Source = 'docs/TESTING.md' }

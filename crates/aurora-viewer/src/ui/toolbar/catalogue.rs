@@ -71,7 +71,7 @@ pub const COMMANDS: &[Command] = commands![
     "destinations", "map-2", "toolbar-command-destinations", false;
     "howto", "Command_HowTo_Icon", "toolbar-command-howto", false;
     "picks", "heart-filled", "toolbar-command-picks", false;
-    "poser", "wand", "toolbar-command-poser", false;
+    "poser", "wand", "toolbar-command-poser", true;
     "flickr", "brand-flickr", "toolbar-command-flickr", false;
     "primfeed", "rss", "toolbar-command-primfeed", false;
     "RFO", "user-check", "toolbar-command-friends-only", false;

@@ -66,7 +66,7 @@ impl App {
         } else {
             (self.settings.dof.clone(), None)
         };
-        if !s.enabled || (self.build.open && !s.in_edit) || !self.in_world() {
+        if !s.enabled || (self.build.open && !s.in_edit) || (self.ik_editor.posing() && !self.ik_editor.poser_dof()) || !self.in_world() {
             return None;
         }
         // the viewfinder's AF-S: the lens where its hunt has it (the image
