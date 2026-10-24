@@ -5979,6 +5979,7 @@ What the inventory must show with these scenarios:
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's) |
+| `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
@@ -6022,6 +6023,19 @@ What the inventory must show with these scenarios:
   as it is. OBS Studio's game capture (`VK_LAYER_OBS_HOOK`) is never
   disabled; `DISABLE_VULKAN_OBS_CAPTURE=1`, set by the user, does it. To
   see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
+- **`AURORA_GPU=<number>|<name>|auto`**: the adapter the renderer opens,
+  over Preferences › Graphics › Fluidity › Graphics card (#894): its number
+  in the `GPU adapter <n>:` lines of the log, or a part of its name in any
+  case (`nvidia`, `intel`); `auto` or empty for the automatic choice
+  (discrete before integrated, then the most video memory, among the
+  adapters that can present to the window). An adapter that is missing or
+  cannot present gives a warning and the automatic choice; one that fails
+  to open hands over to the next. The log lists every adapter Vulkan
+  shows, with its type, memory and whether it can present, then
+  `GPU adapter <n> chosen:` and why. When only an integrated GPU is listed
+  on a PC that has a dedicated one, the NVIDIA Control Panel's "Preferred
+  graphics processor" for `aurora-viewer.exe` hides it from Vulkan
+  (`VK_LAYER_NV_optimus`): the log says so.
 - **`AURORA_BANDWIDTH_KBPS=<n>`**: the "Maximum bandwidth" of Preferences ›
   Network and cache for this launch, without changing the saved setting,
   from 100 to 10,000. A session first asks its simulator for one and a
