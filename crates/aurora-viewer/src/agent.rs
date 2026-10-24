@@ -504,6 +504,16 @@ impl AgentState {
     /// controls can be tried without a grid (walk 3.2 m/s, run 5.1 m/s, fly,
     /// jump, terrain following). On a grid the simulator does this.
     pub fn simulate_locally(&mut self, input: &MoveInput, mouselook: bool, ground: Option<f32>, dt: f32) {
+        self.simulate_flight(input, mouselook, ground, dt, false);
+    }
+
+    /// Optional native-flight stand-in for offline navigation tests. Native
+    /// flight retains velocity after release; NUDGE is not a speed limiter.
+    pub fn simulate_native_flight(&mut self, input: &MoveInput, mouselook: bool, ground: Option<f32>, dt: f32) {
+        self.simulate_flight(input, mouselook, ground, dt, true);
+    }
+
+    fn simulate_flight(&mut self, input: &MoveInput, mouselook: bool, ground: Option<f32>, dt: f32, native_flight: bool) {
         // object center above the floor: half the default body height (SL
         // places the pelvis 0.13 m above it, see Scene::skeleton_of)
         const STAND: f32 = 0.84;
@@ -528,7 +538,7 @@ impl AgentState {
             dir -= left;
         }
         let speed = if self.flying {
-            10.0
+            if native_flight { 16.0 } else { 10.0 }
         } else if input.down {
             1.2 // crouch-walk
         } else if input.run {
@@ -536,8 +546,12 @@ impl AgentState {
         } else {
             3.2
         };
-        let nudge = if input.nudge_fb || input.nudge_lr { 0.4 } else { 1.0 };
-        let horiz = dir.normalize_or_zero() * speed * nudge;
+        let nudge = if (input.nudge_fb || input.nudge_lr) && !(native_flight && self.flying) {
+            0.4
+        } else {
+            1.0
+        };
+        let mut horiz = dir.normalize_or_zero() * speed * nudge;
         let floor = ground.map(|g| g + STAND);
         let mut pos = self.server_pos;
         let mut vz = self.server_vel.z;
@@ -554,6 +568,12 @@ impl AgentState {
             vz = if input.up { 5.0 } else { 0.0 };
         } else {
             vz -= 9.8 * dt;
+        }
+        if native_flight && self.flying {
+            let blend = 1.0 - (-dt / 0.5).exp();
+            let velocity = self.server_vel.lerp(Vec3::new(horiz.x, horiz.y, vz), blend);
+            horiz = velocity.with_z(0.0);
+            vz = velocity.z;
         }
         pos += Vec3::new(horiz.x, horiz.y, vz) * dt;
         if let Some(f) = floor
