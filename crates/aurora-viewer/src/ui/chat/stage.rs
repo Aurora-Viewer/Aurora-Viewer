@@ -473,7 +473,7 @@ fn person_menu(resp: &egui::Response, p: &Palette, name: &str, id: Uuid, volume:
         let title = aurora_i18n::tr!("ui-call-volume-of", name = name);
         ui.label(RichText::new(title).size(11.5).color(p.muted));
         let mut v = volume;
-        ui.add(egui::Slider::new(&mut v, 0.0..=1.0).show_value(false));
+        crate::ui::widgets::volume_slider(ui, &mut v, crate::ui::widgets::VolumeScale::Voice, true, |s| s.show_value(false));
         ui.horizontal(|ui| {
             ui.label(RichText::new("0 %").size(11.0).color(p.muted_dim));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

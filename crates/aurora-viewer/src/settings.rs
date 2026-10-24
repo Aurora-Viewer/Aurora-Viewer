@@ -1246,6 +1246,10 @@ pub struct AudioSettings {
     pub conversation_voice_indicator: bool,
     /// Volume 0..1 per channel (`AUDIO_CHANNELS`).
     pub volume: [f32; 7],
+    /// The volume sliders follow a loudness curve instead of the gain
+    /// (issue #463, off; `widgets::volume_slider`). The stored volumes stay
+    /// linear gains either way.
+    pub perceptual_volume: bool,
     pub muted: [bool; 7],
     /// Channel enabled (checkbox; the master has none).
     pub enabled: [bool; 7],
@@ -1307,6 +1311,7 @@ impl Default for AudioSettings {
             voice_visualizers_in_calls: true,
             conversation_voice_indicator: true,
             volume: [0.8, 0.5, 0.5, 0.5, 0.4, 0.5, 0.7],
+            perceptual_volume: false,
             muted: [false; 7],
             enabled: [true; 7],
             music_autoplay: false,

@@ -157,7 +157,7 @@ fn volume_menu(resp: &egui::Response, p: &Palette, name: &str, id: uuid::Uuid, s
         let before = v;
         ui.horizontal(|ui| {
             crate::ui::widgets::glyph(ui, "volume", p.muted, 14.0);
-            ui.add(egui::Slider::new(&mut v, 0.0..=1.0).show_value(false));
+            crate::ui::widgets::volume_slider(ui, &mut v, crate::ui::widgets::VolumeScale::Voice, true, |s| s.show_value(false));
         });
         if (v - before).abs() > f32::EPSILON {
             actions.push(ConvAction::SetVolume(id, v));
