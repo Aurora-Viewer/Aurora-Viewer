@@ -39,6 +39,23 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-traffic-indicator-help"),
                     &field!(show_net_stats),
                 );
+                // also a left click on the clock, and the island's right click
+                use crate::settings::ClockZone;
+                cx.choice(
+                    tr!("ui-options-clock-zone"),
+                    tr!("ui-options-clock-zone-help"),
+                    &field!(system_island.clock_zone),
+                    &[
+                        (ClockZone::Slt, tr!("ui-options-clock-zone-slt"), false),
+                        (ClockZone::Local, tr!("ui-options-clock-zone-local"), false),
+                        (ClockZone::Utc, tr!("ui-options-clock-zone-utc"), false),
+                    ],
+                );
+                cx.toggle(
+                    tr!("ui-options-clock-seconds"),
+                    tr!("ui-options-clock-seconds-help"),
+                    &field!(system_island.clock_seconds),
+                );
             });
             cx.group(tr!("common-windows"), |cx| {
                 // the interface's zoom has its own path, each frame

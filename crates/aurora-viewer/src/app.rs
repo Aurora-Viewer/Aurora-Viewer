@@ -11472,7 +11472,16 @@ impl App {
                     own_pic: self.avatar_pics.get(&self.world.agent_id),
                     recent: if classic_bars { Vec::new() } else { self.recent_places() },
                     favorites: &favorites,
-                    system_island: self.settings.system_island,
+                    system_island: if self.demo {
+                        let (demo, s) = (ui::bars::demo::get(), self.settings.system_island);
+                        crate::settings::SystemIsland {
+                            clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
+                            clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
+                            ..s
+                        }
+                    } else {
+                        self.settings.system_island
+                    },
                     net_stats: if self.demo {
                         ui::bars::demo::get().net_stats.unwrap_or(self.settings.show_net_stats)
                     } else {

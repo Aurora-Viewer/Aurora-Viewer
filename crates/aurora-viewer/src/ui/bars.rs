@@ -4,6 +4,7 @@
 //! over the world, is in `islands.rs` and `place.rs`; these full-width bars
 //! are its Firestorm look (Preferences › Aurora).
 
+pub(crate) mod clock;
 pub(crate) mod demo;
 pub mod dock;
 pub mod favorites;
@@ -254,18 +255,6 @@ pub fn maturity_name(sim_access: u8) -> &'static str {
         42 => aurora_i18n::tr!("common-adult"),
         _ => "",
     }
-}
-
-fn slt_time() -> String {
-    // SLT is US Pacific time; DST approximated by day of year (mid-March .. early Nov).
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let year_day = (secs / 86400).rem_euclid(365);
-    let off = if (68..=307).contains(&year_day) { -7 } else { -8 };
-    let t = (secs + off * 3600).rem_euclid(86400);
-    format!("{:02}:{:02}:{:02} SLT", t / 3600, (t / 60) % 60, t % 60)
 }
 
 /// Frame of the top and bottom bars: the `bar` color at the panels'
@@ -1535,8 +1524,21 @@ pub fn top_bars(
                     }
                     ui.label(small(format!("{} ms", st.ping_ms), p.muted))
                         .on_hover_text(aurora_i18n::tr!("ui-bars-region-latency"));
-                    ui.label(small(slt_time(), p.muted))
-                        .on_hover_text(aurora_i18n::tr!("ui-bars-second-life-time-pacific"));
+                    // a left click shows the next time (SLT, local, UTC)
+                    let island = st.system_island;
+                    let clock = ui
+                        .add(
+                            egui::Label::new(small(clock::text(island.clock_zone, island.clock_seconds), p.muted))
+                                .sense(egui::Sense::click()),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(clock::hover_text(island.clock_seconds));
+                    if clock.clicked() {
+                        action = BarAction::SystemIsland(crate::settings::SystemIsland {
+                            clock_zone: clock::next(island.clock_zone),
+                            ..island
+                        });
+                    }
                     if let Some(b) = st.balance {
                         // a click opens the L$ purchase
                         let balance = ui

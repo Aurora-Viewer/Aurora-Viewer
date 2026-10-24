@@ -52,6 +52,12 @@ pub struct SystemIsland {
     pub fps: bool,
     /// Media, music and volume.
     pub media: bool,
+    /// The time the bars' clock shows; a left click on it moves to the
+    /// next (#453, `ui/bars/clock.rs`).
+    pub clock_zone: ClockZone,
+    /// The clock's seconds (the Legacy Viewer's FSStatusBarTimeFormat
+    /// "Seconds" formats); on, as Aurora's clock always showed them.
+    pub clock_seconds: bool,
 }
 
 impl Default for SystemIsland {
@@ -61,8 +67,20 @@ impl Default for SystemIsland {
             ping: true,
             fps: true,
             media: true,
+            clock_zone: ClockZone::Slt,
+            clock_seconds: true,
         }
     }
+}
+
+/// The time of the bars' clock: Second Life time (US Pacific), the
+/// computer's own, or UTC.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ClockZone {
+    #[default]
+    Slt,
+    Local,
+    Utc,
 }
 
 /// How notifications arrive (Preferences › Aurora): unrolled from the bell
