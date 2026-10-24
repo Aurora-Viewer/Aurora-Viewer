@@ -44,6 +44,7 @@ mod hover_tips;
 mod ik_edit;
 mod imports;
 mod interaction;
+mod interface_colors;
 mod joystick;
 mod keybinds;
 mod keywords;
