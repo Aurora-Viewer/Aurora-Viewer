@@ -60,6 +60,9 @@ fn root(world: &World, idx: usize) -> Option<(usize, bool)> {
 
 pub fn final_action(world: &World, idx: usize) -> Option<u8> {
     let clicked = world.objects.get(idx)?;
+    if clicked.is_client_preview() {
+        return Some(code::DISABLED);
+    }
     let (root_idx, attached) = root(world, idx)?;
     let root = world.objects.get(root_idx)?;
     if clicked.click_action == code::DISABLED {

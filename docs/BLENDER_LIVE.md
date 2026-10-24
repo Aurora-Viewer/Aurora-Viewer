@@ -1,14 +1,86 @@
-# Blender Live Mesh
+# LiveMesh
 
-Blender Live sends your rigged mesh edits to your own animated avatar in
-Aurora. You can sculpt, move vertices, paint weights, edit UVs, adjust shape
-keys and geometry modifiers, and see the result without saving or uploading.
-The preview is local: other residents do not see it, and it does not create
-inventory items or charge an upload fee.
+LiveMesh sends rigged mesh edits to your own animated avatar and static
+mesh edits to local world objects or attachments in Aurora. You can sculpt,
+move vertices, paint weights, edit UVs, adjust shape keys and geometry modifiers,
+and see the result without saving or uploading. The preview is local: other
+residents do not see it, and it does not create inventory items or charge an
+upload fee.
+
+## Static objects (plug-in 0.13.0)
+
+LiveMesh accepts rigged and non-rigged mesh selections, including a mixture
+in the same synchronization list. Connect with the selection or use **Add
+selected meshes**. A static mesh needs neither an armature nor vertex weights;
+shape keys, geometry modifiers, UVs and live materials still work. Geometry is
+expressed in metres, retaining authored rotation/scale and ignoring the object's
+Blender scene translation; linked children retain their offsets from the root. An existing rig without valid weights remains an
+error rather than silently turning into a static object.
+
+With plug-in **0.14.0+**, adding several static meshes at once creates **one
+linkset**, even when they have no Blender parents. The active selected static
+mesh becomes the **root**; if the active object is rigged, the first static
+entry is used. Each mesh keeps its own geometry, materials, relative position,
+rotation and size. Rigged meshes stay outside these static linksets.
+
+With plug-in **0.14.1+**, click a name in Blender's synchronization list to select
+it. **Ctrl-click** (Cmd-click on macOS) adds or removes individual entries;
+**Shift-click** selects a range in the displayed order. **Group** groups only
+the selected static entries, using the active selected entry as root.
+**Ungroup** on a selected root makes its entire linkset independent. On selected
+children, it detaches only those children and keeps the other members linked.
+Select any member and click **Make root** to change the root of its complete
+linkset. These operations do not change Blender parents or object transforms.
+Removing a root from the list promotes a remaining member. Groups survive
+save/load, renaming, list reordering and Undo/Redo.
+
+Existing entries without an explicit group still follow Blender parenting:
+the highest synchronized static mesh parent is the root, including through
+intermediate empties. Explicit grouping overrides this hierarchy; Ungroup also
+keeps parented meshes independent in Aurora. The source list groups the prims under one
+root, numbered #1, #2 and onward, with an object/prim counter matching the build
+tools. Clicking Edit uses the whole linkset by default. Enable **Edit linked parts**
+in the normal build tools or object context menu to select a child alone.
+All static draw prims, including extra material batches, are direct children
+of the same root rather than nested objects. Rez, drop, derez, body/HUD attachment
+and detach apply to the complete set, even when
+requested from a child. Unparenting inherited groups or using Ungroup creates
+independent previews and preserves their current placement. Paused or absent
+roots are not referenced. Linksets require the viewer's `object-links` capability.
+
+Static objects initially appear on the floor two metres in front of your
+avatar. Select the source in Aurora's **LiveMesh** window to **Edit**, **Drop
+to ground**, **Derez**, **Attach to** a body point or **Attach to HUD**. **Detach**
+removes a worn preview; **Rez** brings it back. Derez/detach keep the source in
+the list and subsequent Blender edits never rez it automatically. The visible
+checkbox remains independent. **Stop** clears all session previews and placement.
+
+**Edit** uses the normal Aurora translation, rotation and size tools, with the
+same controls for body attachments and HUDs. Right-clicking any prim opens the
+ordinary object context menu, with Edit, Edit linked parts, Inspect and supported
+local attachment/removal actions.
+Inspect shows one object with its separate root and linked prims. Link/unlink
+authoring remains in Blender's synchronization list. Numeric
+position, rotation and size are also available below the source list; attachment
+positions use the attachment point's local frame. Dropping a body attachment
+retains its current orientation and horizontal location, resting its rotated
+bounds on the supporting floor or terrain below it. Elevated platforms and
+skybox floors are picked from scene geometry. Dropping a HUD places it in front of the avatar.
+
+Placement survives renaming, source reordering and live geometry/material
+updates. Size edits act as a multiplier over subsequent Blender dimensions.
+Render batches for extra materials stay part of one local source. Import/LOD
+preparation also accepts static sources, through the existing explicit importer.
+The optional `static-meshes` handshake feature protects older viewers: update
+Aurora if the plug-in reports it cannot preview non-rigged meshes.
+
+These objects remain local previews visible only in your viewer. They are not
+uploaded, saved in grid inventory or simulated by the server; no physics or
+script is started. Rigged sources continue to follow the avatar as before.
 
 ## Install and connect
 
-1. In Aurora, open **Build → Blender Live**. The **Plugins** section automatically
+1. In Aurora, open **Build → LiveMesh**. The **Plugins** section automatically
    detects local Blender installations and shows each executable's version,
    path and installed Aurora plug-in version. Click **Install**, **Update** or
    **Enable** on the desired row. Aurora chooses the compatible bundled package,
@@ -35,8 +107,8 @@ inventory items or charge an upload fee.
      permission: it communicates with `127.0.0.1` only.
    - **Blender 2.93–4.1:** choose the **classic add-on** package in Aurora.
      In Blender, open Preferences → Add-ons → Install, select the ZIP,
-     then enable **3D View: Aurora Live Mesh**. Keep the ZIP intact.
-3. In Aurora's **Blender Live** window, click **Enable preview**.
+     then enable **3D View: Aurora LiveMesh**. Keep the ZIP intact.
+3. In Aurora's **LiveMesh** window, click **Enable preview**.
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
 4. In Blender, open the 3D view sidebar (`N`) → **Aurora** → **Live**, then
@@ -89,11 +161,15 @@ existing entries and their enabled/paused state. You can prepare the list before
 connecting. If it is empty, **Connect to Aurora** adds the current mesh selection
 for convenience; an existing list is used independently of the current selection.
 
-Each row has a synchronization checkbox and a remove button. Unchecking an
-object removes it from the Aurora preview while retaining its list entry.
-Rechecking sends its latest geometry, weights and materials. The remove button
+Each row has a selectable name, a synchronization chain toggle and a remove
+button. Selected names are highlighted; the counter below the list shows the
+selection size. Turning synchronization off removes the object from the
+Aurora preview while retaining its list entry. Turning it back on sends its
+latest geometry, weights and materials. Clicking a name only selects entries
+for the list actions; it does not change the preview or the scene's 3D selection.
+Paused entries can also be selected and grouped. The remove button
 removes the entry and its preview, preserving the Blender object. Disabling or
-removing every entry sends an empty preview. Add/remove support Undo/Redo.
+removing every entry sends an empty preview. Add/remove and grouping support Undo/Redo.
 Renaming updates the displayed name and keeps the same object reference.
 Deleted objects are pruned at the next live tick or list operation.
 
@@ -102,7 +178,7 @@ connection and restores that file's saved list. During a connection, switching
 scenes schedules the new scene's enabled entries according to its update settings.
 **Update now** also retries the current enabled objects after an error. List
 changes respect the update mode and interval; in manual mode, click **Update now**
-to publish additions, pauses, resumptions or removals.
+to publish additions, pauses, resumptions, removals or grouping changes.
 
 The add-on reconnects automatically when Aurora becomes available again,
 resending its latest snapshot. Disconnecting Blender leaves the last good
@@ -113,7 +189,7 @@ off on each viewer launch, and changing accounts stops it.
 
 ## Manage objects and upload in Aurora
 
-Aurora's **Build → Blender Live** lists each source object by its Blender
+Aurora's **Build → LiveMesh** lists each source object by its Blender
 name, even if it spans several render batches. The window separates
 **Connection**, **Objects** and **Plugins** with horizontal lines and plain headings.
 Connection status appears beside the section title; port, loopback address and
@@ -181,7 +257,7 @@ continues to show its supported PBR materials.
 
 Both packages contain the same rig, automatic weights, live materials and
 transport. Install only one format in each Blender profile; disable any older
-Aurora Live Mesh installation before switching between the two formats.
+Aurora LiveMesh installation before switching between the two formats.
 Updating within the same format replaces the existing add-on. Blender 2.93 LTS
 is the minimum supported version; Blender 2.79 is not supported.
 
@@ -522,7 +598,7 @@ externally edited image in Blender; **Update now** also refreshes image caches.
 
 ### Send your shape to Blender
 
-With plug-in **0.10.0+** connected, Aurora's Blender Live **Connection** section
+With plug-in **0.10.0+** connected, Aurora's LiveMesh **Connection** section
 offers **Add a skeleton with my shape** and **Apply my shape to the selected
 skeleton**. Aurora requires the worn shape's resolved inventory item
 to belong to you and grant **Modify**. Missing inventory data or a no-modify
@@ -683,10 +759,23 @@ and acknowledgements do not advance or replace live mesh revisions.
 
 Snapshots have `protocol`, `revision` and `meshes`. Each mesh has `name`,
 `joints`, column-major `inverse_bind` matrices, and `faces`. The optional
+`static-meshes` capability permits empty `joints` and `inverse_bind` arrays;
+all static vertex joint indices and weights must be zero. A nonempty joint
+palette still requires valid positive weights. The optional
 `source_id` is a non-null UUID unique within a snapshot, identifying a scene's
 synchronization entry, never a grid asset. The add-on sends it only when the
 viewer advertises `source-ids`; older viewers continue to receive v1 meshes
 without that field. Older add-ons work with name-based identity.
+The optional `object-links` feature adds `link: {parent, offset}` to a static
+mesh. `parent` is a synchronized, unskinned root source UUID; `offset` is the
+child origin minus root origin, in metres in the same baked coordinate frame
+as its vertices. Each source keeps its own geometry and identity. Roots have
+no link, and the exporter flattens explicit LiveMesh groups and inherited
+Blender parenting to the same format. Missing, cyclic, rigged,
+self and excessive-offset links are rejected before installation. The worker
+orders roots before children independently of the synchronization-list order.
+A peer without this feature receives a clear update error for linked scenes.
+
 A face contains
 linear RGBA `color`, `vertices` and triangle `indices`; a vertex has `position`,
 `normal`, `uv`, four `joints` indices and four `weights`. `meshes: []` removes

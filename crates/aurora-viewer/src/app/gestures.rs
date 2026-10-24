@@ -518,6 +518,16 @@ impl App {
                 self.gesture_active(id, false, true);
             }
         }
+    }
+
+    /// LLAppViewer::idle steps the playing gestures (LLGestureMgr::update)
+    /// at every frame. Stepped with the half-second poll above, a short
+    /// wait lasted up to half a second more and a quick gesture played
+    /// again before its steps had run (#915).
+    pub(super) fn step_gestures(&mut self) {
+        if self.demo && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "replay") {
+            self.demo_replay_keys();
+        }
         self.tick_gestures();
     }
 
@@ -844,6 +854,7 @@ impl App {
             self.demo_documents.insert(item, data);
         }
         self.gesture_request(item, false, false, Some(true), false);
+        let replay = std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "replay");
         let (sound, clip) = crate::demo::chime();
         self.scene.sounds.insert(sound, clip);
         if let Some(mut sound_item) = self.world.inventory.items.get(&Uuid::from_u128(8105)).cloned() {
@@ -896,29 +907,129 @@ impl App {
                     false,
                 ),
             ] {
-                let mut it = template.clone();
-                it.id = Uuid::from_u128(id);
-                it.asset_id = Uuid::from_u128(id + 100);
-                it.name = name.into();
                 let definition = Gesture {
                     trigger: trigger.into(),
                     key,
                     steps,
                     ..Default::default()
                 };
-                if let Ok(data) = definition.encode() {
-                    self.demo_documents.insert(it.id, data);
+                self.seed_demo_gesture(&template, id, name, definition, active);
+            }
+            if replay {
+                for (id, name, definition) in demo_replay_gestures(sound) {
+                    self.seed_demo_gesture(&template, id, name, definition, true);
                 }
-                let item = it.id;
-                self.world.inventory.add_items(vec![it]);
-                self.gesture_request(item, false, false, active.then_some(true), false);
             }
         }
         self.panels.gestures = !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate"));
         if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| matches!(v.as_str(), "editor" | "numpad")) {
             self.gesture_action(Action::Open(item));
         }
+        if replay {
+            self.gesture_action(Action::Open(Uuid::from_u128(DEMO_CTRL_B)));
+        }
     }
+
+    fn seed_demo_gesture(&mut self, template: &aurora_net::inventory::InvItem, id: u128, name: &str, definition: Gesture, active: bool) {
+        let mut it = template.clone();
+        it.id = Uuid::from_u128(id);
+        it.asset_id = Uuid::from_u128(id + 100);
+        it.name = name.into();
+        if let Ok(data) = definition.encode() {
+            self.demo_documents.insert(it.id, data);
+        }
+        let item = it.id;
+        self.world.inventory.add_items(vec![it]);
+        self.gesture_request(item, false, false, active.then_some(true), false);
+    }
+
+    /// `AURORA_DEMO_GESTURES=replay`: the clap gesture's key pressed three
+    /// times a quarter of a second apart, then Ctrl+Z and Ctrl+B, through the
+    /// same rules as a real key press (the build shortcuts first).
+    fn demo_replay_keys(&mut self) {
+        let press = match self.frame_count {
+            650 | 665 | 680 => Some((DEMO_CLAP_KEY, 0)),
+            760 => Some((b'Z', 1)),
+            780 => Some((b'B', 1)),
+            _ => None,
+        };
+        let Some((key, mask)) = press else {
+            return;
+        };
+        let taken = crate::build::ui::Shortcut::for_gesture_key(key, mask, self.build.open);
+        let played = if taken.is_none() {
+            self.gesture_state.manager.key_trigger(key, mask)
+        } else {
+            None
+        };
+        log::info!(
+            "demo gesture key {}: {}",
+            crate::gestures::keys::shortcut(key, mask),
+            match (taken, played) {
+                (Some(shortcut), _) => format!("kept by the build shortcut {shortcut:?}"),
+                (None, Some(id)) => format!("plays {id}"),
+                (None, None) => "no gesture".to_owned(),
+            }
+        );
+        if let Some(id) = played {
+            self.gesture_play(id, Some(key));
+        }
+        self.gesture_state.manager.release(Some(key));
+    }
+}
+
+const DEMO_CLAP_KEY: u8 = 0xa7;
+const DEMO_CTRL_B: u128 = 951005;
+
+/// The `replay` scenario's gestures: a clap (a sound three times with short
+/// waits, the kind of gesture played back to back) and two Ctrl shortcuts.
+fn demo_replay_gestures(sound: Uuid) -> Vec<(u128, &'static str, Gesture)> {
+    let clap = |name| Step::Sound {
+        name,
+        asset: sound,
+        flags: 0,
+    };
+    let wait = || Step::Wait {
+        seconds: 0.3,
+        flags: aurora_assets::gesture::WAIT_TIME,
+    };
+    let name = aurora_i18n::tr!("gesture-demo-sound-name");
+    let chat = |text: &str| Step::Chat {
+        text: text.into(),
+        flags: 0,
+    };
+    vec![
+        (
+            951003,
+            aurora_i18n::tr!("gesture-demo-clap-name"),
+            Gesture {
+                trigger: "/clap".into(),
+                key: DEMO_CLAP_KEY,
+                steps: vec![clap(name.into()), wait(), clap(name.into()), wait(), clap(name.into())],
+                ..Default::default()
+            },
+        ),
+        (
+            951004,
+            "Ctrl+Z",
+            Gesture {
+                key: b'Z',
+                mask: 1,
+                steps: vec![chat("Ctrl+Z")],
+                ..Default::default()
+            },
+        ),
+        (
+            DEMO_CTRL_B,
+            "Ctrl+B",
+            Gesture {
+                key: b'B',
+                mask: 1,
+                steps: vec![chat("Ctrl+B")],
+                ..Default::default()
+            },
+        ),
+    ]
 }
 
 #[cfg(test)]

@@ -1810,7 +1810,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, prepared LOD import and permission-gated shape transfer |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, static object placement, LOD import and shape transfer |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
@@ -1829,10 +1829,40 @@ To check with these scenarios:
 
 `AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell
 on our animated avatar, through the production protocol and GPU skinning.
+`static` adds an editable unrigged green object on the terrain and selects it
+for the standard build tools. `static-linked` adds an orange child mesh beside
+the green root, sent child-first to verify order-independent parentage. The
+list shows both sources and their root relationship; editing the root selects
+the linked set. `static-linked-child` selects only the child with Edit linked.
+`static-linked-hud`, `static-linked-attached` and `static-linked-detached`
+exercise whole-family attachment or removal. `static-linked-menu` opens the
+native object menu on the child, preserving whole-linkset selection;
+`static-linked-hud-menu` exercises the worn local menu. Check the single root,
+indented prim numbers and object/prim counts. The Edit linked checkbox belongs to
+the native build tools and context menu; it is absent from the LiveMesh
+window. `static-hud` attaches it at HUD Center;
+`static-attached` attaches it to the right hand; `static-detached` removes its
+draw object while retaining the source row. Check numeric/gizmo transforms,
+body/HUD menus, detach/rez, source visibility and geometry updates, with the
+rigged shell remaining on the avatar.
 The listener accepts the Blender extension on port 17655. Check that live
 retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`
-objects using our avatar's skeleton. See [Blender Live](BLENDER_LIVE.md).
+objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
+
+Blender's synchronization-list linksets are exercised by
+`blender --background --factory-startup --python-exit-code 1 --python blender/tests/test_groups.py`.
+It covers unparented multi-add, active roots, plain/Ctrl/Shift row selection,
+range ordering and stable anchors, partial regrouping, whole-family root
+Ungroup, selective child Ungroup across multiple families, Blender parent
+overrides, root removal/promotion, paused and mixed rigged/static selections,
+stable source identities, coordinate units, save/load, Undo/Redo and
+automatic/manual update behavior. Check the native Blender list visually too:
+click names, Ctrl/Cmd-click two separate rows, Shift-click a displayed range,
+then Group only that selection. Ungroup a root alone and several children
+without the root. Selection highlights, the selected count, synchronization
+chain icons, root-first ordering and Group/Ungroup/Make root must remain usable
+in English and French without changing Blender's 3D selection.
 `objects` adds a belt and neck band, starts the belt hidden and the band
 removed. Toggle the belt and clear the objects; no restore button should
 appear. Each row's Import button opens that object's
@@ -3332,7 +3362,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_POPOUT=1\|option` | Conversations in their own windows: the friend's IM and a group popped out, or a group opened with the option on (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
@@ -3346,7 +3376,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, layout notecards, filters, drag feedback, windows, keyboard and search selection; `aurora…` modes show Aurora's window at each width |
-| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, completion and menu access |
+| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -4147,18 +4177,26 @@ failure. Grid validation and any paid upload are performed by the human.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
-- **`AURORA_DEMO_CONV_REORDER=1`**: with `AURORA_DEMO_CONV=aurora`
-  (also `aurora:compact` or `aurora:narrow`),
-  synthetic pointer events drag the first conversation after the next of
-  its category. Captures simulate logical focus without activating the
-  native window or taking the user's keyboard. Capture frames 690, 740 and 800 at `AURORA_FPS_LIMIT=60`
-  for the initial order, insertion marker and completed move. Manually
-  check upward/downward moves within private messages, groups and
-  conferences; reject drops across categories, on pinned entries and
-  outside the list; Escape cancels. A small pointer movement remains a
-  click. Check filtering, edge scrolling, close buttons, menus and switching
-  chat styles. Order lasts while those conversations remain open; closing
-  and reopening a conversation appends it again. No grid is needed.
+- **`AURORA_DEMO_CONV_REORDER=1|hold|out|nearby`**: with
+  `AURORA_DEMO_CONV=aurora` (also `aurora:compact`, `aurora:narrow` or
+  `legacy`), synthetic pointer events drag the first conversation after the
+  next of its category (pressed at frame 701, moved until frame 720, let go
+  at frame 760). Captures simulate logical focus without activating the
+  native window or taking the user's keyboard. Capture frames 690, 740 and
+  800 at `AURORA_FPS_LIMIT=60` for the initial order, the ghost under the
+  pointer with the entries moved apart where it lands, and the completed
+  move. `hold` never lets go: the ghost and the gap stay. `out` drops the
+  first conversation at the left of the Conversations window and `nearby`
+  the nearby chat (#910): its own window opens where the ghost was let go,
+  the ghost shows the Detach mark while it is outside the window. With
+  `nearby`, the chat island's button then shows and hides the nearby chat's
+  window alone. Manually check upward/downward moves within private
+  messages, groups and conferences; reject drops across categories and on
+  pinned entries; a drop inside the window but off the list does nothing;
+  Escape cancels. A small pointer movement remains a click. Check
+  filtering, edge scrolling, close buttons, menus and switching chat
+  styles. Order lasts while those conversations remain open; closing and
+  reopening a conversation appends it again. No grid is needed.
 
 - **`AURORA_DEMO_CONV_GIVE=away|over|many|drop|give`**: with `AURORA_DEMO_CONV=aurora`
   (also `aurora:compact` or `aurora:narrow`), an inventory drag starts at
@@ -5505,7 +5543,7 @@ and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
 
-**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|completion|completion-send|communicate|communicate-open`** — three synthetic gestures:
+**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|completion|completion-send|communicate|communicate-open`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
 inactive chime on F10. `manager` opens the list; `editor` also opens the
 chat gesture's editor; `play` starts the chat and animation at frame 650.
@@ -5515,6 +5553,15 @@ playback. Change and save its key or modifier to check other digits,
 Ctrl and Shift; keypad digit shortcuts also work with NumLock off.
 Capture at frame 620 for the list/editor, 680 during playback and 800
 after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+`replay` adds a clap gesture on F7 (the chime three times, 0.3 s apart),
+a gesture on Ctrl+Z and one on Ctrl+B, and opens the Ctrl+B gesture's
+editor, whose shortcut row warns that the build tools keep Ctrl+B. The
+scenario presses F7 at frames 650, 665 and 680, then Ctrl+Z at 760 and
+Ctrl+B at 780, through the rules of a real key press: run it with
+`AURORA_FPS_LIMIT=60` and read the `demo gesture key` and `demo sound
+trigger` lines of the log (each F7 press starts the clap over; Ctrl+Z
+plays its gesture while the build tools are closed; Ctrl+B is kept by
+them). Capture frame 620 for the editor's warning.
 `completion` gives the chat gesture the `/eject` trigger, focuses nearby
 chat at frame 540 and types `/ej` at frame 550: capture frame 620 to see
 `/eject` with the added `ect` selected. `completion-send` also presses
