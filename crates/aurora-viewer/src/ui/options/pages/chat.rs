@@ -84,6 +84,16 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-flash-conversations-button-hint"),
                     &field!(flash_conversations_button),
                 );
+                // "Flash chat toolbar button if new nearby chat arrived"
+                // (FSNotifyNearbyChatFlash), also in the button's right click
+                let off = !cx.s.flash_conversations_button;
+                cx.subs(off, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-flash-conversations-nearby"),
+                        tr!("ui-options-flash-conversations-nearby-hint"),
+                        &field!(flash_conversations_nearby),
+                    );
+                });
             });
             link_previews(cx);
         }

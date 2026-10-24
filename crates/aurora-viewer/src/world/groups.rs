@@ -992,6 +992,57 @@ mod tests {
         assert_eq!(sent(&mut w), vec![dialog::SESSION_LEAVE]);
     }
 
+    /// A snoozed group chat never flashes the Conversations button: its
+    /// messages are dropped before they reach the app; the first one after
+    /// the snooze flashes it like any group chat.
+    #[test]
+    fn a_snoozed_group_chat_does_not_flash_the_conversations_button() {
+        let (group, tess) = (Uuid::from_u128(10), Uuid::from_u128(7));
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Builders".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+        w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
+        w.on_session_invite(aurora_net::SessionInvite {
+            session: group,
+            from: tess,
+            from_name: "Tess Touch".into(),
+            message: "hi".into(),
+            session_name: "Builders".into(),
+            offline: false,
+            timestamp: 0,
+        });
+        let im = |text: &str| aurora_net::InstantMessage {
+            from_agent_id: tess,
+            from_name: "Tess Touch".into(),
+            to_agent_id: Uuid::nil(),
+            dialog: dialog::SESSION_SEND,
+            session_id: group,
+            message: text.into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        };
+        w.im_messages.clear();
+        assert!(w.snooze_group_chat(group, 3600));
+        assert!(w.on_session_im(&im("during")));
+        assert!(w.im_messages.is_empty(), "nothing reaches the app during the snooze");
+        w.groups.snooze(group, Instant::now());
+        assert!(w.on_session_im(&im("after")));
+        let flashes: Vec<bool> = std::mem::take(&mut w.im_messages)
+            .iter()
+            .map(|m| w.message_flashes_conversations(m))
+            .collect();
+        assert_eq!(flashes, vec![true], "the message after the snooze flashes");
+    }
+
     #[test]
     fn splitting() {
         assert_eq!(split_im("hello"), vec!["hello"]);

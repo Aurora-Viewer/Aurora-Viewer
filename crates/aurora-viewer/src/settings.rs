@@ -627,6 +627,10 @@ pub struct Settings {
     /// lit until it is opened; minimized, its bar flashes instead
     /// (FSNotifyIMFlash, on).
     pub flash_conversations_button: bool,
+    /// A resident's line of nearby chat flashes it too, while the window is
+    /// closed (FSNotifyNearbyChatFlash, on); the button's right-click menu
+    /// turns it off, IMs and group chats keep flashing.
+    pub flash_conversations_nearby: bool,
     /// Flash the taskbar button when a message, an offer or a mention
     /// arrives while the window is not in front (FSFlashOnMessage; on here,
     /// off in the Legacy Viewer: the point of #680 is not to miss them).
@@ -1493,6 +1497,7 @@ impl Default for Settings {
             typing_chevron: false,
             flash_unread_conversations: true,
             flash_conversations_button: true,
+            flash_conversations_nearby: true,
             flash_on_message: true,
             flash_on_object_im: true,
             flash_on_script_dialog: false,

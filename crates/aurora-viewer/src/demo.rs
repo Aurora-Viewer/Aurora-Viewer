@@ -61,6 +61,9 @@ pub mod collisions;
 /// (AURORA_DEMO_CONFERENCE).
 #[path = "demo_conference.rs"]
 pub mod conference;
+/// The Conversations button flashing (AURORA_DEMO_CONV_BUTTON).
+#[path = "demo_conv_button.rs"]
+pub mod conv_button;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
