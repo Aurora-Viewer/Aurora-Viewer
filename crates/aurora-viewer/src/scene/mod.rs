@@ -4659,10 +4659,12 @@ impl Scene {
             } else {
                 world.look_at.remote.get(&owner).copied()
             };
-            let look = match target {
-                None => Some((false, None)),
-                Some(t) if t.kind == crate::world::lookat::NONE => Some((true, None)),
-                Some(t) => match (self.look_target_pos(world, owner, &t, now), self.head_world(world, &owner, now)) {
+            use crate::world::lookat::Gaze;
+            let ahead = owner == world.agent_id && world.look_at.own_ahead;
+            let look = match crate::world::lookat::gaze(target, ahead) {
+                Gaze::Unknown | Gaze::Ahead => Some((false, None)),
+                Gaze::Cleared => Some((true, None)),
+                Gaze::At(t) => match (self.look_target_pos(world, owner, &t, now), self.head_world(world, &owner, now)) {
                     (Some(tp), Some(head)) => {
                         let rot = Self::object_transform(world, idx, now, 0).map(|x| x.1).unwrap_or(Quat::IDENTITY);
                         let d = rot.inverse() * (tp - head);

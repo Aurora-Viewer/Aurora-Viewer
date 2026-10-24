@@ -341,7 +341,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_POINTER=<points>` | Moves, clicks or holds the pointer over the interface |
 | `AURORA_DEMO_HOVER=1` or `"x,y"` | Cursor swept, or resting on a pixel, on hover |
 | `AURORA_DEMO_CLICKS=<ms>` | Clicks on the world at a regular rate |
-| `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave[,x,y]` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off |
+| `AURORA_DEMO_LOOKAT=1\|own[,x,y]\|targets\|leave[,x,y]\|ahead` | Gaze tracking and gaze of another avatar; `own` / `targets`: the look-at crosshairs; `leave`: an avatar looking at us logs off; `ahead`: our eyes come back straight when the look-at is turned off |
 | `AURORA_DEMO_POINTING=1\|release\|private\|remote\|remote-release\|aim` | Editing arm and gun targeting, driven by local selection or received point-at effects |
 | `AURORA_DEMO_KEYBOARD=<layout>` | Default movement and letter shortcut keys according to the layout |
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
@@ -651,6 +651,11 @@ when unfocused") is ignored during a screenshot.
   `own,x,y,side` also turns the camera beside our head from frame 300,
   aimed at a point in front of the face, which we then look at: the line
   leaves from between the eyes (capture at frame 420).
+  **`AURORA_DEMO_LOOKAT=ahead`**: from frame 300 the camera in front of our
+  face and our eyes on a point far to our left (a focus), then from frame
+  500 Privacy › "Send no target at all, not even to me" on (in memory): head
+  and eyes come back straight ahead (captures at frames 480 and 640),
+  instead of the eyes staying on the last point.
   **`AURORA_DEMO_LOOKAT=targets`**: `own`, and from frame 240 every other avatar looking
   somewhere new every 120 frames (focus and select points, the next avatar's
   eyes, free look, mouselook: one colour per type). With
