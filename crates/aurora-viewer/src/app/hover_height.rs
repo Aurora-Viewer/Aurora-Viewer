@@ -8,13 +8,13 @@ impl App {
                 crate::demo::grounding::tick(&mut self.world, &mut self.scene, self.frame_count, &mode);
                 if mode.contains("-transition") {
                     match self.frame_count {
-                        660 | 720 => self.settings.ground_avatar_feet = false,
-                        666 | 750 => self.settings.ground_avatar_feet = true,
+                        660 | 720 => self.settings.ground_avatar_feet = mode.contains("-legacy"),
+                        666 | 750 => self.settings.ground_avatar_feet = !mode.contains("-legacy"),
                         _ => {}
                     }
                 }
                 if self.frame_count == 600 {
-                    self.settings.ground_avatar_feet = !mode.ends_with("-off");
+                    self.settings.ground_avatar_feet = !mode.ends_with("-off") && !mode.contains("-legacy");
                     self.settings.ground_feet_while_moving = mode.contains("-moving");
                     self.settings.ground_feet_max_height = crate::settings::DEFAULT_GROUND_FEET_HEIGHT;
                     self.panels.chat = false;

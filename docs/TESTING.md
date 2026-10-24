@@ -2088,7 +2088,20 @@ That ignored test creates and removes its own isolated profile.
 
 `AURORA_DEMO_GROUNDING` places our avatar on a solid ramp (`slope`) or
 different-height steps (`steps`). `landing` starts with a synthetic standing-up
-clip on the ramp.
+clip on the ramp. The fixture hides the system skirt to expose both knees
+and ankles. Append `-legacy` (or `-off`) to select automatic native
+motion placement instead of Aurora. The native pass uses the emulated
+simulator foot plane and terrain only: on separate steps it follows the common
+plane, while Aurora follows each exact support. Compare `slope-front-legacy`
+and `slope-front`, then `steps-front-legacy` and `steps-front`.
+Append `-ao` to publish the same standing clip under a custom AO identity: native
+placement must leave it alone, while Aurora can still adapt its contacts.
+`landing-front-legacy` retains the authored leg bend and adapts the pelvis;
+`landing-front` uses Aurora's independent terrain correction.
+`-legacy-transition` starts in native mode, enables Aurora at frames 660/720,
+and returns to native at 666/750; ordinary `-transition` runs the reverse.
+Check the first toggle frame and frames after 0.5 s for continuity and a full
+return. Explicit contacts and IK Edit must keep control in either mode.
 The “Also while moving” preference defaults off. Append `-moving` to enable
 it in a grounding demo; compare `steps-front-motion` with
 `steps-front-motion-moving` at the same frames. Movement releases placement
@@ -2103,7 +2116,7 @@ and chairs must never acquire standing placement.
 The avatar is placed only once: walk, strafe, turn, crouch, fly or jump with
 the normal controls, then stop on either support. Jumps
 trigger recovery on actual return to the surface; walking uses the demo's
-normal gait clips. Append `-off` to compare the original keyframes, or
+normal gait clips. Append `-off` to compare native motion placement, or
 `-motion` for an automated side-step/stop/return/jump input sequence. Compare
 `slope-lift` with `slope-lift-off` (or `steps-lift` with `steps-lift-off`):
 the stand alternately raises each foot.
@@ -2111,7 +2124,7 @@ The raised leg must keep its authored clearance over the terrain, while the othe
 keeps its support. If a swing foot intersects a step, only the necessary
 upward correction should prevent penetration; it must not be forced down to
 the floor. `steps-front-walk` and `steps-reach-front-walk` use an independently
-authored walk with explicit stance/flight paths; `-off` exposes its source.
+authored walk with explicit stance/flight paths; `-off` selects native standing correction for this synthetic standing clip.
 On flat support, adaptation should retain that source animation. During real
 movement across a step, inspect the rendered body rather than its correction
 offset: a sudden change of the physical centre must not pop the body upward.
@@ -2133,7 +2146,7 @@ correction-height limit.
 `steps-range-reach-front` uses a 0.9 m upper support: the saved correction
 limit starts at 0.4 m, then changes to 1 m at frame 900. Compare frames 850
 and 950, and inspect the live slider in Preferences › Aurora › Animations
-(`AURORA_DEMO_OPTIONS=13:animations`). Feet and body must respect the limit;
+(`AURORA_DEMO_OPTIONS=avatars/3`). Feet and body must respect the limit;
 supports beyond it may remain out of reach. Ordinary modes use 0.4 m.
 `steps-rise-front-lift` must retain this height while either foot lifts and
 replants. An intentional crouch (normal downward control) must retain its
@@ -2143,7 +2156,7 @@ fixture moves west to keep the frontal camera outside the plaza deck): each
 knee must bend forward on its own side, including when either step is higher,
 and must not turn a nearly straight leg inward across the other knee. Inspect
 each foot's height and orientation, knee bending, and the recovery's return
-upright. Toggle Preferences › Aurora › Animations › Keep feet on the ground
+upright. Toggle Preferences › Avatars › Animations › Use Aurora foot placement
 without restarting: corrections enter and leave smoothly, and should behave
 alike at 30, 60 and 144 fps. Imported animation previews and higher-priority AO poses
 of priority 5/6 must retain control. These fixtures never connect to a grid.
@@ -3238,6 +3251,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
+| `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
@@ -4063,6 +4077,21 @@ failure. Grid validation and any paid upload are performed by the human.
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
 
+- **`AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]`**: from the 10th second in
+  world, Tess writes in the Aurora Builders group chat every 6 seconds
+  ("Group update number n"). The Snooze of a group chat (its head's button
+  beside the close one, or its entry's right-click menu) lasts `<seconds>`
+  instead of Preferences › Chat › Group chat snooze; `auto` snoozes that
+  chat by itself at the 14th second; `ask` asks the duration first, as
+  "Ask the duration at each snooze" does, without changing the saved
+  setting. The conversation leaves the list, its
+  messages are dropped (`snoozed group chat …: message dropped` in the
+  log), and the first one after the snooze opens it again with the
+  new-session sound (`group chat snooze over, reopening`). With
+  `AURORA_DEMO_SNOOZE=20,auto`, `AURORA_DEMO_CONV=aurora:group` and
+  `AURORA_FPS_LIMIT=60`: the chat at frame 780, gone at 1500, back at
+  2280 with the message of the 34th second. With `ask`, the dialog shows
+  from frame 840 until it is answered.
 - **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every
   8 seconds ("Are you there? (n)"), while the Conversations window is
   open. With another conversation shown, her entry (the column in
@@ -6307,7 +6336,8 @@ What the inventory must show with these scenarios:
   `AURORA_DEMO_GLYPHS=1` or to isolate a font problem. The log says
   `system fallback fonts: off`.
 - **`AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>`**: the interface
-  font (`Inter`, `Noto Sans`, `Roboto` or `system:<path of a .ttf>`) and
+  font (`Inter`, `Noto Sans`, `Roboto`, `OpenDyslexic` or
+  `system:<path of a .ttf>`) and
   scale (0.75 to 2) of this launch, without touching Preferences ›
   Fonts / Interface: to capture one screen with every font and scale in a
   row. Give the window the scale too (`AURORA_WINDOW_SIZE="2304,1296"` at

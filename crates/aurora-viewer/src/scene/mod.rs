@@ -4719,6 +4719,8 @@ impl Scene {
                 ik::EditRequest::default()
             };
             motions.ground = self.grounding_frame(world, idx, now);
+            motions.legacy_ground = self.legacy_grounding_frame(world, idx, now);
+            motions.aurora_feet = self.ground_avatar_feet;
             match look {
                 Some((true, _)) => motions.look_cleared = true,
                 Some((false, None)) => {
@@ -4788,7 +4790,7 @@ impl Scene {
             } else {
                 Vec::new()
             };
-            if let Some(frame) = &mut motions.ground {
+            for frame in [&mut motions.ground, &mut motions.legacy_ground].into_iter().flatten() {
                 let previous = world.avatar_shape_dz.get(&owner).copied().unwrap_or(0.0);
                 frame.to_world.w_axis.z += dz - previous;
                 frame.sole_height = self.grounding_sole_height(world, owner);
@@ -4815,13 +4817,15 @@ impl Scene {
                 *m = Mat4::IDENTITY.to_cols_array_2d();
             }
             let frame = motions.ground;
-            if let Some(frame) = frame {
-                motions.evaluate_on_ground(&rig, *pose_now, Some(base), chunk, |ankle| {
-                    self.ground_surface(world, frame, ankle, now)
-                });
-            } else {
-                motions.evaluate(&rig, *pose_now, Some(base), chunk);
-            }
+            let native_frame = motions.legacy_ground;
+            motions.evaluate_with_support(
+                &rig,
+                *pose_now,
+                Some(base),
+                chunk,
+                |point| frame.and_then(|frame| self.ground_surface(world, frame, point, now)),
+                |point| native_frame.and_then(|frame| self.legacy_ground_surface(world, frame, point)),
+            );
             if motions.poser.is_none()
                 && !motions.ik.has_external_targets()
                 && let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref())
@@ -4865,13 +4869,16 @@ impl Scene {
                 .filter_map(|w| chunks.get_mut(w.0).and_then(|c| c.take()).map(|c| (c, w)))
                 .collect();
             frame_par::for_each_mut(&mut jobs, POSES_GRAIN, |(chunk, (_, motions, base, owner, pose_now, physics))| {
-                if let Some(frame) = motions.ground {
-                    motions.evaluate_on_ground(&rig, *pose_now, Some(base), chunk, |ankle| {
-                        self.ground_surface(world, frame, ankle, now)
-                    });
-                } else {
-                    motions.evaluate(&rig, *pose_now, Some(base), chunk);
-                }
+                let frame = motions.ground;
+                let native_frame = motions.legacy_ground;
+                motions.evaluate_with_support(
+                    &rig,
+                    *pose_now,
+                    Some(base),
+                    chunk,
+                    |point| frame.and_then(|frame| self.ground_surface(world, frame, point, now)),
+                    |point| native_frame.and_then(|frame| self.legacy_ground_surface(world, frame, point)),
+                );
                 // Advance body physics only once, from the final constrained pose.
                 if let (Some(job), Some(physics_rig)) = (physics, physics_rig.as_deref()) {
                     job.run(physics_rig, &rig, now, chunk);
