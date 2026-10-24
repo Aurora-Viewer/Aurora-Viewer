@@ -15291,15 +15291,20 @@ impl ApplicationHandler for App {
                 crate::keywords::set(&self.keyword_settings());
                 self.panels.chat = true;
             }
-            // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
-            // interface sounds (audible: off by default for the captures)
+            // AURORA_DEMO_SOUND=1: a looped chime in the world; =hud:
+            // on a linked HUD prim. Interface sounds are enabled too.
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {
                 let (id, clip) = crate::demo::chime();
                 self.scene.sounds.insert(id, clip);
                 for id in self.settings.audio.ui.preload() {
                     self.scene.sounds.insert(id, crate::demo::ui_sound(id));
                 }
-                for ev in crate::demo::sound_events(id) {
+                let events = if std::env::var("AURORA_DEMO_SOUND").is_ok_and(|mode| mode == "hud") {
+                    crate::demo::hud::sound_events(id)
+                } else {
+                    crate::demo::sound_events(id)
+                };
+                for ev in events {
                     if let Some(e) = self.world.apply(ev) {
                         self.on_app_event(e);
                     }
