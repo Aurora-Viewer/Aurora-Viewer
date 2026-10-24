@@ -13,17 +13,25 @@ pose history are independent of the binding editor and virtual controls.
 
 ## Posing
 
-Open **Build > Poser**, or add Poser to the toolbar. The subject picker
-contains yourself, owned animesh roots and explicitly consenting nearby
-avatars. Other subjects must be within 50 m, in the same region and unmuted.
+Open **Build > Poser**, or add Poser to the toolbar. The window follows
+the layout validated on 2026-10-24: the subject strip (subject, posing
+status, "Visible to you only" with the full notice as tooltip, Start / Stop),
+the tabs, the joints column on the left and the selected joint on the right,
+then the file footer. The subject button opens a menu with yourself and your
+owned animesh roots, then every nearby avatar with its consent action (see
+Consent); Privacy › "Who can ask to pose my avatar" is its last entry. Other subjects must be within 50 m, in the same region and unmuted.
 Several subjects can retain independent poses at once. Eligibility is
 checked every frame; losing it removes the corresponding local pose.
 
 The pose captures the displayed shaped skeleton and overrides its final
 animation palette. Body, Face, Hands, Other bones and Physics expose the
 actual Bento joints and collision volumes. Whole-avatar movement is the
-first Body row. Paired joints have left/right chips; fingers are grouped
-into base, middle and tip. Edited joints have violet dots, including their
+first Body row. Each joint pair has one row: the **Side** selector above the
+list (Left / Right / Mirror) chooses which one is edited, and Mirror is the
+symmetry (the left joint is edited and its counterpart follows). A joint
+picked in the world shows its side in the selector. The Hands tab has the
+five presets, applied to the chosen side (both in Mirror, in one undo step),
+and a finger grid: finger × base, middle and tip. Edited joints have violet dots, including their
 in-world markers.
 Only the active tab's joints and shafts are visible and selectable. Changing
 tabs selects a joint in that group and replaces the previous group's gizmo.
@@ -51,10 +59,11 @@ the selected transform mode. This changes the pose without assigning a target.
 Loaded pose/animation translations also retain the captured shaped offsets;
 non-root displacement is retargeted through joint rotations.
 
-Mirror copies the selected joint to its counterpart. Flip, left-to-right
-and right-to-left operate on the full pose. Symmetry mirrors ongoing edits.
-The hand presets Relaxed, Fist, Open, Point and Pinch can be applied to
-either side. Undo/redo is independent per subject and retains 64 checkpoints;
+The joint's header holds its own actions: the world pin (lit while locked),
+Mirror (copies the joint to its counterpart) and Reset joint. The **Whole
+pose** group holds Flip, Left → right, Right → left, T-pose and Reset all.
+Mirror on the Side selector mirrors ongoing edits. The hand presets
+Relaxed, Fist, Open, Point and Pinch follow the Side selector. Undo/redo is independent per subject and retains 64 checkpoints;
 a continuous drag creates one checkpoint. Reset joint / Reset all restore
 the captured initial channels. T-pose restores the rig's neutral rotations.
 
@@ -68,8 +77,13 @@ poser. Poses affect only this viewer, including poses of other residents.
 Save writes a named `*.aurora-pose.json` under the current account's local
 `poses/` directory. It retains rotation, relative translation, scale and
 world-lock flags, without subject IDs, avatar names or world coordinates.
-Library mode widens the window with search, dates, refresh, load and open
-folder actions. Save's optional BVH output is next to the pose file.
+The book in the title bar shows the library in the joints column's place
+(the window keeps its size): back arrow, refresh, open folder, search, the
+entries with their date; a double click loads everything. Save's menu (its
+chevron) holds the optional BVH output next to the pose file, the pelvis
+unlock and the priority. Load's menu holds the four modes, applied to the
+selected library entry while the library is shown or to a file chosen
+otherwise, and "Open a file".
 
 Load accepts Aurora pose documents, native `.anim` files and `.bvh` files,
 up to 4 MiB. Animation imports sample their first frame. The four load modes
@@ -88,8 +102,9 @@ confirmation still require the human's action; saving never uploads.
 
 ## Consent
 
-**Other avatars, with consent…** lists every nearby avatar without probing
-their viewer or bridge. Ask sends one explicit request, with Cancel while
+The subject menu lists every nearby avatar without probing their viewer or
+bridge. Ask needs the worn bridge (the request travels through its query
+service): without it the button is disabled and the menu says why. Ask sends one explicit request, with Cancel while
 pending. The target sees the requester, distance, the local-only photo use,
 the session lifetime, Refuse, Accept and a permanent-request-block checkbox.
 Accepted targets keep a reminder with Withdraw even when Poser is closed.
@@ -113,6 +128,11 @@ checks the worn bridge root, owner and region before consuming the private
 owner-say tag. There are no IMs, software advertisements or capability probes.
 
 ## Settings and validation
+
+The gear of the title bar opens the settings as a panel over the joint,
+grouped Window (stop on close, DoF while posing), Handling (markers, natural
+alignment, trackball sensitivity) and Files (overwrite confirmation, BVH,
+pelvis unlock, priority), with the note on the formats' limits.
 
 Defaults were checked against the local Legacy Viewer source: stop on close,
 joint markers and natural alignment on; DoF in edit, additional BVH, pelvis

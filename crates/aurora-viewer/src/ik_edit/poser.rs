@@ -51,6 +51,25 @@ impl Default for Config {
         }
     }
 }
+/// What the poser window asks of the app, which owns the consent state and
+/// the Preferences: the subject menu lists the nearby avatars with their
+/// consent action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Request {
+    Ask(Uuid),
+    Cancel(Uuid),
+    OpenPrivacy,
+}
+/// Which side of the paired joints the window edits: the Côté selector. In
+/// `Mirror` the left joint is edited and its counterpart follows (the
+/// editor's symmetry).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Side {
+    #[default]
+    Left,
+    Right,
+    Mirror,
+}
 #[derive(Default)]
 pub(super) struct State {
     pub active: bool,
@@ -71,6 +90,11 @@ pub(super) struct State {
     filter: String,
     camera: Option<crate::build::geom::Cam>,
     scale_gizmo: scale_gizmo::Gizmo,
+    side: Side,
+    requests: Vec<Request>,
+    /// The worn bridge answers queries: the consent requests travel through
+    /// it (query.lsl), so Ask waits for it.
+    bridge_ready: bool,
 }
 impl Deref for State {
     type Target = Config;
@@ -101,9 +125,6 @@ impl Editor {
     pub(super) fn poser_edited(&self, bone: usize) -> bool {
         self.poser.active && self.poser.sessions.get(&self.poser.subject).is_some_and(|s| s.edited(bone))
     }
-    pub fn poser_open(&self) -> bool {
-        self.poser.active && self.open
-    }
     pub fn poser_dof(&self) -> bool {
         self.poser.active && self.poser.dof
     }
@@ -116,6 +137,14 @@ impl Editor {
     }
     pub fn posing(&self) -> bool {
         self.poser.active
+    }
+    /// The consent and Preferences actions chosen in the window since the
+    /// last call.
+    pub fn take_poser_requests(&mut self) -> Vec<Request> {
+        std::mem::take(&mut self.poser.requests)
+    }
+    pub fn set_poser_bridge(&mut self, ready: bool) {
+        self.poser.bridge_ready = ready;
     }
     pub fn select_pose_subject(&mut self, world: &World, id: Uuid) {
         self.pick_subject(world, id);

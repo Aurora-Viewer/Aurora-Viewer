@@ -232,6 +232,9 @@ mod tests {
                 }
             };
             let mut frames = Frames::new();
+            // the window minimized to its bar: the joint is in the middle of a
+            // screen narrower than the window and the drag happens in the world
+            crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
             let p = crate::theme::Theme::default().palette();
             let initial = editor.poser.sessions[&world.agent_id].pose.clone();
             let button = |pos, pressed| egui::Event::PointerButton {
