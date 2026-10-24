@@ -329,6 +329,7 @@ impl Motion {
 /// Motions and held pose of one avatar (or animesh).
 #[derive(Default)]
 pub struct Controller {
+    pub(super) poser: Option<(Arc<crate::ik_edit::poser::SubjectPose>, Mat4)>,
     pub(super) ik: super::ik::Pose,
     /// LLControlAvatar disables default head / eye motions.
     pub control: bool,
@@ -1166,12 +1167,13 @@ impl Controller {
             !protected(["mPelvis"; 3]) && !protected(["mHipLeft", "mKneeLeft", "mAnkleLeft"]),
             !protected(["mPelvis"; 3]) && !protected(["mHipRight", "mKneeRight", "mAnkleRight"]),
         ];
-        if self.control || self.preview_start.is_some() || self.ik.edit.active {
+        if self.control || self.preview_start.is_some() || self.ik.edit.active || self.poser.is_some() {
             self.placement = grounding::Placement::default();
         }
         let frame = self.ground.filter(|frame| {
             !self.control
                 && !self.ik.edit.active
+                && self.poser.is_none()
                 && self.preview_start.is_none()
                 && (frame.standing_anchor || frame.velocity_z.abs() < 0.5)
                 && !self
@@ -1215,7 +1217,10 @@ impl Controller {
         let (rotations, positions) = edited.as_ref().map_or((rotations, local_pos.as_slice()), |p| {
             (p.rotations.as_slice(), p.positions.as_slice())
         });
-        let world = rig.world_with(rotations, pelvis, positions, scale);
+        let world = self.poser.as_ref().map_or_else(
+            || rig.world_with(rotations, pelvis, positions, scale),
+            |(pose, model)| pose.matrices(rig, *model),
+        );
         if !hold_pose {
             self.update_live_morphs(now);
         }

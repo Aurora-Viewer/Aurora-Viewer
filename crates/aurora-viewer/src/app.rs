@@ -29,6 +29,7 @@ mod app_links;
 mod attention;
 mod bridge;
 mod movelock;
+mod poser;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
 mod avatar_health;
@@ -3308,9 +3309,7 @@ impl App {
                 &mut self.panels.texture_library,
             ),
             Action::IkEdit => {
-                if !self.ik_editor.open {
-                    self.ik_editor.toggle();
-                }
+                self.ik_editor.open_ik();
                 ui::widgets::open_floater(&self.egui_ctx, "ik-edit", &mut self.ik_editor.open);
             }
             Action::Gestures => ui::widgets::toggle_floater(&self.egui_ctx, "gestures", &mut self.panels.gestures),
@@ -6894,7 +6893,15 @@ impl App {
         self.update_bridge();
         self.update_region_restart();
         if self.demo
-            && let Ok(mode) = std::env::var("AURORA_DEMO_HAND_IK").or_else(|_| std::env::var("AURORA_DEMO_IK_EDIT").map(|_| "1".into()))
+            && let Ok(mode) = std::env::var("AURORA_DEMO_HAND_IK").or_else(|_| {
+                std::env::var("AURORA_DEMO_IK_EDIT").and_then(|m| {
+                    if m.starts_with("poser") {
+                        Err(std::env::VarError::NotPresent)
+                    } else {
+                        Ok("1".into())
+                    }
+                })
+            })
         {
             crate::demo::hand_ik::tick(&mut self.world, &mut self.scene, self.frame_count, &mode);
             if self.frame_count == 350 {
@@ -7156,14 +7163,29 @@ impl App {
             }
             // what carries an edited attachment stands still (pauseAssociatedAvatars)
             self.scene.paused_skeletons = crate::build::anim_pause::paused_skeletons(&self.world, &self.build.selection);
-            if self.world.teleporting && self.ik_editor.open {
-                self.ik_editor.toggle();
+            if self.world.teleporting {
+                self.ik_editor.stop_editing();
             }
             self.ik_editor.tick_project(&self.scene.jobs, &self.egui_ctx, &self.world);
             self.ik_editor.tick_animations(&mut self.scene.anims, &mut self.world.inventory);
             self.ik_editor
                 .tick_clip(&self.scene.jobs, &self.egui_ctx, self.world.avatar_lib.rig.clone());
             self.scene.ik_edit = self.ik_editor.request();
+            if self.demo
+                && let Ok(mode) = std::env::var("AURORA_DEMO_POSER")
+            {
+                self.poser_demo(&mode);
+            }
+            self.tick_poser_consent();
+            // Persist a sensitivity drag once it rests, like the other sliders.
+            if !self.egui_ctx.input(|i| i.pointer.any_down()) && self.ik_editor.sync_poser_settings(&mut self.settings.poser) {
+                self.settings.save();
+            }
+            self.scene.poser = self.ik_editor.pose_layers(&self.world);
+            self.ik_editor.tick_pose_storage(&self.scene.jobs, &self.egui_ctx, &self.world);
+            if !self.scene.poser.is_empty() {
+                self.scene.ik_edit = Default::default();
+            }
             if self.demo && crate::demo::animation_edit_demo() && matches!(self.frame_count, 420 | 630 | 750 | 930) {
                 log::info!("demo animation edit: {} frozen skeletons", self.scene.paused_skeletons.len());
             }
@@ -9999,6 +10021,10 @@ impl App {
             BarAction::IkEdit => {
                 self.ik_editor.toggle();
             }
+            BarAction::Poser => {
+                self.ik_editor.open_poser();
+                ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
+            }
             BarAction::Build(t) => {
                 match t {
                     1 => self.build.open_build(crate::build::Tool::Edit),
@@ -10011,7 +10037,7 @@ impl App {
                 self.flush_build();
             }
             BarAction::Logout => {
-                self.ik_editor.open = false;
+                self.ik_editor.stop_editing();
                 self.want_scene_capture = true;
                 self.release_bridge();
                 self.net.send(NetCommand::Logout);
@@ -11347,6 +11373,7 @@ impl App {
                 let here = parcel_landmark.as_ref().is_some_and(|lm| lm.favorite);
                 let favorites = self.favorites_view(favorites_shown, here);
                 let (classic_bars, islands) = self.bars_look();
+                self.poser_consent_ui(&ctx, &p);
                 let own_name = self.world.own_name();
                 // AURORA_DEMO_BARS: the long parcel name of the mockup (the
                 // islands only: Firestorm's bars stay as they were)
@@ -11759,14 +11786,16 @@ impl App {
                     },
                 );
                 self.ik_editor.show(&ctx, &p, &self.world, projector);
-                self.ik_editor.request_object_data(&mut self.world, Instant::now());
-                self.build.out.extend(self.ik_editor.take_prim_requests());
-                self.build.out.extend(self.ik_editor.take_project_commands(self.world.agent_id));
-                if self
-                    .ik_editor
-                    .apply_prim_edit(&mut self.world, &mut self.build, &mut self.settings.build)
-                {
-                    self.settings.save();
+                if !self.ik_editor.posing() {
+                    self.ik_editor.request_object_data(&mut self.world, Instant::now());
+                    self.build.out.extend(self.ik_editor.take_prim_requests());
+                    self.build.out.extend(self.ik_editor.take_project_commands(self.world.agent_id));
+                    if self
+                        .ik_editor
+                        .apply_prim_edit(&mut self.world, &mut self.build, &mut self.settings.build)
+                    {
+                        self.settings.save();
+                    }
                 }
                 for prepared in self.ik_editor.take_clip_imports() {
                     self.imports.authored_animation(
@@ -14894,7 +14923,7 @@ impl ApplicationHandler for App {
                     p.media.auto_scale = true;
                 }
             }
-            if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() {
+            if std::env::var_os("AURORA_DEMO_ANIMESH").is_some() || std::env::var("AURORA_DEMO_POSER").is_ok_and(|m| m == "animesh") {
                 if let Some(g) = &mut self.gfx {
                     self.scene.install_demo_animesh(&mut g.renderer);
                 }

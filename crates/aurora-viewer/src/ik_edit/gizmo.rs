@@ -48,30 +48,36 @@ pub(super) struct Geometry {
     tool: Tool,
 }
 
+/// Recover the current camera, including roll, from the rendered projection.
+pub(super) fn camera(proj: &Projector) -> Option<Cam> {
+    let inverse = proj.view_proj.inverse();
+    let unproject = |x, y, z, w| {
+        let p = inverse * Vec4::new(x, y, z, w);
+        p.truncate() / p.w
+    };
+    // A perspective camera's origin projects onto the clip Z axis.
+    let eye = unproject(0.0, 0.0, 1.0, 0.0);
+    let near = unproject(0.0, 0.0, 1.0, 1.0);
+    let up_span = unproject(0.0, 1.0, 1.0, 1.0) - unproject(0.0, -1.0, 1.0, 1.0);
+    let fov = 2.0 * (up_span.length() * 0.5 / near.distance(eye)).atan();
+    if !eye.is_finite() || !fov.is_finite() || !(0.01..3.13).contains(&fov) {
+        return None;
+    }
+    let mut cam = Cam::new(eye, near, proj.view_proj, fov, proj.width, proj.height, proj.ppp);
+    // Keep a rolled camera's actual up/right, too.
+    cam.up = up_span.try_normalize()?;
+    cam.left = cam.up.cross(cam.at).try_normalize()?;
+    Some(cam)
+}
+
 impl Geometry {
     pub fn new(proj: &Projector, pivot: Vec3, basis: Quat, tool: Tool) -> Option<Self> {
-        let inverse = proj.view_proj.inverse();
-        let unproject = |x, y, z, w| {
-            let p = inverse * Vec4::new(x, y, z, w);
-            p.truncate() / p.w
-        };
-        // A perspective camera's origin projects onto the clip Z axis.
-        let eye = unproject(0.0, 0.0, 1.0, 0.0);
-        let near = unproject(0.0, 0.0, 1.0, 1.0);
-        let up_span = unproject(0.0, 1.0, 1.0, 1.0) - unproject(0.0, -1.0, 1.0, 1.0);
-        let fov = 2.0 * (up_span.length() * 0.5 / near.distance(eye)).atan();
-        if !eye.is_finite() || !fov.is_finite() || !(0.01..3.13).contains(&fov) {
-            return None;
-        }
-        let mut cam = Cam::new(eye, near, proj.view_proj, fov, proj.width, proj.height, proj.ppp);
-        // Keep a rolled camera's actual up/right, too.
-        cam.up = up_span.try_normalize()?;
-        cam.left = cam.up.cross(cam.at).try_normalize()?;
+        let cam = camera(proj)?;
         if cam.depth(pivot) <= 0.05 {
             return None;
         }
         let pixels = if tool == Tool::Move { 50.0 } else { 100.0 } * proj.ppp;
-        let length = cam.depth(pivot) * (pixels / cam.height * fov).tan();
+        let length = cam.depth(pivot) * (pixels / cam.height * cam.fov_y).tan();
         Some(Self {
             cam,
             pivot,

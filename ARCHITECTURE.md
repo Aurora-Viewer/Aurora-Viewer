@@ -180,6 +180,37 @@ outliving their emitter share this path. Outside the known regions the main
 region supplies wind, as in the Legacy Viewer; without a main grid it is zero.
 The grid owns Legacy interpolation/scaling, and the simulator retains the
 Legacy velocity relaxation before target and acceleration updates.
+`ik_edit/poser.rs` adds Build > Poser over the same shaped Bento skeleton
+as the IK editor. `poser/overlay.rs` owns joint selection and manipulation,
+sharing skeleton geometry and transform gizmos. It bypasses IK projects,
+bone-to-prim/bone bindings, virtual controls, poles and object requests.
+`poser/kinematics.rs` uses the numerical chain solver for positional edits
+and world pins, retaining every shaped parent offset. Unreachable targets
+yield at the chain's reach. Imports retarget non-root translations through
+the same solver; only an unparented root may translate freely.
+Per-subject immutable pose snapshots
+override the final animation palette with local rotations, positions, scales
+and optional world locks; owned animesh use their actual skeleton model.
+Posed subjects bypass automatic grounding/body physics and remain fully
+updated when ordinary avatars would use impostors. Eligibility is checked
+every frame. Closing releases poses by default, with an explicit keep option.
+`poser/{data,controls,bones,ui}.rs` implement history, paired joint groups,
+presets, symmetry, numeric controls, trackball, library and settings.
+`poser/trackball.rs` projects joint axes and rotates in the rendered camera
+frame, including camera roll. `poser/scale_gizmo.rs` edits local scale channels
+with axis/uniform handles and one undo checkpoint per drag. Poser visibility
+uses the active Body/Face/Hands/Misc/Physics group for markers, shafts and hits;
+changing tabs replaces selection before drawing the scene overlay.
+`poser/{document,storage,bvh}.rs` keep identity-free, shape-relative pose
+documents, bounded file I/O and BVH export on the background pool. Native
+animation preparation reuses the existing document/codec and human-controlled
+import preview. Poser does not start IK-project autosaves or object imports.
+`world/poser_consent.rs` owns region-scoped request/accept/refuse/cancel/withdraw
+state, privacy, nonces, timeouts and cooldowns. `app/poser.rs` drives transport
+and the independent target modal/reminder. Bridge 1.34 adds authenticated
+attachment-to-attachment consent relay to `world/bridge/query.lsl`, using the
+existing private HTTPS query service. It sends no IM or viewer probe.
+See [the local trial and validation](docs/POSER.md).
 
 Native links share `ui/chat/action_marker.rs`: a parsed action chooses its
 Tabler icon before the unchanged destination text. Wrapping text

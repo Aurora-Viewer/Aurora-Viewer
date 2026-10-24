@@ -23,7 +23,7 @@ pub(super) struct State {
 
 impl Editor {
     pub fn sync_build(&mut self, world: &World, build: &BuildTool, settings: &BuildSettings, cursor: (f32, f32), mods: Mods) {
-        if !self.open {
+        if !self.open || self.poser.active {
             return;
         }
         if let Some(index) = self.take_project_target_selection().and_then(|id| world.objects.index_of_uuid(&id)) {
@@ -223,7 +223,7 @@ impl Editor {
     }
 
     pub fn link_target_definition(&self) -> Option<(&crate::world::rig_graph::Definition, Option<Uuid>)> {
-        self.open.then_some((&self.graph.definition, self.graph.source))
+        (self.open && !self.poser.active).then_some((&self.graph.definition, self.graph.source))
     }
 
     pub(super) fn stored_definition(&self) -> crate::world::rig_graph::Definition {

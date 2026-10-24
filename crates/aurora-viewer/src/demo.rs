@@ -18,6 +18,8 @@ pub mod anti_spam;
 pub mod beacons;
 #[path = "demo_pointing.rs"]
 pub mod pointing;
+#[path = "demo_poser.rs"]
+pub mod poser;
 
 #[path = "demo_texture_library.rs"]
 pub mod texture_library;

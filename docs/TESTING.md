@@ -1873,6 +1873,30 @@ That ignored test creates and removes its own isolated profile.
   source/owner metadata. Capture 620: contacts must still apply to the driver
   or observed rider. A simulator chat with a missing owner or known ownership
   conflict remains rejected; worn sources require the chat owner to be their actual wearer.
+- **`AURORA_DEMO_IK_EDIT=poser|poser-face|poser-hands`**: open the standalone
+  local poser at frame 420 and turn the head at frame 450. The face/hand
+  variants select a corresponding Bento joint. Capture 620: grouped bone
+  list, parent-local numeric controls, markers and native save/load/import
+  actions. No motorcycle, contacts or IK-project draft is loaded or written.
+  Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder`**:
+  the full handoff trial, with the real local pose layer and consent state
+  machine, on a standing avatar without motorcycle contacts or bone bindings.
+  The additional `connected` mode restores a T-pose at 450 and moves the
+  left wrist down/inwards at 480; capture 620 shows the bent elbow and
+  connected wrist, with the position inspector in avatar coordinates.
+  `camera` views the same head rotation from a quarter-turn camera orbit;
+  compare the trackball axes with `self`. `scale` shows the head's local
+  scale handles; `physics` shows the collision volume scale handles. All
+  body-part scenarios display only the selected tab's joints and shafts.
+  Open at frame 420, edit at 450, capture 620. Animesh selects an
+  owned synthetic control skeleton. Consent fixtures request at 450, answer
+  or expire at 480, and optionally withdraw at 560. Incoming-request and
+  reminder modes show the target UI; accept/withdraw modes select the peer
+  and edit its head at 510. Library widens the native window; settings and
+  the remaining modes select the corresponding controls. Synthetic events
+  do not validate real LSL delivery: two human-controlled grid clients must
+  check bridge 1.34 provisioning and the complete consent round trip.
 - **`AURORA_DEMO_IK_EDIT=1|move|release|gizmo|gizmo-local|gizmo-rotate`**: reuse the synthetic motorcycle,
   open IK Edit at frame 420, select the left wrist's palm point and the left
   linked target. `move` changes palm position and enables orientation;

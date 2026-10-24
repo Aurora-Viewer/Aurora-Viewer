@@ -304,6 +304,13 @@ impl Editor {
         true
     }
     pub fn tick_project(&mut self, jobs: &Jobs, ctx: &egui::Context, world: &World) {
+        if self.poser.active {
+            if world.teleporting || world.agent_id.is_nil() {
+                self.poser.active = false;
+                self.open = false;
+            }
+            return;
+        }
         if self.project.owner != Some(world.agent_id) && !world.agent_id.is_nil() {
             self.project = State::default();
             self.project.owner = Some(world.agent_id);

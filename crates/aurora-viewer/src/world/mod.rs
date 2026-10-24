@@ -56,6 +56,7 @@ pub mod parked;
 pub mod place_details;
 pub mod place_snapshots;
 pub mod pointat;
+pub mod poser_consent;
 pub mod profiles;
 pub mod radar;
 pub mod received_items;
@@ -260,6 +261,7 @@ pub struct World {
     /// Animated joint matrices (skeleton space, rest -> posed) of the avatars
     /// near the camera, so attachments follow their bone.
     pub avatar_poses: HashMap<Uuid, Vec<glam::Mat4>>,
+    pub avatar_models: HashMap<Uuid, glam::Mat4>,
     /// Root offset from body size, shape hover and mesh pelvis fixups.
     /// A ground animesh entry holds only its mesh pelvis fixup.
     /// The adjustable hover height stays live, independent of pose timing.
@@ -328,6 +330,7 @@ pub struct World {
     aliases_synced: u64,
     /// Block list (LLMuteList).
     pub mutes: mutes::MuteList,
+    pub poser_consent: poser_consent::State,
     /// Firestorm LSL bridge messages kept out of nearby chat.
     pub lsl_bridge: lslbridge::LslBridge,
     pub rlva: rlva::Rlva,
@@ -554,6 +557,7 @@ impl World {
             parked: HashMap::new(),
             appearances: HashMap::new(),
             avatar_poses: HashMap::new(),
+            avatar_models: HashMap::new(),
             avatar_shape_dz: HashMap::new(),
             water_float: Default::default(),
             bodies: HashMap::new(),
@@ -590,6 +594,7 @@ impl World {
             recent: Default::default(),
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
+            poser_consent: poser_consent::State::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
             hand_contacts: hand_ik::Contacts::default(),
             ik_targets: rig_targets::Targets::default(),

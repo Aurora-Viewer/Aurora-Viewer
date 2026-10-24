@@ -99,6 +99,7 @@ impl Demo {
                     Err(aurora_i18n::tr!("bridge-script-info-missing").into())
                 } else {
                     Ok(match query {
+                        Query::Pose { .. } => Reply::Pose,
                         Query::Altitudes(ids) => Reply::Altitudes(
                             ids.iter()
                                 .filter(|id| **id == SKY_VISITOR)

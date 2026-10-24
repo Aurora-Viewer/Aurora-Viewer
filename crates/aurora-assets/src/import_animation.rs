@@ -125,6 +125,15 @@ impl<'a> Tokens<'a> {
 }
 
 pub fn parse_bvh(bytes: &[u8], skeleton: &Skeleton) -> Result<Bvh, AssetError> {
+    parse_bvh_channels(bytes, skeleton, false)
+}
+
+/// A pose needs every static channel, including an entirely neutral T-pose.
+/// Ordinary motion imports retain their existing reference-frame reduction.
+pub fn parse_bvh_pose(bytes: &[u8], skeleton: &Skeleton) -> Result<Bvh, AssetError> {
+    parse_bvh_channels(bytes, skeleton, true)
+}
+fn parse_bvh_channels(bytes: &[u8], skeleton: &Skeleton, keep_static: bool) -> Result<Bvh, AssetError> {
     if bytes.len() > 64 * 1024 * 1024 {
         return Err(AssetError::TooLarge("BVH file"));
     }
@@ -196,8 +205,8 @@ pub fn parse_bvh(bytes: &[u8], skeleton: &Skeleton) -> Result<Bvh, AssetError> {
         let first = if frames > 1 { 1 } else { 0 };
         let mut rotations = Vec::new();
         let mut positions = Vec::new();
-        let mut rotation_changed = frames == 1;
-        let mut position_changed = frames == 1;
+        let mut rotation_changed = frames == 1 || keep_static;
+        let mut position_changed = frames == 1 || keep_static;
         for frame in first..frames {
             let (position, rotation) = pose(frame);
             rotation_changed |= ((rotation * Vec3::X - reference_rotation * Vec3::X).length()

@@ -4,8 +4,8 @@ use super::*;
 use crate::scene::{anim::BoundAnim, jobs::Jobs};
 use aurora_assets::Animation;
 use std::{collections::HashSet, sync::Arc};
-mod document;
-mod files;
+pub(super) mod document;
+pub(super) mod files;
 #[cfg(test)]
 mod tests;
 mod ui;
@@ -284,6 +284,7 @@ impl Editor {
     pub fn take_clip_imports(&mut self) -> Vec<Prepared> {
         let prepared = std::mem::take(&mut self.clip.prepared);
         if !prepared.is_empty() {
+            self.poser.active = false;
             self.leave_clip();
             self.open = false;
             self.cancel_link_pick();

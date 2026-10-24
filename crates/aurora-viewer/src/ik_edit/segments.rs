@@ -13,7 +13,7 @@ pub(super) struct Segment {
     pub a: (Pos2, f32),
     pub b: (Pos2, f32),
 }
-fn pick(segments: &[Segment], pointer: Pos2) -> Option<&Segment> {
+pub(super) fn pick(segments: &[Segment], pointer: Pos2) -> Option<&Segment> {
     segments
         .iter()
         .filter_map(|s| {
@@ -26,12 +26,24 @@ fn pick(segments: &[Segment], pointer: Pos2) -> Option<&Segment> {
 }
 
 impl Editor {
+    pub(super) fn bone_visible(&self, name: &str) -> bool {
+        if self.poser.active {
+            poser::group(name) == self.poser.group
+        } else {
+            self.visibility.visible(name)
+        }
+    }
     pub(super) fn skeleton_segments(&self, world: &World, proj: &Projector, frame: &Frame) -> Vec<Segment> {
         let rig = &world.avatar_lib.rig;
         let mut segments = Vec::new();
         let mut children = vec![false; rig.len()];
-        for (joint, _) in rig.canonical_names.iter().enumerate().filter(|(_, n)| self.visibility.visible(n)) {
-            if let Some(parent) = self.visibility.parent(rig, joint) {
+        for (joint, _) in rig.canonical_names.iter().enumerate().filter(|(_, n)| self.bone_visible(n)) {
+            let parent = if self.poser.active {
+                rig.parent[joint].filter(|b| self.bone_visible(&rig.canonical_names[*b]))
+            } else {
+                self.visibility.parent(rig, joint)
+            };
+            if let Some(parent) = parent {
                 children[parent] = true;
                 if let (Some(a), Some(b)) = (
                     proj.project(frame.joints[parent].w_axis.truncate()),
@@ -52,7 +64,7 @@ impl Editor {
                 .canonical_names
                 .iter()
                 .enumerate()
-                .filter(|(j, n)| !children[*j] && self.visibility.visible(n))
+                .filter(|(j, n)| !children[*j] && self.bone_visible(n))
             {
                 let Some(joint) = skeleton.joints.get(bone) else { continue };
                 if joint.end.is_finite()
@@ -70,7 +82,7 @@ impl Editor {
                 }
             }
         }
-        if !self.clip.active {
+        if !self.poser.active && !self.clip.active {
             segments.extend(self.virtual_segments(proj, frame));
         }
         segments
@@ -78,7 +90,9 @@ impl Editor {
     pub(super) fn draw_segments(&self, painter: &egui::Painter, palette: &Palette, segments: &[Segment]) {
         for s in segments {
             let selected = match s.source {
-                Source::Bone(b) => self.graph.selected.is_none() && self.selected == Some(b) && self.control == Control::Bone,
+                Source::Bone(b) => {
+                    (self.poser.active || self.graph.selected.is_none()) && self.selected == Some(b) && self.control == Control::Bone
+                }
                 Source::Node(id) => self.graph.selected == Some(id),
             };
             let color = if selected {
@@ -92,6 +106,14 @@ impl Editor {
         }
     }
     pub(super) fn point_owns_pointer(&self, ctx: &egui::Context, rig: &Rig, pointer: Pos2) -> bool {
+        if self.poser.active {
+            return ctx.memory(|m| {
+                (0..rig.len()).filter(|b| self.bone_visible(&rig.canonical_names[*b])).any(|b| {
+                    m.area_rect(egui::Id::unique(("poser-joint", b)))
+                        .is_some_and(|r| r.contains(pointer))
+                })
+            });
+        }
         ctx.memory(|m| {
             rig.canonical_names
                 .iter()

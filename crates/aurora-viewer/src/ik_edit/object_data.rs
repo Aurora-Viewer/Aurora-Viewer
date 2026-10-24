@@ -31,6 +31,9 @@ enum Status {
 
 impl Editor {
     pub fn request_object_data(&mut self, world: &mut World, now: Instant) {
+        if self.poser.active {
+            return;
+        }
         if self.object_data.pending.is_none() || !self.open || self.clip.active {
             world.cancel_object_ik();
         }

@@ -28,6 +28,7 @@ mod links;
 mod object_data;
 mod poles;
 mod pose;
+pub(crate) mod poser;
 mod prim_targets;
 mod profiles;
 mod project;
@@ -63,6 +64,7 @@ pub struct Editor {
     tab: u8,
     graph: graph::State,
     clip: clip::State,
+    poser: poser::State,
     prims: prim_targets::State,
     links: links::State,
     profiles: profiles::State,
@@ -112,14 +114,21 @@ pub struct Frame {
 
 impl Frame {
     pub fn new(world: &World) -> Option<Self> {
-        let index = world.objects.index_of_uuid(&world.agent_id)?;
+        Self::subject(world, world.agent_id)
+    }
+    pub fn subject(world: &World, subject: Uuid) -> Option<Self> {
+        let index = world.objects.index_of_uuid(&subject)?;
         let at = Instant::now();
         let (p, q, hud) = Scene::object_transform(world, index, at, 0)?;
         if hud {
             return None;
         }
-        let model = Mat4::from_rotation_translation(q, p) * Mat4::from_translation(-world.avatar_lib.pelvis);
-        let poses = world.avatar_poses.get(&world.agent_id)?;
+        let model = world
+            .avatar_models
+            .get(&subject)
+            .copied()
+            .unwrap_or_else(|| Mat4::from_rotation_translation(q, p) * Mat4::from_translation(-world.avatar_lib.pelvis));
+        let poses = world.avatar_poses.get(&subject)?;
         let rig = &world.avatar_lib.rig;
         if poses.len() < rig.len() {
             return None;
@@ -272,6 +281,10 @@ impl Editor {
     }
 
     pub fn demo_tick(&mut self, world: &World, frame: u64, mode: &str) {
+        if mode.starts_with("poser") {
+            self.poser_demo(world, frame, mode);
+            return;
+        }
         if frame == 420 {
             self.toggle();
             if ["library-empty", "library-new", "library-profile", "library-profile-name"].contains(&mode) {
@@ -565,6 +578,10 @@ impl Editor {
     }
 
     pub fn toggle(&mut self) {
+        if self.poser.active {
+            self.poser.active = false;
+            self.open = false;
+        }
         if self.open {
             self.leave_clip();
             self.open = false;
@@ -586,7 +603,10 @@ impl Editor {
     }
 
     pub fn request(&self) -> ik::EditRequest {
-        if !self.open {
+        if !self.open && !(self.poser.active && !self.poser.stop_on_close) {
+            return ik::EditRequest::default();
+        }
+        if self.poser.active {
             return ik::EditRequest::default();
         }
         if self.clip.active {
@@ -649,6 +669,10 @@ impl Editor {
     }
 
     fn select(&mut self, bone: usize, rig: &Rig, frame: &Frame) {
+        if self.poser.active {
+            self.select_pose_bone(bone, rig, frame);
+            return;
+        }
         self.graph.selected = None;
         self.graph.binding = self.graph.binding_index(bone, &rig.canonical_names);
         self.mirrors.initialize(rig);
@@ -781,16 +805,12 @@ impl Editor {
 
     fn show_gizmo(&mut self, ctx: &egui::Context, palette: &Palette, proj: &Projector, frame: &Frame, rig: &Rig) -> bool {
         let modifiers = ctx.input(|i| i.modifiers);
-        if self.clip.waiting_source()
-            || self.graph.selected.is_some()
+        if (!self.poser.active
+            && (self.clip.waiting_source() || self.graph.selected.is_some() || self.picking || self.prims.object_handles))
             || !self.gizmo_visible(modifiers)
             || modifiers.alt
-            || self.picking
-            || self.prims.object_handles
             || self.drag.is_some()
-            || self
-                .selected
-                .is_some_and(|bone| !self.visibility.visible(&rig.canonical_names[bone]))
+            || self.selected.is_some_and(|bone| !self.bone_visible(&rig.canonical_names[bone]))
         {
             self.gizmo.cancel();
             return false;
@@ -862,7 +882,15 @@ impl Editor {
         if !self.open {
             return;
         }
-        if let Some(frame) = Frame::new(world) {
+        if self.poser.active {
+            if world.teleporting {
+                self.stop_editing();
+            } else {
+                self.show_poser(ctx, palette, world, proj);
+            }
+            return;
+        }
+        if let Some(frame) = self.editor_frame(world) {
             self.poll_object_data(world, &frame);
         }
         if self.library_loading_ui(ctx, palette) {
@@ -878,11 +906,12 @@ impl Editor {
             }
         }
         if world.teleporting {
+            self.poser.active = false;
             self.leave_clip();
             self.open = false;
             return;
         }
-        let Some(frame) = Frame::new(world) else {
+        let Some(frame) = self.editor_frame(world) else {
             return;
         };
         let rig = &world.avatar_lib.rig;
