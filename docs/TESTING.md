@@ -3333,6 +3333,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -4198,6 +4199,20 @@ failure. Grid validation and any paid upload are performed by the human.
   "Report ignored conferences" adds a nearby chat line naming the inviter,
   "Except from my friends" lets Orion's through and still ignores Tess's.
   The log says `ignoring conference (ad-hoc) chat from <name>` for each.
+
+- **`AURORA_DEMO_CONV_LINE_MENU=1`**: with `AURORA_DEMO_CONV=aurora:group`
+  or `aurora:compact:group`, right-click a visible message at frame 702.
+  Combine with `AURORA_DEMO_SNOOZE=300` (without `auto`) and `AURORA_FPS_LIMIT=60`:
+  captures at frames 780 and 1500 show the same highlighted target while
+  new group messages arrive below the paused viewport. Inline place, avatar,
+  command and preview menus hold and highlight their containing message too.
+  The workspace's
+  New marker moves below the messages present when the menu opens and
+  stays before the first arrival. Escape, an outside click or a menu action
+  closes the menu, removes the highlight and resumes following if the
+  conversation was at its end beforehand. Repeat manually after scrolling
+  up: closing keeps the older reading position. Also check the sender menus
+  in Bubbles and Legacy, and Copy/Quote/Ignore against the original target.
 
 - **`AURORA_DEMO_CONV_SCROLL=up|new`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy` (the friend's

@@ -108,6 +108,8 @@ pub struct View {
     token: u64,
     revision: u64,
     len: usize,
+    /// Next sequence number at the last sync (independent of filtering).
+    next: u64,
     width: f32,
     filter: String,
     find: String,
@@ -135,11 +137,27 @@ pub struct View {
     /// The number after the last line when the reader left the end: the
     /// lines from it on came in since (`latest.rs` counts them).
     left_end: Option<u64>,
+    /// Bottom alignment last used by a short workspace conversation.
+    lift: f32,
+    /// A menu holds this alignment while new rows continue below it.
+    paused: Option<Pause>,
+    /// Closing a menu at the live end places rows there in the same frame;
+    /// the scroll area receives the finite content height after layout.
+    resume_following: bool,
+    /// Visible row positions relative to the viewport's top, for holding
+    /// the selected message when an older New marker moves away.
+    positions: Vec<(u64, f32)>,
     unmeasured: usize,
     /// Rows matching the find text, as indices of `rows`.
     hits: Vec<usize>,
     /// Row to bring in sight at the next `show`.
     scroll_to: Option<usize>,
+}
+
+struct Pause {
+    lift: f32,
+    following: bool,
+    anchor: Option<(u64, f32)>,
 }
 
 /// Case-insensitive search of `needle` (already lowercase) in `hay`: the
@@ -286,6 +304,40 @@ impl View {
         self.below
     }
 
+    pub(super) fn is_paused(&self) -> bool {
+        self.paused.is_some()
+    }
+
+    pub(super) fn next(&self) -> u64 {
+        self.next
+    }
+
+    /// Hold the viewport, including a short conversation's bottom padding.
+    /// Resume following only if the reader was at the end before the menu.
+    pub(super) fn pause(&mut self, paused: bool, selected: Option<u64>) -> bool {
+        if paused {
+            if self.paused.is_none() {
+                self.paused = Some(Pause {
+                    lift: self.lift,
+                    following: self.below <= 1.0,
+                    anchor: self
+                        .positions
+                        .iter()
+                        .find(|(seq, _)| Some(*seq) == selected)
+                        .or_else(|| self.positions.first())
+                        .copied(),
+                });
+                self.left_end.get_or_insert(self.next);
+                self.anchored_top = None;
+            }
+            false
+        } else {
+            let resume = self.paused.take().is_some_and(|p| p.following);
+            self.resume_following |= resume;
+            self.resume_following
+        }
+    }
+
     /// The rows that came in since the reader left the end, among those
     /// `keep` takes (by line index).
     pub fn arrived(&self, first: u64, keep: impl Fn(usize) -> bool) -> usize {
@@ -325,6 +377,7 @@ impl View {
         self.token = s.clock.token;
         self.revision = s.clock.revision;
         self.len = s.lines.len();
+        self.next = s.clock.first + self.len as u64;
         self.width = width;
         s.filter.clone_into(&mut self.filter);
         s.find.clone_into(&mut self.find);
@@ -460,7 +513,9 @@ impl View {
         // at the end of the conversation the scroll area follows its growth
         // by itself (stick to bottom), a frame late: the rows are placed
         // against the bottom here instead, no correction to add
-        let at_end = viewport.bottom() >= self.shown_height - 1.0 || self.anchored_top.is_some_and(|t| (viewport.top() - t).abs() < 0.5);
+        let at_end = self.resume_following
+            || (self.paused.is_none()
+                && (viewport.bottom() >= self.shown_height - 1.0 || self.anchored_top.is_some_and(|t| (viewport.top() - t).abs() < 0.5)));
         let target = self.scroll_to.take().filter(|&t| t < self.rows.len());
         let anchored = at_end && target.is_none();
 
@@ -541,18 +596,26 @@ impl View {
         // positions: the scroll offset follows at the next one.
         // at least the height in sight: a short conversation's empty dark
         // area under its lines selects too, never moves the window
-        let height = self.total.max(viewport.height());
+        let height = (self.total + self.paused.as_ref().map_or(0.0, |p| p.lift)).max(viewport.height());
         // Measuring a variable number of rows advances egui's auto ids.
         // The menu and selection must keep the same owner on every frame.
         let (_, rect) = ui.allocate_space(egui::vec2(width, height));
         let content = ui.interact(rect, ui.scope_id().with("conv_content"), egui::Sense::click_and_drag());
         // Aurora's workspace keeps a short conversation against the field,
         // as a chat does: its lines start from the bottom
-        let lift = if self.layout.workspace() {
-            (height - self.total).max(0.0)
-        } else {
-            0.0
-        };
+        let lift = self.paused.as_ref().map_or_else(
+            || {
+                if self.layout.workspace() {
+                    (height - self.total).max(0.0)
+                } else {
+                    0.0
+                }
+            },
+            |p| p.lift,
+        );
+        if !ui.is_sizing_pass() {
+            self.lift = lift;
+        }
         self.shown_height = height;
         // (not a window's sizing pass: it scrolls an area of its own, at its
         // top)
@@ -564,6 +627,20 @@ impl View {
                 self.left_end.get_or_insert(first + self.len as u64);
             }
         }
+        // Moving the New marker or measuring an earlier row must not move
+        // the menu's target. Keep a surviving visible row at its old screen
+        // position; never retain the transcript itself after eviction.
+        let correction = self
+            .paused
+            .as_ref()
+            .and_then(|p| p.anchor)
+            .and_then(|(seq, y)| {
+                self.rows
+                    .iter()
+                    .find(|r| first + r.line as u64 == seq)
+                    .map(|r| r.y + lift - y - viewport.top())
+            })
+            .unwrap_or(shift_above);
         let (base, view_top) = if anchored {
             // the viewport's top once at the end, where the scroll area
             // will be at the next frame
@@ -572,7 +649,7 @@ impl View {
             (rect.top() + lift + viewport.top() - top, self.total - viewport.height())
         } else {
             self.anchored_top = None;
-            (rect.top() + lift - shift_above, viewport.top() + shift_above)
+            (rect.top() + lift - correction, viewport.top() + correction)
         };
         let view_bottom = view_top + viewport.height();
         if let Some(r) = target.and_then(|t| self.rows.get(t)) {
@@ -583,9 +660,19 @@ impl View {
         }
         let mut i = self.rows.partition_point(|r| r.y + r.h <= view_top);
         let mut changed_from = usize::MAX;
+        let real_pass = !ui.is_sizing_pass();
+        let mut positions = if real_pass {
+            std::mem::take(&mut self.positions)
+        } else {
+            Vec::new()
+        };
+        positions.clear();
         while i < self.rows.len() && self.rows[i].y < view_bottom {
             let row = self.rows[i];
             let row_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), base + row.y), egui::vec2(width, row.h));
+            if real_pass && row_rect.intersects(ui.clip_rect()) {
+                positions.push((first + row.line as u64, row_rect.top() - rect.top() - viewport.top()));
+            }
             let mut child = ui.new_child(
                 egui::UiBuilder::new()
                     .scope_id(ui.scope_id().with(("conv_row", first + row.line as u64)))
@@ -605,7 +692,11 @@ impl View {
             self.reflow(changed_from);
             ui.ctx().request_repaint();
         }
-        (if at_end { 0.0 } else { shift_above }, content)
+        if real_pass {
+            self.positions = positions;
+            self.resume_following = false;
+        }
+        (if at_end { 0.0 } else { correction }, content)
     }
 
     /// The lines shown, in order: their index in the conversation.
