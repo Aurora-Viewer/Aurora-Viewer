@@ -3353,7 +3353,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_HOME=<outcome>[:set]` | World › Set Home to Here and the region's answer |
 | `AURORA_DEMO_USERINFO=hidden\|liaison\|opensim\|fail\|savefail` | Preferences › Privacy › Visibility, the account settings the grid keeps |
 | `AURORA_DEMO_SLURLS=1\|offer` | Place links with their region rating badges, one region looked up |
-| `AURORA_DEMO_APPLINKS=1\|actions\|<command>[:restore]` | URI examples, visible action markers or a minimize/reopen scenario |
+| `AURORA_DEMO_APPLINKS=1\|actions\|preview\|<command>[:restore]` | URI examples, visible action markers, their previews or a minimize/reopen scenario |
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
@@ -4811,6 +4811,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   style. There must be no added action words before the original link text.
   Custom link text must not hide the action; copying a transcript
   must retain the message content without its visual markers.
+  `preview` sends one short message with a resident, a group and a place
+  link from Tess Touch and the welcome sign, and leaves Conversations on
+  the nearby chat (#947): the column's entries (the nearby chat, Tess)
+  and the message's card show the resident's and the group's names and
+  "Teleport to Aurora Demo (128,128,25)", never a `secondlife:///app`
+  address. With `AURORA_DEMO_NOTIFS=1`, Nova's message at frame 700
+  carries the same links: its card shows them by name (capture around
+  frame 760).
 - **`AURORA_DEMO_SLURLS=1|offer`**: Tess Touch's conversation, the chat
   console and the notification list show the same place links, one per
   SLURL form: the plaza (General), the lagoon (Moderate), Nordheim (Adult),

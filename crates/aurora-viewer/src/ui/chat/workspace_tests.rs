@@ -1964,3 +1964,35 @@ fn the_latest_button_brings_the_end_back() {
         assert_eq!(count(&h.settle(), "after"), away + 1, "{style:?}");
     }
 }
+
+/// The column's entries say the last line with its links by their labels,
+/// as the thread shows them, never the raw `secondlife:///app` address
+/// (#947): the nearby chat's entry and a conversation's.
+#[test]
+fn the_column_previews_show_link_labels() {
+    let (lune, group) = (Uuid::from_u128(0x71), Uuid::from_u128(0x72));
+    let mut h = Harness::new(ChatStyle::Aurora);
+    h.world.social.names.insert(lune, "Lune Étoilée".into());
+    h.world.land.group_names.insert(group, "Cercle des Brumes".into());
+    let said = format!(
+        "join secondlife:///app/group/{group}/about with secondlife:///app/agent/{lune}/about at secondlife:///app/teleport/Pinede/1/2/3"
+    );
+    h.world
+        .chat
+        .push_back(line("Nova Demo", BOB, ChatKind::Local(aurora_net::ChatType::Normal), &said));
+    h.world.conversation_line(
+        JANE,
+        line("Jane", JANE, ChatKind::Im, &format!("ask secondlife:///app/agent/{lune}/about")),
+    );
+    let texts = h.settle();
+    // (a teleport link reads "Teleport to Pinede (1,2,3)", in the language)
+    assert!(
+        texts
+            .iter()
+            .any(|t| t.source.contains(" · Nova : join Cercle des Brumes with Lune Étoilée at ") && t.source.ends_with(" Pinede (1,2,3)")),
+        "the nearby chat's entry: {:?}",
+        texts.iter().map(|t| &t.source).collect::<Vec<_>>()
+    );
+    assert!(texts.iter().any(|t| t.source.ends_with("ask Lune Étoilée")), "Jane's entry");
+    assert!(texts.iter().all(|t| !t.source.contains("secondlife:")), "no raw address anywhere");
+}

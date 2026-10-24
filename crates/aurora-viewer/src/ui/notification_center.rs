@@ -731,7 +731,7 @@ fn center_card(
     let read = n.read;
     let inner = ui.scope(|ui| {
         if matches!(n.data, Data::Message { .. }) {
-            cards::person_card(ui, p, icons, env, wanted, n, false)
+            cards::person_card(ui, p, icons, world, env, wanted, n, false)
         } else {
             cards::card(ui, p, icons, world, n, false, true)
         }
