@@ -1,8 +1,8 @@
 """Blender editing to Aurora's animated avatar, without uploading assets."""
 
 bl_info = {
-    "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 13, 0), "blender": (2, 93, 0),
+    "name": "Aurora LiveMesh", "author": "Aurora Viewer contributors",
+    "version": (0, 13, 1), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
     "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
@@ -405,7 +405,7 @@ def _draw_live(layout, context):
         box = layout.box()
         box.alert = True
         box.label(text=_error, icon="ERROR", translate=False)
-    layout.label(text="Enable Blender Live in Aurora first.")
+    layout.label(text="Enable LiveMesh in Aurora first.")
     layout.label(text="Local preview · no asset upload")
 
 
@@ -609,7 +609,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
         "Créer un T-shirt éditable et pondéré sur le nouveau squelette SL",
     "Switch to Object Mode to create a rig.": "Passez en mode Objet pour créer un squelette.",
     "Created 133 Bento bones and 26 Fitted Mesh bones": "133 os Bento et 26 os Fitted Mesh créés",
-    "Aurora Live Mesh": "Maillage Aurora Live", "Connect to Aurora": "Connecter à Aurora",
+    "Aurora LiveMesh": "Aurora LiveMesh", "Connect to Aurora": "Connecter à Aurora",
     "Disconnect": "Déconnecter", "Add selected meshes": "Ajouter la sélection",
     "Add the current selection without replacing listed objects or enabling paused entries":
         "Ajouter la sélection sans remplacer les objets listés ni réactiver les objets en pause",
@@ -637,7 +637,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Receive avatar shape": "Recevoir la shape de l’avatar",
     "Automatic (Avastar / SL)": "Automatique (Avastar / SL)",
     "Detect each rig's rest axes; create new rigs facing Blender -Y": "Détectez les axes de repos de chaque squelette ; les nouveaux rigs regardent vers −Y comme Avastar",
-    "Enable Blender Live in Aurora first.": "Activez d’abord Blender Live dans Aurora.",
+    "Enable LiveMesh in Aurora first.": "Activez d’abord LiveMesh dans Aurora.",
     "Local preview · no asset upload": "Aperçu local · sans import automatique",
 }.items()}}
 

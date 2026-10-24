@@ -1,6 +1,6 @@
 # Aurora Viewer architecture
 
-`blender_live/` owns the opt-in loopback Blender transport, bounded v1 rest-mesh
+`blender_live/` implements LiveMesh: the opt-in loopback Blender transport, bounded v1 rest-mesh
 snapshots and UI. Both matching Blender package layouts are bundled by
 `blender_live/addon.rs` and exported to ZIP on a worker, using the shared atomic
 file writer: a native extension for 4.2+ or a classic add-on for 2.93–4.1.
@@ -59,7 +59,7 @@ four File LODs already assigned. Preparation never requests a quote or upload;
 the normal review, quote and confirmed upload workflow follows. Preview-only
 elbow/knee flexion inspects skinning without altering the uploaded mesh.
 Hidden/removed sources keep receiving edits, with no simulator traffic.
-The Blender Live floater separates connection, objects and plug-in controls
+The LiveMesh floater separates connection, objects and plug-in controls
 with shared horizontal dividers in a brighter palette tone and plain section
 headings. Connection status shares its title row; port, loopback address and
 start/stop share a single control row. Each source row requests its own fresh LOD bundle;

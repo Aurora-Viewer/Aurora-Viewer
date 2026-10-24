@@ -1,6 +1,6 @@
-# Blender Live Mesh
+# LiveMesh
 
-Blender Live sends rigged mesh edits to your own animated avatar and static
+LiveMesh sends rigged mesh edits to your own animated avatar and static
 mesh edits to local world objects or attachments in Aurora. You can sculpt,
 move vertices, paint weights, edit UVs, adjust shape keys and geometry modifiers,
 and see the result without saving or uploading. The preview is local: other
@@ -9,7 +9,7 @@ upload fee.
 
 ## Static objects (plug-in 0.13.0)
 
-Blender Live accepts rigged and non-rigged mesh selections, including a mixture
+LiveMesh accepts rigged and non-rigged mesh selections, including a mixture
 in the same synchronization list. Connect with the selection or use **Add
 selected meshes**. A static mesh needs neither an armature nor vertex weights;
 shape keys, geometry modifiers, UVs and live materials still work. Geometry is
@@ -33,7 +33,7 @@ preserves their current placement. Paused or absent parents are not referenced.
 This requires plug-in 0.13.0 and the viewer's `object-links` capability.
 
 Static objects initially appear on the floor two metres in front of your
-avatar. Select the source in Aurora's **Blender Live** window to **Edit**, **Drop
+avatar. Select the source in Aurora's **LiveMesh** window to **Edit**, **Drop
 to ground**, **Derez**, **Attach to** a body point or **Attach to HUD**. **Detach**
 removes a worn preview; **Rez** brings it back. Derez/detach keep the source in
 the list and subsequent Blender edits never rez it automatically. The visible
@@ -64,7 +64,7 @@ script is started. Rigged sources continue to follow the avatar as before.
 
 ## Install and connect
 
-1. In Aurora, open **Build → Blender Live**. The **Plugins** section automatically
+1. In Aurora, open **Build → LiveMesh**. The **Plugins** section automatically
    detects local Blender installations and shows each executable's version,
    path and installed Aurora plug-in version. Click **Install**, **Update** or
    **Enable** on the desired row. Aurora chooses the compatible bundled package,
@@ -91,8 +91,8 @@ script is started. Rigged sources continue to follow the avatar as before.
      permission: it communicates with `127.0.0.1` only.
    - **Blender 2.93–4.1:** choose the **classic add-on** package in Aurora.
      In Blender, open Preferences → Add-ons → Install, select the ZIP,
-     then enable **3D View: Aurora Live Mesh**. Keep the ZIP intact.
-3. In Aurora's **Blender Live** window, click **Enable preview**.
+     then enable **3D View: Aurora LiveMesh**. Keep the ZIP intact.
+3. In Aurora's **LiveMesh** window, click **Enable preview**.
    The default port is **17655**. Change it in both applications if another
    program is already using that port, or to preview in another viewer.
 4. In Blender, open the 3D view sidebar (`N`) → **Aurora** → **Live**, then
@@ -169,7 +169,7 @@ off on each viewer launch, and changing accounts stops it.
 
 ## Manage objects and upload in Aurora
 
-Aurora's **Build → Blender Live** lists each source object by its Blender
+Aurora's **Build → LiveMesh** lists each source object by its Blender
 name, even if it spans several render batches. The window separates
 **Connection**, **Objects** and **Plugins** with horizontal lines and plain headings.
 Connection status appears beside the section title; port, loopback address and
@@ -237,7 +237,7 @@ continues to show its supported PBR materials.
 
 Both packages contain the same rig, automatic weights, live materials and
 transport. Install only one format in each Blender profile; disable any older
-Aurora Live Mesh installation before switching between the two formats.
+Aurora LiveMesh installation before switching between the two formats.
 Updating within the same format replaces the existing add-on. Blender 2.93 LTS
 is the minimum supported version; Blender 2.79 is not supported.
 
@@ -578,7 +578,7 @@ externally edited image in Blender; **Update now** also refreshes image caches.
 
 ### Send your shape to Blender
 
-With plug-in **0.10.0+** connected, Aurora's Blender Live **Connection** section
+With plug-in **0.10.0+** connected, Aurora's LiveMesh **Connection** section
 offers **Add a skeleton with my shape** and **Apply my shape to the selected
 skeleton**. Aurora requires the worn shape's resolved inventory item
 to belong to you and grant **Modify**. Missing inventory data or a no-modify

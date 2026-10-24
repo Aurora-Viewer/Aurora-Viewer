@@ -1839,7 +1839,7 @@ exercise whole-family attachment or removal. `static-linked-menu` opens the
 native object menu on the child, preserving whole-linkset selection;
 `static-linked-hud-menu` exercises the worn local menu. Check the single root,
 indented prim numbers and object/prim counts. The Edit linked checkbox belongs to
-the native build tools and context menu; it is absent from the Blender Live
+the native build tools and context menu; it is absent from the LiveMesh
 window. `static-hud` attaches it at HUD Center;
 `static-attached` attaches it to the right hand; `static-detached` removes its
 draw object while retaining the source row. Check numeric/gizmo transforms,
@@ -1848,7 +1848,7 @@ rigged shell remaining on the avatar.
 The listener accepts the Blender extension on port 17655. Check that live
 retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`
-objects using our avatar's skeleton. See [Blender Live](BLENDER_LIVE.md).
+objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
 `objects` adds a belt and neck band, starts the belt hidden and the band
 removed. Toggle the belt and clear the objects; no restore button should
 appear. Each row's Import button opens that object's
