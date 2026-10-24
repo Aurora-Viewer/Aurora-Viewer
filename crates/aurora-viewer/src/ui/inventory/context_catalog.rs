@@ -613,7 +613,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 c.prepare_outfit = Some(id);
             }
             let content = content.unwrap_or_default();
-            if !content.is_empty() || all {
+            if !content.is_empty() || c.prepare_outfit.is_some() || all {
                 let zone = c.group(
                     "attachments",
                     TEXT,
@@ -623,7 +623,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     Direction::Vertical,
                     true,
                 );
-                let can_wear = single && !facts.appearance_busy && !rules::library(inv, id);
+                let can_wear = single && !facts.appearance_busy && !content.is_empty() && !rules::library(inv, id);
                 for (key, icon, label, mode) in [
                     (
                         "replace-outfit",
