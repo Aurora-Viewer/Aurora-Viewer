@@ -182,8 +182,16 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// Create the renderer on the Vulkan backend for the given window.
-    pub fn new(target: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32, vsync: bool) -> Result<Renderer, RenderError> {
+    /// Create the renderer on the Vulkan backend for the given window, on
+    /// the GPU `gpu` asks for (`adapter_choice::Wanted`: empty for the
+    /// automatic choice).
+    pub fn new(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+        vsync: bool,
+        gpu: &str,
+    ) -> Result<Renderer, RenderError> {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
         desc.backends = wgpu::Backends::VULKAN;
         desc.flags = if std::env::var_os("AURORA_GPU_VALIDATION").is_some() {
@@ -193,13 +201,61 @@ impl Renderer {
         };
         let instance = wgpu::Instance::new(desc);
         let surface = instance.create_surface(target).map_err(|e| RenderError::Surface(e.to_string()))?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-            apply_limit_buckets: false,
-        }))
-        .map_err(|e| RenderError::NoAdapter(e.to_string()))?;
+        // ---- the GPU: every adapter listed, then tried in our order
+        // (adapter_choice.rs), the next one if one fails to open
+        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN));
+        let candidates: Vec<crate::adapter_choice::Candidate> = adapters
+            .iter()
+            .map(|a| {
+                let info = a.get_info();
+                crate::adapter_choice::Candidate {
+                    name: info.name,
+                    kind: crate::adapter_choice::Kind::from_wgpu(info.device_type),
+                    vram_mb: detect_vram_mb(a),
+                    surface: a.is_surface_supported(&surface),
+                }
+            })
+            .collect();
+        for (i, c) in candidates.iter().enumerate() {
+            log::info!(
+                "GPU adapter {i}: {} ({}, {}, {})",
+                c.name,
+                c.kind.label(),
+                c.vram_mb.map(|m| format!("{m} MB")).unwrap_or_else(|| "memory unknown".into()),
+                if c.surface { "can present" } else { "cannot present to the window" }
+            );
+        }
+        if let Some(hint) = crate::adapter_choice::hint(&candidates) {
+            log::warn!("GPU: {hint}");
+        }
+        let wanted = crate::adapter_choice::Wanted::parse(gpu);
+        let plan = crate::adapter_choice::plan(&candidates, &wanted);
+        if plan.reason == crate::adapter_choice::Reason::WantedMissing {
+            log::warn!("GPU: \"{}\" asked for, not found among the adapters that can present: automatic choice", gpu.trim());
+        }
+        let mut opened = None;
+        let mut failure = RenderError::NoAdapter("no Vulkan adapter can present to the window".into());
+        for (n, &i) in plan.order.iter().enumerate() {
+            match open_device(&adapters[i]) {
+                Ok(o) => {
+                    let why = match (n, plan.reason) {
+                        (0, crate::adapter_choice::Reason::Wanted) => "the one asked for (AURORA_GPU or Preferences › Graphics)",
+                        (0, _) => "automatic: discrete before integrated, then the most video memory",
+                        _ => "the ones before it failed to open",
+                    };
+                    log::info!("GPU adapter {i} chosen: {why}");
+                    opened = Some((i, o));
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("GPU adapter {i} ({}) could not be opened: {e}", candidates[i].name);
+                    failure = e;
+                }
+            }
+        }
+        let (index, o) = opened.ok_or(failure)?;
+        let adapter = adapters.swap_remove(index);
+        let vram_mb = candidates[index].vram_mb;
         let ainfo = adapter.get_info();
         log::info!(
             "GPU: {} ({:?}, driver {} {})",
@@ -208,13 +264,20 @@ impl Renderer {
             ainfo.driver,
             ainfo.driver_info
         );
-        let vram_mb = detect_vram_mb(&adapter);
         log::info!(
             "GPU memory: {}",
             vram_mb.map(|m| format!("{m} MB")).unwrap_or_else(|| "unknown".into())
         );
-
-        let afeat = adapter.features();
+        let OpenedDevice {
+            device,
+            queue,
+            alim,
+            bindless,
+            timestamps,
+            adapter_specific,
+            max_textures,
+        } = o;
+        let adapters: Vec<String> = candidates.into_iter().filter(|c| c.surface).map(|c| c.name).collect();
         let alim = adapter.limits();
         let bindless_feats =
             wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
