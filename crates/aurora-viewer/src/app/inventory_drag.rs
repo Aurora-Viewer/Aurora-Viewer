@@ -353,7 +353,8 @@ impl App {
             Ok(drop) => Some(drop),
             Err(reason) => {
                 self.inventory_ui.message = reason_text(reason).into();
-                self.world.system_message(reason_text(reason));
+                self.world
+                    .system_notice(reason_text(reason), crate::world::notice_topics::Topic::Items);
                 None
             }
         }

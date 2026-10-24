@@ -376,7 +376,7 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
             ctx.move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(w.floater.as_str())));
         }
         let (title, unread) = match w.conversation {
-            None => (aurora_i18n::tr!("common-nearby-chat").to_owned(), world.chat_unread),
+            None => (aurora_i18n::tr!("common-nearby-chat").to_owned(), world.chat_badge),
             Some(id) => (world.session_title(&id), sessions.get(&id).copied().unwrap_or(0)),
         };
         let mut open = true;

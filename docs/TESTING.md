@@ -3292,7 +3292,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WINDOW_EDGES=<l\|r\|b…>` | Screen edges the windows may cross for the run |
 | `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: Alt attachment, free move, detachment, grouped move, resize |
-| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged or swept in and out |
+| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner or edge dragged or swept in and out |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
@@ -3343,6 +3343,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
+| `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
@@ -3825,7 +3826,7 @@ failure. Grid validation and any paid upload are performed by the human.
   in place. `detach` attaches first, then moves People with Alt held:
   Conversations stays behind and the link is removed. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
-- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast[,<window>]`**: from frame 600,
+- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast|sweep-right|sweep-bottom[,<window>]`**: from frame 600,
   the pointer rests 6 points inside the bottom-right corner of a real
   window (`corner`), 1 point inside its right edge, halfway down
   (`edge`), or presses that corner and holds it 40 × 30 further out until
@@ -3841,7 +3842,14 @@ failure. Grid validation and any paid upload are performed by the human.
   points out by frame 900, a few points a frame; `sweep-h` does the same
   on the height (400 in, 600 out); `sweep-fast` drags it 520 points in
   and back out in 24 frames (about 45 points a frame), five times, then
-  rests at its start; released at frame 1000. With
+  rests at its start; released at frame 1000. `sweep-right` and
+  `sweep-bottom` do what `sweep` and `sweep-h` do, by the middle of the
+  right or the bottom edge instead of the corner. On the video player
+  window (`link_preview_player`, with `AURORA_DEMO_CONV_PREVIEWS=videos`
+  and `AURORA_DEMO_PREVIEW_PLAY=window`) the picture keeps the video's
+  shape at every captured frame of the drag (#941): the other dimension
+  follows the edge, and the window stops at its minimum or at the screen
+  on the video's shape, never stretched. With
   `AURORA_DEMO_CONV=aurora:group` and `AURORA_CAPTURE_FRAMES` listing
   frames (every 10 from 600 to 900, and runs of consecutive ones), what to
   look for in the Conversations window: nothing jumps at a frame; around
@@ -4377,8 +4385,9 @@ failure. Grid validation and any paid upload are performed by the human.
   With `net` the video really plays (network needed; capture at frame
   1500): YouTube's player inside a page served on 127.0.0.1, with
   YouTube's controls; without that page it shows its error 153. The card
-  and the window keep the video's shape (#848): the window's height
-  follows its width once a resize is let go. In its card the cog, window
+  and the window keep the video's shape (#848): dragged by an edge or a
+  corner, the window's picture keeps it at every frame (#941; see
+  `AURORA_DEMO_RESIZE`). In its card the cog, window
   and stop buttons show only while the pointer is over the card; the cog
   (also in the window's title bar) opens Preferences › Chat on "YouTube
   videos". Moving YouTube's own volume slider logs `video volume kept at
@@ -4554,6 +4563,24 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Viewer's one-line look for the session (nothing saved). Check them over a
   dark and a bright world (`AURORA_DEMO_SKY=2,4,2`): readable on both, the
   name, the picture and the links clickable, the world clickable around.
+- **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines]`**
+  (#475, #741): nearby chat said at the arrival, two residents among a
+  greeter, a tip jar, our HUD's owner-say, a door's emote and a vendor's
+  llRegionSayTo with a link, then two notices (a friend online, a
+  teleport). The Conversations window shows the nearby chat
+  in the style named (`1` is `aurora`), or `lines` the cards above the chat
+  bar with the window closed. `:on` turns Preferences › Chat › "Compact
+  messages that do not come from a person" on for the run (nothing saved):
+  each object's line on one small row (cube, name, muted text), the notices
+  with the icon of their kind; the nearby chat's unread count counts the
+  two residents' lines only. Compare a run without `:on`: the same lines in
+  the style's usual look. Hover a cube: the object's name; click it or the
+  name: the object's inspector (its menu: inspect, ignore). `:im` shows the
+  friend's conversation instead, with a call's and an automatic reply's
+  lines: unchanged with `:on` alone, compact with their icons (a phone, the
+  "i") with `:on:imlines` (the sub-option "Compact the conversations'
+  system lines too", off by default). Above the chat bar, the notices
+  carry their topic's icon too.
 - **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy]`**: the Conversations
   window as a messenger, placed at 700 x 560 px. Without a suffix, the
   conversation with an online friend over two days: their bubbles on the

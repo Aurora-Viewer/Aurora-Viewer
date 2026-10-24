@@ -264,7 +264,7 @@ impl World {
         };
         let (out, _) = self.notifications.respond(id, Response::Block, |_| Uuid::nil(), Uuid::nil());
         if let Err(error) = self.block(owner, &name, kind) {
-            self.system_message(error);
+            self.system_notice(error, crate::world::notice_topics::Topic::Items);
         }
         out
     }

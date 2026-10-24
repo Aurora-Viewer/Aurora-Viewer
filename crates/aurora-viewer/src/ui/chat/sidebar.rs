@@ -322,7 +322,7 @@ pub(super) fn show(
                     sub: Some(local_sub(world, st)),
                     sub_icon: None,
                     current: shown,
-                    unread: if shown { 0 } else { world.chat_unread },
+                    unread: if shown { 0 } else { world.chat_badge },
                     close: None,
                     ringing: false,
                     in_call: false,

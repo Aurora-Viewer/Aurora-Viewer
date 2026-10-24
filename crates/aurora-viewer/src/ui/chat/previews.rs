@@ -158,6 +158,9 @@ struct Playing {
     /// The window was given the video's shape since this video started
     /// playing in it.
     fitted: bool,
+    /// What the player window adds around the picture (its title bar), as
+    /// last measured: its edges keep the picture's shape while dragged.
+    chrome: Vec2,
 }
 
 /// What the player needs of the app: the media plugins, the browser's
@@ -527,28 +530,40 @@ impl Previews {
         let mut open = true;
         let (mut browser, mut settings) = (false, false);
         let work = crate::ui::layout::work_area(ctx);
-        let default = window_size(WINDOW_WIDTH, TITLE_BAR, v.aspect, work.height() * 0.8);
+        let default = window_size(WINDOW_WIDTH, v.chrome, v.aspect, work.height() * 0.8);
         let pos = work.center() - default * 0.5;
         let body = crate::ui::widgets::Floater::new(PLAYER_WINDOW, title, pos, default)
             .action("settings-filled", aurora_i18n::tr!("ui-chat-preview-settings"), &mut settings)
             .action("external-link-filled", aurora_i18n::tr!("ui-chat-preview-open"), &mut browser)
             .flush_body()
+            .keep_aspect(v.aspect, v.chrome)
             .show(ctx, p, &mut open, |ui| {
                 let size = ui.available_size().max(Vec2::splat(64.0));
                 web.show(&mut v.web, ui, p, size);
                 size
             });
-        // the window keeps the video's shape (#848): its height follows
-        // its width once a resize is let go, and when another video starts
-        // in it; never while the pointer drags it
+        // the window keeps the video's shape (#848): its edges hold it at
+        // every frame of a drag (#941); outside a drag its height follows
+        // its width when another video starts in it, or when the title
+        // bar measured differently
         let outer = ctx.memory(|m| m.area_rect(egui::Id::unique(PLAYER_WINDOW)));
         if let (Some(body), Some(outer)) = (body, outer)
+            && !crate::ui::widgets::floater_minimized(ctx, PLAYER_WINDOW)
+        {
+            v.chrome = (outer.size() - body).max(Vec2::ZERO);
+        }
+        if let (Some(_), Some(outer)) = (body, outer)
             && !ctx.input(|i| i.pointer.any_down())
             && !crate::ui::widgets::floater_minimized(ctx, PLAYER_WINDOW)
         {
-            let chrome = (outer.height() - body.y).max(0.0);
-            let width = if v.fitted { outer.width() } else { outer.width().max(160.0) };
-            let want = window_size(width, chrome, v.aspect, work.height() * 0.8);
+            // a window the user sized may be as tall as the room; a video
+            // starting in it opens at most at 80 % of it
+            let (width, max_height) = if v.fitted {
+                (outer.width(), work.height())
+            } else {
+                (outer.width().max(160.0), work.height() * 0.8)
+            };
+            let want = window_size(width, v.chrome, v.aspect, max_height);
             if (want - outer.size()).abs().max_elem() > 1.5 {
                 crate::ui::widgets::size_floater(ctx, PLAYER_WINDOW, want);
             }
@@ -567,15 +582,16 @@ impl Previews {
 }
 
 /// The player window's size for a video of `aspect` (width over height):
-/// `width` wide, its title bar `chrome` high above the picture, and no
-/// taller than `max_height` (an upright video narrows instead).
-fn window_size(width: f32, chrome: f32, aspect: f32, max_height: f32) -> Vec2 {
+/// `width` wide, `chrome` around the picture (its title bar above it), and
+/// no taller than `max_height` (an upright video narrows instead). The same
+/// shape its edges keep while dragged (`Floater::keep_aspect`).
+fn window_size(width: f32, chrome: Vec2, aspect: f32, max_height: f32) -> Vec2 {
     let aspect = aspect.clamp(0.2, 5.0);
-    let mut width = width.max(160.0);
-    if chrome + width / aspect > max_height {
-        width = ((max_height - chrome).max(90.0) * aspect).max(160.0);
+    let mut picture = width.max(160.0) - chrome.x;
+    if chrome.y + picture / aspect > max_height {
+        picture = ((max_height - chrome.y).max(90.0) * aspect).max(160.0 - chrome.x);
     }
-    Vec2::new(width.round(), (chrome + width / aspect).round())
+    Vec2::new((picture + chrome.x).round(), (chrome.y + picture / aspect).round())
 }
 
 /// A video's size in a card `width` wide: within a square of that side, as
@@ -1188,6 +1204,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             drawn: pass,
             aspect,
             fitted: false,
+            chrome: Vec2::new(0.0, TITLE_BAR),
         });
     }
     if detach && let Some(v) = pv.playing.as_mut() {
@@ -1334,11 +1351,14 @@ mod tests {
     /// upright video narrows the window rather than outgrowing the screen.
     #[test]
     fn the_player_window_takes_the_video_s_shape() {
-        assert_eq!(window_size(480.0, 30.0, 16.0 / 9.0, 900.0), Vec2::new(480.0, 300.0));
-        assert_eq!(window_size(400.0, 30.0, 4.0 / 3.0, 900.0), Vec2::new(400.0, 330.0));
-        let tall = window_size(480.0, 30.0, 9.0 / 16.0, 700.0);
+        let bar = |y: f32| Vec2::new(0.0, y);
+        assert_eq!(window_size(480.0, bar(30.0), 16.0 / 9.0, 900.0), Vec2::new(480.0, 300.0));
+        assert_eq!(window_size(400.0, bar(30.0), 4.0 / 3.0, 900.0), Vec2::new(400.0, 330.0));
+        let tall = window_size(480.0, bar(30.0), 9.0 / 16.0, 700.0);
         assert!(tall.y <= 700.0 && (tall.x - 377.0).abs() <= 1.0);
         // a width the user gave keeps, the height follows it
-        assert_eq!(window_size(640.0, 32.0, 16.0 / 9.0, 2000.0), Vec2::new(640.0, 392.0));
+        assert_eq!(window_size(640.0, bar(32.0), 16.0 / 9.0, 2000.0), Vec2::new(640.0, 392.0));
+        // a frame on the sides: the picture, not the window, has the shape
+        assert_eq!(window_size(482.0, Vec2::new(2.0, 30.0), 16.0 / 9.0, 900.0), Vec2::new(482.0, 300.0));
     }
 }

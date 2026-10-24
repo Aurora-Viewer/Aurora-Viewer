@@ -764,7 +764,10 @@ impl App {
         }
         // LLSelectMgr::selectionSetImage refuses duplicating a no-copy item.
         if selection_copy_denied(&item, self.world.agent_id, targets.len()) {
-            self.world.system_message(aurora_i18n::tr!("texture-library-no-copy-multiple"));
+            self.world.system_notice(
+                aurora_i18n::tr!("texture-library-no-copy-multiple"),
+                crate::world::notice_topics::Topic::Items,
+            );
             return;
         }
         let mut waiting = false;
@@ -782,13 +785,19 @@ impl App {
                         .any(|i| i.asset_id == item.asset_id && i.asset_type as i32 == item.asset_type)
                 }) && super::inventory_drag::target_allowed(&self.world, *idx, &item, true).is_err()
                 {
-                    self.world.system_message(aurora_i18n::tr!("texture-library-locked"));
+                    self.world.system_notice(
+                        aurora_i18n::tr!("texture-library-locked"),
+                        crate::world::notice_topics::Topic::Items,
+                    );
                     return;
                 }
             }
         }
         if waiting {
-            self.world.system_message(aurora_i18n::tr!("texture-library-wait-selection"));
+            self.world.system_notice(
+                aurora_i18n::tr!("texture-library-wait-selection"),
+                crate::world::notice_topics::Topic::Items,
+            );
             return;
         }
         let mut applied = false;
@@ -856,7 +865,10 @@ impl App {
         self.settings.texture_library.activate(self.world.agent_id);
         self.settings.texture_library.record(id);
         self.settings.save();
-        self.world.system_message(aurora_i18n::tr!("texture-library-applied"));
+        self.world.system_notice(
+            aurora_i18n::tr!("texture-library-applied"),
+            crate::world::notice_topics::Topic::Items,
+        );
     }
 }
 
