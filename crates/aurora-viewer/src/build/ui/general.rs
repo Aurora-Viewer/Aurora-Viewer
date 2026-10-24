@@ -86,6 +86,17 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     }
     let ids: Vec<Uuid> = targets.iter().filter_map(|&i| world.objects.get(i).map(|o| o.full_id)).collect();
     let props: Vec<ObjectProps> = ids.iter().filter_map(|id| tool.props.get(id).cloned()).collect();
+    if !targets.is_empty()
+        && targets
+            .iter()
+            .all(|&idx| world.objects.get(idx).is_some_and(|object| object.is_client_preview()))
+    {
+        for properties in &props {
+            ui.label(&properties.name);
+        }
+        small(ui, p, aurora_i18n::tr!("blender-live-local-only"));
+        return;
+    }
     if props.len() != ids.len() || props.is_empty() {
         small(ui, p, aurora_i18n::tr!("build-ui-general-waiting-for-simulator-properties"));
         return;

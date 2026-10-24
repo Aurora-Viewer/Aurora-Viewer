@@ -1,6 +1,6 @@
 # Aurora Viewer architecture
 
-`blender_live/` owns the opt-in loopback Blender transport, bounded v1 rest-mesh
+`blender_live/` implements LiveMesh: the opt-in loopback Blender transport, bounded v1 rest-mesh
 snapshots and UI. Both matching Blender package layouts are bundled by
 `blender_live/addon.rs` and exported to ZIP on a worker, using the shared atomic
 file writer: a native extension for 4.2+ or a classic add-on for 2.93–4.1.
@@ -19,15 +19,39 @@ while preserving unrelated add-ons/settings. Manually
 selected executables are stored in `blender-installations.json` under Aurora's
 configuration directory. Existing Blender windows are never restarted or closed.
 A dedicated thread validates, normalizes and encodes the latest snapshot;
-`app/blender_live.rs` maintains render-only attachments under
-our avatar in `world::objects::PREVIEW_REGION`. These have no simulator identity
-or edit/touch target. Arrival cleanup excludes these private roots from stale
+`app/blender_live.rs` maintains private objects in `world::objects::PREVIEW_REGION`.
+Rigged sources remain render-only attachments under our avatar. Static sources
+use ordinary normalized mesh geometry, with stable source/batch UUIDs and one
+editable local linkset per independent Blender source. Negotiated `object-links`
+retains distinct parented static sources with one root and metre-based offsets;
+`blender_live/links.rs` owns hierarchy placement, reparenting, family bounds and
+parent resolution. Nested Blender parenting is flattened to a single mesh root.
+Every static draw prim is a direct child of one root, including material
+batches. The source tree and object/prim counts reflect that hierarchy. Native
+object context menus and the shared Edit linked mode govern selection; local
+menu actions resolve before simulator/inventory handlers. `blender_live/objects.rs` owns their
+session placement, scale multipliers, world-origin rebasing, body/HUD attachment
+and derez state. Local tool commands are consumed before network/demo dispatch;
+right-click uses the native object menu with local actions. These objects
+have no simulator identity or touch action. Arrival cleanup excludes these private roots from stale
 simulator attachments. Normal GPU skinning supplies animations and avatar shape;
 existing draw objects retain their geometry while replacement meshes load.
-`scene/blender_live.rs` retires obsolete assets as soon as their geometry has
+`scene/blender_live.rs` resolves local rez/drop support through the shared
+triangle picker (including elevated floors), and retires obsolete assets as soon as their geometry has
 no references or pending jobs. `blender/aurora_live/` is the shared Blender 2.93+
 implementation, with main-thread rest capture, a separate socket worker and a
-single latest-snapshot mailbox. Per-scene automatic/manual settings gate dirty
+single latest-snapshot mailbox. `tracking.py` stores scene-owned synchronization
+groups independently of Blender parents: multi-add chooses the active static
+root, transient row selection supports click/Ctrl/Cmd/Shift in display order,
+and Make root reassigns a complete family. Group uses only selected entries;
+Ungroup expands a selected root to its entire family, otherwise detaching only
+selected children. Removing a root from the list promotes a member. Stable
+source IDs anchor range selection across reordering without retaining deleted
+objects. Group IDs, root flags and explicit
+independence survive save/load and Undo/Redo; their signature schedules updates
+even when RNA callbacks are not replayed. `exporter.static_roots` resolves both
+explicit groups and inherited parenting into the existing flat `object-links`
+format. Per-scene automatic/manual settings gate dirty
 captures at a seconds-based interval, including membership changes; an explicit
 refresh captures immediately or waits for the handshake. Initial connections
 always capture. Comparing prepared content suppresses identical automatic
@@ -46,7 +70,7 @@ four File LODs already assigned. Preparation never requests a quote or upload;
 the normal review, quote and confirmed upload workflow follows. Preview-only
 elbow/knee flexion inspects skinning without altering the uploaded mesh.
 Hidden/removed sources keep receiving edits, with no simulator traffic.
-The Blender Live floater separates connection, objects and plug-in controls
+The LiveMesh floater separates connection, objects and plug-in controls
 with shared horizontal dividers in a brighter palette tone and plain section
 headings. Connection status shares its title row; port, loopback address and
 start/stop share a single control row. Each source row requests its own fresh LOD bundle;

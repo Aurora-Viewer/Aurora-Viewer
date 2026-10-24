@@ -1810,7 +1810,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, prepared LOD import and permission-gated shape transfer |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, static object placement, LOD import and shape transfer |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
@@ -1829,10 +1829,40 @@ To check with these scenarios:
 
 `AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell
 on our animated avatar, through the production protocol and GPU skinning.
+`static` adds an editable unrigged green object on the terrain and selects it
+for the standard build tools. `static-linked` adds an orange child mesh beside
+the green root, sent child-first to verify order-independent parentage. The
+list shows both sources and their root relationship; editing the root selects
+the linked set. `static-linked-child` selects only the child with Edit linked.
+`static-linked-hud`, `static-linked-attached` and `static-linked-detached`
+exercise whole-family attachment or removal. `static-linked-menu` opens the
+native object menu on the child, preserving whole-linkset selection;
+`static-linked-hud-menu` exercises the worn local menu. Check the single root,
+indented prim numbers and object/prim counts. The Edit linked checkbox belongs to
+the native build tools and context menu; it is absent from the LiveMesh
+window. `static-hud` attaches it at HUD Center;
+`static-attached` attaches it to the right hand; `static-detached` removes its
+draw object while retaining the source row. Check numeric/gizmo transforms,
+body/HUD menus, detach/rez, source visibility and geometry updates, with the
+rigged shell remaining on the avatar.
 The listener accepts the Blender extension on port 17655. Check that live
 retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`
-objects using our avatar's skeleton. See [Blender Live](BLENDER_LIVE.md).
+objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
+
+Blender's synchronization-list linksets are exercised by
+`blender --background --factory-startup --python-exit-code 1 --python blender/tests/test_groups.py`.
+It covers unparented multi-add, active roots, plain/Ctrl/Shift row selection,
+range ordering and stable anchors, partial regrouping, whole-family root
+Ungroup, selective child Ungroup across multiple families, Blender parent
+overrides, root removal/promotion, paused and mixed rigged/static selections,
+stable source identities, coordinate units, save/load, Undo/Redo and
+automatic/manual update behavior. Check the native Blender list visually too:
+click names, Ctrl/Cmd-click two separate rows, Shift-click a displayed range,
+then Group only that selection. Ungroup a root alone and several children
+without the root. Selection highlights, the selected count, synchronization
+chain icons, root-first ordering and Group/Ungroup/Make root must remain usable
+in English and French without changing Blender's 3D selection.
 `objects` adds a belt and neck band, starts the belt hidden and the band
 removed. Toggle the belt and clear the objects; no restore button should
 appear. Each row's Import button opens that object's

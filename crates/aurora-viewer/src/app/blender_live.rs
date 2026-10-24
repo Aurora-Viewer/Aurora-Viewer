@@ -31,6 +31,24 @@ impl App {
     }
 
     pub(super) fn show_blender_live(&mut self, ctx: &egui::Context, palette: &Palette) {
+        self.blender_live.edit_linked = self.settings.build.edit_linked;
+        self.blender_live.attach_choices = self
+            .world
+            .avatar_lib
+            .attach_points
+            .iter()
+            .map(|(&id, point)| {
+                let name = self
+                    .world
+                    .avatar_lib
+                    .attach_names
+                    .get(&id)
+                    .map(String::as_str)
+                    .unwrap_or(aurora_i18n::tr!("common-attachment"));
+                (id, point.hud, crate::ui::appearance::items::point_name(name).to_owned())
+            })
+            .collect();
+        self.blender_live.attach_choices.sort_by(|a, b| a.2.cmp(&b.2));
         self.blender_live.shape.blocked = crate::blender_live::shape::editable(&self.world)
             .and_then(|_| self.blender_live.shape_connection())
             .err();
@@ -72,7 +90,9 @@ impl App {
     }
 
     pub(super) fn clear_blender_preview(&mut self) {
+        self.blender_live.instances.clear();
         for id in self.blender_live.objects.drain(..) {
+            self.build.props.remove(&id);
             if let Some(index) = self.world.objects.index_of_uuid(&id) {
                 self.world.objects.remove_idx(index);
             }
@@ -86,6 +106,53 @@ impl App {
     }
 
     pub(super) fn update_blender_live(&mut self, renderer: &mut aurora_render::Renderer) {
+        self.blender_live.capture_placements(&mut self.world);
+        if let Some((source, action)) = self.blender_live.object_action.take() {
+            let source = if matches!(
+                action,
+                crate::blender_live::objects::Action::Transform { .. } | crate::blender_live::objects::Action::Edit
+            ) {
+                source
+            } else {
+                self.blender_live.linked_root(source)
+            };
+            if matches!(action, crate::blender_live::objects::Action::Edit) {
+                if let Some(idx) = self
+                    .blender_live
+                    .edit_target(source, self.settings.build.edit_linked)
+                    .and_then(|id| self.world.objects.index_of_uuid(&id))
+                {
+                    self.build.open_build(crate::build::Tool::Edit);
+                    self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+                    self.flush_build();
+                }
+            } else {
+                let revision = self.blender_live.revision;
+                let ceiling = self
+                    .blender_live
+                    .root(source)
+                    .and_then(|id| self.world.objects.index_of_uuid(&id))
+                    .and_then(|idx| Scene::object_transform(&self.world, idx, Instant::now(), 0))
+                    .filter(|(_, _, hud)| !hud)
+                    .map_or(self.world.agent.position.z, |(position, _, _)| {
+                        position.z.max(self.world.agent.position.z)
+                    });
+                self.blender_live.place_object(source, action, &self.world);
+                let floor_offset = self.blender_live.floor_offset(source);
+                if matches!(
+                    action,
+                    crate::blender_live::objects::Action::Rez | crate::blender_live::objects::Action::Drop
+                ) && let Some(placement) = self.blender_live.placements.get_mut(&source)
+                    && let Some(floor) = self.scene.preview_floor(&self.world, placement.position, ceiling)
+                {
+                    placement.position.z = floor + floor_offset;
+                }
+                if matches!(action, crate::blender_live::objects::Action::Transform { .. }) {
+                    self.blender_live.apply_transform(source, &mut self.world);
+                    self.blender_live.revision = revision;
+                }
+            }
+        }
         self.update_blender_shape();
         if self.blender_live.owner.is_some_and(|owner| owner != self.world.agent_id) {
             self.blender_live.stop();
@@ -115,6 +182,10 @@ impl App {
             self.blender_live.states.clear();
             self.blender_live.selected = None;
             self.blender_live.upload_requested = None;
+            self.blender_live.placements.clear();
+            self.blender_live.placement_dirty.clear();
+            self.blender_live.object_action = None;
+            self.blender_live.world_origin = None;
             self.clear_blender_preview();
         }
         // An offline fixture uses the exact protocol and production skin path.
@@ -122,6 +193,7 @@ impl App {
             && !self.blender_live.demo_started
             && std::env::var_os("AURORA_DEMO_BLENDER_LIVE").is_some()
             && self.world.objects.index_of_uuid(&self.world.agent_id).is_some()
+            && (self.frame_count >= 300 || std::env::var("AURORA_DEMO_BLENDER_LIVE").is_ok_and(|mode| !mode.starts_with("static")))
         {
             self.blender_live.demo_started = true;
             self.blender_live.open = true;
@@ -141,7 +213,12 @@ impl App {
             if mode.starts_with("shape") {
                 self.demo_blender_shape(mode == "shape-readonly");
             }
-            match crate::blender_live::demo_fixture(&self.world.avatar_lib.rig, mode != "1") {
+            let fixture = if mode.starts_with("static") {
+                crate::blender_live::demo_static_fixture(&self.world.avatar_lib.rig, mode.starts_with("static-linked"))
+            } else {
+                crate::blender_live::demo_fixture(&self.world.avatar_lib.rig, mode != "1")
+            };
+            match fixture {
                 Ok(snapshot) if !mode.starts_with("shape") && mode != "lods" => {
                     self.blender_live.receive(snapshot);
                     self.blender_live.owner = Some(self.world.agent_id);
@@ -174,6 +251,88 @@ impl App {
             self.blender_live.owner = Some(self.world.agent_id);
         }
         if self.demo
+            && self.frame_count == 450
+            && let Ok(mode) = std::env::var("AURORA_DEMO_BLENDER_LIVE")
+            && mode.starts_with("static")
+            && let Some(source) = self.blender_live.selected
+        {
+            use crate::blender_live::objects::Action;
+            let source = if mode == "static-linked-child" {
+                self.blender_live
+                    .snapshot
+                    .as_ref()
+                    .and_then(|s| s.sources.iter().find(|s| s.link.is_some()))
+                    .map_or(source, |s| s.id)
+            } else {
+                source
+            };
+            self.blender_live.selected = Some(source);
+            if mode == "static-linked-child" {
+                self.build.set_edit_linked(&mut self.world, &mut self.settings.build, true);
+            }
+            let action = match mode.as_str() {
+                "static-hud" | "static-linked-hud" | "static-linked-hud-menu" => Action::Attach(31),
+                "static-attached" | "static-linked-attached" => Action::Attach(6),
+                "static-detached" | "static-linked-detached" => Action::Detach,
+                _ => Action::Edit,
+            };
+            if matches!(
+                mode.as_str(),
+                "static" | "static-linked" | "static-linked-child" | "static-linked-menu"
+            ) && let Some(placement) = self.blender_live.placements.get(&source)
+            {
+                let position = if let Some(parent) = placement.parent.and_then(|id| self.blender_live.placements.get(&id)) {
+                    parent.position + parent.rotation * placement.position
+                } else {
+                    placement.position
+                };
+                self.camera.set_view(
+                    position + Vec3::new(3.0, -3.0, 2.0),
+                    position,
+                    &mut self.world.agent,
+                    &self.settings.camera,
+                );
+            }
+            self.blender_live.object_action = Some((source, action));
+        }
+        if self.demo
+            && self.frame_count == 520
+            && std::env::var("AURORA_DEMO_BLENDER_LIVE")
+                .is_ok_and(|mode| matches!(mode.as_str(), "static-linked-menu" | "static-linked-hud-menu"))
+            && let Some(source) = self
+                .blender_live
+                .snapshot
+                .as_ref()
+                .and_then(|s| s.sources.iter().find(|s| s.link.is_some()))
+            && let Some(idx) = self
+                .blender_live
+                .root(source.id)
+                .and_then(|id| self.world.objects.index_of_uuid(&id))
+            && let Some(object) = self.world.objects.get(idx)
+        {
+            let key = object.key;
+            let id = object.full_id;
+            let point = Scene::object_transform(&self.world, idx, Instant::now(), 0).map_or(Vec3::ZERO, |xf| xf.0);
+            let worn = crate::ui::context::wearer(&self.world, idx) == Some(self.world.agent_id);
+            self.build.select_for_menu(&mut self.world, &self.settings.build, idx);
+            self.flush_build();
+            self.context_menu = Some(crate::ui::context::ContextMenu {
+                pos: egui::pos2(700.0, 180.0),
+                point,
+                target: if worn {
+                    crate::ui::context::Target::Attachment { key }
+                } else {
+                    crate::ui::context::Target::Object {
+                        key,
+                        full_id: id,
+                        offset: Vec3::ZERO,
+                    }
+                },
+                pie_path: Vec::new(),
+                pie_input_frame: None,
+            });
+        }
+        if self.demo
             && std::env::var("AURORA_DEMO_BLENDER_LIVE").as_deref() == Ok("lods")
             && !self.blender_live.import.demo_requested
             && let Some(source) = self.blender_live.snapshot.as_ref().and_then(|snapshot| snapshot.sources.first())
@@ -190,7 +349,7 @@ impl App {
         if let Some(snapshot) = self.blender_live.snapshot.as_ref()
             && (Some(snapshot.revision) != self.blender_live.revision || missing)
             && self.world.objects.index_of_uuid(&self.world.agent_id).is_some()
-            && let Some(snapshot) = self.blender_live.visible_snapshot()
+            && let Some(snapshot) = self.blender_live.snapshot.clone()
         {
             self.install_blender_snapshot(snapshot, renderer);
         }
@@ -211,8 +370,19 @@ impl App {
                     ready && own
                 })
                 .count();
+            let (mut ready_static, mut ready_hud) = (0, 0);
+            for id in &self.blender_live.objects {
+                if let Some(gpu) = self.world.objects.index_of_uuid(id).and_then(|idx| self.scene.gpu.get(idx))
+                    && !gpu.rigged
+                    && !gpu.faces.is_empty()
+                    && matches!(gpu.geom, Some(crate::scene::GeomKey::Mesh { id, .. }) if self.blender_live.assets.contains(&id))
+                {
+                    ready_static += 1;
+                    ready_hud += usize::from(gpu.hud);
+                }
+            }
             log::info!(
-                "demo Blender live: revision={:?} objects={} ready_skinned={ready} appearances={appearances} images={images}",
+                "demo Blender live: revision={:?} objects={} ready_skinned={ready} ready_static={ready_static} ready_hud={ready_hud} appearances={appearances} images={images}",
                 self.blender_live.revision,
                 self.blender_live.objects.len()
             );
@@ -220,6 +390,27 @@ impl App {
     }
 
     fn install_blender_snapshot(&mut self, snapshot: Prepared, renderer: &mut aurora_render::Renderer) {
+        // Hidden and derezzed sources also retain their current hierarchy.
+        let initial: Vec<_> = snapshot
+            .sources
+            .iter()
+            .filter(|source| !source.rigged() && source.link.is_none() && !self.blender_live.placements.contains_key(&source.id))
+            .map(|source| source.id)
+            .collect();
+        self.blender_live.prepare_placements(&snapshot, &self.world);
+        for source in initial {
+            let offset = self.blender_live.floor_offset(source);
+            if let Some(placement) = self.blender_live.placements.get_mut(&source)
+                && let Some(floor) = self
+                    .scene
+                    .preview_floor(&self.world, placement.position, self.world.agent.position.z)
+            {
+                placement.position.z = floor + offset;
+            }
+        }
+        let Some(snapshot) = self.blender_live.visible_snapshot() else {
+            return;
+        };
         if !self.scene.install_preview_images(&snapshot.images, renderer) {
             return;
         }
@@ -233,19 +424,22 @@ impl App {
             self.blender_live.error = Some(aurora_i18n::tr!("blender-live-no-avatar").into());
             return;
         };
-        for asset in self.blender_live.assets.drain(..) {
+        let previous_assets: HashSet<_> = self.blender_live.assets.drain(..).collect();
+        for &asset in &previous_assets {
             if !snapshot.meshes.iter().any(|mesh| mesh.id == asset) {
                 self.scene.retire_preview_mesh(asset);
             }
         }
-        while self.blender_live.objects.len() > snapshot.meshes.len() {
-            if let Some(id) = self.blender_live.objects.pop()
-                && let Some(index) = self.world.objects.index_of_uuid(&id)
-            {
-                self.world.objects.remove_idx(index);
-            }
-        }
-        for (index, mesh) in snapshot.meshes.into_iter().enumerate() {
+        let mut old = std::mem::take(&mut self.blender_live.instances);
+        let mut parts = std::collections::HashMap::<Uuid, usize>::new();
+        let mut roots = std::collections::HashMap::new();
+        self.blender_live.objects.clear();
+        for mesh in snapshot.meshes {
+            let part = parts.entry(mesh.source).or_default();
+            let key = (mesh.source, *part);
+            *part += 1;
+            let rigged = mesh.skin.is_some();
+            let placement = (!rigged).then(|| self.blender_live.placements[&mesh.source]);
             self.scene.install_preview_materials(mesh.id, &mesh.materials);
             let extra = ExtraParams {
                 render_materials: mesh
@@ -256,7 +450,9 @@ impl App {
                     .collect(),
                 ..Default::default()
             };
-            self.scene.meshes.insert_local(mesh.id, mesh.data, mesh.header, Some(mesh.skin));
+            if !previous_assets.contains(&mesh.id) {
+                self.scene.meshes.insert_local(mesh.id, mesh.data, mesh.header, mesh.skin);
+            }
             self.blender_live.assets.push(mesh.id);
             let faces = mesh
                 .colors
@@ -275,41 +471,61 @@ impl App {
                 }),
                 ..Default::default()
             };
-            if let Some(existing) = self
-                .blender_live
+            let id = old.remove(&key).unwrap_or_else(Uuid::new_v4);
+            let local_id = self
+                .world
                 .objects
-                .get(index)
-                .and_then(|id| self.world.objects.index_of_uuid(id))
-                .and_then(|i| self.world.objects.get_mut(i))
-            {
-                // Keep the draw object and its last good geometry while the
-                // replacement is staged; no disappearance between snapshots.
-                existing.volume = volume;
-                existing.extra = extra;
-                existing.te = Some(Arc::new(TextureEntry { faces }));
-                existing.shape_dirty = true;
-                existing.material_dirty = true;
-                existing.render.needs_records = true;
-                continue;
-            }
-            let id = Uuid::new_v4();
+                .index_of_uuid(&id)
+                .and_then(|i| self.world.objects.get(i))
+                .map(|o| o.key.local_id)
+                .unwrap_or_else(|| {
+                    let id = self.blender_live.next_local_id;
+                    self.blender_live.next_local_id = id.saturating_add(1);
+                    id
+                });
+            let attachment = placement.and_then(|p| match p.location {
+                crate::blender_live::objects::Location::Attachment(point) => Some(point),
+                _ => None,
+            });
+            let object_parent = self.blender_live.preview_parent(mesh.source, key.1, rigged, parent, &roots);
+            let (position, rotation) = self
+                .blender_live
+                .preview_transform(mesh.source, key.1)
+                .unwrap_or((Vec3::ZERO, Quat::IDENTITY));
             let update = ObjectUpdate {
-                local_id: index as u32 + 1,
+                local_id,
                 full_id: id,
-                parent_id: parent.local_id,
+                parent_id: object_parent.map_or(0, |key| key.local_id),
                 pcode: aurora_prim::params::LL_PCODE_VOLUME,
-                state: 1u8.rotate_left(4),
+                state: if rigged {
+                    1
+                } else {
+                    attachment
+                        .filter(|_| key.1 == 0 && placement.is_some_and(|p| p.parent.is_none()))
+                        .unwrap_or(0)
+                }
+                .rotate_left(4),
                 crc: 0,
                 material: 0,
-                click_action: crate::interaction::code::IGNORE,
-                scale: Vec3::ONE,
-                position: Vec3::ZERO,
-                rotation: Quat::IDENTITY,
+                click_action: if rigged {
+                    crate::interaction::code::IGNORE
+                } else {
+                    crate::interaction::code::DISABLED
+                },
+                scale: placement.map_or(Vec3::ONE, |p| p.size * p.scale),
+                position,
+                rotation,
                 velocity: Vec3::ZERO,
                 acceleration: Vec3::ZERO,
                 angular_velocity: Vec3::ZERO,
-                update_flags: 0,
-                owner_id: Uuid::nil(),
+                update_flags: if rigged {
+                    0
+                } else {
+                    crate::ui::context::flags::OBJECT_MOVE
+                        | crate::ui::context::flags::OBJECT_MODIFY
+                        | crate::ui::context::flags::OBJECT_YOU_OWNER
+                },
+                owner_id: self.world.agent_id,
                 volume,
                 texture_entry: Some(Arc::new(TextureEntry { faces })),
                 extra,
@@ -323,15 +539,40 @@ impl App {
                 particles: ParticleUpdate::Clear,
                 sound: Default::default(),
             };
-            self.world.objects.insert_preview_attachment(parent, update);
-            if index < self.blender_live.objects.len() {
-                self.blender_live.objects[index] = id;
-            } else {
-                self.blender_live.objects.push(id);
+            let index = self.world.objects.upsert_preview(object_parent, update);
+            if !rigged {
+                let mask = aurora_net::build::perm::MOVE | aurora_net::build::perm::MODIFY;
+                self.build.props.insert(
+                    id,
+                    aurora_net::build::ObjectProps {
+                        object_id: id,
+                        full: true,
+                        owner_id: self.world.agent_id,
+                        creator_id: self.world.agent_id,
+                        base_mask: mask,
+                        owner_mask: mask,
+                        name: mesh.name.clone(),
+                        ..Default::default()
+                    },
+                );
             }
+            if key.1 == 0
+                && let Some(o) = self.world.objects.get(index)
+            {
+                roots.insert(mesh.source, o.key);
+            }
+            self.blender_live.instances.insert(key, id);
+            self.blender_live.objects.push(id);
             log::debug!("Blender preview installed: {}", mesh.name);
         }
+        for id in old.into_values() {
+            self.build.props.remove(&id);
+            if let Some(idx) = self.world.objects.index_of_uuid(&id) {
+                self.world.objects.remove_idx(idx);
+            }
+        }
         self.blender_live.triangles = snapshot.triangles;
+        self.blender_live.placement_dirty.clear();
         self.blender_live.revision = Some(snapshot.revision);
         self.blender_live.error = None;
         log::info!(

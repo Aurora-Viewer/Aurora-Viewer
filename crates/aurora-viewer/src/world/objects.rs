@@ -168,6 +168,9 @@ impl Object {
     pub fn is_client_preview(&self) -> bool {
         self.key.region == PREVIEW_REGION
     }
+    pub fn is_editable_preview(&self) -> bool {
+        self.is_client_preview() && self.update_flags & crate::ui::context::flags::OBJECT_MOVE != 0
+    }
     pub fn local_appearance(&self, face: usize) -> Option<LocalAppearance> {
         self.render
             .local_appearance
@@ -1078,10 +1081,31 @@ impl ObjectStore {
 
     /// Insert a render-only attachment with an explicit real avatar parent.
     /// Its key cannot collide with a simulator object, even after crossings.
+    #[cfg(test)]
     pub fn insert_preview_attachment(&mut self, parent: ObjKey, update: ObjectUpdate) -> usize {
+        self.upsert_preview(Some(parent), update)
+    }
+
+    /// Update a private draw object without losing its stable UUID/slot. An
+    /// explicit parent may be another preview batch or the real avatar.
+    pub fn upsert_preview(&mut self, parent: Option<ObjKey>, update: ObjectUpdate) -> usize {
+        if let Some(idx) = self
+            .index_of_uuid(&update.full_id)
+            .filter(|&idx| self.get(idx).is_some_and(Object::is_client_preview))
+        {
+            self.unlink(idx);
+            if let Some(object) = self.get_mut(idx) {
+                object.apply_full(update);
+                object.parent_id = parent.map_or(0, |key| key.local_id);
+                object.parent_region = parent.map_or(PREVIEW_REGION, |key| key.region);
+            }
+            self.link(idx);
+            self.touch(idx);
+            return idx;
+        }
         let mut object = Object::from_update(PREVIEW_REGION, update);
-        object.parent_id = parent.local_id;
-        object.parent_region = parent.region;
+        object.parent_id = parent.map_or(0, |key| key.local_id);
+        object.parent_region = parent.map_or(PREVIEW_REGION, |key| key.region);
         self.insert(object)
     }
 

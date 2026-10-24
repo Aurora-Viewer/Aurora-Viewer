@@ -13,6 +13,41 @@ pub(super) struct ImageSlot {
 }
 
 impl Scene {
+    /// Resolve local rez/drop support, including elevated floors. Reuse the
+    /// scene's triangle picking; previews cannot become their own support.
+    pub fn preview_floor(&self, world: &World, position: Vec3, ceiling: f32) -> Option<f32> {
+        use rayon::prelude::*;
+        let ray = (position.with_z(ceiling), -Vec3::Z);
+        let mut candidates = Vec::new();
+        self.pick.ray_candidates(ray, &mut candidates);
+        let now = Instant::now();
+        let object = candidates
+            .par_iter()
+            .filter_map(|&idx| {
+                let object = world.objects.get(idx)?;
+                let gpu = self.gpu.get(idx)?;
+                if object.is_client_preview()
+                    || object.pcode != aurora_prim::params::LL_PCODE_VOLUME
+                    || object.update_flags & crate::build::edits::FLAGS_PHANTOM != 0
+                    || gpu.hud
+                    || gpu.rigged
+                    || gpu.owner_avatar.is_some()
+                {
+                    return None;
+                }
+                let hit = self.face_hit(world, idx, ray, now, true)?;
+                (hit.t.is_finite() && hit.t >= 0.0 && hit.normal.is_finite() && hit.normal.z > 0.1).then_some(ceiling - hit.t)
+            })
+            .max_by(f32::total_cmp);
+        let terrain = world
+            .ground_height(position)
+            .filter(|height| height.is_finite() && *height <= ceiling);
+        match (object, terrain) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
     pub fn preview_appearance_counts(&self) -> (usize, usize) {
         (self.preview_appearances.len(), self.preview_images.len())
     }
@@ -131,5 +166,29 @@ impl Scene {
                 renderer.free_texture(entry.slot);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod floor_tests {
+    use super::*;
+
+    #[test]
+    fn blender_live_floor_uses_platform_triangles_and_excludes_phantom_and_worn_supports() {
+        let (mut world, mut scene, front, _) = super::super::picking::tests::scene_with_two_objects();
+        let object = world.objects.get_mut(front).expect("platform");
+        object.update_flags = 0;
+        object.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        scene.gpu[front].center = Vec3::new(3.0, 0.0, 50.0);
+        scene.gpu[front].radius = 1.0;
+        scene.pick.set(front, super::super::hover::PickEntry::of(&scene.gpu[front]));
+        let point = Vec3::new(3.0, 0.0, 51.0);
+        let floor = scene.preview_floor(&world, point, 52.0).expect("elevated floor");
+        assert!((floor - 50.5).abs() < 0.001);
+        world.objects.get_mut(front).expect("platform").update_flags = crate::build::edits::FLAGS_PHANTOM;
+        assert!(scene.preview_floor(&world, point, 52.0).is_none_or(|height| height < 50.5));
+        world.objects.get_mut(front).expect("platform").update_flags = 0;
+        scene.gpu[front].owner_avatar = Some(0);
+        assert!(scene.preview_floor(&world, point, 52.0).is_none_or(|height| height < 50.5));
     }
 }

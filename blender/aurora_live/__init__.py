@@ -1,10 +1,10 @@
 """Blender editing to Aurora's animated avatar, without uploading assets."""
 
 bl_info = {
-    "name": "Aurora Live Mesh", "author": "Aurora Viewer contributors",
-    "version": (0, 11, 0), "blender": (2, 93, 0),
+    "name": "Aurora LiveMesh", "author": "Aurora Viewer contributors",
+    "version": (0, 14, 1), "blender": (2, 93, 0),
     "location": "View3D > Sidebar > Aurora", "category": "3D View",
-    "description": "Preview rigged mesh edits live on your avatar in Aurora Viewer",
+    "description": "Preview rigged and static mesh edits live in Aurora Viewer",
 }
 
 _reloading = "bpy" in globals()
@@ -13,7 +13,7 @@ import time
 import bpy
 from bpy.app.handlers import persistent
 from bpy.app.translations import pgettext_iface
-from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
+from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 from . import compat, client, materials, weights, starter, exporter, lods, tracking, handles, rigging, skinning, posing, tools_ui, shape_apply, shape_transfer
 if _reloading:
     # Blender reloads the package during an in-place extension upgrade. Reload
@@ -48,6 +48,10 @@ def _changed(_scene, depsgraph):
     for obj in tracking.active(bpy.context.scene):
         try:
             watched.update((obj, obj.data))
+            parent = obj.parent
+            while parent:
+                watched.add(parent)
+                parent = parent.parent
             armature = obj.find_armature()
             if armature:
                 watched.update((armature, armature.data))
@@ -74,6 +78,8 @@ def _load_pre(_unused):
 @persistent
 def _refresh_handles(_unused=None):
     for scene in bpy.data.scenes:
+        if not any(entry.marked for entry in scene.aurora_live.objects):
+            scene.aurora_live.object_index = -1
         for entry in scene.aurora_live.objects:
             lods.initialize(entry)
     for obj in list(bpy.data.objects):
@@ -135,7 +141,7 @@ def _tick():
     prefs = scene.aurora_live
     # Polling also sees Undo/Redo, scene switches and names changed while idle.
     membership = (scene.as_pointer(), scene.unit_settings.scale_length, prefs.forward,
-                  tuple((obj.as_pointer(), obj.name) for obj in objects))
+                  tuple((obj.as_pointer(), obj.name) for obj in objects), tracking.signature(scene))
     if membership != _object_signature:
         _object_signature = membership
         _request_capture()
@@ -154,7 +160,8 @@ def _tick():
         try:
             if painting:
                 materials.invalidate()
-            value = exporter.snapshot(objects, supported, _revision + 1, prefs.forward, _client.rest_axes(), tracking.source_ids(scene))
+            value = exporter.snapshot(objects, supported, _revision + 1, prefs.forward, _client.rest_axes(),
+                                      tracking.source_ids(scene), tracking.link_roots(scene))
             # Texture painting can change pixels without a depsgraph event.
             # Compare the prepared payload, sharing its buffers with the worker,
             # so idle paint ticks and unrelated notifications send no revisions.
@@ -214,7 +221,8 @@ class AURORA_OT_receive_shape(bpy.types.Operator):
 class AURORA_PG_live(bpy.types.PropertyGroup):
     show_lods: BoolProperty(name="Import / LOD", default=False)
     objects: CollectionProperty(type=tracking.AURORA_PG_sync_object)
-    object_index: IntProperty(default=0, min=0)
+    object_index: IntProperty(default=-1, min=-1, options={"SKIP_SAVE"})
+    selection_anchor: StringProperty(default="", options={"SKIP_SAVE"})
     rig: PointerProperty(name="Avatar rig", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "ARMATURE")
     weight_source: PointerProperty(name="Weight source", type=bpy.types.Object, poll=lambda _self, obj: obj.type == "MESH")
     transfer_method: EnumProperty(name="Weight mapping", items=[
@@ -273,7 +281,7 @@ class AURORA_OT_connect(bpy.types.Operator):
         global _client, _force_capture
         tracking.prune(context.scene)
         if not context.scene.aurora_live.objects:
-            tracking.add(context.scene, [obj for obj in _selected() if obj.find_armature() is not None])
+            tracking.add(context.scene, _selected(), context.view_layer.objects.active)
         _stop()
         _request_capture()
         _force_capture = True
@@ -392,7 +400,12 @@ def _draw_live(layout, context):
     layout.operator("aurora.live_selection", icon="ADD")
     if prefs.objects:
         layout.template_list("AURORA_UL_sync_objects", "", prefs, "objects", prefs, "object_index", rows=4, maxrows=8)
-        layout.label(text=pgettext_iface("{enabled} / {total} enabled").format(
+        row = layout.row(align=True)
+        row.operator("aurora.live_group", icon="LINKED")
+        row.operator("aurora.live_ungroup", icon="UNLINKED")
+        layout.operator("aurora.live_root", icon="OBJECT_ORIGIN")
+        layout.label(text=pgettext_iface("{selected} selected · {enabled}/{total} enabled").format(
+            selected=sum(entry.marked for entry in prefs.objects),
             enabled=len(tracking.active(context.scene)), total=len(prefs.objects)), translate=False)
     else:
         layout.label(text="Add selected meshes to start syncing.")
@@ -401,7 +414,7 @@ def _draw_live(layout, context):
         box = layout.box()
         box.alert = True
         box.label(text=_error, icon="ERROR", translate=False)
-    layout.label(text="Enable Blender Live in Aurora first.")
+    layout.label(text="Enable LiveMesh in Aurora first.")
     layout.label(text="Local preview · no asset upload")
 
 
@@ -605,17 +618,31 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
         "Créer un T-shirt éditable et pondéré sur le nouveau squelette SL",
     "Switch to Object Mode to create a rig.": "Passez en mode Objet pour créer un squelette.",
     "Created 133 Bento bones and 26 Fitted Mesh bones": "133 os Bento et 26 os Fitted Mesh créés",
-    "Aurora Live Mesh": "Maillage Aurora Live", "Connect to Aurora": "Connecter à Aurora",
+    "Aurora LiveMesh": "Aurora LiveMesh", "Connect to Aurora": "Connecter à Aurora",
     "Disconnect": "Déconnecter", "Add selected meshes": "Ajouter la sélection",
     "Add the current selection without replacing listed objects or enabling paused entries":
         "Ajouter la sélection sans remplacer les objets listés ni réactiver les objets en pause",
     "Synchronized objects": "Objets synchronisés", "Synchronize": "Synchroniser",
+    "Select synchronized object": "Sélectionner un objet synchronisé",
+    "Click to select; Ctrl-click to toggle; Shift-click to select a range":
+        "Cliquer pour sélectionner ; Ctrl-clic pour ajouter ou retirer ; Maj-clic pour sélectionner une plage",
+    "{selected} selected · {enabled}/{total} enabled": "{selected} sélectionnés · {enabled}/{total} actifs",
+    "Group": "Grouper", "Ungroup": "Dégrouper", "Make root": "Définir root",
+    "Group selected entries; the active selected entry becomes the root":
+        "Grouper les objets sélectionnés ; la ligne active sélectionnée devient le root",
+    "Ungroup selected children, or the whole linkset when its root is selected":
+        "Dégrouper les enfants sélectionnés, ou tout le linkset lorsque son root est sélectionné",
+    "Use the highlighted entry as the root of its linkset": "Utiliser la ligne active comme root de son linkset",
+    "Root #1 · {name}": "Root #1 · {name}", "#{number} · {name}": "#{number} · {name}",
+    "Invalid LiveMesh grouping": "Groupement LiveMesh invalide",
     "Include this object in Aurora's live preview": "Inclure cet objet dans l’aperçu live Aurora",
     "Remove from synchronization": "Retirer de la synchronisation",
     "Remove this entry from Aurora's preview list; keep the Blender object":
         "Retirer cette entrée de la liste d’aperçu Aurora ; conserver l’objet Blender",
     "Missing object": "Objet manquant", "{enabled} / {total} enabled": "{enabled} / {total} actifs",
     "Add selected meshes to start syncing.": "Ajoutez la sélection pour commencer.",
+    "Update Aurora Viewer to preview non-rigged meshes": "Mettez Aurora Viewer à jour pour prévisualiser les maillages non riggés",
+    "Update Aurora Viewer to preview linked objects": "Mettez Aurora Viewer à jour pour prévisualiser les objets liés",
     "Select one or more rigged meshes first": "Sélectionnez d’abord un ou plusieurs maillages riggés",
     "Update now": "Mettre à jour maintenant", "Aurora port": "Port Aurora",
     "Automatic updates": "Mise à jour automatique", "Interval (seconds)": "Intervalle (secondes)",
@@ -631,7 +658,7 @@ _translations = {"fr_FR": {(context, key): value for context in ("*", "Operator"
     "Receive avatar shape": "Recevoir la shape de l’avatar",
     "Automatic (Avastar / SL)": "Automatique (Avastar / SL)",
     "Detect each rig's rest axes; create new rigs facing Blender -Y": "Détectez les axes de repos de chaque squelette ; les nouveaux rigs regardent vers −Y comme Avastar",
-    "Enable Blender Live in Aurora first.": "Activez d’abord Blender Live dans Aurora.",
+    "Enable LiveMesh in Aurora first.": "Activez d’abord LiveMesh dans Aurora.",
     "Local preview · no asset upload": "Aperçu local · sans import automatique",
 }.items()}}
 

@@ -101,7 +101,7 @@ fn serve(
     }
     let mut joints: Vec<_> = supported.iter().collect();
     joints.sort();
-    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer", "shape-apply", "import-lods"] });
+    let hello = serde_json::json!({ "protocol": protocol::VERSION, "joints": joints, "rest_axes": rest_axes, "max_bytes": protocol::MAX_BYTES, "features": ["pbr-materials", "source-ids", "shape-transfer", "shape-apply", "import-lods", "static-meshes", "object-links"] });
     writeln!(stream, "{hello}")?;
     {
         let mut status = shared.status.lock();
