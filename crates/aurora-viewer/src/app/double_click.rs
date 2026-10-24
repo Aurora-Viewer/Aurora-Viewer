@@ -55,7 +55,10 @@ impl App {
         // the target stays its centre's height above the ground
         let target = point + Vec3::Z * self.pelvis_to_foot();
         let was_running = self.autopilot.as_ref().is_some_and(|a| a.run);
+        self.world.following_avatar = None;
         self.autopilot = Some(AutoPilot::start(agent.position, target, run, Instant::now()));
+        self.autopilot_stop_pending = false;
+        self.autopilot_flags = 0;
         self.release_native_movelock();
         if run != was_running {
             self.sync_run();
@@ -110,12 +113,48 @@ impl App {
         self.send(NetCommand::SetAlwaysRun(run));
     }
 
+    pub(super) fn travel_to_avatar(&mut self, id: uuid::Uuid, follow: bool) {
+        let agent = &self.world.agent;
+        if !self.in_world() || self.native_anchor.blocks_walk(agent.seated, agent.ground_sit) {
+            return;
+        }
+        let Some(target) = autopilot::avatar_position(&self.world, id) else {
+            return;
+        };
+        let pilot = AutoPilot::avatar(agent.position, target, follow.then_some(id), agent.flying, Instant::now());
+        self.stop_autopilot(true);
+        self.world.following_avatar = pilot.leader;
+        self.autopilot = Some(pilot);
+        self.autopilot_stop_pending = false;
+        self.autopilot_flags = 0;
+        self.release_native_movelock();
+    }
+
+    /// The demo feeds the pilot's flags into local physics as keys. Remove
+    /// those synthesized movement bits before sending/predicting controls,
+    /// retaining the pilot's exact slow/fast/stop request.
+    pub(super) fn autopilot_controls(&self, mut flags: u32) -> u32 {
+        if self.autopilot.is_some() {
+            flags &= !(control::AT_POS
+                | control::AT_NEG
+                | control::FAST_AT
+                | control::NUDGE_AT_POS
+                | control::NUDGE_AT_NEG
+                | control::UP_POS
+                | control::UP_NEG
+                | control::FAST_UP);
+        }
+        flags | self.autopilot_flags
+    }
+
     /// stopAutoPilot: the avatar stops (AGENT_CONTROL_STOP this frame).
     pub(super) fn stop_autopilot(&mut self, user_cancel: bool) {
+        self.world.following_avatar = None;
         let Some(ap) = self.autopilot.take() else {
             return;
         };
-        self.autopilot_flags |= control::STOP;
+        self.autopilot_flags = control::STOP;
+        self.autopilot_stop_pending = true;
         if ap.run {
             self.sync_run();
         }
@@ -138,16 +177,29 @@ impl App {
     /// stopAutoPilot(true)); otherwise the body turns and the flags go out
     /// with this frame's AgentUpdate.
     pub(super) fn update_autopilot(&mut self, dt: f32) {
-        self.autopilot_flags = 0;
+        self.autopilot_flags = if std::mem::take(&mut self.autopilot_stop_pending) {
+            control::STOP
+        } else {
+            0
+        };
         if self.autopilot.is_none() {
             return;
         }
         let i = &self.input;
-        let keys = i.forward || i.back || i.turn_left || i.turn_right || i.strafe_left || i.strafe_right || i.up || i.down;
+        let keys = i.forward
+            || i.back
+            || i.turn_left
+            || i.turn_right
+            || i.strafe_left
+            || i.strafe_right
+            || i.up
+            || i.down
+            || i.joystick_yaw.abs() > 0.001
+            || i.joystick_pitch.abs() > 0.001;
         let agent = &self.world.agent;
         if keys
             || self.mouse_mode == MouseMode::Steer
-            || agent.flying
+            || self.autopilot.as_ref().is_some_and(|ap| ap.flying != agent.flying)
             || self.native_anchor.blocks_walk(agent.seated, agent.ground_sit)
             || !self.in_world()
         {
@@ -155,6 +207,15 @@ impl App {
             return;
         }
         let (position, yaw) = (agent.position, agent.yaw);
+        if let Some(id) = self.autopilot.as_ref().and_then(|ap| ap.leader) {
+            let Some(target) = autopilot::avatar_position(&self.world, id) else {
+                self.stop_autopilot(true);
+                return;
+            };
+            if let Some(ap) = &mut self.autopilot {
+                ap.target = target;
+            }
+        }
         let Some(ap) = self.autopilot.as_mut() else {
             return;
         };
@@ -169,8 +230,11 @@ impl App {
             self.stop_autopilot(false);
         } else if self.demo {
             // no simulator offline: the local stand-in walks on the keys
-            self.input.forward |= step.flags & control::AT_POS != 0;
+            self.input.forward |= step.flags & (control::AT_POS | control::NUDGE_AT_POS) != 0;
             self.input.back |= step.flags & control::AT_NEG != 0;
+            self.input.nudge_fb = step.flags & control::FAST_AT == 0;
+            self.input.up |= step.flags & control::UP_POS != 0;
+            self.input.down |= step.flags & control::UP_NEG != 0;
             self.input.run |= run;
         }
     }
@@ -257,5 +321,70 @@ impl App {
         };
         let pressed = (self.frame_count - START).is_multiple_of(2);
         self.mouse_input(MouseButton::Left, pressed, false);
+    }
+
+    /// Offline avatar approach and follow, through the context action route.
+    pub(super) fn demo_avatar_travel_steps(&mut self) {
+        let Ok(mode) = std::env::var("AURORA_DEMO_AVATAR_TRAVEL") else {
+            return;
+        };
+        let id = crate::demo::DEMO_LOUP;
+        let frame = self.frame_count;
+        if frame == 600 && mode != "menu" {
+            self.on_ctx_action(if mode == "go" {
+                ui::context::CtxAction::GoToAvatar(id)
+            } else {
+                ui::context::CtxAction::FollowAvatar(id)
+            });
+        }
+        if ((frame == 600 && mode == "menu") || (frame == 1400 && mode == "follow-menu"))
+            && let Some(point) = autopilot::avatar_position(&self.world, id)
+        {
+            self.context_menu = Some(ui::context::ContextMenu {
+                pos: egui::pos2(240.0, 120.0),
+                point,
+                target: ui::context::Target::Avatar {
+                    id,
+                    own: false,
+                    attachment: None,
+                },
+                pie_path: Vec::new(),
+                pie_input_frame: None,
+            });
+        }
+        if frame == 1500
+            && matches!(mode.as_str(), "go" | "follow")
+            && let Some(idx) = self.world.objects.index_of_uuid(&id)
+            && let Some(o) = self.world.objects.get_mut(idx)
+        {
+            o.position += Vec3::X * 6.0;
+            o.velocity = Vec3::ZERO;
+            o.acceleration = Vec3::ZERO;
+        }
+        if frame == 1500 {
+            match mode.as_str() {
+                "stop" => self.on_ctx_action(ui::context::CtxAction::StopFollowing),
+                "escape" => self.reset_camera_view(),
+                "manual" => self.controls_held.push(Action::Forward),
+                "lost" => {
+                    if let Some(idx) = self.world.objects.index_of_uuid(&id) {
+                        self.world.objects.remove_idx(idx);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if frame == 1502 && mode == "manual" {
+            self.controls_held.retain(|a| *a != Action::Forward);
+        }
+        if matches!(frame, 601 | 1400 | 1501 | 2400) {
+            let distance = autopilot::avatar_position(&self.world, id).map(|p| (p - self.world.agent.position).truncate().length());
+            log::info!(
+                "demo avatar travel: mode={mode}, frame={frame}, distance={distance:?}, active={}, following={}, flags={:#x}",
+                self.autopilot.is_some(),
+                self.world.following_avatar.is_some(),
+                self.autopilot_flags
+            );
+        }
     }
 }

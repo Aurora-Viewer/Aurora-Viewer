@@ -335,6 +335,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
+| `AURORA_DEMO_AVATAR_TRAVEL=menu\|go\|follow` | Avatar navigation menu, approach and persistent follow |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
@@ -347,6 +348,23 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
 ### Details
+
+- **`AURORA_DEMO_AVATAR_TRAVEL=menu|go|follow`**: at frame 600, open the
+  violet wolf's avatar menu or dispatch its Go to / Follow action. `go`
+  keeps the initial destination and ends within 2 m; `follow` keeps the
+  leader, rests near it, then resumes after the wolf moves 6 m at frame 1500
+  (the wolf also moves in `go`, but the pilot stays finished).
+  `follow-menu` shows the active follow's menu at 1400. `manual`, `escape`,
+  `stop` and `lost` start a follow, then cancel it at 1500 through the movement
+  controls, Escape's reset action, Stop following or target removal respectively.
+  Capture the menu at 620 and the final follow at 2450; milestone distances,
+  active state and control flags are logged. With the native menu, verify
+  Rejoindre/Go to, Suivre/Follow and Arrêter de suivre/Stop following in both
+  languages, on the avatar and its worn objects, and in resident lists.
+  On the grid, the human checks a moving resident, stable arrival, a target
+  sitting on an object, manual movement/Escape, target departure, a region
+  crossing and a follow started while already flying. Ground travel stays
+  on the ground; these actions do not enable flight or route around walls.
 
 - **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle|sit-ground`**:
   opens the hover-height floater at frame 600. A number sets the height;

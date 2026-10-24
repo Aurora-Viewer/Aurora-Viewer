@@ -5,7 +5,7 @@
 //! Port of LLAgent::startAutoPilotGlobal / autoPilot / stopAutoPilot
 //! (indra/newview/llagent.cpp), LLToolPie::walkToClickedLocation and
 //! teleportToClickedLocation (indra/newview/lltoolpie.cpp), originally LGPL
-//! 2.1. Like Firestorm, the viewer only turns the body and sends the walk
+//! 2.1. Like the Legacy Viewer, the viewer only turns the body and sends the walk
 //! flags of `AgentUpdate`; the simulator moves the avatar. Firestorm offers
 //! no action, walk or teleport; "run" is the walk with running on
 //! (SetAlwaysRun), Aurora's own.
@@ -99,7 +99,7 @@ impl DoubleClickDetector {
 }
 
 /// AUTOPILOT_MAX_TIME_NO_PROGRESS_WALK: the walk gives up after this long
-/// without getting nearer, counted over the whole walk as Firestorm does.
+/// without progress. Successful movement resets this consecutive stall timer.
 const MAX_TIME_NO_PROGRESS: f32 = 1.5;
 
 /// What a press of the left button on the world was, once the HUDs, the
@@ -147,6 +147,11 @@ pub struct AutoPilot {
     pub started: Instant,
     /// What to do once there (the finish callback of startAutoPilotGlobal).
     pub on_arrival: Option<Arrival>,
+    /// A persistent follow keeps its pilot while resting near the leader.
+    pub leader: Option<uuid::Uuid>,
+    pub flying: bool,
+    waiting: bool,
+    previous_position: Vec3,
 }
 
 /// The finish callback of a walk: run when it ends within its stop
@@ -174,11 +179,6 @@ pub struct Step {
     pub finish: Option<Finish>,
 }
 
-fn angle_between(a: Vec3, b: Vec3) -> f32 {
-    let (a, b) = (a.normalize_or_zero(), b.normalize_or_zero());
-    a.dot(b).clamp(-1.0, 1.0).acos()
-}
-
 impl AutoPilot {
     /// startAutoPilotGlobal without a stop distance: the square root of the
     /// distance, 0.5 m at least. Never flying (walkToClickedLocation).
@@ -192,6 +192,10 @@ impl AutoPilot {
             run,
             started: now,
             on_arrival: None,
+            leader: None,
+            flying: false,
+            waiting: false,
+            previous_position: from,
         }
     }
 
@@ -204,65 +208,130 @@ impl AutoPilot {
         }
     }
 
+    /// Avatar approach, using LLAgent::startFollowPilot's target identity.
+    /// Unlike the Legacy Viewer, arrival rests at 2 m and following resumes
+    /// only beyond 3 m. Ground travel compares XY, so different pelvis heights
+    /// cannot keep the avatar turning or walking through its destination.
+    pub fn avatar(from: Vec3, target: Vec3, leader: Option<uuid::Uuid>, flying: bool, now: Instant) -> Self {
+        Self {
+            stop_distance: 2.0,
+            leader,
+            flying,
+            ..Self::start(from, target, false, now)
+        }
+    }
+
+    pub fn shift(&mut self, delta: Vec3) {
+        self.target += delta;
+        self.previous_position += delta;
+    }
+
+    fn distance(&self, delta: Vec3) -> f32 {
+        if self.flying { delta.length() } else { delta.truncate().length() }
+    }
+
     /// Ended where it was going: within the stop distance of the target,
     /// on the ground plane (Aurora's walk does not fly up to a target
     /// above the avatar, as startAutoPilotGlobal may).
     pub fn reached(&self, position: Vec3) -> bool {
-        (self.target - position).truncate().length() < self.stop_distance
+        self.distance(self.target - position) <= self.stop_distance
     }
 
     /// One frame of LLAgent::autoPilot from the avatar's place and heading,
     /// `dt` seconds after the last (1 / gFPSClamped).
     pub fn step(&mut self, position: Vec3, yaw: f32, dt: f32) -> Step {
-        let at = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
-        let mut direction = self.target - position;
-        let target_dist = direction.length();
-        if target_dist >= self.target_dist {
-            self.no_progress += dt;
-            if self.no_progress > MAX_TIME_NO_PROGRESS {
-                return Step {
-                    yaw: 0.0,
-                    flags: control::STOP,
-                    finish: Some(Finish::NoProgress),
-                };
-            }
-        }
-        self.target_dist = target_dist;
-        // a two-dimensional solution
-        direction.z = 0.0;
-        let xy_distance = direction.length();
-        let direction = direction.normalize_or_zero();
-        let mut flags = 0;
-        let mut yaw = if self.target_dist > self.stop_distance {
-            angle_between(at, direction)
-        } else {
-            0.0
+        let stop = |finish| Step {
+            yaw: 0.0,
+            flags: control::STOP,
+            finish,
         };
-        yaw *= 4.0 * dt;
-        if at.cross(direction).z > 0.0 {
-            flags |= control::YAW_POS;
-        } else {
-            yaw = -yaw;
-            flags |= control::YAW_NEG;
+        if !position.is_finite() || !self.target.is_finite() || !yaw.is_finite() || !dt.is_finite() {
+            return stop(Some(Finish::NoProgress));
         }
-        let slow_distance = (self.stop_distance + 2.0).max(3.0);
-        // (Firestorm compares the scaled, signed turn: kept as it is)
-        if xy_distance > slow_distance && yaw < std::f32::consts::PI / 10.0 {
-            flags |= control::FAST_AT | control::AT_POS;
-        } else if self.target_dist > self.stop_distance {
-            let along = at.dot(direction);
-            if along > 0.9 {
-                flags |= control::AT_POS;
-            } else if along < -0.9 {
-                flags |= control::AT_NEG;
+        let dt = dt.clamp(0.0, 0.1);
+        let at = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
+        let delta = self.target - position;
+        let target_dist = self.distance(delta);
+        if self.reached(position) {
+            self.no_progress = 0.0;
+            self.previous_position = position;
+            self.waiting = self.leader.is_some();
+            return stop(self.leader.is_none().then_some(Finish::Arrived));
+        }
+        if self.waiting {
+            self.previous_position = position;
+            self.no_progress = 0.0;
+            self.target_dist = target_dist;
+            if target_dist <= self.stop_distance + 1.0 {
+                return stop(None);
+            }
+            self.waiting = false;
+        }
+        // Follow must measure our own progress: a leader walking away can
+        // increase the remaining distance even while we are moving correctly.
+        let travelled = (position - self.previous_position).dot(delta.normalize_or_zero());
+        let progress = if self.leader.is_some() {
+            travelled > 0.001
+        } else {
+            target_dist < self.target_dist - 0.001
+        };
+        self.no_progress = if progress { 0.0 } else { self.no_progress + dt };
+        self.previous_position = position;
+        self.target_dist = target_dist;
+        if self.no_progress > MAX_TIME_NO_PROGRESS {
+            return stop(Some(Finish::NoProgress));
+        }
+        let direction = Vec3::new(delta.x, delta.y, 0.0).normalize_or_zero();
+        let angle = if direction == Vec3::ZERO {
+            0.0
+        } else {
+            at.cross(direction).z.atan2(at.dot(direction))
+        };
+        let turn = angle * (4.0 * dt).min(1.0);
+        let mut flags = if angle > 0.001 {
+            control::YAW_POS
+        } else if angle < -0.001 {
+            control::YAW_NEG
+        } else {
+            0
+        };
+        let slow_distance = (self.stop_distance + if self.flying { 5.0 } else { 2.0 }).max(3.0);
+        if at.dot(direction) > 0.9 && delta.truncate().length() > if self.flying { 0.5 } else { 0.0 } {
+            flags |= if self.flying && target_dist <= slow_distance {
+                control::NUDGE_AT_POS
+            } else {
+                control::AT_POS
+            };
+            if target_dist > slow_distance {
+                flags |= control::FAST_AT;
             }
         }
-        let finish = (self.target_dist < self.stop_distance).then(|| {
-            flags |= control::STOP;
-            Finish::Arrived
-        });
-        Step { yaw, flags, finish }
+        if self.flying && delta.z.abs() > 0.5 {
+            flags |= if delta.z > 0.0 { control::UP_POS } else { control::UP_NEG };
+            if delta.z.abs() > 6.0 {
+                flags |= control::FAST_UP;
+            }
+        }
+        Step {
+            yaw: turn,
+            flags,
+            finish: None,
+        }
     }
+}
+
+/// Precise main-region position, including a seated avatar's parent chain.
+/// Coarse map locations are deliberately excluded: their quantization and
+/// stale entries cannot drive a stable approach or establish target presence.
+pub fn avatar_position(world: &crate::world::World, id: uuid::Uuid) -> Option<Vec3> {
+    if id == world.agent_id || id.is_nil() {
+        return None;
+    }
+    let idx = world.objects.index_of_uuid(&id)?;
+    world.objects.get(idx).filter(|o| o.is_avatar())?;
+    crate::scene::Scene::object_transform_unshifted(world, idx, Instant::now())
+        .map(|(p, _, _)| p)
+        .filter(|p| p.is_finite())
 }
 
 /// Where a teleport by double click goes (teleportToClickedLocation then
@@ -406,6 +475,181 @@ mod tests {
             let s = ap.step(Vec3::new(i as f32 * 0.05, 0.0, 0.0), 0.0, FRAME);
             assert_eq!(s.finish, None);
         }
+    }
+
+    #[test]
+    fn avatar_arrival_ignores_ground_height_and_never_turns_or_moves_at_rest() {
+        for z in [-20.0, 0.0, 20.0] {
+            let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::new(2.0, 0.0, z), None, false, Instant::now());
+            assert_eq!(
+                ap.step(Vec3::ZERO, 2.0, FRAME),
+                Step {
+                    yaw: 0.0,
+                    flags: control::STOP,
+                    finish: Some(Finish::Arrived)
+                }
+            );
+            assert!(ap.reached(Vec3::ZERO));
+        }
+    }
+
+    #[test]
+    fn far_targets_on_either_side_wait_for_the_body_to_turn() {
+        for y in [-40.0, 40.0] {
+            let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::new(-20.0, y, 0.0), None, false, Instant::now());
+            let s = ap.step(Vec3::ZERO, 0.0, FRAME);
+            assert_eq!(s.flags & (control::AT_POS | control::AT_NEG | control::FAST_AT), 0);
+            assert_eq!(s.yaw.signum(), y.signum());
+        }
+    }
+
+    #[test]
+    fn following_rests_indefinitely_and_resumes_only_outside_the_restart_margin() {
+        let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::X * 2.0, Some(uuid::Uuid::from_u128(7)), false, Instant::now());
+        for i in 0..1200 {
+            ap.target.x = if i % 2 == 0 { 2.0 } else { 2.9 };
+            assert_eq!(
+                ap.step(Vec3::ZERO, 0.0, FRAME),
+                Step {
+                    yaw: 0.0,
+                    flags: control::STOP,
+                    finish: None
+                }
+            );
+        }
+        ap.target.x = 3.1;
+        let s = ap.step(Vec3::ZERO, 0.0, FRAME);
+        assert_ne!(s.flags & control::AT_POS, 0);
+        assert_eq!(s.finish, None);
+        assert_eq!(ap.step(Vec3::X * 1.2, 0.0, FRAME).flags, control::STOP);
+        assert_ne!(ap.step(Vec3::X * -0.2, 0.0, FRAME).flags & control::AT_POS, 0);
+    }
+
+    #[test]
+    fn a_moving_leader_does_not_count_as_an_obstacle_but_a_stationary_follower_does() {
+        let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::X * 10.0, Some(uuid::Uuid::from_u128(7)), false, Instant::now());
+        for i in 0..600 {
+            ap.target.x = 10.0 + i as f32 * 0.1;
+            assert_eq!(ap.step(Vec3::X * (i as f32 * 0.05), 0.0, FRAME).finish, None);
+        }
+        let mut end = None;
+        for _ in 0..120 {
+            end = ap.step(Vec3::X * 30.0, 0.0, FRAME).finish;
+            if end.is_some() {
+                break;
+            }
+        }
+        assert_eq!(end, Some(Finish::NoProgress));
+    }
+
+    #[test]
+    fn progress_resets_the_stall_timer_and_region_shifts_preserve_the_destination() {
+        let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::X * 10.0, None, false, Instant::now());
+        for _ in 0..60 {
+            assert_eq!(ap.step(Vec3::ZERO, 0.0, FRAME).finish, None);
+        }
+        assert_eq!(ap.step(Vec3::X, 0.0, FRAME).finish, None);
+        for _ in 0..60 {
+            assert_eq!(ap.step(Vec3::X, 0.0, FRAME).finish, None);
+        }
+        ap.shift(Vec3::X * -256.0);
+        assert_eq!(ap.target, Vec3::X * -246.0);
+        assert!(!ap.reached(Vec3::X * -255.0));
+        assert!(ap.reached(Vec3::X * -248.0));
+    }
+
+    #[test]
+    fn flight_uses_height_and_nudges_for_the_final_approach() {
+        let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::Z * 10.0, None, true, Instant::now());
+        let s = ap.step(Vec3::ZERO, 0.0, FRAME);
+        assert_ne!(s.flags & control::UP_POS, 0);
+        assert_eq!(s.yaw, 0.0);
+        assert!(!ap.reached(Vec3::ZERO));
+        assert_eq!(ap.step(Vec3::Z * 8.0, 0.0, FRAME).finish, Some(Finish::Arrived));
+        ap.target = Vec3::X * 5.0;
+        let s = ap.step(Vec3::ZERO, 0.0, FRAME);
+        assert_ne!(s.flags & control::NUDGE_AT_POS, 0);
+        assert_eq!(s.flags & (control::AT_POS | control::FAST_AT), 0);
+    }
+
+    #[test]
+    fn avatar_approach_arrives_without_overshoot_at_different_frame_rates() {
+        for fps in [30.0, 60.0, 144.0] {
+            let dt = 1.0 / fps;
+            let mut position = Vec3::ZERO;
+            let mut yaw = 0.0;
+            let mut ap = AutoPilot::avatar(position, Vec3::new(-8.0, -6.0, 5.0), None, false, Instant::now());
+            let mut arrived = false;
+            for _ in 0..(fps as usize * 20) {
+                let s = ap.step(position, yaw, dt);
+                yaw += s.yaw;
+                if let Some(end) = s.finish {
+                    assert_eq!(end, Finish::Arrived);
+                    arrived = true;
+                    break;
+                }
+                if s.flags & control::AT_POS != 0 {
+                    position += Vec3::new(yaw.cos(), yaw.sin(), 0.0) * 3.2 * dt;
+                }
+            }
+            assert!(arrived, "fps={fps}, position={position:?}");
+            assert!((ap.target - position).truncate().length() > 1.8);
+        }
+    }
+
+    #[test]
+    fn invalid_motion_data_stops_without_emitting_nan_turns() {
+        let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::X * 10.0, None, false, Instant::now());
+        for (p, yaw, dt) in [(Vec3::NAN, 0.0, FRAME), (Vec3::ZERO, f32::NAN, FRAME), (Vec3::ZERO, 0.0, f32::NAN)] {
+            assert_eq!(
+                ap.step(p, yaw, dt),
+                Step {
+                    yaw: 0.0,
+                    flags: control::STOP,
+                    finish: Some(Finish::NoProgress)
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn avatar_target_uses_seat_and_region_transforms_and_rejects_coarse_or_missing_objects() {
+        use crate::{demo, scene::avatar::AvatarLibrary, world::World};
+        use aurora_net::NetEvent;
+        use std::sync::Arc;
+        let (main, neighbour) = (
+            aurora_net::origin_to_handle(256000, 256000),
+            aurora_net::origin_to_handle(256256, 256000),
+        );
+        let mut world = World::new(Arc::new(AvatarLibrary::load()));
+        world.agent_id = demo::DEMO_AGENT;
+        world.main_region = Some(main);
+        let id = demo::DEMO_LOUP;
+        world.coarse.insert(main, vec![(id, Vec3::splat(12.0))]);
+        assert_eq!(avatar_position(&world, id), None);
+        let mut seat = demo::action_avatar(false);
+        seat.local_id = 970;
+        seat.full_id = uuid::Uuid::from_u128(970);
+        seat.pcode = 9;
+        seat.position = Vec3::new(10.0, 20.0, 30.0);
+        seat.rotation = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let mut subject = demo::action_avatar(true);
+        subject.full_id = id;
+        subject.position = Vec3::X;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: neighbour,
+            objects: vec![seat, subject],
+        });
+        let position = avatar_position(&world, id).expect("seated target");
+        assert!(position.abs_diff_eq(Vec3::new(266.0, 21.0, 30.0), 0.001), "{position:?}");
+        assert_eq!(avatar_position(&world, world.agent_id), None);
+        let idx = world.objects.index_of_uuid(&id).expect("subject");
+        world.objects.remove_idx(idx);
+        assert_eq!(
+            avatar_position(&world, id),
+            None,
+            "stale coarse position cannot keep a follow alive"
+        );
     }
 
     #[test]
