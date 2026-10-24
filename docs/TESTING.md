@@ -3238,6 +3238,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
+| `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
@@ -4063,6 +4064,21 @@ failure. Grid validation and any paid upload are performed by the human.
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
 
+- **`AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]`**: from the 10th second in
+  world, Tess writes in the Aurora Builders group chat every 6 seconds
+  ("Group update number n"). The Snooze of a group chat (its head's button
+  beside the close one, or its entry's right-click menu) lasts `<seconds>`
+  instead of Preferences › Chat › Group chat snooze; `auto` snoozes that
+  chat by itself at the 14th second; `ask` asks the duration first, as
+  "Ask the duration at each snooze" does, without changing the saved
+  setting. The conversation leaves the list, its
+  messages are dropped (`snoozed group chat …: message dropped` in the
+  log), and the first one after the snooze opens it again with the
+  new-session sound (`group chat snooze over, reopening`). With
+  `AURORA_DEMO_SNOOZE=20,auto`, `AURORA_DEMO_CONV=aurora:group` and
+  `AURORA_FPS_LIMIT=60`: the chat at frame 780, gone at 1500, back at
+  2280 with the message of the 34th second. With `ask`, the dialog shows
+  from frame 840 until it is answered.
 - **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every
   8 seconds ("Are you there? (n)"), while the Conversations window is
   open. With another conversation shown, her entry (the column in
