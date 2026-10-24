@@ -438,8 +438,10 @@ impl HistoryUi {
                     return;
                 };
                 let seq = clock.first + row.line as u64;
-                super::select::row(ui, seq, selection.of_row(seq), painted, |ui| {
-                    super::draw_line(ui, &mut env, line, row.look, mark.filter(|_| row.hit));
+                super::line_menu::highlight(ui, menu, seq, line, p, |ui| {
+                    super::select::row(ui, seq, selection.of_row(seq), painted, |ui| {
+                        super::draw_line(ui, &mut env, line, row.look, mark.filter(|_| row.hit));
+                    });
                 });
                 if painted && current == Some(row.line) {
                     find::current_marker(ui, p);

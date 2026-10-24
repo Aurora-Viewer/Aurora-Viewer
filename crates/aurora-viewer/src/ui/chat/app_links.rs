@@ -281,6 +281,7 @@ pub(super) fn menu(r: &egui::Response, p: &Palette, world: &World, url: &str, li
             ui.ctx().copy_text(url.to_owned());
         }
     });
+    super::line_menu::inline(r);
 }
 
 /// A command of a wrapping text (conversation, profile…): its label in the

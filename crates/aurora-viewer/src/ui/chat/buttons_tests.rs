@@ -739,20 +739,15 @@ fn incoming_messages_keep_chat_context_menus_open() {
                     );
                 }
                 h.settle();
-                assert_eq!(
-                    h.painted("incoming message 19"),
-                    !older,
-                    "{style:?}: chat keeps updating with its menu open"
+                assert!(
+                    !h.painted("incoming message 19"),
+                    "{style:?}: new messages stay below the paused viewport"
                 );
-                if older {
-                    assert_eq!(
-                        h.text_rect(&original),
-                        position,
-                        "{style:?}: keep the normal manual-scroll position"
-                    );
-                } else {
-                    assert!(!h.painted(&original), "{style:?}: the menu survives its row scrolling out of sight");
-                }
+                assert_eq!(
+                    h.text_rect(&original),
+                    position,
+                    "{style:?}: the menu holds the original message in place"
+                );
                 h.press_text(block);
                 assert!(
                     crate::ui::context::take_requests(&h.frames.ctx)
@@ -781,8 +776,8 @@ fn incoming_messages_keep_chat_context_menus_open() {
     }
 }
 
-/// A short conversation keeps updating while its sender menu is open,
-/// including new messages from that very same sender.
+/// A short conversation keeps receiving messages while its menu is open.
+/// Its bottom alignment must not pull the original message upward (#591).
 #[test]
 fn incoming_messages_keep_short_chat_context_menus_open() {
     for style in ALL {
@@ -790,19 +785,152 @@ fn incoming_messages_keep_short_chat_context_menus_open() {
         h.world.groups.sessions.entry(GROUP).or_default().group = true;
         h.open(Some(GROUP));
         h.right_click(h.text_rect("Jane").center());
+        let original = h.text_rect("hi builders");
         for i in 0..3 {
             h.world
                 .conversation_line(GROUP, line("Jane", JANE, ChatKind::Im, &format!("short incoming {i}")));
             h.frame(Vec::new());
             assert!(h.painted(aurora_i18n::tr!("common-ignore")), "{style:?}: sender menu stays open");
-            assert!(
-                h.painted(&format!("short incoming {i}")),
-                "{style:?}: the new message appears with its menu open"
+            assert_eq!(
+                h.text_rect("hi builders"),
+                original,
+                "{style:?}: keep the original message in place"
             );
+            if !style.workspace() {
+                assert!(
+                    h.painted(&format!("short incoming {i}")),
+                    "{style:?}: new messages fit below the original"
+                );
+            }
         }
         h.history_key(egui::Key::Escape, egui::Modifiers::NONE);
         assert!(!egui::Popup::is_any_open(&h.frames.ctx), "{style:?}: Escape closes the menu");
         assert!(h.painted("short incoming 2"), "{style:?}: new messages appear after closing");
+    }
+}
+
+/// A fresh menu moves an existing New marker below the messages already
+/// received, then leaves it before the first arrival throughout that menu.
+#[test]
+fn chat_context_menu_moves_the_new_marker_below_existing_messages() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        let mut h = H::new(style);
+        for i in 0..6 {
+            h.world
+                .conversation_line(GROUP, line("Bob", BOB, ChatKind::Im, &format!("before menu {i}")));
+        }
+        h.open(Some(GROUP));
+        let session = h.world.social.ims.iter().find(|s| s.other == GROUP).unwrap();
+        let boundary = session.clock.first + session.lines.len() as u64;
+        h.st.new_lines.pause_at(Some(GROUP), boundary - 2);
+        h.settle();
+        let before = h.text_rect("before menu 5");
+        h.right_click(h.text_rect("before menu 5").center());
+        assert_eq!(
+            h.text_rect("before menu 5"),
+            before,
+            "{style:?}: moving the older marker keeps the target in place"
+        );
+        assert_eq!(
+            h.st.new_lines.at(Some(GROUP)),
+            Some(boundary),
+            "{style:?}: move the older boundary below the current messages"
+        );
+        let original = h.text_rect("before menu 5");
+        for i in 0..3 {
+            h.world
+                .conversation_line(GROUP, line("Jane", JANE, ChatKind::Im, &format!("after menu {i}")));
+            h.settle();
+            assert_eq!(
+                h.st.new_lines.at(Some(GROUP)),
+                Some(boundary),
+                "{style:?}: the first new arrival keeps the marker"
+            );
+            assert!(
+                h.text_rect("before menu 5").min.distance(original.min) < 0.5,
+                "{style:?}: the marker must not move the target by a pixel"
+            );
+        }
+        h.history_key(egui::Key::Escape, egui::Modifiers::NONE);
+        assert!(h.painted("after menu 2"), "{style:?}: Escape resumes following");
+        assert_eq!(h.st.new_lines.at(Some(GROUP)), Some(boundary));
+    }
+}
+
+/// A link's own context menu holds and highlights its containing message,
+/// while retaining its original native actions.
+#[test]
+fn an_inline_place_menu_holds_its_containing_message() {
+    let url = "http://maps.secondlife.com/secondlife/Aurora%20Demo/128/130/24";
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        let mut h = H::new(style);
+        h.world
+            .conversation_line(GROUP, line("Jane", JANE, ChatKind::Im, &format!("Look here: {url}")));
+        h.open(Some(GROUP));
+        let link = h
+            .texts
+            .iter()
+            .find(|t| t.source.contains("Aurora Demo ("))
+            .expect("place badge")
+            .source
+            .clone();
+        h.right_click(h.text_rect(&link).center());
+        let original = h.text_rect(&link);
+        let copy = aurora_i18n::tr!("common-copy-slurl");
+        assert!(h.painted(copy), "{style:?}: the place's own menu opens");
+        assert!(h.st.views[&Some(GROUP)].is_paused(), "{style:?}: its message holds the viewport");
+        for i in 0..20 {
+            h.world
+                .conversation_line(GROUP, line("Bob", BOB, ChatKind::Im, &format!("after the place {i}")));
+        }
+        h.settle();
+        assert!(h.painted(copy), "{style:?}: the place menu survives arrivals");
+        assert!(
+            h.text_rect(&link).min.distance(original.min) < 0.5,
+            "{style:?}: the linked message stays fixed"
+        );
+        assert!(
+            h.st.views[&Some(GROUP)].below() > 0.0,
+            "{style:?}: arrivals stay below the viewport"
+        );
+        let pos = h.text_rect(copy).center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.frame(vec![egui::Event::PointerMoved(pos)]);
+        h.frame(vec![button(true)]);
+        let out = h.frame_out(vec![button(false)]);
+        assert!(
+            out.commands
+                .iter()
+                .any(|c| matches!(c, egui::OutputCommand::CopyText(t) if t == url)),
+            "{style:?}: keep the link's Copy action"
+        );
+        h.settle();
+        assert!(!egui::Popup::is_any_open(&h.frames.ctx));
+        assert!(!h.st.views[&Some(GROUP)].is_paused());
+        assert!(h.st.views[&Some(GROUP)].below() <= 1.0, "{style:?}: closing resumes following");
+        h.world
+            .conversation_line(GROUP, line("Jane", JANE, ChatKind::Im, &format!("A fresh place: {url}")));
+        h.settle();
+        h.right_click(h.text_rect(&link).center());
+        assert!(h.painted(copy));
+        for i in 0..2100 {
+            h.world
+                .conversation_line(GROUP, line("Bob", BOB, ChatKind::Im, &format!("evict the place {i}")));
+        }
+        h.settle();
+        assert!(
+            !egui::Popup::is_any_open(&h.frames.ctx),
+            "{style:?}: eviction dismisses the inline menu"
+        );
+        assert!(
+            !h.st.views[&Some(GROUP)].is_paused(),
+            "{style:?}: no invisible menu keeps the viewport paused"
+        );
     }
 }
 
@@ -840,8 +968,8 @@ fn incoming_messages_keep_evicted_chat_context_menu_targets() {
                 "{style:?}: the transcript no longer draws the evicted row"
             );
             assert!(
-                h.painted("busy incoming 2099"),
-                "{style:?}: the live end updates with its menu open"
+                !h.painted("busy incoming 2099"),
+                "{style:?}: eviction does not resume automatic following"
             );
             h.press_text(aurora_i18n::tr!("common-ignore"));
             assert!(
@@ -980,13 +1108,24 @@ fn the_message_menu_retains_copy_and_quote_after_eviction() {
             let mut h = H::new(style);
             h.open(Some(JANE));
             h.right_click(h.text_rect("hello from Jane").center());
+            assert!(
+                egui::Popup::is_any_open(&h.frames.ctx),
+                "{style:?}, quote={quote}: original menu opened"
+            );
+            assert!(
+                h.st.views[&Some(JANE)].is_paused(),
+                "{style:?}, quote={quote}: original viewport paused"
+            );
             for i in 0..2100 {
                 h.world
                     .conversation_line(JANE, line("Bob", BOB, ChatKind::Im, &format!("later message {i}")));
             }
             h.settle();
             assert!(!h.painted("hello from Jane"), "{style:?}: the original message left the transcript");
-            assert!(h.painted("later message 2099"), "{style:?}: the transcript keeps updating");
+            assert!(
+                h.st.views[&Some(JANE)].below() > 1000.0,
+                "{style:?}, quote={quote}: the live end remains below the paused transcript (the sidebar still previews the latest message)"
+            );
             if quote {
                 h.press_text(aurora_i18n::tr!("ui-chat-quote-message"));
                 assert_eq!(

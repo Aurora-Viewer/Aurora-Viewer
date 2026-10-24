@@ -1384,6 +1384,27 @@ fn the_new_line_waits_for_the_focus() {
     assert_eq!(nl.at(None), Some(3));
 }
 
+#[test]
+fn the_menu_boundary_ignores_our_replies_and_survives_focus_changes() {
+    use std::collections::VecDeque;
+    let mut lines = VecDeque::from([line("Jane", JANE, ChatKind::Im, "already seen")]);
+    let mut nl = super::NewLines::default();
+    nl.frame(Some(JANE), 1, true, 100, &lines, 0);
+    nl.pause_at(Some(JANE), 101);
+    lines.push_back(line("Me", Uuid::nil(), ChatKind::Own, "our reply"));
+    nl.frame(Some(JANE), 2, false, 100, &lines, 0);
+    assert_eq!(nl.at(Some(JANE)), Some(102));
+    lines.push_back(line("Jane", JANE, ChatKind::Im, "arrived during the menu"));
+    nl.frame(Some(JANE), 3, false, 100, &lines, 1);
+    assert_eq!(nl.at(Some(JANE)), Some(102));
+    nl.frame(Some(JANE), 4, true, 100, &lines, 0);
+    assert_eq!(
+        nl.at(Some(JANE)),
+        Some(102),
+        "closing/refocusing preserves the first unread arrival"
+    );
+}
+
 /// The window's right edge dragged quickly in past the rail's threshold and
 /// back out: the column takes its width at once on every frame (never
 /// between the two, which kept the content wider than the window), and the

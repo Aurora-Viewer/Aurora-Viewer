@@ -222,6 +222,11 @@ pub fn row<R>(ui: &mut egui::Ui, seq: u64, selected: Option<Range<usize>>, paint
     out
 }
 
+/// The stable number of the message whose sender is being drawn.
+pub(super) fn current_seq() -> Option<u64> {
+    CURRENT.with_borrow(|c| c.as_ref().map(|c| c.seq))
+}
+
 /// The lines drawn since the last call (this frame's).
 pub fn take_drawn() -> Vec<Row> {
     DRAWN.with_borrow_mut(std::mem::take)

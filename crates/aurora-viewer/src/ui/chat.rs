@@ -1224,6 +1224,7 @@ fn name_menu(r: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid) {
     super::menu::context_menu(r, p, |ui| {
         super::context::avatar_list_menu(ui, p, world, id, super::context::AvatarList::Name)
     });
+    line_menu::inline(r);
 }
 
 /// Right click on a place link: menu_url_slurl.xml (place details first)
@@ -1268,6 +1269,7 @@ fn place_menu(r: &egui::Response, p: &Palette, url: &str, place: &crate::slurl::
             ui.ctx().copy_text(url.to_owned());
         }
     });
+    line_menu::inline(r);
 }
 
 /// Message text with emoji, clickable links and highlighted mentions
@@ -1796,10 +1798,10 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     if st.selection.0 != st.selected {
         st.selection = (st.selected, select::Selection::default());
     }
-    let (layout, first_unread) = match &rows {
-        Rows::Classic(_) => (view::Layout::Classic, None),
-        Rows::Thread(th) if th.compact => (view::Layout::Compact, st.new_lines.at(st.selected)),
-        Rows::Thread(_) => (view::Layout::Aurora, st.new_lines.at(st.selected)),
+    let layout = match &rows {
+        Rows::Classic(_) => view::Layout::Classic,
+        Rows::Thread(th) if th.compact => view::Layout::Compact,
+        Rows::Thread(_) => view::Layout::Aurora,
     };
     let mut to_field = ToField::Nothing;
     let (lines, clock) = match st.selected {
@@ -1810,6 +1812,12 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         },
     };
     let menu = ui.layer_id().id.with(("chat_line_menu", st.selected));
+    let paused = line_menu::is_open(ui.ctx(), menu);
+    if paused && !view.is_paused() {
+        st.new_lines.pause_at(st.selected, view.next());
+    }
+    let resume = view.pause(paused, line_menu::selected(ui.ctx(), menu));
+    let first_unread = layout.workspace().then(|| st.new_lines.at(st.selected)).flatten();
     st.previews.place = match st.selected {
         None => crate::link_preview::Place::Nearby,
         Some(id) if w.is_group_session(&id) => crate::link_preview::Place::Group,
@@ -1837,8 +1845,9 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
     };
     let wash = find::wash(p);
     let current = search.find.as_ref().and_then(|f| f.current_line(view));
-    let out = super::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("conv", st.selected))
-        .stick_to_bottom(true)
+    let area = super::widgets::scroll_offset::show(ui, egui::ScrollArea::vertical(), ("conv", st.selected));
+    let out = area
+        .stick_to_bottom(!paused)
         .auto_shrink([false, false])
         .max_height(height)
         .min_scrolled_height(height)
@@ -1886,7 +1895,9 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
                     draw(ui);
                 } else {
                     let seq = clock.first + row.line as u64;
-                    select::row(ui, seq, selection.of_row(seq), painted, draw);
+                    line_menu::highlight(ui, menu, seq, line, p, |ui| {
+                        select::row(ui, seq, selection.of_row(seq), painted, draw);
+                    });
                 }
                 if painted && current == Some(row.line) {
                     find::current_marker(ui, p);
@@ -1905,6 +1916,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             }
             to_field = select_lines(ui, &content, &drawn, selection, &copied);
             if matches!(rows, Rows::Thread(_)) {
+                line_menu::demo_mark(ui, &drawn);
                 let first = clock.first;
                 line_menu::message(&content, menu, &drawn, |seq| {
                     seq.checked_sub(first).and_then(|i| lines.get(i as usize))
@@ -1926,7 +1938,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         })
     });
     let latest_id = ui.scope_id().with(("latest", st.selected));
-    if !ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived) {
+    if resume || (!ui.is_sizing_pass() && latest::show(ui, p, latest_id, out.inner_rect, view.below(), arrived)) {
         // past the end: the scroll area stops there and sticks to it again
         offset.y = out.content_size.y;
         store = true;
@@ -3139,6 +3151,10 @@ fn line_extras(
 /// on a conversation of the list (`conv_menu`); `AURORA_DEMO_CONV_GIVE`'s
 /// inventory carried to an IM (`workspace`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let line_menu = line_menu::demo_events(ctx, frame);
+    if !line_menu.is_empty() {
+        return line_menu;
+    }
     let preview = previews::demo_events(ctx, frame);
     if !preview.is_empty() {
         return preview;
