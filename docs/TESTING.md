@@ -3320,8 +3320,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `net` from the real sites |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
+| `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
@@ -4258,9 +4259,12 @@ failure. Grid validation and any paid upload are performed by the human.
   (the link alone) and a 24 MB one (its size and the limit, open button).
   `net`: the real sites, network needed: two Wikimedia files (an unknown
   site: "Show" loads them, the GIF animated) and a YouTube video, whose
-  title and picture come from YouTube. In the Legacy lines
-  (`bubbles:legacy`) no card at all. Capture at frame 900 (1500 with
-  `net`).
+  title and picture come from YouTube. `videos` (#848): Nova's 4:3 clip
+  ("Me at the zoo") and our upright short, each card in its video's shape
+  (the short as tall as a landscape card is wide, its card no narrower
+  than 200 points; the thumbnails without their black bands). In the
+  Legacy lines (`bubbles:legacy`) no card at all. Capture at frame 900
+  (1500 with `net`).
 - **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy`**: with `AURORA_DEMO_CONV`
   and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture
   (`1`), or animated picture (`gif`); `zoom` starts at twice its fitted size,
@@ -4292,7 +4296,19 @@ failure. Grid validation and any paid upload are performed by the human.
   window ("Me at the zoo" in its title, open in the browser in its bar).
   With `net` the video really plays (network needed; capture at frame
   1500): YouTube's player inside a page served on 127.0.0.1, with
-  YouTube's controls; without that page it shows its error 153.
+  YouTube's controls; without that page it shows its error 153. The card
+  and the window keep the video's shape (#848): the window's height
+  follows its width once a resize is let go. In its card the cog, window
+  and stop buttons show only while the pointer is over the card; the cog
+  (also in the window's title bar) opens Preferences › Chat on "YouTube
+  videos". Moving YouTube's own volume slider logs `video volume kept at
+  N %`, and the next video starts at that level.
+- **`AURORA_DEMO_VIDEO_VOLUME=<0-100>`**: demo only, the level YouTube's
+  player is set to when a video starts (what Preferences › Chat › Video
+  volume keeps). With `AURORA_DEMO_PREVIEW_PLAY=window` and `0`, the
+  player's volume icon shows one wave instead of two at frame 1500; no
+  `video volume kept` line follows (the player's own 100 % before it is
+  set is not taken for a change).
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of

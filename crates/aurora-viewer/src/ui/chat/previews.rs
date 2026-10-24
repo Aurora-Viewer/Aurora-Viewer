@@ -46,8 +46,17 @@ const VIDEO_EXTRA: f32 = 20.0;
 const PLAYING_SCALE: f32 = 1.375;
 const BUTTON: f32 = 26.0;
 const PLAY: f32 = 56.0;
-/// The player window's default size: a 16:9 picture under its title bar.
-const WINDOW_SIZE: Vec2 = Vec2::new(480.0, 300.0);
+/// The player window's default width, and the height of its title bar
+/// until the window has been measured.
+const WINDOW_WIDTH: f32 = 480.0;
+const TITLE_BAR: f32 = 30.0;
+/// A video's shape when YouTube does not say it.
+const DEFAULT_ASPECT: f32 = 16.0 / 9.0;
+/// A card never narrower than this under an upright video: its title and
+/// buttons keep room.
+const MIN_VIDEO_CARD: f32 = 200.0;
+/// The player window's id (its place and size are remembered).
+const PLAYER_WINDOW: &str = "link_preview_player";
 
 /// A picture made into textures.
 #[derive(Clone)]
@@ -119,6 +128,8 @@ enum Entry {
         title: String,
         channel: String,
         thumbnail: Option<Shown>,
+        /// Width over height of the video.
+        aspect: f32,
     },
     Failed(Failure),
 }
@@ -138,6 +149,11 @@ struct Playing {
     window: bool,
     /// The pass its card last drew it in.
     drawn: u64,
+    /// Width over height of the video: the card and the window keep it.
+    aspect: f32,
+    /// The window was given the video's shape since this video started
+    /// playing in it.
+    fitted: bool,
 }
 
 /// What the player needs of the app: the media plugins, the browser's
@@ -180,6 +196,8 @@ pub struct Previews {
     /// `AURORA_DEMO_PREVIEW_PLAY=card|window`: the first video card drawn
     /// plays there by itself.
     pub demo_play: Option<lp::Player>,
+    /// A player's cog was clicked: the app opens the video settings.
+    pub open_settings: bool,
     cache: HashMap<String, Cached>,
     queue: VecDeque<(String, Target, bool)>,
     in_flight: usize,
@@ -210,6 +228,7 @@ impl Default for Previews {
             web: None,
             hide_site: None,
             demo_play: None,
+            open_settings: false,
             cache: HashMap::new(),
             queue: VecDeque::new(),
             in_flight: 0,
@@ -358,6 +377,7 @@ impl Previews {
                     title: v.title,
                     channel: v.channel,
                     thumbnail: v.thumbnail.map(|p| Shown::new(ctx, &url, p)),
+                    aspect: v.aspect.unwrap_or(DEFAULT_ASPECT),
                 },
                 Err(f) => Entry::Failed(f),
             };
@@ -494,21 +514,82 @@ impl Previews {
             v.title.clone()
         };
         let mut open = true;
-        let mut browser = false;
+        let (mut browser, mut settings) = (false, false);
         let work = crate::ui::layout::work_area(ctx);
-        let pos = work.center() - WINDOW_SIZE * 0.5;
-        crate::ui::widgets::Floater::new("link_preview_player", title, pos, WINDOW_SIZE)
+        let default = window_size(WINDOW_WIDTH, TITLE_BAR, v.aspect, work.height() * 0.8);
+        let pos = work.center() - default * 0.5;
+        let body = crate::ui::widgets::Floater::new(PLAYER_WINDOW, title, pos, default)
+            .action("settings-filled", aurora_i18n::tr!("ui-chat-preview-settings"), &mut settings)
             .action("external-link-filled", aurora_i18n::tr!("ui-chat-preview-open"), &mut browser)
+            .flush_body()
             .show(ctx, p, &mut open, |ui| {
                 let size = ui.available_size().max(Vec2::splat(64.0));
                 web.show(&mut v.web, ui, p, size);
+                size
             });
+        // the window keeps the video's shape (#848): its height follows
+        // its width once a resize is let go, and when another video starts
+        // in it; never while the pointer drags it
+        let outer = ctx.memory(|m| m.area_rect(egui::Id::unique(PLAYER_WINDOW)));
+        if let (Some(body), Some(outer)) = (body, outer)
+            && !ctx.input(|i| i.pointer.any_down())
+            && !crate::ui::widgets::floater_minimized(ctx, PLAYER_WINDOW)
+        {
+            let chrome = (outer.height() - body.y).max(0.0);
+            let width = if v.fitted { outer.width() } else { outer.width().max(160.0) };
+            let want = window_size(width, chrome, v.aspect, work.height() * 0.8);
+            if (want - outer.size()).abs().max_elem() > 1.5 {
+                crate::ui::widgets::size_floater(ctx, PLAYER_WINDOW, want);
+            }
+            v.fitted = true;
+        }
         if browser {
             super::open_web_link(ctx, &v.link);
+        }
+        if settings {
+            self.open_settings = true;
         }
         if !open {
             self.playing = None;
         }
+    }
+}
+
+/// The player window's size for a video of `aspect` (width over height):
+/// `width` wide, its title bar `chrome` high above the picture, and no
+/// taller than `max_height` (an upright video narrows instead).
+fn window_size(width: f32, chrome: f32, aspect: f32, max_height: f32) -> Vec2 {
+    let aspect = aspect.clamp(0.2, 5.0);
+    let mut width = width.max(160.0);
+    if chrome + width / aspect > max_height {
+        width = ((max_height - chrome).max(90.0) * aspect).max(160.0);
+    }
+    Vec2::new(width.round(), (chrome + width / aspect).round())
+}
+
+/// A video's size in a card `width` wide: within a square of that side, as
+/// a picture's, so an upright short stays as tall as a landscape card is
+/// wide (#848).
+fn video_size(width: f32, aspect: f32) -> Vec2 {
+    let aspect = aspect.clamp(0.2, 5.0);
+    if aspect >= 1.0 {
+        Vec2::new(width.round(), (width / aspect).round())
+    } else {
+        Vec2::new((width * aspect).round(), width.round())
+    }
+}
+
+/// The part of a thumbnail that holds the picture: YouTube's thumbnails
+/// are 4:3 with black bands around a picture of another shape.
+fn thumbnail_uv(size: [u32; 2], aspect: f32) -> egui::Rect {
+    let thumb = size[0].max(1) as f32 / size[1].max(1) as f32;
+    let aspect = aspect.clamp(0.2, 5.0);
+    if aspect > thumb {
+        let h = thumb / aspect;
+        egui::Rect::from_min_max(egui::pos2(0.0, (1.0 - h) * 0.5), egui::pos2(1.0, (1.0 + h) * 0.5))
+    } else {
+        let w = aspect / thumb;
+        egui::Rect::from_min_max(egui::pos2((1.0 - w) * 0.5, 0.0), egui::pos2((1.0 + w) * 0.5, 1.0))
     }
 }
 
@@ -902,12 +983,18 @@ fn too_large(ui: &mut egui::Ui, p: &Palette, url: &str, size: Option<u64>, width
 fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, video: &lp::Video, width: f32) {
     let pass = ui.ctx().cumulative_pass_nr();
     let Some(Cached {
-        entry: Entry::Video { title, channel, thumbnail },
+        entry: Entry::Video {
+            title,
+            channel,
+            thumbnail,
+            aspect,
+        },
         ..
     }) = pv.cache.get(url)
     else {
         return;
     };
+    let aspect = *aspect;
     let title = if title.is_empty() {
         aurora_i18n::tr!("ui-chat-preview-video").to_owned()
     } else {
@@ -924,32 +1011,50 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
     } else {
         width
     };
+    // the video in its own shape; the card no narrower than its text needs
+    let size = video_size(width, aspect);
+    let card_width = size.x.max(MIN_VIDEO_CARD.min(width));
+    // the player's buttons show while the pointer is over the card (#848)
+    let hover_id = ui.scope_id().with(("video_card_hover", k));
+    let last = ui.ctx().data(|d| d.get_temp::<egui::Rect>(hover_id));
+    let over = last.is_some_and(|r| ui.rect_contains_pointer(r));
+    let shown = ui.ctx().animate_bool(hover_id, over);
     let mut play = false;
-    let (mut detach, mut stop) = (false, false);
+    let (mut detach, mut stop, mut settings) = (false, false, false);
     let resp = egui::Frame::new()
         .fill(p.raised)
         .corner_radius(ui.visuals().window_corner_radius)
         .show(ui, |ui| {
-            ui.set_width(width);
+            ui.set_width(card_width);
             ui.spacing_mut().item_spacing.y = 0.0;
-            let size = Vec2::new(width, (width * 9.0 / 16.0).round());
+            let (row, _) = ui.allocate_exact_size(Vec2::new(card_width, size.y), egui::Sense::hover());
+            let area = egui::Rect::from_center_size(row.center(), size);
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(area)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
             match (here, pv.playing.as_mut(), pv.web.as_ref()) {
                 (Some(false), Some(v), Some(web)) => {
                     v.drawn = pass;
-                    web.show(&mut v.web, ui, p, size);
+                    web.show(&mut v.web, &mut child, p, size);
                 }
                 _ => {
+                    let ui = &mut child;
                     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
                     let radius = ui.visuals().window_corner_radius;
                     match thumbnail {
                         Some(t) => {
                             let corners = egui::CornerRadius {
-                                nw: radius.nw,
-                                ne: radius.ne,
+                                nw: if area.left() <= row.left() { radius.nw } else { 0 },
+                                ne: if area.right() >= row.right() { radius.ne } else { 0 },
                                 sw: 0,
                                 se: 0,
                             };
-                            egui::Image::new(&t.frames[0].0).corner_radius(corners).paint_at(ui, rect);
+                            egui::Image::new(&t.frames[0].0)
+                                .uv(thumbnail_uv(t.size, aspect))
+                                .corner_radius(corners)
+                                .paint_at(ui, rect);
                         }
                         None => {
                             ui.painter().rect_filled(rect, radius, p.field);
@@ -1010,15 +1115,18 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                 })
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        let buttons = if here == Some(false) { 2.0 * (20.0 + 6.0) } else { 0.0 };
+                        // room kept for the buttons while it plays here, so
+                        // the title does not move when they appear
+                        let buttons = if here == Some(false) { 3.0 * (20.0 + 6.0) } else { 0.0 };
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - buttons).max(60.0));
                             ui.spacing_mut().item_spacing.y = 2.0;
                             ui.add(egui::Label::new(RichText::new(&title).size(13.5).strong().color(p.ink)).truncate());
                             ui.add(egui::Label::new(RichText::new(&channel).size(11.5).color(p.muted)).truncate());
                         });
-                        if here == Some(false) {
+                        if here == Some(false) && shown > 0.01 {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.multiply_opacity(shown);
                                 stop = crate::ui::widgets::icon_button(
                                     ui,
                                     p,
@@ -1033,34 +1141,66 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                                     aurora_i18n::tr!("ui-chat-preview-detach"),
                                     true,
                                 );
+                                settings = crate::ui::widgets::icon_button(
+                                    ui,
+                                    p,
+                                    "settings-filled",
+                                    aurora_i18n::tr!("ui-chat-preview-settings"),
+                                    true,
+                                );
                             });
                         }
                     });
                 });
         })
         .response;
+    ui.ctx().data_mut(|d| d.insert_temp(hover_id, resp.rect));
     let demo = pv.playing.is_none().then(|| pv.demo_play.take()).flatten();
     if play || demo.is_some() {
+        let mut options = pv.settings.player_options(aurora_i18n::language());
+        // AURORA_DEMO_VIDEO_VOLUME=<0-100>: the level a video starts at,
+        // as if kept from an earlier one
+        if let Some(v) = demo_video_volume() {
+            options.volume = v;
+        }
         pv.playing = Some(Playing {
             key: k,
             link: url.to_owned(),
             title: title.clone(),
             web: {
                 let mut web = WebView::default();
-                web.navigate(&video.player_page());
+                web.navigate(&video.player_page(&options));
                 web
             },
             window: demo.unwrap_or(pv.settings.player) == lp::Player::Window,
             drawn: pass,
+            aspect,
+            fitted: false,
         });
     }
     if detach && let Some(v) = pv.playing.as_mut() {
         v.window = true;
+        v.fitted = false;
     }
     if stop {
         pv.playing = None;
     }
+    if settings {
+        pv.open_settings = true;
+    }
     card_menu(&resp, p, pv, k, url);
+}
+
+/// `AURORA_DEMO_VIDEO_VOLUME=<0-100>` (demo only): the player's starting level.
+fn demo_video_volume() -> Option<u8> {
+    static LEVEL: std::sync::OnceLock<Option<u8>> = std::sync::OnceLock::new();
+    *LEVEL.get_or_init(|| {
+        std::env::var_os("AURORA_DEMO")
+            .is_some()
+            .then(|| std::env::var("AURORA_DEMO_VIDEO_VOLUME").ok()?.trim().parse::<u8>().ok())
+            .flatten()
+            .map(|v| v.min(100))
+    })
 }
 
 /// Right click on a card: open, copy the link, hide this preview, hide the
@@ -1150,5 +1290,42 @@ mod tests {
         assert_eq!(make(640, 480).fit(320.0), Vec2::new(320.0, 240.0));
         assert_eq!(make(300, 900).fit(320.0), Vec2::new(107.0, 320.0));
         assert_eq!(make(64, 32).fit(320.0), Vec2::new(64.0, 32.0));
+    }
+
+    /// A video keeps its shape in its card (#848): a landscape one as wide
+    /// as the card, an upright one as tall as the card is wide.
+    #[test]
+    fn videos_keep_their_shape_in_their_card() {
+        assert_eq!(video_size(320.0, 16.0 / 9.0), Vec2::new(320.0, 180.0));
+        assert_eq!(video_size(320.0, 4.0 / 3.0), Vec2::new(320.0, 240.0));
+        assert_eq!(video_size(320.0, 9.0 / 16.0), Vec2::new(180.0, 320.0));
+        // nonsense from a site is held within bounds
+        assert_eq!(video_size(320.0, 0.0), Vec2::new(64.0, 320.0));
+    }
+
+    /// A 4:3 thumbnail shows only the part that holds the picture.
+    #[test]
+    fn thumbnails_lose_their_black_bands() {
+        let r = thumbnail_uv([480, 360], 16.0 / 9.0);
+        assert!((r.top() - 0.125).abs() < 1e-4 && (r.bottom() - 0.875).abs() < 1e-4);
+        assert_eq!((r.left(), r.right()), (0.0, 1.0));
+        let r = thumbnail_uv([480, 360], 9.0 / 16.0);
+        assert!((r.width() - 0.421_875).abs() < 1e-4 && (r.center().x - 0.5).abs() < 1e-4);
+        assert_eq!(
+            thumbnail_uv([480, 360], 4.0 / 3.0),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0))
+        );
+    }
+
+    /// The player window is the video's shape under its title bar, and an
+    /// upright video narrows the window rather than outgrowing the screen.
+    #[test]
+    fn the_player_window_takes_the_video_s_shape() {
+        assert_eq!(window_size(480.0, 30.0, 16.0 / 9.0, 900.0), Vec2::new(480.0, 300.0));
+        assert_eq!(window_size(400.0, 30.0, 4.0 / 3.0, 900.0), Vec2::new(400.0, 330.0));
+        let tall = window_size(480.0, 30.0, 9.0 / 16.0, 700.0);
+        assert!(tall.y <= 700.0 && (tall.x - 377.0).abs() <= 1.0);
+        // a width the user gave keeps, the height follows it
+        assert_eq!(window_size(640.0, 32.0, 16.0 / 9.0, 2000.0), Vec2::new(640.0, 392.0));
     }
 }
