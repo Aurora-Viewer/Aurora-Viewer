@@ -94,9 +94,13 @@ a review or that left the queue.
   first. Even when you ask for a task directly, the agent first looks for an
   open issue that already covers it (often the sub-issue of an epic) and
   takes it. An agent that takes an issue assigns it to you and moves it to
-  `In progress`; at the end it replies on the issue and moves it to `Done`,
-  or to `Waiting Review` when it waits on someone (a reporter's answer, your
-  test). The agents move the Status with `scripts/issue-board.ps1`, which
+  `In progress`; at the end it replies on the issue with the PR link and
+  moves it to `Done`, to `Waiting Review` when the fix waits for your test or
+  the QA's, or to `Waiting for reporter` when it asked the reporter for
+  something. `On hold` marks an issue paused on purpose, with a comment
+  saying what unblocks it. Each PR names its issues (`Closes #<n>` or
+  `Refs #<n>`), or says `No issue`. The agents move the Status with
+  `scripts/issue-board.ps1`, which
   needs the `project` right on your `gh` account, once per machine:
   `gh auth refresh -s project`.
 - **Dependabot** opens dependency update PRs every week; an agent can check

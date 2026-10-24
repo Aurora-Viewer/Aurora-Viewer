@@ -1,3 +1,7 @@
+<!-- One line per issue: "Closes #<n>" if this PR resolves it, "Refs #<n>"
+     if a part or a validation stays pending; "No issue" if there is none. -->
+Closes #
+
 ## What it is for
 
 <!-- 2 or 3 simple sentences, from the user's point of view. -->
