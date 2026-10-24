@@ -212,6 +212,11 @@ pub struct ToolbarUi {
     /// button's menu, and the choice made there (taken by the app).
     pub favorites_access: crate::settings::FavoritesAccess,
     pub access_choice: Option<crate::settings::FavoritesAccess>,
+    /// Whether nearby chat flashes the Conversations button (given by the
+    /// app), for that button's menu, and the choice made there (taken by
+    /// the app).
+    pub flash_nearby: bool,
+    pub conversations_menu: Option<crate::ui::chat::ButtonMenu>,
     /// The look the bars are drawn in (given by the app): the islands' dock
     /// or Firestorm's bars.
     pub islands: bool,
@@ -313,6 +318,14 @@ impl ToolbarUi {
                 && menu::item(ui, p, "lock-filled", aurora_i18n::tr!("movelock-options"))
             {
                 self.movelock_options = true;
+            }
+            // the Conversations button: open the window, leave nearby chat
+            // out of its flash
+            if button.is_some_and(|b| b.command == "conversations") {
+                menu::separator(ui, p);
+                if let Some(choice) = crate::ui::chat::button_menu(ui, p, self.flash_nearby) {
+                    self.conversations_menu = Some(choice);
+                }
             }
             // the Favorites button: where the favourites live
             if button.is_some_and(|b| b.command == "favorites")

@@ -744,6 +744,21 @@ fn ui_font(settings: &Settings) -> String {
         .unwrap_or_else(|| settings.font.clone())
 }
 
+/// The login screen keeps one shortcut of the viewer: the preferences
+/// (Ctrl+P unless rebound), as the Legacy Viewer's login menu does
+/// (menu_login.xml, "Preferences..." on control|P).
+fn login_shortcut(screen: &Screen, action: Option<Action>) -> bool {
+    matches!(screen, Screen::Login) && action == Some(Action::Preferences)
+}
+
+/// A Ctrl / Alt shortcut of the viewer still works while a text field has
+/// the focus, as the Legacy Viewer's menu accelerators go before the focused
+/// field (LLViewerWindow::handleKey); the field keeps its own editing
+/// shortcuts (copy, paste, undo, words...).
+fn shortcut_while_typing(typing: bool, ctrl: bool, alt: bool, code: KeyCode, bound: bool) -> bool {
+    typing && (ctrl || alt) && !crate::keybinds::is_text_edit_key(code) && bound
+}
+
 /// The interface scale, or AURORA_UI_SCALE for this launch (brought into
 /// the range of the Preferences, 0.75–2).
 fn ui_scale(settings: &Settings) -> f32 {
@@ -1293,7 +1308,8 @@ impl App {
         }
         let im_placeholder = actor.is_nil() && self.world.rlva_prepare_outgoing_im(&mut cmd);
         if !im_placeholder && !self.world.rlva_allows_command(&cmd, actor) {
-            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             return;
         }
         if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
@@ -3308,6 +3324,10 @@ impl App {
         if let Some(group) = self.run_group(&input) {
             self.walk_tap(group, pressed && action.is_none());
         }
+        if pressed && login_shortcut(&self.screen, action) {
+            ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+            return;
+        }
         if !pressed || !self.in_world() {
             return;
         }
@@ -4127,6 +4147,9 @@ impl App {
         // conversations by their IM mode (LLIMMgr::addMessage), never in
         // do not disturb; "in front" = shown in the focused window
         let dnd = w.status.dnd;
+        // only people's lines count and alert (#741; AURORA_DEMO_OBJECT_CHAT=…:on
+        // for the run)
+        w.quiet_automated_chat = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
             presence: self.settings.toast_friends_online,
             presence_in_chat: self.settings.friends_online_in_chat,
@@ -4147,8 +4170,16 @@ impl App {
         // (FSFloaterIMContainer::setVisible), or with its preference off
         let flash = &mut self.chat_ui.button_flash;
         flash.set_on(self.settings.flash_conversations_button);
+        flash.set_still(self.settings.reduce_motion || (self.demo && crate::demo::conv_button::still()));
         if self.panels.chat {
             flash.shown();
+        }
+        // nearby chat in the Conversations window, or in its own (#910)
+        let nearby_apart = self.chat_ui.nearby_apart();
+        let nearby_out_of_sight =
+            crate::ui::chat::nearby_out_of_sight(nearby_apart, self.panels.chat, self.chat_ui.nearby_window_shown(&self.egui_ctx));
+        if !nearby_out_of_sight {
+            self.chat_ui.button_flash.nearby_seen();
         }
         let now = self.egui_ctx.input(|i| i.time);
         for m in std::mem::take(&mut w.im_messages) {
@@ -4163,6 +4194,18 @@ impl App {
             }
             w.notify_message(&m, in_sight.contains(&Some(m.session)));
             w.message_attention(&m);
+        }
+        // a resident in nearby chat, out of sight (FSNotifyNearbyChatFlash)
+        if std::mem::take(&mut w.nearby_news)
+            && crate::ui::chat::nearby_flashes(
+                self.settings.flash_conversations_button,
+                // `flash_nearby`, field by field: the world is borrowed
+                self.settings.flash_conversations_nearby && !(self.demo && crate::demo::conv_button::nearby_off()),
+                nearby_out_of_sight,
+                dnd,
+            )
+        {
+            self.chat_ui.button_flash.nearby(now);
         }
         w.acknowledge_read_messages();
         for (old, new) in std::mem::take(&mut w.balance_changes) {
@@ -4250,9 +4293,10 @@ impl App {
         let a = &self.settings.audio;
         match a.stream_title {
             crate::settings::StreamTitleShow::Off => {}
-            crate::settings::StreamTitleShow::Chat => self
-                .world
-                .system_message(aurora_i18n::tr!("app-stream-title-now-playing", title = title.to_owned())),
+            crate::settings::StreamTitleShow::Chat => self.world.system_notice(
+                aurora_i18n::tr!("app-stream-title-now-playing", title = title.to_owned()),
+                crate::world::notice_topics::Topic::Media,
+            ),
             crate::settings::StreamTitleShow::Toast => {
                 self.world.notifications.push(
                     crate::world::notifications::Kind::Info,
@@ -4677,16 +4721,22 @@ impl App {
     /// a map lookup by name.
     fn teleport_to_text(&mut self, text: &str) {
         let Some(l) = crate::slurl::parse(text) else {
-            self.world.system_message(aurora_i18n::tr!("app-destination-not-recognized"));
+            self.world.system_notice(
+                aurora_i18n::tr!("app-destination-not-recognized"),
+                crate::world::notice_topics::Topic::Teleport,
+            );
             return;
         };
-        self.world.system_message(aurora_i18n::tr!(
-            "app-teleporting-to",
-            value0 = l.region.to_string(),
-            value1 = format!("{:.0}", l.pos.x),
-            value2 = format!("{:.0}", l.pos.y),
-            value3 = format!("{:.0}", l.pos.z)
-        ));
+        self.world.system_notice(
+            aurora_i18n::tr!(
+                "app-teleporting-to",
+                value0 = l.region.to_string(),
+                value1 = format!("{:.0}", l.pos.x),
+                value2 = format!("{:.0}", l.pos.y),
+                value3 = format!("{:.0}", l.pos.z)
+            ),
+            crate::world::notice_topics::Topic::Teleport,
+        );
         self.teleport_to_location(l.target(), l.pos);
     }
 
@@ -5494,7 +5544,8 @@ impl App {
         if self.world.rlva_allows_command(command, uuid::Uuid::nil()) {
             true
         } else {
-            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             false
         }
     }
@@ -5551,8 +5602,10 @@ impl App {
             self.world.tp_history.go_forward()
         };
         if let Some(e) = dest {
-            self.world
-                .system_message(aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()));
+            self.world.system_notice(
+                aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()),
+                crate::world::notice_topics::Topic::Teleport,
+            );
             if !self.request_user_teleport(
                 NetCommand::TeleportTo {
                     handle: e.handle,
@@ -8187,6 +8240,7 @@ impl App {
                 .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
             raw.events.extend(ui::bars::favorites::demo_events(&ctx, self.frame_count));
             raw.events.extend(ui::chat::demo_events(&ctx, self.frame_count));
+            raw.events.extend(crate::demo::conv_button::input_events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::appearance::demo_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
@@ -8522,6 +8576,7 @@ impl App {
             // In particular, never fsync the crash snapshot during a drag.
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));
         }
+        crate::theme::apply_motion(&self.egui_ctx, self.settings.reduce_motion);
         if actions.settings_changed || std::mem::take(&mut self.snapshots.settings_changed) {
             aurora_i18n::select(&self.settings.language, crate::cli::get().language.as_deref());
             crate::crash::update(&self.skin.theme, &self.settings);
@@ -8928,6 +8983,14 @@ impl App {
         if self.demo && crate::demo::keywords::active() {
             let agent = self.world.agent_id;
             for event in crate::demo::keywords::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo && crate::demo::conv_button::mode().is_some() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::conv_button::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
@@ -9911,11 +9974,12 @@ impl App {
                 aurora_render::frame_priority::set_raised(!old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
-            // AURORA_RIGGED_BLEND=alt: the rigged blended faces writing
-            // depth from 1/255 (#499) one second in three
+            // AURORA_RIGGED_BLEND=alt: the rigged blended faces drawn as
+            // before #935 (their depth where half covered, then their
+            // colour) one second in three
             if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
                 let old = self.sync_alt.is_multiple_of(3);
-                crate::scene::blend_order::set_write_now(old);
+                crate::scene::blend_order::set_old_now(old);
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_NAME_TAGS=alt: the classic tags one second in three
@@ -10075,6 +10139,10 @@ impl App {
             LoginAction::ReportBug => self.open_issue_chooser(),
             LoginAction::Quit => self.request_exit(),
             LoginAction::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
+            LoginAction::Accessibility => {
+                ui::widgets::open_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings);
+                self.options_ui.open(ui::options::Page::Accessibility, 0);
+            }
             LoginAction::None | LoginAction::Login => {}
         }
         // the line first, then the typing stop it brings (sendChat, then
@@ -10098,10 +10166,10 @@ impl App {
             if self.world.mutes.is_muted_id(&to) {
                 let name = self.world.legacy_name(&to).unwrap_or_else(|| self.world.social.name_of(&to));
                 self.world.unblock(to, &name, 0);
-                self.world.system_message(aurora_i18n::tr!(
-                    "app-was-unblocked-because-you-sent-them-an-im",
-                    name = name.to_string()
-                ));
+                self.world.system_notice(
+                    aurora_i18n::tr!("app-was-unblocked-because-you-sent-them-an-im", name = name.to_string()),
+                    crate::world::notice_topics::Topic::People,
+                );
             }
             self.world.own_im(to, &text);
             self.send(NetCommand::SendIm { to, message: text });
@@ -10177,7 +10245,8 @@ impl App {
             }
             BarAction::ShowHuds(visible) => {
                 if !visible && self.world.rlva_has_locked_hud() {
-                    self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+                    self.world
+                        .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
                     return;
                 }
                 if self.hud_drag.is_some() {
@@ -10439,6 +10508,13 @@ impl App {
 
     /// Where the favourites live: the setting, or what `AURORA_DEMO_BARS`
     /// asks for in demo (never saved).
+    /// Nearby chat flashes the Conversations button (Preferences › Chat, or
+    /// that button's right-click menu); `AURORA_DEMO_CONV_BUTTON=mute` leaves
+    /// it out for the run.
+    fn flash_nearby(&self) -> bool {
+        self.settings.flash_conversations_nearby && !(self.demo && crate::demo::conv_button::nearby_off())
+    }
+
     fn favorites_access(&self) -> crate::settings::FavoritesAccess {
         let demo = if self.demo { ui::bars::demo::get().access } else { None };
         demo.unwrap_or(self.settings.favorites_access)
@@ -11764,6 +11840,8 @@ impl App {
                     ..Default::default()
                 };
                 self.toolbar_ui.favorites_access = self.favorites_access();
+                self.toolbar_ui.flash_nearby = self.flash_nearby();
+                self.chat_ui.flash_nearby = self.flash_nearby();
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
                 let mut demo_toolbar = None;
                 // AURORA_DEMO_TOOLBAR=custom|side|labels|right: the mockup's
@@ -11926,6 +12004,22 @@ impl App {
                     self.settings.favorites_access = access;
                     self.settings.save();
                 }
+                // the Conversations button's right click (the chat island's
+                // opens the window itself)
+                for choice in [self.toolbar_ui.conversations_menu.take(), self.chat_ui.button_menu.take()]
+                    .into_iter()
+                    .flatten()
+                {
+                    match choice {
+                        ui::chat::ButtonMenu::Open => {
+                            ui::widgets::open_floater(ui.ctx(), "conversations", &mut self.panels.chat);
+                        }
+                        ui::chat::ButtonMenu::NearbyFlash(on) => {
+                            self.settings.flash_conversations_nearby = on;
+                            self.settings.save();
+                        }
+                    }
+                }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
                 if mic.mode_changed || mic.devices_changed || mic.processing_changed {
@@ -12063,6 +12157,7 @@ impl App {
                         // AURORA_DEMO_CHAT_LINES=legacy: the one-line look
                         // for the session, nothing saved
                         !(self.settings.classic_chat_lines || crate::demo::chat_lines_scenario() == Some(true)),
+                        self.chat_ui.compact_automated,
                     );
                 }
                 // the hidden interface: how to bring it back (the islands), or
@@ -12116,6 +12211,10 @@ impl App {
                     self.chat_ui.output_device.clone_from(&self.settings.audio.output_device);
                 }
                 self.chat_ui.timestamps = self.settings.chat_timestamps;
+                // AURORA_DEMO_OBJECT_CHAT=…:on: for the run, nothing saved
+                self.chat_ui.compact_automated = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
+                self.chat_ui.compact_im_notices =
+                    self.settings.compact_im_system_lines || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.im_lines));
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
@@ -12147,6 +12246,10 @@ impl App {
                 // plugins' browser
                 self.chat_ui.previews.settings.clone_from(&self.settings.link_previews);
                 self.chat_ui.previews.demo = self.demo && crate::demo::previews_offline();
+                // the GIF picker of the fields (#932): made here in the demo's
+                // GIF scenarios, the real settings and keys otherwise
+                self.chat_ui.gifs.settings.clone_from(&self.settings.gifs);
+                self.chat_ui.gifs.demo = self.demo && crate::demo::gifs_scenario().is_some_and(crate::demo::Gifs::made_here);
                 let volume = self.media_volume();
                 self.chat_ui.previews.web = self.chat_ui.previews.playing().then(|| ui::chat::previews::WebEnv {
                     paths: self.media.plugins(&self.settings.media).cloned(),
@@ -12370,7 +12473,16 @@ impl App {
                     self.panels.settings = true;
                     self.options_ui.open_videos();
                 }
-                // a YouTube video playing in its window, or a card's that
+                // the GIF picker's favourites, its last tab or its random id
+                if std::mem::take(&mut self.chat_ui.gifs.changed) {
+                    self.settings.gifs.clone_from(&self.chat_ui.gifs.settings);
+                    self.settings.save();
+                }
+                if std::mem::take(&mut self.chat_ui.gifs.open_settings) {
+                    self.chat_ui.gif_open = false;
+                    self.panels.settings = true;
+                    self.options_ui.open_gifs();
+                } // a YouTube video playing in its window, or a card's that
                 // stopped being drawn
                 self.chat_ui.previews.player_window(&ctx, &p);
                 if self.settings.friends_list != friends_before {
@@ -14381,6 +14493,32 @@ impl ApplicationHandler for App {
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
                 self.chat_ui.show_profile = true;
             }
+            // AURORA_DEMO_GIFS=open|klipy|sent|menu|nokey|net: the GIF picker of
+            // the friend's conversation (#932), with AURORA_DEMO_CONV or alone
+            if let Some(mode) = crate::demo::gifs_scenario() {
+                if std::env::var_os("AURORA_DEMO_CONV").is_none() {
+                    self.panels.chat = true;
+                    self.panels.perf = false;
+                    self.chat_ui.selected = Some(crate::demo::DEMO_FRIEND);
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
+                }
+                self.chat_ui.gif_open = !matches!(mode, crate::demo::Gifs::NoKey | crate::demo::Gifs::Menu);
+                self.chat_ui.gifs.demo_scene(mode);
+            }
+            // AURORA_DEMO_OBJECT_CHAT=<style>|lines[:on]: the nearby chat in
+            // the Conversations window of that style, or the lines above the
+            // chat bar with the window closed
+            if let Some(scene) = crate::demo::object_chat::scene() {
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.panels.chat = scene.style.is_some();
+                if let Some(style) = scene.style {
+                    self.chat_ui.selected = scene.im.then_some(crate::demo::DEMO_FRIEND);
+                    self.chat_ui.demo_style = Some(style);
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
+                }
+            }
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)
             if let Ok(scenario) = std::env::var("AURORA_DEMO_MAP") {
@@ -14431,6 +14569,11 @@ impl ApplicationHandler for App {
             }
             if crate::demo::presence::position().is_some() {
                 self.panels.people = false;
+            }
+            // AURORA_DEMO_CONV_BUTTON: the Conversations window closed
+            if crate::demo::conv_button::mode().is_some() {
+                self.panels.perf = false;
+                self.panels.chat = false;
             }
             // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
             // window closed, or minimized for `minimized`
@@ -14634,6 +14777,11 @@ impl ApplicationHandler for App {
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
+            }
+            // AURORA_DEMO_OBJECT_CHAT: two notices among the lines, each with
+            // its topic's icon when compact
+            if crate::demo::object_chat::scene().is_some() {
+                crate::demo::object_chat::notices(&mut self.world);
             }
             if let Some(scene) = crate::demo::aurora_scenario() {
                 crate::demo::aurora_lines(&mut self.world, scene);
@@ -15806,15 +15954,15 @@ impl ApplicationHandler for App {
                         return;
                     }
                     // Ctrl / Alt shortcuts of the viewer still work while a text
-                    // field has the focus (chat bar...), as Firestorm's menu
-                    // accelerators go before the focused field
-                    // (LLViewerWindow::handleKey); the field keeps its own
-                    // editing shortcuts (copy, paste, undo, words...)
+                    // field has the focus (chat bar, login fields...)
                     let shortcut = pressed
-                        && typing
-                        && (self.ctrl || self.alt)
-                        && !crate::keybinds::is_text_edit_key(code)
-                        && self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some();
+                        && shortcut_while_typing(
+                            typing,
+                            self.ctrl,
+                            self.alt,
+                            code,
+                            self.settings.keybinds.triggered(&Input::key(code), self.mods()).is_some(),
+                        );
                     // Ctrl+F belongs to the window with its own find when the
                     // script editor is active, the keyboard is in a conversation, or the
                     // pointer over a conversation with the keyboard nowhere:
@@ -15995,6 +16143,39 @@ mod tests {
     use super::{RightGesture, capture_files, frame_cap};
     use crate::settings::Settings;
     use std::path::{Path, PathBuf};
+
+    /// Ctrl+P opens the preferences from the login screen, a login field
+    /// focused or not, as in the world; it types no "p" in the field.
+    #[test]
+    fn ctrl_p_opens_the_preferences_from_the_login_screen() {
+        use super::{Screen, login_shortcut, shortcut_while_typing};
+        use crate::keybinds::{Action, Input, Mods};
+        use winit::keyboard::KeyCode;
+        let bindings = Settings::default().keybinds;
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        let action = bindings.triggered(&Input::key(KeyCode::KeyP), ctrl);
+        assert_eq!(action, Some(Action::Preferences), "Ctrl+P is the preferences' shortcut");
+        assert_eq!(bindings.triggered(&Input::key(KeyCode::KeyP), Mods::default()), None);
+        // a field focused: the key still reaches the viewer's shortcuts
+        assert!(shortcut_while_typing(true, true, false, KeyCode::KeyP, action.is_some()));
+        // the fields keep their own editing shortcuts (Ctrl+C, Ctrl+V…)
+        assert!(!shortcut_while_typing(true, true, false, KeyCode::KeyV, true));
+        // a plain P while typing is the field's
+        assert!(!shortcut_while_typing(true, false, false, KeyCode::KeyP, false));
+        assert!(login_shortcut(&Screen::Login, action));
+        // the other shortcuts wait for the world
+        assert!(!login_shortcut(&Screen::Login, Some(Action::Fly)));
+        assert!(!login_shortcut(&Screen::World, action), "in the world, the usual path opens them");
+        assert!(!login_shortcut(
+            &Screen::Loading {
+                since: std::time::Instant::now()
+            },
+            action
+        ));
+    }
 
     #[test]
     fn right_click_tolerates_small_straight_and_diagonal_motion() {

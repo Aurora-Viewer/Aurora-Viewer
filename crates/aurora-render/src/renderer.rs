@@ -695,6 +695,12 @@ struct Targets {
     color: wgpu::TextureView,
     /// Multisampled depth (MSAA only; otherwise `depth_ss` is the scene depth).
     depth_msaa: Option<wgpu::TextureView>,
+    depth_msaa_tex: Option<wgpu::Texture>,
+    /// A copy of the scene depth (same size and samples) the rigged blended
+    /// faces draw into, writing their depth as they go
+    /// (`RiggedBlendDepth::Layered`).
+    blend_layers_tex: wgpu::Texture,
+    blend_layers: wgpu::TextureView,
     /// Single-sample depth from the prepass.
     depth_ss_tex: wgpu::Texture,
     depth_ss: wgpu::TextureView,
@@ -746,10 +752,13 @@ struct Pipelines {
     /// frames that ask for it ([`BlendDiscard::Alternate`] only).
     blend_late: Option<wgpu::RenderPipeline>,
     /// Blended faces of rigged meshes, drawn before the others and writing
-    /// depth (`DrawLists::blend_depth`).
+    /// depth from 1/255 (`DrawLists::blend_depth`; into the scene depth with
+    /// `RiggedBlendDepth::Write`, into `Targets::blend_layers` with
+    /// `Layered`).
     blend_depth: wgpu::RenderPipeline,
-    /// The rigged blended faces' depth where at least half covered, then
-    /// their colour without depth (`DrawLists::blend_depth_alpha_test`).
+    /// The rigged blended faces' depth where at least half covered
+    /// (`HalfCovered`, then their colour without depth; `Layered`, after
+    /// their colour).
     blend_depth_mask: wgpu::RenderPipeline,
     blend_depth_color: wgpu::RenderPipeline,
     particles: wgpu::RenderPipeline,
@@ -1642,6 +1651,19 @@ fn begin_scene_b<'a>(
     last: bool,
     write_depth: bool,
 ) -> wgpu::RenderPass<'a> {
+    begin_scene_b_on(encoder, t, label, last, write_depth, t.depth_msaa.as_ref().unwrap_or(&t.depth_ss))
+}
+
+/// [`begin_scene_b`] on another depth attachment of the same size and
+/// samples (`Targets::blend_layers`).
+fn begin_scene_b_on<'a>(
+    encoder: &'a mut wgpu::CommandEncoder,
+    t: &Targets,
+    label: &'static str,
+    last: bool,
+    write_depth: bool,
+    depth: &wgpu::TextureView,
+) -> wgpu::RenderPass<'a> {
     let (view, resolve) = match &t.color_msaa {
         Some(msaa) => (msaa, Some(&t.color)),
         None => (&t.color, None),
@@ -1663,7 +1685,7 @@ fn begin_scene_b<'a>(
             },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-            view: t.depth_msaa.as_ref().unwrap_or(&t.depth_ss),
+            view: depth,
             depth_ops: write_depth.then_some(wgpu::Operations {
                 load: wgpu::LoadOp::Load,
                 store: wgpu::StoreOp::Store,
@@ -2982,11 +3004,11 @@ impl Backend {
         // LLDrawPoolAlpha::forwardRender(true): rigged alpha writes depth
         // (fragments under 1/255 of alpha are dropped, as minimum_alpha)
         let blend_depth = blend_pipe("blend rigged", true, true);
-        // Aurora's default (`DrawLists::blend_depth_alpha_test`): the rigged
-        // faces' depth only where at least half covered (fs_depth_contact),
-        // then their colour depth tested, nothing written: a soft fringe no
-        // longer hides the glass behind it (#556), an opaque strand still
-        // hides the eyelashes under it
+        // The rigged faces' depth only where at least half covered
+        // (fs_depth_contact): a soft fringe no longer hides the glass behind
+        // it (#556). Before their colour with `RiggedBlendDepth::HalfCovered`
+        // (blend_depth_color, depth tested, nothing written), after it with
+        // `Layered` (#935)
         let blend_depth_mask = pipe(PipeDesc {
             fs: Some("fs_depth_contact"),
             blend: None,
@@ -3477,7 +3499,29 @@ impl Backend {
         let sampled = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
         let (color_tex, color) = make_view(device, "hdr", w, h, HDR_FORMAT, 1, sampled | wgpu::TextureUsages::COPY_SRC);
         let color_msaa = (samples > 1).then(|| make_view(device, "hdr msaa", w, h, HDR_FORMAT, samples, att).1);
-        let depth_msaa = (samples > 1).then(|| make_view(device, "depth msaa", w, h, DEPTH_FORMAT, samples, att).1);
+        let (depth_msaa_tex, depth_msaa) = match (samples > 1).then(|| {
+            make_view(
+                device,
+                "depth msaa",
+                w,
+                h,
+                DEPTH_FORMAT,
+                samples,
+                att | wgpu::TextureUsages::COPY_SRC,
+            )
+        }) {
+            Some((tex, view)) => (Some(tex), Some(view)),
+            None => (None, None),
+        };
+        let (blend_layers_tex, blend_layers) = make_view(
+            device,
+            "rigged blend layers depth",
+            w,
+            h,
+            DEPTH_FORMAT,
+            samples,
+            att | wgpu::TextureUsages::COPY_DST,
+        );
         // read by the cursor picks through a compute pass (pick.rs)
         let (depth_ss_tex, depth_ss) = make_view(
             device,
@@ -3578,6 +3622,9 @@ impl Backend {
             color_tex,
             color,
             depth_msaa,
+            depth_msaa_tex,
+            blend_layers_tex,
+            blend_layers,
             depth_ss,
             water_interface,
             water_mask,
@@ -6505,16 +6552,37 @@ impl Backend {
             }
         }
         if split {
-            {
-                let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
-                // (the frame group without the scene copy and the depth:
-                // the depth is written here, and fs_blend reads neither)
-                bind_mesh(&mut pass, &self.groups.a);
-                if lists.blend_depth_alpha_test {
+            // (the frame group without the scene copy and the depth: the
+            // depth is written here, and fs_blend reads neither)
+            match lists.blend_depth_mode {
+                RiggedBlendDepth::Write => {
+                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
+                }
+                RiggedBlendDepth::HalfCovered => {
+                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
                     draw(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth));
                     blended(&mut pass, &self.pipelines.blend_depth_color, 0, n_depth);
-                } else {
-                    blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
+                }
+                RiggedBlendDepth::Layered => {
+                    // their colour as the Legacy Viewer draws it, each
+                    // fragment from 1/255 hiding the layers drawn after it
+                    // behind it, on a copy of the depth...
+                    let t = &self.targets;
+                    let scene_depth = t.depth_msaa_tex.as_ref().unwrap_or(&t.depth_ss_tex);
+                    encoder.copy_texture_to_texture(scene_depth.as_image_copy(), t.blend_layers_tex.as_image_copy(), scene_depth.size());
+                    {
+                        let mut pass = begin_scene_b_on(&mut encoder, t, "scene b rigged blend", false, true, &t.blend_layers);
+                        bind_mesh(&mut pass, &self.groups.a);
+                        blended(&mut pass, &self.pipelines.blend_depth, 0, n_depth);
+                    }
+                    // ...and in the scene depth only where at least half
+                    // covered, for what is drawn after them (#556)
+                    let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    draw(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth));
                 }
             }
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b blend", true, false);

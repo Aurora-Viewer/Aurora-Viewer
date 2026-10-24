@@ -388,8 +388,9 @@ change to the interface:
     folder, Windows refuses to delete it (the same with an editor or a viewer
     open in it; the script says so, just run it again once the folder is
     free). If the task came from an issue, **close it on the board** before
-    handing back (section 15, "End of the work"): reply on the issue, Status
-    `Done` or `Waiting Review`. Then **tell the human**: link of the merged
+    handing back (section 15, "End of the work"): reply on the issue with
+    the PR link, Status `Done`, `Waiting Review` or `Waiting for reporter`.
+    Then **tell the human**: link of the merged
     PR, what changed, the state of the issue, and what is left to test on the
     grid if anything. If the session stops before
     the merge, the merge still happens on GitHub; housekeeping is done at
@@ -409,6 +410,8 @@ gh pr create --base main --title "feat(avatar): …" --body-file <file.md> --lab
 The body follows the template `.github/pull_request_template.md`, is written
 in English and must be **readable by a human in two minutes**:
 
+- **Issues**: every issue the PR addresses, one line each, at the top of the
+  body (rules below, "Link the PR and its issues").
 - **What it is for**: 2–3 simple sentences, from the user's point of view.
 - **Legacy Viewer origin**: yes/no; if yes, the files and functions followed.
 - **What changes**: by area (interface, rendering, network…), in short
@@ -429,6 +432,28 @@ Labels (created by `scripts/setup-labels.ps1`):
   tags above avatars), `contact-group` (contact groups / sets), `inventory`,
   `build-tools` (in-world building and editing), `tooling` (repository, CI,
   scripts).
+
+### Link the PR and its issues
+
+The link goes both ways: the issue shows its PR, the PR names its issue.
+
+- **In the PR body**, one line per issue the PR addresses:
+  - `Closes #<n>` when the PR resolves the whole issue: GitHub lists the PR
+    in the issue's Development panel and closes the issue on merge;
+  - `Refs #<n>` when a part or a validation stays pending (grid test, the
+    reporter's confirmation, another PR to come).
+
+  A PR covering several issues has one line each (`Refs #475`, then
+  `Refs #741`). A PR with no issue says `No issue`, so that a reviewer does
+  not look for one.
+- **On the issue**: `Refs` does not fill the Development panel, so the reply
+  posted on the issue after the merge always contains the PR link (`#<PR>`).
+  GitHub then shows the PR in the issue's timeline: check that it does.
+- **A follow-up PR** on an issue already handled by a merged PR references
+  the same issue, and the first PR when it helps (`Refs #941`, "follows
+  #943").
+- **In TASKS.md**, the task's line names its issue, then its PR once it
+  exists.
 
 ## 10. Commits, identity and mentions
 
@@ -686,7 +711,33 @@ preserve the changes made in the meantime by others.
 
 The team follows the issues on the GitHub project **Aurora Team Planning**
 (organisation Aurora-Viewer). Its **Status** column says where each issue
-stands: `Todo`, `In progress`, `Waiting Review`, `Done`. The **Priority**
+stands:
+
+| Status | Meaning | Set by |
+|---|---|---|
+| `Todo` | not started | the project manager; an agent that hands back unfinished work |
+| `In progress` | actively worked on | the agent that takes the issue |
+| `On hold` | paused on purpose, until something named in a comment unblocks it | an agent or the project manager |
+| `Waiting for reporter` | waiting for the reporter or another outside person: information, a file, a reproduction, a test | the agent that asked for it |
+| `Waiting Review` | fix merged or ready, waiting for the human's or the QA's validation (🟡 in TASKS.md) | the agent, at the end of the work |
+| `Done` | resolved and closed | the agent, or GitHub after `Closes #<n>` |
+
+- **`Waiting for reporter`**: as soon as a comment asks the reporter (or
+  another outside person) for something: details, a screenshot, a
+  reproduction, a test of a build or of the next release ("please confirm
+  on the next release"). When they answer, move it back to `In progress`
+  (`Todo` if nobody works on it), or to `Waiting Review` / `Done` if the
+  answer settles it. Never use `Waiting Review` for this.
+- **`Waiting Review`**: only for a fix that is merged or ready and waits for
+  a validation by the human or the QA testers.
+- **`On hold`**: only with a comment saying why and what will unblock it: a
+  product decision your human has to take, an upstream dependency (link its
+  issue or PR), another issue (link it), a later milestone, a hardware or an
+  account the team does not have. Set it when you are blocked like that and
+  tell your human. It never hides dropped work: the assignment stays, and
+  work dropped for good goes back to `Todo` (below).
+
+The **Priority**
 (Urgent, High, Medium, Low; an issue field of the organisation, like the
 type) and the milestone are set by the **project manager**:
 they tell the team what to work on first. **Never change the Priority, the
@@ -696,6 +747,7 @@ first, the `1.0 Release` milestone before the rest:
 
 ```powershell
 ./scripts/issue-board.ps1 -Todo                        # open Todo issues, by priority
+./scripts/issue-board.ps1 -List 'Waiting for reporter' # open issues with that Status, by priority
 ./scripts/issue-board.ps1 -Issue <n>                   # Status, Priority, milestone of one issue
 ./scripts/issue-board.ps1 -Issue <n> -Status 'In progress'
 ```
@@ -717,8 +769,9 @@ gh issue list --repo Aurora-Viewer/Aurora-Viewer --state open --search "<words> 
 ```
 
 - One matches: it is your task's issue. Take it as below, link it in your
-  `TASKS.md` line, and close it from the PR (`Closes #<n>`, or `Refs #<n>`
-  while a grid validation stays pending).
+  `TASKS.md` line (then the PR, once it exists), and close it from the PR
+  (`Closes #<n>`, or `Refs #<n>` while a grid validation stays pending;
+  section 9, "Link the PR and its issues").
 - It is an epic: never take the epic itself. Take the sub-issue that matches
   your task (`gh api repos/Aurora-Viewer/Aurora-Viewer/issues/<epic>/sub_issues --paginate`;
   without `--paginate` the list stops at 30).
@@ -748,14 +801,18 @@ order:
 both are done:
 
 - **a reply on the issue** (below, "Reply and close"): what was done, the PR
-  link, or what is missing;
+  link (`#<PR>`, so the PR shows in the issue's timeline), or what is
+  missing;
 - **the Status**:
   - `Done` when the issue is resolved and closed (closing rules below; check
     the Status after an automatic close by `Closes #<n>` too, the board may
     not have followed);
-  - `Waiting Review` when the issue now waits on someone else: you asked
-    the reporter for information or a test in a comment, or the fix waits
-    for your human's validation or a grid test (🟡 in TASKS.md).
+  - `Waiting Review` when the fix is merged or ready and waits for your
+    human's validation or a grid test (🟡 in TASKS.md);
+  - `Waiting for reporter` when your comment asks the reporter for
+    information, a file or a test, including a test of the next release;
+  - `On hold` when the work is blocked by something outside it, with a
+    comment saying what unblocks it (above).
 
   Then read it back with `issue-board.ps1 -Issue <n>`.
 
@@ -793,18 +850,19 @@ both are done:
   `Refs #<n>` if a validation or a part of the problem will stay pending.
   Otherwise, after these checks:
   `gh issue close <n> --repo Aurora-Viewer/Aurora-Viewer --reason completed`.
-  Post a summary with the PR link, the tests and the available version, or
-  state that the fix is still waiting for a release. Check the final state,
-  including after an automatic close.
-- **Established duplicate**: explain the link with the reference issue, then
-  close with
+  Post a summary with the link of every PR that fixed it, the tests and the
+  available version, or state that the fix is still waiting for a release.
+  Check the final state, including after an automatic close.
+- **Established duplicate**: explain the link with the reference issue (its
+  number in the comment), then close with
   `gh issue close <n> --repo Aurora-Viewer/Aurora-Viewer --duplicate-of <reference-number>`.
 - **Documented out of scope**: explain and link the scope rule, then close
   with `--reason "not planned"`. A new or disputed product choice must be
   decided by the human before closing.
 - **Missing information, unreadable attachment, problem not reproduced or
   partial fix**: keep the issue open, say in a comment what is missing and
-  set its Status to `Waiting Review` (above). A lack
+  set its Status to `Waiting for reporter` when the reporter has to answer,
+  `On hold` when something else blocks it (above). A lack
   of reply and a mere hypothesis are not enough to close it. If new evidence
   invalidates the resolution, reopen it (`gh issue reopen`), explain why and
   resume the triage.

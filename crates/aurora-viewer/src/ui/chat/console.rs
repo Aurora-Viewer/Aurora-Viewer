@@ -86,6 +86,7 @@ pub(super) fn cards(
     bottom: f32,
     seconds: f32,
     times: bool,
+    compact_automated: bool,
 ) {
     let now = std::time::SystemTime::now();
     let mut recent: Vec<&ChatLine> = world
@@ -117,13 +118,24 @@ pub(super) fn cards(
                 let radius = ui.visuals().window_corner_radius;
                 let glass = p.panel_alpha < 255;
                 let mut slot = None;
+                let small = super::object_row::compact(group[0], compact_automated);
                 let card = egui::Frame::new()
                     .fill(if glass { Color32::TRANSPARENT } else { tint })
                     .corner_radius(radius)
-                    .inner_margin(egui::Margin::symmetric(9, 6))
+                    .inner_margin(if small {
+                        egui::Margin::symmetric(9, 3)
+                    } else {
+                        egui::Margin::symmetric(9, 6)
+                    })
                     .show(ui, |ui| {
                         slot = Some(ui.painter().add(egui::Shape::Noop));
                         ui.multiply_opacity(card_alpha);
+                        if small {
+                            compact_card(
+                                ui, p, world, want_names, &group, seconds, now, card_alpha, times, &mut links, &mut names,
+                            );
+                            return;
+                        }
                         card(
                             ui,
                             p,
@@ -222,6 +234,76 @@ fn card<'a>(
     });
 }
 
+/// An object's lines on small rows, as the Conversations window shows them
+/// with the option on (`object_row.rs`): the cube, the name (its click and
+/// menu inspect the object) and the text, no picture nor head.
+#[allow(clippy::too_many_arguments)]
+fn compact_card<'a>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    want_names: &mut HashSet<uuid::Uuid>,
+    group: &[&'a ChatLine],
+    seconds: f32,
+    now: std::time::SystemTime,
+    card_alpha: f32,
+    times: bool,
+    links: &mut Vec<(egui::Rect, Link, Color32)>,
+    names: &mut Vec<(egui::Rect, &'a ChatLine)>,
+) {
+    use egui::emath::GuiRounding as _;
+    let size = super::object_row::TEXT;
+    ui.spacing_mut().item_spacing.y = 1.0;
+    for &line in group {
+        let fade = alpha(seconds, line, now) / card_alpha.max(0.01);
+        // the time before the line, set on its baseline (in the line's job,
+        // a smaller section sits on the bottom of the row, lower)
+        let time = times.then(|| super::object_row::time_galley(ui.painter(), p, line));
+        let time_w = time.as_ref().map_or(0.0, |t| t.size().x + 5.0);
+        // a notice's icon of its topic, as in the Conversations window (an
+        // object's cube takes the room its job leaves before its name)
+        let side = super::pic_side(size);
+        let notice = line.kind.is_notice();
+        let lead = time_w + if notice { side + 2.0 } else { 0.0 };
+        let BubbleJob {
+            job,
+            links: line_links,
+            badges,
+            sender,
+            name,
+        } = line_job(line, p, world, want_names, WIDTH - 18.0 - lead, size, false, JobLook::Compact);
+        let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(lead + galley.size().x, galley.size().y), egui::Sense::hover());
+        let mut painter = ui.painter().clone();
+        painter.multiply_opacity(fade);
+        let origin = (rect.min + egui::vec2(lead, 0.0)).round_to_pixels(painter.pixels_per_point());
+        painter.galley(origin, galley.clone(), p.ink);
+        let baseline = origin.y + crate::ui::widgets::galley_baseline(&painter, &galley);
+        if let Some(time) = time {
+            crate::ui::widgets::paint_on_baseline(&painter, time, rect.left(), baseline, p.muted_dim);
+        }
+        if notice {
+            let middle = super::object_row::caps_middle(&painter, size, baseline);
+            let r = egui::Rect::from_center_size(egui::pos2(rect.left() + time_w + side * 0.5, middle), egui::vec2(side, side));
+            thread::paint_icon(&painter, super::object_row::icon(world, line), r.shrink(1.0), p.muted_dim);
+        }
+        // the cube in the room left before the name, on the capitals
+        if let Some((at, _)) = sender {
+            let c = galley.pos_from_cursor(egui::text::CCursor::new(at)).translate(origin.to_vec2());
+            let middle = super::object_row::caps_middle(&painter, size, baseline);
+            let r = egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, middle), egui::vec2(side, side));
+            thread::paint_icon(&painter, "box", r.shrink(1.0), p.muted_dim);
+        }
+        if let Some(range) = name
+            && let Some(r) = super::range_rects(&galley, origin, range).first().copied()
+        {
+            names.push((r, line));
+        }
+        let col = crate::ui::colors::keyword_color(line).unwrap_or(p.muted).gamma_multiply(fade);
+        line_extras(ui, p, world, &galley, origin, size, fade, badges, line_links, col, links);
+    }
+}
+
 /// The tags after a name: IM, shouts, whispers (the Conversations thread's).
 fn tags(ui: &mut egui::Ui, p: &Palette, line: &ChatLine) {
     match line.kind {
@@ -316,6 +398,122 @@ mod tests {
         assert_eq!(sizes, vec![2, 1, 1, 1, 1]);
     }
 
+    /// The human's report of 2026-10-24: above the chat bar, the time of an
+    /// object's compact line stood lower than its text (a smaller section
+    /// of one job sits on the bottom of the row). The time stands on the
+    /// line's baseline and the cube on the middle of its capitals, within
+    /// half a pixel, with the four built-in fonts at the scales 1, 1.25 and
+    /// 1.5.
+    #[test]
+    fn a_compact_lines_time_and_cube_stand_on_its_text() {
+        let mut said = line(ChatKind::Object(ChatType::Normal), "HELM KIT", 9);
+        said.text = "LIFT THE HELM".into();
+        // 11:11 in Second Life time (15 January 2026, 19:11 UTC), shown as
+        // long as the lines last below: a time of flat-footed digits
+        said.time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_768_504_260);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.chat.push_back(said);
+        // and a notice about a teleport, said after it
+        let mut notice = line(ChatKind::System, "", 0);
+        notice.text = "LIFT OFF".into();
+        notice.time = world.chat[0].time;
+        world.notice_topics.note(&notice, crate::world::notice_topics::Topic::Teleport);
+        world.chat.push_back(notice);
+        let time = hhmm(world.chat[0].time);
+        for font in [
+            crate::ui::fonts::INTER,
+            crate::ui::fonts::NOTO,
+            crate::ui::fonts::ROBOTO,
+            crate::ui::fonts::OPEN_DYSLEXIC,
+        ] {
+            for pixels in [1.0, 1.25, 1.5] {
+                let ctx = egui::Context::default();
+                crate::theme::Theme::default().apply(&ctx, 1.0);
+                crate::ui::fonts::apply(&ctx, font);
+                ctx.set_pixels_per_point(pixels);
+                let p = crate::theme::Theme::default().palette();
+                let _icons = crate::ui::icons::Icons::load(&ctx, None);
+                // (an area shows from its second frame)
+                let run = || {
+                    ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0))),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            cards(
+                                ui.ctx(),
+                                &p,
+                                &world,
+                                &HashMap::new(),
+                                &mut HashSet::new(),
+                                &mut HashSet::new(),
+                                700.0,
+                                1e10,
+                                true,
+                                true,
+                            )
+                        },
+                    )
+                };
+                let mut first = run();
+                first.textures_delta.clear();
+                let mut out = run();
+                out.textures_delta.clear();
+                let case = format!("font={font}, pixels={pixels}");
+                let feet = super::super::object_row::tests::feet(&out.shapes, pixels);
+                let foot = |text: &str| {
+                    feet.iter()
+                        .find(|(t, _)| t.contains(text))
+                        .map(|(_, y)| *y)
+                        .unwrap_or_else(|| panic!("{case}: no {text}: {feet:?}"))
+                };
+                let text = foot("LIFT THE HELM");
+                assert_eq!(time, "11:11");
+                let at = foot(&time);
+                assert!((at - text).abs() <= 0.5 + 1e-3, "{case}: the time at {at}, the text at {text}");
+                let side = super::super::pic_side(super::super::object_row::TEXT) - 2.0;
+                // the object's cube, then the notice's icon of its topic
+                let icons: Vec<egui::Rect> = out
+                    .shapes
+                    .iter()
+                    .filter_map(|c| match &c.shape {
+                        egui::Shape::Mesh(m) if !m.vertices.is_empty() => {
+                            let r = egui::Rect::from_points(&m.vertices.iter().map(|v| v.pos).collect::<Vec<_>>());
+                            ((r.width() - side).abs() < 0.01 && (r.height() - side).abs() < 0.01).then_some(r)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(icons.len(), 2, "{case}: the cube and the notice's icon, {icons:?}");
+                let cube = icons[0];
+                let cap = {
+                    let probe = ctx.fonts_mut(|f| {
+                        f.layout_no_wrap(
+                            "H".into(),
+                            egui::FontId::proportional(super::super::object_row::TEXT),
+                            egui::Color32::PLACEHOLDER,
+                        )
+                    });
+                    crate::ui::widgets::ink_rect(&probe).height()
+                };
+                assert!(
+                    (cube.center().y - (text - cap / 2.0)).abs() <= 0.5 + 1e-3,
+                    "{case}: the cube's middle {} against the capitals' {}",
+                    cube.center().y,
+                    text - cap / 2.0
+                );
+                let notice = foot("LIFT OFF");
+                assert!(
+                    (icons[1].center().y - (notice - cap / 2.0)).abs() <= 0.5 + 1e-3,
+                    "{case}: the notice's icon {} against its capitals' {}",
+                    icons[1].center().y,
+                    notice - cap / 2.0
+                );
+            }
+        }
+    }
+
     /// A card's body leaves the name to the head, except an emote's, whose
     /// name is part of its sentence.
     #[test]
@@ -368,6 +566,7 @@ mod tests {
                         &mut HashSet::new(),
                         800.0,
                         20.0,
+                        false,
                         false,
                     )
                 },

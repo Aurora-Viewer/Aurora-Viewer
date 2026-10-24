@@ -46,6 +46,7 @@ pub mod maturity;
 pub mod motion;
 pub mod mutes;
 pub mod names;
+pub mod notice_topics;
 pub mod notification_history;
 pub mod notifications;
 pub mod object_im_filter;
@@ -80,6 +81,10 @@ pub mod voice_moderation;
 pub mod windlight_presets;
 pub mod worldmap;
 
+#[cfg(test)]
+mod automated_chat_tests;
+#[cfg(test)]
+mod flash_tests;
 #[cfg(test)]
 mod toasts_tests;
 
@@ -149,6 +154,13 @@ impl ChatKind {
     /// A card with its own buttons (an invitation, an offer).
     pub fn is_card(self) -> bool {
         matches!(self, ChatKind::Invite(_) | ChatKind::InventoryOffer(_))
+    }
+
+    /// Not sent by a person: what an object or a script says (its owner-say
+    /// and its llRegionSayTo to us included), its IMs, and the viewer's
+    /// notices. The cards of residents' offers are people's (#741).
+    pub fn is_automated(self) -> bool {
+        matches!(self, ChatKind::Object(_) | ChatKind::ObjectIm | ChatKind::System)
     }
 }
 
@@ -233,6 +245,17 @@ pub struct World {
     /// Follows `chat` for the view.
     pub chat_clock: transcripts::LineClock,
     pub chat_unread: usize,
+    /// A resident said something in nearby chat since the app last looked:
+    /// it may flash the Conversations button (FSNotifyNearbyChatFlash).
+    pub nearby_news: bool,
+    /// What the nearby chat's entry counts as unread: `chat_unread`, or only
+    /// the people's lines while `quiet_automated_chat` is on.
+    pub chat_badge: usize,
+    /// Lines not sent by a person neither count as unread nor alert
+    /// (Preferences › Chat, #741, off), given every frame by the app.
+    pub quiet_automated_chat: bool,
+    /// What the notices of the nearby chat are about, for their icon.
+    pub notice_topics: notice_topics::Topics,
     /// Conversation transcripts of the account logged in.
     pub chat_log: chat_log::ChatLog,
     /// History of the nearby chat (asked once per login).
@@ -549,6 +572,10 @@ impl World {
             chat: VecDeque::new(),
             chat_clock: Default::default(),
             chat_unread: 0,
+            nearby_news: false,
+            chat_badge: 0,
+            quiet_automated_chat: false,
+            notice_topics: Default::default(),
             chat_log: Default::default(),
             nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
@@ -681,9 +708,12 @@ impl World {
         let cache_dir = self.cache_dir.take();
         let mut chat_log = std::mem::take(&mut self.chat_log);
         chat_log.logout();
+        // a setting, not the session's: the arrival's lines follow it too
+        let quiet = self.quiet_automated_chat;
         *self = World::new(lib);
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
+        self.quiet_automated_chat = quiet;
     }
 
     /// saveOpenIMs, when the session ends (quit, logout or disconnection).
@@ -1362,8 +1392,24 @@ impl World {
     }
 
     fn push_chat(&mut self, line: ChatLine) {
+        if self.alerts(line.kind) {
+            self.chat_badge += 1;
+        }
         self.nearby_push(line);
         self.chat_unread += 1;
+    }
+
+    /// A line of this kind counts as unread and may alert (keyword sound,
+    /// flash, system notification): always, or only a person's while the
+    /// option asks for it (#741).
+    pub(crate) fn alerts(&self, kind: ChatKind) -> bool {
+        !(self.quiet_automated_chat && kind.is_automated())
+    }
+
+    /// The nearby chat is read.
+    pub fn nearby_read(&mut self) -> usize {
+        self.chat_badge = 0;
+        std::mem::take(&mut self.chat_unread)
     }
 
     /// Count on the Conversations button of the bottom bar: the unread IMs,
@@ -1421,14 +1467,37 @@ impl World {
     }
 
     pub fn system_message(&mut self, text: impl Into<String>) {
-        self.push_chat(ChatLine {
+        self.system_notice(text, notice_topics::Topic::Info);
+    }
+
+    /// A notice of the viewer in the nearby chat, about `topic` (the icon
+    /// of its compact row, #741).
+    pub fn system_notice(&mut self, text: impl Into<String>, topic: notice_topics::Topic) {
+        let line = ChatLine {
             time: SystemTime::now(),
             from: String::new(),
             text: text.into(),
             kind: ChatKind::System,
             source: Uuid::nil(),
             origin: Origin::Live,
-        });
+        };
+        self.notice_topics.note(&line, topic);
+        self.push_chat(line);
+    }
+
+    /// A notice of the viewer in a conversation (a call, an automatic
+    /// reply), about `topic`, never unread.
+    pub fn conversation_notice(&mut self, session: Uuid, text: impl Into<String>, topic: notice_topics::Topic) {
+        let line = ChatLine {
+            time: SystemTime::now(),
+            from: String::new(),
+            text: text.into(),
+            kind: ChatKind::System,
+            source: Uuid::nil(),
+            origin: Origin::Live,
+        };
+        self.notice_topics.note(&line, topic);
+        self.conversation_push(session, line, false);
     }
 
     fn ensure_region(&mut self, h: RegionHandle, size: (u32, u32)) -> &mut Region {
@@ -2268,14 +2337,20 @@ impl World {
                 self.tp_failed = false;
                 self.tp_progress = self.tp_progress.max(0.10);
                 self.tp_status = aurora_i18n::tr!("common-teleport-accepted").into();
-                self.system_message(aurora_i18n::tr!("world-mod-teleporting"));
+                self.system_notice(
+                    aurora_i18n::tr!("world-mod-teleporting"),
+                    crate::world::notice_topics::Topic::Teleport,
+                );
                 None
             }
             NetEvent::TeleportFailed { reason } => {
                 self.tp_history.failed();
                 self.teleporting = false;
                 self.tp_failed = true;
-                self.system_message(aurora_i18n::tr!("world-mod-teleport-failed", reason = reason.to_string()));
+                self.system_notice(
+                    aurora_i18n::tr!("world-mod-teleport-failed", reason = reason.to_string()),
+                    crate::world::notice_topics::Topic::Teleport,
+                );
                 None
             }
             NetEvent::ScriptControlChange(blocks) => {
@@ -3149,9 +3224,13 @@ impl World {
         }
         // process_chat_from_simulator: every line but ours and the debug
         // channel's (FSKeywords::chatContainsKeyword)
-        if !matches!(kind, ChatKind::Own | ChatKind::Object(ChatType::Debug)) {
+        // (an object's line alerts no more while #741's option is on)
+        if !matches!(kind, ChatKind::Own | ChatKind::Object(ChatType::Debug)) && self.alerts(kind) {
             self.keyword_alert(c.source_id, &from, &c.message, true, attention::Open::NearbyChat);
         }
+        // a resident's line, not ours nor an object's: the Conversations
+        // button may flash (the blocked never got this far)
+        self.nearby_news |= matches!(kind, ChatKind::Local(_));
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,
@@ -3264,16 +3343,19 @@ impl World {
         } else {
             attention::Cause::Message
         };
-        let notice = attention::Notice {
-            title: from.clone(),
-            body: text.clone(),
-            open: attention::Open::NearbyChat,
-        };
-        self.ask_attention(cause, Some(notice));
-        // an object's IM is checked as nearby chat (processNewMessage,
-        // IM_FROM_TASK)
-        if im.dialog == 19 {
-            self.keyword_alert(im.from_agent_id, &from, &text, true, attention::Open::NearbyChat);
+        // (neither while #741's option keeps objects quiet)
+        if self.alerts(kind) {
+            let notice = attention::Notice {
+                title: from.clone(),
+                body: text.clone(),
+                open: attention::Open::NearbyChat,
+            };
+            self.ask_attention(cause, Some(notice));
+            // an object's IM is checked as nearby chat (processNewMessage,
+            // IM_FROM_TASK)
+            if im.dialog == 19 {
+                self.keyword_alert(im.from_agent_id, &from, &text, true, attention::Open::NearbyChat);
+            }
         }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
@@ -3819,10 +3901,13 @@ impl World {
             // the line of nearby chat (OnlineOfflinetoNearbyChat), only when
             // asked for: the toast already says it
             if self.notifications.toasts.presence_in_chat {
-                // checked as nearby chat (LLAvatarTracker::processNotify)
-                let from = self.social.name_of(&id);
-                self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
-                self.system_message(n);
+                // checked as nearby chat (LLAvatarTracker::processNotify),
+                // unless notices are kept quiet (#741)
+                if self.alerts(ChatKind::System) {
+                    let from = self.social.name_of(&id);
+                    self.keyword_alert(id, &from, &n, true, attention::Open::NearbyChat);
+                }
+                self.system_notice(n, notice_topics::Topic::People);
             }
         }
     }

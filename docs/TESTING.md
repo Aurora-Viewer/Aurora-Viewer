@@ -2858,6 +2858,10 @@ both open states and the selection count. Capture at frame 620.
   avatar. The texture is made of vertical strands spaced `period` texels
   apart (16 by default, 4 to 256, out of 256), `empty` per cent of which are
   fully transparent (60 by default, 0 to 90).
+  The inner layer is attached last, so that it is drawn first, as a hair
+  made for the Legacy Viewer (`AURORA_RIGGED_BLEND`); the strands are 90 %
+  opaque at the roots and 36 % at the tips: with `AURORA_RIGGED_BLEND=depth05`
+  the outer layers look see-through (#935).
   - To read in `perf summary`: `g_transparent` + `g_post` (see
     [Profiling](#profiling)), `blend`, `blend_tris_k`. `32` with
     `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS="129,134"` gives ~970
@@ -3288,7 +3292,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WINDOW_EDGES=<l\|r\|b…>` | Screen edges the windows may cross for the run |
 | `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: Alt attachment, free move, detachment, grouped move, resize |
-| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged or swept in and out |
+| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner or edge dragged or swept in and out |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
@@ -3327,6 +3331,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
+| `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object` | Notification center: cards, burst, paused bell, history, Legacy toasts and object inventory offers |
@@ -3339,6 +3344,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_COLORPICK=1` | Opens the compact colour picker of the first swatch shown |
 | `AURORA_DEMO_CONV=1`, `AURORA_DEMO_TALK=1` | Group conversation, open microphone |
 | `AURORA_DEMO_CHAT_LINES=1\|legacy` | Nearby chat lines above the chat bar: cards by sender, or the one-line look |
+| `AURORA_DEMO_OBJECT_CHAT=aurora\|compact\|bubbles\|legacy\|lines[:on][:im][:imlines]` | Residents talking among objects in the nearby chat, in a style; `on` makes what no person sent compact and quiet; `im` the friend's conversation, `imlines` its system lines compact |
 | `AURORA_DEMO_TYPING=1` | We type in the nearby chat from our arrival on: typing animation, dots on our plate |
 | `AURORA_DEMO_CONV=bubbles[:busy\|group\|local\|legacy]` | Conversations as a messenger: bubbles, head with picture and status; or the legacy lines |
 | `AURORA_DEMO_CONV=aurora[:flag…]` | Conversations in Aurora's workspace (column, head, grouped messages, members, calls), roomy or compact |
@@ -3358,6 +3364,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services; `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
+| `AURORA_DEMO_GIFS=1\|klipy\|sent\|menu\|nokey\|net` | Conversations open on the GIF picker of the field, its results made here; `sent` sends the first GIF; `menu` the button's right-click menu; `nokey` no button; `net` the real services |
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
@@ -3822,7 +3829,7 @@ failure. Grid validation and any paid upload are performed by the human.
   in place. `detach` attaches first, then moves People with Alt held:
   Conversations stays behind and the link is removed. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
-- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast[,<window>]`**: from frame 600,
+- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast|sweep-right|sweep-bottom[,<window>]`**: from frame 600,
   the pointer rests 6 points inside the bottom-right corner of a real
   window (`corner`), 1 point inside its right edge, halfway down
   (`edge`), or presses that corner and holds it 40 × 30 further out until
@@ -3838,7 +3845,14 @@ failure. Grid validation and any paid upload are performed by the human.
   points out by frame 900, a few points a frame; `sweep-h` does the same
   on the height (400 in, 600 out); `sweep-fast` drags it 520 points in
   and back out in 24 frames (about 45 points a frame), five times, then
-  rests at its start; released at frame 1000. With
+  rests at its start; released at frame 1000. `sweep-right` and
+  `sweep-bottom` do what `sweep` and `sweep-h` do, by the middle of the
+  right or the bottom edge instead of the corner. On the video player
+  window (`link_preview_player`, with `AURORA_DEMO_CONV_PREVIEWS=videos`
+  and `AURORA_DEMO_PREVIEW_PLAY=window`) the picture keeps the video's
+  shape at every captured frame of the drag (#941): the other dimension
+  follows the edge, and the window stops at its minimum or at the screen
+  on the video's shape, never stretched. With
   `AURORA_DEMO_CONV=aurora:group` and `AURORA_CAPTURE_FRAMES` listing
   frames (every 10 from 600 to 900, and runs of consecutive ones), what to
   look for in the Conversations window: nothing jumps at a frame; around
@@ -3996,6 +4010,18 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
   `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
   existing sounds.
+- **`AURORA_DEMO_CONV_BUTTON=1|mute|still|menu`**: the Conversations window
+  closed, Tess says something in nearby chat at frame 700 and Nova writes an
+  IM at 900. The demo's group chat already lit the chat island's button
+  (faint tint and light outline, as a minimized conversations bar); each of
+  the two messages flashes it again (eight rises over four seconds, the
+  outline widening with the wash). `mute` leaves nearby chat out for the run
+  (never saved): 700 stays at the tint, 900 flashes. `still` turns Reduce
+  motion on for the run: the button holds the top of a rise for the four
+  seconds instead of rising and falling. `menu` right-clicks the button at
+  700: "Open conversations", then "Don't flash for nearby chat" (unchecked).
+  Capture with `AURORA_FPS_LIMIT=60` at `690,715,730,915,1200` (715 and 915:
+  the top of a rise; 730: its bottom), `760` for `menu`.
 - **`AURORA_DEMO_KEYWORDS=1|prefs`**: keyword alerts on for the run, never saved
   (the two keywords of `demo-keywords-words`, "party, builders" in English,
   "fête, constructeurs" in French; colour change and sound on), with the
@@ -4081,7 +4107,8 @@ failure. Grid validation and any paid upload are performed by the human.
   - the rows of the former filters, lit a moment and scrolled to:
     `0:tonemap` (Graphics › Image › Tone mapping), `0:occlusion` (Light ›
     Indirect light, its cog opened), `0:bloom`, `name-tags`, `attention`
-    (Chat › Notifications), `keywords`, `7:voice`, `7:processing`,
+    (Chat › Notifications), `keywords`, `gifs` (Chat › Nearby chat › GIFs,
+    its keys explained), `7:voice`, `7:processing`,
     `7:indicators` (Sound and voice › Voice), `13:animations` /
     `13:animations-sync` (Aurora › Behaviour, Legacy / Synchronized clock).
     `8:<text>` searches the shortcuts (`8:Ctrl`, `8:HUD`).
@@ -4135,7 +4162,7 @@ failure. Grid validation and any paid upload are performed by the human.
   disturb, a hollow ring offline): combine with `AURORA_DEMO_CONV=bubbles:busy`,
   `AURORA_DEMO_PEOPLE=rows` or `AURORA_DEMO_CONTACTS=friends`.
 - **`AURORA_DEMO_CONTRAST=1|0`**: the high contrast palette for this run,
-  as Preferences › Accessibility › Contrast does, without touching the
+  as Preferences › Accessibility › Vision does, without touching the
   saved settings (`0` forces it off on a profile that has it on). What to
   look for: opaque black windows and bars (no glass), white text, light
   grey secondary text, a light grey border around buttons, fields, windows
@@ -4374,8 +4401,9 @@ failure. Grid validation and any paid upload are performed by the human.
   With `net` the video really plays (network needed; capture at frame
   1500): YouTube's player inside a page served on 127.0.0.1, with
   YouTube's controls; without that page it shows its error 153. The card
-  and the window keep the video's shape (#848): the window's height
-  follows its width once a resize is let go. In its card the cog, window
+  and the window keep the video's shape (#848): dragged by an edge or a
+  corner, the window's picture keeps it at every frame (#941; see
+  `AURORA_DEMO_RESIZE`). In its card the cog, window
   and stop buttons show only while the pointer is over the card; the cog
   (also in the window's title bar) opens Preferences › Chat on "YouTube
   videos". Moving YouTube's own volume slider logs `video volume kept at
@@ -4386,6 +4414,24 @@ failure. Grid validation and any paid upload are performed by the human.
   player's volume icon shows one wave instead of two at frame 1500; no
   `video volume kept` line follows (the player's own 100 % before it is
   set is not taken for a change).
+- **`AURORA_DEMO_GIFS=1|klipy|sent|menu|nokey|net`** (#932): the
+  Conversations window open on the friend's conversation (or the one of
+  `AURORA_DEMO_CONV`), its field's GIF picker open (`gif_picker.rs`,
+  `gif_search.rs`). Outside these scenarios the demo has no GIF button,
+  as a profile without a key. `1` / `open`: GIPHY's tab on its trending, 24 tiles of
+  dots going round drawn by the demo (no network, no key), the categories
+  row, "Powered by GIPHY" under the grid; scrolling to the end asks the
+  second page. `klipy`: KLIPY's tab, "dance" searched (the field's
+  placeholder reads "Search KLIPY"). `sent`: the first GIF is sent once its
+  tile shows: its link becomes our message, and its card animates under it
+  (with the previews of `AURORA_DEMO_CONV_PREVIEWS`' demo, made here).
+  Searching `none` shows the empty grid, the popup the same size. `menu`:
+  the picker closed, the GIF button's right-click menu open ("Hide the GIF
+  button", "GIF settings…"). `nokey`: the real settings without a key: no
+  GIF button, only the emoji one. `net`: the real services, with the keys
+  entered in Preferences › Chat › GIFs (the button shows once one is
+  entered); network needed, and a free test key allows about 100 requests
+  an hour. Capture at frame 900 or later.
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of
@@ -4551,6 +4597,24 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Viewer's one-line look for the session (nothing saved). Check them over a
   dark and a bright world (`AURORA_DEMO_SKY=2,4,2`): readable on both, the
   name, the picture and the links clickable, the world clickable around.
+- **`AURORA_DEMO_OBJECT_CHAT=aurora|compact|bubbles|legacy|lines[:on][:im][:imlines]`**
+  (#475, #741): nearby chat said at the arrival, two residents among a
+  greeter, a tip jar, our HUD's owner-say, a door's emote and a vendor's
+  llRegionSayTo with a link, then two notices (a friend online, a
+  teleport). The Conversations window shows the nearby chat
+  in the style named (`1` is `aurora`), or `lines` the cards above the chat
+  bar with the window closed. `:on` turns Preferences › Chat › "Compact
+  messages that do not come from a person" on for the run (nothing saved):
+  each object's line on one small row (cube, name, muted text), the notices
+  with the icon of their kind; the nearby chat's unread count counts the
+  two residents' lines only. Compare a run without `:on`: the same lines in
+  the style's usual look. Hover a cube: the object's name; click it or the
+  name: the object's inspector (its menu: inspect, ignore). `:im` shows the
+  friend's conversation instead, with a call's and an automatic reply's
+  lines: unchanged with `:on` alone, compact with their icons (a phone, the
+  "i") with `:on:imlines` (the sub-option "Compact the conversations'
+  system lines too", off by default). Above the chat bar, the notices
+  carry their topic's icon too.
 - **`AURORA_DEMO_CONV=bubbles[:busy|group|local|legacy]`**: the Conversations
   window as a messenger, placed at 700 x 560 px. Without a suffix, the
   conversation with an online friend over two days: their bubbles on the
@@ -6247,7 +6311,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
-| `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where half covered (default), from 1/255, none (sorted with the others), or `write` by turns |
+| `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: from 1/255 on a copy and where half covered in the scene (default), where half covered before their colour, from 1/255, none (sorted with the others), or `depth05` by turns |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 
 ### Details
@@ -6558,20 +6622,31 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
-- **`AURORA_RIGGED_BLEND=depth05|write|sorted|alt`**: by default
-  (`depth05`) the blended faces of rigged meshes (mesh hair, eyelashes,
-  clothes, animesh) are drawn before the other blended faces, back to front
-  among themselves, after a depth pass that writes their depth where they
-  are at least half covered; their colour is then depth tested without
-  writing it. A layer in front hides what is behind it where it is opaque,
-  whatever the order of the two objects, and its nearly transparent fringe
-  no longer hides the glass behind it (#556). `write`: their depth written
-  from 1/255 of alpha, as the Legacy Viewer's alpha pass
-  (`LLDrawPoolAlpha::render`, #499): a ring around fur or hair where the
-  glass behind is missing. `sorted`: everything sorted by the distance of
-  its object and nothing writing depth (eyelashes showed through mesh
-  hair). `alt`: `write` during one `perf summary` line out of three
-  (`xmode=old`). See `AURORA_DEMO_LASHES` and `AURORA_DEMO_HALO`.
+- **`AURORA_RIGGED_BLEND=depth05|write|sorted|alt`**: by default the
+  blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
+  are drawn before the other blended faces, skeleton by skeleton back to
+  front, each skeleton's in the Legacy Viewer's order: the last attachment
+  point first, on one point the last attached first (by the local id of
+  the linkset's root), the prims of a linkset and the faces of a prim in
+  turn. Their colour writes its
+  depth from 1/255 of alpha as it is drawn, as the Legacy Viewer's alpha
+  pass (`LLDrawPoolAlpha::render`), but into a copy of the scene depth:
+  each strand hides the layers drawn after it behind it, so the layers of
+  one hair compose as their creator drew them (#935). The scene depth then
+  takes them only where they are at least half covered, so that their
+  nearly transparent fringe does not hide the glass, water and particles
+  drawn after them (#556). `depth05`: as before #935, their depth where at
+  least half covered written before their colour, which is depth tested
+  without writing it: a layer drawn first is hidden behind every strand of
+  the layers over it from 50 % on, which then shows what lies behind the
+  hair through it (the strands of the outer layer look see-through, with
+  stair steps where they cross 50 %). `write`: their depth written from
+  1/255 into the scene depth, as the Legacy Viewer (#499): a ring around
+  fur or hair where the glass behind is missing. `sorted`: everything
+  sorted by the distance of its object and nothing writing depth
+  (eyelashes showed through mesh hair). `alt`: `depth05` during one
+  `perf summary` line out of three (`xmode=old`). See `AURORA_DEMO_HAIR`,
+  `AURORA_DEMO_LASHES` and `AURORA_DEMO_HALO`.
 - **`AURORA_BLEND_AO=new|none|old|alt`**: the occlusion (both methods)
   reads a copy of the depth prepass with the blended faces at least half
   covered drawn over it (`fs_depth_contact`, the rule of the contact

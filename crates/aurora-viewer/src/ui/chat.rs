@@ -11,6 +11,8 @@ mod console;
 mod conv_menu;
 mod find;
 mod flash;
+pub use flash::{ButtonMenu, button_menu, nearby_flashes, nearby_out_of_sight};
+mod gif_picker;
 mod head;
 mod header;
 pub mod history;
@@ -20,6 +22,7 @@ mod keys;
 mod latest;
 mod line_menu;
 mod members;
+mod object_row;
 mod offer_card;
 mod popout;
 pub mod previews;
@@ -107,6 +110,13 @@ pub struct ChatUi {
     /// Laid-out rows of each conversation.
     views: HashMap<Option<uuid::Uuid>, view::View>,
     pub emoji_open: bool,
+    /// The GIF picker of the conversation's field is open (one picker at a
+    /// time: opening it closes the emoji one, and the other way round).
+    pub gif_open: bool,
+    /// The GIF picker's search and tiles, shared by the windows like the
+    /// emoji picker's (`gif_picker.rs`); its settings given every frame by
+    /// the app.
+    pub gifs: gif_picker::GifPicker,
     /// The emoji picker of the chat island's field is open.
     pub bar_emoji_open: bool,
     /// The lines' style of the settings, given every frame by the app
@@ -148,6 +158,12 @@ pub struct ChatUi {
     /// The times of the lines are shown (Preferences › Chat), given every
     /// frame by the app.
     pub timestamps: bool,
+    /// Objects' lines take one small row (Preferences › Chat, #475, off),
+    /// given every frame by the app.
+    pub compact_automated: bool,
+    /// A conversation's notices too (its sub-option, off), given every
+    /// frame by the app.
+    pub compact_im_notices: bool,
     /// The nearby chat's field shows its channel selector (Preferences ›
     /// Chat, off by default), given every frame by the app.
     pub show_channel: bool,
@@ -164,6 +180,11 @@ pub struct ChatUi {
     /// The Conversations button's flash and the minimized bar's pulse,
     /// started by the app (Preferences › Chat).
     pub button_flash: flash::ButtonFlash,
+    /// Nearby chat flashes the Conversations button too (Preferences ›
+    /// Chat, or the button's right-click menu), given every frame by the
+    /// app; and what that menu asked for this frame.
+    pub flash_nearby: bool,
+    pub button_menu: Option<ButtonMenu>,
     /// The avatars in chat range and those of them who type, given every
     /// frame by the app (the radar) for the nearby chat.
     pub nearby_count: usize,
@@ -690,6 +711,9 @@ enum JobLook<'a> {
     Line,
     Pill(&'a egui::FontFamily),
     Body,
+    /// An object's line on one small row (`object_row.rs`): the name in the
+    /// colour of objects' names, no colon, the text muted.
+    Compact,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -718,17 +742,20 @@ fn line_job(
         _ => None,
     };
     let body_only = matches!(look, JobLook::Body);
+    let compact = matches!(look, JobLook::Compact);
     // a line that holds a keyword takes its colour, name included
     let col = super::colors::contact_chat_color(line, world)
         .or_else(|| super::colors::keyword_color(line))
-        .unwrap_or_else(|| color_for(line.kind, p));
+        .unwrap_or_else(|| if compact { p.muted } else { color_for(line.kind, p) });
     let mut job = egui::text::LayoutJob::default();
     let small = egui::TextFormat {
         color: p.muted_dim,
         font_id: egui::FontId::proportional(size - 3.0),
         ..Default::default()
     };
-    if times && !body_only {
+    // (a compact row paints its time on the text's baseline itself: a
+    // smaller section of the job sits on the bottom of the row, lower)
+    if times && !body_only && !compact {
         job.append(&format!("[{}] ", hhmm(line.time)), 0.0, small);
     }
     let emote = line.text.starts_with("/me ") || line.text.starts_with("/me'");
@@ -738,6 +765,11 @@ fn line_job(
     let resident = matches!(line.kind, ChatKind::Local(_) | ChatKind::Own);
     let mut name_fmt = match pill {
         Some(family) => super::fonts::semibold_format(family, size, if resident { p.violet_light } else { col }),
+        None if compact => egui::TextFormat {
+            color: super::colors::sender_color(line),
+            font_id: egui::FontId::proportional(size),
+            ..Default::default()
+        },
         None => egui::TextFormat {
             color: col,
             font_id: egui::FontId::proportional(size),
@@ -761,15 +793,17 @@ fn line_job(
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
         ChatKind::Local(ChatType::Shout) => ("", aurora_i18n::tr!("status-shouts"), &line.text[..]),
         ChatKind::Local(ChatType::Whisper) => ("", aurora_i18n::tr!("status-whispers"), &line.text[..]),
-        _ if pill.is_some() => ("", "", &line.text[..]),
+        _ if pill.is_some() || compact => ("", "", &line.text[..]),
         _ => ("", ": ", &line.text[..]),
     };
-    // in a pill the body follows the name 4 px away instead of a colon
-    // (an emote's body starts with its own space)
-    let name_gap = if pill.is_some() && after.is_empty() && !emote && !line.kind.is_notice() {
-        4.0
-    } else {
-        0.0
+    // in a pill the body follows the name 4 px away instead of a colon, in
+    // a compact row 5 px as in the conversations (an emote's body starts
+    // with its own space)
+    let name_gap = match (pill.is_some(), compact) {
+        _ if !after.is_empty() || emote || line.kind.is_notice() => 0.0,
+        (true, _) => 4.0,
+        (_, true) => 5.0,
+        _ => 0.0,
     };
     let mut sender = None;
     let mut name = None;
@@ -1789,7 +1823,7 @@ fn demo_selection(sel: &mut select::Selection, mode: &str, drawn: &[select::Row]
 fn mark_read(world: &mut World, selected: Option<uuid::Uuid>) -> Option<(usize, usize)> {
     match selected {
         None => {
-            let unread = std::mem::take(&mut world.chat_unread);
+            let unread = world.nearby_read();
             Some((unread, world.chat.len()))
         }
         Some(id) => world
@@ -1876,6 +1910,8 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         wanted: &mut st.wanted_pics,
         own_name,
         plain_history: false,
+        compact_automated: st.compact_automated,
+        compact_notices: object_row::compact_notices(st.compact_automated, st.compact_im_notices, st.selected.is_none()),
         menu: Some(menu),
         bubbles: match rows {
             Rows::Classic(style) => style,
@@ -2011,6 +2047,11 @@ pub(crate) struct LineEnv<'a> {
     /// History lines in the colors of new ones (the History window, where
     /// every line is history; Firestorm's is_conversation_log).
     pub plain_history: bool,
+    /// Objects' lines on one small row like the notices (`compact_object`).
+    pub compact_automated: bool,
+    /// The viewer's notices on that row too, with their topic's icon
+    /// (`object_row::compact_notices`).
+    pub compact_notices: bool,
     /// A transcript-owned popup; None for nearby-chat toasts and fixtures.
     pub menu: Option<egui::Id>,
     /// The lines as bubbles (`bubbles.rs`), with the sender's name opening
@@ -2047,6 +2088,18 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     }
     if let ChatKind::InventoryOffer(offer) = line.kind {
         offer_card::draw_line(ui, env, line, offer);
+        return;
+    }
+    if object_row::compact_in(line, env) {
+        // the icon where the header strips have the picture, the text at
+        // the lines' text
+        let place = object_row::Place {
+            icon_center: 14.0,
+            text_left: 26.0,
+            time_column: None,
+        };
+        // (the header strips always show the time)
+        object_row::draw(ui, env, line, mark, place, true);
         return;
     }
     if line.kind == ChatKind::System {
@@ -2439,6 +2492,7 @@ pub fn show(
     }
     let style = st.demo_style.unwrap_or(st.style);
     popout::one_picker(st);
+    st.gifs.close_if_hidden(ctx.cumulative_pass_nr());
     // every entry of the window, whatever the column's search: it never
     // shows a conversation that is in its own window (`popout.rs`)
     let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)
@@ -2553,13 +2607,13 @@ pub fn show(
                     None,
                     None,
                     local_shown,
-                    if local_shown { 0 } else { world.chat_unread },
+                    if local_shown { 0 } else { world.chat_badge },
                     None,
                     0.0,
                     true,
                 )
                 .resp;
-                if st.popped.contains(None) && !local_shown && world.chat_unread == 0 && !ui.rect_contains_pointer(local.rect) {
+                if st.popped.contains(None) && !local_shown && world.chat_badge == 0 && !ui.rect_contains_pointer(local.rect) {
                     popout::paint_mark(ui, p, trailing_slot(local.rect));
                 }
                 conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
@@ -2875,6 +2929,12 @@ fn classic_pane(
             emoji_btn = Some(b.rect);
             if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
                 st.emoji_open = !st.emoji_open;
+                st.gif_open = false;
+            }
+            // shown once a key is entered (Preferences › Chat › GIFs)
+            if st.gifs.usable() {
+                let b = tool_resp(ui, p, icons, "gif", st.gif_open).on_hover_text(aurora_i18n::tr!("ui-chat-gif"));
+                gif_picker::button(&b, p, st);
             }
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
@@ -2936,6 +2996,8 @@ fn classic_pane(
             ui.ctx().memory_mut(|m| m.request_focus(conv_input));
         }
     }
+    let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
+    gif_picker::popup(ui.ctx(), p, icons, st, anchor, 4.0, conv_input, ChatType::Normal, actions);
     if st.conv_focus_request {
         st.conv_focus_request = false;
         resp.request_focus();
@@ -3083,9 +3145,21 @@ pub fn toasts(
     times: bool,
     pills: bool,
     cards: bool,
+    compact_automated: bool,
 ) {
     if cards {
-        console::cards(ctx, p, world, pics, want_names, wanted_pics, bottom, seconds, times);
+        console::cards(
+            ctx,
+            p,
+            world,
+            pics,
+            want_names,
+            wanted_pics,
+            bottom,
+            seconds,
+            times,
+            compact_automated,
+        );
         return;
     }
     let now = std::time::SystemTime::now();
@@ -3249,7 +3323,8 @@ fn line_extras(
 /// `AURORA_DEMO_BARS=chatname`: a click on a resident's name in the pills
 /// at frame 700 (its profile opens); `AURORA_DEMO_CONV_MENU`'s right click
 /// on a conversation of the list (`conv_menu`); `AURORA_DEMO_CONV_GIVE`'s
-/// inventory carried to an IM (`workspace`).
+/// inventory carried to an IM (`workspace`); `AURORA_DEMO_GIFS=menu`'s
+/// right click on the GIF button (`gif_picker`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let line_menu = line_menu::demo_events(ctx, frame);
     if !line_menu.is_empty() {
@@ -3270,6 +3345,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let menu = conv_menu::demo_events(ctx, frame);
     if !menu.is_empty() {
         return menu;
+    }
+    let gif_menu = gif_picker::demo_events(ctx, frame);
+    if !gif_menu.is_empty() {
+        return gif_menu;
     }
     if !super::bars::demo::get().click_name || !(700..=701).contains(&frame) {
         return Vec::new();
@@ -3330,32 +3409,31 @@ fn bubble_sender_link(ctx: &egui::Context, p: &Palette, world: &World, k: usize,
                         super::profile::request_open(ui.ctx(), id);
                     }
                 }
-                SenderLink::Object(id) => {
-                    super::menu::context_menu(&resp, p, |ui| {
-                        if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
-                            super::context::request(ui.ctx(), CtxAction::Inspect(id));
-                        }
-                        let (icon, label) = if world.mutes.is_muted_id(&id) {
-                            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-                        } else {
-                            ("ban", aurora_i18n::tr!("common-ignore"))
-                        };
-                        if super::menu::item(ui, p, icon, label) {
-                            super::context::request(
-                                ui.ctx(),
-                                CtxAction::ToggleBlockObject {
-                                    id,
-                                    name: line.from.clone(),
-                                },
-                            );
-                        }
-                    });
-                    if resp.clicked() {
-                        super::context::request(ui.ctx(), CtxAction::Inspect(id));
-                    }
-                }
+                SenderLink::Object(id) => object_sender(&resp, p, world, id, &line.from),
             }
         });
+}
+
+/// An object's name in a line: a click inspects it, a right click offers
+/// to inspect or to ignore it (Firestorm's objectim link of the name,
+/// LLViewerChat::getSenderSLURL).
+fn object_sender(resp: &egui::Response, p: &Palette, world: &World, id: uuid::Uuid, name: &str) {
+    super::menu::context_menu(resp, p, |ui| {
+        if super::menu::item(ui, p, "zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2")) {
+            super::context::request(ui.ctx(), CtxAction::Inspect(id));
+        }
+        let (icon, label) = if world.mutes.is_muted_id(&id) {
+            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
+        } else {
+            ("ban", aurora_i18n::tr!("common-ignore"))
+        };
+        if super::menu::item(ui, p, icon, label) {
+            super::context::request(ui.ctx(), CtxAction::ToggleBlockObject { id, name: name.to_owned() });
+        }
+    });
+    if resp.clicked() {
+        super::context::request(&resp.ctx, CtxAction::Inspect(id));
+    }
 }
 
 /// Screen rects of a char range of a laid-out text, one per row.
@@ -4014,6 +4092,7 @@ mod tests {
                         20.0,
                         false,
                         true,
+                        false,
                         false,
                     )
                 },

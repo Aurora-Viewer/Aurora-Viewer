@@ -1878,9 +1878,10 @@ fn tool_button(
     if let Some(fill) = tool_fill(p, ready && active, hovered).or_else(|| look.editing.then(|| p.raised.gamma_multiply(0.55))) {
         painter.rect_filled(rect, radius, fill);
     }
-    // the Conversations button's flash (`ButtonFlash`)
+    // the Conversations button's flash (`ButtonFlash`), the minimized bar's
+    // own mark
     if flash > 0.0 {
-        painter.rect_filled(rect, radius, p.violet.gamma_multiply(flash));
+        super::widgets::attention_mark(painter, p, rect, radius, flash);
     }
     let tint = if !ready {
         p.muted_dim.gamma_multiply(0.55)

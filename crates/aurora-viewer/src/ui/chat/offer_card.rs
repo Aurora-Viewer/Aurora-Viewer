@@ -168,6 +168,8 @@ mod tests {
                     wanted: &mut wanted,
                     own_name: "Aurora Demo",
                     plain_history: false,
+                    compact_automated: false,
+                    compact_notices: false,
                     menu: None,
                     bubbles: Some(false),
                     previews: None,

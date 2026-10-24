@@ -88,6 +88,28 @@ pub(super) fn draw(
         notice(ui, env, th, line, mark);
         return;
     }
+    // (the notices above are compact rows already)
+    if super::object_row::compact_in(line, env) {
+        // the cube under the pictures, or after the compact rows' times
+        let place = if th.compact {
+            super::object_row::Place {
+                icon_center: 0.0,
+                text_left: 0.0,
+                time_column: th.times.then_some(TIME_W),
+            }
+        } else {
+            super::object_row::Place {
+                icon_center: GUTTER * 0.5,
+                text_left: GUTTER,
+                time_column: None,
+            }
+        };
+        if look.first {
+            ui.add_space(5.0);
+        }
+        super::object_row::draw(ui, env, line, mark, place, th.times);
+        return;
+    }
     let head = look.header;
     if head && !look.first && look.marker.is_none() && !look.new {
         ui.add_space(if th.compact { ROW_GAP } else { GROUP_GAP });
@@ -450,7 +472,13 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
         } else {
             egui::Rect::from_center_size(egui::pos2(r.center().x, r.top() + 9.0), egui::Vec2::splat(14.0))
         };
-        paint_icon(ui.painter(), "info-circle-filled", icon, p.muted_dim);
+        // what it is about, with #741's option (`object_row::icon`)
+        let name = if env.compact_notices {
+            super::object_row::icon(env.world, line)
+        } else {
+            "info-circle-filled"
+        };
+        paint_icon(ui.painter(), name, icon, p.muted_dim);
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);

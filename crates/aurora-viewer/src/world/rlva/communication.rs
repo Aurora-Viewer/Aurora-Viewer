@@ -23,7 +23,7 @@ impl World {
         if recipients.iter().all(|recipient| self.rlva_can_start_im(*recipient)) {
             true
         } else {
-            self.system_message(aurora_i18n::tr!("rlva-blocked"));
+            self.system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             false
         }
     }

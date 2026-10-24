@@ -668,7 +668,10 @@ fn picked(world: &mut World, st: &mut ContactsUi, what: PickFor, ids: Vec<Uuid>)
                 None => {
                     if let Some(id) = ids.first() {
                         let name = world.social.name_of(id);
-                        world.system_message(aurora_i18n::tr!("ui-contacts-is-already-your-friend", name = name.to_string()));
+                        world.system_notice(
+                            aurora_i18n::tr!("ui-contacts-is-already-your-friend", name = name.to_string()),
+                            crate::world::notice_topics::Topic::People,
+                        );
                     }
                 }
             }

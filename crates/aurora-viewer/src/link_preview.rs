@@ -776,13 +776,20 @@ fn frame_delay(delay: image::Delay) -> Duration {
 }
 
 fn decode_gif(bytes: &[u8]) -> Result<Picture, Failure> {
+    decode_animation(bytes, GIF_MAX_SIDE, GIF_MAX_FRAMES, GIF_BUDGET)
+}
+
+/// The frames of an animated GIF, fit within `side`, at most `max_frames`
+/// and `budget` bytes of pixels: a card keeps a large animation, a tile of
+/// the GIF picker (`ui/chat/gif_picker.rs`) a small one.
+pub fn decode_animation(bytes: &[u8], side: u32, max_frames: usize, budget: usize) -> Result<Picture, Failure> {
     use image::{AnimationDecoder, ImageDecoder};
     let decoder = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)).map_err(|_| Failure::NotPicture)?;
     let (gw, gh) = decoder.dimensions();
     if gw == 0 || gh == 0 || gw > DECODE_LIMIT || gh > DECODE_LIMIT {
         return Err(Failure::NotPicture);
     }
-    let (w, h) = fit(gw, gh, GIF_MAX_SIDE);
+    let (w, h) = fit(gw, gh, side);
     let mut frames = Vec::new();
     let mut used = 0usize;
     for frame in decoder.into_frames() {
@@ -795,7 +802,7 @@ fn decode_gif(bytes: &[u8]) -> Result<Picture, Failure> {
             image::imageops::resize(&buffer, w, h, image::imageops::FilterType::Triangle)
         };
         used += (w * h * 4) as usize;
-        if used > GIF_BUDGET || frames.len() >= GIF_MAX_FRAMES {
+        if used > budget || frames.len() >= max_frames {
             break;
         }
         frames.push((color_image(&buffer), delay));

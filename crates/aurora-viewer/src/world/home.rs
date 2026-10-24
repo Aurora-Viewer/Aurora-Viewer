@@ -119,7 +119,7 @@ impl World {
         if kind == notifications::Kind::Alert {
             self.ui_sounds.push(UiSound::Alert);
         }
-        self.system_message(text);
+        self.system_notice(text, crate::world::notice_topics::Topic::Region);
         self.notifications
             .push(kind, aurora_i18n::tr!("common-home"), text.to_owned(), notifications::Data::None);
     }
