@@ -5949,6 +5949,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
+| `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's) |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
@@ -5982,6 +5983,16 @@ What the inventory must show with these scenarios:
 
 ### Details
 
+- **`AURORA_VULKAN_LAYERS=keep`**: at start the viewer sets the variables
+  that disable Overwolf's implicit Vulkan layers (`VK_LAYER_OW_OVERLAY`,
+  `DISABLE_VULKAN_OW_OVERLAY_LAYER=1`; `VK_LAYER_OW_OBS_HOOK`,
+  `DISABLE_VULKAN_OW_OBS_CAPTURE=1`) in its own process, unless the user
+  already set them: their overlay chained into a capture hook crashed in
+  `vkCreateInstance` one second after start (#901). The log says so
+  (`Vulkan layers kept out of the viewer`). `keep` leaves the environment
+  as it is. OBS Studio's game capture (`VK_LAYER_OBS_HOOK`) is never
+  disabled; `DISABLE_VULKAN_OBS_CAPTURE=1`, set by the user, does it. To
+  see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
 - **`AURORA_BANDWIDTH_KBPS=<n>`**: the "Maximum bandwidth" of Preferences ›
   Network and cache for this launch, without changing the saved setting,
   from 100 to 10,000. A session first asks its simulator for one and a

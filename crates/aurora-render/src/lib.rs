@@ -48,6 +48,7 @@ mod ui_glass;
 mod ui_world;
 pub mod upload;
 pub mod vram;
+pub mod vulkan_layers;
 pub mod water_effects;
 mod water_optics;
 mod water_wake;
