@@ -1,8 +1,9 @@
 //! The bars' clock (#453): Second Life time or the computer's local time,
 //! which a left click on the clock switches, with or without its seconds,
 //! in 12 or 24 hours (`SystemIsland::clock_zone`, `clock_seconds`,
-//! `clock_format`). The system island's tooltip gives both times, with how
-//! far local time is from SLT.
+//! `clock_format`). Local time carries its zone's abbreviation (CET in
+//! winter, CEST in summer), else its offset (UTC+4). The system island's
+//! tooltip gives both times, with how far local time is from SLT.
 //!
 //! The Legacy Viewer's status bar shows SLT alone (LLStatusBar::
 //! updateClockDisplay); FSStatusBarTimeFormat picks 12 or 24 hours, the
@@ -11,7 +12,7 @@
 //! system's regional format instead, the user's own 12 / 24 hours choice.
 
 use crate::settings::{ClockFormat, ClockZone, SystemIsland};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// Seconds since the epoch, now.
 pub(crate) fn now_unix() -> i64 {
@@ -21,20 +22,91 @@ pub(crate) fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// Seconds to add to UTC for the computer's time zone at `unix`.
-fn local_offset(unix: i64) -> i64 {
+/// The computer's tz database zone (Windows' own zones mapped to IANA
+/// names by `iana_time_zone`), read at startup (`read_system_clock`); none
+/// when it cannot be read or is not in the database.
+static LOCAL_ZONE: OnceLock<Option<chrono_tz::Tz>> = OnceLock::new();
+
+/// Local time's offset and label, worked out once a minute: a daylight
+/// saving switch falls on a whole minute, so the label follows it.
+struct LocalNow {
+    minute: i64,
+    offset: i64,
+    label: String,
+}
+
+static LOCAL_NOW: Mutex<Option<LocalNow>> = Mutex::new(None);
+
+/// Seconds to add to UTC for local time at `unix`, and its label.
+fn local(unix: i64) -> (i64, String) {
+    let minute = unix.div_euclid(60);
+    let Ok(mut now) = LOCAL_NOW.lock() else {
+        return local_at(unix);
+    };
+    match now.as_ref() {
+        Some(n) if n.minute == minute => (n.offset, n.label.clone()),
+        _ => {
+            let (offset, label) = local_at(unix);
+            *now = Some(LocalNow {
+                minute,
+                offset,
+                label: label.clone(),
+            });
+            (offset, label)
+        }
+    }
+}
+
+/// Local time's offset and label at `unix`: from the zone read at startup,
+/// else from the system's offset alone (a label like UTC+1).
+fn local_at(unix: i64) -> (i64, String) {
+    if let Some(tz) = LOCAL_ZONE.get().copied().flatten() {
+        return zone_at(tz, unix);
+    }
     use chrono::{Offset, TimeZone};
-    chrono::Local
+    let offset = chrono::Local
         .timestamp_opt(unix, 0)
         .single()
-        .map_or(0, |t| i64::from(t.offset().fix().local_minus_utc()))
+        .map_or(0, |t| i64::from(t.offset().fix().local_minus_utc()));
+    (offset, zone_label(None, offset))
+}
+
+/// A zone's offset and label at `unix`.
+fn zone_at(tz: chrono_tz::Tz, unix: i64) -> (i64, String) {
+    use chrono::{Offset, TimeZone};
+    use chrono_tz::OffsetName;
+    let Some(utc) = chrono::DateTime::from_timestamp(unix, 0) else {
+        return (0, zone_label(None, 0));
+    };
+    let offset = tz.offset_from_utc_datetime(&utc.naive_utc());
+    let secs = i64::from(offset.fix().local_minus_utc());
+    (secs, zone_label(offset.abbreviation(), secs))
+}
+
+/// What tells local time's zone: its abbreviation when the tz database has
+/// a word for it (CET, CEST, IST, EDT), else its offset: "UTC+4",
+/// "UTC+5:45", "UTC−3" (the database writes "+04" for many zones, which
+/// chrono-tz gives as none).
+fn zone_label(abbreviation: Option<&str>, offset: i64) -> String {
+    if let Some(word) = abbreviation.filter(|w| w.len() >= 2 && w.chars().all(|c| c.is_ascii_alphabetic())) {
+        return word.to_owned();
+    }
+    if offset == 0 {
+        return "UTC".to_owned();
+    }
+    let sign = if offset > 0 { '+' } else { '−' };
+    let minutes = offset.abs() / 60;
+    match minutes % 60 {
+        0 => format!("UTC{sign}{}", minutes / 60),
+        m => format!("UTC{sign}{}:{m:02}", minutes / 60),
+    }
 }
 
 /// Seconds to add to UTC for `zone` at `unix`.
 pub(crate) fn offset(zone: ClockZone, unix: i64) -> i64 {
     match zone {
         ClockZone::Slt => crate::world::chat_log::format::pacific_offset_hours(unix) * 3600,
-        ClockZone::Local => local_offset(unix),
+        ClockZone::Local => local(unix).0,
     }
 }
 
@@ -47,15 +119,32 @@ pub(crate) fn next(zone: ClockZone) -> ClockZone {
 }
 
 /// Whether the system's regional format writes 12 hours, read at startup
-/// (`read_system_format`); 24 hours until then or when it cannot be read.
+/// (`read_system_clock`); 24 hours until then or when it cannot be read.
 static SYSTEM_12H: OnceLock<bool> = OnceLock::new();
 
-/// Reads the system's 12 / 24 hours once, at startup, off the frames.
-pub(crate) fn read_system_format() {
+/// Reads the system's 12 / 24 hours and time zone once, at startup, off
+/// the frames.
+pub(crate) fn read_system_clock() {
     SYSTEM_12H.get_or_init(|| {
         let twelve = system_pattern_is_12h();
         log::info!("clock: the system's regional format writes {} hours", if twelve { 12 } else { 24 });
         twelve
+    });
+    LOCAL_ZONE.get_or_init(|| match iana_time_zone::get_timezone() {
+        Ok(name) => match name.parse::<chrono_tz::Tz>() {
+            Ok(tz) => {
+                log::info!("clock: local time zone {name}");
+                Some(tz)
+            }
+            Err(_) => {
+                log::warn!("clock: local time zone {name} is not in the tz database, its offset shown instead");
+                None
+            }
+        },
+        Err(e) => {
+            log::warn!("clock: local time zone unknown ({e}), its offset shown instead");
+            None
+        }
     });
 }
 
@@ -172,19 +261,14 @@ fn hours(unix: i64, offset: i64, seconds: bool, twelve: bool) -> String {
     }
 }
 
-/// What tells the time after it: SLT, or the word for local time.
-fn suffix(zone: ClockZone) -> &'static str {
-    match zone {
-        ClockZone::Slt => "SLT",
-        ClockZone::Local => aurora_i18n::tr!("ui-bars-clock-local"),
-    }
-}
-
-/// The clock's text, now.
+/// The clock's text, now: the time and SLT, or local time and its zone.
 pub(crate) fn text(s: SystemIsland) -> String {
     let unix = now_unix();
-    let time = hours(unix, offset(s.clock_zone, unix), s.clock_seconds, twelve_hours(s.clock_format));
-    format!("{time} {}", suffix(s.clock_zone))
+    let (offset, label) = match s.clock_zone {
+        ClockZone::Slt => (offset(ClockZone::Slt, unix), "SLT".to_owned()),
+        ClockZone::Local => local(unix),
+    };
+    format!("{} {label}", hours(unix, offset, s.clock_seconds, twelve_hours(s.clock_format)))
 }
 
 /// How far a time `diff` seconds from SLT is: "SLT +9 h", "SLT −8 h",
@@ -204,11 +288,16 @@ fn from_slt(diff: i64) -> String {
 /// The tooltip's rows: SLT, then local time with how far it is from SLT.
 pub(crate) fn tip_values(s: SystemIsland) -> [String; 2] {
     let unix = now_unix();
-    let (slt, local) = (offset(ClockZone::Slt, unix), local_offset(unix));
+    let slt = offset(ClockZone::Slt, unix);
+    let (local, label) = local(unix);
     let twelve = twelve_hours(s.clock_format);
     [
         format!("{} SLT", hours(unix, slt, s.clock_seconds, twelve)),
-        format!("{} ({})", hours(unix, local, s.clock_seconds, twelve), from_slt(local - slt)),
+        format!(
+            "{} {label} ({})",
+            hours(unix, local, s.clock_seconds, twelve),
+            from_slt(local - slt)
+        ),
     ]
 }
 
@@ -270,6 +359,28 @@ mod tests {
         assert_eq!(from_slt(-3 * 3600), "SLT −3 h");
         assert_eq!(from_slt(13 * 3600 + 1800), "SLT +13 h 30");
         assert_eq!(from_slt(-(3600 + 2700)), "SLT −1 h 45");
+    }
+
+    /// The zone's word in summer and winter, a word all year, the offset
+    /// where the tz database only has numbers, and without a zone.
+    #[test]
+    fn local_time_zone_labels() {
+        // 2026-07-15 and 2026-01-15, 12:00 UTC
+        let (summer, winter) = (1_784_116_800, 1_768_478_400);
+        assert_eq!(zone_at(chrono_tz::Europe::Paris, summer), (7200, "CEST".to_owned()));
+        assert_eq!(zone_at(chrono_tz::Europe::Paris, winter), (3600, "CET".to_owned()));
+        assert_eq!(zone_at(chrono_tz::Asia::Kolkata, summer), (19800, "IST".to_owned()));
+        assert_eq!(zone_at(chrono_tz::America::New_York, winter), (-18000, "EST".to_owned()));
+        // "+04", "+0545", "-03" in the database
+        assert_eq!(zone_at(chrono_tz::Asia::Dubai, summer), (14400, "UTC+4".to_owned()));
+        assert_eq!(zone_at(chrono_tz::Asia::Kathmandu, winter), (20700, "UTC+5:45".to_owned()));
+        assert_eq!(zone_at(chrono_tz::America::Sao_Paulo, summer), (-10800, "UTC−3".to_owned()));
+        assert_eq!(zone_at(chrono_tz::UTC, summer), (0, "UTC".to_owned()));
+        // no zone, or a label that is not a word
+        assert_eq!(zone_label(None, 19800), "UTC+5:30");
+        assert_eq!(zone_label(None, -12600), "UTC−3:30");
+        assert_eq!(zone_label(Some("+03"), 10800), "UTC+3");
+        assert_eq!(zone_label(Some(""), 0), "UTC");
     }
 
     /// Windows short time patterns of a few regional formats.

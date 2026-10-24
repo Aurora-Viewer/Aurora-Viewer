@@ -802,8 +802,8 @@ impl App {
     pub fn new() -> anyhow::Result<App> {
         // found on a background thread while the rest starts
         ui::fonts::fallback::start();
-        // the regional 12 / 24 hours of the bars' clock, read once
-        ui::bars::clock::read_system_format();
+        // the regional 12 / 24 hours and time zone of the bars' clock, read once
+        ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
         aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {

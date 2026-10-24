@@ -3154,7 +3154,6 @@ ui-options-commands-width-used-when-the-command-does-not-specify-one = Largeur q
 ui-bars-region-latency = Latence avec la région
 ui-bars-tip-slt = Heure de Second Life
 ui-bars-tip-local = Heure locale
-ui-bars-clock-local = locale
 ui-bars-clock-am = AM
 ui-bars-clock-pm = PM
 ui-bars-clock-click-hint = Clic sur l'horloge : SLT ou heure locale.
