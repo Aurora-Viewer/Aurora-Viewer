@@ -4,9 +4,12 @@
     Planning), and lists the issues still to take, highest priority first.
     The project manager sets Priority (an issue field of the organisation,
     like the type) and the milestone; the agents only move the project's
-    Status: In progress when they start, Waiting Review or Done at the end
-    (AGENTS.md, section 15). An issue not on the project yet is added to it
-    when its Status is set.
+    Status (AGENTS.md, section 15): In progress when they start; at the end
+    Done, Waiting Review (the fix waits for the human's or the QA's
+    validation) or Waiting for reporter (a comment asked the reporter for
+    something); On hold, with a comment, when something outside the work
+    blocks it. An issue not on the project yet is added to it when its
+    Status is set.
 
     Needs the project scope on the gh token, once per machine:
     gh auth refresh -s project
@@ -14,19 +17,23 @@
 .EXAMPLE
     ./scripts/issue-board.ps1 -Issue 623                         # Status, Priority, milestone
     ./scripts/issue-board.ps1 -Issue 623 -Status 'In progress'
+    ./scripts/issue-board.ps1 -Issue 623 -Status 'Waiting for reporter'
     ./scripts/issue-board.ps1 -Todo                              # open Todo issues, by priority
+    ./scripts/issue-board.ps1 -List 'On hold'                    # open issues with that Status, by priority
 #>
 param(
     [int]$Issue,
     [string]$Status,
     [switch]$Todo,
+    [string]$List,
     [string]$Project = 'Aurora Team Planning'
 )
 . "$PSScriptRoot\common.ps1"
 # gh writes UTF-8; the console decodes it with its OEM code page by default
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
-if (-not $Todo -and -not $Issue) { throw 'Give -Issue <n> (with -Status to move it) or -Todo.' }
+if ($Todo) { $List = 'Todo' }
+if (-not $List -and -not $Issue) { throw 'Give -Issue <n> (with -Status to move it), -Todo or -List <status>.' }
 if ($Status -and -not $Issue) { throw '-Status needs -Issue <n>.' }
 
 # The GitHub repository, from this repository's origin (like merge-pr.ps1).
@@ -75,8 +82,17 @@ function Get-Priority($Issue) {
     [pscustomobject]@{ Name = $v.name; Rank = [array]::IndexOf($names, $v.name) }
 }
 
-if ($Todo) {
-    # open issues of this repository whose Status is Todo
+# Status option by name, case and spaces ignored ("in progress", "waiting-review")
+$key = { param($t) ($t -replace '[\s_-]', '').ToLowerInvariant() }
+function Find-StatusOption([string]$Wanted) {
+    $o = @($board.status.options | Where-Object { (& $key $_.name) -eq (& $key $Wanted) }) | Select-Object -First 1
+    if (-not $o) { throw "No Status '$Wanted' on the project (choices: $(($board.status.options | ForEach-Object name) -join ', '))." }
+    $o
+}
+
+if ($List) {
+    # open issues of this repository with that Status
+    $listed = (Find-StatusOption $List).name
     $rows = @()
     $after = $null
     do {
@@ -89,7 +105,7 @@ if ($Todo) {
         foreach ($n in $page.nodes) {
             $c = $n.content
             if (-not $c -or -not $c.number -or $c.state -ne 'OPEN' -or $c.repository.nameWithOwner -ne "$owner/$name") { continue }
-            if ($n.status.name -ne 'Todo') { continue }
+            if ($n.status.name -ne $listed) { continue }
             $p = Get-Priority $c
             $rows += [pscustomobject]@{
                 Rank      = $p.Rank
@@ -131,10 +147,7 @@ function Show-IssueItem($s) {
 $s = Get-IssueItem
 if (-not $Status) { Show-IssueItem $s; exit 0 }
 
-# option by name, case and spaces ignored ("in progress", "waiting-review")
-$key = { param($t) ($t -replace '[\s_-]', '').ToLowerInvariant() }
-$option = @($board.status.options | Where-Object { (& $key $_.name) -eq (& $key $Status) }) | Select-Object -First 1
-if (-not $option) { throw "No Status '$Status' on the project (choices: $(($board.status.options | ForEach-Object name) -join ', '))." }
+$option = Find-StatusOption $Status
 
 if (-not $s.Item) {
     $q = 'mutation($p:ID!,$c:ID!){addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}'
@@ -146,5 +159,8 @@ $q = 'mutation($p:ID!,$i:ID!,$f:ID!,$v:String!){updateProjectV2ItemFieldValue(in
 [void](Invoke-Graphql $q @{ p = $board.id; i = $s.Item.id; f = $board.status.id; v = $option.id })
 Show-IssueItem (Get-IssueItem)
 if ($option.name -eq 'Done' -and $s.Issue.state -eq 'OPEN') {
-    Write-Host '  The issue is still open: close it once resolved (AGENTS.md, section 15), or use Waiting Review.' -ForegroundColor Yellow
+    Write-Host '  The issue is still open: close it once resolved (AGENTS.md, section 15), or use Waiting Review / Waiting for reporter.' -ForegroundColor Yellow
+}
+if ($option.name -eq 'On hold') {
+    Write-Host '  On hold needs a comment on the issue saying why and what unblocks it (AGENTS.md, section 15).' -ForegroundColor Yellow
 }

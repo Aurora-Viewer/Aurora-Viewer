@@ -4170,8 +4170,16 @@ impl App {
         // (FSFloaterIMContainer::setVisible), or with its preference off
         let flash = &mut self.chat_ui.button_flash;
         flash.set_on(self.settings.flash_conversations_button);
+        flash.set_still(self.settings.reduce_motion || (self.demo && crate::demo::conv_button::still()));
         if self.panels.chat {
             flash.shown();
+        }
+        // nearby chat in the Conversations window, or in its own (#910)
+        let nearby_apart = self.chat_ui.nearby_apart();
+        let nearby_out_of_sight =
+            crate::ui::chat::nearby_out_of_sight(nearby_apart, self.panels.chat, self.chat_ui.nearby_window_shown(&self.egui_ctx));
+        if !nearby_out_of_sight {
+            self.chat_ui.button_flash.nearby_seen();
         }
         let now = self.egui_ctx.input(|i| i.time);
         for m in std::mem::take(&mut w.im_messages) {
@@ -4186,6 +4194,18 @@ impl App {
             }
             w.notify_message(&m, in_sight.contains(&Some(m.session)));
             w.message_attention(&m);
+        }
+        // a resident in nearby chat, out of sight (FSNotifyNearbyChatFlash)
+        if std::mem::take(&mut w.nearby_news)
+            && crate::ui::chat::nearby_flashes(
+                self.settings.flash_conversations_button,
+                // `flash_nearby`, field by field: the world is borrowed
+                self.settings.flash_conversations_nearby && !(self.demo && crate::demo::conv_button::nearby_off()),
+                nearby_out_of_sight,
+                dnd,
+            )
+        {
+            self.chat_ui.button_flash.nearby(now);
         }
         w.acknowledge_read_messages();
         for (old, new) in std::mem::take(&mut w.balance_changes) {
@@ -8220,6 +8240,7 @@ impl App {
                 .extend(ui::toolbar::demo_events(&ctx, self.frame_count, &mut self.toolbar_ui));
             raw.events.extend(ui::bars::favorites::demo_events(&ctx, self.frame_count));
             raw.events.extend(ui::chat::demo_events(&ctx, self.frame_count));
+            raw.events.extend(crate::demo::conv_button::input_events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
@@ -8961,6 +8982,14 @@ impl App {
         if self.demo && crate::demo::keywords::active() {
             let agent = self.world.agent_id;
             for event in crate::demo::keywords::events(self.frame_count, agent) {
+                if let Some(e) = self.world.apply(event) {
+                    self.on_app_event(e);
+                }
+            }
+        }
+        if self.demo && crate::demo::conv_button::mode().is_some() {
+            let agent = self.world.agent_id;
+            for event in crate::demo::conv_button::events(self.frame_count, agent) {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
@@ -10478,6 +10507,13 @@ impl App {
 
     /// Where the favourites live: the setting, or what `AURORA_DEMO_BARS`
     /// asks for in demo (never saved).
+    /// Nearby chat flashes the Conversations button (Preferences › Chat, or
+    /// that button's right-click menu); `AURORA_DEMO_CONV_BUTTON=mute` leaves
+    /// it out for the run.
+    fn flash_nearby(&self) -> bool {
+        self.settings.flash_conversations_nearby && !(self.demo && crate::demo::conv_button::nearby_off())
+    }
+
     fn favorites_access(&self) -> crate::settings::FavoritesAccess {
         let demo = if self.demo { ui::bars::demo::get().access } else { None };
         demo.unwrap_or(self.settings.favorites_access)
@@ -11803,6 +11839,8 @@ impl App {
                     ..Default::default()
                 };
                 self.toolbar_ui.favorites_access = self.favorites_access();
+                self.toolbar_ui.flash_nearby = self.flash_nearby();
+                self.chat_ui.flash_nearby = self.flash_nearby();
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
                 let mut demo_toolbar = None;
                 // AURORA_DEMO_TOOLBAR=custom|side|labels|right: the mockup's
@@ -11964,6 +12002,22 @@ impl App {
                 if let Some(access) = self.toolbar_ui.access_choice.take() {
                     self.settings.favorites_access = access;
                     self.settings.save();
+                }
+                // the Conversations button's right click (the chat island's
+                // opens the window itself)
+                for choice in [self.toolbar_ui.conversations_menu.take(), self.chat_ui.button_menu.take()]
+                    .into_iter()
+                    .flatten()
+                {
+                    match choice {
+                        ui::chat::ButtonMenu::Open => {
+                            ui::widgets::open_floater(ui.ctx(), "conversations", &mut self.panels.chat);
+                        }
+                        ui::chat::ButtonMenu::NearbyFlash(on) => {
+                            self.settings.flash_conversations_nearby = on;
+                            self.settings.save();
+                        }
+                    }
                 }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;
@@ -14489,6 +14543,11 @@ impl ApplicationHandler for App {
             }
             if crate::demo::presence::position().is_some() {
                 self.panels.people = false;
+            }
+            // AURORA_DEMO_CONV_BUTTON: the Conversations window closed
+            if crate::demo::conv_button::mode().is_some() {
+                self.panels.perf = false;
+                self.panels.chat = false;
             }
             // AURORA_DEMO_TOASTS: the toasts arrive with the Conversations
             // window closed, or minimized for `minimized`

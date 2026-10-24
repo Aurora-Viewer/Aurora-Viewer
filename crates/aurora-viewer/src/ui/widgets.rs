@@ -840,18 +840,10 @@ impl<'a> Floater<'a> {
                 let painter = ctx.layer_painter(response.response.layer_id);
                 let radius = ctx.global_style().visuals.window_corner_radius;
                 let (wash, moving) = self.attention_flash.unwrap_or((0.0, false));
-                if wash > 0.0 {
-                    painter.rect_filled(response.response.rect, radius, p.violet.gamma_multiply(wash));
-                }
                 if moving {
                     ctx.request_repaint();
                 }
-                painter.rect_stroke(
-                    response.response.rect,
-                    radius,
-                    Stroke::new(1.5 + 4.0 * wash, p.violet_light),
-                    egui::StrokeKind::Inside,
-                );
+                attention_mark(&painter, p, response.response.rect, radius, wash);
             }
             if let (Some(drag), Some(requested)) = (resize_drag, resized) {
                 drag.finish(ctx, window_id, requested, response.response.rect);
@@ -1173,6 +1165,22 @@ pub fn take_floater_resize(ctx: &egui::Context, id: &str) -> Option<Vec2> {
 pub fn minimize_floater(ctx: &egui::Context, id: &str) {
     ctx.data_mut(|d| d.insert_persisted(egui::Id::unique((id, "minimized")), true));
     cascade::minimized(ctx, egui::Id::unique(id), true);
+}
+
+/// The accent that says something waits behind `rect`: a violet wash of
+/// strength `wash` (`ButtonFlash`) and a light outline that widens with it.
+/// A minimized conversations bar and the Conversations button wear the same
+/// one, so both flash alike.
+pub fn attention_mark(painter: &egui::Painter, p: &Palette, rect: egui::Rect, radius: CornerRadius, wash: f32) {
+    if wash > 0.0 {
+        painter.rect_filled(rect, radius, p.violet.gamma_multiply(wash));
+    }
+    painter.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(1.5 + 4.0 * wash, p.violet_light),
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// Is the floater `id` reduced to its title bar?
