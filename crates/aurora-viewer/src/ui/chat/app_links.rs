@@ -24,18 +24,27 @@ pub struct Wanted {
     pub groups: BTreeSet<Uuid>,
     pub experiences: BTreeSet<Uuid>,
     pub parcels: BTreeSet<Uuid>,
+    /// Avatars named by a text drawn without the chat's set of wanted names
+    /// (a notification's or a script dialog's, #898).
+    pub agents: BTreeSet<Uuid>,
 }
 
 static WANTED: Mutex<Wanted> = Mutex::new(Wanted {
     groups: BTreeSet::new(),
     experiences: BTreeSet::new(),
     parcels: BTreeSet::new(),
+    agents: BTreeSet::new(),
 });
 
 fn want(f: impl FnOnce(&mut Wanted)) {
     if let Ok(mut w) = WANTED.lock() {
         f(&mut w);
     }
+}
+
+/// Ask the names of these avatars at the end of the frame.
+pub(crate) fn want_agents(ids: impl IntoIterator<Item = Uuid>) {
+    want(|w| w.agents.extend(ids));
 }
 
 /// The lookups asked since the last call.

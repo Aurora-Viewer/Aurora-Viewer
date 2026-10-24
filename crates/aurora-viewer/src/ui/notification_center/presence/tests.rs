@@ -229,7 +229,6 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
     let mut notif = NotifUi::default();
     let mut list = Notifications::default();
     let mut history = crate::world::notification_history::History::default();
-    let ratings = crate::world::worldmap::RegionRatings::default();
     let mut emoji = crate::ui::emoji::Emoji::load();
     let pics = std::collections::HashMap::new();
     let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
@@ -326,7 +325,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                 presence_at: at,
                 classic_bars: classic,
             };
-            crate::ui::notification_center::show(ui.ctx(), &p, &icons, &ratings, &mut list, &mut history, &mut notif, &mut env, false);
+            crate::ui::notification_center::show(ui.ctx(), &p, &icons, &world, &mut list, &mut history, &mut notif, &mut env, false);
         });
         out.textures_delta.clear();
     }
@@ -397,6 +396,7 @@ struct Clicks {
     notif: NotifUi,
     history: crate::world::notification_history::History,
     emoji: crate::ui::emoji::Emoji,
+    world: crate::world::World,
     time: f64,
 }
 
@@ -408,6 +408,7 @@ impl Clicks {
             notif: NotifUi::default(),
             history: Default::default(),
             emoji: crate::ui::emoji::Emoji::load(),
+            world: crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load())),
             time: 0.0,
         }
     }
@@ -416,7 +417,6 @@ impl Clicks {
     fn frame(&mut self, at: PresencePosition, events: Vec<egui::Event>) -> Vec<(u64, crate::world::notifications::Response)> {
         let p = crate::theme::Theme::default().palette();
         let icons = Icons::default();
-        let ratings = crate::world::worldmap::RegionRatings::default();
         let pics = std::collections::HashMap::new();
         self.time += 0.1;
         let input = egui::RawInput {
@@ -443,7 +443,7 @@ impl Clicks {
                 ui.ctx(),
                 &p,
                 &icons,
-                &ratings,
+                &self.world,
                 &mut self.list,
                 &mut self.history,
                 &mut self.notif,

@@ -11237,6 +11237,7 @@ impl App {
         let p = self.palette;
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
+        ui::widgets::set_perceptual_volume(&ctx, self.settings.audio.perceptual_volume);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
         self.beacon_hit = None;
         let mut t = Instant::now();
@@ -12688,14 +12689,18 @@ impl App {
                     presence_at,
                     classic_bars,
                 };
+                // the cards read the world for their links' names (#898): the
+                // lists leave it while they are drawn, then come back
+                let mut list = std::mem::take(&mut self.world.notifications);
+                let mut hist = std::mem::take(&mut self.world.notification_history);
                 let (mut answers, asks) = if aurora {
                     ui::notification_center::show(
                         &ctx,
                         &p,
                         &self.skin.icons,
-                        &self.world.map.ratings,
-                        &mut self.world.notifications,
-                        &mut self.world.notification_history,
+                        &self.world,
+                        &mut list,
+                        &mut hist,
                         &mut self.notif_ui,
                         &mut toast_env,
                         dnd,
@@ -12705,14 +12710,16 @@ impl App {
                         &ctx,
                         &p,
                         &self.skin.icons,
-                        &self.world.map.ratings,
-                        &mut self.world.notifications,
-                        &mut self.world.notification_history,
+                        &self.world,
+                        &mut list,
+                        &mut hist,
                         &mut self.notif_ui,
                         &mut toast_env,
                         dnd,
                     )
                 };
+                self.world.notifications = list;
+                self.world.notification_history = hist;
                 // the region restart over the toasts, under the open list
                 self.show_region_restart(&ctx, &p);
                 self.show_link_health(&ctx, &p);

@@ -529,7 +529,7 @@ fn place_link(
     place: crate::slurl::PlaceLink,
     size: f32,
 ) {
-    if place.location.grid.is_none() && super::widgets::region_badge(ui, p, ratings, &place.location.region, size).is_some() {
+    if place.location.grid.is_none() && super::widgets::region_badge_in_text(ui, p, ratings, &place.location.region, size).is_some() {
         ui.add_space(3.0);
     }
     let k = super::colors::get();
@@ -564,45 +564,60 @@ fn place_link(
 }
 
 /// A notification's or a script dialog's text: plain and selectable, its
-/// place links clickable with their region's badge (Firestorm's toasts
-/// parse their links too, LLToastNotifyPanel's text editor).
-pub(crate) fn text_with_places(
+/// links shown and clickable as in the chat: places with their region's
+/// badge, avatars, groups and the other `secondlife:///app` commands by
+/// their name (#898), web links. The Legacy Viewer's toasts and script
+/// dialogs parse their links the same way (LLToastNotifyPanel's text editor,
+/// panel_notification.xml `parse_urls`).
+pub(crate) fn text_with_links(
     ui: &mut egui::Ui,
     p: &Palette,
-    ratings: &crate::world::worldmap::RegionRatings,
+    world: &World,
     text: &str,
     names: &[crate::world::notifications::NameLink],
     size: f32,
     color: Color32,
 ) {
-    let places: Vec<_> = segments(text)
-        .into_iter()
-        .filter_map(|s| match s {
-            Seg::Place(u, place) => Some((u, place)),
-            _ => None,
-        })
-        .collect();
+    let segs = segments(text);
     let plain = |ui: &mut egui::Ui, t: &str| {
         if !t.is_empty() {
             super::notifications::text::show(ui, p, t, names, size, color, false, true);
         }
     };
-    if places.is_empty() {
+    if segs.iter().all(|s| matches!(s, Seg::Text(_))) {
         plain(ui, text);
         return;
     }
+    let k = super::colors::get();
+    let mut wanted = HashSet::new();
     super::emoji::text_rows(ui, size, |ui| {
-        let mut at = 0;
-        for (u, place) in places {
-            let Some(i) = text[at..].find(u) else {
-                continue;
-            };
-            plain(ui, &text[at..at + i]);
-            place_link(ui, p, ratings, u, place, size);
-            at += i + u.len();
+        for s in segs {
+            match s {
+                Seg::Text(t) => plain(ui, t),
+                Seg::Url(u) => web_link(ui, p, u, u, size),
+                Seg::Slurl(u) => {
+                    select::label(ui, RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
+                }
+                Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
+                Seg::Labelled(label, inner) => match *inner {
+                    Seg::Url(u) => web_link(ui, p, u, &label, size),
+                    Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size),
+                    Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &label, size),
+                    _ => plain(ui, &label),
+                },
+                Seg::App(u, link) => {
+                    let label = app_links::label(world, &mut wanted, u, &link);
+                    app_links::link(ui, p, world, u, &link, &label, size);
+                }
+                // a dialog has no mention highlight: the name, as a link
+                Seg::Agent(id) | Seg::Mention(id) => {
+                    wanted.insert(id);
+                    agent_link(ui, p, world, id, &world.social.name_of(&id), size);
+                }
+            }
         }
-        plain(ui, &text[at..]);
     });
+    app_links::want_agents(wanted);
 }
 
 /// Open a web link of a text: trusted ones open at once, unknown ones after
@@ -3421,8 +3436,8 @@ mod tests {
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let p = crate::theme::Theme::default().palette();
-        let mut ratings = crate::world::worldmap::RegionRatings::default();
-        ratings.learn("Aurora Démo", aurora_net::search::SIM_ACCESS_PG);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.map.ratings.learn("Aurora Démo", aurora_net::search::SIM_ACCESS_PG);
         let text = "Ici http://maps.secondlife.com/secondlife/Aurora%20D%C3%A9mo/1/2/3, là secondlife:///app/region/Pin%C3%A8de/4/5/6 \
                     et secondlife://Pinède/7/8/9";
         let mut output = ctx.run_ui(
@@ -3430,12 +3445,145 @@ mod tests {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
                 ..Default::default()
             },
-            |ui| text_with_places(ui, &p, &ratings, text, &[], 12.0, p.ink),
+            |ui| text_with_links(ui, &p, &world, text, &[], 12.0, p.ink),
         );
         output.textures_delta.clear();
         assert_eq!(super::super::widgets::take_wanted_regions(&ctx), vec!["Pinède".to_owned()]);
         // taken: nothing left until the next frame draws them again
         assert!(super::super::widgets::take_wanted_regions(&ctx).is_empty());
+    }
+
+    /// #898 follow-up: a place link's maturity square stands on the
+    /// capitals of the text beside it (and its letter in its middle), within
+    /// half a pixel, for every rating, built-in font and scale, in a dialog's
+    /// text and in a chat line.
+    #[test]
+    fn place_link_badge_is_centred_on_the_text_beside_it() {
+        use egui::emath::GuiRounding as _;
+        fn texts(shape: &egui::Shape, out: &mut Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.pos, t.galley.clone())),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| texts(s, out)),
+                _ => {}
+            }
+        }
+        fn rects(shape: &egui::Shape, size: f32, out: &mut Vec<egui::Rect>) {
+            match shape {
+                egui::Shape::Rect(r) if (r.rect.width() - size).abs() < 1.01 && (r.rect.height() - size).abs() < 1.01 => out.push(r.rect),
+                egui::Shape::Vec(v) => v.iter().for_each(|s| rects(s, size, out)),
+                _ => {}
+            }
+        }
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.map.ratings.learn("Pinède", aurora_net::search::SIM_ACCESS_PG);
+        world.map.ratings.learn("Lagune", aurora_net::search::SIM_ACCESS_MATURE);
+        world.map.ratings.learn("Falaise", aurora_net::search::SIM_ACCESS_ADULT);
+        for font in [
+            crate::ui::fonts::INTER,
+            crate::ui::fonts::NOTO,
+            crate::ui::fonts::ROBOTO,
+            crate::ui::fonts::OPEN_DYSLEXIC,
+        ] {
+            for pixels in [1.0, 1.25, 1.5] {
+                let ctx = egui::Context::default();
+                let theme = crate::theme::Theme::default();
+                theme.apply(&ctx, 1.0);
+                crate::ui::fonts::apply(&ctx, font);
+                ctx.set_pixels_per_point(pixels);
+                let p = theme.palette();
+                let mut emoji = crate::ui::emoji::Emoji::load();
+                for (region, letter) in [("Pin%C3%A8de", "G"), ("Lagune", "M"), ("Falaise", "A")] {
+                    for chat in [false, true] {
+                        let text = format!("AB secondlife:///app/region/{region}/1/2/3");
+                        let size = 12.0;
+                        let mut out = ctx.run_ui(
+                            egui::RawInput {
+                                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 200.0))),
+                                ..Default::default()
+                            },
+                            |ui| {
+                                if chat {
+                                    chat_text(ui, &p, &mut emoji, &world, &mut HashSet::new(), &text, size, p.ink, false);
+                                } else {
+                                    text_with_links(ui, &p, &world, &text, &[], size, p.ink);
+                                }
+                            },
+                        );
+                        out.textures_delta.clear();
+                        let mut shown = Vec::new();
+                        let mut squares = Vec::new();
+                        for s in &out.shapes {
+                            texts(&s.shape, &mut shown);
+                            rects(&s.shape, size, &mut squares);
+                        }
+                        let case = format!("font={font}, pixels={pixels}, letter={letter}, chat={chat}");
+                        assert_eq!(squares.len(), 1, "{case}: one badge square, {squares:?}");
+                        let square = squares[0];
+                        // the neighbour's capitals and the badge's letter, as drawn
+                        // (the link's label starts with its icon's slot, an
+                        // "M": the letter is the text of its own alone)
+                        let ink = |text: &str, whole: bool| {
+                            let (pos, galley) = shown
+                                .iter()
+                                .find(|(_, g)| if whole { g.text() == text } else { g.text().starts_with(text) })
+                                .unwrap_or_else(|| panic!("{case}: no {text}"));
+                            let ink = crate::ui::widgets::ink_rect(galley);
+                            ink.translate(pos.round_to_pixels(pixels).to_vec2())
+                        };
+                        let caps = ink("AB", false);
+                        assert!(
+                            (square.center().y - caps.center().y).abs() <= 0.5 + 1e-3,
+                            "{case}: square {square:?} against the capitals {caps:?}"
+                        );
+                        let mark = ink(letter, true);
+                        assert!(
+                            (mark.center() - square.center()).abs().max_elem() <= 0.5 + 1e-3,
+                            "{case}: letter {mark:?} in its square {square:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// #898: a script dialog's agent and group links show the names, not
+    /// the addresses; an unknown avatar shows the placeholder until its
+    /// name comes.
+    #[test]
+    fn dialog_text_shows_agent_and_group_names() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let p = crate::theme::Theme::default().palette();
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (known, unknown, group) = (
+            uuid::Uuid::from_u128(0x8981),
+            uuid::Uuid::from_u128(0x8982),
+            uuid::Uuid::from_u128(0x8983),
+        );
+        world.social.names.insert(known, "Demo Resident".into());
+        world.land.group_names.insert(group, "Demo Builders".into());
+        let text = format!(
+            "#1 secondlife:///app/agent/{known}/about\n#2 secondlife:///app/agent/{unknown}/about\n#3 secondlife:///app/group/{group}/about"
+        );
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0))),
+                ..Default::default()
+            },
+            |ui| text_with_links(ui, &p, &world, &text, &[], 12.0, p.ink),
+        );
+        output.textures_delta.clear();
+        let mut shown = String::new();
+        for clipped in &output.shapes {
+            if let egui::Shape::Text(t) = &clipped.shape {
+                shown.push_str(t.galley.text());
+                shown.push('|');
+            }
+        }
+        assert!(shown.contains("Demo Resident"), "{shown}");
+        assert!(shown.contains("Demo Builders"), "{shown}");
+        assert!(shown.contains('…'), "{shown}");
+        assert!(!shown.contains("secondlife:///app"), "{shown}");
     }
 
     #[test]

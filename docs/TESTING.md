@@ -1271,10 +1271,15 @@ Transaction windows, with the same variable:
   the next owner.
 - `buy-empty`: offers contents that cannot be sold and disables the purchase.
 
-**`AURORA_DEMO_DIALOG=12|4|long`** — llDialog menu of twelve answers in
+**`AURORA_DEMO_DIALOG=12|4|long|links`** — llDialog menu of twelve answers in
 three columns, arranged from the bottom to the top like Firestorm; `4`: four
 answers, to check the incomplete last row; `long`: long label truncated,
 with the full text on hover. Block and Ignore buttons under the menu.
+`links` (#898): a menu whose text lists two residents and a group by their
+`secondlife:///app/.../about` links and a region by its `app/region` link;
+they show as names (a person or group mark before them, the region with its
+badge), clickable. With `AURORA_DEMO_NOTIFS=legacy` and a capture before
+frame 700, the same menu in the Legacy toasts.
 
 **`AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`** — script of the build
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
@@ -5815,6 +5820,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
+| `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
@@ -6039,6 +6045,12 @@ What the inventory must show with these scenarios:
   struck through, as after a click on it. Display only: the volumes and the
   mutes of the settings do not change. Look at the panel: only Music,
   Multimedia and Voice have an enable box.
+- **`AURORA_PERCEPTUAL_VOLUME=0|1`**: Preferences › Sound › "Perceptual
+  volume sliders" forced off or on for the launch, without saving it
+  (`widgets::volume_slider`, #463). With `1` the knobs of the same volumes
+  sit further right (a 50 % gain at about four fifths of the travel, a
+  resident's 100 % still in the middle), the percentages unchanged. With
+  `AURORA_DEMO_VOLUME=open`, capture once with `0` and once with `1`.
 
 ## Forced settings and diagnostics
 
