@@ -740,8 +740,8 @@ pub struct Settings {
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
-    /// Project standing feet onto support and adapt landing recovery to its
-    /// slope (LLKeyframeStandMotion / LLKeyframeFallMotion). Off by default.
+    /// Replace native motion foot placement/recovery with Aurora's terrain
+    /// solver. Off by default: the Legacy Viewer behaviour remains automatic.
     pub ground_avatar_feet: bool,
     /// Also adapt walking, running and crouch-walking feet. Off by default.
     pub ground_feet_while_moving: bool,

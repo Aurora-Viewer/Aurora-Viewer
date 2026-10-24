@@ -2468,8 +2468,18 @@ targets keep updating under the frozen animation pose, so unmasking or
 closing restores their current state. Runtime activation policy remains in
 the LSL template, outside the authoring UI.
 
-Explicit IK is applied after additive animation and automatic terrain foot
-placement, without writing either correction into the held animation channels.
+`scene/anim/legacy_grounding.rs` corrects the native standing/crouching
+motions before animation blending and captures native stand-up recovery's
+support tilt and descent-dependent ease-in. Its support queries use terrain
+and the simulator foot plane without object geometry. The saved Aurora foot
+placement option exclusively replaces native leg and pelvis corrections;
+ineligible Aurora frames never fall back to the native solver. A half-second
+handoff interpolates independent corrections relative to the same current
+source pose; source channels retain neither solver's corrections. The native
+solver shares the analytic two-segment math in `scene/hand_ik.rs`.
+
+Explicit IK is applied after additive animation and the selected automatic
+foot placement, without writing either correction into the held animation channels.
 IK Edit suspends automatic foot placement before capturing its frozen source.
 Cross-avatar target refresh retains terrain evaluation and advances body
 physics once from the final constrained pose, within the parallel pose jobs.
