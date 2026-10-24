@@ -61,41 +61,76 @@ pub fn page(cx: &mut Cx, tab: usize) {
         }),
         3 => reflections_and_water(cx),
         4 => image(cx),
-        _ => cx.group(tr!("ui-options-frames-per-second"), |cx| {
-            // across, its switch in line with those of the limits below
-            cx.wide().toggle(
-                tr!("ui-options-vertical-synchronization"),
-                tr!("ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing"),
-                &field!(vsync),
-            );
-            // the limits show under their switches: the value is what the
-            // switch is turned on for
-            cx.unfolded().toggle(
-                tr!("extra-limit-frame-rate"),
-                tr!("ui-options-caps-frames-per-second-less-heat-and-noise-enabled"),
-                &field!(fps_cap),
-            );
-            let off = !cx.s.fps_cap;
-            cx.subs(off, |cx| {
-                cx.slider(tr!("ui-options-frame-limit"), "", &field!(fps_limit), 10..=360, tr!("status-fps"));
-            });
-            cx.unfolded().toggle(
-                tr!("ui-options-limit-when-unfocused"),
-                tr!("ui-options-when-the-window-is-not-in-the-foreground-the"),
-                &field!(background_fps_cap),
-            );
-            let off = !cx.s.background_fps_cap;
-            cx.subs(off, |cx| {
-                cx.slider(
-                    tr!("ui-options-frame-limit-unfocused"),
-                    "",
-                    &field!(background_fps_limit),
-                    1..=120,
-                    tr!("status-fps"),
-                );
-            });
-        }),
+        _ => {
+            frames_per_second(cx);
+            graphics_card(cx);
+        }
     }
+}
+
+/// The GPU the viewer draws with (#894): automatic (discrete first) or one
+/// by name; the renderer opens it at startup, so the choice applies at the
+/// next start. `AURORA_GPU` overrides it.
+fn graphics_card(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-graphics-card"), |cx| {
+        let in_use = tr!("ui-options-graphics-card-in-use", name = cx.st.gpu_in_use.clone());
+        let hint = format!("{} {in_use}", tr!("ui-options-graphics-card-help"));
+        cx.row_with(
+            tr!("ui-options-graphics-card-choice"),
+            &hint,
+            &field!(gpu_adapter),
+            |ui, s, st, _| {
+                super::super::named_combo(
+                    ui,
+                    "gpu_adapter",
+                    &mut s.gpu_adapter,
+                    &st.gpus,
+                    COMBO_W,
+                    tr!("ui-options-graphics-card-automatic"),
+                )
+                .0
+            },
+        );
+    });
+}
+
+fn frames_per_second(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-frames-per-second"), |cx| {
+        // across, its switch in line with those of the limits below
+        cx.wide().toggle(
+            tr!("ui-options-vertical-synchronization"),
+            tr!("ui-options-synchronizes-frames-with-the-monitor-refresh-rate-no-tearing"),
+            &field!(vsync),
+        );
+        // the limits show under their switches: the value is what the
+        // switch is turned on for
+        cx.unfolded().toggle(
+            tr!("extra-limit-frame-rate"),
+            tr!("ui-options-caps-frames-per-second-less-heat-and-noise-enabled"),
+            &field!(fps_cap),
+        );
+        let off = !cx.s.fps_cap;
+        cx.subs(off, |cx| {
+            cx.slider(tr!("ui-options-frame-limit"), "", &field!(fps_limit), 10..=360, tr!("status-fps"));
+        });
+        cx.unfolded().toggle(
+            tr!("ui-options-limit-when-unfocused"),
+            tr!("ui-options-when-the-window-is-not-in-the-foreground-the"),
+            &field!(background_fps_cap),
+        );
+        let off = !cx.s.background_fps_cap;
+        cx.subs(off, |cx| {
+            cx.slider(
+                tr!("ui-options-frame-limit-unfocused"),
+                "",
+                &field!(background_fps_limit),
+                1..=120,
+                tr!("status-fps"),
+            );
+        });
+    });
 }
 
 fn quality(cx: &mut Cx) {

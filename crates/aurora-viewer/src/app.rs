@@ -332,6 +332,7 @@ pub struct App {
     autopilot: Option<crate::autopilot::AutoPilot>,
     /// The control flags the walk asks for this frame.
     autopilot_flags: u32,
+    autopilot_stop_pending: bool,
     /// Microphone switched on (toggle mode).
     mic_on: bool,
     /// AURORA_DEMO_CALL: the simulated voice server of the calls.
@@ -974,6 +975,7 @@ impl App {
             double_press: false,
             autopilot: None,
             autopilot_flags: 0,
+            autopilot_stop_pending: false,
             mic_on: false,
             call_demo: Default::default(),
             call_shown: None,
@@ -3165,6 +3167,7 @@ impl App {
 
     /// Escape / "Reset camera" (handle_reset_view).
     fn reset_camera_view(&mut self) {
+        self.stop_autopilot(true);
         self.joystick.active = false;
         self.camera.clear_flycam();
         let was = self.camera.mouselook();
@@ -5539,6 +5542,7 @@ impl App {
         if !self.world.agent.flying && self.world.rlva.has("fly") {
             return;
         }
+        self.stop_autopilot(true);
         self.release_native_movelock();
         self.movement_runtime.cancel_water_exit();
         self.world.agent.flying = !self.world.agent.flying;
@@ -6612,6 +6616,9 @@ impl App {
         let shift = self.world.take_origin_shift();
         if shift != Vec3::ZERO {
             self.camera.shift(shift);
+            if let Some(ap) = &mut self.autopilot {
+                ap.shift(shift);
+            }
         }
         self.world.poll_inventory_cache();
         let receipts = std::mem::take(&mut self.world.received_items.receipts);
@@ -6890,7 +6897,7 @@ impl App {
             self.update_look_at(w as f32, h as f32);
             let mut c = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
             // the walk to a double-clicked point (src/autopilot.rs)
-            c.control_flags |= self.autopilot_flags;
+            c.control_flags = self.autopilot_controls(c.control_flags);
             c.control_flags = crate::movement::controls(
                 c.control_flags,
                 self.movement_runtime.state,
@@ -7551,6 +7558,10 @@ impl App {
                 }
             }
             self.options_ui.vram = (gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
+            if self.options_ui.gpus.is_empty() {
+                self.options_ui.gpus = gfx.renderer.info.adapters.clone();
+                self.options_ui.gpu_in_use = gfx.renderer.info.name.clone();
+            }
             // Preferences › Debug › Detail levels: what the overlay labels
             self.lod_infos = if self.settings.debug.lod_info {
                 let range = ui::debug_overlay::RANGE;
@@ -8964,6 +8975,7 @@ impl App {
         }
         if self.demo {
             self.demo_double_click_steps();
+            self.demo_avatar_travel_steps();
         }
         self.demo_hud_drag_steps();
         // AURORA_DEMO_INVENTORY=offer|offer-reject: the sample offer's item
@@ -13400,7 +13412,10 @@ impl ApplicationHandler for App {
         if std::env::var_os("AURORA_NOVSYNC").is_some() {
             self.settings.vsync = false;
         }
-        let renderer = match Renderer::new(window.clone(), size.width, size.height, self.settings.vsync) {
+        // the GPU of Preferences › Graphics; AURORA_GPU=<number|name|auto>
+        // overrides it for this launch (adapter_choice.rs)
+        let gpu = std::env::var("AURORA_GPU").unwrap_or_else(|_| self.settings.gpu_adapter.clone());
+        let renderer = match Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu) {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");

@@ -28,6 +28,7 @@ pub mod powers {
     pub const LAND_CHANGE_MEDIA: u64 = 1 << 20;
     pub const LAND_EDIT: u64 = 1 << 21;
     pub const LAND_OPTIONS: u64 = 1 << 22;
+    pub const LAND_ALLOW_FLY: u64 = 1 << 24;
     pub const LAND_MANAGE_ALLOWED: u64 = 1 << 29;
     pub const LAND_MANAGE_BANNED: u64 = 1 << 30;
     pub const LAND_RETURN_GROUP_SET: u64 = 1 << 33;
