@@ -7,6 +7,14 @@ use crate::scene::{
 };
 use aurora_assets::anim::{JointMotion, PosKey, RotKey};
 
+fn motion(state: State, mode: &str) -> Uuid {
+    if state == State::Standing && mode.contains("-ao") {
+        Uuid::from_u128(0x6670_0000_0000_0000_0000_0000_0000_0001)
+    } else {
+        state.motion()
+    }
+}
+
 pub fn animation(landing: bool) -> aurora_assets::Animation {
     let mut anim = super::idle_animation();
     for name in ["mAnkleLeft", "mAnkleRight", "mPelvis"] {
@@ -72,6 +80,13 @@ pub fn contact_animation(rig: &Rig, base: &SkeletonBase, recovery: bool) -> auro
     for joint in &mut clip.joints {
         joint.rot_keys.clear();
         joint.pos_keys.clear();
+        if joint.joint_name == "mPelvis" {
+            // Native recovery tilts this authored channel before blending.
+            joint.rot_keys.push(RotKey {
+                time: 0.0,
+                rotation: Quat::IDENTITY,
+            });
+        }
     }
     for i in 0..=frames {
         let time = i as f32 / 60.0;
@@ -224,7 +239,7 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
                     animation(false)
                 }
             };
-            scene.anims.insert(state.motion(), Arc::new(BoundAnim::bind(clip, &rig)));
+            scene.anims.insert(motion(state, mode), Arc::new(BoundAnim::bind(clip, &rig)));
         }
         for state in [State::Jumping, State::Falling, State::Crouching] {
             let mut clip = contact_animation(&rig, &base, true);
@@ -288,16 +303,45 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
         avatar.position = world.agent.position;
         avatar.rotation = Quat::IDENTITY;
         avatar.velocity = Vec3::ZERO;
-        avatar.foot_plane = None;
+        avatar.foot_plane = Some(contact_plane(mode, spawn));
+        if let Some(te) = &mut avatar.te
+            && let Some(skirt) = Arc::make_mut(te).faces.get_mut(19)
+        {
+            // Expose both knees and ankles in the offline comparison fixture.
+            skirt.texture = crate::scene::avatar::IMG_INVISIBLE;
+            avatar.shape_dirty = true;
+        }
     }
+    // AvatarAppearance overrides the object TE after the demo's appearance
+    // setup. Update that rendered bake source as well, preserving the shape.
+    if let Some(mut appearance) = world.server_appearance().cloned() {
+        if let Some(te) = &mut appearance.texture_entry
+            && let Some(skirt) = Arc::make_mut(te).faces.get_mut(19)
+        {
+            skirt.texture = crate::scene::avatar::IMG_INVISIBLE;
+        }
+        // Own appearances at the current COF version are deliberately ignored.
+        // Publish a newer simulated appearance, as a real outfit change does.
+        appearance.cof_version = appearance.cof_version.max(world.outfit.stepped_cof_version()).saturating_add(1);
+        world.apply(NetEvent::Appearance(appearance));
+    }
+    let agent = world.agent_id;
+    world.refresh_bakes(&agent);
     // Combining this terrain fixture with native Movelock must retain the
     // confirmed ground sit. Replacing its raw signal would stand the avatar
     // up behind the anchor controller's back and invalidate the scenario.
     if !world.agent.ground_sit {
         let state = if landing { State::StandingUp } else { State::Standing };
+        // Restart the fixture's stand after replacing its tracks. A sequence
+        // change alone preserves an uninterrupted loop and its loaded asset.
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
-            anims: vec![(state.motion(), frame as i32)],
+            anims: Vec::new(),
+            sources: Vec::new(),
+        });
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: world.agent_id,
+            anims: vec![(motion(state, mode), frame as i32)],
             sources: Vec::new(),
         });
     }
@@ -332,6 +376,18 @@ pub fn surface_height(mode: &str, position: Vec3) -> f32 {
     }
 }
 
+fn contact_plane(mode: &str, position: Vec3) -> glam::Vec4 {
+    let height = surface_height(mode, position);
+    let normal = if !mode.starts_with("steps") && height > super::floor_at(position.x, position.y) + 0.001 {
+        Vec3::new(0.0, -0.3_f32.sin(), 0.3_f32.cos())
+    } else {
+        Vec3::Z
+    };
+    // Emulate the simulator's common foot plane, including the documented
+    // 5 cm contact bias. It intentionally cannot describe two separate steps.
+    normal.extend(normal.dot(position.with_z(height)) + 0.05)
+}
+
 /// Compensate only this fixture for simulate_locally's fixed 0.84 m half
 /// height, so its shaped physical centre and both support traces agree.
 pub fn simulation_floor(world: &crate::world::World, scene: &Scene, mode: &str) -> f32 {
@@ -346,6 +402,13 @@ pub fn update_motion(world: &mut crate::world::World, scene: &Scene, frame: u64,
     let velocity = world.agent.velocity;
     let moving = velocity.truncate().length_squared() > 0.01;
     let airborne = position.z - half_height(world, scene) > surface_height(mode, position) + 0.05;
+    if let Some(avatar) = world
+        .objects
+        .index_of_uuid(&world.agent_id)
+        .and_then(|idx| world.objects.get_mut(idx))
+    {
+        avatar.foot_plane = (!airborne && !world.agent.flying).then(|| contact_plane(mode, position));
+    }
     let current = world.animations.get(&world.agent_id).and_then(|motions| motions.first()).copied();
     let recovering =
         current.is_some_and(|motion| motion.id == State::StandingUp.motion() && motion.sequence_start.elapsed().as_secs_f32() < 2.0);
@@ -377,10 +440,10 @@ pub fn update_motion(world: &mut crate::world::World, scene: &Scene, frame: u64,
     } else {
         State::Standing
     };
-    if current.is_none_or(|motion| motion.id != state.motion()) {
+    if current.is_none_or(|playing| playing.id != motion(state, mode)) {
         world.apply(NetEvent::AvatarAnimations {
             avatar: world.agent_id,
-            anims: vec![(state.motion(), frame as i32)],
+            anims: vec![(motion(state, mode), frame as i32)],
             sources: Vec::new(),
         });
     }
@@ -419,6 +482,28 @@ mod tests {
         world.agent.update(&input, false, 1.0 / 60.0, 4.0);
         tick(world, scene, frame, "steps");
         update_motion(world, scene, frame, "steps", &input);
+    }
+
+    #[test]
+    fn grounding_comparison_exposes_legs_with_an_appearance_bake_override() {
+        let (mut world, mut scene) = fixture();
+        let params = scene.avatar_lib.shape_params.values_with(&[]);
+        world.apply(NetEvent::Appearance(aurora_net::AvatarAppearance {
+            avatar_id: world.agent_id,
+            texture_entry: Some(Arc::new(aurora_prim::te::TextureEntry::default())),
+            visual_params: params.clone(),
+            cof_version: 7,
+            appearance_version: 1,
+            hover_height: 0.03,
+            attachments: 0,
+        }));
+        let idx = world.objects.index_of_uuid(&world.agent_id).expect("our avatar");
+        assert_ne!(world.bake_texture(idx, 19), Some(crate::scene::avatar::IMG_INVISIBLE));
+        tick(&mut world, &mut scene, 600, "steps");
+        assert_eq!(world.bake_texture(idx, 19), Some(crate::scene::avatar::IMG_INVISIBLE));
+        assert_eq!(world.visual_params(&world.agent_id), Some(params.as_slice()));
+        assert_eq!(world.appearance_cof_version(&world.agent_id), 8);
+        assert_eq!(world.server_appearance().expect("received appearance").hover_height, 0.03);
     }
 
     #[test]

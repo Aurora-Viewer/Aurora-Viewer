@@ -3,7 +3,7 @@
 //! IM panel (FSFloaterIM: profile, teleport, call, block…) are kept: the
 //! frequent ones as buttons, the others in its menu.
 
-use super::{ChatUi, ConvAction, close_tip, find, presence, tool};
+use super::{ChatUi, ConvAction, SNOOZE_ICON, close_tip, find, presence, tool};
 use crate::theme::Palette;
 use crate::ui::context::CtxAction;
 use crate::ui::menu;
@@ -86,11 +86,13 @@ pub(super) fn show(
     let group = st.selected.is_some_and(|s| world.is_group_session(&s));
     // buttons at the right: their count fixes the room the names keep
     // (a conversation's own close button among them)
+    let snooze = st.selected.filter(|s| super::can_snooze(world, s));
     let tools = match st.selected {
         None => 1,
         Some(_) if group => 3,
         Some(_) => 4,
-    } + 1;
+    } + 1
+        + usize::from(snooze.is_some());
     egui::Frame::new()
         .fill(p.bar)
         .corner_radius(ui.visuals().window_corner_radius)
@@ -126,6 +128,13 @@ pub(super) fn show(
                         && tool(ui, p, icons, "x", super::close_tip(world, &other), true, false)
                     {
                         actions.push(ConvAction::Close(other));
+                    }
+                    // a group chat's snooze beside its close (FSFloaterIM's
+                    // title bar)
+                    if let Some(other) = snooze
+                        && tool(ui, p, icons, SNOOZE_ICON, aurora_i18n::tr!("ui-chat-snooze-tip"), true, false)
+                    {
+                        actions.push(ConvAction::Snooze(other));
                     }
                     more_menu(ui, p, world, st, actions, group, false);
                     match st.selected {

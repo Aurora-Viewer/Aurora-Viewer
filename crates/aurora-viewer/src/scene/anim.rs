@@ -3,6 +3,7 @@
 //! joint palettes (joint world matrices; meshes apply their inverse binds).
 
 pub(super) mod grounding;
+mod legacy_grounding;
 mod pointing;
 
 use super::default_motions;
@@ -276,6 +277,7 @@ struct Motion {
     /// Started by another motion (the expression an animation names), not
     /// by the simulator: it ends on its own.
     internal: bool,
+    recovery: Option<legacy_grounding::Recovery>,
 }
 
 impl Motion {
@@ -283,7 +285,7 @@ impl Motion {
         let a = &self.anim.anim;
         let start = if a.looping { self.continuous_activation } else { self.activation };
         let elapsed = now.saturating_duration_since(start).as_secs_f64();
-        let ease_in = a.ease_in;
+        let ease_in = legacy_grounding::ease_in(self.recovery, a.ease_in);
         if ease_in > 0.0 {
             aurora_assets::anim::cubic_step(elapsed / f64::from(ease_in))
         } else {
@@ -334,7 +336,14 @@ pub struct Controller {
     /// LLControlAvatar disables default head / eye motions.
     pub control: bool,
     pub(super) ground: Option<grounding::Frame>,
+    pub(super) legacy_ground: Option<grounding::Frame>,
+    /// Ownership is the saved option, never the availability of a support hit.
+    pub(super) aurora_feet: bool,
     placement: grounding::Placement,
+    legacy_rot: Vec<Quat>,
+    legacy_held: bool,
+    ground_handoff: legacy_grounding::Handoff,
+    ground_origin: Option<Vec3>,
     /// Opt-in receipt clock; the default keeps Legacy Viewer activation / pauses.
     synchronized: bool,
     /// Newest first (mActiveMotions, push_front).
@@ -646,6 +655,10 @@ impl Controller {
         self.tag_pelvis_offset = 0.0;
         self.last_eval = None;
         self.placement = grounding::Placement::default();
+        self.legacy_rot.clear();
+        self.legacy_held = false;
+        self.ground_handoff = legacy_grounding::Handoff::default();
+        self.ground_origin = None;
         if animations {
             self.motions.retain(|m| m.stop.is_none());
         }
@@ -686,6 +699,7 @@ impl Controller {
         pr.noise_start = pr.noise_start.map(|t| t + d);
         self.last_eval = self.last_eval.map(|t| t + d);
         self.placement.resume(d);
+        self.ground_handoff.resume(d);
         self.pointing.resume(d);
     }
 
@@ -904,6 +918,7 @@ impl Controller {
                         residual: 0.0,
                         weight: 0.0,
                         internal: false,
+                        recovery: None,
                     },
                 );
                 self.signals.insert(signal.id, *signal);
@@ -925,6 +940,7 @@ impl Controller {
                             residual: 0.0,
                             weight: 0.0,
                             internal: true,
+                            recovery: None,
                         },
                     );
                 }
@@ -983,6 +999,18 @@ impl Controller {
         out: &mut [[[f32; 4]; 4]],
         ground: impl Fn(Vec3) -> Option<grounding::Surface>,
     ) {
+        self.evaluate_with_support(rig, now, base, out, ground, |_| None);
+    }
+
+    pub(super) fn evaluate_with_support(
+        &mut self,
+        rig: &Rig,
+        now: Instant,
+        base: Option<&SkeletonBase>,
+        out: &mut [[[f32; 4]; 4]],
+        ground: impl Fn(Vec3) -> Option<grounding::Surface>,
+        legacy_ground: impl Fn(Vec3) -> Option<grounding::Surface>,
+    ) {
         let now = self.paused_at.unwrap_or(now);
         let n = rig.len().min(out.len());
         // Keep the displayed pose even if signals stop/change or a file arrives
@@ -1002,11 +1030,47 @@ impl Controller {
         // (LLJointStateBlender::addJointState)
         // Last flag: this source motion predates the editing arm, which
         // starts on selection rather than with the default motions.
-        type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>, bool, bool);
+        type State = (i32, f32, Option<Quat>, Option<(Vec3, f32)>, bool, bool, Option<Quat>);
         let mut states: Vec<Vec<State>> = vec![Vec::new(); n];
+        let editing = self.control || self.preview_start.is_some() || self.ik.edit.active || self.poser.is_some();
+        if let Some(frame) = self.legacy_ground.or(self.ground) {
+            let origin = frame.to_world.w_axis.truncate();
+            if self
+                .ground_origin
+                .replace(origin)
+                .is_some_and(|previous| previous.distance_squared(origin) > 4.0)
+            {
+                self.ground_handoff = legacy_grounding::Handoff::default();
+            }
+        }
+        let native_frame = self.legacy_ground.filter(|frame| {
+            !self.aurora_feet
+                && !editing
+                && !self
+                    .motions
+                    .iter()
+                    .any(|motion| motion.stop.is_none() && grounding::unplanted(motion.id, frame.standing_anchor))
+        });
+        let blend_native = native_frame.is_some()
+            && if hold_pose {
+                self.legacy_held
+            } else {
+                self.motions.iter().any(|motion| legacy_grounding::supported(motion.id))
+            };
+        self.legacy_held = blend_native;
+        if blend_native && self.legacy_rot.len() != rig.len() {
+            self.legacy_rot.clone_from(&self.rot);
+        }
         for m in self.motions.iter_mut().filter(|_| !hold_pose) {
             if m.weight <= 0.0 {
                 continue;
+            }
+            let native = native_frame.map_or_else(Vec::new, |frame| legacy_grounding::sample(m, rig, base, frame, &legacy_ground, now));
+            // Recovery's ease-in becomes known at its first evaluated support.
+            // Subsequent syncs use the same activation snapshot.
+            if m.recovery.is_some() && m.stop.is_none() {
+                m.weight = m.ease_in_weight(now);
+                m.residual = m.weight;
             }
             let a = &m.anim.anim;
             let t = m.local_time(now) as f32;
@@ -1017,6 +1081,7 @@ impl Controller {
                 if j >= n {
                     continue;
                 }
+                let native = native.iter().find_map(|&(joint, rotation)| (joint == j).then_some(rotation));
                 let rot = jm.rotation_at_loop(t, a.loop_range());
                 let pos = jm
                     .position_at_loop(t, a.loop_range())
@@ -1030,7 +1095,18 @@ impl Controller {
                 let at = s.iter().position(|o| prio > o.0).unwrap_or(s.len());
                 if at < JOINT_STATES {
                     let activation = if a.looping { m.continuous_activation } else { m.activation };
-                    s.insert(at, (prio, m.weight, rot, pos, false, self.pointing.animation_is_older(activation)));
+                    s.insert(
+                        at,
+                        (
+                            prio,
+                            m.weight,
+                            rot,
+                            pos,
+                            false,
+                            self.pointing.animation_is_older(activation),
+                            native,
+                        ),
+                    );
                     s.truncate(JOINT_STATES);
                 }
             }
@@ -1064,7 +1140,7 @@ impl Controller {
                     })
                     .unwrap_or(s.len());
                 if at < JOINT_STATES {
-                    s.insert(at, (prio, w, Some(r), None, additive, false));
+                    s.insert(at, (prio, w, Some(r), None, additive, false, None));
                     s.truncate(JOINT_STATES);
                 }
             }
@@ -1072,14 +1148,20 @@ impl Controller {
         let mut local_pos: Vec<Vec3> = rest_pos.to_vec();
         // joints turned by an additive motion: the held pose stays without it
         let mut added_rot: Vec<(usize, Quat)> = Vec::new();
+        let mut native_added_rot: Vec<(usize, Quat)> = Vec::new();
         for (j, s) in states.iter().enumerate() {
             let mut rot_sum = 0.0f32;
             let mut rot = self.rot[j];
+            let mut native_rot = if blend_native && hold_pose {
+                self.legacy_rot[j]
+            } else {
+                self.rot[j]
+            };
             let mut pos_sum = 0.0f32;
             let mut pos = Vec3::ZERO;
             let mut top = 0.0f32;
             let mut added: Option<Quat> = None;
-            for &(_, w, r, p, additive, _) in s {
+            for &(_, w, r, p, additive, _, native) in s {
                 if additive {
                     // LLJointStateBlender::blendJointStates: what the
                     // stronger regular states leave of its weight
@@ -1094,9 +1176,13 @@ impl Controller {
                     if rot_sum > 0.0 {
                         let sum = (rot_sum + w).min(1.0);
                         rot = nlerp(rot_sum / sum, r, rot);
+                        if blend_native {
+                            native_rot = nlerp(rot_sum / sum, native.unwrap_or(r), native_rot);
+                        }
                         rot_sum = sum;
                     } else {
                         rot = r;
+                        native_rot = native.unwrap_or(r);
                         rot_sum = w;
                     }
                 }
@@ -1114,8 +1200,14 @@ impl Controller {
                 }
             }
             self.rot[j] = rot;
+            if blend_native {
+                self.legacy_rot[j] = native_rot;
+            }
             if let Some(a) = added {
                 added_rot.push((j, (a * rot).normalize()));
+                if blend_native {
+                    native_added_rot.push((j, (a * native_rot).normalize()));
+                }
             }
             if pos_sum > 0.0 {
                 if j == rig.pelvis {
@@ -1157,21 +1249,23 @@ impl Controller {
         // additive and placement deltas out of self.rot's held blend state.
         let protected = |names: [&str; 3]| {
             names.iter().any(|name| {
-                rig.names
-                    .get(*name)
-                    .and_then(|&j| states.get(j))
-                    .is_some_and(|states| states.iter().any(|&(priority, weight, _, _, _, _)| priority >= 5 && weight > 0.01))
+                rig.names.get(*name).and_then(|&j| states.get(j)).is_some_and(|states| {
+                    states
+                        .iter()
+                        .any(|&(priority, weight, _, _, _, _, _)| priority >= 5 && weight > 0.01)
+                })
             })
         };
         let allowed = [
             !protected(["mPelvis"; 3]) && !protected(["mHipLeft", "mKneeLeft", "mAnkleLeft"]),
             !protected(["mPelvis"; 3]) && !protected(["mHipRight", "mKneeRight", "mAnkleRight"]),
         ];
-        if self.control || self.preview_start.is_some() || self.ik.edit.active || self.poser.is_some() {
+        if editing || !self.aurora_feet {
             self.placement = grounding::Placement::default();
         }
         let frame = self.ground.filter(|frame| {
-            !self.control
+            self.aurora_feet
+                && !self.control
                 && !self.ik.edit.active
                 && self.poser.is_none()
                 && self.preview_start.is_none()
@@ -1192,20 +1286,52 @@ impl Controller {
                 &fallback
             }
         };
-        let corrected = self.placement.apply(
-            rig,
-            skeleton,
-            grounding::Pose {
-                rotations: source_rotations,
-                positions: &local_pos,
-                pelvis: pelvis_offset,
+        let corrected = self
+            .aurora_feet
+            .then(|| {
+                self.placement.apply(
+                    rig,
+                    skeleton,
+                    grounding::Pose {
+                        rotations: source_rotations,
+                        positions: &local_pos,
+                        pelvis: pelvis_offset,
+                        allowed,
+                    },
+                    frame,
+                    now,
+                    &ground,
+                )
+            })
+            .flatten();
+        let mut native_rotations;
+        let selected = if self.aurora_feet || editing || !blend_native {
+            corrected.as_ref().map_or(source_rotations, |pose| pose.rotations.as_slice())
+        } else {
+            native_rotations = self.legacy_rot.clone();
+            for (joint, rotation) in native_added_rot {
+                native_rotations[joint] = rotation;
+            }
+            &native_rotations
+        };
+        let mut transitioned = None;
+        if editing {
+            self.ground_handoff = legacy_grounding::Handoff::default();
+        } else if self.legacy_ground.is_some() || self.ground.is_some() {
+            transitioned = self.ground_handoff.apply(
+                rig,
+                source_rotations,
+                selected,
+                corrected.as_ref().map_or(Vec3::ZERO, |pose| pose.pelvis),
+                self.aurora_feet,
                 allowed,
-            },
-            frame,
-            now,
-            &ground,
-        );
-        let (rotations, pelvis) = corrected.as_ref().map_or((source_rotations, pelvis_offset), |pose| {
+                now,
+            );
+        } else {
+            self.ground_handoff = legacy_grounding::Handoff::default();
+        }
+        let selected_pelvis = pelvis_offset + corrected.as_ref().map_or(Vec3::ZERO, |pose| pose.pelvis);
+        let (rotations, pelvis) = transitioned.as_ref().map_or((selected, selected_pelvis), |pose| {
             (pose.rotations.as_slice(), pelvis_offset + pose.pelvis)
         });
         // Explicit contacts and authored poses take precedence over automatic

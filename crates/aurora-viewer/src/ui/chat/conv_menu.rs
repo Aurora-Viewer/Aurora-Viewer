@@ -6,8 +6,9 @@
 //! its call, then the resident's own menu (the one of their name in a
 //! conversation, so both stay the same) and the rows the conversation item
 //! adds to it; a group Close, its call, the transcript and the group's
-//! actions; a conference Close, its call and the transcript; the nearby
-//! chat its transcript.
+//! actions (and its snooze, the chiclet menu's "Snooze Session"); a
+//! conference Close, its call and the transcript; the nearby chat its
+//! transcript.
 
 use super::sidebar::{self, Kind};
 use super::{ChatUi, ConvAction, close_tip};
@@ -47,6 +48,10 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
     let kind = sidebar::kind(world, &id);
     if menu::item(ui, p, "x", close_tip(world, &id)) {
         actions.push(ConvAction::Close(id));
+    }
+    // "Snooze Session" of a group's chiclet menu (menu_fs_imchiclet_group.xml)
+    if super::can_snooze(world, &id) && menu::item(ui, p, super::SNOOZE_ICON, aurora_i18n::tr!("ui-chat-snooze")) {
+        actions.push(ConvAction::Snooze(id));
     }
     voice(ui, p, world, actions, id);
     match kind {

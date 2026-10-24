@@ -1302,6 +1302,42 @@ fn invitations_are_answered() {
     }
 }
 
+/// A group chat's Snooze, in every style: the head's button beside the
+/// close one and the entry's right-click menu; none for an IM or a
+/// conference (FSFloaterIM::setCanSnooze).
+#[test]
+fn a_group_chat_snoozes_from_its_head_and_its_menu() {
+    for style in ALL {
+        let mut h = H::new(style);
+        h.world.groups.sessions.entry(GROUP).or_default().group = true;
+        let button = if style.workspace() {
+            control_id("head-alarm-snooze-filled")
+        } else {
+            classic_id("alarm-snooze-filled")
+        };
+        h.open(Some(GROUP));
+        h.press(button);
+        assert!(
+            has(&h.take(), |a| matches!(a, ConvAction::Snooze(id) if *id == GROUP)),
+            "{style:?}: the head's snooze"
+        );
+        for other in [BOB, MEETING] {
+            h.open(Some(other));
+            assert!(h.shown(button).is_none(), "{style:?}: no snooze for {other}");
+        }
+        // the group's entry (Bob's conversation shown)
+        h.open(Some(BOB));
+        let name = h.world.session_title(&GROUP);
+        let at = h.text_rect(&name).center();
+        h.right_click(at);
+        h.press_text(aurora_i18n::tr!("ui-chat-snooze"));
+        assert!(
+            has(&h.take(), |a| matches!(a, ConvAction::Snooze(id) if *id == GROUP)),
+            "{style:?}: the entry's snooze"
+        );
+    }
+}
+
 /// The window of tabs (Bubbles, Lines): its tabs, its head's buttons, the
 /// emoji, find (Ctrl+F) and send still act as before the redesign.
 #[test]

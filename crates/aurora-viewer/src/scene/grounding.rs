@@ -42,6 +42,24 @@ impl Scene {
                 return None;
             }
         }
+        self.support_frame(world, idx, now, standing_anchor)
+    }
+
+    pub(super) fn legacy_grounding_frame(&self, world: &World, idx: usize, now: Instant) -> Option<Frame> {
+        let object = world.objects.get(idx)?;
+        let own = object.full_id == world.agent_id;
+        let standing_anchor = own && self.ground_feet_native_stand && world.agent.ground_sit && !world.agent.seated;
+        if !object.is_avatar()
+            || object.parent_id != 0
+            || (own && (world.agent.flying || (world.agent.is_sitting() && !standing_anchor) || world.animation_preview_clock.is_some()))
+        {
+            return None;
+        }
+        self.support_frame(world, idx, now, standing_anchor)
+    }
+
+    fn support_frame(&self, world: &World, idx: usize, now: Instant, standing_anchor: bool) -> Option<Frame> {
+        let object = world.objects.get(idx)?;
         let (position, rotation, _) = Self::object_transform(world, idx, now, 0)?;
         let velocity_z = if object.full_id == world.agent_id {
             world.agent.velocity.z
@@ -62,6 +80,26 @@ impl Scene {
             max_height: crate::settings::foot_height_limit(self.ground_feet_max_height),
             standing_anchor,
         })
+    }
+
+    /// LLWorld::resolveStepHeightGlobal: terrain and the simulator's shared
+    /// foot plane only. No object candidates, triangle traces, or shoe probes.
+    pub(super) fn legacy_ground_surface(&self, world: &World, frame: Frame, point: Vec3) -> Option<Surface> {
+        let terrain = world.ground_height(point).filter(|z| z.is_finite()).map(|z| Surface {
+            position: point.with_z(z),
+            normal: terrain_normal(world, point),
+        });
+        let contact = frame.contact.and_then(|plane| {
+            let z = (plane.w - plane.x * point.x - plane.y * point.y - 0.05) / plane.z;
+            z.is_finite().then_some(Surface {
+                position: point.with_z(z.clamp(point.z - 1.0, point.z + 1.0)),
+                normal: plane.truncate().normalize_or(Vec3::Z),
+            })
+        });
+        match (terrain, contact) {
+            (Some(a), Some(b)) => Some(if a.position.z >= b.position.z { a } else { b }),
+            (a, b) => a.or(b),
+        }
     }
 
     pub(super) fn ground_surface(&self, world: &World, frame: Frame, ankle: Vec3, now: Instant) -> Option<Surface> {
@@ -156,6 +194,11 @@ mod tests {
         let ankle = Vec3::new(3.0, 0.0, 50.7);
         let now = Instant::now();
         let support = scene.ground_surface(&world, frame, ankle, now).expect("platform top");
+        let native = scene.legacy_ground_surface(&world, frame, ankle).expect("native contact");
+        assert!(
+            (native.position.z - 50.85).abs() < 0.001,
+            "native support must ignore exact object geometry"
+        );
         assert!(
             (support.position.z - 50.5).abs() < 0.001,
             "exact step overrides one higher contact plane"
@@ -278,23 +321,34 @@ mod tests {
         let now = Instant::now();
         world.agent.flying = false;
         assert!(scene.grounding_frame(&world, idx, now).is_none(), "placement defaults off");
+        assert!(
+            scene.legacy_grounding_frame(&world, idx, now).is_some(),
+            "native placement defaults on"
+        );
         scene.ground_avatar_feet = true;
         assert!(scene.grounding_frame(&world, idx, now).is_some());
         scene.ground_feet_max_height = 1.0;
         assert_eq!(scene.grounding_frame(&world, idx, now).expect("enabled").max_height, 1.0);
         scene.ground_feet_max_height = 0.0;
         assert!(scene.grounding_frame(&world, idx, now).is_none());
+        assert!(
+            scene.legacy_grounding_frame(&world, idx, now).is_some(),
+            "the Aurora height limit does not gate native context"
+        );
         scene.ground_feet_max_height = 0.4;
         scene.ground_avatar_feet = false;
         assert!(scene.grounding_frame(&world, idx, now).is_none());
         scene.ground_avatar_feet = true;
         world.agent.flying = true;
         assert!(scene.grounding_frame(&world, idx, now).is_none());
+        assert!(scene.legacy_grounding_frame(&world, idx, now).is_none());
         world.agent.flying = false;
         world.objects.get_mut(idx).unwrap().parent_id = 970;
         assert!(scene.grounding_frame(&world, idx, now).is_none());
+        assert!(scene.legacy_grounding_frame(&world, idx, now).is_none());
         world.objects.get_mut(idx).unwrap().parent_id = 0;
         world.animation_preview_clock = Some((Uuid::nil(), now, now));
         assert!(scene.grounding_frame(&world, idx, now).is_none());
+        assert!(scene.legacy_grounding_frame(&world, idx, now).is_none());
     }
 }

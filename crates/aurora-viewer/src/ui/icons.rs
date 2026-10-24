@@ -198,6 +198,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "adjustments-horizontal",
     "archive",
     "adjustments",
+    "alarm-snooze",
     "alert-triangle",
     "arrow-big-up",
     "app-window",

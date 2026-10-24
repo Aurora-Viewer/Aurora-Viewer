@@ -755,6 +755,85 @@ pub fn flash_message(agent: Uuid, secs: f64) -> Option<NetEvent> {
     }))
 }
 
+/// AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]: a group chat's snooze
+/// (`world/groups.rs`). Tess writes in the Aurora Builders chat every 6
+/// seconds from the 10th in world; a snooze lasts `<seconds>` instead of
+/// the setting's; `auto` snoozes that chat by itself at the 14th second;
+/// `ask` asks the duration first, as the setting would.
+#[derive(Clone, Copy)]
+struct SnoozeScene {
+    seconds: u32,
+    auto: bool,
+    ask: bool,
+}
+
+fn snooze_scenario() -> Option<SnoozeScene> {
+    static SCENE: std::sync::OnceLock<Option<SnoozeScene>> = std::sync::OnceLock::new();
+    *SCENE.get_or_init(|| {
+        let v = std::env::var("AURORA_DEMO_SNOOZE").ok()?;
+        let mut parts = v.split(',').map(str::trim);
+        let seconds = parts.next()?.parse().ok()?;
+        let flags: Vec<&str> = parts.collect();
+        Some(SnoozeScene {
+            seconds,
+            auto: flags.contains(&"auto"),
+            ask: flags.contains(&"ask"),
+        })
+    })
+}
+
+/// The snooze's duration of `AURORA_DEMO_SNOOZE`.
+pub fn snooze_seconds() -> Option<u32> {
+    snooze_scenario().map(|s| s.seconds)
+}
+
+/// `AURORA_DEMO_SNOOZE=…,ask`: the duration is asked at each snooze.
+pub fn snooze_ask() -> bool {
+    snooze_scenario().is_some_and(|s| s.ask)
+}
+
+/// Seconds since the scenario's first look, made in world.
+fn snooze_clock() -> f64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64()
+}
+
+/// `AURORA_DEMO_SNOOZE=…,auto`: true once, when the demo snoozes the group
+/// chat itself. Asked every frame in world.
+pub fn snooze_now() -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    snooze_scenario().is_some_and(|s| s.auto) && snooze_clock() >= 14.0 && !DONE.swap(true, Ordering::Relaxed)
+}
+
+/// `AURORA_DEMO_SNOOZE`: Tess's message in the group chat now due, once.
+/// Asked every frame in world.
+pub fn snooze_message(agent: Uuid) -> Option<NetEvent> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SENT: AtomicU64 = AtomicU64::new(0);
+    snooze_scenario()?;
+    let secs = snooze_clock();
+    if secs < 10.0 {
+        return None;
+    }
+    let due = ((secs - 10.0) / 6.0) as u64 + 1;
+    if SENT.swap(due, Ordering::Relaxed) == due {
+        return None;
+    }
+    Some(NetEvent::InstantMessage(aurora_net::InstantMessage {
+        from_agent_id: DEMO_TESS,
+        from_name: "Tess Touch".into(),
+        to_agent_id: agent,
+        dialog: 17,
+        session_id: DEMO_GROUP1,
+        message: aurora_i18n::tr!("demo-snooze-message", n = due as i64),
+        offline: false,
+        from_group: false,
+        binary_bucket: b"Aurora Builders\0".to_vec(),
+        timestamp: 0,
+    }))
+}
+
 /// AURORA_DEMO_CONV_PREVIEWS=net: the previews of the demo's links come from
 /// the real sites; otherwise the demo makes them (`link_preview::demo`).
 pub fn previews_offline() -> bool {
