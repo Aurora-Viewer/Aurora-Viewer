@@ -809,7 +809,8 @@ pub struct Settings {
     pub collisions: crate::world::collisions::Settings,
     /// "Reduce animations": the interface's pulses, shakes and spinners
     /// stand still (the region restart alert, the rez effect, the bounce of
-    /// a hovered name plate).
+    /// a hovered name plate), and egui's transitions end at once
+    /// (`theme::apply_motion`).
     pub reduce_motion: bool,
     /// Preferences › Accessibility › Colour blindness: the interface's
     /// colours adapted to a colour vision deficiency (`crate::colorblind`),
@@ -817,7 +818,7 @@ pub struct Settings {
     pub color_blindness: crate::colorblind::Deficiency,
     /// How strongly (0–1, 1 by default: the full correction).
     pub color_blindness_strength: f32,
-    /// Preferences › Accessibility › Contrast: the high contrast palette
+    /// Preferences › Accessibility › Vision: the high contrast palette
     /// (`crate::high_contrast`, #906) instead of the skin's colours, off by
     /// default.
     pub high_contrast: bool,
