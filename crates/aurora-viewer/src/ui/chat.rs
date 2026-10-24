@@ -413,13 +413,18 @@ pub struct OutgoingChat {
 }
 
 /// Parse "/5 text" channel prefixes.
+/// FSNearbyChat::stripChannelNumber (fsnearbychathub.cpp): a slash, an
+/// optional minus sign, then the digits; the text after them, with or
+/// without a space ("/5 cmd", "/5cmd", "/-4242 ping"). Used by the chat bar
+/// and by gestures' chat steps alike.
 pub fn parse_channel(text: &str) -> (i32, String) {
     if let Some(rest) = text.strip_prefix('/') {
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '-').collect();
-        if !digits.is_empty()
-            && let Ok(ch) = digits.parse::<i32>()
+        let sign = usize::from(rest.starts_with('-'));
+        let digits = rest[sign..].chars().take_while(char::is_ascii_digit).count();
+        if digits > 0
+            && let Ok(ch) = rest[..sign + digits].parse::<i32>()
         {
-            let msg = rest[digits.len()..].trim_start().to_owned();
+            let msg = rest[sign + digits..].trim_start().to_owned();
             return (ch, msg);
         }
     }
@@ -4134,6 +4139,13 @@ mod tests {
         assert_eq!(parse_channel("hello"), (0, "hello".into()));
         assert_eq!(parse_channel("/me waves"), (0, "/me waves".into()));
         assert_eq!(parse_channel("/-1 x"), (-1, "x".into()));
+        // a gesture's commands to worn scripts (#952)
+        assert_eq!(parse_channel("/-4242 ping"), (-4242, "ping".into()));
+        assert_eq!(parse_channel("/5test"), (5, "test".into()));
+        assert_eq!(parse_channel("/5-3"), (5, "-3".into()), "the sign only before the digits");
+        assert_eq!(parse_channel("/-"), (0, "/-".into()));
+        assert_eq!(parse_channel("/--5 x"), (0, "/--5 x".into()));
+        assert_eq!(parse_channel("/hudping"), (0, "/hudping".into()));
     }
 
     use crate::ui::widgets::elide_tests::{Frames, LONG, SHORT, WIDE, painted, tooltip_shown};

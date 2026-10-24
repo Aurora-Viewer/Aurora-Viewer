@@ -528,6 +528,14 @@ impl App {
         if self.demo && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "replay") {
             self.demo_replay_keys();
         }
+        // `channel`: its trigger sent from the chat bar, as a resident types it
+        if self.demo && self.frame_count == 650 && std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "channel") {
+            self.send_local_chat(crate::ui::chat::OutgoingChat {
+                message: "/hudping".into(),
+                channel: 0,
+                chat_type: ChatType::Normal,
+            });
+        }
         self.tick_gestures();
     }
 
@@ -920,6 +928,15 @@ impl App {
                     self.seed_demo_gesture(&template, id, name, definition, true);
                 }
             }
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "channel") {
+                self.seed_demo_gesture(
+                    &template,
+                    951006,
+                    aurora_i18n::tr!("gesture-demo-channel-name"),
+                    demo_channel_gesture(),
+                    true,
+                );
+            }
         }
         self.panels.gestures = !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate"));
         if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| matches!(v.as_str(), "editor" | "numpad")) {
@@ -975,6 +992,20 @@ impl App {
             self.gesture_play(id, Some(key));
         }
         self.gesture_state.manager.release(Some(key));
+    }
+}
+
+/// The `channel` scenario's gesture: commands to worn scripts, on a
+/// negative channel, then a positive one with and without the space (#952).
+fn demo_channel_gesture() -> Gesture {
+    let chat = |text: &str| Step::Chat {
+        text: text.into(),
+        flags: 0,
+    };
+    Gesture {
+        trigger: "/hudping".into(),
+        steps: vec![chat("/-4242 ping"), chat("/5 test"), chat("/5test")],
+        ..Default::default()
     }
 }
 
@@ -1035,6 +1066,50 @@ fn demo_replay_gestures(sound: Uuid) -> Vec<(u128, &'static str, Gesture)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// A gesture's commands to worn scripts (#952): its chat steps run in
+    /// one step, in their order, each on its own channel, the minus sign of
+    /// a negative channel kept (sent as a dialog answer by aurora-net).
+    #[test]
+    fn channel_chat_steps_run_in_order_on_their_channels() {
+        let mut manager = Manager::default();
+        let id = Uuid::from_u128(1);
+        manager.play(id, demo_channel_gesture(), None);
+        let sent: Vec<_> = manager
+            .tick(Instant::now(), &BTreeSet::new())
+            .into_iter()
+            .map(|effect| match effect {
+                Effect::Chat(text) => crate::ui::chat::parse_channel(&text),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(sent, [(-4242, "ping".into()), (5, "test".into()), (5, "test".into())]);
+        assert!(!manager.is_playing(id));
+    }
+
+    /// The demo simulator echoes channel 0 as our local chat, and lets only
+    /// its worn listener answer a script channel, as the grid does.
+    #[test]
+    fn demo_channel_chat_is_heard_by_scripts_not_echoed() {
+        let reply = |channel| {
+            crate::demo::demo_reply(&NetCommand::Chat {
+                message: "ping".into(),
+                channel,
+                chat_type: ChatType::Normal,
+            })
+        };
+        for channel in [-4242, 5] {
+            let events = reply(channel);
+            assert!(
+                matches!(&events[..], [aurora_net::NetEvent::Chat(c)] if c.source_type == aurora_net::ChatSourceType::Object && c.message.contains("ping")),
+                "channel {channel}: {events:?}"
+            );
+        }
+        assert!(matches!(
+            &reply(0)[..],
+            [aurora_net::NetEvent::Chat(c)] if c.source_type == aurora_net::ChatSourceType::Agent && c.message == "ping"
+        ));
+    }
+
     #[test]
     fn restore_waits_for_inventory_but_removed_known_items_are_deactivated() {
         let mut state = State::default();
