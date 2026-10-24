@@ -1696,12 +1696,14 @@ grid.
   moving the linkset by the Y handle, also at 50%.
 - `edit-scroll`: selects a HUD locally enlarged to 200%, then
   places it off screen (frame 740). Without the HUD key, five notches
-  backwards in an empty area zoom all the HUDs out (frame 760); with the HUD
-  key, one notch enlarges only the hovered HUD (frame 820). Five notches
-  forwards return to the normal global view (frame 900). The camera and the
-  local factors are kept during the global zoom; the HUD key keeps
-  its priority for the local zoom. Frames 920 and 940 close editing,
-  then select a world object: the wheel is no longer intercepted
+  backwards in an empty area zoom all the HUDs out (frame 760); holding the
+  HUD key while clicking, moving the pointer and scrolling keeps the HUD's
+  position and local scale unchanged (frame 820). The wheel still changes
+  the common editing view. Five notches forwards return to the normal
+  global view (frame 900). The camera and the
+  local factors are kept during the global zoom. Direct held-key movement
+  and local resizing stay disabled while build tools are open. Frames 920
+  and 940 close editing, then select a world object: the wheel is no longer intercepted
   by the HUDs. Suggested screenshots: 750,790,850,910.
 - `faces`, `faces-turned`: nine HUD panels with a single visible face —
   columns front / back / explicitly double-sided PBR material, rows
@@ -1710,8 +1712,10 @@ grid.
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
 - `faces-alpha` uses a texture with holes in those panels. Normal touches
-  and quick movement pass through texture holes; opaque PBR ignores texture
-  alpha. Editing and right-click selection retain access to invisible faces.
+  and hover reach transparent Blend texels; quick movement and local resizing
+  pass through them. Masked cutouts still let normal touches through, and
+  opaque PBR ignores texture alpha. Editing and right-click selection retain
+  access to invisible faces.
   With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
   and material masks blue; their highlighted surfaces become pickable.
 

@@ -1314,6 +1314,7 @@ impl TextureStreamer {
         }
         if let Some((px, w, h)) = crate::demo::local_texture(&id) {
             let alpha = super::jobs::classify_alpha(&px);
+            let pick_mask = (alpha != AlphaKind::Opaque).then(|| PickMask::from_rgba(w, h, &px)).flatten();
             let levels = mips_for(w, h, px, if crate::demo::local_texture_mips(&id) { 16 } else { 1 }, alpha);
             let mips: Vec<MipLevel> = levels
                 .iter()
@@ -1325,6 +1326,9 @@ impl TextureStreamer {
                 .collect();
             if let Some(slot) = renderer.create_texture(&mips) {
                 set_slot_alpha(&mut self.alpha_by_slot, &mut self.generation, &mut self.alpha_changes, slot, alpha);
+                if let Some(mask) = pick_mask {
+                    self.pick_masks.insert(id, mask);
+                }
                 self.local_slots.insert(id, slot);
                 return slot;
             }
