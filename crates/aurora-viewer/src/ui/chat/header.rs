@@ -111,7 +111,7 @@ pub(super) fn show(
                     let view = views.entry(selected).or_default();
                     if let Some(search) = searches.get_mut(&selected)
                         && let Some(f) = search.find.as_mut()
-                        && find::field(ui, p, rect, p.field, f, view, true)
+                        && find::field(ui, p, rect, p.field, f, view, true, selected)
                     {
                         search.find = None;
                         ui.ctx().memory_mut(|m| m.request_focus(egui::Id::unique(("conv_input", selected))));
@@ -175,7 +175,7 @@ pub(super) fn show(
         ui.add_space(2.0);
         ui.add(
             egui::TextEdit::singleline(q)
-                .id(find::filter_id())
+                .id(find::filter_id(st.selected))
                 .hint_text(aurora_i18n::tr!("ui-chat-filter"))
                 .desired_width(ui.available_width()),
         );

@@ -195,6 +195,8 @@ pub struct Facts {
     pub voice_volume: Option<menu::VoiceVolume>,
     /// The avatar is in view and wears something: "Inspect" lists it.
     pub worn: bool,
+    pub avatar_travel: bool,
+    pub following: bool,
 }
 
 /// One attachment point of "Put on ▸ Attach" or "Attach HUD".
@@ -229,6 +231,9 @@ pub enum CtxAction {
         offset: Vec3,
     },
     Zoom(Vec3),
+    GoToAvatar(Uuid),
+    FollowAvatar(Uuid),
+    StopFollowing,
     /// About Land on the parcel at the clicked point (LLToolPie selects it).
     AboutLand(Vec3),
     /// Buy Land on the parcel at the clicked point (Land.Buy).
@@ -642,6 +647,8 @@ fn avatar_menu_reporting(
     let friend = world.social.friends.iter().find(|f| f.id == id).cloned();
     let blocked = world.is_avatar_blocked(&id);
     let here = avatar_position(world, &id).is_some();
+    let travel = !world.agent.is_sitting() && crate::autopilot::avatar_position(world, id).is_some();
+    let following = world.following_avatar == Some(id);
     let online = friend.as_ref().is_none_or(|f| f.online);
     let name = world.social.name_of(&id);
     if !world.rlva_can_name(id) {
@@ -703,6 +710,23 @@ fn avatar_menu_reporting(
             act(CtxAction::ZoomAvatar(id));
         }
     };
+    let navigation = |ui: &mut egui::Ui| {
+        if menu::item_if(ui, p, "walk", aurora_i18n::tr!("ui-context-go-to-avatar"), travel) {
+            act(CtxAction::GoToAvatar(id));
+        }
+        let label = if following {
+            aurora_i18n::tr!("ui-context-stop-following")
+        } else {
+            aurora_i18n::tr!("common-follow")
+        };
+        if menu::item_if(ui, p, "current-location-filled", label, travel || following) {
+            act(if following {
+                CtxAction::StopFollowing
+            } else {
+                CtxAction::FollowAvatar(id)
+            });
+        }
+    };
     let block = |ui: &mut egui::Ui| {
         if menu::check(ui, p, "ban", aurora_i18n::tr!("common-ignore"), blocked, true) {
             act(CtxAction::ToggleBlock(id));
@@ -750,6 +774,7 @@ fn avatar_menu_reporting(
     match kind {
         AvatarList::Nearby => {
             profile(ui);
+            navigation(ui);
             im(ui);
             offer_tp(ui);
             request_tp(ui);
@@ -806,7 +831,7 @@ fn avatar_menu_reporting(
             if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
                 act(CtxAction::PayResident(id));
             }
-            menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("common-follow"));
+            navigation(ui);
             remove_friend(ui);
             menu::separator(ui, p);
             copy(ui);
@@ -839,7 +864,7 @@ fn avatar_menu_reporting(
             tp_to(ui);
             offer_tp(ui);
             request_tp(ui);
-            menu::todo(ui, p, "current-location-filled", aurora_i18n::tr!("ui-context-follow-resident"));
+            navigation(ui);
             remove_friend(ui);
             menu::separator(ui, p);
             if menu::item(ui, p, "flag-filled", aurora_i18n::tr!("ui-context-report-abuse")) {

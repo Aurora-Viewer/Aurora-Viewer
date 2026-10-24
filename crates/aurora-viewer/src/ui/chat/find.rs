@@ -7,6 +7,7 @@
 use super::view::View;
 use crate::theme::Palette;
 use egui::{Color32, RichText};
+use uuid::Uuid;
 
 /// Height of the find bar.
 pub const BAR_H: f32 = 26.0;
@@ -110,12 +111,16 @@ pub fn current_marker(ui: &egui::Ui, p: &Palette) {
     ui.painter().rect_filled(bar, 0.0, p.amber);
 }
 
-pub fn field_id() -> egui::Id {
-    egui::Id::unique("conv_find_field")
+/// The find field of `conversation` (None: the nearby chat): each its
+/// own, as a conversation in its own window (`popout.rs`) has its find
+/// field beside the Conversations window's.
+pub fn field_id(conversation: Option<Uuid>) -> egui::Id {
+    egui::Id::unique(("conv_find_field", conversation))
 }
 
-pub fn filter_id() -> egui::Id {
-    egui::Id::unique("conv_filter_field")
+/// The filter field of `conversation`, the same way.
+pub fn filter_id(conversation: Option<Uuid>) -> egui::Id {
+    egui::Id::unique(("conv_filter_field", conversation))
 }
 
 /// Ctrl+F was pressed for the window this `ui` is in: the keyboard is in
@@ -139,8 +144,18 @@ const BUTTON: f32 = 20.0;
 /// then inside it the match count and previous / next. Enter goes to the
 /// previous (older) match, Shift+Enter to the next one; Escape closes, as
 /// the cross at its end when `cross` (a head without the magnifier's
-/// button). True when it was closed.
-pub fn field(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, face: Color32, f: &mut Find, view: &mut View, cross: bool) -> bool {
+/// button). True when it was closed. `conversation`: whose it is.
+#[allow(clippy::too_many_arguments)]
+pub fn field(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    rect: egui::Rect,
+    face: Color32,
+    f: &mut Find,
+    view: &mut View,
+    cross: bool,
+    conversation: Option<Uuid>,
+) -> bool {
     use super::super::widgets;
     let mut close = false;
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, face);
@@ -175,7 +190,7 @@ pub fn field(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, face: Color32, f:
     let text_w = (ui.available_width() - trailing).max(40.0);
     let edit = ui.add(
         egui::TextEdit::singleline(&mut f.text)
-            .id(field_id())
+            .id(field_id(conversation))
             .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(
                 ui.ctx(),
                 &egui::TextStyle::Body.resolve(ui.style()),
