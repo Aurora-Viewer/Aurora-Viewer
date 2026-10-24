@@ -9,6 +9,7 @@ use egui::{RichText, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
 mod aurora;
+mod bulk_permissions;
 mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
 mod context;
@@ -305,6 +306,7 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    bulk_permissions: bulk_permissions::State,
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
     /// Library wearables being copied to be worn: copy request → replace.
@@ -422,6 +424,10 @@ pub struct AnimationStats {
 }
 
 impl InventoryUi {
+    pub(crate) fn open_bulk_permissions(&mut self, roots: Vec<Uuid>) {
+        self.bulk_permissions.open(roots);
+    }
+
     pub(crate) fn load_received(&mut self, path: std::path::PathBuf, root: Uuid) {
         self.received_badge = received::Badge::load(path, root);
     }
@@ -1520,6 +1526,7 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
+    bulk_permissions::show(ctx, p, inv, st, prefs, world.agent_id, &mut actions);
     st.visible.clear();
     if st.fetch_all && st.search.trim().is_empty() && !st.filters.active() && st.links_filter.is_none() && st.tab == 0 {
         // Full fetches requested by mutation dialogs must keep running even
@@ -1666,6 +1673,7 @@ pub fn show(
                 aurora::widen(ctx, &window_id);
             }
         }
+        bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, prefs, world.agent_id, &mut actions);
         finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
         controls::dialogs(ctx, p, &mut w.state, prefs);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
@@ -1712,7 +1720,12 @@ pub fn show(
     // Documents and confirmations outlive the inventory window which opened
     // them, just like the main inventory's auxiliary floaters.
     windows.retain(|w| {
-        w.open || w.state.preview.is_some() || w.state.dialog.is_some() || w.state.move_to.is_some() || w.state.thumbnail.item.is_some()
+        w.open
+            || w.state.preview.is_some()
+            || w.state.dialog.is_some()
+            || w.state.move_to.is_some()
+            || w.state.thumbnail.item.is_some()
+            || w.state.bulk_permissions.active()
     });
     windows.append(&mut spawned);
     st.windows = windows;

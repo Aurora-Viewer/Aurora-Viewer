@@ -932,6 +932,12 @@ including wrapped and empty rows. Inline code retains its glyph highlight.
 `ui/texture_library.rs` owns the compact lateral grid and bottom shelf, their
 shared folder/search/type state and inventory management shortcut.
 
+`ui/inventory/bulk_permissions.rs` pins selected items/folders, incrementally loads
+real descendants and submits permission-only AIS mutations through the normal
+inventory operation/progress path. Library, protected, foreign-owned items and
+links are excluded. Its controls and type filters are shared with
+`build/ui/contents_permissions.rs`.
+
 `ui/inventory/view.rs` also publishes the main inventory's saved sort into
 the UI context each frame. Texture/material trees inherit that sort directly;
 independent inventory selectors share an immutable order projection, cached by

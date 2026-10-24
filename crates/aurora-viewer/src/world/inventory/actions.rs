@@ -410,6 +410,9 @@ pub fn demo_mutate(inv: &mut Inventory, agent: Uuid, change: Mutation) -> Result
                     if body.has("thumbnail") {
                         it.thumbnail = body["thumbnail"]["asset_id"].as_uuid();
                     }
+                    if body.has("flags") {
+                        it.flags = body["flags"].as_u32();
+                    }
                     if body.has("desc") {
                         it.desc = body["desc"].to_string_value();
                     }

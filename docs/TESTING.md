@@ -3769,6 +3769,10 @@ failure. Grid validation and any paid upload are performed by the human.
   the windows. The build window keeps its width across its six sections,
   including Shape for the advanced settings; long lists scroll in the body,
   the actions stay visible. Modal confirmations keep the blurred background.
+- **`AURORA_DEMO_INVENTORY=bulk-multi|bulk-folder|bulk-permissions`**: selected items
+  and folder context menus expose Bulk permissions; the last mode opens the
+  shared type/permission controls directly. Apply/OK use synthetic inventory
+  mutations offline. Folders include real subfolders; links are excluded.
 - **`AURORA_DEMO_INVENTORY=search-selection|search-selection-keyboard`**:
   search for item 1490 in a 1,500-item folder, select its real row at frames
   650–651, then clear the query using the field's cross at 720–721 or
