@@ -452,6 +452,13 @@ impl OptionsUi {
         self.capture = None;
     }
 
+    /// Opens the Chat page on the YouTube player's settings (a player's
+    /// cog, #848).
+    pub fn open_videos(&mut self) {
+        self.open(Page::Chat, 0);
+        self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-video-volume")));
+    }
+
     /// Opens the Sound and voice page on one of its parts.
     pub fn open_audio(&mut self, section: AudioSection) {
         self.open(Page::Sound, 2);

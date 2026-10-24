@@ -139,7 +139,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
 /// The pictures and videos shown under the links of the conversations
 /// (`link_preview.rs`): when they load, where, how large, the sites hidden.
 fn link_previews(cx: &mut Cx) {
-    use crate::link_preview::{Load, Player, Size};
+    use crate::link_preview::{Load, Size};
     use aurora_i18n::tr;
     let p = cx.p;
     cx.group(tr!("ui-options-link-previews"), |cx| {
@@ -171,15 +171,6 @@ fn link_previews(cx: &mut Cx) {
             tr!("ui-options-link-previews-nearby"),
             tr!("ui-options-link-previews-nearby-hint"),
             &field!(link_previews.nearby),
-        );
-        cx.choice(
-            tr!("ui-options-link-previews-player"),
-            tr!("ui-options-link-previews-player-hint"),
-            &field!(link_previews.player),
-            &[
-                (Player::InCard, tr!("ui-options-link-previews-in-card"), true),
-                (Player::Window, tr!("ui-options-link-previews-in-window"), true),
-            ],
         );
         cx.choice(
             tr!("ui-options-link-previews-size"),
@@ -217,6 +208,80 @@ fn link_previews(cx: &mut Cx) {
         } else {
             cx.track(&field!(link_previews.hidden_sites));
         }
+    });
+    videos(cx);
+}
+
+/// The YouTube player of the previews (#848): where it plays, its volume
+/// kept from one video to the next, its subtitles. YouTube's player
+/// offers no more through its address: the subtitles' font and size and
+/// the quality stay in its own cog menu.
+fn videos(cx: &mut Cx) {
+    use crate::link_preview::Player;
+    use aurora_i18n::tr;
+    let p = cx.p;
+    cx.group(tr!("ui-options-videos"), |cx| {
+        cx.choice(
+            tr!("ui-options-link-previews-player"),
+            tr!("ui-options-link-previews-player-hint"),
+            &field!(link_previews.player),
+            &[
+                (Player::InCard, tr!("ui-options-link-previews-in-card"), true),
+                (Player::Window, tr!("ui-options-link-previews-in-window"), true),
+            ],
+        );
+        cx.wide().row(
+            tr!("ui-options-video-volume"),
+            tr!("ui-options-video-volume-hint"),
+            &field!(link_previews.video_volume),
+            |ui, s| {
+                let v = &mut s.link_previews.video_volume;
+                ui.spacing_mut().slider_width = super::super::COMBO_W;
+                let changed = ui
+                    .add(
+                        egui::Slider::new(v, 0.0..=1.0)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .trailing_fill(true)
+                            .show_value(false),
+                    )
+                    .changed();
+                ui.label(RichText::new(format!("{:>3.0} %", *v * 100.0)).size(12.0).color(p.muted));
+                changed
+            },
+        );
+        cx.toggle(
+            tr!("ui-options-video-subtitles"),
+            tr!("ui-options-video-subtitles-hint"),
+            &field!(link_previews.subtitles),
+        );
+        let off = !cx.s.link_previews.subtitles;
+        cx.subs(off, |cx| {
+            let languages: [(&'static str, &str); 8] = [
+                ("", tr!("ui-options-video-subtitles-interface")),
+                ("en", tr!("ui-options-video-language-en")),
+                ("fr", tr!("ui-options-video-language-fr")),
+                ("de", tr!("ui-options-video-language-de")),
+                ("es", tr!("ui-options-video-language-es")),
+                ("it", tr!("ui-options-video-language-it")),
+                ("pt", tr!("ui-options-video-language-pt")),
+                ("ja", tr!("ui-options-video-language-ja")),
+            ];
+            let words: Vec<&str> = languages.iter().map(|(_, l)| *l).collect();
+            cx.keywords(&words.join(" ")).row(
+                tr!("ui-options-video-subtitles-language"),
+                "",
+                &field!(link_previews.subtitle_language),
+                |ui, s| {
+                    let lang = &mut s.link_previews.subtitle_language;
+                    let mut code = languages.iter().find(|(c, _)| *c == lang.as_str()).map_or("", |(c, _)| *c);
+                    let changed = super::super::combo(ui, &mut code, &languages);
+                    if changed {
+                        *lang = code.to_owned();
+                    }
+                    changed
+                },
+            );
+        });
     });
 }
 

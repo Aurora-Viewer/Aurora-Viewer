@@ -97,6 +97,14 @@ pub struct Settings {
     pub size: Size,
     /// Sites whose links get no preview (a link's menu adds them).
     pub hidden_sites: Vec<String>,
+    /// The level of the player's own volume, 0 to 1, kept from one video
+    /// to the next (#848): set by the player's slider or Preferences, and
+    /// still scaled by the master and media volumes.
+    pub video_volume: f32,
+    /// A video starts with its subtitles shown.
+    pub subtitles: bool,
+    /// The subtitles' language, a code such as "fr" ("" = the viewer's).
+    pub subtitle_language: String,
 }
 
 impl Default for Settings {
@@ -110,8 +118,53 @@ impl Default for Settings {
             player: Player::default(),
             size: Size::default(),
             hidden_sites: Vec::new(),
+            video_volume: 1.0,
+            subtitles: false,
+            subtitle_language: String::new(),
         }
     }
+}
+
+impl Settings {
+    /// What the player starts with, in the viewer's `language`.
+    pub fn player_options(&self, language: &str) -> PlayerOptions {
+        let language = language_code(language).unwrap_or_else(|| "en".to_owned());
+        PlayerOptions {
+            volume: (self.video_volume.clamp(0.0, 1.0) * 100.0).round() as u8,
+            subtitles: self
+                .subtitles
+                .then(|| language_code(&self.subtitle_language).unwrap_or_else(|| language.clone())),
+            language,
+        }
+    }
+}
+
+/// How a video starts playing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlayerOptions {
+    /// The player's own volume, 0 to 100.
+    pub volume: u8,
+    /// The subtitles' language when they are shown.
+    pub subtitles: Option<String>,
+    /// The language of the player's interface.
+    pub language: String,
+}
+
+impl Default for PlayerOptions {
+    fn default() -> Self {
+        PlayerOptions {
+            volume: 100,
+            subtitles: None,
+            language: "en".to_owned(),
+        }
+    }
+}
+
+/// A language code fit for the player's address: letters and `-`, 2 to 8
+/// long ("fr", "pt-BR"); anything else is refused.
+fn language_code(s: &str) -> Option<String> {
+    let s = s.trim();
+    ((2..=8).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-') && !s.starts_with('-')).then(|| s.to_owned())
 }
 
 /// The conversation a link is in.
@@ -151,14 +204,24 @@ impl Video {
         )
     }
 
-    /// The player alone, on YouTube's domain that sets no cookie.
-    pub fn player(&self) -> String {
+    /// The player alone, on YouTube's domain that sets no cookie: its
+    /// interface in the viewer's language, the subtitles shown in theirs
+    /// when asked (`cc_load_policy`, `cc_lang_pref`), and the page around it
+    /// allowed to set and read its volume (`enablejsapi`).
+    pub fn player(&self, options: &PlayerOptions) -> String {
         let start = if self.start > 0 {
             format!("&start={}", self.start)
         } else {
             String::new()
         };
-        format!("https://www.youtube-nocookie.com/embed/{}?autoplay=1&rel=0{start}", self.id)
+        let subtitles = match &options.subtitles {
+            Some(lang) => format!("&cc_load_policy=1&cc_lang_pref={lang}"),
+            None => String::new(),
+        };
+        format!(
+            "https://www.youtube-nocookie.com/embed/{}?autoplay=1&rel=0&enablejsapi=1&hl={}{subtitles}{start}",
+            self.id, options.language
+        )
     }
 
     /// The page the browser opens to play it: YouTube's player refuses a
@@ -166,17 +229,29 @@ impl Video {
     /// opened directly never does; so the player sits in a page of our
     /// own, served on this machine (`player_page`). The player's address
     /// alone when that page cannot be served.
-    pub fn player_page(&self) -> String {
+    pub fn player_page(&self, options: &PlayerOptions) -> String {
         match player_server() {
-            Some(port) => format!("http://127.0.0.1:{port}/youtube/{}?start={}", self.id, self.start),
-            None => self.player(),
+            Some(port) => {
+                let cc = options.subtitles.as_ref().map(|l| format!("&cc={l}")).unwrap_or_default();
+                format!(
+                    "http://127.0.0.1:{port}/youtube/{}?start={}&vol={}&hl={}{cc}",
+                    self.id, self.start, options.volume, options.language
+                )
+            }
+            None => self.player(options),
         }
     }
 }
 
 /// The page holding a video's player, for `id` (checked) from `start`.
-fn player_page(id: &str, start: u32, port: u16) -> String {
-    let player = Video { id: id.to_owned(), start }.player();
+/// Its script speaks YouTube's embed protocol by `postMessage` (what
+/// YouTube's iframe API does, without loading that script): once the
+/// player is ready it gets the volume kept, and each change made with the
+/// player's own slider goes back to the viewer (`/volume`), so the next
+/// video starts at the same level (#848).
+fn player_page(id: &str, start: u32, options: &PlayerOptions, port: u16) -> String {
+    let player = Video { id: id.to_owned(), start }.player(options);
+    let volume = options.volume.min(100);
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
          <meta name=\"referrer\" content=\"strict-origin-when-cross-origin\">\
@@ -184,7 +259,17 @@ fn player_page(id: &str, start: u32, port: u16) -> String {
          iframe{{border:0;width:100%;height:100%}}</style></head><body>\
          <iframe src=\"{player}&amp;origin=http%3A%2F%2F127.0.0.1%3A{port}\" \
          allow=\"autoplay; encrypted-media; picture-in-picture; fullscreen\" allowfullscreen \
-         referrerpolicy=\"strict-origin-when-cross-origin\"></iframe></body></html>"
+         referrerpolicy=\"strict-origin-when-cross-origin\"></iframe>\
+         <script>(function(){{var f=document.querySelector('iframe'),o='https://www.youtube-nocookie.com',\
+         v={volume},since=0;\
+         function post(m){{f.contentWindow.postMessage(JSON.stringify(m),o);}}\
+         f.addEventListener('load',function(){{post({{event:'listening',id:1,channel:'widget'}});}});\
+         window.addEventListener('message',function(e){{if(e.origin!==o)return;var d;\
+         try{{d=JSON.parse(e.data);}}catch(x){{return;}}\
+         if(d.event==='onReady'){{post({{event:'command',func:'setVolume',args:[v]}});since=Date.now()+1500;return;}}\
+         if(!since||Date.now()<since||d.event!=='infoDelivery'||!d.info||typeof d.info.volume!=='number')return;\
+         var n=Math.round(d.info.volume);if(n!==v){{v=n;new Image().src='/volume?v='+n;}}}});}})();</script>\
+         </body></html>"
     )
 }
 
@@ -194,12 +279,34 @@ fn player_answer(request: &str, port: u16) -> Option<String> {
     let path = request.strip_prefix("GET /youtube/")?.split(' ').next()?;
     let (id, query) = path.split_once('?').unwrap_or((path, ""));
     let id = video_id(id)?;
-    let start = query
-        .split('&')
-        .find_map(|kv| kv.strip_prefix("start="))
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    Some(player_page(&id, start, port))
+    let param = |name: &str| {
+        query
+            .split('&')
+            .find_map(|kv| kv.strip_prefix(name).and_then(|v| v.strip_prefix('=')))
+    };
+    let start = param("start").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let options = PlayerOptions {
+        volume: param("vol").and_then(|v| v.parse::<u8>().ok()).unwrap_or(100).min(100),
+        subtitles: param("cc").and_then(language_code),
+        language: param("hl").and_then(language_code).unwrap_or_else(|| "en".to_owned()),
+    };
+    Some(player_page(&id, start, &options, port))
+}
+
+/// A level the player's page reports (`GET /volume?v=<0-100>`).
+fn volume_answer(request: &str) -> Option<u8> {
+    let path = request.strip_prefix("GET /volume?v=")?.split(' ').next()?;
+    path.parse::<u8>().ok().filter(|v| *v <= 100)
+}
+
+/// The last level the player reported, not yet taken by the app (-1: none).
+static REPORTED_VOLUME: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+/// The player's volume changed with its own slider, 0 to 1: the app keeps
+/// it in the settings. Once per change.
+pub fn take_video_volume() -> Option<f32> {
+    let v = REPORTED_VOLUME.swap(-1, std::sync::atomic::Ordering::Relaxed);
+    (v >= 0).then(|| v as f32 / 100.0)
 }
 
 /// The loopback server of the player pages, started once; its port.
@@ -218,7 +325,13 @@ fn player_server() -> Option<u16> {
                 let mut buf = [0u8; 2048];
                 let n = stream.read(&mut buf).unwrap_or(0);
                 let request = String::from_utf8_lossy(&buf[..n]);
-                let answer = match player_answer(request.lines().next().unwrap_or(""), port) {
+                let line = request.lines().next().unwrap_or("");
+                if let Some(volume) = volume_answer(line) {
+                    REPORTED_VOLUME.store(i32::from(volume), std::sync::atomic::Ordering::Relaxed);
+                    let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                    continue;
+                }
+                let answer = match player_answer(line, port) {
                     Some(page) => format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n\
                          Content-Length: {}\r\nConnection: close\r\n\r\n{page}",
@@ -354,6 +467,9 @@ pub struct VideoInfo {
     pub title: String,
     pub channel: String,
     pub thumbnail: Option<Picture>,
+    /// Width over height of the video itself (oEmbed's player size), when
+    /// YouTube says it: a portrait short, an old 4:3 clip.
+    pub aspect: Option<f32>,
 }
 
 pub enum Content {
@@ -471,11 +587,19 @@ pub async fn fetch_video(client: &reqwest::Client, video: &Video) -> Result<Vide
     if about.is_none() && thumbnail.is_none() {
         return Err(Failure::Unavailable);
     }
+    let aspect = about.as_ref().and_then(|v| aspect(v["width"].as_f64()?, v["height"].as_f64()?));
     Ok(VideoInfo {
         title: text("title"),
         channel: text("author_name"),
         thumbnail,
+        aspect,
     })
+}
+
+/// A video's width over height, from sizes that make sense only.
+fn aspect(w: f64, h: f64) -> Option<f32> {
+    let a = (w / h) as f32;
+    (w > 0.0 && h > 0.0 && a.is_finite() && (0.2..=5.0).contains(&a)).then_some(a)
 }
 
 fn color_image(img: &image::RgbaImage) -> egui::ColorImage {
@@ -588,10 +712,18 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
         return Err(Failure::Unavailable);
     }
     match target {
+        // a short is upright; the zoo clip is 4:3, as on YouTube
+        Target::Video(_) if url.contains("/shorts/") => Ok(Content::Video(VideoInfo {
+            title: "Aurora short".into(),
+            channel: "Aurora".into(),
+            thumbnail: Some(demo_still(480, 360, 1)),
+            aspect: Some(9.0 / 16.0),
+        })),
         Target::Video(_) => Ok(Content::Video(VideoInfo {
             title: "Me at the zoo".into(),
             channel: "jawed".into(),
             thumbnail: Some(demo_still(480, 360, 1)),
+            aspect: Some(4.0 / 3.0),
         })),
         Target::Picture if file.ends_with(".gif") => Ok(Content::Picture(demo_gif())),
         Target::Picture => Ok(Content::Picture(demo_still(640, 480, 0))),
@@ -732,18 +864,72 @@ mod tests {
             start: 90,
         };
         assert_eq!(
-            v.player(),
-            "https://www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1&rel=0&start=90"
+            v.player(&PlayerOptions::default()),
+            "https://www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1&rel=0&enablejsapi=1&hl=en&start=90"
         );
         assert!(v.oembed().ends_with("v%3DjNQXAC9IVRw"));
+    }
+
+    /// The settings become the player's options: its volume in YouTube's
+    /// 0-100, the interface in the viewer's language, the subtitles in the
+    /// one chosen or the viewer's.
+    #[test]
+    fn the_settings_set_the_players_volume_language_and_subtitles() {
+        let mut s = Settings::default();
+        assert_eq!(
+            s.player_options("fr"),
+            PlayerOptions {
+                volume: 100,
+                subtitles: None,
+                language: "fr".into()
+            }
+        );
+        s.video_volume = 0.304;
+        s.subtitles = true;
+        assert_eq!(s.player_options("fr").volume, 30);
+        assert_eq!(s.player_options("fr").subtitles.as_deref(), Some("fr"));
+        s.subtitle_language = "pt-BR".into();
+        assert_eq!(s.player_options("fr").subtitles.as_deref(), Some("pt-BR"));
+        // a code that could break the address is ignored
+        s.subtitle_language = "fr&x=1".into();
+        assert_eq!(s.player_options("de").subtitles.as_deref(), Some("de"));
+        assert_eq!(s.player_options("<b>").language, "en");
+        s.video_volume = 7.0;
+        assert_eq!(s.player_options("en").volume, 100);
+        let v = Video {
+            id: "jNQXAC9IVRw".into(),
+            start: 0,
+        };
+        assert!(
+            v.player(&s.player_options("de"))
+                .ends_with("enablejsapi=1&hl=de&cc_load_policy=1&cc_lang_pref=de")
+        );
+    }
+
+    #[test]
+    fn a_video_s_aspect_comes_from_sizes_that_make_sense() {
+        assert_eq!(aspect(200.0, 150.0), Some(4.0 / 3.0));
+        assert_eq!(aspect(113.0, 200.0), Some(113.0 / 200.0));
+        assert_eq!(aspect(0.0, 150.0), None);
+        assert_eq!(aspect(200.0, 0.0), None);
+        assert_eq!(aspect(5000.0, 10.0), None);
     }
 
     /// The local page serves a checked video only: nothing of the request
     /// reaches the page but an id and a number.
     #[test]
     fn the_player_page_holds_a_checked_video_only() {
-        let page = player_answer("GET /youtube/jNQXAC9IVRw?start=5 HTTP/1.1", 4321).unwrap();
-        assert!(page.contains("src=\"https://www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1&rel=0&start=5&amp;origin="));
+        let page = player_answer("GET /youtube/jNQXAC9IVRw?start=5&vol=30&hl=fr&cc=de HTTP/1.1", 4321).unwrap();
+        assert!(page.contains(concat!(
+            "src=\"https://www.youtube-nocookie.com/embed/jNQXAC9IVRw?autoplay=1&rel=0&enablejsapi=1&hl=fr",
+            "&cc_load_policy=1&cc_lang_pref=de&start=5&amp;origin="
+        )));
+        // the volume kept reaches the page's script
+        assert!(page.contains("v=30,"));
+        // options that could break the page fall back to safe values
+        let page = player_answer("GET /youtube/jNQXAC9IVRw?vol=900&hl=%3Cb%3E&cc=x\" HTTP/1.1", 4321).unwrap();
+        assert!(page.contains("v=100,"));
+        assert!(page.contains("enablejsapi=1&hl=en&amp;origin"));
         assert!(page.contains("referrerpolicy=\"strict-origin-when-cross-origin\""));
         assert!(player_answer("GET /youtube/<script>x</s HTTP/1.1", 4321).is_none());
         assert!(player_answer("GET /youtube/jNQXAC9IVRw\"onload HTTP/1.1", 4321).is_none());
@@ -753,8 +939,20 @@ mod tests {
         assert!(
             player_answer("GET /youtube/jNQXAC9IVRw?start=x\" HTTP/1.1", 4321)
                 .unwrap()
-                .contains("rel=0&amp;origin")
+                .contains("hl=en&amp;origin")
         );
+    }
+
+    /// The page reports the player's volume to `/volume`, a number from 0
+    /// to 100 and nothing else.
+    #[test]
+    fn the_player_reports_its_volume_as_a_number_only() {
+        assert_eq!(volume_answer("GET /volume?v=30 HTTP/1.1"), Some(30));
+        assert_eq!(volume_answer("GET /volume?v=0 HTTP/1.1"), Some(0));
+        assert_eq!(volume_answer("GET /volume?v=101 HTTP/1.1"), None);
+        assert_eq!(volume_answer("GET /volume?v=-1 HTTP/1.1"), None);
+        assert_eq!(volume_answer("POST /volume?v=30 HTTP/1.1"), None);
+        assert_eq!(volume_answer("GET /youtube/jNQXAC9IVRw HTTP/1.1"), None);
     }
 
     fn png(w: u32, h: u32) -> Vec<u8> {

@@ -12195,6 +12195,18 @@ impl App {
                     self.settings.link_previews.hidden_sites.push(site);
                     self.settings.save();
                 }
+                // the player's own volume slider moved: the next video
+                // starts there (#848); saved with the settings, like the
+                // volumes of Sound and voice
+                if let Some(volume) = crate::link_preview::take_video_volume() {
+                    log::info!("link previews: video volume kept at {:.0} %", volume * 100.0);
+                    self.settings.link_previews.video_volume = volume;
+                }
+                // a player's cog: the video settings
+                if std::mem::take(&mut self.chat_ui.previews.open_settings) {
+                    self.panels.settings = true;
+                    self.options_ui.open_videos();
+                }
                 // a YouTube video playing in its window, or a card's that
                 // stopped being drawn
                 self.chat_ui.previews.player_window(&ctx, &p);

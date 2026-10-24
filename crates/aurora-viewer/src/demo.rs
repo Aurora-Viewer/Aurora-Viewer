@@ -1034,8 +1034,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             if let Some(extra) = emoji_lines {
                 lines.splice(4..4, extra);
             }
-            // AURORA_DEMO_CONV_PREVIEWS=1|states: links with their cards
-            // (#538, #739), made here without network (`link_preview::demo`)
+            // AURORA_DEMO_CONV_PREVIEWS=1|states|videos: links with their
+            // cards (#538, #739, #848), made here without network
+            // (`link_preview::demo`)
             let preview_lines = std::env::var("AURORA_DEMO_CONV_PREVIEWS").ok().map(|mode| {
                 let with = |key: &str, url: &str| format!("{key} {url}");
                 if mode == "net" {
@@ -1062,6 +1063,18 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ChatKind::Own,
                             "https://www.youtube.com/watch?v=jNQXAC9IVRw&t=5s",
                         ),
+                    ]
+                } else if mode == "videos" {
+                    // a 4:3 clip and an upright short (#848)
+                    vec![
+                        line(
+                            ago(8),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
+                        ),
+                        line(ago(5), &me, Uuid::nil(), ChatKind::Own, "https://youtube.com/shorts/DemoShort01"),
                     ]
                 } else if mode == "states" {
                     vec![
