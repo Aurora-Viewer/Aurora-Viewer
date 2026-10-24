@@ -1,5 +1,5 @@
 //! What a notice of the viewer in the nearby chat is about (#741): a
-//! teleport, a resident, an item, the region, the music… Its compact row
+//! teleport, a resident, an item, the region, the music, a call… Its compact row
 //! shows an icon of that kind instead of the same "i" for all of them.
 //!
 //! The topic is kept beside the lines, by each notice's time and text, so
@@ -28,6 +28,8 @@ pub enum Topic {
     Region,
     /// The parcel's music.
     Media,
+    /// A call: its start, its end, its errors.
+    Call,
     /// Something refused or that failed.
     Warning,
 }

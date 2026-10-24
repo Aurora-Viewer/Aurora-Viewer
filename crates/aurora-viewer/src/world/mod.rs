@@ -702,9 +702,12 @@ impl World {
         let cache_dir = self.cache_dir.take();
         let mut chat_log = std::mem::take(&mut self.chat_log);
         chat_log.logout();
+        // a setting, not the session's: the arrival's lines follow it too
+        let quiet = self.quiet_automated_chat;
         *self = World::new(lib);
         self.chat_log = chat_log;
         self.cache_dir = cache_dir;
+        self.quiet_automated_chat = quiet;
     }
 
     /// saveOpenIMs, when the session ends (quit, logout or disconnection).
@@ -1471,6 +1474,21 @@ impl World {
         };
         self.notice_topics.note(&line, topic);
         self.push_chat(line);
+    }
+
+    /// A notice of the viewer in a conversation (a call, an automatic
+    /// reply), about `topic`, never unread.
+    pub fn conversation_notice(&mut self, session: Uuid, text: impl Into<String>, topic: notice_topics::Topic) {
+        let line = ChatLine {
+            time: SystemTime::now(),
+            from: String::new(),
+            text: text.into(),
+            kind: ChatKind::System,
+            source: Uuid::nil(),
+            origin: Origin::Live,
+        };
+        self.notice_topics.note(&line, topic);
+        self.conversation_push(session, line, false);
     }
 
     fn ensure_region(&mut self, h: RegionHandle, size: (u32, u32)) -> &mut Region {

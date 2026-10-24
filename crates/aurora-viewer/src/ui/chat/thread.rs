@@ -89,7 +89,7 @@ pub(super) fn draw(
         return;
     }
     // (the notices above are compact rows already)
-    if super::object_row::compact(line, env.compact_automated) {
+    if super::object_row::compact_in(line, env) {
         // the cube under the pictures, or after the compact rows' times
         let place = if th.compact {
             super::object_row::Place {
@@ -473,7 +473,7 @@ fn notice(ui: &mut egui::Ui, env: &mut LineEnv, th: &Thread, line: &ChatLine, ma
             egui::Rect::from_center_size(egui::pos2(r.center().x, r.top() + 9.0), egui::Vec2::splat(14.0))
         };
         // what it is about, with #741's option (`object_row::icon`)
-        let name = if env.compact_automated {
+        let name = if env.compact_notices {
             super::object_row::icon(env.world, line)
         } else {
             "info-circle-filled"

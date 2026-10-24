@@ -150,6 +150,9 @@ pub struct ChatUi {
     /// Objects' lines take one small row (Preferences › Chat, #475, off),
     /// given every frame by the app.
     pub compact_automated: bool,
+    /// A conversation's notices too (its sub-option, off), given every
+    /// frame by the app.
+    pub compact_im_notices: bool,
     /// The nearby chat's field shows its channel selector (Preferences ›
     /// Chat, off by default), given every frame by the app.
     pub show_channel: bool,
@@ -1854,6 +1857,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         own_name,
         plain_history: false,
         compact_automated: st.compact_automated,
+        compact_notices: object_row::compact_notices(st.compact_automated, st.compact_im_notices, st.selected.is_none()),
         menu: Some(menu),
         bubbles: match rows {
             Rows::Classic(style) => style,
@@ -1991,6 +1995,9 @@ pub(crate) struct LineEnv<'a> {
     pub plain_history: bool,
     /// Objects' lines on one small row like the notices (`compact_object`).
     pub compact_automated: bool,
+    /// The viewer's notices on that row too, with their topic's icon
+    /// (`object_row::compact_notices`).
+    pub compact_notices: bool,
     /// A transcript-owned popup; None for nearby-chat toasts and fixtures.
     pub menu: Option<egui::Id>,
     /// The lines as bubbles (`bubbles.rs`), with the sender's name opening
@@ -2029,7 +2036,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
         offer_card::draw_line(ui, env, line, offer);
         return;
     }
-    if object_row::compact(line, env.compact_automated) {
+    if object_row::compact_in(line, env) {
         // the icon where the header strips have the picture, the text at
         // the lines' text
         let place = object_row::Place {

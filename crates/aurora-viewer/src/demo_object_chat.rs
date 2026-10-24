@@ -4,7 +4,9 @@
 //! link, and our HUD's owner-say. The Conversations window shows the nearby
 //! chat in the style named, or `lines` the cards above the chat bar (the
 //! window closed). `on` turns the compact object rows on for the run,
-//! nothing saved.
+//! nothing saved; `im` shows the friend's conversation instead, with a
+//! call's and an automatic reply's lines, and `imlines` turns their
+//! sub-option on.
 
 use crate::settings::ChatStyle;
 use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetEvent};
@@ -18,6 +20,10 @@ pub struct Scene {
     pub style: Option<ChatStyle>,
     /// The compact object rows, for the run.
     pub on: bool,
+    /// The friend's conversation shown instead of the nearby chat.
+    pub im: bool,
+    /// The conversations' system lines compacted too, for the run.
+    pub im_lines: bool,
 }
 
 pub fn scene() -> Option<Scene> {
@@ -34,9 +40,12 @@ fn parse(v: &str) -> Option<Scene> {
         "lines" => None,
         _ => return None,
     };
+    let flags: Vec<&str> = flags.collect();
     Some(Scene {
         style,
-        on: flags.any(|f| f == "on"),
+        on: flags.contains(&"on"),
+        im: flags.contains(&"im"),
+        im_lines: flags.contains(&"imlines"),
     })
 }
 
@@ -141,6 +150,18 @@ pub fn notices(world: &mut crate::world::World) {
     let online = aurora_i18n::tr!("world-social-is-online", n = aurora_i18n::tr!("demo-nova-example").to_string());
     world.system_notice(online, Topic::People);
     world.system_notice(aurora_i18n::tr!("world-mod-teleporting"), Topic::Teleport);
+    // the friend's conversation: a call ended, an automatic reply
+    let friend = super::DEMO_FRIEND;
+    let ended = aurora_i18n::tr!(
+        "world-calls-ended-by-other",
+        name = aurora_i18n::tr!("demo-orion-example").to_string()
+    );
+    world.conversation_notice(friend, ended, Topic::Call);
+    let reply = aurora_i18n::tr!(
+        "world-status-auto-reply-sent",
+        text = aurora_i18n::tr!("demo-object-chat-reply").to_string()
+    );
+    world.conversation_notice(friend, reply, Topic::Info);
 }
 
 #[cfg(test)]
@@ -149,7 +170,14 @@ mod tests {
 
     #[test]
     fn the_scenario_names_a_style_or_the_lines_and_turns_the_rows_on() {
-        let scene = |style, on| Some(Scene { style, on });
+        let scene = |style, on| {
+            Some(Scene {
+                style,
+                on,
+                im: false,
+                im_lines: false,
+            })
+        };
         assert_eq!(parse("aurora"), scene(Some(ChatStyle::Aurora), false));
         assert_eq!(parse("1"), scene(Some(ChatStyle::Aurora), false));
         assert_eq!(parse("compact:on"), scene(Some(ChatStyle::Compact), true));
@@ -157,5 +185,7 @@ mod tests {
         assert_eq!(parse("legacy"), scene(Some(ChatStyle::Legacy), false));
         assert_eq!(parse("lines:on"), scene(None, true));
         assert_eq!(parse("nothing"), None);
+        let im = parse("aurora:on:im:imlines").expect("a scene");
+        assert!(im.on && im.im && im.im_lines);
     }
 }

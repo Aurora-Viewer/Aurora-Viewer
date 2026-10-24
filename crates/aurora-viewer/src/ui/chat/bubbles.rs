@@ -153,7 +153,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     }
     // (the current match's marker starts under the day)
     super::find::note_message(ui, ui.cursor().top(), None);
-    let compact = super::object_row::compact(line, env.compact_automated);
+    let compact = super::object_row::compact_in(line, env);
     if line.kind == ChatKind::System && !compact {
         system_pill(ui, env, line, mark);
         return;
@@ -468,6 +468,7 @@ mod tests {
                     own_name: "Aurora Demo",
                     plain_history: false,
                     compact_automated: false,
+                    compact_notices: false,
                     menu: None,
                     bubbles: Some(true),
                     previews: None,

@@ -409,6 +409,7 @@ impl HistoryUi {
             plain_history: true,
             // the transcripts as they were said
             compact_automated: false,
+            compact_notices: false,
             menu: Some(menu),
             bubbles: None,
             previews: None,

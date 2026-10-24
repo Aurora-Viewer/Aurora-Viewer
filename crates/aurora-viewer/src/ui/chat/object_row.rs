@@ -41,6 +41,22 @@ pub(crate) fn compact(line: &ChatLine, on: bool) -> bool {
     on && line.kind.is_automated()
 }
 
+/// The viewer's notices are compacted too: in the nearby chat with the
+/// option, in a conversation (a call, an automatic reply) only with its
+/// sub-option as well (the human's choice of 2026-10-24).
+pub(crate) fn compact_notices(on: bool, im_lines: bool, nearby: bool) -> bool {
+    on && (nearby || im_lines)
+}
+
+/// The line takes a compact row in a conversation drawn with `env`.
+pub(super) fn compact_in(line: &ChatLine, env: &LineEnv) -> bool {
+    if line.kind == ChatKind::System {
+        env.compact_notices
+    } else {
+        compact(line, env.compact_automated)
+    }
+}
+
 /// The icon of a compact row: the cube of objects, or what a notice is
 /// about, in the icons the interface already gives these things.
 pub(super) fn icon(world: &World, line: &ChatLine) -> &'static str {
@@ -54,6 +70,7 @@ pub(super) fn icon(world: &World, line: &ChatLine) -> &'static str {
         Topic::Items => "box",
         Topic::Region => "world-filled",
         Topic::Media => "music",
+        Topic::Call => "phone-filled",
         Topic::Warning => "alert-triangle-filled",
     }
 }
@@ -277,6 +294,7 @@ pub(super) mod tests {
                     own_name: "Aurora Demo",
                     plain_history: false,
                     compact_automated: on,
+                    compact_notices: on,
                     menu: None,
                     bubbles: style,
                     previews: None,
@@ -410,6 +428,7 @@ pub(super) mod tests {
                                 own_name: "Aurora Demo",
                                 plain_history: false,
                                 compact_automated: true,
+                                compact_notices: true,
                                 menu: None,
                                 bubbles: None,
                                 previews: None,
@@ -469,6 +488,26 @@ pub(super) mod tests {
         }
     }
 
+    /// A conversation's notices (calls, automatic replies) stay as they are
+    /// unless the sub-option asks for them too; the nearby chat's follow
+    /// the option alone.
+    #[test]
+    fn a_conversations_notices_follow_the_sub_option() {
+        // (option, sub-option, nearby chat) → compacted
+        let cases = [
+            (false, false, true, false),
+            (false, true, true, false),
+            (false, true, false, false),
+            (true, false, true, true),
+            (true, false, false, false),
+            (true, true, false, true),
+            (true, true, true, true),
+        ];
+        for (on, im, nearby, expected) in cases {
+            assert_eq!(compact_notices(on, im, nearby), expected, "{on} {im} {nearby}");
+        }
+    }
+
     /// Objects show their cube, notices the icon of what they are about.
     #[test]
     fn each_row_has_the_icon_of_its_kind() {
@@ -481,6 +520,7 @@ pub(super) mod tests {
             (Topic::Items, "box"),
             (Topic::Region, "world-filled"),
             (Topic::Media, "music"),
+            (Topic::Call, "phone-filled"),
             (Topic::Warning, "alert-triangle-filled"),
             (Topic::Info, "info-circle-filled"),
         ];

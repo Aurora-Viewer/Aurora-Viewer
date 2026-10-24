@@ -259,7 +259,12 @@ fn compact_card<'a>(
         // the time before the line, set on its baseline (in the line's job,
         // a smaller section sits on the bottom of the row, lower)
         let time = times.then(|| super::object_row::time_galley(ui.painter(), p, line));
-        let lead = time.as_ref().map_or(0.0, |t| t.size().x + 5.0);
+        let time_w = time.as_ref().map_or(0.0, |t| t.size().x + 5.0);
+        // a notice's icon of its topic, as in the Conversations window (an
+        // object's cube takes the room its job leaves before its name)
+        let side = super::pic_side(size);
+        let notice = line.kind.is_notice();
+        let lead = time_w + if notice { side + 2.0 } else { 0.0 };
         let BubbleJob {
             job,
             links: line_links,
@@ -277,9 +282,13 @@ fn compact_card<'a>(
         if let Some(time) = time {
             crate::ui::widgets::paint_on_baseline(&painter, time, rect.left(), baseline, p.muted_dim);
         }
+        if notice {
+            let middle = super::object_row::caps_middle(&painter, size, baseline);
+            let r = egui::Rect::from_center_size(egui::pos2(rect.left() + time_w + side * 0.5, middle), egui::vec2(side, side));
+            thread::paint_icon(&painter, super::object_row::icon(world, line), r.shrink(1.0), p.muted_dim);
+        }
         // the cube in the room left before the name, on the capitals
         if let Some((at, _)) = sender {
-            let side = super::pic_side(size);
             let c = galley.pos_from_cursor(egui::text::CCursor::new(at)).translate(origin.to_vec2());
             let middle = super::object_row::caps_middle(&painter, size, baseline);
             let r = egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, middle), egui::vec2(side, side));
@@ -404,6 +413,12 @@ mod tests {
         said.time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_768_504_260);
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.chat.push_back(said);
+        // and a notice about a teleport, said after it
+        let mut notice = line(ChatKind::System, "", 0);
+        notice.text = "LIFT OFF".into();
+        notice.time = world.chat[0].time;
+        world.notice_topics.note(&notice, crate::world::notice_topics::Topic::Teleport);
+        world.chat.push_back(notice);
         let time = hhmm(world.chat[0].time);
         for font in [
             crate::ui::fonts::INTER,
@@ -458,7 +473,8 @@ mod tests {
                 let at = foot(&time);
                 assert!((at - text).abs() <= 0.5 + 1e-3, "{case}: the time at {at}, the text at {text}");
                 let side = super::super::pic_side(super::super::object_row::TEXT) - 2.0;
-                let cube = out
+                // the object's cube, then the notice's icon of its topic
+                let icons: Vec<egui::Rect> = out
                     .shapes
                     .iter()
                     .filter_map(|c| match &c.shape {
@@ -468,8 +484,9 @@ mod tests {
                         }
                         _ => None,
                     })
-                    .next()
-                    .unwrap_or_else(|| panic!("{case}: the cube is drawn"));
+                    .collect();
+                assert_eq!(icons.len(), 2, "{case}: the cube and the notice's icon, {icons:?}");
+                let cube = icons[0];
                 let cap = {
                     let probe = ctx.fonts_mut(|f| {
                         f.layout_no_wrap(
@@ -485,6 +502,13 @@ mod tests {
                     "{case}: the cube's middle {} against the capitals' {}",
                     cube.center().y,
                     text - cap / 2.0
+                );
+                let notice = foot("LIFT OFF");
+                assert!(
+                    (icons[1].center().y - (notice - cap / 2.0)).abs() <= 0.5 + 1e-3,
+                    "{case}: the notice's icon {} against its capitals' {}",
+                    icons[1].center().y,
+                    notice - cap / 2.0
                 );
             }
         }

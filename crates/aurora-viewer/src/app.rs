@@ -12072,6 +12072,8 @@ impl App {
                 self.chat_ui.timestamps = self.settings.chat_timestamps;
                 // AURORA_DEMO_OBJECT_CHAT=…:on: for the run, nothing saved
                 self.chat_ui.compact_automated = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
+                self.chat_ui.compact_im_notices =
+                    self.settings.compact_im_system_lines || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.im_lines));
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
@@ -14328,7 +14330,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.panels.chat = scene.style.is_some();
                 if let Some(style) = scene.style {
-                    self.chat_ui.selected = None;
+                    self.chat_ui.selected = scene.im.then_some(crate::demo::DEMO_FRIEND);
                     self.chat_ui.demo_style = Some(style);
                     ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
                 }
