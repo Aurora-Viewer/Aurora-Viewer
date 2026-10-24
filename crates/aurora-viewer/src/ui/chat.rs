@@ -26,6 +26,7 @@ pub mod previews;
 mod reorder;
 pub(crate) mod select;
 mod sidebar;
+pub mod snooze;
 mod stage;
 mod thread;
 mod typing;
@@ -195,6 +196,8 @@ pub struct ChatUi {
     /// The pictures and videos under links (`previews.rs`), their settings
     /// given every frame by the app.
     pub previews: previews::Previews,
+    /// The duration asked before a group chat's snooze (`snooze.rs`).
+    snooze: Option<snooze::Prompt>,
     /// The conversations in their own windows (`popout.rs`).
     popped: popout::Popped,
     /// The conversations asked for open in their own window (Preferences ›
@@ -238,6 +241,12 @@ impl ChatUi {
         self.reveal = Some(conversation);
         self.show_profile = false;
         self.contacts = false;
+    }
+
+    /// Ask how long to snooze a group chat, `seconds` proposed (the
+    /// SnoozeDuration notification).
+    pub fn ask_snooze(&mut self, group: uuid::Uuid, seconds: u32) {
+        self.snooze = Some(snooze::Prompt::new(group, seconds));
     }
 
     /// A conversation closed: its filter, find bar, rows, draft and recall go with it.
@@ -843,6 +852,9 @@ pub enum ConvAction {
     Close(uuid::Uuid),
     /// Stop receiving a group's chat (and leave its session).
     BlockGroupChat(uuid::Uuid),
+    /// Snooze a group chat: closed without leaving, its messages ignored
+    /// for a while (`snooze.rs`).
+    Snooze(uuid::Uuid),
     /// Open an avatar's profile window.
     Profile(uuid::Uuid),
     /// Call the conversation's resident, group or conference.
@@ -2115,6 +2127,15 @@ fn close_tip(world: &World, session: &uuid::Uuid) -> &'static str {
     } else {
         aurora_i18n::tr!("ui-chat-close-conversation")
     }
+}
+
+/// The snooze of a group chat, wherever it is offered.
+const SNOOZE_ICON: &str = "alarm-snooze-filled";
+
+/// A group chat, which can be snoozed (FSFloaterIM: setCanSnooze for
+/// IM_SESSION_GROUP_START and the invitations of our groups).
+fn can_snooze(world: &World, session: &uuid::Uuid) -> bool {
+    world.groups.sessions.get(session).is_some_and(|s| s.group)
 }
 
 /// One entry of the conversation list: picture (or initials), name, unread

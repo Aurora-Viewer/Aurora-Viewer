@@ -635,6 +635,12 @@ pub struct Settings {
     /// FSMuteGroupWhenNoticesDisabled: refuse group chat of groups whose
     /// notices are turned off.
     pub mute_groups_without_notices: bool,
+    /// GroupSnoozeTime: how long the snooze of a group chat lasts, in
+    /// seconds (900; 0 only closes it until its next message).
+    pub group_snooze_seconds: u32,
+    /// FSEnablePerGroupSnoozeDuration: ask the duration at each snooze
+    /// (off).
+    pub group_snooze_ask: bool,
     /// FSReportBlockToNearbyChat: say in nearby chat when the block list changes.
     pub report_blocks: bool,
     /// Show the invitations to a group we are already in (the Legacy
@@ -745,8 +751,8 @@ pub struct Settings {
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
-    /// Project standing feet onto support and adapt landing recovery to its
-    /// slope (LLKeyframeStandMotion / LLKeyframeFallMotion). Off by default.
+    /// Replace native motion foot placement/recovery with Aurora's terrain
+    /// solver. Off by default: the Legacy Viewer behaviour remains automatic.
     pub ground_avatar_feet: bool,
     /// Also adapt walking, running and crouch-walking feet. Off by default.
     pub ground_feet_while_moving: bool,
@@ -1442,6 +1448,8 @@ impl Default for Settings {
             trusted_sites: Default::default(),
             mute_all_groups: false,
             mute_groups_without_notices: false,
+            group_snooze_seconds: 900,
+            group_snooze_ask: false,
             report_blocks: false,
             show_joined_group_invitations: false,
             script_count_alert: false,

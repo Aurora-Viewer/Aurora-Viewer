@@ -5572,6 +5572,44 @@ impl App {
         ui::notifications::open_conversations(&self.egui_ctx, &mut self.panels.chat);
     }
 
+    /// The Snooze of a group chat (FSFloaterIM::onSnooze, confirmSnooze):
+    /// asks its duration first when the settings say so
+    /// (FSEnablePerGroupSnoozeDuration), else snoozes it for the setting's
+    /// (GroupSnoozeTime; `AURORA_DEMO_SNOOZE` in demo).
+    /// (Fields rather than `self`: it runs while the frame's UI borrows it.)
+    fn ask_or_snooze(
+        settings: &crate::settings::Settings,
+        demo: bool,
+        world: &mut crate::world::World,
+        chat_ui: &mut ui::chat::ChatUi,
+        group: uuid::Uuid,
+    ) {
+        let seconds = demo
+            .then(crate::demo::snooze_seconds)
+            .flatten()
+            .unwrap_or(settings.group_snooze_seconds);
+        if settings.group_snooze_ask || (demo && crate::demo::snooze_ask()) {
+            chat_ui.ask_snooze(group, seconds);
+        } else {
+            Self::snooze_group_chat(world, chat_ui, group, seconds);
+        }
+    }
+
+    /// Snooze a group chat for `seconds` (FSFloaterIM::snooze): its
+    /// conversation closes without leaving the session, and its call ends as
+    /// when it is closed.
+    fn snooze_group_chat(world: &mut crate::world::World, chat_ui: &mut ui::chat::ChatUi, group: uuid::Uuid, seconds: u32) {
+        if !world.snooze_group_chat(group, seconds) {
+            return;
+        }
+        world.conversation_closed(&group);
+        chat_ui.forget(group);
+        if chat_ui.selected == Some(group) {
+            chat_ui.selected = None;
+            chat_ui.show_profile = false;
+        }
+    }
+
     /// A letter key started the nearby chat: in the Conversations window
     /// when it shows the nearby chat, in the chat bar otherwise, with the
     /// character typed in (LLViewerWindow::handleKey; Firestorm's
@@ -12010,6 +12048,22 @@ impl App {
                 {
                     self.world.apply(ev);
                 }
+                // AURORA_DEMO_SNOOZE: Tess writes in the group chat, which
+                // `auto` snoozes by itself
+                if self.demo && self.in_world() {
+                    if let Some(ev) = crate::demo::snooze_message(self.world.agent_id) {
+                        self.world.apply(ev);
+                    }
+                    if crate::demo::snooze_now() {
+                        Self::ask_or_snooze(
+                            &self.settings,
+                            self.demo,
+                            &mut self.world,
+                            &mut self.chat_ui,
+                            crate::demo::DEMO_GROUP1,
+                        );
+                    }
+                }
                 // AURORA_DEMO_CONV_SCROLL=new: the friend writes while we read
                 // higher up
                 if self.demo {
@@ -12057,6 +12111,7 @@ impl App {
                     images: &self.ui_images,
                 });
                 let mut contacts_people = Vec::new();
+                let mut snoozes = Vec::new();
                 for c in ui::chat::show(
                     &ctx,
                     &p,
@@ -12099,6 +12154,7 @@ impl App {
                             // saved once the slider rests
                             self.volumes_save_at = Some(Instant::now() + std::time::Duration::from_millis(500));
                         }
+                        ui::chat::ConvAction::Snooze(id) => snoozes.push(id),
                         ui::chat::ConvAction::BlockGroupChat(id) => {
                             self.world.conversation_closed(&id);
                             self.world.set_group_chat_blocked(id, true);
@@ -12153,6 +12209,12 @@ impl App {
                     }
                 }
                 self.panels.chat = open;
+                for group in snoozes {
+                    Self::ask_or_snooze(&self.settings, self.demo, &mut self.world, &mut self.chat_ui, group);
+                }
+                if let Some((group, seconds)) = ui::chat::snooze::dialog(&ctx, &p, &self.world, &mut self.chat_ui) {
+                    Self::snooze_group_chat(&mut self.world, &mut self.chat_ui, group, seconds);
+                }
                 // a link's menu hid the previews of its site
                 if let Some(site) = self.chat_ui.previews.hide_site.take()
                     && !self.settings.link_previews.hidden_sites.contains(&site)

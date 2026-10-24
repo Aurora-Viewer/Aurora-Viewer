@@ -85,6 +85,28 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-reject-chat-from-groups-whose-notices-you-do-not"),
                 &field!(mute_groups_without_notices),
             );
+            // GroupSnoozeTime and FSEnablePerGroupSnoozeDuration: the
+            // snooze button of a group chat
+            cx.row(
+                tr!("ui-options-group-snooze-duration"),
+                tr!("ui-options-group-snooze-duration-hint"),
+                &field!(group_snooze_seconds),
+                |ui, s| {
+                    ui.add(
+                        egui::DragValue::new(&mut s.group_snooze_seconds)
+                            .custom_parser(aurora_i18n::parse_number)
+                            .range(0..=i32::MAX as u32)
+                            .speed(10.0)
+                            .suffix(" s"),
+                    )
+                    .changed()
+                },
+            );
+            cx.toggle(
+                tr!("ui-options-group-snooze-ask"),
+                tr!("ui-options-group-snooze-ask-hint"),
+                &field!(group_snooze_ask),
+            );
             // FSIgnoreAdHocSessions, FSReportIgnoredAdHocSession,
             // FSDontIgnoreAdHocFromFriends: the same switches as Online
             // status › Ad hoc conferences

@@ -159,6 +159,21 @@ pub(super) fn show(
     {
         actions.push(ConvAction::Close(other));
     }
+    // a group chat's snooze beside its close (FSFloaterIM's title bar)
+    if let Some(other) = selected
+        && super::can_snooze(world, &other)
+        && tool(
+            ui,
+            p,
+            slot(),
+            super::SNOOZE_ICON,
+            aurora_i18n::tr!("ui-chat-snooze-tip"),
+            Tone::Plain,
+        )
+        .clicked()
+    {
+        actions.push(ConvAction::Snooze(other));
+    }
     // the menu of the others
     let more = tool(ui, p, slot(), "dots-filled", aurora_i18n::tr!("ui-chat-more"), Tone::Plain);
     crate::ui::menu::dropdown(&more, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
