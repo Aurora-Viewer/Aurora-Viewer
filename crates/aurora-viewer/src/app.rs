@@ -4369,8 +4369,49 @@ impl App {
                     self.world.media_filter.apply(Edit::Set(site.into(), action));
                 }
             }
+            // media on an item we wear (on our back, or a HUD), on a site the
+            // list does not know: no question unless `-ask` turns
+            // filter_trust_own_worn off; `-blocked` puts the site in the list
+            // as blocked
+            "worn" | "worn-ask" | "worn-blocked" | "hud" | "hud-ask" | "hud-blocked" => {
+                let url = "https://media.example.com/earring/index.html";
+                self.settings.media.filter_trust_own_worn = !mode.ends_with("-ask");
+                if mode.ends_with("-blocked") {
+                    self.world.media_filter.apply(Edit::Set("media.example.com".into(), Action::Deny));
+                }
+                if mode.starts_with("hud") {
+                    self.demo_hud_media(url);
+                } else {
+                    if std::env::var_os("AURORA_DEMO_WORN").is_none() {
+                        for ev in crate::demo::worn::events() {
+                            self.world.apply(ev);
+                        }
+                    }
+                    self.media.demo_entry(crate::demo::worn::root().full_id, 0, url);
+                }
+            }
             _ => log::warn!("AURORA_DEMO_MEDIA_FILTER: unknown mode {mode}"),
         }
+    }
+
+    /// AURORA_DEMO_HUDS=media (and the media filter's `hud` modes): a worn
+    /// HUD screen with media on `url`, playing at once.
+    fn demo_hud_media(&mut self, url: &str) {
+        let mut hud = crate::demo::hud::object(35, false);
+        let face = crate::demo::media_screen().2;
+        hud.scale = Vec3::new(0.012, 0.7, 0.394);
+        if let Some(te) = hud.texture_entry.as_mut() {
+            let tf = &mut Arc::make_mut(te).faces[face as usize];
+            tf.texture = aurora_prim::te::BLANK_TEXTURE;
+            tf.color = [1.0; 4];
+            tf.scale_t = 576.0 / 1024.0;
+            tf.offset_t = -(1.0 - tf.scale_t) * 0.5;
+        }
+        self.media.demo_entry(hud.full_id, face, url);
+        self.world.apply(NetEvent::ObjectUpdates {
+            handle: self.world.main_region.unwrap_or_default(),
+            objects: vec![hud],
+        });
     }
 
     fn update_audio(&mut self) {
@@ -15470,21 +15511,7 @@ impl ApplicationHandler for App {
                     }
                 }
                 if mode == "media" {
-                    let mut hud = crate::demo::hud::object(35, false);
-                    let face = crate::demo::media_screen().2;
-                    hud.scale = Vec3::new(0.012, 0.7, 0.394);
-                    if let Some(te) = hud.texture_entry.as_mut() {
-                        let tf = &mut Arc::make_mut(te).faces[face as usize];
-                        tf.texture = aurora_prim::te::BLANK_TEXTURE;
-                        tf.color = [1.0; 4];
-                        tf.scale_t = 576.0 / 1024.0;
-                        tf.offset_t = -(1.0 - tf.scale_t) * 0.5;
-                    }
-                    self.media.demo_entry(hud.full_id, face, crate::demo::demo_media_page());
-                    self.world.apply(NetEvent::ObjectUpdates {
-                        handle: self.world.main_region.unwrap_or_default(),
-                        objects: vec![hud],
-                    });
+                    self.demo_hud_media(crate::demo::demo_media_page());
                 }
             }
             // AURORA_DEMO_PARCEL_MEDIA=<url> (1: the test page): parcel media

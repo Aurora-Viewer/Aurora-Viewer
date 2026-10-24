@@ -74,6 +74,11 @@ pub fn page(cx: &mut Cx) {
         );
         let off = !cx.s.media.filter;
         cx.subs(off, |cx| {
+            cx.toggle(
+                tr!("ui-options-media-filter-own-worn"),
+                tr!("ui-options-media-filter-own-worn-help"),
+                &field!(media.filter_trust_own_worn),
+            );
             cx.below().row_with(
                 tr!("ui-options-media-filter-list"),
                 tr!("ui-options-media-filter-list-help"),
