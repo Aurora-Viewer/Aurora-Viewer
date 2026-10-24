@@ -617,13 +617,15 @@ fn button_sized(ui: &mut egui::Ui, p: &Palette, label: &str, primary: bool, size
 }
 
 /// The toasts that new arrivals start and those that end. A toast-only
-/// notice (a friend online) leaves the list with its toast.
-fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_seconds: f64, hidden: bool) {
+/// notice (a friend online) leaves the list with its toast. In do not
+/// disturb (`dnd`) only the script menus toast, the others wait in the list
+/// (LLScreenChannel::addToast; #491).
+fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_seconds: f64, hidden: bool, dnd: bool) {
     // new arrivals become toasts (unless the list is open or the view must
     // stay clear, or they were already seen where they arrived: a card in
     // the conversation in sight)
     for n in list.list.iter().filter(|n| n.id > nui.last_seen) {
-        if !nui.open && !hidden && !n.read && !n.quiet {
+        if !nui.open && !hidden && !n.read && !n.quiet && (!dnd || super::notification_center::dnd_shows(n)) {
             nui.toasts.push((n.id, now + toast_seconds(n, message_seconds)));
         }
     }
@@ -631,9 +633,9 @@ fn update_toasts(list: &mut Notifications, nui: &mut NotifUi, now: f64, message_
         nui.last_seen = nui.last_seen.max(last);
     }
     nui.toasts.retain(|(id, until)| {
-        list.list
-            .iter()
-            .any(|n| n.id == *id && (*until > now || matches!(n.data, Data::Dialog { .. })))
+        list.list.iter().any(|n| {
+            n.id == *id && (*until > now || matches!(n.data, Data::Dialog { .. })) && (!dnd || super::notification_center::dnd_shows(n))
+        })
     });
     if nui.toasts.len() > MAX_TOASTS {
         let extra = nui.toasts.len() - MAX_TOASTS;
@@ -653,6 +655,7 @@ pub fn show(
     hist: &mut crate::world::notification_history::History,
     nui: &mut NotifUi,
     env: &mut ToastEnv<'_>,
+    dnd: bool,
 ) -> (Vec<(u64, Response)>, Vec<super::notification_center::Ask>) {
     let mut answers = Vec::new();
     let mut asks = Vec::new();
@@ -660,7 +663,7 @@ pub fn show(
     // Firestorm's toasts keep their own place: the islands' column is for
     // Aurora's center only (not kept for a later frame of it)
     nui.column = None;
-    update_toasts(list, nui, now, env.message_seconds, env.hidden);
+    update_toasts(list, nui, now, env.message_seconds, env.hidden, dnd);
 
     let anchor = nui.anchor.unwrap_or(egui::pos2(8.0, 60.0));
     if nui.open {
@@ -1009,17 +1012,17 @@ mod tests {
         let friend = list.push_presence(JANE, "Jane Doe is online.", true);
         let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
         let toast_only = list.push_message(JOHN, JOHN, "John Doe", "hi", false);
-        update_toasts(&mut list, &mut nui, 0.0, 30.0, false);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, false, false);
         assert_eq!(
             nui.toasts.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
             vec![friend, message, toast_only]
         );
         assert_eq!(list.unread(), 1, "the toast alone is not counted");
         // the friend's toast ends after TOAST_TIP, the messages' after 30 s
-        update_toasts(&mut list, &mut nui, TOAST_TIP + 1.0, 30.0, false);
+        update_toasts(&mut list, &mut nui, TOAST_TIP + 1.0, 30.0, false, false);
         assert!(!list.list.iter().any(|n| n.id == friend));
         assert!(list.list.iter().any(|n| n.id == message));
-        update_toasts(&mut list, &mut nui, 31.0, 30.0, false);
+        update_toasts(&mut list, &mut nui, 31.0, 30.0, false, false);
         assert!(nui.toasts.is_empty());
         assert_eq!(list.list.iter().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
         assert_eq!(list.unread(), 1);
@@ -1033,9 +1036,37 @@ mod tests {
         let mut nui = NotifUi::default();
         list.push_presence(JANE, "Jane Doe is online.", true);
         let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
-        update_toasts(&mut list, &mut nui, 0.0, 30.0, true);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, true, false);
         assert!(nui.toasts.is_empty());
         assert_eq!(list.list.iter().map(|n| n.id).collect::<Vec<_>>(), vec![message]);
+    }
+
+    /// In do not disturb only a script menu toasts (#491): a message waits in
+    /// the list, and a toast already out leaves when the status is set.
+    #[test]
+    fn do_not_disturb_toasts_only_script_menus() {
+        let mut list = Notifications::default();
+        let mut nui = NotifUi::default();
+        let early = list.push_message(JANE, JANE, "Jane Doe", "before", true);
+        update_toasts(&mut list, &mut nui, 0.0, 30.0, false, false);
+        assert_eq!(nui.toasts.iter().map(|t| t.0).collect::<Vec<_>>(), vec![early]);
+        let message = list.push_message(JANE, JANE, "Jane Doe", "hello", true);
+        let menu = list.push(
+            Kind::Script,
+            "Fountain",
+            "Pick a colour",
+            Data::Dialog {
+                sender: ([127, 0, 0, 1], 13000).into(),
+                object: Uuid::from_u128(9),
+                object_name: "Fountain".into(),
+                own_object: false,
+                channel: -5,
+                buttons: vec!["Violet".into()],
+            },
+        );
+        update_toasts(&mut list, &mut nui, 1.0, 30.0, false, true);
+        assert_eq!(nui.toasts.iter().map(|t| t.0).collect::<Vec<_>>(), vec![menu]);
+        assert!(list.list.iter().any(|n| n.id == message));
     }
 
     /// Run the Conversations floater for a few frames.
