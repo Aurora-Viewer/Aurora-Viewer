@@ -81,6 +81,8 @@ mod window_show;
 mod world;
 
 fn main() -> anyhow::Result<()> {
+    // SAFETY: the first line of main, before any other thread starts.
+    let vulkan_layers_off = unsafe { aurora_render::vulkan_layers::disable() };
     if aurora_updater::install::run_helper()? {
         return Ok(());
     }
@@ -107,6 +109,13 @@ fn main() -> anyhow::Result<()> {
     aurora_i18n::select("default", cli::get().language.as_deref());
     crash::start();
     logging::init();
+    if !vulkan_layers_off.is_empty() {
+        let names: Vec<_> = vulkan_layers_off.iter().map(|l| l.name).collect();
+        log::info!(
+            "Vulkan layers kept out of the viewer (they crash at startup, #901): {} (AURORA_VULKAN_LAYERS=keep loads them)",
+            names.join(", ")
+        );
+    }
 
     let result = run_viewer();
     if let Err(error) = &result {
