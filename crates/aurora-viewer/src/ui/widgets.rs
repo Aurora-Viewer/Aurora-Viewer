@@ -440,7 +440,7 @@ impl<'a> Floater<'a> {
                 p.panel.b(),
                 p.panel_alpha,
             ))
-            .stroke(Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6)))
+            .stroke(border_stroke(p, Stroke::new(1.0, p.muted_dim.gamma_multiply(0.6))))
             .corner_radius(ctx.global_style().visuals.window_corner_radius)
             .shadow(ctx.global_style().visuals.window_shadow)
             .inner_margin(if self.framed_header.is_some() {
@@ -1291,9 +1291,20 @@ pub fn scroll_strip(ui: &egui::Ui) -> f32 {
 }
 
 /// Stroke of every divider of the interface: a thin line of a neutral
-/// hardly lighter than the panels.
+/// hardly lighter than the panels (a light one in high contrast).
 pub fn divider_stroke(p: &Palette) -> Stroke {
-    Stroke::new(1.0, p.raised)
+    border_stroke(p, Stroke::new(1.0, p.raised))
+}
+
+/// The border of a window, panel, island or divider: `usual`, or in high
+/// contrast (`crate::high_contrast`) a light line that stands out 3:1 from
+/// the black panels.
+pub fn border_stroke(p: &Palette, usual: Stroke) -> Stroke {
+    if p.high_contrast {
+        Stroke::new(usual.width.max(1.0), p.muted_dim)
+    } else {
+        usual
+    }
 }
 
 /// Thin line between two zones of a window, across the layout (horizontal in
@@ -2130,6 +2141,13 @@ pub fn action_button_keyed(
     let fade = if enabled { 1.0 } else { 0.45 };
     let radius = ui.visuals().widgets.inactive.corner_radius;
     ui.painter().rect_filled(rect, radius, fill.gamma_multiply(fade));
+    // high contrast: the dark faces get the buttons' light border, white
+    // when hovered (the accent's and the states' faces stand out already)
+    if p.high_contrast && matches!(kind, ActionKind::Flat | ActionKind::FlatDanger | ActionKind::SoftDanger) {
+        let edge = if hot { p.ink } else { p.muted_dim };
+        ui.painter()
+            .rect_stroke(rect, radius, Stroke::new(1.0, edge.gamma_multiply(fade)), egui::StrokeKind::Inside);
+    }
     let ink = ink.gamma_multiply(fade);
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
     let left = rect.center().x - content / 2.0;

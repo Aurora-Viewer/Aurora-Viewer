@@ -3247,6 +3247,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TOOLBOX=1`, `edit` or `<target>:<tool>` | Opens the Dev Toolbox (Customize, or a target and a tool pressed) |
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
+| `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
@@ -4076,6 +4077,14 @@ failure. Grid validation and any paid upload are performed by the human.
   their shape (a disc online, a crescent away, a barred disc in do not
   disturb, a hollow ring offline): combine with `AURORA_DEMO_CONV=bubbles:busy`,
   `AURORA_DEMO_PEOPLE=rows` or `AURORA_DEMO_CONTACTS=friends`.
+- **`AURORA_DEMO_CONTRAST=1|0`**: the high contrast palette for this run,
+  as Preferences › Accessibility › Contrast does, without touching the
+  saved settings (`0` forces it off on a profile that has it on). What to
+  look for: opaque black windows and bars (no glass), white text, light
+  grey secondary text, a light grey border around buttons, fields, windows
+  and the bar islands, black text on the light violet accent; combine with
+  `AURORA_DEMO_OPTIONS=14` (the Accessibility page) or
+  `AURORA_DEMO_COLORBLIND`, which applies after it.
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Appearance ›

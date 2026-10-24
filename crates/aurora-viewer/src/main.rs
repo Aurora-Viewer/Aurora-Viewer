@@ -39,6 +39,7 @@ mod frame_profile;
 mod gestures;
 mod graphics_presets;
 mod grids;
+mod high_contrast;
 mod hover_tips;
 mod ik_edit;
 mod imports;
