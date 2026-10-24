@@ -87,6 +87,81 @@ impl App {
         }
     }
 
+    /// AURORA_DEMO_SIT_TP=local|region: at frame 300 our avatar sits on the
+    /// nearest prim of the plaza, at frame 420 it teleports from the seat,
+    /// in the region or to another one; at frame 700 the log says whether
+    /// it still sits (the stale seat of a teleport, LLAgent::teleportCore).
+    pub(super) fn demo_sit_teleport(&mut self) {
+        if !self.demo || !matches!(self.frame_count, 300 | 420 | 700) {
+            return;
+        }
+        let Ok(mode) = std::env::var("AURORA_DEMO_SIT_TP") else {
+            return;
+        };
+        let me = self.world.agent.position;
+        match self.frame_count {
+            300 => {
+                let seat = self
+                    .world
+                    .objects
+                    .iter()
+                    .filter(|(_, o)| o.parent_id == 0 && !o.is_avatar() && !o.is_tree() && o.attachment_point() == 0)
+                    .filter(|(_, o)| Some(o.key.region) == self.world.main_region && o.scale.max_element() < 4.0)
+                    .min_by(|a, b| a.1.position.distance(me).total_cmp(&b.1.position.distance(me)))
+                    .map(|(_, o)| o.full_id);
+                if let (Some(target), Some(handle)) = (seat, self.world.main_region) {
+                    self.send(NetCommand::RequestSit {
+                        handle,
+                        target,
+                        offset: Vec3::ZERO,
+                    });
+                }
+            }
+            420 => {
+                log::info!("demo sit tp: before the teleport, seated {}", self.world.agent.seated);
+                let (x, y) = (me.x - 6.0, me.y - 4.0);
+                let to = Vec3::new(x, y, crate::demo::floor_at(x, y) + 0.9);
+                let region = if mode.trim() == "region" {
+                    aurora_i18n::tr!("app-aurora-elsewhere")
+                } else {
+                    aurora_i18n::tr!("common-aurora-demo")
+                };
+                self.teleport_to_location(region.into(), to);
+            }
+            _ => {
+                let parent = self
+                    .world
+                    .objects
+                    .index_of_uuid(&self.world.agent_id)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map_or(0, |o| o.parent_id);
+                log::info!(
+                    "demo sit tp: arrived, seated {}, parent {parent}, seat animation {}",
+                    self.world.agent.seated,
+                    self.world
+                        .animations_of(&self.world.agent_id)
+                        .iter()
+                        .any(|a| a.id == crate::demo::SEAT_ANIM)
+                );
+            }
+        }
+    }
+
+    /// The demo simulator's side of a teleport from one of its seats: it
+    /// unseats the avatar and stops the sit animation, but sends no update
+    /// with the avatar's new parent (as a simulator whose updates after the
+    /// teleport are terse ones): the viewer must get off by itself.
+    pub(super) fn demo_unseat_on_teleport(&mut self) {
+        if self.demo_seat.take().is_some() {
+            log::info!("demo sit: the simulator unseats us for the teleport");
+            self.demo_answer(vec![NetEvent::AvatarAnimations {
+                avatar: crate::demo::DEMO_AGENT,
+                anims: vec![(crate::demo::IDLE_ANIM, 1)],
+                sources: Vec::new(),
+            }]);
+        }
+    }
+
     /// The root prim of `target` when it is a prim of the scene (not an
     /// avatar nor something one wears).
     fn demo_seat_root(&self, target: &uuid::Uuid) -> Option<usize> {

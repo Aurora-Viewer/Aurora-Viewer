@@ -333,6 +333,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
+| `AURORA_DEMO_SIT_TP=local\|region` | Sits on the nearest prim, then teleports from the seat |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
@@ -599,6 +600,19 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_ACTIONS=1` a row of cubes stands in front of the avatar
   (the Sit chair keeps its own answer without the link).
 - **`AURORA_DEMO_SIT=n`**: clicks at frames 240, 300, 360…
+- **`AURORA_DEMO_SIT_TP=local|region`**: at frame 300 our avatar sits on
+  the nearest prim of the plaza, at frame 420 it teleports from the seat,
+  7 m south-west (`local`, in the region) or by the demo's remote teleport
+  (`region`, 3 s of progress). The demo's simulator unseats it and stops
+  the sit animation but sends no update with its new parent, as a
+  simulator whose updates after a teleport are terse ones: the viewer gets
+  off by itself (`get_off_for_teleport`, LLAgent::teleportCore). With
+  `AURORA_FPS_LIMIT=60`, capture frames 380 (seated) and 700 (arrived):
+  standing at the destination. The log gives `demo sit tp: before the
+  teleport, seated true`, `teleport: our avatar gets off its seat`, then
+  `demo sit tp: arrived, seated false, parent 0, seat animation false`
+  (before the fix: `parent 150, seat animation true`, the avatar drawn
+  seated far out of the region).
 - **`AURORA_DEMO_MMO="x,y[,1|2]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead,
   `2`: double right click (running).

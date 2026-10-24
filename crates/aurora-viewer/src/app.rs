@@ -359,9 +359,9 @@ pub struct App {
     /// the first frame), camera focus, cursor and body heading
     /// (LLAgentCamera::updateLookAt).
     look_at_privacy: Option<(bool, bool)>,
-    /// What the simulator was told of the static eyes animation this
-    /// session (FSStaticEyes); none before the arrival.
-    static_eyes_sent: Option<bool>,
+    /// What the simulator was told of the static eyes animation since the
+    /// last arrival (FSStaticEyes).
+    static_eyes: crate::world::lookat::StaticEyes,
     /// The world point the cursor was over last frame, and the object it
     /// lies on (the hover pick of the cursor icon), for the look-at.
     look_hover: Option<(Option<usize>, Vec3)>,
@@ -1004,7 +1004,7 @@ impl App {
             turn_since: None,
             cam_key_since: [None; 10],
             look_at_privacy: None,
-            static_eyes_sent: None,
+            static_eyes: Default::default(),
             look_hover: None,
             hover_tips: Default::default(),
             look_at_fades: Default::default(),
@@ -1442,6 +1442,7 @@ impl App {
                 }
                 NetCommand::TeleportTo { handle, position, look_at } => {
                     if Some(*handle) == self.world.main_region {
+                        self.demo_unseat_on_teleport();
                         self.world.apply(NetEvent::TeleportLocal {
                             flying: self.world.agent.flying,
                         });
@@ -2256,7 +2257,7 @@ impl App {
         self.region_restart = region_restart::State::default();
         self.region_restart.put_demo(demo);
         self.move_complete_at = None;
-        self.static_eyes_sent = None;
+        self.static_eyes.on_arrival();
         self.set_mouselook_grab(false);
         self.camera = Camera::default();
     }
@@ -2887,6 +2888,8 @@ impl App {
                 });
                 self.stop_local_typing();
                 self.move_complete_at = Some(Instant::now());
+                // the simulator we land in plays none of our animations yet
+                self.static_eyes.on_arrival();
                 self.tp_checks = vec![10.0, 3.0];
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
@@ -3948,23 +3951,18 @@ impl App {
 
     /// FSStaticEyes (update_static_eyes in llstartup.cpp, its setting's
     /// listener in llviewercontrol.cpp): the animation that holds the eyes
-    /// still is started once arrived, then started or stopped as the setting
-    /// changes.
+    /// still is started after every arrival, then started or stopped as the
+    /// setting changes (`StaticEyes`).
     fn sync_static_eyes(&mut self) {
         if self.move_complete_at.is_none() {
             return;
         }
-        let want = self.settings.lookat.static_eyes;
-        match self.static_eyes_sent {
-            Some(sent) if sent == want => {}
-            None if !want => self.static_eyes_sent = Some(false),
-            _ => {
-                self.send(NetCommand::AgentAnimation {
-                    anim: crate::world::lookat::STATIC_EYES,
-                    start: want,
-                });
-                self.static_eyes_sent = Some(want);
-            }
+        if let Some(start) = self.static_eyes.request(self.settings.lookat.static_eyes) {
+            log::info!("static eyes: {} asked of the simulator", if start { "start" } else { "stop" });
+            self.send(NetCommand::AgentAnimation {
+                anim: crate::world::lookat::STATIC_EYES,
+                start,
+            });
         }
     }
 
@@ -7689,6 +7687,7 @@ impl App {
                 w.tp_progress = 0.6;
                 w.tp_status = aurora_i18n::tr!("common-loading-region").into();
                 if let (Some(position), Some(handle)) = (self.demo_tp_dest.take(), w.main_region) {
+                    self.demo_unseat_on_teleport();
                     aurora_net::transition::step(|| "AgentMovementComplete (demo)".to_string());
                     aurora_net::transition::arrived(Duration::from_secs(20));
                     let ev = NetEvent::AgentMovementComplete {
@@ -9196,6 +9195,7 @@ impl App {
             self.toggle_ground_sit();
             log::info!("demo sit button: sitting {}", self.world.agent.is_sitting());
         }
+        self.demo_sit_teleport();
         if let (Some(demo), Some(g)) = (&mut self.geometry_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut g.renderer);
         }
