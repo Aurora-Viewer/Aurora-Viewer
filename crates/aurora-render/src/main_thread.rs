@@ -60,6 +60,9 @@ pub struct GpuInfo {
     pub vram_mb: Option<u64>,
     /// Integrated GPU (shares the system memory).
     pub integrated: bool,
+    /// The names of the adapters that can present to the window, in the
+    /// log's order: the choice of Preferences › Graphics.
+    pub adapters: Vec<String>,
 }
 
 /// The part of a range of skin bindings to send that is in a list of `len`.
@@ -182,8 +185,16 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// Create the renderer on the Vulkan backend for the given window.
-    pub fn new(target: impl Into<wgpu::SurfaceTarget<'static>>, width: u32, height: u32, vsync: bool) -> Result<Renderer, RenderError> {
+    /// Create the renderer on the Vulkan backend for the given window, on
+    /// the GPU `gpu` asks for (`adapter_choice::Wanted`: empty for the
+    /// automatic choice).
+    pub fn new(
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+        vsync: bool,
+        gpu: &str,
+    ) -> Result<Renderer, RenderError> {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
         desc.backends = wgpu::Backends::VULKAN;
         desc.flags = if std::env::var_os("AURORA_GPU_VALIDATION").is_some() {
@@ -193,13 +204,64 @@ impl Renderer {
         };
         let instance = wgpu::Instance::new(desc);
         let surface = instance.create_surface(target).map_err(|e| RenderError::Surface(e.to_string()))?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-            apply_limit_buckets: false,
-        }))
-        .map_err(|e| RenderError::NoAdapter(e.to_string()))?;
+        // ---- the GPU: every adapter listed, then tried in our order
+        // (adapter_choice.rs), the next one if one fails to open
+        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN));
+        let candidates: Vec<crate::adapter_choice::Candidate> = adapters
+            .iter()
+            .map(|a| {
+                let info = a.get_info();
+                crate::adapter_choice::Candidate {
+                    name: info.name,
+                    kind: crate::adapter_choice::Kind::from_wgpu(info.device_type),
+                    vram_mb: detect_vram_mb(a),
+                    surface: a.is_surface_supported(&surface),
+                }
+            })
+            .collect();
+        for (i, c) in candidates.iter().enumerate() {
+            log::info!(
+                "GPU adapter {i}: {} ({}, {}, {})",
+                c.name,
+                c.kind.label(),
+                c.vram_mb.map(|m| format!("{m} MB")).unwrap_or_else(|| "memory unknown".into()),
+                if c.surface { "can present" } else { "cannot present to the window" }
+            );
+        }
+        if let Some(hint) = crate::adapter_choice::hint(&candidates) {
+            log::warn!("GPU: {hint}");
+        }
+        let wanted = crate::adapter_choice::Wanted::parse(gpu);
+        let plan = crate::adapter_choice::plan(&candidates, &wanted);
+        if plan.reason == crate::adapter_choice::Reason::WantedMissing {
+            log::warn!(
+                "GPU: \"{}\" asked for, not found among the adapters that can present: automatic choice",
+                gpu.trim()
+            );
+        }
+        let mut opened = None;
+        let mut failure = RenderError::NoAdapter("no Vulkan adapter can present to the window".into());
+        for (n, &i) in plan.order.iter().enumerate() {
+            match open_device(&adapters[i]) {
+                Ok(o) => {
+                    let why = match (n, plan.reason) {
+                        (0, crate::adapter_choice::Reason::Wanted) => "the one asked for (AURORA_GPU or Preferences › Graphics)",
+                        (0, _) => "automatic: discrete before integrated, then the most video memory",
+                        _ => "the ones before it failed to open",
+                    };
+                    log::info!("GPU adapter {i} chosen: {why}");
+                    opened = Some((i, o));
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("GPU adapter {i} ({}) could not be opened: {e}", candidates[i].name);
+                    failure = e;
+                }
+            }
+        }
+        let (index, o) = opened.ok_or(failure)?;
+        let adapter = adapters.swap_remove(index);
+        let vram_mb = candidates[index].vram_mb;
         let ainfo = adapter.get_info();
         log::info!(
             "GPU: {} ({:?}, driver {} {})",
@@ -208,82 +270,20 @@ impl Renderer {
             ainfo.driver,
             ainfo.driver_info
         );
-        let vram_mb = detect_vram_mb(&adapter);
         log::info!(
             "GPU memory: {}",
             vram_mb.map(|m| format!("{m} MB")).unwrap_or_else(|| "unknown".into())
         );
-
-        let afeat = adapter.features();
-        let alim = adapter.limits();
-        let bindless_feats =
-            wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
-        let bindless = afeat.contains(bindless_feats) && alim.max_binding_array_elements_per_shader_stage >= 64;
-        if !bindless {
-            return Err(RenderError::Device(
-                "the GPU driver lacks descriptor indexing (texture binding arrays)".into(),
-            ));
-        }
-        let mut features = bindless_feats;
-        if afeat.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE) {
-            features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
-        } else {
-            return Err(RenderError::Device("INDIRECT_FIRST_INSTANCE unsupported".into()));
-        }
-        let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
-        if timestamps {
-            features |= wgpu::Features::TIMESTAMP_QUERY;
-            // GPU time by kind of element (performance panel)
-            for f in [
-                wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
-                wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
-            ] {
-                if afeat.contains(f) {
-                    features |= f;
-                }
-            }
-        }
-        // needed for MSAA 8x on HDR targets (adapter-specific sample counts)
-        let adapter_specific = afeat.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
-        if adapter_specific {
-            features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
-        }
-        // debug wireframe
-        if afeat.contains(wgpu::Features::POLYGON_MODE_LINE) {
-            features |= wgpu::Features::POLYGON_MODE_LINE;
-        }
-        // Keep the actual water triangles across the near plane. The portable
-        // shader path restores their real depth when hardware clamp is absent.
-        let portable_water = std::env::var_os("AURORA_DEMO").is_some()
-            && std::env::var("AURORA_DEMO_WATER").is_ok_and(|mode| mode.contains("portable-depth"));
-        if afeat.contains(wgpu::Features::DEPTH_CLIP_CONTROL) && !portable_water {
-            features |= wgpu::Features::DEPTH_CLIP_CONTROL;
-        }
-        if afeat.contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY) {
-            features |= wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY;
-        }
-        // BC7 texture pages (textures.rs): a quarter of the video memory of
-        // RGBA8 for the streamed textures; without it they stay RGBA8
-        if afeat.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
-            features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
-        }
-        // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
-        if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
-            features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
-        }
-        let max_textures = alim
-            .max_binding_array_elements_per_shader_stage
-            .min(alim.max_sampled_textures_per_shader_stage.saturating_sub(17))
-            .clamp(64, 16384);
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("aurora"),
-            required_features: features,
-            required_limits: alim.clone(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            memory_hints: wgpu::MemoryHints::Performance,
-            trace: wgpu::Trace::Off,
-        }))
-        .map_err(|e| RenderError::Device(e.to_string()))?;
+        let OpenedDevice {
+            device,
+            queue,
+            alim,
+            bindless,
+            timestamps,
+            adapter_specific,
+            max_textures,
+        } = o;
+        let adapters: Vec<String> = candidates.into_iter().filter(|c| c.surface).map(|c| c.name).collect();
         // The same error every frame (a write into a buffer that could not
         // be made) wrote millions of lines a minute: once, then a count.
         let throttle = std::sync::Mutex::new(crate::gpu_alloc::LogThrottle::new(std::time::Duration::from_secs(10)));
@@ -305,6 +305,7 @@ impl Renderer {
             max_textures,
             vram_mb,
             integrated: ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
+            adapters,
         };
 
         // ---- the scene's stores; what they write at creation is replayed
@@ -1123,6 +1124,101 @@ impl Renderer {
     pub fn clear_color_default() -> Vec4 {
         Vec4::new(0.03, 0.04, 0.12, 1.0)
     }
+}
+
+/// What `Renderer::new` needs of an opened adapter.
+struct OpenedDevice {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    alim: wgpu::Limits,
+    bindless: bool,
+    timestamps: bool,
+    adapter_specific: bool,
+    max_textures: u32,
+}
+
+/// Open `adapter` with the features the renderer needs and the optional
+/// ones it has; an error when it lacks a needed one or the device fails.
+fn open_device(adapter: &wgpu::Adapter) -> Result<OpenedDevice, RenderError> {
+    let afeat = adapter.features();
+    let alim = adapter.limits();
+    let bindless_feats =
+        wgpu::Features::TEXTURE_BINDING_ARRAY | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+    let bindless = afeat.contains(bindless_feats) && alim.max_binding_array_elements_per_shader_stage >= 64;
+    if !bindless {
+        return Err(RenderError::Device(
+            "the GPU driver lacks descriptor indexing (texture binding arrays)".into(),
+        ));
+    }
+    let mut features = bindless_feats;
+    if afeat.contains(wgpu::Features::INDIRECT_FIRST_INSTANCE) {
+        features |= wgpu::Features::INDIRECT_FIRST_INSTANCE;
+    } else {
+        return Err(RenderError::Device("INDIRECT_FIRST_INSTANCE unsupported".into()));
+    }
+    let timestamps = afeat.contains(wgpu::Features::TIMESTAMP_QUERY);
+    if timestamps {
+        features |= wgpu::Features::TIMESTAMP_QUERY;
+        // GPU time by kind of element (performance panel)
+        for f in [
+            wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+            wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+        ] {
+            if afeat.contains(f) {
+                features |= f;
+            }
+        }
+    }
+    // needed for MSAA 8x on HDR targets (adapter-specific sample counts)
+    let adapter_specific = afeat.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
+    if adapter_specific {
+        features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    }
+    // debug wireframe
+    if afeat.contains(wgpu::Features::POLYGON_MODE_LINE) {
+        features |= wgpu::Features::POLYGON_MODE_LINE;
+    }
+    // Keep the actual water triangles across the near plane. The portable
+    // shader path restores their real depth when hardware clamp is absent.
+    let portable_water =
+        std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_WATER").is_ok_and(|mode| mode.contains("portable-depth"));
+    if afeat.contains(wgpu::Features::DEPTH_CLIP_CONTROL) && !portable_water {
+        features |= wgpu::Features::DEPTH_CLIP_CONTROL;
+    }
+    if afeat.contains(wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY) {
+        features |= wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY;
+    }
+    // BC7 texture pages (textures.rs): a quarter of the video memory of
+    // RGBA8 for the streamed textures; without it they stay RGBA8
+    if afeat.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+        features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+    }
+    // GPU draw lists (gpu_cull.rs): draw counts written by the GPU
+    if afeat.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT) {
+        features |= wgpu::Features::MULTI_DRAW_INDIRECT_COUNT;
+    }
+    let max_textures = alim
+        .max_binding_array_elements_per_shader_stage
+        .min(alim.max_sampled_textures_per_shader_stage.saturating_sub(17))
+        .clamp(64, 16384);
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("aurora"),
+        required_features: features,
+        required_limits: alim.clone(),
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
+    }))
+    .map_err(|e| RenderError::Device(e.to_string()))?;
+    Ok(OpenedDevice {
+        device,
+        queue,
+        alim,
+        bindless,
+        timestamps,
+        adapter_specific,
+        max_textures,
+    })
 }
 
 /// Size of the largest device-local memory heap (the GPU's own VRAM on a

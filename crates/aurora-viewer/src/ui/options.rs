@@ -359,6 +359,10 @@ pub struct OptionsUi {
     pub cache_clearing: bool,
     /// Detected video memory (MB) and integrated GPU; set by the app.
     pub vram: (Option<u64>, bool),
+    /// The GPUs that can draw the viewer and the one in use; set by the app
+    /// once the renderer is up (the choice applies at the next start).
+    pub gpus: Vec<String>,
+    pub gpu_in_use: String,
     /// The sky in use is tone mapped (not classic); set by the app each
     /// frame: the tone mapper choice is greyed otherwise.
     pub sky_tone_mapped: bool,
@@ -780,9 +784,21 @@ fn preset_choice(ui: &mut egui::Ui, p: &Palette, s: &mut Settings) -> bool {
 /// Device combo: "" = system default. Returns (a device was chosen, the
 /// list is unfolded).
 pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devices: &[String], width: f32) -> (bool, bool) {
+    named_combo(ui, id, value, devices, width, aurora_i18n::tr!("ui-options-system-default"))
+}
+
+/// `device_combo` whose empty choice reads `default_label`.
+pub(super) fn named_combo(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut String,
+    devices: &[String],
+    width: f32,
+    default_label: &str,
+) -> (bool, bool) {
     let mut changed = false;
     let shown = if value.is_empty() {
-        aurora_i18n::tr!("ui-options-system-default").to_owned()
+        default_label.to_owned()
     } else {
         value.clone()
     };
@@ -791,9 +807,7 @@ pub(super) fn device_combo(ui: &mut egui::Ui, id: &str, value: &mut String, devi
         .selected_text(shown)
         .truncate()
         .show_ui(ui, |ui| {
-            changed |= ui
-                .selectable_value(value, String::new(), aurora_i18n::tr!("ui-options-system-default"))
-                .changed();
+            changed |= ui.selectable_value(value, String::new(), default_label).changed();
             for d in devices {
                 changed |= ui.selectable_value(value, d.clone(), d).changed();
             }

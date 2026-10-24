@@ -335,6 +335,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
+| `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
 | `AURORA_DEMO_PIE=1` | Right-click pie menu |
 | `AURORA_DEMO_TEXT_MENU=1` | Right-click menu of a text field (Cut, Copy, Paste…) |
@@ -347,6 +348,53 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_CHATCMD="<commands>"` | Types commands in the chat bar |
 
 ### Details
+
+- **`AURORA_DEMO_AVATAR_TRAVEL=<mode>`**: at frame 600, `menu` opens
+  the violet wolf's avatar menu; the other modes dispatch Go to or Follow. `go`
+  keeps the initial destination and ends within 2 m; `follow` keeps the
+  leader, rests near it, then resumes after the wolf moves 6 m at frame 1500
+  (the wolf also moves in `go`, but the pilot stays finished).
+  `follow-menu` shows the active follow's menu at 1400. `manual`, `escape`,
+  `stop` and `lost` start a follow, then cancel it at 1500 through the movement
+  controls, Escape's reset action, Stop following or target removal respectively.
+  `flight` follows the wolf through takeoff at 900, landing at 1500, a
+  second takeoff at 2100 and landing at 2700. Capture at 1400, 2000, 2600
+  and 3200; flight must follow the leader and remain active after each landing.
+  `go-flight` starts Go to with an already-flying target and ends nearby in flight.
+  `go-flight-late` delays the hover animation until frame 620, after Go to
+  started at 600: it must still take off while keeping its fixed destination.
+  `run` follows a running target, walking at 1200 and stopping at 1500;
+  milestone logs show temporary running enabled, then restored. `flight-brake`
+  approaches a hovering target 35 m farther away. Combine it with
+  `AURORA_DEMO_LINK=300,jitter=40,aurora,native-flight` or
+  `300,jitter=40,firestorm,native-flight` and
+  capture after frame 4400: the follower must stop beside the target at its
+  height after one continuous burn per axis, with no final approach impulses
+  or repeated crossings. The delayed native demo exercises the network/prediction
+  path; `native-flight` adds full-speed flight and inertia to that simulator.
+  Use `AURORA_DEMO_LINK=0,native-flight` with the other flight scenarios too.
+  The deterministic regression additionally covers different frame rates,
+  short/high-latency approaches, ascent/descent, height alignment and one burn
+  per axis. A nearby stationary hover must remain still; a leader moving away
+  horizontally or vertically must restart the follow.
+  Logs include our flight state, landing phase, altitude and height error. A stationary
+  hover must cause takeoff; jump/fall or missing signals must not cause a
+  spurious flight change. Takeoff respects region, parcel and RLVa permissions.
+  Capture the menu at 620 and the final follow at 2450; milestone distances,
+  active state and control flags are logged. With the native menu, verify
+  Rejoindre/Go to, Suivre/Follow and Arrêter de suivre/Stop following in both
+  languages, on the avatar and its worn objects, and in resident lists.
+  On the grid, the human checks a moving resident, stable arrival, a target
+  sitting on an object, manual movement/Escape, target departure, a region
+  crossing and flight changes: start on the ground, let the leader take off,
+  hover, land, walk and take off again; repeat on a raised platform. We descend
+  near the landed leader and clear flight only on our own physical support,
+  never merely on the leader's landing signal or our predicted arrival.
+  Repeat Go to on an airborne resident, follow a runner who walks/stops,
+  then approach a stationary flyer from 30 m or more: our avatar must brake
+  once beside the target at the same height, then remain there without small
+  approach impulses or passing back and forth through the target.
+  These actions do not route around walls.
 
 - **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle|sit-ground`**:
   opens the hover-height floater at frame 600. A number sets the height;
@@ -502,7 +550,7 @@ when unfocused") is ignored during a screenshot.
 - **`AURORA_DEMO_KEY=down|up|left|right`**: holds an arrow from frame 235
   (movement, body orientation). `:pulse` (`up:pulse`): held 2 s, released
   2 s, over and over (by the clock: the same at any frame rate).
-- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace]`**:
+- **`AURORA_DEMO_LINK=<ping ms>[,jitter=<ms>][,stoplag=<ms>][,aurora|firestorm][,vehicle][,trace][,native-flight]`**:
   instead of moving our avatar at once, the demo sends the keys to a
   stand-in simulator after half the ping; it moves its own copy of the
   avatar with the demo's rules and its reports (terse updates of our
@@ -517,7 +565,11 @@ when unfocused") is ignored during a screenshot.
   frame show whether the walk comes back after a stop); `aurora` / `firestorm`
   force the movement for the run without touching the saved choice;
   without them, the choice of Preferences applies and can be switched
-  while walking. The log says, for each press and release of a walking
+  while walking. `native-flight` opts into a 16 m/s flight model with a
+  0.5 s velocity ramp, coasting after release and full speed despite NUDGE.
+  It makes avatar-navigation braking tests exercise native flight inertia;
+  ground movement and the default demo physics keep their existing behavior.
+  The log says, for each press and release of a walking
   key, `demo link: the drawn avatar moved N ms after the press` and
   `… stopped N ms after the release, D m on (P m travelled)`, and
   `own motion learned: …` (the speeds, ramps and delay the prediction
@@ -3213,7 +3265,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
@@ -3249,6 +3301,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_POPOUT=1\|option` | Conversations in their own windows: the friend's IM and a group popped out, or a group opened with the option on (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
@@ -4137,6 +4190,22 @@ failure. Grid validation and any paid upload are performed by the human.
   (`aurora:conference`): Close, Hang up during its call, the transcript;
   `local`: the transcript only. The transcript rows are greyed in the demo
   (no transcript folder).
+- **`AURORA_DEMO_CONV_POPOUT=1|option`** (#717): with an `AURORA_DEMO_CONV`
+  scenario (`aurora`, `aurora:compact`, `bubbles` or `bubbles:legacy`), at
+  frame 640: `1` pops the friend's IM (Nova) and the Aurora Builders group
+  out into their own windows, at the left of the screen, one above the
+  other; `option` turns Preferences › Chat › "Open conversations in their
+  own window" on for the run (not saved) and opens Aurora Builders as a
+  notification would, in its own window at the top left, the
+  Conversations window keeping its conversation. Capture at frame 760 with
+  `AURORA_FPS_LIMIT=60`. What to see: each window with its head, lines and
+  field, the "Attach to Conversations" button in its title bar; the column
+  (or the tabs) keeps their entries with the "Detach" icon where the unread
+  count goes; the Conversations window shows another conversation and its
+  title bar a "Detach" button (none when the nearby chat alone is left
+  there). With `AURORA_DEMO_CONV_MENU=im` and `1`: the friend's menu starts
+  with "Attach to Conversations"; without `AURORA_DEMO_CONV_POPOUT`, with
+  "Detach".
 - **`AURORA_DEMO_CONV_EMOJI=1`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy`, the friend's
   conversation holds two more messages of emoji alone: Nova's three
@@ -4768,7 +4837,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   controls), `sysperf` / `sysnet` (Performance opened from the island at
   frame 300, by its frame rate / its network: the full view 8 px under the
   island, its left and right edges on the island's, down to the work
-  area's bottom; the compact view where it stands). In demo the network's graphs show a synthetic minute of
+  area's bottom; the compact view where it stands); the clock (#453):
+  `clocklocal` (local time instead of the saved time, so a click on the
+  clock does not change it in that run), `noseconds` (without its
+  seconds), `clock12` / `clock24` (12 / 24 hours instead of the saved
+  format; Auto writes the `clock:` log line at startup with the system's
+  12 or 24 hours). In demo the network's graphs show a synthetic minute of
   traffic (about 1.2 Mb/s in, waves), no packet lost. The hidden interface:
   `hidden` (hidden at frame 600 as Alt+Shift+U does: the bars and the
   windows go, the hint at the top in the middle for 6 s; with `legacy`,
@@ -5995,6 +6069,7 @@ What the inventory must show with these scenarios:
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's) |
+| `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
@@ -6038,6 +6113,19 @@ What the inventory must show with these scenarios:
   as it is. OBS Studio's game capture (`VK_LAYER_OBS_HOOK`) is never
   disabled; `DISABLE_VULKAN_OBS_CAPTURE=1`, set by the user, does it. To
   see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
+- **`AURORA_GPU=<number>|<name>|auto`**: the adapter the renderer opens,
+  over Preferences › Graphics › Fluidity › Graphics card (#894): its number
+  in the `GPU adapter <n>:` lines of the log, or a part of its name in any
+  case (`nvidia`, `intel`); `auto` or empty for the automatic choice
+  (discrete before integrated, then the most video memory, among the
+  adapters that can present to the window). An adapter that is missing or
+  cannot present gives a warning and the automatic choice; one that fails
+  to open hands over to the next. The log lists every adapter Vulkan
+  shows, with its type, memory and whether it can present, then
+  `GPU adapter <n> chosen:` and why. When only an integrated GPU is listed
+  on a PC that has a dedicated one, the NVIDIA Control Panel's "Preferred
+  graphics processor" for `aurora-viewer.exe` hides it from Vulkan
+  (`VK_LAYER_NV_optimus`): the log says so.
 - **`AURORA_BANDWIDTH_KBPS=<n>`**: the "Maximum bandwidth" of Preferences ›
   Network and cache for this launch, without changing the saved setting,
   from 100 to 10,000. A session first asks its simulator for one and a

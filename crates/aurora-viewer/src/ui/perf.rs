@@ -796,6 +796,7 @@ mod tests {
             max_textures: 4096,
             vram_mb: Some(8192),
             integrated: false,
+            adapters: vec!["Test GPU".into()],
         };
         let data = PerfData::default();
         for tab in super::super::monitor::Tab::ALL {

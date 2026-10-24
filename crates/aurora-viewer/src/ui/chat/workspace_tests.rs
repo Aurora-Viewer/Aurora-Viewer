@@ -891,7 +891,7 @@ fn the_find_field_opens_in_the_head_row() {
     let box_before = h.rect(input);
     h.st.searches.entry(Some(JANE)).or_default().open_find();
     h.settle();
-    let field = h.rect(super::super::find::field_id());
+    let field = h.rect(super::super::find::field_id(Some(JANE)));
     assert!(
         field.bottom() < box_before.top() - 200.0,
         "the field is up in the head, not over the box: {field:?}"

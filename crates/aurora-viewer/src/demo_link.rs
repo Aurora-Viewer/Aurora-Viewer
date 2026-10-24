@@ -15,6 +15,8 @@
 //! `aurora` / `firestorm` force the movement for the session without
 //! touching the saved choice; `vehicle` seats our avatar on a vehicle that
 //! drives back and forth, then stands it up (`vehicle_events`).
+//! `native-flight` opts into full-speed flight with inertia for navigation
+//! regressions; ordinary ground/vehicle fixtures retain their default model.
 
 use crate::agent::{AgentState, MoveInput};
 use crate::own_motion::{ANIM_CROUCHWALK, ANIM_FLY, ANIM_HOVER, ANIM_HOVER_DOWN, ANIM_HOVER_UP, ANIM_RUN, ANIM_STAND, ANIM_WALK};
@@ -39,6 +41,8 @@ pub struct Config {
     /// `stoplag=<ms>`: how long the stand-in keeps its walk signal once
     /// stopped, as a busy simulator is late to say it (s).
     pub stop_lag: f32,
+    /// Full native flight speed and a 0.5 s velocity ramp, including coast.
+    pub native_flight: bool,
 }
 
 impl Config {
@@ -56,6 +60,7 @@ impl Config {
             vehicle: false,
             trace: false,
             stop_lag: 0.0,
+            native_flight: false,
         };
         for part in parts {
             match part {
@@ -63,6 +68,7 @@ impl Config {
                 "firestorm" => cfg.prediction = Some(false),
                 "vehicle" => cfg.vehicle = true,
                 "trace" => cfg.trace = true,
+                "native-flight" => cfg.native_flight = true,
                 _ => {
                     let ms = |name: &str| {
                         part.strip_prefix(name)
@@ -327,7 +333,12 @@ impl DemoLink {
             input.run = k.running;
             let p = self.sim.server_pos;
             let was_flying = self.sim.flying;
-            self.sim.simulate_locally(&input, k.mouselook, Some(super::floor_at(p.x, p.y)), dt);
+            if self.cfg.native_flight {
+                self.sim
+                    .simulate_native_flight(&input, k.mouselook, Some(super::floor_at(p.x, p.y)), dt);
+            } else {
+                self.sim.simulate_locally(&input, k.mouselook, Some(super::floor_at(p.x, p.y)), dt);
+            }
             if was_flying && !self.sim.flying {
                 self.flying = false;
                 self.send(now, Delivery::Landed);
@@ -662,6 +673,38 @@ mod tests {
         assert_eq!((c.ping, c.jitter, c.prediction, c.vehicle), (0.15, 0.03, Some(false), true));
         assert_eq!(Config::parse("aurora"), None);
         assert_eq!(Config::parse("100,aurora").and_then(|c| c.prediction), Some(true));
+        assert!(!c.native_flight);
+        assert!(Config::parse("100,native-flight").unwrap().native_flight);
+    }
+
+    #[test]
+    fn native_flight_fixture_keeps_nudge_speed_and_coasts_without_changing_ground_physics() {
+        let mut agent = AgentState::default();
+        agent.server_pos = Vec3::Z * 100.0;
+        agent.reset_motion();
+        agent.flying = true;
+        let input = MoveInput {
+            forward: true,
+            nudge_fb: true,
+            ..Default::default()
+        };
+        for _ in 0..60 {
+            agent.simulate_native_flight(&input, false, None, 1.0 / 60.0);
+        }
+        assert!(agent.velocity.x > 13.0, "NUDGE must not hide native flight speed");
+        let before = agent.server_pos;
+        agent.simulate_native_flight(&MoveInput::default(), false, None, 1.0 / 60.0);
+        assert!(agent.server_pos.x > before.x && agent.velocity.x > 10.0, "release must coast");
+        for _ in 0..300 {
+            agent.simulate_native_flight(&MoveInput::default(), false, None, 1.0 / 60.0);
+        }
+        assert!(agent.velocity.length() < 0.01);
+        let mut ordinary = AgentState::default();
+        let mut native = ordinary.clone();
+        ordinary.simulate_locally(&input, false, Some(0.0), 0.1);
+        native.simulate_native_flight(&input, false, Some(0.0), 0.1);
+        assert_eq!(native.server_pos, ordinary.server_pos);
+        assert_eq!(native.velocity, ordinary.velocity);
     }
 
     /// The keys reach the stand-in after half the ping and its report
