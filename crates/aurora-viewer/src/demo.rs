@@ -1052,8 +1052,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             if let Some(extra) = emoji_lines {
                 lines.splice(4..4, extra);
             }
-            // AURORA_DEMO_CONV_PREVIEWS=1|states: links with their cards
-            // (#538, #739), made here without network (`link_preview::demo`)
+            // AURORA_DEMO_CONV_PREVIEWS=1|states|videos: links with their
+            // cards (#538, #739, #848), made here without network
+            // (`link_preview::demo`)
             let preview_lines = std::env::var("AURORA_DEMO_CONV_PREVIEWS").ok().map(|mode| {
                 let with = |key: &str, url: &str| format!("{key} {url}");
                 if mode == "net" {
@@ -1080,6 +1081,18 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             ChatKind::Own,
                             "https://www.youtube.com/watch?v=jNQXAC9IVRw&t=5s",
                         ),
+                    ]
+                } else if mode == "videos" {
+                    // a 4:3 clip and an upright short (#848)
+                    vec![
+                        line(
+                            ago(8),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
+                        ),
+                        line(ago(5), &me, Uuid::nil(), ChatKind::Own, "https://youtube.com/shorts/DemoShort01"),
                     ]
                 } else if mode == "states" {
                     vec![
@@ -4944,6 +4957,25 @@ fn notification_samples(notifications: bool, inventory_offer: bool, menu: Option
         return ev;
     }
     let menu = menu.unwrap_or_default();
+    // `links` (#898): a menu whose text names residents, a group and a
+    // place by their secondlife:///app links, as listing scripts write them
+    if menu == "links" {
+        let message = format!(
+            "{}\n#1 secondlife:///app/agent/{DEMO_FRIEND}/about\n#2 secondlife:///app/agent/{DEMO_GIVER}/about\n\
+             #3 secondlife:///app/group/{DEMO_GROUP1}/about\n#4 secondlife:///app/region/Aurora%20D%C3%A9mo/128/128/25",
+            aurora_i18n::tr!("demo-pick-a-resident")
+        );
+        ev.push(NetEvent::ScriptDialog {
+            sender: ([127, 0, 0, 1], 13000).into(),
+            object_id: Uuid::from_u128(0xF1),
+            object_name: aurora_i18n::tr!("demo-resident-picker").into(),
+            owner_name: aurora_i18n::tr!("demo-violet-wolf").into(),
+            message,
+            channel: -4243,
+            buttons: ["1", "2", "3", "4"].map(str::to_owned).to_vec(),
+        });
+        return ev;
+    }
     let (object_name, message, buttons) = if !menu.is_empty() {
         let mut buttons = [
             aurora_i18n::tr!("status-close"),

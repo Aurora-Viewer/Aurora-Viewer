@@ -61,10 +61,11 @@ fn transformed_box(m: Mat4, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum FacePick {
+pub(super) enum FacePick {
     Surface,
     Inventory,
     Blend,
+    HudMove,
 }
 
 impl PickFace {
@@ -633,7 +634,7 @@ impl Scene {
         self.face_hit_mode(world, idx, ray, now, include_hidden, FacePick::Surface)
     }
 
-    fn face_hit_mode(
+    pub(super) fn face_hit_mode(
         &self,
         world: &World,
         idx: usize,
@@ -718,7 +719,10 @@ impl Scene {
                         )
                         || (draw.legacy_alpha == Some(legacy_mat::alpha_mode::MASK)
                             && self.legacy_mats.peek(&tf.material_id).is_some_and(|m| m.alpha_cutoff == 0));
-                    if ignore_alpha {
+                    // LLToolPie::handleMouseDown prioritizes transparent
+                    // attachments. Blend texels remain normal HUD buttons;
+                    // only the local move/scale gesture passes through them.
+                    if ignore_alpha || (g.hud && mode == FacePick::Surface && self.blend_face(world, o, g, hit.face)) {
                         return Some(hit);
                     }
                     let Some(mask) = self.textures.pick_masks.get(&draw.tex_id) else {
@@ -2072,7 +2076,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn hud_texture_holes_pass_through_except_in_editing_and_transparency_debug() {
+    fn hud_blend_buttons_keep_normal_clicks_while_move_and_mask_picks_respect_texture_holes() {
         let (mut world, mut scene, front, back) = scene_with_two_objects();
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         let parent = world.objects.get(own).unwrap().key.local_id;
@@ -2094,13 +2098,22 @@ pub(super) mod tests {
         let texture = Uuid::from_u128(8888);
         scene.gpu[front].faces[0].tex_id = texture;
         scene.gpu[front].faces[0].pass = Pass::Blend;
+        scene.textures.alpha_by_slot = vec![AlphaKind::Blend];
         scene
             .textures
             .pick_masks
             .insert(texture, super::super::textures::PickMask::from_rgba(2, 2, &[0; 16]).unwrap());
-        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
-        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
-        assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
+        for (pbr, legacy) in [(None, None), (Some(1), None), (None, Some(legacy_mat::alpha_mode::BLEND))] {
+            scene.gpu[front].faces[0].pbr_alpha = pbr;
+            scene.gpu[front].faces[0].legacy_alpha = legacy;
+            let (idx, _, ray) = scene.hud_pick(&world, cursor, false).unwrap();
+            assert_eq!(idx, front);
+            assert!(scene.touch_surface(&world, idx, ray).is_some());
+            assert_eq!(scene.hover_hud(&world, cursor), Some(front));
+            assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+            assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
+        }
+        scene.gpu[front].faces[0].legacy_alpha = None;
         // Follow repeats/offsets in HUD space, rather than the raw mesh UV.
         let mut pixels = vec![255; 4 * 4 * 4];
         for y in 0..4 {
@@ -2112,15 +2125,28 @@ pub(super) mod tests {
             .textures
             .pick_masks
             .insert(texture, super::super::textures::PickMask::from_rgba(4, 4, &pixels).unwrap());
-        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].offset_s = 0.5;
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].offset_s = 0.0;
         // Opaque materials display the texture without its alpha channel.
         scene.gpu[front].faces[0].pbr_alpha = Some(0);
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(front));
         scene.gpu[front].faces[0].pbr_alpha = Some(2);
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        scene.gpu[front].faces[0].pbr_alpha = None;
+        scene.textures.alpha_by_slot[0] = AlphaKind::Mask;
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+        scene.textures.alpha_by_slot[0] = AlphaKind::Blend;
+        scene.gpu[front].faces[0].legacy_alpha = Some(legacy_mat::alpha_mode::MASK);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+        scene.gpu[front].faces[0].legacy_alpha = None;
+        scene.gpu[front].faces[0].pbr_alpha = Some(2);
         scene.build_huds(&world, [1280, 720], true);
         assert!(scene.lists.hud_debug_blue.is_empty());
         // The overlay's displayed triangles become pickable, with no texture test.

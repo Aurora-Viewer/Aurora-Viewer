@@ -359,9 +359,9 @@ pub struct App {
     /// the first frame), camera focus, cursor and body heading
     /// (LLAgentCamera::updateLookAt).
     look_at_privacy: Option<(bool, bool)>,
-    /// What the simulator was told of the static eyes animation this
-    /// session (FSStaticEyes); none before the arrival.
-    static_eyes_sent: Option<bool>,
+    /// What the simulator was told of the static eyes animation since the
+    /// last arrival (FSStaticEyes).
+    static_eyes: crate::world::lookat::StaticEyes,
     /// The world point the cursor was over last frame, and the object it
     /// lies on (the hover pick of the cursor icon), for the look-at.
     look_hover: Option<(Option<usize>, Vec3)>,
@@ -1016,7 +1016,7 @@ impl App {
             turn_since: None,
             cam_key_since: [None; 10],
             look_at_privacy: None,
-            static_eyes_sent: None,
+            static_eyes: Default::default(),
             look_hover: None,
             hover_tips: Default::default(),
             look_at_fades: Default::default(),
@@ -1454,6 +1454,7 @@ impl App {
                 }
                 NetCommand::TeleportTo { handle, position, look_at } => {
                     if Some(*handle) == self.world.main_region {
+                        self.demo_unseat_on_teleport();
                         self.world.apply(NetEvent::TeleportLocal {
                             flying: self.world.agent.flying,
                         });
@@ -2268,7 +2269,7 @@ impl App {
         self.region_restart = region_restart::State::default();
         self.region_restart.put_demo(demo);
         self.move_complete_at = None;
-        self.static_eyes_sent = None;
+        self.static_eyes.on_arrival();
         self.set_mouselook_grab(false);
         self.camera = Camera::default();
     }
@@ -2899,6 +2900,8 @@ impl App {
                 });
                 self.stop_local_typing();
                 self.move_complete_at = Some(Instant::now());
+                // the simulator we land in plays none of our animations yet
+                self.static_eyes.on_arrival();
                 self.tp_checks = vec![10.0, 3.0];
                 // (a border crossing leaves the camera where it is)
                 if !self.world.arrived_by_crossing {
@@ -3960,23 +3963,18 @@ impl App {
 
     /// FSStaticEyes (update_static_eyes in llstartup.cpp, its setting's
     /// listener in llviewercontrol.cpp): the animation that holds the eyes
-    /// still is started once arrived, then started or stopped as the setting
-    /// changes.
+    /// still is started after every arrival, then started or stopped as the
+    /// setting changes (`StaticEyes`).
     fn sync_static_eyes(&mut self) {
         if self.move_complete_at.is_none() {
             return;
         }
-        let want = self.settings.lookat.static_eyes;
-        match self.static_eyes_sent {
-            Some(sent) if sent == want => {}
-            None if !want => self.static_eyes_sent = Some(false),
-            _ => {
-                self.send(NetCommand::AgentAnimation {
-                    anim: crate::world::lookat::STATIC_EYES,
-                    start: want,
-                });
-                self.static_eyes_sent = Some(want);
-            }
+        if let Some(start) = self.static_eyes.request(self.settings.lookat.static_eyes) {
+            log::info!("static eyes: {} asked of the simulator", if start { "start" } else { "stop" });
+            self.send(NetCommand::AgentAnimation {
+                anim: crate::world::lookat::STATIC_EYES,
+                start,
+            });
         }
     }
 
@@ -7701,6 +7699,7 @@ impl App {
                 w.tp_progress = 0.6;
                 w.tp_status = aurora_i18n::tr!("common-loading-region").into();
                 if let (Some(position), Some(handle)) = (self.demo_tp_dest.take(), w.main_region) {
+                    self.demo_unseat_on_teleport();
                     aurora_net::transition::step(|| "AgentMovementComplete (demo)".to_string());
                     aurora_net::transition::arrived(Duration::from_secs(20));
                     let ev = NetEvent::AgentMovementComplete {
@@ -9214,6 +9213,7 @@ impl App {
             self.toggle_ground_sit();
             log::info!("demo sit button: sitting {}", self.world.agent.is_sitting());
         }
+        self.demo_sit_teleport();
         if let (Some(demo), Some(g)) = (&mut self.geometry_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut g.renderer);
         }
@@ -11255,6 +11255,7 @@ impl App {
         let p = self.palette;
         let ctx = ui.ctx().clone();
         ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
+        ui::widgets::set_perceptual_volume(&ctx, self.settings.audio.perceptual_volume);
         let beacon_hovered = !ctx.is_pointer_over_egui() && !ctx.egui_wants_pointer_input() && self.beacon_hover();
         self.beacon_hit = None;
         let mut t = Instant::now();
@@ -12313,6 +12314,18 @@ impl App {
                     self.settings.link_previews.hidden_sites.push(site);
                     self.settings.save();
                 }
+                // the player's own volume slider moved: the next video
+                // starts there (#848); saved with the settings, like the
+                // volumes of Sound and voice
+                if let Some(volume) = crate::link_preview::take_video_volume() {
+                    log::info!("link previews: video volume kept at {:.0} %", volume * 100.0);
+                    self.settings.link_previews.video_volume = volume;
+                }
+                // a player's cog: the video settings
+                if std::mem::take(&mut self.chat_ui.previews.open_settings) {
+                    self.panels.settings = true;
+                    self.options_ui.open_videos();
+                }
                 // a YouTube video playing in its window, or a card's that
                 // stopped being drawn
                 self.chat_ui.previews.player_window(&ctx, &p);
@@ -12694,14 +12707,18 @@ impl App {
                     presence_at,
                     classic_bars,
                 };
+                // the cards read the world for their links' names (#898): the
+                // lists leave it while they are drawn, then come back
+                let mut list = std::mem::take(&mut self.world.notifications);
+                let mut hist = std::mem::take(&mut self.world.notification_history);
                 let (mut answers, asks) = if aurora {
                     ui::notification_center::show(
                         &ctx,
                         &p,
                         &self.skin.icons,
-                        &self.world.map.ratings,
-                        &mut self.world.notifications,
-                        &mut self.world.notification_history,
+                        &self.world,
+                        &mut list,
+                        &mut hist,
                         &mut self.notif_ui,
                         &mut toast_env,
                         dnd,
@@ -12711,14 +12728,16 @@ impl App {
                         &ctx,
                         &p,
                         &self.skin.icons,
-                        &self.world.map.ratings,
-                        &mut self.world.notifications,
-                        &mut self.world.notification_history,
+                        &self.world,
+                        &mut list,
+                        &mut hist,
                         &mut self.notif_ui,
                         &mut toast_env,
                         dnd,
                     )
                 };
+                self.world.notifications = list;
+                self.world.notification_history = hist;
                 // the region restart over the toasts, under the open list
                 self.show_region_restart(&ctx, &p);
                 self.show_link_health(&ctx, &p);
@@ -15290,15 +15309,20 @@ impl ApplicationHandler for App {
                 crate::keywords::set(&self.keyword_settings());
                 self.panels.chat = true;
             }
-            // AURORA_DEMO_SOUND=1: a looped chime on the fountain and the
-            // interface sounds (audible: off by default for the captures)
+            // AURORA_DEMO_SOUND=1: a looped chime in the world; =hud:
+            // on a linked HUD prim. Interface sounds are enabled too.
             if std::env::var_os("AURORA_DEMO_SOUND").is_some() {
                 let (id, clip) = crate::demo::chime();
                 self.scene.sounds.insert(id, clip);
                 for id in self.settings.audio.ui.preload() {
                     self.scene.sounds.insert(id, crate::demo::ui_sound(id));
                 }
-                for ev in crate::demo::sound_events(id) {
+                let events = if std::env::var("AURORA_DEMO_SOUND").is_ok_and(|mode| mode == "hud") {
+                    crate::demo::hud::sound_events(id)
+                } else {
+                    crate::demo::sound_events(id)
+                };
+                for ev in events {
                     if let Some(e) = self.world.apply(ev) {
                         self.on_app_event(e);
                     }

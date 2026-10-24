@@ -7,8 +7,8 @@
 use super::icons::Icons;
 use super::presence::Status;
 use crate::theme::Palette;
+use crate::world::World;
 use crate::world::notifications::{Data, Kind, Notification, Notifications, Response};
-use crate::world::worldmap::RegionRatings;
 use egui::{Color32, RichText, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -318,7 +318,7 @@ pub(super) fn card(
     ui: &mut egui::Ui,
     p: &Palette,
     icons: &Icons,
-    ratings: &RegionRatings,
+    world: &World,
     n: &mut Notification,
     toast: bool,
     aurora: bool,
@@ -402,12 +402,12 @@ pub(super) fn card(
                 // LLTextEditor (lltoastnotifypanel.cpp, "text_editor_box")
                 if script {
                     egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        super::chat::text_with_places(ui, p, ratings, &n.body, &n.name_links, 12.0, p.ink);
+                        super::chat::text_with_links(ui, p, world, &n.body, &n.name_links, 12.0, p.ink);
                     });
                 } else {
                     ui.horizontal(|ui| {
                         ui.add_space(indent);
-                        super::chat::text_with_places(ui, p, ratings, &n.body, &n.name_links, 12.0, p.muted);
+                        super::chat::text_with_links(ui, p, world, &n.body, &n.name_links, 12.0, p.muted);
                     });
                 }
             }
@@ -650,7 +650,7 @@ pub fn show(
     ctx: &egui::Context,
     p: &Palette,
     icons: &Icons,
-    ratings: &RegionRatings,
+    world: &World,
     list: &mut Notifications,
     hist: &mut crate::world::notification_history::History,
     nui: &mut NotifUi,
@@ -714,6 +714,7 @@ pub fn show(
                                 ui,
                                 p,
                                 icons,
+                                world,
                                 hist,
                                 &mut nui.center.query,
                                 ctx.content_rect().height() * 0.7,
@@ -745,7 +746,7 @@ pub fn show(
                                     let r = if matches!(n.data, Data::Message { .. }) {
                                         person_card(ui, p, icons, env, &mut nui.wanted_pics, n, false)
                                     } else {
-                                        card(ui, p, icons, ratings, n, false, false)
+                                        card(ui, p, icons, world, n, false, false)
                                     };
                                     if let Some(r) = r {
                                         answers.push((n.id, r));
@@ -778,7 +779,7 @@ pub fn show(
                         let r = if matches!(n.data, Data::Presence { .. } | Data::Message { .. }) {
                             person_card(ui, p, icons, env, &mut nui.wanted_pics, n, true)
                         } else {
-                            card(ui, p, icons, ratings, n, true, false)
+                            card(ui, p, icons, world, n, true, false)
                         };
                         match r {
                             // closing a toast only hides it: the offer waits in the list
@@ -833,7 +834,7 @@ mod tests {
             theme.apply(&ctx, 1.0);
             let p = theme.palette();
             let icons = Icons::default();
-            let ratings = RegionRatings::default();
+            let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
             let labels: Vec<_> = (0..12).map(|i| format!("Choice {i:02}")).collect();
             let mut list = Notifications::default();
             list.push(
@@ -862,7 +863,7 @@ mod tests {
                     },
                     |ui| {
                         ui.set_width(390.0);
-                        answer = card(ui, &p, &icons, &ratings, &mut list.list[0], !aurora, aurora);
+                        answer = card(ui, &p, &icons, &world, &mut list.list[0], !aurora, aurora);
                     },
                 );
                 output.textures_delta.clear();
@@ -911,7 +912,7 @@ mod tests {
                 theme.apply(&ctx, 1.0);
                 let p = theme.palette();
                 let icons = Icons::default();
-                let ratings = RegionRatings::default();
+                let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
                 let mut list = Notifications::default();
                 let body = "An object named Gift dispenser owned by Jane Doe has given you this object:\nWelcome note";
                 list.push(
@@ -947,7 +948,7 @@ mod tests {
                         },
                         |ui| {
                             ui.set_width(320.0);
-                            answer = card(ui, &p, &icons, &ratings, &mut list.list[0], true, aurora);
+                            answer = card(ui, &p, &icons, &world, &mut list.list[0], true, aurora);
                         },
                     );
                     output.textures_delta.clear();

@@ -495,15 +495,16 @@ impl SoundManager {
         }
 
         // positions; objects gone stop their sound
-        let pos_of = |id: &Uuid| -> Option<Vec3> {
+        let pos_of = |id: &Uuid| {
             let idx = world.objects.index_of_uuid(id)?;
-            Scene::object_transform(world, idx, now, 0).filter(|t| !t.2).map(|t| t.0)
+            let (pos, _, hud) = Scene::object_transform(world, idx, now, 0)?;
+            Some((idx, pos, hud))
         };
         let mut gone = Vec::new();
-        // candidates: (distance, is_source, key)
-        let mut active: Vec<(f32, usize, Uuid, Vec3)> = Vec::new();
+        // Candidates: (distance, kind, key, audio position, within cut-off).
+        let mut active: Vec<(f32, usize, Uuid, Vec3, bool)> = Vec::new();
         for (id, s) in self.sources.iter_mut() {
-            let Some(pos) = pos_of(id) else {
+            let Some((idx, pos, hud)) = pos_of(id) else {
                 gone.push(*id);
                 continue;
             };
@@ -525,7 +526,21 @@ impl SoundManager {
             if s.playing.is_none() && s.pending.is_none() {
                 continue;
             }
-            active.push((pos.distance(l.pos), 0, *id, pos));
+            // LLAudioSourceVO::update places HUD audio at the camera, not
+            // in HUD coordinates. Its cut-off still uses the wearer's world
+            // position (getPosGlobal / updateMute, llaudiosourcevo.cpp).
+            let within_radius = self.radius.get(id).is_none_or(|radius| {
+                let origin = if hud {
+                    Scene::wearer_avatar(world, idx)
+                        .and_then(|(_, wearer)| Scene::object_transform(world, wearer, now, 0))
+                        .map(|t| t.0)
+                } else {
+                    Some(pos)
+                };
+                origin.is_some_and(|pos| pos.distance(l.pos) < *radius)
+            });
+            let pos = if hud { l.pos } else { pos };
+            active.push((pos.distance(l.pos), 0, *id, pos, within_radius));
         }
         for id in gone {
             if let Some(s) = self.sources.remove(&id)
@@ -536,28 +551,28 @@ impl SoundManager {
         }
         for (i, t) in self.triggered.iter_mut().enumerate() {
             if let Some(f) = t.follow
-                && let Some(p) = pos_of(&f)
+                && let Some((_, p, false)) = pos_of(&f)
             {
                 t.pos = p;
             }
-            active.push((t.pos.distance(l.pos), 1, Uuid::from_u128(i as u128), t.pos));
+            active.push((t.pos.distance(l.pos), 1, Uuid::from_u128(i as u128), t.pos, true));
         }
         // the nearest within their cut-off radius play
         active.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut voices = 0usize;
-        for (d, kind, key, pos) in active {
-            let (sound, gain, looped, playing, cutoff) = if kind == 0 {
+        for (_, kind, key, pos, within_radius) in active {
+            let (sound, gain, looped, playing) = if kind == 0 {
                 let Some(s) = self.sources.get(&key) else {
                     continue;
                 };
-                (s.sound, s.gain, s.flags & FLAG_LOOP != 0, s.playing, self.radius.get(&key).copied())
+                (s.sound, s.gain, s.flags & FLAG_LOOP != 0, s.playing)
             } else {
                 let Some(t) = self.triggered.get(key.as_u128() as usize) else {
                     continue;
                 };
-                (t.sound, t.gain, false, t.playing, None)
+                (t.sound, t.gain, false, t.playing)
             };
-            let audible = cutoff.is_none_or(|r| d < r) && voices < MAX_VOICES;
+            let audible = within_radius && voices < MAX_VOICES;
             let g = if audible { Self::gains(l, pos, gain) } else { (0.0, 0.0) };
             match playing {
                 Some(mut p) => {
@@ -648,6 +663,177 @@ impl SoundManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hud_world() -> World {
+        let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::hud::events()) {
+            world.apply(event);
+        }
+        world
+    }
+
+    fn object_id(world: &World, local_id: u32) -> Uuid {
+        world.objects.iter().find(|(_, o)| o.key.local_id == local_id).unwrap().1.full_id
+    }
+
+    fn assert_gain(playing: Option<Playing>, gain: (f32, f32)) {
+        let actual = playing.expect("sound is playing").gain;
+        assert!(
+            (actual.0 - gain.0).abs() < 1e-5 && (actual.1 - gain.1).abs() < 1e-5,
+            "{actual:?} != {gain:?}"
+        );
+    }
+
+    #[test]
+    fn hud_sounds_play_at_the_listener_on_roots_and_linked_prims() {
+        let world = hud_world();
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-hud-sound-tests"));
+        let sound = Uuid::from_u128(1);
+        sounds.insert(sound, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
+        let mut ids = Vec::new();
+        for point in 31..=38 {
+            let id = object_id(&world, 8200 + point);
+            sounds.set_attached(None, id, sound, 0.6, if point % 2 == 0 { FLAG_LOOP } else { 0 });
+            ids.push(id);
+        }
+        let child = object_id(&world, crate::demo::hud::CHILD);
+        sounds.set_attached(None, child, sound, 0.4, 0);
+        let mut listener = Listener {
+            pos: Vec3::new(100.0, 200.0, 300.0),
+            right: Vec3::X,
+            underwater: false,
+        };
+        let now = Instant::now();
+        sounds.update(None, &world, &listener, now);
+        assert_eq!(sounds.voices(), 9);
+        for id in &ids {
+            assert_gain(sounds.sources[id].playing, (0.6, 0.6));
+        }
+        assert_gain(sounds.sources[&child].playing, (0.4, 0.4));
+        listener.pos += Vec3::splat(1000.0);
+        listener.right = Vec3::Y;
+        listener.underwater = true;
+        sounds.update(None, &world, &listener, now + Duration::from_millis(10));
+        for id in &ids {
+            assert_gain(sounds.sources[id].playing, (0.6, 0.6));
+        }
+        assert_gain(sounds.sources[&child].playing, (0.4, 0.4));
+        assert!(sounds.beacon_sources(&world, now).is_empty());
+    }
+
+    #[test]
+    fn hud_sounds_wait_for_assets_then_honor_queue_gain_stop_and_detach() {
+        let mut world = hud_world();
+        let child = object_id(&world, crate::demo::hud::CHILD);
+        let root = object_id(&world, crate::demo::hud::FIRST);
+        let first = Uuid::from_u128(1);
+        let second = Uuid::from_u128(2);
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-hud-sound-tests"));
+        let listener = Listener {
+            pos: Vec3::splat(100.0),
+            right: Vec3::X,
+            underwater: false,
+        };
+        sounds.set_attached(None, child, first, 0.8, 0);
+        let now = Instant::now();
+        sounds.update(None, &world, &listener, now);
+        assert!(sounds.sources.get(&child).is_some_and(|s| s.pending.is_some()));
+        for sound in [first, second] {
+            sounds.insert(sound, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
+        }
+        sounds.update(None, &world, &listener, now + Duration::from_millis(10));
+        let voice = sounds.sources[&child].playing.expect("loaded HUD sound").voice;
+        sounds.set_attached(None, child, second, 0.5, FLAG_QUEUE);
+        sounds.set_gain(child, 0.3);
+        sounds.update(None, &world, &listener, now + Duration::from_millis(20));
+        assert_eq!(sounds.sources[&child].playing.unwrap().voice, voice);
+        assert_gain(sounds.sources[&child].playing, (0.3, 0.3));
+        sounds.update(None, &world, &listener, now + Duration::from_millis(120));
+        assert_eq!(sounds.sources[&child].sound, second);
+        assert_ne!(sounds.sources[&child].playing.unwrap().voice, voice);
+        sounds.set_attached(None, child, Uuid::nil(), 0.0, FLAG_STOP);
+        sounds.set_attached(None, root, first, 0.7, FLAG_LOOP);
+        sounds.update(None, &world, &listener, now + Duration::from_millis(130));
+        assert!(sounds.sources[&child].playing.is_none());
+        assert_gain(sounds.sources[&root].playing, (0.7, 0.7));
+        sounds.set_attached(None, root, Uuid::nil(), 0.0, FLAG_STOP);
+        assert!(!sounds.sources.contains_key(&root));
+        sounds.set_attached(None, root, first, 0.7, FLAG_LOOP);
+        sounds.update(None, &world, &listener, now + Duration::from_millis(140));
+        world.objects.remove_idx(world.objects.index_of_uuid(&root).unwrap());
+        sounds.update(None, &world, &listener, now + Duration::from_millis(150));
+        assert_eq!(sounds.voices(), 0);
+        assert!(!sounds.sources.contains_key(&root));
+        assert!(!sounds.sources.contains_key(&child));
+    }
+
+    #[test]
+    fn hud_sounds_honor_cutoff_at_the_wearer() {
+        let world = hud_world();
+        let child = object_id(&world, crate::demo::hud::CHILD);
+        let now = Instant::now();
+        let avatar = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let wearer_pos = Scene::object_transform(&world, avatar, now, 0).unwrap().0;
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-hud-sound-tests"));
+        let sound = Uuid::from_u128(1);
+        sounds.insert(sound, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
+        sounds.apply_object_sound(
+            None,
+            child,
+            AttachedSound {
+                id: sound,
+                gain: 0.6,
+                flags: FLAG_LOOP,
+                radius: 2.0,
+            },
+        );
+        let mut listener = Listener {
+            pos: wearer_pos + Vec3::X * 4.0,
+            right: Vec3::X,
+            underwater: false,
+        };
+        sounds.update(None, &world, &listener, now);
+        assert_eq!(sounds.voices(), 0, "HUD radius is measured from its wearer, not its audio position");
+        listener.pos = wearer_pos + Vec3::X;
+        sounds.update(None, &world, &listener, now + Duration::from_millis(10));
+        assert_gain(sounds.sources[&child].playing, (0.6, 0.6));
+        listener.pos = wearer_pos + Vec3::X * 4.0;
+        sounds.update(None, &world, &listener, now + Duration::from_millis(20));
+        assert_eq!(sounds.voices(), 0);
+        sounds.set_radius(child, 0.0);
+        sounds.update(None, &world, &listener, now + Duration::from_millis(30));
+        assert_gain(sounds.sources[&child].playing, (0.6, 0.6));
+    }
+
+    #[test]
+    fn hud_sounds_leave_world_and_triggered_sounds_spatial() {
+        let world = hud_world();
+        let object = object_id(&world, 101);
+        let hud = object_id(&world, crate::demo::hud::CHILD);
+        let now = Instant::now();
+        let idx = world.objects.index_of_uuid(&object).unwrap();
+        let pos = Scene::object_transform(&world, idx, now, 0).unwrap().0;
+        let listener = Listener {
+            pos: pos + Vec3::X * 4.0,
+            right: Vec3::X,
+            underwater: false,
+        };
+        let sound = Uuid::from_u128(1);
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-hud-sound-tests"));
+        sounds.insert(sound, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
+        sounds.set_attached(None, object, sound, 0.6, FLAG_LOOP);
+        // SoundTrigger positions remain in the world, even if the emitter is a HUD.
+        sounds.trigger(sound, pos, Some(hud), 0.6);
+        sounds.update(None, &world, &listener, now);
+        assert_gain(sounds.sources[&object].playing, SoundManager::gains(&listener, pos, 0.6));
+        assert_gain(sounds.triggered[0].playing, SoundManager::gains(&listener, pos, 0.6));
+        assert_eq!(sounds.triggered[0].pos, pos);
+        assert!(sounds.sources[&object].playing.unwrap().gain.1 < 1e-5);
+        sounds.set_radius(object, 2.0);
+        sounds.update(None, &world, &listener, now + Duration::from_millis(10));
+        assert!(sounds.sources[&object].playing.is_none());
+        assert!(sounds.triggered[0].playing.is_some());
+    }
 
     #[test]
     fn sound_beacons_follow_pending_sources_and_drop_stopped_sounds() {

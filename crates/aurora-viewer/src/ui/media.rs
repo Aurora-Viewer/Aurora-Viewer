@@ -174,12 +174,9 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, media: &mut MediaMa
                         m.muted = !m.muted;
                     }
                     ui.spacing_mut().slider_width = 70.0;
-                    ui.add(
-                        egui::Slider::new(&mut m.volume, 0.0..=1.0)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .trailing_fill(true)
-                            .show_value(false),
-                    )
+                    super::widgets::volume_slider(ui, &mut m.volume, super::widgets::VolumeScale::Gain, true, |s| {
+                        s.custom_parser(aurora_i18n::parse_number).trailing_fill(true).show_value(false)
+                    })
                     .on_hover_text(aurora_i18n::tr!("ui-media-volume-for-this-media"));
                     if button(ui, p, icons, "x", aurora_i18n::tr!("ui-media-close-esc"), true) {
                         close = true;

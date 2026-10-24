@@ -10,7 +10,7 @@
 //! actions, another layout.
 
 use super::{
-    ChatUi, ConvAction, Lines, Rows, ToField, compose, conversation_lines, find, head, mark_read, members, sidebar, stage, thread,
+    ChatUi, ConvAction, Lines, Rows, ToField, compose, conversation_lines, find, head, mark_read, members, sidebar, stage, thread, view,
 };
 use crate::theme::Palette;
 use crate::world::{ChatKind, ChatLine, World};
@@ -545,7 +545,7 @@ fn note_new_line(ui: &egui::Ui, world: &World, st: &mut ChatUi, read: Option<(us
         },
     };
     let unread = read.map_or(0, |(unread, _)| unread);
-    let looked = ui.input(|i| i.focused);
+    let looked = ui.input(|i| i.focused) && !st.views.get(&st.selected).is_some_and(view::View::is_paused);
     st.new_lines
         .frame(st.selected, ui.ctx().cumulative_frame_nr(), looked, first, lines, unread);
 }
@@ -571,6 +571,13 @@ pub(super) struct NewLines {
 }
 
 impl NewLines {
+    /// Opening a message menu starts a new reading boundary below the
+    /// messages already present, even if an older New marker was visible.
+    pub(super) fn pause_at(&mut self, conv: Option<Uuid>, next: u64) {
+        self.at.insert(conv, next);
+        self.seen.insert(conv, next);
+    }
+
     /// Nothing seen yet: the next sight of each conversation puts its
     /// "New" line above its unread lines (a demo's lines, given at once).
     pub(super) fn forget(&mut self) {
@@ -613,6 +620,17 @@ impl NewLines {
         }
         if looked {
             self.seen.insert(conv, next);
+        }
+        // A menu can put the boundary at the next, not-yet-received line.
+        // Our own replies do not turn into unread arrivals at that boundary.
+        if let Some(seq) = self.at.get_mut(&conv) {
+            while seq
+                .checked_sub(first)
+                .and_then(|i| lines.get(i as usize))
+                .is_some_and(|l| l.kind == ChatKind::Own)
+            {
+                *seq += 1;
+            }
         }
         self.present.insert(conv, (frame, looked));
     }

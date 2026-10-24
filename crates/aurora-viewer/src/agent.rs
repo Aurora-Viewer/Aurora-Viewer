@@ -234,6 +234,22 @@ impl AgentState {
         self.last_prediction = self.last_server;
     }
 
+    /// Off the seat without a server report (LLVOAvatar::getOffObject ->
+    /// sitDown(false), indra/newview/llvoavatar.cpp): standing where the
+    /// avatar was drawn, `pos` in main-region coordinates, nothing of the
+    /// seated state carried over.
+    pub fn get_off(&mut self, pos: Vec3) {
+        self.drop_prediction();
+        self.seated = false;
+        self.position = pos;
+        self.aim = pos;
+        self.server_pos = pos;
+        self.predicted_pos = pos;
+        self.velocity = Vec3::ZERO;
+        self.server_vel = Vec3::ZERO;
+        self.acceleration = Vec3::ZERO;
+    }
+
     /// A server report replaces the extrapolated object state immediately;
     /// drawable damping in `update` handles the visible correction.
     #[cfg(test)]

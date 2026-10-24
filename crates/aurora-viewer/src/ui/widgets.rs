@@ -29,10 +29,12 @@ pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
 mod unread;
+mod volume;
 mod workspace;
 pub use color::color_button;
 pub use pills::{dot_pill, dot_pill_width, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide, search_box};
 pub use unread::{CountSize, UnreadCount, unread_count};
+pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
     Modal, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation, navigation_wrapped,
     paint_glyph, section_header, sort_caret, stat, surface,
@@ -2380,16 +2382,47 @@ pub fn maturity_style(p: &Palette, maturity: &str) -> Option<(&'static str, Colo
     }
 }
 
-pub fn maturity_badge(ui: &mut egui::Ui, p: &Palette, maturity: &str, size: f32) -> Option<egui::Response> {
-    let (letter, ..) = maturity_style(p, maturity)?;
-    let tip = match letter {
+fn maturity_tip(letter: &str) -> &'static str {
+    match letter {
         "G" => aurora_i18n::tr!("ui-widgets-general-region-all-ages"),
         "M" => aurora_i18n::tr!("ui-widgets-moderate-region"),
         _ => aurora_i18n::tr!("ui-widgets-adult-region"),
-    };
+    }
+}
+
+pub fn maturity_badge(ui: &mut egui::Ui, p: &Palette, maturity: &str, size: f32) -> Option<egui::Response> {
+    let (letter, ..) = maturity_style(p, maturity)?;
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     paint_maturity_badge(ui.painter(), p, maturity, rect, inner_radius(ui.visuals()));
-    Some(resp.on_hover_text(tip))
+    Some(resp.on_hover_text(maturity_tip(letter)))
+}
+
+/// The badge inside a line of text of `size` (`emoji::text_rows`): it takes
+/// a text row's height and its square is centred on the capitals of that
+/// text as epaint draws them. Centred on egui's row instead, whose middle
+/// sits under the letters (room for the descenders), the square stood up
+/// to 1.5 px lower than the place name beside it.
+pub fn maturity_badge_in_text(ui: &mut egui::Ui, p: &Palette, maturity: &str, size: f32) -> Option<egui::Response> {
+    use egui::emath::GuiRounding as _;
+    let (letter, ..) = maturity_style(p, maturity)?;
+    let font = egui::FontId::proportional(size);
+    let row = ui.fonts_mut(|f| f.row_height(&font));
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(size, row), Sense::hover());
+    // the capitals of a label of this text, laid out as egui lays a label
+    // out (its rows sit apart from a bare layout's), drawn from the top of
+    // its row on the pixel
+    let probe = egui::WidgetText::from(egui::RichText::new("H").size(size)).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Body,
+    );
+    let caps = ink_rect(&probe);
+    let painter = ui.painter();
+    let top = rect.left_top().round_to_pixels(painter.pixels_per_point()).y;
+    let square = egui::Rect::from_center_size(egui::pos2(rect.center().x, top + caps.center().y), Vec2::splat(size));
+    paint_maturity_badge(painter, p, maturity, square, inner_radius(ui.visuals()));
+    Some(resp.on_hover_text(maturity_tip(letter)))
 }
 
 /// The same badge painted in a given square (labels drawn on a map).
@@ -2421,17 +2454,20 @@ pub fn maturity_badge_of(ui: &mut egui::Ui, p: &Palette, sim_access: u8, size: f
     maturity_badge(ui, p, super::bars::maturity_name(sim_access), size)
 }
 
-/// The badge of a region named by a place link, once its rating is known.
-/// An unknown region is handed to `take_wanted_regions` (only the links
-/// actually drawn are asked) and gets its badge when the answer arrives.
-pub fn region_badge(
+/// The badge of a region named by a place link in a line of text
+/// (`maturity_badge_in_text`: the chat, the notifications, the script
+/// dialogs), once its rating is known. An unknown region is handed to
+/// `take_wanted_regions` (only the links actually drawn are asked) and gets
+/// its badge when the answer arrives.
+pub fn region_badge_in_text(
     ui: &mut egui::Ui,
     p: &Palette,
     ratings: &crate::world::worldmap::RegionRatings,
     region: &str,
     size: f32,
 ) -> Option<egui::Response> {
-    maturity_badge_of(ui, p, region_rating(ui.ctx(), ratings, region)?, size)
+    let rating = region_rating(ui.ctx(), ratings, region)?;
+    maturity_badge_in_text(ui, p, super::bars::maturity_name(rating), size)
 }
 
 /// A region's rating, for a badge drawn now; an unknown one is asked

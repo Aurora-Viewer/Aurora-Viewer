@@ -897,12 +897,10 @@ pub fn voice_volume(ui: &mut Ui, p: &Palette, v: VoiceVolume) -> Option<VoiceEdi
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     child.spacing_mut().slider_width = slider.width();
-    let r = child
-        .add_enabled(
-            !v.muted,
-            egui::Slider::new(&mut value, 0.0..=1.0).show_value(false).trailing_fill(true),
-        )
-        .on_hover_text(aurora_i18n::tr!("ui-call-voice-volume"));
+    let r = super::widgets::volume_slider(&mut child, &mut value, super::widgets::VolumeScale::Voice, !v.muted, |s| {
+        s.show_value(false).trailing_fill(true)
+    })
+    .on_hover_text(aurora_i18n::tr!("ui-call-voice-volume"));
     if r.changed() && !v.muted {
         edit = Some(VoiceEdit::Volume(value));
     }

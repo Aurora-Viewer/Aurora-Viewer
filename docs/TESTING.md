@@ -333,6 +333,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_LINK=<ping ms>[,…]` | Our avatar moved by a stand-in simulator through a simulated link, to compare Aurora's movement with Firestorm's |
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
+| `AURORA_DEMO_SIT_TP=local\|region` | Sits on the nearest prim, then teleports from the seat |
 | `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
@@ -599,6 +600,19 @@ when unfocused") is ignored during a screenshot.
   `AURORA_DEMO_ACTIONS=1` a row of cubes stands in front of the avatar
   (the Sit chair keeps its own answer without the link).
 - **`AURORA_DEMO_SIT=n`**: clicks at frames 240, 300, 360…
+- **`AURORA_DEMO_SIT_TP=local|region`**: at frame 300 our avatar sits on
+  the nearest prim of the plaza, at frame 420 it teleports from the seat,
+  7 m south-west (`local`, in the region) or by the demo's remote teleport
+  (`region`, 3 s of progress). The demo's simulator unseats it and stops
+  the sit animation but sends no update with its new parent, as a
+  simulator whose updates after a teleport are terse ones: the viewer gets
+  off by itself (`get_off_for_teleport`, LLAgent::teleportCore). With
+  `AURORA_FPS_LIMIT=60`, capture frames 380 (seated) and 700 (arrived):
+  standing at the destination. The log gives `demo sit tp: before the
+  teleport, seated true`, `teleport: our avatar gets off its seat`, then
+  `demo sit tp: arrived, seated false, parent 0, seat animation false`
+  (before the fix: `parent 150, seat animation true`, the avatar drawn
+  seated far out of the region).
 - **`AURORA_DEMO_MMO="x,y[,1|2]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead,
   `2`: double right click (running).
@@ -1271,10 +1285,15 @@ Transaction windows, with the same variable:
   the next owner.
 - `buy-empty`: offers contents that cannot be sold and disables the purchase.
 
-**`AURORA_DEMO_DIALOG=12|4|long`** — llDialog menu of twelve answers in
+**`AURORA_DEMO_DIALOG=12|4|long|links`** — llDialog menu of twelve answers in
 three columns, arranged from the bottom to the top like Firestorm; `4`: four
 answers, to check the incomplete last row; `long`: long label truncated,
 with the full text on hover. Block and Ignore buttons under the menu.
+`links` (#898): a menu whose text lists two residents and a group by their
+`secondlife:///app/.../about` links and a region by its `app/region` link;
+they show as names (a person or group mark before them, the region with its
+badge), clickable. With `AURORA_DEMO_NOTIFS=legacy` and a capture before
+frame 700, the same menu in the Legacy toasts.
 
 **`AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]"`** — script of the build
 tools. Modes: `move`, `rotate`, `stretch`, `face`, `align`, `grab`,
@@ -1677,12 +1696,14 @@ grid.
   moving the linkset by the Y handle, also at 50%.
 - `edit-scroll`: selects a HUD locally enlarged to 200%, then
   places it off screen (frame 740). Without the HUD key, five notches
-  backwards in an empty area zoom all the HUDs out (frame 760); with the HUD
-  key, one notch enlarges only the hovered HUD (frame 820). Five notches
-  forwards return to the normal global view (frame 900). The camera and the
-  local factors are kept during the global zoom; the HUD key keeps
-  its priority for the local zoom. Frames 920 and 940 close editing,
-  then select a world object: the wheel is no longer intercepted
+  backwards in an empty area zoom all the HUDs out (frame 760); holding the
+  HUD key while clicking, moving the pointer and scrolling keeps the HUD's
+  position and local scale unchanged (frame 820). The wheel still changes
+  the common editing view. Five notches forwards return to the normal
+  global view (frame 900). The camera and the
+  local factors are kept during the global zoom. Direct held-key movement
+  and local resizing stay disabled while build tools are open. Frames 920
+  and 940 close editing, then select a world object: the wheel is no longer intercepted
   by the HUDs. Suggested screenshots: 750,790,850,910.
 - `faces`, `faces-turned`: nine HUD panels with a single visible face —
   columns front / back / explicitly double-sided PBR material, rows
@@ -1691,8 +1712,10 @@ grid.
   becomes empty, the back appears, the double-sided one stays visible. The
   floating labels stay visible both ways.
 - `faces-alpha` uses a texture with holes in those panels. Normal touches
-  and quick movement pass through texture holes; opaque PBR ignores texture
-  alpha. Editing and right-click selection retain access to invisible faces.
+  and hover reach transparent Blend texels; quick movement and local resizing
+  pass through them. Masked cutouts still let normal touches through, and
+  opaque PBR ignores texture alpha. Editing and right-click selection retain
+  access to invisible faces.
   With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
   and material masks blue; their highlighted surfaces become pickable.
 
@@ -3302,8 +3325,9 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `net` from the real sites |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
+| `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
@@ -3314,6 +3338,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -4190,6 +4215,20 @@ failure. Grid validation and any paid upload are performed by the human.
   "Except from my friends" lets Orion's through and still ignores Tess's.
   The log says `ignoring conference (ad-hoc) chat from <name>` for each.
 
+- **`AURORA_DEMO_CONV_LINE_MENU=1`**: with `AURORA_DEMO_CONV=aurora:group`
+  or `aurora:compact:group`, right-click a visible message at frame 702.
+  Combine with `AURORA_DEMO_SNOOZE=300` (without `auto`) and `AURORA_FPS_LIMIT=60`:
+  captures at frames 780 and 1500 show the same highlighted target while
+  new group messages arrive below the paused viewport. Inline place, avatar,
+  command and preview menus hold and highlight their containing message too.
+  The workspace's
+  New marker moves below the messages present when the menu opens and
+  stays before the first arrival. Escape, an outside click or a menu action
+  closes the menu, removes the highlight and resumes following if the
+  conversation was at its end beforehand. Repeat manually after scrolling
+  up: closing keeps the older reading position. Also check the sender menus
+  in Bubbles and Legacy, and Copy/Quote/Ignore against the original target.
+
 - **`AURORA_DEMO_CONV_SCROLL=up|new`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy` (the friend's
   conversation), forty earlier messages come before the scenario's lines and
@@ -4250,9 +4289,12 @@ failure. Grid validation and any paid upload are performed by the human.
   (the link alone) and a 24 MB one (its size and the limit, open button).
   `net`: the real sites, network needed: two Wikimedia files (an unknown
   site: "Show" loads them, the GIF animated) and a YouTube video, whose
-  title and picture come from YouTube. In the Legacy lines
-  (`bubbles:legacy`) no card at all. Capture at frame 900 (1500 with
-  `net`).
+  title and picture come from YouTube. `videos` (#848): Nova's 4:3 clip
+  ("Me at the zoo") and our upright short, each card in its video's shape
+  (the short as tall as a landscape card is wide, its card no narrower
+  than 200 points; the thumbnails without their black bands). In the
+  Legacy lines (`bubbles:legacy`) no card at all. Capture at frame 900
+  (1500 with `net`).
 - **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy`**: with `AURORA_DEMO_CONV`
   and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture
   (`1`), or animated picture (`gif`); `zoom` starts at twice its fitted size,
@@ -4284,7 +4326,19 @@ failure. Grid validation and any paid upload are performed by the human.
   window ("Me at the zoo" in its title, open in the browser in its bar).
   With `net` the video really plays (network needed; capture at frame
   1500): YouTube's player inside a page served on 127.0.0.1, with
-  YouTube's controls; without that page it shows its error 153.
+  YouTube's controls; without that page it shows its error 153. The card
+  and the window keep the video's shape (#848): the window's height
+  follows its width once a resize is let go. In its card the cog, window
+  and stop buttons show only while the pointer is over the card; the cog
+  (also in the window's title bar) opens Preferences › Chat on "YouTube
+  videos". Moving YouTube's own volume slider logs `video volume kept at
+  N %`, and the next video starts at that level.
+- **`AURORA_DEMO_VIDEO_VOLUME=<0-100>`**: demo only, the level YouTube's
+  player is set to when a video starts (what Preferences › Chat › Video
+  volume keeps). With `AURORA_DEMO_PREVIEW_PLAY=window` and `0`, the
+  player's volume icon shows one wave instead of two at frame 1500; no
+  `video volume kept` line follows (the player's own 100 % before it is
+  set is not taken for a change).
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of
@@ -5807,9 +5861,10 @@ What the inventory must show with these scenarios:
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music` or `list` | Media filter question or list |
-| `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
+| `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
+| `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
@@ -6015,11 +6070,15 @@ What the inventory must show with these scenarios:
   `medialist.xml`, and an answer does not save the profile. `AURORA_DEMO_MEDIA=<https URL>` or
   `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
   profile's filter is on.
-- **`AURORA_DEMO_SOUND=1`**: world sounds (looping chime) and interface
+- **`AURORA_DEMO_SOUND=1|hud`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
   them a volume of 0, so a video in the demo is silent unless this is set.
   The wind sound is silent too, unless this or `AURORA_DEMO_WIND` is set.
+  With `hud`, the chime loops on a linked HUD prim instead of the world
+  objects. Move the camera away or turn it: the chime stays centered at the
+  same volume. Effects volume and mute still control it; hiding the HUDs
+  does not stop their sounds.
 - **`AURORA_DEMO_WIND=<x>,<y>[,fly]`**: the demo region gets a uniform wind
   of x, y m/s (default `3,2`; LLWind::getVelocity doubles it, as on the
   grid), and with `fly` our avatar arrives flying. The wind noise plays on
@@ -6034,6 +6093,12 @@ What the inventory must show with these scenarios:
   struck through, as after a click on it. Display only: the volumes and the
   mutes of the settings do not change. Look at the panel: only Music,
   Multimedia and Voice have an enable box.
+- **`AURORA_PERCEPTUAL_VOLUME=0|1`**: Preferences › Sound › "Perceptual
+  volume sliders" forced off or on for the launch, without saving it
+  (`widgets::volume_slider`, #463). With `1` the knobs of the same volumes
+  sit further right (a 50 % gain at about four fifths of the travel, a
+  resident's 100 % still in the middle), the percentages unchanged. With
+  `AURORA_DEMO_VOLUME=open`, capture once with `0` and once with `1`.
 
 ## Forced settings and diagnostics
 
