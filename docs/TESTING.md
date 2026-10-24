@@ -3372,6 +3372,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
+| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]` | A large wardrobe in the Appearance demo: generated outfits, the window closed or scrolled |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
@@ -5527,6 +5528,18 @@ opens its submenu.
 
 These operations stay offline; creating new clothing and
 new body parts is not available yet.
+
+**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]`** — with
+`AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names like
+"Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
+clothes, objects and body parts, a thumbnail id (never loaded offline) on
+one in four. `closed` leaves the window closed; `scroll` turns the wheel
+over the list or gallery of the default window from frame 700, down then up
+every 300 frames. With `AURORA_PROFILE=1`, read `ui` of `perf summary`
+(and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8 ms with
+the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms open and
+2.5 ms closed before the wardrobe's links were walked only on inventory
+changes and only the rows in sight laid out.
 
 The demo objects use distinct points (skull, left ear,
 left ring finger, left foot and top-right HUD), shown in the

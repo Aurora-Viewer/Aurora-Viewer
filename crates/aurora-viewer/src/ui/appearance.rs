@@ -38,6 +38,66 @@ pub struct AppearanceUi {
     requested_items: HashSet<Uuid>,
     gallery: gallery::State,
     pub wanted_images: HashSet<Uuid>,
+    /// What `prepare` walked at the last inventory change.
+    prepared: Option<Prepared>,
+    /// The outfits shown, filtered and sorted, and what they came from.
+    shown: Option<Shown>,
+    /// The list's outfits whose header was open at the last frame, `None`
+    /// until the list has been drawn whole once (see `outfit_list`).
+    list_open: Option<HashSet<Uuid>>,
+    /// The heights of the rows last drawn, for those left out.
+    rows: RowHeights,
+}
+
+/// The measured heights of the rows of the list and the gallery, spacing
+/// included, for the rows out of sight that are not drawn. A name drawn
+/// with a taller fallback font (emoji, symbols) makes a taller row; using
+/// one height for all would move the rows when such a row leaves the view.
+#[derive(Default)]
+struct RowHeights {
+    /// Zoom and text sizes the heights were measured at.
+    key: (f32, f32, f32),
+    /// A closed header of the list, by outfit, and the last one measured.
+    list: HashMap<Uuid, f32>,
+    list_typical: Option<f32>,
+    /// A gallery row, by its first outfit, minus the height of the first row.
+    gallery: HashMap<Uuid, f32>,
+}
+
+impl RowHeights {
+    /// Forgets the heights when the zoom or a text size changed; `true`
+    /// then, when the list must be drawn whole again.
+    fn check(&mut self, ui: &egui::Ui) -> bool {
+        let key = (
+            ui.ctx().pixels_per_point(),
+            ui.text_style_height(&egui::TextStyle::Body),
+            ui.text_style_height(&egui::TextStyle::Button),
+        );
+        if key == self.key {
+            return false;
+        }
+        *self = RowHeights { key, ..Default::default() };
+        true
+    }
+}
+
+/// The folders `prepare` keeps loaded, and per folder the link targets it
+/// found missing with the folder's version and item count at the time.
+struct Prepared {
+    generation: u64,
+    /// The inventory's item count: when items go away, an original once
+    /// there may be missing in a folder that did not change.
+    items: usize,
+    folders: Vec<Uuid>,
+    missing: HashMap<Uuid, ((i32, usize), Vec<Uuid>)>,
+}
+
+/// The outfits of My Outfits that match the filter, in display order.
+struct Shown {
+    generation: u64,
+    search: String,
+    reverse: bool,
+    outfits: Vec<Uuid>,
 }
 
 impl AppearanceUi {
@@ -63,13 +123,97 @@ impl AppearanceUi {
         self.select_name = true;
     }
 
+    /// Keeps the outfits loaded and asks for the originals their links
+    /// point to. The folders are asked for at every frame (a cheap check of
+    /// their state, which a refresh resets); their links are walked again
+    /// only when the inventory changed, and then only those of the folders
+    /// whose version or item count moved: a wardrobe of thousands of outfits
+    /// cost tens of milliseconds a frame when it was walked whole each time.
     pub fn prepare(
         &mut self,
         inv: &mut crate::world::inventory::Inventory,
         agent: Uuid,
         worn: &HashSet<Uuid>,
     ) -> Vec<aurora_net::NetCommand> {
-        self.filter_requests(model::prepare(inv, agent, worn))
+        let changed = self.prepared.as_ref().is_none_or(|p| p.generation != inv.generation);
+        if changed {
+            let folders = model::prepare_folders(inv);
+            let mut known = self
+                .prepared
+                .take()
+                .filter(|p| inv.items.len() >= p.items)
+                .map(|p| p.missing)
+                .unwrap_or_default();
+            let mut missing = HashMap::with_capacity(folders.len());
+            for id in &folders {
+                let key = inv.folders.get(id).map_or((0, 0), |f| (f.info.version, f.items.len()));
+                let targets = match known.remove(id) {
+                    Some((was, targets)) if was == key => targets,
+                    _ => model::missing_targets(inv, *id).collect(),
+                };
+                missing.insert(*id, (key, targets));
+            }
+            self.prepared = Some(Prepared {
+                generation: inv.generation,
+                items: inv.items.len(),
+                folders,
+                missing,
+            });
+        }
+        let Some(prepared) = &self.prepared else {
+            return Vec::new();
+        };
+        for id in &prepared.folders {
+            inv.request(*id);
+        }
+        let mut missing: HashSet<_> = worn.iter().filter(|id| !inv.items.contains_key(id)).copied().collect();
+        // links walked at an earlier change were asked for then
+        // (`requested_items`), unless a refresh forgot them
+        if changed {
+            missing.extend(
+                prepared
+                    .missing
+                    .values()
+                    .flat_map(|(_, targets)| targets)
+                    .filter(|id| !inv.items.contains_key(id)),
+            );
+        }
+        self.filter_requests(model::fetch_items(missing, agent))
+    }
+
+    /// The outfits of My Outfits matching the filter, sorted by name, built
+    /// again only when the inventory, the filter or the order changed.
+    fn shown_outfits(&mut self, inv: &crate::world::inventory::Inventory) -> Vec<Uuid> {
+        if let Some(shown) = &self.shown
+            && shown.generation == inv.generation
+            && shown.search == self.search
+            && shown.reverse == self.reverse_sort
+        {
+            return shown.outfits.clone();
+        }
+        let needle = self.search.trim().to_lowercase();
+        let my = model::system_folder(inv, model::FT_MY_OUTFITS);
+        let mut named: Vec<(String, Uuid)> = my
+            .and_then(|id| inv.folders.get(&id))
+            .into_iter()
+            .flat_map(|f| &f.children)
+            .filter_map(|id| inv.folders.get(id))
+            .filter(|f| f.info.type_default == model::FT_OUTFIT)
+            .map(|f| (f.info.name.to_lowercase(), f.info.id))
+            .filter(|(name, _)| name.contains(&needle))
+            .collect();
+        named.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut outfits: Vec<_> = named.into_iter().map(|(_, id)| id).collect();
+        if self.reverse_sort {
+            outfits.reverse();
+        }
+        self.shown = Some(Shown {
+            generation: inv.generation,
+            search: self.search.clone(),
+            reverse: self.reverse_sort,
+            outfits: outfits.clone(),
+        });
+        outfits
     }
 
     pub fn prepare_contents(
@@ -97,6 +241,7 @@ impl AppearanceUi {
 
     pub fn refresh(&mut self, inv: &mut crate::world::inventory::Inventory) {
         self.requested_items.clear();
+        self.prepared = None;
         for f in inv.folders.values_mut().filter(|f| matches!(f.info.type_default, 46..=48)) {
             f.state = crate::world::inventory::FetchState::Unknown;
         }
@@ -121,6 +266,7 @@ impl AppearanceUi {
         worn: &HashSet<Uuid>,
     ) -> Vec<aurora_net::NetCommand> {
         self.requested_items.clear();
+        self.prepared = None;
         self.prepare(inv, agent, worn)
     }
 }
@@ -239,6 +385,7 @@ fn gallery(
     world: &World,
     st: &mut AppearanceUi,
     outfits: &[Uuid],
+    current: Option<Uuid>,
     actions: &mut Vec<Action>,
     images: &HashMap<Uuid, egui::TextureHandle>,
     list_width: f32,
@@ -247,7 +394,22 @@ fn gallery(
     // the bar's strip must not drop a column
     let columns = if list_width >= 540.0 { 3 } else { 2 };
     let width = ((ui.available_width() - 10.0 * (columns - 1) as f32) / columns as f32).max(90.0);
+    // Only the rows in sight are laid out (with their thumbnails asked
+    // for); the others leave their height: that of the first row, drawn at
+    // every frame to measure it, give or take what a row measured when last
+    // drawn (a taller font in a name).
+    st.rows.check(ui);
+    let view = ui.clip_rect();
+    let mut pitch = None;
     for pair in outfits.chunks(columns) {
+        if let Some(pitch) = pitch {
+            let height = pitch + st.rows.gallery.get(&pair[0]).copied().unwrap_or(0.0);
+            if !in_sight(ui.cursor().top(), height, view) {
+                skip_row(ui, height);
+                continue;
+            }
+        }
+        let top = ui.cursor().top();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             for id in pair {
@@ -293,7 +455,7 @@ fn gallery(
                         st.open_outfit(*id);
                     }
                     gallery::context_menu(&response, p, world, st, *id, actions, true);
-                    let current = model::base(&world.inventory) == Some(*id);
+                    let current = current == Some(*id);
                     let color = if current { p.violet_light } else { p.ink };
                     let font_id = egui::FontId::proportional(12.0);
                     let galley = outfit_label(ui, &folder.info.name, current, font_id.clone(), color, width);
@@ -315,7 +477,24 @@ fn gallery(
             }
         });
         ui.add_space(12.0);
+        let height = ui.cursor().top() - top;
+        let first = *pitch.get_or_insert(height);
+        st.rows.gallery.insert(pair[0], height - first);
     }
+}
+
+/// Whether a row of `pitch` points starting at `top` is in sight of the
+/// list's viewport `view`, give or take a row.
+fn in_sight(top: f32, pitch: f32, view: egui::Rect) -> bool {
+    top + 2.0 * pitch >= view.top() && top - pitch <= view.bottom()
+}
+
+/// Leaves the room of a row that is not drawn, and the one automatic id
+/// its child `Ui` would have taken, so that the rows drawn after it keep
+/// the ids (hover, clicks, open menus) they have when every row is drawn.
+fn skip_row(ui: &mut egui::Ui, pitch: f32) {
+    ui.add_space(pitch);
+    ui.skip_ahead_auto_ids(1);
 }
 
 /// The room between an outfit's name and its worn tag.
@@ -356,13 +535,40 @@ fn worn_tag(ui: &egui::Ui, p: &Palette, name_end: f32, center_y: f32) {
     );
 }
 
-fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, outfits: &[Uuid], actions: &mut Vec<Action>) {
+fn outfit_list(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut AppearanceUi,
+    outfits: &[Uuid],
+    current: Option<Uuid>,
+    actions: &mut Vec<Action>,
+) {
     let worn = items::worn_labels(world);
-    let current = model::base(&world.inventory);
+    // Only the headers in sight are laid out; a closed one out of sight
+    // leaves the height it had when last drawn. An open one (known from the
+    // last frame), the selected one (open by default) and the one to reveal
+    // are always drawn. The first frame draws every header, to learn which
+    // ones are open and their heights, again after a zoom or text size change.
+    let view = ui.clip_rect();
+    let remeasure = st.rows.check(ui);
+    let known_open = st.list_open.take().filter(|_| !remeasure);
+    let mut open_now = HashSet::new();
     for id in outfits {
         let Some(f) = world.inventory.folders.get(id) else {
             continue;
         };
+        if let Some(known_open) = &known_open
+            && !known_open.contains(id)
+            && st.selected_outfit != Some(*id)
+            && st.reveal_outfit != Some(*id)
+            && let Some(height) = st.rows.list.get(id).copied().or(st.rows.list_typical)
+            && !in_sight(ui.cursor().top(), height, view)
+        {
+            skip_row(ui, height);
+            continue;
+        }
+        let top = ui.cursor().top();
         let is_current = current == Some(*id);
         let font_id = egui::TextStyle::Button.resolve(ui.style());
         // the header's own room for its title: past the caret, 4 px short of the end
@@ -442,7 +648,15 @@ fn outfit_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut Appearanc
             response.header.scroll_to_me(Some(egui::Align::Min));
             st.reveal_outfit = None;
         }
+        if response.body.is_some() {
+            open_now.insert(*id);
+        } else {
+            let height = ui.cursor().top() - top;
+            st.rows.list.insert(*id, height);
+            st.rows.list_typical = Some(height);
+        }
     }
+    st.list_open = Some(open_now);
 }
 
 fn worn_list(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, actions: &mut Vec<Action>, edit: bool) {
@@ -717,28 +931,6 @@ pub fn show(
     images: &HashMap<Uuid, egui::TextureHandle>,
 ) -> Vec<Action> {
     let mut actions = Vec::new();
-    let inv = &world.inventory;
-    let base = model::base(inv);
-    let name = base
-        .and_then(|id| inv.folders.get(&id))
-        .map(|f| f.info.name.clone())
-        .unwrap_or_else(|| aurora_i18n::tr!("common-current-outfit").into());
-    let dirty = model::dirty(inv);
-    let count = world.worn_attachment_items().len();
-    let my = model::system_folder(inv, model::FT_MY_OUTFITS);
-    let mut outfits: Vec<_> = my
-        .and_then(|id| inv.folders.get(&id))
-        .map(|f| f.children.clone())
-        .unwrap_or_default();
-    outfits.retain(|id| {
-        inv.folders.get(id).is_some_and(|f| {
-            f.info.type_default == model::FT_OUTFIT && f.info.name.to_lowercase().contains(&st.search.trim().to_lowercase())
-        })
-    });
-    outfits.sort_by_key(|id| inv.folders.get(id).map(|f| f.info.name.to_lowercase()));
-    if st.reverse_sort {
-        outfits.reverse();
-    }
     let mut floater = widgets::Floater::new(
         "appearance",
         aurora_i18n::tr!("common-appearance"),
@@ -747,7 +939,17 @@ pub fn show(
     )
     .help(aurora_i18n::tr!("ui-appearance-choose-an-outfit-manage-worn-items-or-save-your"));
     floater.min_size = Vec2::new(390.0, 520.0);
+    // what the window shows is gathered only when it is drawn
     floater.show(ctx, p, open, |ui| {
+        let inv = &world.inventory;
+        let base = model::base(inv);
+        let name = base
+            .and_then(|id| inv.folders.get(&id))
+            .map(|f| f.info.name.clone())
+            .unwrap_or_else(|| aurora_i18n::tr!("common-current-outfit").into());
+        let dirty = model::dirty(inv);
+        let count = world.worn_attachment_items().len();
+        let outfits = st.shown_outfits(inv);
         ui.set_width(ui.available_width());
         if st.editing {
             ui.horizontal(|ui| {
@@ -883,8 +1085,8 @@ pub fn show(
                                 worn_list(ui, p, world, st, &mut actions, true);
                             } else {
                                 match st.tab {
-                                    0 => gallery(ui, p, world, st, &outfits, &mut actions, images, list_width),
-                                    1 => outfit_list(ui, p, world, st, &outfits, &mut actions),
+                                    0 => gallery(ui, p, world, st, &outfits, base, &mut actions, images, list_width),
+                                    1 => outfit_list(ui, p, world, st, &outfits, base, &mut actions),
                                     _ => {
                                         ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-items-to-wear")).color(p.muted));
                                         worn_list(ui, p, world, st, &mut actions, false);
@@ -1073,6 +1275,26 @@ pub fn show(
     actions
 }
 
+/// `AURORA_DEMO_OUTFITS=<count>,scroll`: from frame 700 the wheel scrolls
+/// the outfit list or gallery of the default window, down then up every 300
+/// frames, to measure the frames of a scrolled wardrobe.
+pub fn demo_events(frame: u64) -> Vec<egui::Event> {
+    if frame < 700 || !model::demo_outfit_mode("scroll") {
+        return Vec::new();
+    }
+    let down = ((frame - 700) / 300).is_multiple_of(2);
+    vec![
+        egui::Event::PointerMoved(egui::pos2(300.0, 450.0)),
+        egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, if down { -120.0 } else { 120.0 }),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Unknown,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1134,7 +1356,7 @@ mod tests {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 ui.set_width(430.0);
                 if view == 0 {
-                    outfit_list(ui, &palette, &world, &mut st, &[folder], &mut vec![]);
+                    outfit_list(ui, &palette, &world, &mut st, &[folder], model::base(&world.inventory), &mut vec![]);
                 } else {
                     worn_list(ui, &palette, &world, &mut st, &mut vec![], view == 2);
                 }
@@ -1486,5 +1708,277 @@ mod tests {
             st.reveal_outfit.is_none(),
             "the previously closed folder has opened and been scrolled to"
         );
+    }
+
+    fn wardrobe(count: usize) -> World {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.agent_id = crate::demo::DEMO_AGENT;
+        model::seed_demo(&mut world.inventory, world.agent_id);
+        model::seed_demo_many(&mut world.inventory, world.agent_id, count);
+        world
+    }
+
+    fn fetched(commands: &[aurora_net::NetCommand]) -> HashSet<Uuid> {
+        commands
+            .iter()
+            .flat_map(|c| match c {
+                aurora_net::NetCommand::FetchItems { items, .. } => items.clone(),
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+
+    /// A wardrobe of thousands of outfits used to have all its links walked
+    /// and copied at every frame the window was open (25 ms a frame with
+    /// 3,000 outfits). They are walked again only when the inventory changed.
+    #[test]
+    fn prepare_walks_the_outfit_links_only_after_an_inventory_change() {
+        let mut world = wardrobe(50);
+        let agent = world.agent_id;
+        let inv = &mut world.inventory;
+        let mut st = AppearanceUi::default();
+        assert!(
+            fetched(&st.prepare(inv, agent, &HashSet::new())).is_empty(),
+            "every original is there"
+        );
+        let outfit = Uuid::from_u128(2_000_010);
+        assert!(model::missing_targets(inv, outfit).next().is_none());
+        let target = model::folder_links(inv, outfit)[0].target;
+        // unchanged generation: the links are not walked again
+        let original = inv.items.remove(&target).expect("original");
+        assert!(
+            fetched(&st.prepare(inv, agent, &HashSet::new())).is_empty(),
+            "idle frame walks nothing"
+        );
+        // an inventory change (an item fewer): walked again and asked for once
+        inv.generation += 1;
+        assert!(fetched(&st.prepare(inv, agent, &HashSet::new())).contains(&target));
+        assert!(fetched(&st.prepare(inv, agent, &HashSet::new())).is_empty(), "asked for once");
+        // a refresh forgets what was asked for: asked for again
+        st.refresh(inv);
+        assert!(fetched(&st.prepare(inv, agent, &HashSet::new())).contains(&target));
+        // the original arrives and the outfit is loaded again; a new link
+        // to a missing original is found by its outfit's change alone
+        inv.add_items(vec![original]);
+        inv.folders.get_mut(&outfit).expect("outfit").state = crate::world::inventory::FetchState::Fetched;
+        let ghost = Uuid::from_u128(99);
+        let mut link = inv.items[&inv.folders[&outfit].items[0]].clone();
+        link.id = Uuid::from_u128(98);
+        link.asset_id = ghost;
+        inv.add_items(vec![link]);
+        assert_eq!(fetched(&st.prepare(inv, agent, &HashSet::new())), HashSet::from([ghost]));
+        // the folders are asked for at every frame: a reset state is seen at once
+        inv.queue.clear();
+        inv.folders.get_mut(&outfit).expect("outfit").state = crate::world::inventory::FetchState::Unknown;
+        st.prepare(inv, agent, &HashSet::new());
+        assert!(inv.queue.contains(&(outfit, false)));
+    }
+
+    #[test]
+    fn the_outfit_list_is_built_again_only_when_its_inputs_change() {
+        let mut world = wardrobe(30);
+        let inv = &mut world.inventory;
+        let mut st = AppearanceUi::default();
+        let first = st.shown_outfits(inv);
+        assert_eq!(first.len(), 34, "4 demo outfits and 30 generated");
+        let name = |inv: &crate::world::inventory::Inventory, id: &Uuid| inv.folders[id].info.name.to_lowercase();
+        assert!(first.windows(2).all(|w| name(inv, &w[0]) <= name(inv, &w[1])), "sorted by name");
+        // renamed without an inventory change: the list is not rebuilt
+        let last = *first.last().expect("outfit");
+        inv.folders.get_mut(&last).expect("outfit").info.name = "  a first outfit".into();
+        assert_eq!(st.shown_outfits(inv), first, "idle frame keeps the list");
+        // the inventory changed: rebuilt
+        inv.generation += 1;
+        assert_eq!(st.shown_outfits(inv)[0], last);
+        // the filter and the order rebuild it too
+        st.search = " BEACH ".into();
+        let beach = st.shown_outfits(inv);
+        assert_eq!(beach.len(), 3);
+        assert!(beach.iter().all(|id| name(inv, id).contains("beach")));
+        st.reverse_sort = true;
+        let reversed = st.shown_outfits(inv);
+        assert_eq!(reversed.iter().rev().copied().collect::<Vec<_>>(), beach);
+    }
+
+    #[test]
+    fn rows_within_a_row_of_the_view_are_in_sight() {
+        let view = egui::Rect::from_min_max(egui::pos2(0.0, 100.0), egui::pos2(300.0, 400.0));
+        assert!(in_sight(100.0, 30.0, view));
+        assert!(in_sight(45.0, 30.0, view), "the row before the view");
+        assert!(!in_sight(30.0, 30.0, view));
+        assert!(in_sight(425.0, 30.0, view), "the row after the view");
+        assert!(!in_sight(431.0, 30.0, view));
+    }
+
+    fn outfit_names(shapes: &[egui::epaint::ClippedShape], world: &World) -> HashMap<String, egui::Pos2> {
+        fn collect(shape: &egui::Shape, out: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::Shape::Text(t) => out.push((t.galley.text().to_owned(), t.pos)),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+                _ => {}
+            }
+        }
+        let names: HashSet<_> = world.inventory.folders.values().map(|f| f.info.name.as_str()).collect();
+        let mut out = Vec::new();
+        shapes.iter().for_each(|s| collect(&s.shape, &mut out));
+        out.into_iter().filter(|(text, _)| names.contains(text.as_str())).collect()
+    }
+
+    /// Only the outfits in sight are laid out, where the whole list puts
+    /// them, and the widgets keep their ids: an item's menu stays open
+    /// across frames that draw the whole list.
+    #[test]
+    fn a_long_outfit_list_lays_out_what_is_in_sight_where_the_whole_list_does() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = wardrobe(400);
+        let mut st = AppearanceUi::default();
+        let outfit = Uuid::from_u128(2_000_200);
+        st.open_outfit(outfit);
+        // the scroll to the open outfit is animated
+        for _ in 0..120 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        assert!(st.reveal_outfit.is_none(), "scrolled to the open outfit");
+        assert!(st.list_open.as_ref().is_some_and(|open| open.contains(&outfit)));
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+            ..Default::default()
+        };
+        // right click an item of the open outfit, then draw the whole list
+        let label = model::folder_links(&world.inventory, outfit)
+            .into_iter()
+            .filter_map(|l| world.inventory.items.get(&l.target).map(|it| it.name.clone()))
+            .min_by_key(|n| n.to_lowercase())
+            .expect("item");
+        let pos = label_position(&ctx, &mut world, &mut st, &label);
+        for pressed in [true, false] {
+            let mut input = input();
+            input.events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: Default::default(),
+                },
+            ];
+            draw_input(&ctx, &mut world, &mut st, input);
+        }
+        assert!(egui::Popup::is_any_open(&ctx), "right-click menu");
+        for _ in 0..3 {
+            st.list_open = None;
+            draw(&ctx, &mut world, &mut st, None);
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        assert!(egui::Popup::is_any_open(&ctx), "the menu stays open across whole-list frames");
+        draw(&ctx, &mut world, &mut st, Some(egui::Key::Escape));
+        // up a little: closed headers above the open outfit come into sight
+        let mut wheel = input();
+        wheel.events = vec![
+            egui::Event::PointerMoved(egui::pos2(300.0, 400.0)),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 200.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ];
+        draw_input(&ctx, &mut world, &mut st, wheel);
+        for _ in 0..120 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let settled = outfit_names(&draw_output(&ctx, &mut world, &mut st, input()).1, &world);
+        st.list_open = None;
+        let whole = outfit_names(&draw_output(&ctx, &mut world, &mut st, input()).1, &world);
+        let in_sight = outfit_names(&draw_output(&ctx, &mut world, &mut st, input()).1, &world);
+        assert!(in_sight.len() > 8, "{}", in_sight.len());
+        assert_eq!(whole, settled, "the whole list puts the headers where they were");
+        assert_eq!(in_sight, whole, "the headers in sight sit where the whole list puts them");
+    }
+
+    /// The gallery lays out only its rows in sight, where the whole gallery
+    /// puts them, and keeps the whole gallery's height.
+    #[test]
+    fn the_gallery_lays_out_its_rows_in_sight_where_the_whole_gallery_does() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let palette = crate::theme::Theme::default().palette();
+        let world = wardrobe(200);
+        let mut st = AppearanceUi::default();
+        let outfits = st.shown_outfits(&world.inventory);
+        let base = model::base(&world.inventory);
+        let mut run = |clip: Option<egui::Rect>| {
+            let mut height = 0.0;
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_width(560.0);
+                if let Some(clip) = clip {
+                    ui.set_clip_rect(clip);
+                }
+                let top = ui.cursor().top();
+                gallery(ui, &palette, &world, &mut st, &outfits, base, &mut vec![], &HashMap::new(), 560.0);
+                height = ui.cursor().top() - top;
+            });
+            output.textures_delta.clear();
+            (outfit_names(&output.shapes, &world), height)
+        };
+        let (whole, whole_height) = run(Some(egui::Rect::from_min_max(egui::pos2(0.0, -1e6), egui::pos2(560.0, 1e6))));
+        let (part, part_height) = run(Some(egui::Rect::from_min_max(egui::pos2(0.0, 6000.0), egui::pos2(560.0, 6600.0))));
+        assert_eq!(whole.len(), outfits.len());
+        assert!(part.len() < 30 && part.len() > 6, "{}", part.len());
+        assert_eq!(part_height, whole_height);
+        for (text, pos) in &part {
+            if pos.y > 1000.0 {
+                assert_eq!(whole.get(text), Some(pos), "{text} moved");
+            }
+        }
+    }
+
+    /// The list keeps the whole list's height and positions while it lays
+    /// out only the headers in sight (an open outfit included).
+    #[test]
+    fn the_outfit_list_keeps_its_height_while_it_lays_out_what_is_in_sight() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let palette = crate::theme::Theme::default().palette();
+        let world = wardrobe(300);
+        let mut st = AppearanceUi {
+            tab: 1,
+            ..Default::default()
+        };
+        let outfits = st.shown_outfits(&world.inventory);
+        st.selected_outfit = Some(outfits[150]);
+        let base = model::base(&world.inventory);
+        let everything = egui::Rect::from_min_max(egui::pos2(0.0, -1e6), egui::pos2(560.0, 1e6));
+        let mut run = |clip: egui::Rect| {
+            let mut height = 0.0;
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_width(560.0);
+                ui.set_clip_rect(clip);
+                let top = ui.cursor().top();
+                outfit_list(ui, &palette, &world, &mut st, &outfits, base, &mut vec![]);
+                height = ui.cursor().top() - top;
+            });
+            output.textures_delta.clear();
+            (outfit_names(&output.shapes, &world), height)
+        };
+        // a few frames for the selected outfit to open
+        for _ in 0..30 {
+            run(everything);
+        }
+        let (whole, whole_height) = run(everything);
+        assert_eq!(whole.len(), outfits.len());
+        // past the open outfit, whose body is laid out above the view
+        let view = egui::Rect::from_min_max(egui::pos2(0.0, 6000.0), egui::pos2(560.0, 6600.0));
+        let (part, part_height) = run(view);
+        assert_eq!(part_height, whole_height);
+        assert!(part.len() > 10 && part.len() < 40, "{}", part.len());
+        for (text, pos) in &part {
+            assert_eq!(whole.get(text), Some(pos), "{text} moved");
+        }
     }
 }

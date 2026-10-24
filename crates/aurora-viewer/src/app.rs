@@ -8188,6 +8188,7 @@ impl App {
             raw.events.extend(ui::bars::favorites::demo_events(&ctx, self.frame_count));
             raw.events.extend(ui::chat::demo_events(&ctx, self.frame_count));
             raw.events.extend(crate::demo::chatlog::input_events(self.frame_count));
+            raw.events.extend(ui::appearance::demo_events(self.frame_count));
             raw.events.extend(ui::widgets::demo::snap_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::resize_events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::minimized_events(&ctx, self.frame_count));
@@ -14818,12 +14819,16 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                let many = crate::world::appearance::demo_outfit_count();
+                if many > 0 {
+                    crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
+                }
                 for cmd in
                     crate::world::appearance::sync_commands(&self.world.inventory, self.world.agent_id, &self.world.worn_attachment_items())
                 {
                     self.send(cmd);
                 }
-                self.panels.appearance = true;
+                self.panels.appearance = !crate::world::appearance::demo_outfit_mode("closed");
                 self.panels.perf = false;
                 self.appearance_ui.open(
                     match view.as_str() {
