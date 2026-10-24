@@ -29,10 +29,12 @@ pub(crate) mod scroll_offset;
 #[cfg(test)]
 pub(crate) mod steady_tests;
 mod unread;
+mod volume;
 mod workspace;
 pub use color::color_button;
 pub use pills::{dot_pill, dot_pill_width, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide, search_box};
 pub use unread::{CountSize, UnreadCount, unread_count};
+pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
     Modal, caret_room, collapsing, collapsing_forced, disclosure_caret, experimental_mark, glyph, navigation, navigation_wrapped,
     paint_glyph, section_header, sort_caret, stat, surface,

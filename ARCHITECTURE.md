@@ -1751,6 +1751,10 @@ The "Invisible" status (right to see us online withdrawn from each friend, then 
 is in `world/status.rs`.
 `ui/widgets/unread.rs` is the one unread counter (islands, dock, Firestorm's
 bars, Conversations list): dark red, its digits' ink centred to the pixel.
+`ui/widgets/volume.rs` is the one volume slider (Preferences › Sound, the
+volume panel, media controls, a resident's voice): the stored gain stays
+linear, the knob follows a loudness curve when "Perceptual volume sliders"
+is on.
 Text beside an icon, a badge or in a box is placed where epaint draws it
 (`widgets::ink_rect`, `galley_baseline`, `row_text_origin`: each glyph and
 the face's vertical shift rounded to the pixel); `ui/widgets/alignment_tests.rs`

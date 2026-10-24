@@ -237,12 +237,12 @@ pub fn top_controls(
                                 RichText::new(*name).size(12.0).color(p.muted)
                             };
                             ui.label(label);
-                            let r = ui.add_enabled(
+                            let r = super::widgets::volume_slider(
+                                ui,
+                                &mut audio.volume[i],
+                                super::widgets::VolumeScale::Gain,
                                 audio.enabled[i],
-                                egui::Slider::new(&mut audio.volume[i], 0.0..=1.0)
-                                    .custom_parser(aurora_i18n::parse_number)
-                                    .show_value(false)
-                                    .trailing_fill(true),
+                                |s| s.custom_parser(aurora_i18n::parse_number).show_value(false).trailing_fill(true),
                             );
                             if r.changed() {
                                 action = AudioAction::Changed;

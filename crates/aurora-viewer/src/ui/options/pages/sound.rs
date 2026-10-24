@@ -6,7 +6,7 @@
 use super::super::cx::{Custom, Cx, Nothing, field};
 use super::super::{SLIDER_W, binding_cell, device_combo, parse_uuid_text, uuid_text};
 use crate::ui::widgets;
-use egui::{RichText, Vec2};
+use egui::Vec2;
 
 pub(crate) fn ear_choice(ui: &mut egui::Ui, value: &mut crate::settings::VoiceEar) -> bool {
     use crate::settings::VoiceEar;
@@ -94,24 +94,30 @@ fn volumes(cx: &mut Cx) {
                 let a = &mut s.audio;
                 let mut ch = false;
                 ui.spacing_mut().slider_width = SLIDER_W + 40.0;
-                ch |= ui
-                    .add_enabled(
-                        !a.muted[i] && a.enabled[i],
-                        egui::Slider::new(&mut a.volume[i], 0.0..=1.0)
-                            .custom_parser(aurora_i18n::parse_number)
-                            .trailing_fill(true)
-                            .show_value(false),
-                    )
-                    .changed();
-                let percent_width = ui
-                    .painter()
-                    .layout_no_wrap("100 %".to_owned(), egui::FontId::proportional(12.0), p.muted)
-                    .size()
-                    .x;
-                ui.add_sized(
-                    egui::vec2(percent_width, ui.spacing().interact_size.y),
-                    egui::Label::new(RichText::new(format!("{:>3.0} %", a.volume[i] * 100.0)).size(12.0).color(p.muted))
-                        .wrap_mode(egui::TextWrapMode::Extend),
+                // this page's own copy of the setting: the sliders follow a
+                // click on the switch below at once
+                let enabled = !a.muted[i] && a.enabled[i];
+                ch |= widgets::volume_slider_with(
+                    ui,
+                    &mut a.volume[i],
+                    widgets::VolumeScale::Gain,
+                    widgets::perceptual_override().unwrap_or(a.perceptual_volume),
+                    enabled,
+                    |s| s.custom_parser(aurora_i18n::parse_number).trailing_fill(true).show_value(false),
+                )
+                .changed();
+                // the percentage in a fixed column, painted from its right
+                // edge: its text never moves the row (a font without even
+                // digits, OpenDyslexic, made " 80 %" wider than "100 %")
+                let font = egui::FontId::proportional(12.0);
+                let percent_width = ui.painter().layout_no_wrap("100 %".to_owned(), font.clone(), p.muted).size().x;
+                let (cell, _) = ui.allocate_exact_size(egui::vec2(percent_width, ui.spacing().interact_size.y), egui::Sense::hover());
+                ui.painter().text(
+                    cell.right_center(),
+                    egui::Align2::RIGHT_CENTER,
+                    format!("{:.0} %", a.volume[i] * 100.0),
+                    font,
+                    p.muted,
                 );
                 let mut on = !a.muted[i];
                 if widgets::switch(ui, &p, &mut on)
@@ -125,10 +131,23 @@ fn volumes(cx: &mut Cx) {
                     ch |= widgets::checkbox(ui, &p, &mut a.enabled[i], "")
                         .on_hover_text(tr!("ui-options-enable-this-channel"))
                         .changed();
+                } else {
+                    // the master has no enable box: its room kept, so that
+                    // its slider lines up with the channels' (the row is
+                    // laid out from the right)
+                    ui.scope(|ui| {
+                        ui.set_invisible();
+                        widgets::checkbox(ui, &p, &mut true, "");
+                    });
                 }
                 ch
             });
         }
+        cx.toggle(
+            tr!("ui-options-perceptual-volume"),
+            tr!("ui-options-perceptual-volume-hint"),
+            &field!(audio.perceptual_volume),
+        );
     });
     cx.group(tr!("ui-options-music-and-sounds"), |cx| {
         cx.toggle(

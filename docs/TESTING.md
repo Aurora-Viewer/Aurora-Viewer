@@ -5711,6 +5711,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_SOUND=1` | World, interface and media sounds audible |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
+| `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
@@ -5935,6 +5936,12 @@ What the inventory must show with these scenarios:
   struck through, as after a click on it. Display only: the volumes and the
   mutes of the settings do not change. Look at the panel: only Music,
   Multimedia and Voice have an enable box.
+- **`AURORA_PERCEPTUAL_VOLUME=0|1`**: Preferences › Sound › "Perceptual
+  volume sliders" forced off or on for the launch, without saving it
+  (`widgets::volume_slider`, #463). With `1` the knobs of the same volumes
+  sit further right (a 50 % gain at about four fifths of the travel, a
+  resident's 100 % still in the middle), the percentages unchanged. With
+  `AURORA_DEMO_VOLUME=open`, capture once with `0` and once with `1`.
 
 ## Forced settings and diagnostics
 

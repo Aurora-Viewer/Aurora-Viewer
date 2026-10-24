@@ -676,6 +676,38 @@ fn preference_slider_rails_stay_in_place_when_values_change() {
 }
 
 #[test]
+fn the_volume_sliders_line_up() {
+    // the master has no enable box: its slider used to start one box
+    // further right than the channels' (#463)
+    for font in [crate::ui::fonts::INTER, crate::ui::fonts::OPEN_DYSLEXIC] {
+        for scale in [1.0, 1.25] {
+            for perceptual in [false, true] {
+                let mut frames = Frames::new();
+                crate::ui::fonts::apply(&frames.ctx, font);
+                frames.ctx.set_zoom_factor(scale);
+                let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+                s.audio.perceptual_volume = perceptual;
+                let view = (Page::Sound, 0, 700.0);
+                let mut shapes = Vec::new();
+                for _ in 0..3 {
+                    shapes = preference_shapes(&mut frames, &mut s, &mut st, &mut r, view, Vec::new());
+                }
+                let rails: Vec<egui::Rect> = slider_rails(&frames, &shapes)
+                    .into_iter()
+                    .filter(|rail| (rail.width() - (SLIDER_W + 40.0)).abs() < 1.0)
+                    .collect();
+                let case = format!("{font}, scale {scale}, perceptual {perceptual}");
+                assert_eq!(rails.len(), crate::settings::audio_channels().len(), "{case}: one rail per channel");
+                for rail in &rails[1..] {
+                    assert!((rail.left() - rails[0].left()).abs() <= 0.5, "{case}: {rails:?}");
+                    assert!((rail.right() - rails[0].right()).abs() <= 0.5, "{case}: {rail:?} vs {:?}", rails[0]);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn away_slider_rails_stay_in_place_during_typing_and_pointer_changes() {
     let mut frames = Frames::new();
     let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
