@@ -802,6 +802,8 @@ impl App {
     pub fn new() -> anyhow::Result<App> {
         // found on a background thread while the rest starts
         ui::fonts::fallback::start();
+        // the regional 12 / 24 hours and time zone of the bars' clock, read once
+        ui::bars::clock::read_system_clock();
         let mut settings = Settings::load();
         aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
@@ -11510,7 +11512,17 @@ impl App {
                     own_pic: self.avatar_pics.get(&self.world.agent_id),
                     recent: if classic_bars { Vec::new() } else { self.recent_places() },
                     favorites: &favorites,
-                    system_island: self.settings.system_island,
+                    system_island: if self.demo {
+                        let (demo, s) = (ui::bars::demo::get(), self.settings.system_island);
+                        crate::settings::SystemIsland {
+                            clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
+                            clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
+                            clock_format: demo.clock_format.unwrap_or(s.clock_format),
+                            ..s
+                        }
+                    } else {
+                        self.settings.system_island
+                    },
                     net_stats: if self.demo {
                         ui::bars::demo::get().net_stats.unwrap_or(self.settings.show_net_stats)
                     } else {

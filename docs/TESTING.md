@@ -3213,7 +3213,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the interface hidden |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
@@ -4752,7 +4752,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   controls), `sysperf` / `sysnet` (Performance opened from the island at
   frame 300, by its frame rate / its network: the full view 8 px under the
   island, its left and right edges on the island's, down to the work
-  area's bottom; the compact view where it stands). In demo the network's graphs show a synthetic minute of
+  area's bottom; the compact view where it stands); the clock (#453):
+  `clocklocal` (local time instead of the saved time, so a click on the
+  clock does not change it in that run), `noseconds` (without its
+  seconds), `clock12` / `clock24` (12 / 24 hours instead of the saved
+  format; Auto writes the `clock:` log line at startup with the system's
+  12 or 24 hours). In demo the network's graphs show a synthetic minute of
   traffic (about 1.2 Mb/s in, waves), no packet lost. The hidden interface:
   `hidden` (hidden at frame 600 as Alt+Shift+U does: the bars and the
   windows go, the hint at the top in the middle for 6 s; with `legacy`,
