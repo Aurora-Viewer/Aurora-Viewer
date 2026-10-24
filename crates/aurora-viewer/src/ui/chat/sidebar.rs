@@ -902,7 +902,7 @@ fn voice_panel(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut ChatUi, a
             st.select_tab(Some(conversation));
         }
         let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-        let resp = ui.interact(rect, egui::Id::unique(("conv_control", "panel-hang-up")), egui::Sense::click());
+        let resp = ui.interact(rect, control_id("panel-hang-up"), egui::Sense::click());
         ui.painter().rect_filled(
             rect,
             ui.visuals().widgets.inactive.corner_radius,
