@@ -407,6 +407,8 @@ impl HistoryUi {
             wanted: &mut no_pictures,
             own_name: &own_name,
             plain_history: true,
+            // the transcripts as they were said
+            compact_automated: false,
             menu: Some(menu),
             bubbles: None,
             previews: None,

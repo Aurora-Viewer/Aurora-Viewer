@@ -434,7 +434,7 @@ impl App {
         let name = self.world.legacy_name(&owner).unwrap_or_else(|| self.world.social.name_of(&owner));
         let blocked = self.world.mutes.is_muted_id(&owner);
         match self.world.toggle_block_avatar(owner, &name) {
-            Err(e) => self.world.system_message(e),
+            Err(e) => self.world.system_notice(e, crate::world::notice_topics::Topic::Items),
             Ok(()) if !blocked => {
                 self.panels.people = true;
                 self.panels.people_tab = crate::ui::people::TAB_BLOCKED;

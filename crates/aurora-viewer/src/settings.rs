@@ -581,6 +581,10 @@ pub struct Settings {
     /// off by default; Preferences > Chat). "/n" before the text works
     /// without it.
     pub show_chat_channel: bool,
+    /// What objects say in the nearby chat on one small row like the
+    /// viewer's notices (#475, off by default; Preferences > Chat). Not in
+    /// the Legacy Viewer.
+    pub compact_automated_chat: bool,
     /// The local chat bar keeps the keyboard after a message is sent; Enter
     /// on the empty bar gives it back to the world (the Legacy Viewer's
     /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
@@ -1469,6 +1473,7 @@ impl Default for Settings {
             font_scale: 1.0,
             chat_timestamps: true,
             show_chat_channel: false,
+            compact_automated_chat: false,
             chat_keep_focus: true,
             show_contacts_tab: true,
             conversations_own_windows: false,

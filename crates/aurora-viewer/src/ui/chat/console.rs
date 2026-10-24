@@ -86,6 +86,7 @@ pub(super) fn cards(
     bottom: f32,
     seconds: f32,
     times: bool,
+    compact_automated: bool,
 ) {
     let now = std::time::SystemTime::now();
     let mut recent: Vec<&ChatLine> = world
@@ -117,13 +118,24 @@ pub(super) fn cards(
                 let radius = ui.visuals().window_corner_radius;
                 let glass = p.panel_alpha < 255;
                 let mut slot = None;
+                let small = super::object_row::compact(group[0], compact_automated);
                 let card = egui::Frame::new()
                     .fill(if glass { Color32::TRANSPARENT } else { tint })
                     .corner_radius(radius)
-                    .inner_margin(egui::Margin::symmetric(9, 6))
+                    .inner_margin(if small {
+                        egui::Margin::symmetric(9, 3)
+                    } else {
+                        egui::Margin::symmetric(9, 6)
+                    })
                     .show(ui, |ui| {
                         slot = Some(ui.painter().add(egui::Shape::Noop));
                         ui.multiply_opacity(card_alpha);
+                        if small {
+                            compact_card(
+                                ui, p, world, want_names, &group, seconds, now, card_alpha, times, &mut links, &mut names,
+                            );
+                            return;
+                        }
                         card(
                             ui,
                             p,
@@ -220,6 +232,56 @@ fn card<'a>(
             }
         });
     });
+}
+
+/// An object's lines on small rows, as the Conversations window shows them
+/// with the option on (`object_row.rs`): the cube, the name (its click and
+/// menu inspect the object) and the text, no picture nor head.
+#[allow(clippy::too_many_arguments)]
+fn compact_card<'a>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    want_names: &mut HashSet<uuid::Uuid>,
+    group: &[&'a ChatLine],
+    seconds: f32,
+    now: std::time::SystemTime,
+    card_alpha: f32,
+    times: bool,
+    links: &mut Vec<(egui::Rect, Link, Color32)>,
+    names: &mut Vec<(egui::Rect, &'a ChatLine)>,
+) {
+    let size = super::object_row::TEXT;
+    ui.spacing_mut().item_spacing.y = 1.0;
+    for &line in group {
+        let fade = alpha(seconds, line, now) / card_alpha.max(0.01);
+        let BubbleJob {
+            job,
+            links: line_links,
+            badges,
+            sender,
+            name,
+        } = line_job(line, p, world, want_names, WIDTH - 18.0, size, times, JobLook::Compact);
+        let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+        let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+        let mut painter = ui.painter().clone();
+        painter.multiply_opacity(fade);
+        painter.galley(rect.min, galley.clone(), p.ink);
+        // the cube in the room left before the name
+        if let Some((at, _)) = sender {
+            let side = super::pic_side(size);
+            let c = galley.pos_from_cursor(egui::text::CCursor::new(at)).translate(rect.min.to_vec2());
+            let r = egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
+            thread::paint_icon(&painter, "box", r.shrink(1.0), p.muted_dim);
+        }
+        if let Some(range) = name
+            && let Some(r) = super::range_rects(&galley, rect.min, range).first().copied()
+        {
+            names.push((r, line));
+        }
+        let col = crate::ui::colors::keyword_color(line).unwrap_or(p.muted).gamma_multiply(fade);
+        line_extras(ui, p, world, &galley, rect.min, size, fade, badges, line_links, col, links);
+    }
 }
 
 /// The tags after a name: IM, shouts, whispers (the Conversations thread's).
@@ -368,6 +430,7 @@ mod tests {
                         &mut HashSet::new(),
                         800.0,
                         20.0,
+                        false,
                         false,
                     )
                 },

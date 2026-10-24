@@ -145,7 +145,10 @@ impl World {
             };
             self.social.avatar_names.want(&c.perp);
             if cfg.in_chat {
-                self.system_message(kind.sentence(&format!("secondlife:///app/agent/{}/about", c.perp)));
+                self.system_notice(
+                    kind.sentence(&format!("secondlife:///app/agent/{}/about", c.perp)),
+                    crate::world::notice_topics::Topic::People,
+                );
             }
             // ScriptDialogReply from ourselves: chat on a negative channel
             // that reaches the agent's attachments
