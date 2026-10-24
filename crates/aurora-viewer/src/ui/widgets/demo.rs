@@ -250,7 +250,8 @@ pub fn minimized_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
 /// (`edge`), or presses that corner and holds it 40 x 30 further out
 /// (`drag`) or drags it in then out over the frames (`sweep` the width,
 /// `sweep-h` the height: `sweep_offset`; `sweep-fast` the width, in and
-/// out quickly: `fast_offset`), released at frame 1000.
+/// out quickly: `fast_offset`; `sweep-right` / `sweep-bottom` the same as
+/// `sweep` / `sweep-h` by the right or bottom edge), released at frame 1000.
 pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let Ok(value) = std::env::var("AURORA_DEMO_RESIZE") else {
         return Vec::new();
@@ -270,9 +271,13 @@ pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     };
     // inside the corner's and the edge's grab areas (`resize::Edge::hit_rect`)
     let corner = rect.max - egui::vec2(6.0, 6.0);
+    let (right, bottom) = (
+        egui::pos2(rect.right() - 1.0, rect.center().y),
+        egui::pos2(rect.center().x, rect.bottom() - 1.0),
+    );
     match mode.trim() {
         "corner" => vec![egui::Event::PointerMoved(corner)],
-        "edge" => vec![egui::Event::PointerMoved(egui::pos2(rect.right() - 1.0, rect.center().y))],
+        "edge" => vec![egui::Event::PointerMoved(right)],
         "drag" => {
             let start = egui::Id::unique("demo_resize_start");
             let Some(from) = ctx.data(|d| d.get_temp::<egui::Pos2>(start)) else {
@@ -286,17 +291,23 @@ pub fn resize_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
                 _ => Vec::new(),
             }
         }
-        "sweep" | "sweep-h" | "sweep-fast" => {
+        "sweep" | "sweep-h" | "sweep-fast" | "sweep-right" | "sweep-bottom" => {
+            let mode = mode.trim();
+            let grip = match mode {
+                "sweep-right" => right,
+                "sweep-bottom" => bottom,
+                _ => corner,
+            };
             let start = egui::Id::unique("demo_resize_start");
             let Some(from) = ctx.data(|d| d.get_temp::<egui::Pos2>(start)) else {
-                ctx.data_mut(|d| d.insert_temp(start, corner));
-                return vec![egui::Event::PointerMoved(corner), button(corner, true)];
+                ctx.data_mut(|d| d.insert_temp(start, grip));
+                return vec![egui::Event::PointerMoved(grip), button(grip, true)];
             };
             let to = from
-                + if mode.trim() == "sweep-fast" {
+                + if mode == "sweep-fast" {
                     fast_offset(frame)
                 } else {
-                    sweep_offset(frame, mode.trim() == "sweep-h")
+                    sweep_offset(frame, matches!(mode, "sweep-h" | "sweep-bottom"))
                 };
             match frame {
                 ..1000 => vec![egui::Event::PointerMoved(to)],

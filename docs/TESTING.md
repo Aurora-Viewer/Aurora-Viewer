@@ -3288,7 +3288,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_WINDOW_EDGES=<l\|r\|b…>` | Screen edges the windows may cross for the run |
 | `AURORA_DEMO_MINIMIZED=<mode>` | Minimized Conversations: short bar, unread outline, expanded by its toolbar button |
 | `AURORA_DEMO_SNAP=<mode>` | Window snapping: Alt attachment, free move, detachment, grouped move, resize |
-| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner dragged or swept in and out |
+| `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner or edge dragged or swept in and out |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
 | `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
@@ -3822,7 +3822,7 @@ failure. Grid validation and any paid upload are performed by the human.
   in place. `detach` attaches first, then moves People with Alt held:
   Conversations stays behind and the link is removed. Take screenshots at
   `800,960,1060,1160` with `AURORA_FPS_LIMIT=60`.
-- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast[,<window>]`**: from frame 600,
+- **`AURORA_DEMO_RESIZE=corner|edge|drag|sweep|sweep-h|sweep-fast|sweep-right|sweep-bottom[,<window>]`**: from frame 600,
   the pointer rests 6 points inside the bottom-right corner of a real
   window (`corner`), 1 point inside its right edge, halfway down
   (`edge`), or presses that corner and holds it 40 × 30 further out until
@@ -3838,7 +3838,14 @@ failure. Grid validation and any paid upload are performed by the human.
   points out by frame 900, a few points a frame; `sweep-h` does the same
   on the height (400 in, 600 out); `sweep-fast` drags it 520 points in
   and back out in 24 frames (about 45 points a frame), five times, then
-  rests at its start; released at frame 1000. With
+  rests at its start; released at frame 1000. `sweep-right` and
+  `sweep-bottom` do what `sweep` and `sweep-h` do, by the middle of the
+  right or the bottom edge instead of the corner. On the video player
+  window (`link_preview_player`, with `AURORA_DEMO_CONV_PREVIEWS=videos`
+  and `AURORA_DEMO_PREVIEW_PLAY=window`) the picture keeps the video's
+  shape at every captured frame of the drag (#941): the other dimension
+  follows the edge, and the window stops at its minimum or at the screen
+  on the video's shape, never stretched. With
   `AURORA_DEMO_CONV=aurora:group` and `AURORA_CAPTURE_FRAMES` listing
   frames (every 10 from 600 to 900, and runs of consecutive ones), what to
   look for in the Conversations window: nothing jumps at a frame; around
@@ -4374,8 +4381,9 @@ failure. Grid validation and any paid upload are performed by the human.
   With `net` the video really plays (network needed; capture at frame
   1500): YouTube's player inside a page served on 127.0.0.1, with
   YouTube's controls; without that page it shows its error 153. The card
-  and the window keep the video's shape (#848): the window's height
-  follows its width once a resize is let go. In its card the cog, window
+  and the window keep the video's shape (#848): dragged by an edge or a
+  corner, the window's picture keeps it at every frame (#941; see
+  `AURORA_DEMO_RESIZE`). In its card the cog, window
   and stop buttons show only while the pointer is over the card; the cog
   (also in the window's title bar) opens Preferences › Chat on "YouTube
   videos". Moving YouTube's own volume slider logs `video volume kept at
