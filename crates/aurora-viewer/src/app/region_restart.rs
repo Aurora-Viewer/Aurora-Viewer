@@ -144,7 +144,8 @@ impl App {
                 .notifications
                 .push(Kind::Alert, aurora_i18n::tr!("region-restart-title"), body, Data::None);
             self.world.ui_sounds.push(sound);
-            self.world.system_message(aurora_i18n::tr!("region-restart-chat"));
+            self.world
+                .system_notice(aurora_i18n::tr!("region-restart-chat"), crate::world::notice_topics::Topic::Region);
             return;
         }
         let classic = self.classic_restart();
@@ -158,7 +159,10 @@ impl App {
         if self.world.region_restart.cancelled() {
             self.drop_restart_bell();
             self.region_restart.legacy_open = false;
-            self.world.system_message(aurora_i18n::tr!("region-restart-chat-cancelled"));
+            self.world.system_notice(
+                aurora_i18n::tr!("region-restart-chat-cancelled"),
+                crate::world::notice_topics::Topic::Region,
+            );
             self.announce_restart(None);
         } else {
             // no alert to close: the simulator's system message, as Firestorm
@@ -228,7 +232,8 @@ impl App {
                 Cue::Shake => {}
                 Cue::Notice(seconds) => {
                     // FIRE-6307: a line in the nearby chat at each notice
-                    self.world.system_message(aurora_i18n::tr!("region-restart-chat"));
+                    self.world
+                        .system_notice(aurora_i18n::tr!("region-restart-chat"), crate::world::notice_topics::Topic::Region);
                     self.announce_restart(Some(seconds));
                     if let Some(id) = self.region_restart.bell
                         && let Some(n) = self.world.notifications.list.iter_mut().find(|n| n.id == id)
@@ -237,7 +242,10 @@ impl App {
                     }
                 }
                 Cue::Step(Level::Zero) => {
-                    self.world.system_message(aurora_i18n::tr!("region-restart-chat-zero"));
+                    self.world.system_notice(
+                        aurora_i18n::tr!("region-restart-chat-zero"),
+                        crate::world::notice_topics::Topic::Region,
+                    );
                     self.drop_restart_bell();
                 }
                 Cue::Step(_) | Cue::Back => {}

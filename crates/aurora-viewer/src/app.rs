@@ -1293,7 +1293,8 @@ impl App {
         }
         let im_placeholder = actor.is_nil() && self.world.rlva_prepare_outgoing_im(&mut cmd);
         if !im_placeholder && !self.world.rlva_allows_command(&cmd, actor) {
-            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             return;
         }
         if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
@@ -4127,6 +4128,9 @@ impl App {
         // conversations by their IM mode (LLIMMgr::addMessage), never in
         // do not disturb; "in front" = shown in the focused window
         let dnd = w.status.dnd;
+        // only people's lines count and alert (#741; AURORA_DEMO_OBJECT_CHAT=…:on
+        // for the run)
+        w.quiet_automated_chat = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
         w.notifications.toasts = crate::world::notifications::ToastPrefs {
             presence: self.settings.toast_friends_online,
             presence_in_chat: self.settings.friends_online_in_chat,
@@ -4250,9 +4254,10 @@ impl App {
         let a = &self.settings.audio;
         match a.stream_title {
             crate::settings::StreamTitleShow::Off => {}
-            crate::settings::StreamTitleShow::Chat => self
-                .world
-                .system_message(aurora_i18n::tr!("app-stream-title-now-playing", title = title.to_owned())),
+            crate::settings::StreamTitleShow::Chat => self.world.system_notice(
+                aurora_i18n::tr!("app-stream-title-now-playing", title = title.to_owned()),
+                crate::world::notice_topics::Topic::Media,
+            ),
             crate::settings::StreamTitleShow::Toast => {
                 self.world.notifications.push(
                     crate::world::notifications::Kind::Info,
@@ -4677,16 +4682,22 @@ impl App {
     /// a map lookup by name.
     fn teleport_to_text(&mut self, text: &str) {
         let Some(l) = crate::slurl::parse(text) else {
-            self.world.system_message(aurora_i18n::tr!("app-destination-not-recognized"));
+            self.world.system_notice(
+                aurora_i18n::tr!("app-destination-not-recognized"),
+                crate::world::notice_topics::Topic::Teleport,
+            );
             return;
         };
-        self.world.system_message(aurora_i18n::tr!(
-            "app-teleporting-to",
-            value0 = l.region.to_string(),
-            value1 = format!("{:.0}", l.pos.x),
-            value2 = format!("{:.0}", l.pos.y),
-            value3 = format!("{:.0}", l.pos.z)
-        ));
+        self.world.system_notice(
+            aurora_i18n::tr!(
+                "app-teleporting-to",
+                value0 = l.region.to_string(),
+                value1 = format!("{:.0}", l.pos.x),
+                value2 = format!("{:.0}", l.pos.y),
+                value3 = format!("{:.0}", l.pos.z)
+            ),
+            crate::world::notice_topics::Topic::Teleport,
+        );
         self.teleport_to_location(l.target(), l.pos);
     }
 
@@ -5494,7 +5505,8 @@ impl App {
         if self.world.rlva_allows_command(command, uuid::Uuid::nil()) {
             true
         } else {
-            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             false
         }
     }
@@ -5551,8 +5563,10 @@ impl App {
             self.world.tp_history.go_forward()
         };
         if let Some(e) = dest {
-            self.world
-                .system_message(aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()));
+            self.world.system_notice(
+                aurora_i18n::tr!("app-teleporting-to-2", value0 = e.region.to_string()),
+                crate::world::notice_topics::Topic::Teleport,
+            );
             if !self.request_user_teleport(
                 NetCommand::TeleportTo {
                     handle: e.handle,
@@ -10097,10 +10111,10 @@ impl App {
             if self.world.mutes.is_muted_id(&to) {
                 let name = self.world.legacy_name(&to).unwrap_or_else(|| self.world.social.name_of(&to));
                 self.world.unblock(to, &name, 0);
-                self.world.system_message(aurora_i18n::tr!(
-                    "app-was-unblocked-because-you-sent-them-an-im",
-                    name = name.to_string()
-                ));
+                self.world.system_notice(
+                    aurora_i18n::tr!("app-was-unblocked-because-you-sent-them-an-im", name = name.to_string()),
+                    crate::world::notice_topics::Topic::People,
+                );
             }
             self.world.own_im(to, &text);
             self.send(NetCommand::SendIm { to, message: text });
@@ -10176,7 +10190,8 @@ impl App {
             }
             BarAction::ShowHuds(visible) => {
                 if !visible && self.world.rlva_has_locked_hud() {
-                    self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+                    self.world
+                        .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
                     return;
                 }
                 if self.hud_drag.is_some() {
@@ -12062,6 +12077,7 @@ impl App {
                         // AURORA_DEMO_CHAT_LINES=legacy: the one-line look
                         // for the session, nothing saved
                         !(self.settings.classic_chat_lines || crate::demo::chat_lines_scenario() == Some(true)),
+                        self.chat_ui.compact_automated,
                     );
                 }
                 // the hidden interface: how to bring it back (the islands), or
@@ -12115,6 +12131,10 @@ impl App {
                     self.chat_ui.output_device.clone_from(&self.settings.audio.output_device);
                 }
                 self.chat_ui.timestamps = self.settings.chat_timestamps;
+                // AURORA_DEMO_OBJECT_CHAT=…:on: for the run, nothing saved
+                self.chat_ui.compact_automated = self.settings.compact_automated_chat || (self.demo && crate::demo::object_chat::on());
+                self.chat_ui.compact_im_notices =
+                    self.settings.compact_im_system_lines || (self.demo && crate::demo::object_chat::scene().is_some_and(|s| s.im_lines));
                 self.chat_ui.show_channel = self.settings.show_chat_channel || self.chat_ui.demo_channel;
                 self.chat_ui.send_typing = self.settings.send_typing_state;
                 self.chat_ui.typing_chevron = self.settings.typing_chevron;
@@ -14380,6 +14400,20 @@ impl ApplicationHandler for App {
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
                 self.chat_ui.show_profile = true;
             }
+            // AURORA_DEMO_OBJECT_CHAT=<style>|lines[:on]: the nearby chat in
+            // the Conversations window of that style, or the lines above the
+            // chat bar with the window closed
+            if let Some(scene) = crate::demo::object_chat::scene() {
+                self.panels.people = false;
+                self.panels.inventory = false;
+                self.panels.perf = false;
+                self.panels.chat = scene.style.is_some();
+                if let Some(style) = scene.style {
+                    self.chat_ui.selected = scene.im.then_some(crate::demo::DEMO_FRIEND);
+                    self.chat_ui.demo_style = Some(style);
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(760.0, 560.0));
+                }
+            }
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)
             if let Ok(scenario) = std::env::var("AURORA_DEMO_MAP") {
@@ -14633,6 +14667,11 @@ impl ApplicationHandler for App {
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
+            }
+            // AURORA_DEMO_OBJECT_CHAT: two notices among the lines, each with
+            // its topic's icon when compact
+            if crate::demo::object_chat::scene().is_some() {
+                crate::demo::object_chat::notices(&mut self.world);
             }
             if let Some(scene) = crate::demo::aurora_scenario() {
                 crate::demo::aurora_lines(&mut self.world, scene);

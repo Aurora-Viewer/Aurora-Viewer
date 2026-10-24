@@ -223,7 +223,8 @@ impl App {
         if let InvAction::Share { resident, .. } = &action
             && !self.world.rlva.allows("share", &resident.to_string())
         {
-            self.world.system_message(aurora_i18n::tr!("rlva-blocked"));
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             return;
         }
         match action {
