@@ -287,7 +287,25 @@ pub fn seed_received_big(inv: &mut Inventory, agent: Uuid, folders: u128, items:
     }
 }
 
-pub fn target(view: &str) -> Option<Uuid> {
+pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
+    if let Some(mode) = view.strip_prefix("aurora-menu-") {
+        return target(
+            match mode {
+                "folder" | "all-folder" => "folder",
+                "texture" | "all-texture" => return Some(Uuid::from_u128(8104)),
+                "trash" | "all-trash" => {
+                    return inv.folders.values().find(|f| f.info.type_default == 14).map(|f| f.info.id);
+                }
+                "animation" => "animation",
+                "script" => "script",
+                "link" => "link",
+                "object" | "organize" | "custom" | "locked" | "hidden" | "bars" | "drop" | "filter" | "export" | "load" | "empty"
+                | "load-search" | "empty-custom" | "restored" => "object",
+                _ => return None,
+            },
+            inv,
+        );
+    }
     Some(Uuid::from_u128(match view {
         "outfit-menu" | "outfit-menu-loading" => 704,
         "folder"

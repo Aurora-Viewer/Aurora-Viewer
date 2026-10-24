@@ -112,6 +112,7 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-received-unread"
             | "aurora-received-sort"
             | "aurora-received-sort-name" => egui::vec2(WIDE_SIZE, 720.0),
+            _ if mode.starts_with("aurora-menu-") => egui::vec2(WIDE_SIZE, 720.0),
             _ => egui::vec2(DEFAULT_SIZE.x, 640.0),
         };
         if let Some(wide) = mode.strip_prefix("aurora-folder-window") {

@@ -721,10 +721,8 @@ pub(super) fn message(p: &Palette, st: &InventoryUi) -> Option<(String, Color32)
         Some((st.message.clone(), p.warn))
     } else if st.busy() {
         Some((st.pending_status(now), p.ink))
-    } else if let Some((message, finished)) = &st.notice
-        && now.duration_since(*finished) < progress::NOTICE_DURATION
-    {
-        Some((message.clone(), p.success))
+    } else if let Some(message) = st.success_notice(now) {
+        Some((message.to_owned(), p.success))
     } else if st.fetch_all {
         Some((aurora_i18n::tr!("ui-inventory-search-loading-folders").to_owned(), p.muted))
     } else {
@@ -784,6 +782,20 @@ pub(super) fn status_bar(ui: &mut egui::Ui, p: &Palette, st: &InventoryUi, explo
 mod tests {
     use super::super::super::view::Filters;
     use super::*;
+
+    #[test]
+    fn restored_menu_feedback_uses_the_success_color_and_disappears_after_expiry() {
+        let palette = crate::theme::Theme::default().palette();
+        let mut st = InventoryUi::default();
+        let mut prefs = InventoryPreferences::default();
+        crate::ui::inventory::context_notecards::demo_restore(&mut st, &mut prefs);
+        assert_eq!(
+            message(&palette, &st),
+            Some((aurora_i18n::tr!("inventory-menu-loaded").into(), palette.success))
+        );
+        st.notice.as_mut().unwrap().1 -= std::time::Duration::from_secs(5);
+        assert!(message(&palette, &st).is_none());
+    }
 
     #[test]
     fn received_sort_controls_edit_only_the_active_order_in_both_layouts() {

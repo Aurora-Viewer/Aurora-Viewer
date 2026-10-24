@@ -104,6 +104,13 @@ impl InventoryUi {
         self.notice = Some((aurora_i18n::tr!("inventory-moves-queued").into(), Instant::now()));
     }
 
+    pub(super) fn success_notice(&self, now: Instant) -> Option<&str> {
+        self.notice
+            .as_ref()
+            .filter(|(_, finished)| now.saturating_duration_since(*finished) < NOTICE_DURATION)
+            .map(|(message, _)| message.as_str())
+    }
+
     pub(super) fn pending_status(&self, now: Instant) -> String {
         let aggregate = (!self.copy_jobs.is_empty()).then(|| State {
             value: Progress {
@@ -158,11 +165,25 @@ pub(super) fn demo(frame: u64, st: &mut InventoryUi) {
     }
 }
 
-pub(super) const NOTICE_DURATION: Duration = Duration::from_secs(8);
+const NOTICE_DURATION: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn success_notices_expire_after_five_seconds_and_a_new_notice_restarts_the_duration() {
+        let now = Instant::now();
+        let mut st = InventoryUi {
+            notice: Some(("Completed".into(), now)),
+            ..Default::default()
+        };
+        assert_eq!(st.success_notice(now + Duration::from_millis(4999)), Some("Completed"));
+        assert!(st.success_notice(now + Duration::from_secs(5)).is_none());
+        st.notice = Some(("Restored".into(), now + Duration::from_secs(4)));
+        assert_eq!(st.success_notice(now + Duration::from_secs(5)), Some("Restored"));
+        assert!(st.success_notice(now + Duration::from_secs(9)).is_none());
+    }
 
     #[test]
     fn outstanding_copies_leave_commands_available_and_track_multiple_jobs() {

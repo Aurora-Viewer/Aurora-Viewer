@@ -227,6 +227,16 @@ impl App {
             return;
         }
         match action {
+            InvAction::ExportMenuNotecard { name, text } => {
+                if let Some(command) = ui::inventory::context_notecards::export(&mut self.inventory_ui, &self.world.inventory, name, text) {
+                    self.send(command);
+                }
+            }
+            InvAction::LoadMenuNotecard(item) => {
+                if let Some(command) = ui::inventory::context_notecards::load(&mut self.inventory_ui, &self.world.inventory, item) {
+                    self.send(command);
+                }
+            }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
             InvAction::Edit(mut change) => {
                 if self.inventory_ui.pending.is_some() {

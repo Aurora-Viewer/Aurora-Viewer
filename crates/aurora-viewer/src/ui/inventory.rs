@@ -12,8 +12,12 @@ mod aurora;
 mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
 mod context;
+mod context_catalog;
+mod context_customize;
+pub(crate) mod context_notecards;
 mod controls;
 mod delete;
+mod menu_layout;
 pub use delete::demo_events as delete_demo_events;
 mod dialogs;
 mod document;
@@ -85,6 +89,11 @@ pub fn show_document(
 }
 
 pub enum InvAction {
+    ExportMenuNotecard {
+        name: String,
+        text: String,
+    },
+    LoadMenuNotecard(Uuid),
     TakeTask(Box<crate::build::task_inventory::TransferRequest>),
     TeleportLandmark(Uuid),
     /// "About Landmark" (LLLandmarkBridge "about"): its profile, as
@@ -296,6 +305,8 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    menu_editor: context_customize::State,
+    menu_notecards: context_notecards::State,
     /// Library wearables being copied to be worn: copy request → replace.
     pub wear_copies: std::collections::HashMap<Uuid, bool>,
     pub filters_open: bool,
@@ -946,10 +957,8 @@ fn status(
         (st.message.as_str(), p.warn)
     } else if let Some(message) = &pending_message {
         (message.as_str(), p.ink)
-    } else if let Some((message, finished)) = &st.notice
-        && now.duration_since(*finished) < progress::NOTICE_DURATION
-    {
-        (message.as_str(), p.success)
+    } else if let Some(message) = st.success_notice(now) {
+        (message, p.success)
     } else if st.fetch_all {
         (aurora_i18n::tr!("ui-inventory-search-loading-folders"), p.muted)
     } else {
@@ -1592,6 +1601,7 @@ pub fn show(
     for w in &mut windows {
         if !w.root.is_nil() && !world.inventory.folders.contains_key(&w.root) {
             w.open = false;
+            w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
             continue;
         }
         w.state.ui_id = w.id;
@@ -1696,6 +1706,7 @@ pub fn show(
         }
         st.consume_clipboard |= w.state.consume_clipboard;
         w.state.consume_clipboard = false;
+        w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
         spawned.append(&mut w.state.windows);
     }
     // Documents and confirmations outlive the inventory window which opened
@@ -1719,6 +1730,8 @@ pub fn show(
             st.demo_menu = None;
         }
     }
+    st.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+    context_notecards::show(ctx, p, &mut world.inventory, st, prefs, &mut actions);
     actions
 }
 

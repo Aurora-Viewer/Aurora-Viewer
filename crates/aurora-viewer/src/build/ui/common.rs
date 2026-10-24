@@ -14,15 +14,7 @@ pub(super) const SMALL: f32 = 11.0;
 pub(super) const TITLE: f32 = 13.0;
 
 pub(super) fn typography(ui: &mut egui::Ui) {
-    let style = ui.style_mut();
-    for text in [egui::TextStyle::Body, egui::TextStyle::Button, egui::TextStyle::Monospace] {
-        if let Some(font) = style.text_styles.get_mut(&text) {
-            font.size = BODY;
-        }
-    }
-    if let Some(font) = style.text_styles.get_mut(&egui::TextStyle::Small) {
-        font.size = SMALL;
-    }
+    crate::ui::widgets::organization_typography(ui);
 }
 
 /// What a value control did this frame: changed (live) and / or must be
@@ -62,9 +54,7 @@ pub fn small(ui: &mut egui::Ui, p: &Palette, t: &str) -> egui::Response {
 
 /// Section title, in the violet of the brand.
 pub fn section(ui: &mut egui::Ui, p: &Palette, title: &str) {
-    ui.add_space(4.0);
-    ui.label(RichText::new(title).size(TITLE).strong().color(p.violet_light));
-    ui.add_space(1.0);
+    crate::ui::widgets::organization_section(ui, p, title);
 }
 
 /// A label of fixed width then the content (Firestorm's two-column rows).

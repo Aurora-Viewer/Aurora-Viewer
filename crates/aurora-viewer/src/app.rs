@@ -2382,6 +2382,12 @@ impl App {
                 self.ik_editor.project_saved(&result);
                 return;
             }
+            if ui::inventory::context_notecards::saved(&mut self.inventory_ui, request, &result) {
+                if let Ok(item) = result {
+                    self.world.inventory.add_items(vec![item]);
+                }
+                return;
+            }
             if crate::build::ui::layout_notecard_saved(&mut self.build, request, &result) {
                 if let Ok(item) = result {
                     self.world.inventory.add_items(vec![item]);
@@ -2484,6 +2490,9 @@ impl App {
         if let NetEvent::InventoryPreview { item, asset, result } = ev {
             if self.ik_editor.project_preview(&self.world, item, &result) {
                 return;
+            }
+            if ui::inventory::context_notecards::loaded(&mut self.inventory_ui, &mut self.settings.inventory, item, &result) {
+                self.settings.save();
             }
             if crate::build::ui::layout_notecard_loaded(&mut self.build, &mut self.world, &mut self.settings.build, item, &result) {
                 self.settings.save();
@@ -7956,6 +7965,7 @@ impl App {
                             | "aurora-keyboard-wide"
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
+                        || v.starts_with("aurora-menu-")
                 }))
         {
             raw.focused = true;
@@ -14772,7 +14782,7 @@ impl ApplicationHandler for App {
                 if !view.starts_with("offer") {
                     self.world.notifications = Default::default();
                 }
-                if let Some(id) = crate::world::inventory::demo::target(&view) {
+                if let Some(id) = crate::world::inventory::demo::target(&view, &self.world.inventory) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
                     if let Some(item) = self.world.inventory.items.get_mut(&id) {
                         if view == "uuid-restricted" {
@@ -14783,6 +14793,10 @@ impl ApplicationHandler for App {
                     }
                     if view == "uuid-multi" {
                         self.inventory_ui.selection.insert(uuid::Uuid::from_u128(8105));
+                    }
+                    if view.starts_with("aurora-menu-") {
+                        self.inventory_ui
+                            .configure_menu_demo(&self.world.inventory, &mut self.settings.inventory, id, &view);
                     }
                     if view.starts_with("clipboard") {
                         if view == "clipboard-window" {
