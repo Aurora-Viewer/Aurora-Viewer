@@ -1145,7 +1145,7 @@ fn second_life_tab(
                         egui::Label::new(
                             RichText::new(world.social.name_of(&partner))
                                 .size(12.0)
-                                .color(super::colors::c(super::colors::get().chat_slurl)),
+                                .color(super::colors::text(super::colors::get().chat_slurl)),
                         )
                         .sense(egui::Sense::click()),
                     );

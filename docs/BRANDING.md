@@ -8,7 +8,15 @@ consistent icons. Every screen must look polished and finished.
 
 The colours come from `crates/aurora-viewer/src/theme.rs` (`Theme::default`).
 In the code, always use the resolved `Palette` (`p.violet`, `p.ink`…),
-**never a hard-coded colour**: a skin can change them.
+**never a hard-coded colour**: a skin can change them, and so can the user,
+from Preferences › Appearance › Skin › Interface colours
+(`interface_colors.rs`): they pick the accent (`violet`), the windows'
+background (`panel`) and the text (`ink`), and the other accent, surface
+and text roles follow from those three. So never pick a role for its
+violet: a teal or pink accent, or a light background, must still read.
+On a chosen background the states and `teal` move in lightness to read
+4.5:1, their hue kept; a configured chat colour goes through
+`ui::colors::text` for the same reason.
 
 ### Brand colours
 

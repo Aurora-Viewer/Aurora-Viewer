@@ -172,7 +172,7 @@ pub(super) fn agent_link(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid) {
     c.want_names.insert(id);
     let name = c.world.social.name_of(&id);
     let link = ui.add(egui::Link::new(
-        RichText::new(name).size(12.0).color(colors::c(colors::get().chat_slurl)),
+        RichText::new(name).size(12.0).color(colors::text(colors::get().chat_slurl)),
     ));
     if link.clicked() {
         crate::ui::profile::request_open(ui.ctx(), id);
@@ -646,7 +646,7 @@ fn event(ui: &mut egui::Ui, c: &mut Ctx, id: u32, row_name: &str, actions: &mut 
         field(ui, p, aurora_i18n::tr!("ui-profile-location-2"), |ui| {
             let text = format!("{} ({}, {}, {})", e.sim_name, pos.x, pos.y, pos.z);
             let link = ui.add(egui::Link::new(
-                RichText::new(text).size(12.0).color(colors::c(colors::get().chat_slurl)),
+                RichText::new(text).size(12.0).color(colors::text(colors::get().chat_slurl)),
             ));
             if link.on_hover_text(aurora_i18n::tr!("search-event-place-info")).clicked() {
                 context::request(ui.ctx(), CtxAction::ShowPlaceInfo(e.sim_name.clone(), pos));
