@@ -4144,6 +4144,7 @@ impl App {
         // (FSFloaterIMContainer::setVisible), or with its preference off
         let flash = &mut self.chat_ui.button_flash;
         flash.set_on(self.settings.flash_conversations_button);
+        flash.set_still(self.settings.reduce_motion);
         if self.panels.chat {
             flash.shown();
         }
@@ -4160,6 +4161,18 @@ impl App {
             }
             w.notify_message(&m, in_sight.contains(&Some(m.session)));
             w.message_attention(&m);
+        }
+        // a resident in nearby chat, the window closed (FSNotifyNearbyChatFlash)
+        if std::mem::take(&mut w.nearby_news)
+            && crate::ui::chat::nearby_flashes(
+                self.settings.flash_conversations_button,
+                self.settings.flash_conversations_nearby,
+                !self.panels.chat,
+                false,
+                dnd,
+            )
+        {
+            self.chat_ui.button_flash.message(now, true);
         }
         w.acknowledge_read_messages();
         for (old, new) in std::mem::take(&mut w.balance_changes) {
@@ -11757,6 +11770,8 @@ impl App {
                     ..Default::default()
                 };
                 self.toolbar_ui.favorites_access = self.favorites_access();
+                self.toolbar_ui.flash_nearby = self.settings.flash_conversations_nearby;
+                self.chat_ui.flash_nearby = self.settings.flash_conversations_nearby;
                 let toolbar_migrated = self.settings.migrate_toolbar(self.world.agent_id);
                 let mut demo_toolbar = None;
                 // AURORA_DEMO_TOOLBAR=custom|side|labels|right: the mockup's
@@ -11918,6 +11933,19 @@ impl App {
                 if let Some(access) = self.toolbar_ui.access_choice.take() {
                     self.settings.favorites_access = access;
                     self.settings.save();
+                }
+                // the Conversations button's right click (the chat island's
+                // opens the window itself)
+                for choice in [self.toolbar_ui.conversations_menu.take(), self.chat_ui.button_menu.take()].into_iter().flatten() {
+                    match choice {
+                        ui::chat::ButtonMenu::Open => {
+                            ui::widgets::open_floater(ui.ctx(), "conversations", &mut self.panels.chat);
+                        }
+                        ui::chat::ButtonMenu::NearbyFlash(on) => {
+                            self.settings.flash_conversations_nearby = on;
+                            self.settings.save();
+                        }
+                    }
                 }
                 self.mic_on = mic.on;
                 self.mic_button_held = mic.held;

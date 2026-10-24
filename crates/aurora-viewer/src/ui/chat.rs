@@ -11,6 +11,7 @@ mod console;
 mod conv_menu;
 mod find;
 mod flash;
+pub use flash::{ButtonMenu, button_menu, nearby_flashes};
 mod head;
 mod header;
 pub mod history;
@@ -162,6 +163,11 @@ pub struct ChatUi {
     /// The Conversations button's flash and the minimized bar's pulse,
     /// started by the app (Preferences › Chat).
     pub button_flash: flash::ButtonFlash,
+    /// Nearby chat flashes the Conversations button too (Preferences ›
+    /// Chat, or the button's right-click menu), given every frame by the
+    /// app; and what that menu asked for this frame.
+    pub flash_nearby: bool,
+    pub button_menu: Option<ButtonMenu>,
     /// The avatars in chat range and those of them who type, given every
     /// frame by the app (the radar) for the nearby chat.
     pub nearby_count: usize,

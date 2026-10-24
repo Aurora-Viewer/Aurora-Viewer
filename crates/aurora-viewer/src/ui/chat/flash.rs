@@ -88,6 +88,15 @@ fn breathe(start: Option<f64>, now: f64) -> (f32, bool) {
     }
 }
 
+/// `breathe` for Preferences › Accessibility › Reduce motion: the same
+/// span at the top of a rise, held still, then faint.
+fn hold(start: Option<f64>, now: f64) -> (f32, bool) {
+    match rise(start, now) {
+        Some(_) => (PEAK, true),
+        None => (REST, false),
+    }
+}
+
 /// The Conversations button's flash (FSNotifyIMFlash): LLButton::setFlashing
 /// as FSFloaterIMContainer::checkFlashing calls it for the "chat" command
 /// when a message arrives with the window closed, FlashCount rises every
@@ -104,6 +113,9 @@ pub struct ButtonFlash {
     lit: bool,
     /// Preferences › Chat › "Flash the Conversations button" is on.
     on: bool,
+    /// Preferences › Accessibility › Reduce motion: a steady light instead
+    /// of the rises.
+    still: bool,
 }
 
 impl ButtonFlash {
@@ -114,6 +126,17 @@ impl ButtonFlash {
             *self = ButtonFlash::default();
         }
         self.on = on;
+    }
+
+    /// Follow Reduce motion, given every frame after `set_on`.
+    pub fn set_still(&mut self, still: bool) {
+        self.still = still;
+    }
+
+    /// The wash of the latest flash, risen and fallen or held still.
+    fn wash(&self, now: f64) -> (f32, bool) {
+        let (wash, moving) = if self.still { hold(self.since, now) } else { breathe(self.since, now) };
+        (BUTTON * wash, moving)
     }
 
     /// A message that flashes arrived (`World::message_flashes_conversations`),
@@ -135,8 +158,7 @@ impl ButtonFlash {
         if !self.lit {
             return (0.0, false);
         }
-        let (wash, moving) = breathe(self.since, now);
-        (BUTTON * wash, moving)
+        self.wash(now)
     }
 
     /// The violet of the minimized bar while unread messages wait inside,
@@ -146,9 +168,46 @@ impl ButtonFlash {
         if !self.on {
             return (0.0, false);
         }
-        let (wash, moving) = breathe(self.since, now);
-        (BUTTON * wash, moving)
+        self.wash(now)
     }
+}
+
+/// A resident's line of nearby chat flashes the Conversations button
+/// (FSNotifyNearbyChatFlash, from on_new_message in llimview.cpp): only
+/// while the window is closed, not minimized nor with nearby chat in its own
+/// window, never in do not disturb, and not when the button's right-click
+/// menu (or Preferences › Chat) leaves nearby chat out. The Legacy Viewer
+/// flashes for objects' lines too; here only residents' lines do, or a
+/// chatty script would never let the button rest.
+pub fn nearby_flashes(button_on: bool, nearby_on: bool, window_closed: bool, nearby_in_sight: bool, dnd: bool) -> bool {
+    button_on && nearby_on && window_closed && !nearby_in_sight && !dnd
+}
+
+/// What the Conversations button's right-click menu asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ButtonMenu {
+    /// Open the Conversations window, as a click on the button would.
+    Open,
+    /// Whether nearby chat flashes the button from now on.
+    NearbyFlash(bool),
+}
+
+/// The rows of the Conversations button's right-click menu, `nearby_on`
+/// whether nearby chat flashes it (Preferences › Chat): opening the window,
+/// and leaving nearby chat out of the flash while IMs, group chats and
+/// conferences keep it. Shared by the chat island's button and the
+/// toolbars' Conversations button.
+pub fn button_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, nearby_on: bool) -> Option<ButtonMenu> {
+    use crate::ui::menu;
+    let mut out = None;
+    if menu::item(ui, p, "message-filled", aurora_i18n::tr!("ui-bars-conversations-open")) {
+        out = Some(ButtonMenu::Open);
+    }
+    menu::separator(ui, p);
+    if menu::check(ui, p, "bell-off", aurora_i18n::tr!("ui-bars-conversations-no-nearby-flash"), !nearby_on, true) {
+        out = Some(ButtonMenu::NearbyFlash(!nearby_on));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -213,5 +272,55 @@ mod tests {
         let (top, moving) = b.bar(10.25);
         assert!(moving && (top - BUTTON * PEAK).abs() < 1e-3, "{top}");
         assert_eq!(b.bar(14.1), (BUTTON * REST, false), "over: tinted");
+    }
+
+    /// Nearby chat flashes the button only while the window is closed, with
+    /// both preferences on, nearby chat not shown elsewhere and no do not
+    /// disturb; turning nearby chat off leaves IMs alone (they go through
+    /// `World::message_flashes_conversations`).
+    #[test]
+    fn nearby_chat_flashes_the_closed_button_unless_left_out() {
+        assert!(nearby_flashes(true, true, true, false, false));
+        assert!(!nearby_flashes(true, false, true, false, false), "left out by the menu");
+        assert!(!nearby_flashes(false, true, true, false, false), "the button's flash off");
+        assert!(!nearby_flashes(true, true, false, false, false), "the window open or minimized");
+        assert!(!nearby_flashes(true, true, true, true, false), "nearby chat in its own window");
+        assert!(!nearby_flashes(true, true, true, false, true), "do not disturb");
+        // the flash itself does not know where a message came from: an IM
+        // after nearby chat was left out still lights the button
+        let mut b = ButtonFlash::default();
+        b.set_on(true);
+        b.message(1.0, true);
+        assert!(b.button(1.25).0 > BUTTON * REST);
+    }
+
+    /// Nearby chat flashes by default (FSNotifyNearbyChatFlash), for a
+    /// profile saved before the option too, and the menu's choice is kept.
+    #[test]
+    fn the_nearby_chat_choice_is_kept() {
+        use crate::settings::Settings;
+        assert!(Settings::default().flash_conversations_nearby);
+        let old: Settings = serde_json::from_str("{}").expect("an old profile");
+        assert!(old.flash_conversations_nearby);
+        let mut s = Settings::default();
+        s.flash_conversations_nearby = false;
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&s).expect("saved")).expect("read back");
+        assert!(!back.flash_conversations_nearby);
+    }
+
+    /// Reduce motion: the button lights at the top of a rise and holds it
+    /// for the flash's span, then stays tinted, like the moving flash.
+    #[test]
+    fn reduce_motion_holds_the_flash_still() {
+        let mut b = ButtonFlash::default();
+        b.set_on(true);
+        b.set_still(true);
+        b.message(1.0, true);
+        for t in [1.0, 1.25, 1.5, 3.9] {
+            assert_eq!(b.button(t), (BUTTON * PEAK, true), "{t}");
+        }
+        assert_eq!(b.button(5.1), (BUTTON * REST, false), "over: tinted");
+        b.message(10.0, false);
+        assert_eq!(b.bar(10.5), (BUTTON * PEAK, true), "the minimized bar too");
     }
 }

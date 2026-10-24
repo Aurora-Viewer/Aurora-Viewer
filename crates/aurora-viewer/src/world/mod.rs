@@ -81,6 +81,8 @@ pub mod windlight_presets;
 pub mod worldmap;
 
 #[cfg(test)]
+mod flash_tests;
+#[cfg(test)]
 mod toasts_tests;
 
 use crate::agent::AgentState;
@@ -233,6 +235,9 @@ pub struct World {
     /// Follows `chat` for the view.
     pub chat_clock: transcripts::LineClock,
     pub chat_unread: usize,
+    /// A resident said something in nearby chat since the app last looked:
+    /// it may flash the Conversations button (FSNotifyNearbyChatFlash).
+    pub nearby_news: bool,
     /// Conversation transcripts of the account logged in.
     pub chat_log: chat_log::ChatLog,
     /// History of the nearby chat (asked once per login).
@@ -549,6 +554,7 @@ impl World {
             chat: VecDeque::new(),
             chat_clock: Default::default(),
             chat_unread: 0,
+            nearby_news: false,
             chat_log: Default::default(),
             nearby_history: Default::default(),
             script_debug: script_debug::Messages::default(),
@@ -3149,6 +3155,9 @@ impl World {
         if !matches!(kind, ChatKind::Own | ChatKind::Object(ChatType::Debug)) {
             self.keyword_alert(c.source_id, &from, &c.message, true, attention::Open::NearbyChat);
         }
+        // a resident's line, not ours nor an object's: the Conversations
+        // button may flash (the blocked never got this far)
+        self.nearby_news |= matches!(kind, ChatKind::Local(_));
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,

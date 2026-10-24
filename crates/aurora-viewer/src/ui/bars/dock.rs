@@ -384,10 +384,21 @@ fn conversations_button(
         };
     let resp = ui.interact(button, Id::unique("chat_island_open"), Sense::click());
     slot_face(ui, p, button, resp.hovered(), shown);
-    // its flash while the window is closed (`ButtonFlash`)
+    // its flash while the window is closed (`ButtonFlash`), the minimized
+    // bar's own mark
     if row.flash > 0.0 && !panels.chat {
-        ui.painter()
-            .rect_filled(button, ui.visuals().window_corner_radius, p.violet.gamma_multiply(row.flash));
+        crate::ui::widgets::attention_mark(ui.painter(), p, button, ui.visuals().window_corner_radius, row.flash);
+    }
+    // its right click: nearby chat left out of the flash
+    let flash_nearby = chat.flash_nearby;
+    crate::ui::menu::context_menu(&resp, p, |ui| {
+        if let Some(choice) = crate::ui::chat::button_menu(ui, p, flash_nearby) {
+            chat.button_menu = Some(choice);
+        }
+    });
+    if chat.button_menu == Some(crate::ui::chat::ButtonMenu::Open) {
+        chat.button_menu = None;
+        open_conversations(ui.ctx(), panels, chat, target);
     }
     paint_icon(
         ui,
@@ -416,16 +427,27 @@ fn conversations_button(
         if on_target {
             crate::ui::widgets::toggle_floater(ui.ctx(), "conversations", &mut panels.chat);
         } else {
-            match target {
-                Some(id) => chat.open(id),
-                None => {
-                    chat.selected = None;
-                    chat.contacts = false;
-                }
-            }
-            crate::ui::widgets::open_floater(ui.ctx(), "conversations", &mut panels.chat);
+            open_conversations(ui.ctx(), panels, chat, target);
         }
     }
+}
+
+/// The Conversations window on `target` (the newest unread conversation),
+/// else on the local chat.
+fn open_conversations(
+    ctx: &egui::Context,
+    panels: &mut Panels,
+    chat: &mut crate::ui::chat::ChatUi,
+    target: Option<uuid::Uuid>,
+) {
+    match target {
+        Some(id) => chat.open(id),
+        None => {
+            chat.selected = None;
+            chat.contacts = false;
+        }
+    }
+    crate::ui::widgets::open_floater(ctx, "conversations", &mut panels.chat);
 }
 
 /// The skin's toolbar without the Conversations button, for the dock: the
@@ -538,6 +560,10 @@ mod tests {
         toolbar: crate::ui::toolbar::ToolbarUi,
         unread: usize,
         latest: Option<uuid::Uuid>,
+        /// The Conversations button's flash given to the frame.
+        flash: f32,
+        /// What the last frame painted.
+        shapes: Vec<egui::epaint::ClippedShape>,
     }
 
     impl Bench {
@@ -552,6 +578,8 @@ mod tests {
                 toolbar: Default::default(),
                 unread: 0,
                 latest: None,
+                flash: 0.0,
+                shapes: Vec::new(),
             }
         }
 
@@ -571,7 +599,7 @@ mod tests {
             let row = Row {
                 unread: self.unread,
                 latest_unread: self.latest,
-                flash: 0.0,
+                flash: self.flash,
                 flying: false,
                 seated: false,
                 mouselook: false,
@@ -609,8 +637,64 @@ mod tests {
                 },
             );
             output.textures_delta.clear();
+            self.shapes = output.shapes;
             result
         }
+
+        /// Where the text `label` was painted in the last frame.
+        fn text_rect(&self, label: &str) -> Option<Rect> {
+            fn find(shape: &egui::epaint::Shape, label: &str) -> Option<Rect> {
+                match shape {
+                    egui::epaint::Shape::Text(t) if t.galley.text() == label => Some(Rect::from_min_size(t.pos, t.galley.size())),
+                    egui::epaint::Shape::Vec(v) => v.iter().find_map(|s| find(s, label)),
+                    _ => None,
+                }
+            }
+            self.shapes.iter().find_map(|s| find(&s.shape, label))
+        }
+
+        /// A click of `button` at `pos`, then a frame for what it opened.
+        fn click(&mut self, pos: Pos2, button: egui::PointerButton) {
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![egui::Event::PointerMoved(pos), press(true)]);
+            self.frame(vec![press(false)]);
+            self.frame(vec![]);
+            self.frame(vec![]);
+        }
+    }
+
+    /// The chat island's Conversations button wears the minimized bar's
+    /// mark while it flashes. Its right click opens the window, or leaves
+    /// nearby chat out of the flash (the app keeps the choice).
+    #[test]
+    fn the_conversations_button_menu_opens_the_window_and_leaves_nearby_chat_out() {
+        let mut bench = Bench::shown();
+        bench.flash = 0.3;
+        bench.frame(vec![]);
+        let button = bench.ctx.read_response(Id::unique("chat_island_open")).expect("the button").rect;
+        let stroke = bench.shapes.iter().any(|s| {
+            matches!(&s.shape, egui::epaint::Shape::Rect(r) if r.rect.intersects(button) && (r.stroke.width - (1.5 + 4.0 * 0.3)).abs() < 1e-3)
+        });
+        assert!(stroke, "the flash's outline, as on the minimized bar");
+        bench.flash = 0.0;
+        bench.chat.flash_nearby = true;
+        bench.click(button.center(), egui::PointerButton::Secondary);
+        let off = bench
+            .text_rect(aurora_i18n::tr!("ui-bars-conversations-no-nearby-flash"))
+            .expect("the nearby chat row");
+        bench.click(off.center(), egui::PointerButton::Primary);
+        assert_eq!(bench.chat.button_menu.take(), Some(crate::ui::chat::ButtonMenu::NearbyFlash(false)));
+        assert!(!bench.panels.chat);
+        bench.click(button.center(), egui::PointerButton::Secondary);
+        let open = bench.text_rect(aurora_i18n::tr!("ui-bars-conversations-open")).expect("the open row");
+        bench.click(open.center(), egui::PointerButton::Primary);
+        assert!(bench.panels.chat, "the window opened");
+        assert_eq!(bench.chat.button_menu, None, "handled by the button");
     }
 
     fn key(key: egui::Key, pressed: bool, modifiers: egui::Modifiers) -> egui::Event {
