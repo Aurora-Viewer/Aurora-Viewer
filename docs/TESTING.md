@@ -2858,6 +2858,10 @@ both open states and the selection count. Capture at frame 620.
   avatar. The texture is made of vertical strands spaced `period` texels
   apart (16 by default, 4 to 256, out of 256), `empty` per cent of which are
   fully transparent (60 by default, 0 to 90).
+  The inner layer is attached last, so that it is drawn first, as a hair
+  made for the Legacy Viewer (`AURORA_RIGGED_BLEND`); the strands are 90 %
+  opaque at the roots and 36 % at the tips: with `AURORA_RIGGED_BLEND=depth05`
+  the outer layers look see-through (#935).
   - To read in `perf summary`: `g_transparent` + `g_post` (see
     [Profiling](#profiling)), `blend`, `blend_tris_k`. `32` with
     `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS="129,134"` gives ~970
@@ -6261,7 +6265,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
-| `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where half covered (default), from 1/255, none (sorted with the others), or `write` by turns |
+| `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: from 1/255 on a copy and where half covered in the scene (default), where half covered before their colour, from 1/255, none (sorted with the others), or `depth05` by turns |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 
 ### Details
@@ -6572,20 +6576,31 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
-- **`AURORA_RIGGED_BLEND=depth05|write|sorted|alt`**: by default
-  (`depth05`) the blended faces of rigged meshes (mesh hair, eyelashes,
-  clothes, animesh) are drawn before the other blended faces, back to front
-  among themselves, after a depth pass that writes their depth where they
-  are at least half covered; their colour is then depth tested without
-  writing it. A layer in front hides what is behind it where it is opaque,
-  whatever the order of the two objects, and its nearly transparent fringe
-  no longer hides the glass behind it (#556). `write`: their depth written
-  from 1/255 of alpha, as the Legacy Viewer's alpha pass
-  (`LLDrawPoolAlpha::render`, #499): a ring around fur or hair where the
-  glass behind is missing. `sorted`: everything sorted by the distance of
-  its object and nothing writing depth (eyelashes showed through mesh
-  hair). `alt`: `write` during one `perf summary` line out of three
-  (`xmode=old`). See `AURORA_DEMO_LASHES` and `AURORA_DEMO_HALO`.
+- **`AURORA_RIGGED_BLEND=depth05|write|sorted|alt`**: by default the
+  blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
+  are drawn before the other blended faces, skeleton by skeleton back to
+  front, each skeleton's in the Legacy Viewer's order: the last attachment
+  point first, on one point the last attached first (by the local id of
+  the linkset's root), the prims of a linkset and the faces of a prim in
+  turn. Their colour writes its
+  depth from 1/255 of alpha as it is drawn, as the Legacy Viewer's alpha
+  pass (`LLDrawPoolAlpha::render`), but into a copy of the scene depth:
+  each strand hides the layers drawn after it behind it, so the layers of
+  one hair compose as their creator drew them (#935). The scene depth then
+  takes them only where they are at least half covered, so that their
+  nearly transparent fringe does not hide the glass, water and particles
+  drawn after them (#556). `depth05`: as before #935, their depth where at
+  least half covered written before their colour, which is depth tested
+  without writing it: a layer drawn first is hidden behind every strand of
+  the layers over it from 50 % on, which then shows what lies behind the
+  hair through it (the strands of the outer layer look see-through, with
+  stair steps where they cross 50 %). `write`: their depth written from
+  1/255 into the scene depth, as the Legacy Viewer (#499): a ring around
+  fur or hair where the glass behind is missing. `sorted`: everything
+  sorted by the distance of its object and nothing writing depth
+  (eyelashes showed through mesh hair). `alt`: `depth05` during one
+  `perf summary` line out of three (`xmode=old`). See `AURORA_DEMO_HAIR`,
+  `AURORA_DEMO_LASHES` and `AURORA_DEMO_HALO`.
 - **`AURORA_BLEND_AO=new|none|old|alt`**: the occlusion (both methods)
   reads a copy of the depth prepass with the blended faces at least half
   covered drawn over it (`fs_depth_contact`, the rule of the contact
