@@ -821,6 +821,10 @@ pub struct Settings {
     /// (`crate::high_contrast`, #906) instead of the skin's colours, off by
     /// default.
     pub high_contrast: bool,
+    /// Preferences › Appearance › Skin: the accent, background and text
+    /// colours of the interface (`crate::interface_colors`), each the
+    /// skin's by default.
+    pub interface_colors: crate::interface_colors::InterfaceColors,
     /// Firestorm's camera and movement windows (floater_camera.xml,
     /// floater_moveview.xml) instead of `ui/controls.rs`.
     pub classic_controls: bool,
@@ -1555,6 +1559,7 @@ impl Default for Settings {
             color_blindness: crate::colorblind::Deficiency::Off,
             color_blindness_strength: 1.0,
             high_contrast: false,
+            interface_colors: Default::default(),
             classic_controls: false,
             camera_shots: Vec::new(),
             plates_friends_only_full: false,
