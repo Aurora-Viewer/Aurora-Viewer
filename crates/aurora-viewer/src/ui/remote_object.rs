@@ -35,7 +35,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, world: &World, shown: &mut Option<
     )
     .show(ctx, p, &mut open, |ui| {
         let k = super::colors::get();
-        let link_color = super::colors::c(k.chat_slurl);
+        let link_color = super::colors::text(k.chat_slurl);
         let row = |ui: &mut egui::Ui, label: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(Vec2::new(90.0, 18.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
