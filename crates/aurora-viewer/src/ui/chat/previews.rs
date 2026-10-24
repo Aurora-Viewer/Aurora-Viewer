@@ -69,6 +69,9 @@ struct Shown {
     size: [u32; 2],
     /// The first frame, for the clipboard.
     copy: Arc<egui::ColorImage>,
+    /// Where the picture came from when it is not the link itself (the
+    /// page of an image service): the enlargement asks it again.
+    source: Option<String>,
 }
 
 impl Shown {
@@ -87,6 +90,7 @@ impl Shown {
             blurred: ctx.load_texture(format!("{name}#blur"), p.blurred, egui::TextureOptions::LINEAR),
             size: p.size,
             copy,
+            source: None,
         }
     }
 
@@ -349,7 +353,7 @@ impl Previews {
             && let (Some(rt), Some((trusted, any))) = (&self.runtime, &self.clients)
         {
             let client = if trusted_only { trusted.clone() } else { any.clone() };
-            let url = url.to_owned();
+            let url = shown.source.clone().unwrap_or_else(|| url.to_owned());
             let (tx, rx) = mpsc::channel();
             view.pending = Some(rx);
             let wake = ctx.clone();
@@ -373,6 +377,10 @@ impl Previews {
             self.in_flight = self.in_flight.saturating_sub(1);
             let entry = match result {
                 Ok(Content::Picture(p)) => Entry::Picture(Shown::new(ctx, &url, p)),
+                Ok(Content::Page { picture, source }) => Entry::Picture(Shown {
+                    source: Some(source),
+                    ..Shown::new(ctx, &url, picture)
+                }),
                 Ok(Content::Video(v)) => Entry::Video {
                     title: v.title,
                     channel: v.channel,
@@ -465,6 +473,9 @@ impl Previews {
             let result = match &target {
                 Target::Picture => lp::fetch_picture(&client, &url).await.map(Content::Picture),
                 Target::Video(v) => lp::fetch_video(&client, v).await.map(Content::Video),
+                Target::Page(_) => lp::fetch_page(&client, &url, trusted_only)
+                    .await
+                    .map(|(picture, source)| Content::Page { picture, source }),
             };
             let _ = tx.send((url, result));
         });
@@ -485,7 +496,7 @@ impl Previews {
             .iter()
             .filter_map(|url| lp::decide(&self.settings, self.place, url))
             .map(|(target, _)| match target {
-                Target::Picture => w,
+                Target::Picture | Target::Page(_) => w,
                 Target::Video(_) => w + VIDEO_EXTRA,
             })
             .fold(0.0, f32::max)
@@ -630,14 +641,15 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
     // a load allowed by the trust of the site stays on trusted sites
     let trusted_only = start == Start::Load && pv.settings.load == lp::Load::Trusted;
     pv.request(url, target, trusted_only, pass);
-    let blur = pv.place == Place::Group && pv.settings.blur_groups && !pv.revealed.contains(&k);
+    // a group's pictures as set in Preferences, Reddit's always
+    let blur = ((pv.place == Place::Group && pv.settings.blur_groups) || lp::blurred_until_clicked(url)) && !pv.revealed.contains(&k);
     let Some(cached) = pv.cache.get(url) else {
         return;
     };
     let mut enlarge = false;
     let mut window = false;
     let resp = match (&cached.entry, target) {
-        (Entry::Queued | Entry::Loading, Target::Picture) => placeholder(ui, p, Vec2::new(width, (width * 0.75).round())),
+        (Entry::Queued | Entry::Loading, Target::Picture | Target::Page(_)) => placeholder(ui, p, Vec2::new(width, (width * 0.75).round())),
         (Entry::Queued | Entry::Loading, Target::Video(_)) => {
             let w = width + VIDEO_EXTRA;
             placeholder(ui, p, Vec2::new(w, (w * 9.0 / 16.0).round()))
@@ -947,7 +959,7 @@ fn compact_card<R>(
 fn ask_card(ui: &mut egui::Ui, p: &Palette, url: &str, target: &Target, width: f32) -> bool {
     let site = lp::host(url).unwrap_or_default();
     let (icon, title) = match target {
-        Target::Picture => (
+        Target::Picture | Target::Page(_) => (
             "photo-filled",
             aurora_i18n::tr!("ui-chat-preview-picture-from", site = site.as_str()),
         ),

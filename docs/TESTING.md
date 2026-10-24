@@ -1810,7 +1810,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, prepared LOD import and permission-gated shape transfer |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, static object placement, LOD import and shape transfer |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
@@ -1829,10 +1829,40 @@ To check with these scenarios:
 
 `AURORA_DEMO_BLENDER_LIVE=1` opens the local bridge and places a purple shell
 on our animated avatar, through the production protocol and GPU skinning.
+`static` adds an editable unrigged green object on the terrain and selects it
+for the standard build tools. `static-linked` adds an orange child mesh beside
+the green root, sent child-first to verify order-independent parentage. The
+list shows both sources and their root relationship; editing the root selects
+the linked set. `static-linked-child` selects only the child with Edit linked.
+`static-linked-hud`, `static-linked-attached` and `static-linked-detached`
+exercise whole-family attachment or removal. `static-linked-menu` opens the
+native object menu on the child, preserving whole-linkset selection;
+`static-linked-hud-menu` exercises the worn local menu. Check the single root,
+indented prim numbers and object/prim counts. The Edit linked checkbox belongs to
+the native build tools and context menu; it is absent from the LiveMesh
+window. `static-hud` attaches it at HUD Center;
+`static-attached` attaches it to the right hand; `static-detached` removes its
+draw object while retaining the source row. Check numeric/gizmo transforms,
+body/HUD menus, detach/rez, source visibility and geometry updates, with the
+rigged shell remaining on the avatar.
 The listener accepts the Blender extension on port 17655. Check that live
 retouches replace the shell, invalid data preserves the previous geometry,
 and Stop removes all preview objects. The demo log reports `ready_skinned`
-objects using our avatar's skeleton. See [Blender Live](BLENDER_LIVE.md).
+objects using our avatar's skeleton. See [LiveMesh](BLENDER_LIVE.md).
+
+Blender's synchronization-list linksets are exercised by
+`blender --background --factory-startup --python-exit-code 1 --python blender/tests/test_groups.py`.
+It covers unparented multi-add, active roots, plain/Ctrl/Shift row selection,
+range ordering and stable anchors, partial regrouping, whole-family root
+Ungroup, selective child Ungroup across multiple families, Blender parent
+overrides, root removal/promotion, paused and mixed rigged/static selections,
+stable source identities, coordinate units, save/load, Undo/Redo and
+automatic/manual update behavior. Check the native Blender list visually too:
+click names, Ctrl/Cmd-click two separate rows, Shift-click a displayed range,
+then Group only that selection. Ungroup a root alone and several children
+without the root. Selection highlights, the selected count, synchronization
+chain icons, root-first ordering and Group/Ungroup/Make root must remain usable
+in English and French without changing Blender's 3D selection.
 `objects` adds a belt and neck band, starts the belt hidden and the band
 removed. Toggle the belt and clear the objects; no restore button should
 appear. Each row's Import button opens that object's
@@ -3271,6 +3301,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
+| `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
@@ -3325,14 +3356,14 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `net` from the real sites |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services; `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_POPOUT=1\|option` | Conversations in their own windows: the friend's IM and a group popped out, or a group opened with the option on (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_REORDER=1` | Drag the first conversation after the next of its category (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
@@ -3346,7 +3377,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, layout notecards, filters, drag feedback, windows, keyboard and search selection; `aurora…` modes show Aurora's window at each width |
-| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, completion and menu access |
+| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, completion and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -4111,6 +4142,16 @@ failure. Grid validation and any paid upload are performed by the human.
   and the bar islands, black text on the light violet accent; combine with
   `AURORA_DEMO_OPTIONS=14` (the Accessibility page) or
   `AURORA_DEMO_COLORBLIND`, which applies after it.
+- **`AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>`**: the
+  interface colours for this run, any of the three, as Preferences ›
+  Appearance › Skin › Interface colours does, without touching the saved
+  settings (for example `accent:#14B8A6` for a teal accent, or
+  `accent:#EC4899,surface:#3A2433,text:#FCE7F3` for a pink interface).
+  What to look for: the accent on the main buttons, switches, sliders,
+  selection and the 3D selection outline; the bars, fields and button
+  faces in the background's hue; the secondary text in the text's hue;
+  text that still reads on its background. `AURORA_DEMO_CONTRAST=1`
+  ignores them. Combine with `AURORA_DEMO_OPTIONS=appearance/2` (the page).
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Appearance ›
@@ -4137,18 +4178,26 @@ failure. Grid validation and any paid upload are performed by the human.
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
-- **`AURORA_DEMO_CONV_REORDER=1`**: with `AURORA_DEMO_CONV=aurora`
-  (also `aurora:compact` or `aurora:narrow`),
-  synthetic pointer events drag the first conversation after the next of
-  its category. Captures simulate logical focus without activating the
-  native window or taking the user's keyboard. Capture frames 690, 740 and 800 at `AURORA_FPS_LIMIT=60`
-  for the initial order, insertion marker and completed move. Manually
-  check upward/downward moves within private messages, groups and
-  conferences; reject drops across categories, on pinned entries and
-  outside the list; Escape cancels. A small pointer movement remains a
-  click. Check filtering, edge scrolling, close buttons, menus and switching
-  chat styles. Order lasts while those conversations remain open; closing
-  and reopening a conversation appends it again. No grid is needed.
+- **`AURORA_DEMO_CONV_REORDER=1|hold|out|nearby`**: with
+  `AURORA_DEMO_CONV=aurora` (also `aurora:compact`, `aurora:narrow` or
+  `legacy`), synthetic pointer events drag the first conversation after the
+  next of its category (pressed at frame 701, moved until frame 720, let go
+  at frame 760). Captures simulate logical focus without activating the
+  native window or taking the user's keyboard. Capture frames 690, 740 and
+  800 at `AURORA_FPS_LIMIT=60` for the initial order, the ghost under the
+  pointer with the entries moved apart where it lands, and the completed
+  move. `hold` never lets go: the ghost and the gap stay. `out` drops the
+  first conversation at the left of the Conversations window and `nearby`
+  the nearby chat (#910): its own window opens where the ghost was let go,
+  the ghost shows the Detach mark while it is outside the window. With
+  `nearby`, the chat island's button then shows and hides the nearby chat's
+  window alone. Manually check upward/downward moves within private
+  messages, groups and conferences; reject drops across categories and on
+  pinned entries; a drop inside the window but off the list does nothing;
+  Escape cancels. A small pointer movement remains a click. Check
+  filtering, edge scrolling, close buttons, menus and switching chat
+  styles. Order lasts while those conversations remain open; closing and
+  reopening a conversation appends it again. No grid is needed.
 
 - **`AURORA_DEMO_CONV_GIVE=away|over|many|drop|give`**: with `AURORA_DEMO_CONV=aurora`
   (also `aurora:compact` or `aurora:narrow`), an inventory drag starts at
@@ -4282,8 +4331,16 @@ failure. Grid validation and any paid upload are performed by the human.
   title and picture come from YouTube. `videos` (#848): Nova's 4:3 clip
   ("Me at the zoo") and our upright short, each card in its video's shape
   (the short as tall as a landscape card is wide, its card no narrower
-  than 200 points; the thumbnails without their black bands). In the
-  Legacy lines (`bubbles:legacy`) no card at all. Capture at frame 900
+  than 200 points; the thumbnails without their black bands). `services`
+  (#923): links to the pages of image services, read from the saved answers
+  of `link_preview/fixtures/` (made-up ids, no network): a removed Lightshot
+  screenshot and a Reddit text post (the links alone, no card), then a
+  Gyazo page, a Flickr short link, an Imgur album, a Lightshot screenshot
+  and a Reddit post, each with its picture (the demo draws it); the Reddit
+  one blurred until clicked. `services:gyazo,flickr` keeps the listed
+  services only (`gyazo`, `flickr`, `imgur`, `lightshot`, `reddit`, `none`
+  for the two links without a card). In the Legacy lines (`bubbles:legacy`) no card
+  at all. Capture at frame 900
   (1500 with `net`).
 - **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy`**: with `AURORA_DEMO_CONV`
   and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture
@@ -5505,7 +5562,7 @@ and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
 
-**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|completion|completion-send|communicate|communicate-open`** — three synthetic gestures:
+**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|completion|completion-send|communicate|communicate-open`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
 inactive chime on F10. `manager` opens the list; `editor` also opens the
 chat gesture's editor; `play` starts the chat and animation at frame 650.
@@ -5515,6 +5572,15 @@ playback. Change and save its key or modifier to check other digits,
 Ctrl and Shift; keypad digit shortcuts also work with NumLock off.
 Capture at frame 620 for the list/editor, 680 during playback and 800
 after the explicit pause. Sounds stay muted unless `AURORA_DEMO_SOUND=1`.
+`replay` adds a clap gesture on F7 (the chime three times, 0.3 s apart),
+a gesture on Ctrl+Z and one on Ctrl+B, and opens the Ctrl+B gesture's
+editor, whose shortcut row warns that the build tools keep Ctrl+B. The
+scenario presses F7 at frames 650, 665 and 680, then Ctrl+Z at 760 and
+Ctrl+B at 780, through the rules of a real key press: run it with
+`AURORA_FPS_LIMIT=60` and read the `demo gesture key` and `demo sound
+trigger` lines of the log (each F7 press starts the clap over; Ctrl+Z
+plays its gesture while the build tools are closed; Ctrl+B is kept by
+them). Capture frame 620 for the editor's warning.
 `completion` gives the chat gesture the `/eject` trigger, focuses nearby
 chat at frame 540 and types `/ej` at frame 550: capture frame 620 to see
 `/eject` with the added `ect` selected. `completion-send` also presses
@@ -5868,7 +5934,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
-| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music` or `list` | Media filter question or list |
+| `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
@@ -6077,7 +6143,13 @@ What the inventory must show with these scenarios:
   list and the answers stay in memory: no run changes the demo account's
   `medialist.xml`, and an answer does not save the profile. `AURORA_DEMO_MEDIA=<https URL>` or
   `AURORA_DEMO_PARCEL_MEDIA=<https URL>` ask the same way when the
-  profile's filter is on.
+  profile's filter is on. `worn` puts media on `media.example.com` on the
+  object worn on our back (that of `AURORA_DEMO_WORN`), `hud` on a worn HUD
+  screen: no question, as "Trust my worn items" is on (the log has no
+  `media filter: asking about` line). `worn-ask` / `hud-ask` turn that
+  option off for the run, and the question comes; `worn-blocked` /
+  `hud-blocked` put the site in the list as blocked: refused without a
+  question, told in the local chat.
 - **`AURORA_DEMO_SOUND=1|hud`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
@@ -6152,6 +6224,7 @@ What the inventory must show with these scenarios:
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's) |
 | `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
+| `AURORA_GPU_START_FAIL=1` | Start as if no graphics card could draw the window: the message the user gets then |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
 | `AURORA_CLICK_PICK=wait` or `check` | Depth under a click read by waiting for the GPU, or checked |
 | `AURORA_HOVER_LEGACY=1` or `ab` | Search for the object under the cursor as before the classes and the triangle hierarchies |
@@ -6207,7 +6280,17 @@ What the inventory must show with these scenarios:
   `GPU adapter <n> chosen:` and why. When only an integrated GPU is listed
   on a PC that has a dedicated one, the NVIDIA Control Panel's "Preferred
   graphics processor" for `aurora-viewer.exe` hides it from Vulkan
-  (`VK_LAYER_NV_optimus`): the log says so.
+  (`VK_LAYER_NV_optimus`): the log says so, and Preferences › Graphics ›
+  Fluidity › Graphics card shows a note under its title (the same for a
+  dedicated card that cannot present). The list of that choice comes from
+  the renderer's own list as soon as it is created, so the login screen has
+  it too.
+- **`AURORA_GPU_START_FAIL=1`**: the renderer is not created, as when no
+  adapter can present or Vulkan is missing. Before #894's follow-up the
+  viewer exited silently in that case, its window still hidden (no crash
+  report: it is no crash); it now shows a native error box with what to try
+  and the log's path, then exits. Automated captures (`AURORA_CAPTURE`) skip
+  the box. The same box shows when the window itself cannot be created.
 - **`AURORA_BANDWIDTH_KBPS=<n>`**: the "Maximum bandwidth" of Preferences ›
   Network and cache for this launch, without changing the saved setting,
   from 100 to 10,000. A session first asks its simulator for one and a

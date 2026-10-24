@@ -365,6 +365,13 @@ impl App {
     /// "Wear" replaces on the object's own point; "Add" and the points of
     /// the submenus add (LLSelectMgr::sendAttach).
     pub(super) fn wear_object(&mut self, id: Uuid, point: u8, add: bool) {
+        if let Some(source) = self.blender_live.source_for_object(id) {
+            self.blender_live.object_action = Some((
+                source,
+                crate::blender_live::objects::Action::Attach(if point == 0 { 1 } else { point & 0x7f }),
+            ));
+            return;
+        }
         let Some(idx) = self.world.objects.index_of_uuid(&id) else { return };
         let root = linkset_root(&self.world, idx);
         let Some(o) = self.world.objects.get(root) else { return };

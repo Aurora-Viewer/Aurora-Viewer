@@ -63,6 +63,9 @@ pub struct GpuInfo {
     /// The names of the adapters that can present to the window, in the
     /// log's order: the choice of Preferences › Graphics.
     pub adapters: Vec<String>,
+    /// Why the dedicated GPU may not be the one drawing (shown under that
+    /// choice too).
+    pub notice: Option<crate::adapter_choice::Notice>,
 }
 
 /// The part of a range of skin bindings to send that is in a list of `len`.
@@ -228,8 +231,9 @@ impl Renderer {
                 if c.surface { "can present" } else { "cannot present to the window" }
             );
         }
-        if let Some(hint) = crate::adapter_choice::hint(&candidates) {
-            log::warn!("GPU: {hint}");
+        let notice = crate::adapter_choice::hint(&candidates);
+        if let Some(n) = notice {
+            log::warn!("GPU: {}", n.log_line());
         }
         let wanted = crate::adapter_choice::Wanted::parse(gpu);
         let plan = crate::adapter_choice::plan(&candidates, &wanted);
@@ -306,6 +310,7 @@ impl Renderer {
             vram_mb,
             integrated: ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
             adapters,
+            notice,
         };
 
         // ---- the scene's stores; what they write at creation is replayed

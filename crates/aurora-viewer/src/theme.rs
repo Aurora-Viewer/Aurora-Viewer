@@ -126,8 +126,10 @@ impl Palette {
 
 impl Theme {
     /// The colors, those of the high contrast palette instead of the skin's
-    /// when it is chosen (`crate::high_contrast`), adapted to the colour
-    /// blindness chosen in the preferences (`crate::colorblind`).
+    /// when it is chosen (`crate::high_contrast`), else the skin's with the
+    /// interface colours of the preferences (`crate::interface_colors`),
+    /// adapted to the colour blindness chosen in the preferences
+    /// (`crate::colorblind`).
     pub fn palette(&self) -> Palette {
         self.palette_for(crate::colorblind::current())
     }
@@ -136,13 +138,13 @@ impl Theme {
         let base = if crate::high_contrast::current() {
             crate::high_contrast::palette()
         } else {
-            self.skin_palette()
+            crate::interface_colors::apply(self.skin_palette(), &crate::interface_colors::current())
         };
         crate::colorblind::palette(base, vision)
     }
 
     /// The colors as the skin writes them.
-    fn skin_palette(&self) -> Palette {
+    pub fn skin_palette(&self) -> Palette {
         Palette {
             violet: hex(&self.violet),
             indigo: hex(&self.indigo),

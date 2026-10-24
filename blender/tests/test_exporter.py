@@ -4,6 +4,7 @@ import json
 import sys
 import unittest
 import time
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,87 @@ from aurora_live import exporter
 
 
 class ExporterTests(unittest.TestCase):
+    def test_parented_static_sources_keep_separate_meshes_root_and_relative_origins(self):
+        from aurora_live.client import wire_snapshot
+        self.mesh.modifiers.clear()
+        self.mesh.parent = None
+        self.mesh.location = (20, 30, 40)
+        self.mesh.rotation_euler.z = 0.5
+        self.mesh.scale = (2, 1, 3)
+        child = self.mesh.copy()
+        child.data = self.mesh.data.copy()
+        bpy.context.collection.objects.link(child)
+        child.parent = self.mesh
+        child.location = (1, 2, -1)
+        grandchild = child.copy()
+        grandchild.data = child.data.copy()
+        bpy.context.collection.objects.link(grandchild)
+        grandchild.parent = child
+        grandchild.location = (2, 1, 0)
+        bpy.context.view_layer.update()
+        ids = {obj.as_pointer(): str(uuid.uuid4()) for obj in (self.mesh, child, grandchild)}
+        value = exporter.snapshot([grandchild, child, self.mesh], set(), 1, source_ids=ids)
+        self.assertEqual(len(value["meshes"]), 3)
+        self.assertNotIn("link", value["meshes"][2])
+        for obj, mesh in zip((grandchild, child), value["meshes"]):
+            self.assertEqual(mesh["source_id"], ids[obj.as_pointer()])
+            self.assertEqual(mesh["link"]["parent"], ids[self.mesh.as_pointer()])
+            expected = obj.matrix_world.translation - self.mesh.matrix_world.translation
+            self.assertLess((Vector(mesh["link"]["offset"]) - expected).length, 1e-5)
+        with self.assertRaisesRegex(ValueError, "linked objects"):
+            wire_snapshot(value, ["source-ids", "static-meshes"])
+        self.assertEqual(wire_snapshot(value, ["source-ids", "static-meshes", "object-links"]), value)
+        # A paused or unselected parent is not a dangling wire reference.
+        single = exporter.snapshot([child], set(), 2, source_ids=ids)
+        self.assertNotIn("link", single["meshes"][0])
+        bpy.context.scene.unit_settings.scale_length = 0.1
+        scaled = exporter.snapshot([child, self.mesh], set(), 3, forward="NEGATIVE_Y", source_ids=ids)
+        expected = exporter.coordinate_basis(None, "NEGATIVE_Y").to_3x3() @ (child.matrix_world.translation - self.mesh.matrix_world.translation) * 0.1
+        self.assertLess((Vector(scaled["meshes"][0]["link"]["offset"]) - expected).length, 1e-5)
+        bpy.context.scene.unit_settings.scale_length = 1
+
+    def test_static_mesh_evaluates_modifiers_without_weights_and_ignores_scene_translation(self):
+        self.mesh.modifiers.clear()
+        self.mesh.vertex_groups.clear()
+        self.mesh.location = (50, 60, 70)
+        self.mesh.scale = (2, 3, 4)
+        modifier = self.mesh.modifiers.new("Static solidify", "SOLIDIFY")
+        modifier.thickness = 0.1
+        bpy.context.view_layer.update()
+        before = len(bpy.data.objects), len(bpy.data.meshes)
+        mesh = self.capture()["meshes"][0]
+        self.assertEqual(mesh["joints"], [])
+        self.assertEqual(mesh["inverse_bind"], [])
+        vertices = [v for face in mesh["faces"] for v in face["vertices"]]
+        self.assertTrue(all(v["weights"] == [0.0] * 4 for v in vertices))
+        self.assertTrue(all(v["joints"] == [0] * 4 for v in vertices))
+        self.assertLess(max(v["position"][0] for v in vertices), 1.0)
+        self.assertAlmostEqual(max(v["position"][2] for v in vertices), 4.0, places=4)
+        self.assertGreater(sum(len(face["indices"]) // 3 for face in mesh["faces"]), 1)
+        self.assertEqual(before, (len(bpy.data.objects), len(bpy.data.meshes)))
+
+    def test_static_and_rigged_sources_share_a_snapshot_and_negotiate_old_viewers(self):
+        from aurora_live.client import wire_snapshot
+        static = self.mesh.copy()
+        static.data = self.mesh.data.copy()
+        static.name = "Static object"
+        static.modifiers.clear()
+        bpy.context.collection.objects.link(static)
+        value = exporter.snapshot([self.mesh, static], {"mPelvis", "mChest"}, 1)
+        self.assertTrue(value["meshes"][0]["joints"])
+        self.assertEqual(value["meshes"][1]["joints"], [])
+        with self.assertRaisesRegex(ValueError, "Update Aurora Viewer"):
+            wire_snapshot(value, ["source-ids"])
+        self.assertEqual(wire_snapshot(value, ["static-meshes", "source-ids"]), value)
+
+    def test_bone_parented_prop_without_deformation_remains_static(self):
+        self.mesh.modifiers.clear()
+        self.mesh.parent = self.rig
+        self.mesh.parent_type = "BONE"
+        self.mesh.parent_bone = "mChest"
+        bpy.context.view_layer.update()
+        self.assertEqual(self.capture()["meshes"][0]["joints"], [])
+
     @classmethod
     def setUpClass(cls):
         aurora_live.register()

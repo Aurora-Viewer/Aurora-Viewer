@@ -1415,6 +1415,18 @@ cli-aurora-viewer = { "Aurora Viewer " }{ $version }
 cli-aurora-viewer-2 = { "Aurora Viewer " }{ $version }{ " - " }{ $t }
 common-aurora-viewer = { "Aurora Viewer " }{ $value0 }
 app-aurora-viewer-unable-to-initialize-vulkan = { "Aurora Viewer: unable to initialize Vulkan: " }{ $e }
+app-graphics-start-failed-title = Aurora Viewer cannot start
+app-graphics-start-failed =
+    Aurora Viewer could not open a graphics card to draw its window.
+
+    What to try:
+    • update the graphics card driver;
+    • on a PC with two graphics cards, check that both are enabled in Device Manager, and that the monitor is plugged into the card that should draw;
+    • restart the PC.
+
+    Details: { $e }
+
+    The log of this start: { $log }
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora does not have an animation overrider (AO) yet.
 cmdline-mod-use-hover-height-in-appearance = Adjust your avatar's hover height through Appearance → Hover Height.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora recommends against opening this link. If it asks you to log in or pay, it is very likely a scam: never give it your password or payment information.
@@ -2757,6 +2769,19 @@ ui-options-contrast = Contrast
 ui-options-high-contrast = High contrast
 ui-options-high-contrast-help = For poor vision: white text on opaque black surfaces, one light accent and a visible border around buttons, fields and windows, instead of the skin's colours. Every text reaches at least 7:1 against its background.
 ui-options-high-contrast-skin = While high contrast is on (Accessibility), it replaces the skin's colours.
+ui-options-interface-colors = Interface colours
+ui-options-interface-colors-help = Choose the accent, the windows' background and the text: the bars, fields, buttons, hovers and secondary text follow from them.
+ui-options-interface-colors-high-contrast = High contrast is on: it keeps its own colours. These come back when it is turned off.
+ui-options-accent-color = Accent colour
+ui-options-accent-color-help = The main buttons, the selection, the switches and boxes turned on, the sliders and the active tabs.
+ui-options-surface-color = Window background
+ui-options-surface-color-help = The bars, fields and buttons follow from it.
+ui-options-text-color = Text
+ui-options-text-color-help = The secondary text follows from it. It is made lighter or darker when needed to stay readable on the background.
+ui-options-all-interface-colors = Every interface colour
+ui-options-reset-all = Reset all
+ui-options-interface-colors-text-adjusted = The text was adjusted to stay readable on this background (a 4.5:1 contrast at least).
+ui-options-interface-colors-accent-adjusted = The accent was adjusted to stay visible on this background (a 3:1 contrast at least).
 ui-options-color-blindness = Colour blindness
 ui-options-color-blindness-help = The interface's colours adapt to your colour vision: what is told apart by colour (online, away, busy, success, warnings, errors…) stays easy to tell apart. The status dots also differ by their shape.
 ui-options-color-blindness-strength = Strength
@@ -3640,6 +3665,8 @@ build-ui-texture-multiple-media = Multiple media
 ui-options-scripted-media = Scripted media
 ui-options-media-filter = Media filter
 ui-options-media-filter-help = Ask before media or music loads from a site not in the list (MediaEnableFilter)
+ui-options-media-filter-own-worn = Trust my worn items
+ui-options-media-filter-own-worn-help = Media on what you wear (attachments, HUDs) loads without asking; blocked sites stay blocked. Other avatars' items still ask
 ui-options-media-filter-list = Sites
 ui-options-media-filter-list-help = Domains (with their subdomains) and addresses this account allows or blocks
 ui-options-media-filter-empty = No site yet: the answers you keep from the question appear here.
@@ -4912,6 +4939,8 @@ ui-options-graphics-card-automatic = Automatic
 ui-options-graphics-card-help = Automatic takes the dedicated card first. Applied at the next start.
 ui-options-graphics-card-in-use = In use: { $name }.
 ui-options-graphics-card-choice = Card to use
+ui-options-graphics-card-no-discrete = Only the integrated graphics is visible to the viewer. On a PC with an NVIDIA card, set "Preferred graphics processor" to the NVIDIA card for aurora-viewer.exe in the NVIDIA Control Panel, then restart the PC if the card still does not show.
+ui-options-graphics-card-cannot-present = The dedicated card cannot draw the viewer's window: plug the monitor into the dedicated card's outputs, not the motherboard's.
 ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait = Vertical synchronization, frame rate limit, presentation, render thread wait
 build-ui-texture-synchronize-materials = Synchronize materials
 common-system = System
@@ -9376,6 +9405,8 @@ gesture-trigger = Trigger
 gesture-key = Key
 gesture-replacement = Replacement
 gesture-shortcut = Shortcut
+gesture-shortcut-taken = { $shortcut } is a shortcut of the build tools: it will not play this gesture.
+gesture-shortcut-taken-building = { $shortcut } will not play this gesture while the build tools are open, which use it.
 gesture-activate = Activate
 gesture-deactivate = Deactivate
 gesture-active = Active
@@ -9427,6 +9458,7 @@ gesture-demo-replacement = Hello!
 gesture-demo-chat = Hello from the demo gesture!
 gesture-demo-animation-name = Demo pose
 gesture-demo-sound-name = Demo chime
+gesture-demo-clap-name = Demo clap
 gesture-demo-finished = The gesture animation has finished.
 gesture-builtin-express-afraid = Afraid
 gesture-builtin-express-anger = Angry
@@ -11029,7 +11061,7 @@ build-material-specular-tint = Specular tint
 build-material-base-tint = Base tint
 build-material-emissive-tint = Emissive tint
 
-blender-live-title = Blender Live
+blender-live-title = LiveMesh
 blender-live-invalid-source = Invalid or duplicate live object identifier.
 blender-live-connection = Connection
 blender-live-objects = Objects
@@ -11057,7 +11089,7 @@ blender-shape-success = Shape imported in Blender as a new rigged reference body
 blender-shape-failed = Shape transfer failed: { $error }
 blender-shape-invalid = This shape does not contain a valid, usable avatar definition.
 blender-shape-too-large = This shape exceeds the 8 MiB transfer limit.
-blender-live-bundled-version = Aurora Live Mesh { $version }
+blender-live-bundled-version = Aurora LiveMesh { $version }
 blender-live-detect = Refresh
 blender-live-choose-blender = Choose Blender…
 blender-live-manual-install = Manual installation (ZIP)
@@ -11084,8 +11116,8 @@ blender-live-empty = No objects in this preview.
 blender-live-visible = Show this object on my avatar
 blender-live-upload = Import
 blender-live-restore = Restore removed objects
-blender-live-upload-frozen = Blender Live snapshot. Further live edits do not change this draft. Use Import again for a new snapshot.
-blender-live-upload-source = Blender Live · frozen snapshot
+blender-live-upload-frozen = LiveMesh snapshot. Further live edits do not change this draft. Use Import again for a new snapshot.
+blender-live-upload-source = LiveMesh · frozen snapshot
 blender-live-upload-materials = Includes base colors and textures. Upload PBR materials separately.
 blender-live-invalid-material = Invalid live material, image dimensions, pixel budget or texture reference.
 blender-live-material-busy = Preparing live material images; retrying automatically.
@@ -11097,7 +11129,7 @@ blender-live-addon-error = Could not save the plug-in: { $error }
 blender-live-invalid-size = A snapshot must contain at most 64 MiB.
 blender-live-invalid-protocol = Unsupported protocol or more than 32 mesh objects.
 blender-live-invalid-name = Invalid mesh name.
-blender-live-invalid-joints = A mesh needs 1 to 110 joints and matching inverse binds.
+blender-live-invalid-joints = A rigged mesh needs 1 to 110 joints and matching inverse binds; a static mesh needs neither.
 blender-live-unknown-joint = Unsupported or duplicate avatar joint: { $joint }
 blender-live-invalid-bind = Invalid inverse bind matrix.
 blender-live-invalid-surfaces = A mesh needs 1 to 32 material surfaces.
@@ -11123,7 +11155,14 @@ blender-live-counts =
 blender-live-revision = Revision { $revision }
 blender-live-error = Preview: { $error }
 blender-live-no-avatar = Your avatar is not available yet. Send again after it appears.
-blender-live-instructions = In Blender, install Aurora Live Mesh, select your rigged meshes, then open Sidebar › Aurora › Connect to Aurora.
+blender-live-instructions = In Blender, install Aurora LiveMesh, select your meshes, then open Sidebar › Aurora › Connect to Aurora.
+blender-object-world = Local object in the world
+blender-object-detached = Not rezzed or attached
+blender-object-attached = Attached locally: { $point }
+blender-object-edit = Edit
+blender-object-rez = Rez
+blender-object-drop = Drop to ground
+blender-object-derez = Derez
 blender-live-local-only = Only you see this preview. No asset upload. Closing this window keeps it active; Stop removes it.
 
 inventory-menu-new = New...
@@ -11174,3 +11213,22 @@ inventory-menu-editor-open = Open / Teleport
 inventory-menu-editor-gesture = Activate / Deactivate gesture
 inventory-menu-editor-protect = Lock / Unlock folder
 inventory-menu-editor-detach = Take off / Detach
+
+blender-live-invalid-link = Invalid live object parenting.
+blender-object-root = { $name } (root)
+blender-object-child = { $name } — linked to { $root }
+blender-object-child-frame = Position and rotation relative to root: { $root }
+
+blender-live-linkset-counts =
+    { $objects ->
+        [one] { $objects } object
+       *[other] { $objects } objects
+    } · { $prims ->
+        [one] { $prims } prim
+       *[other] { $prims } prims
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-object-linkset = { $name } — root #1 · { $prims } prims
+blender-object-linked-prim = #{ $number } · { $name }

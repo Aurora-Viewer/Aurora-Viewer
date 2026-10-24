@@ -1567,6 +1567,7 @@ mod tests {
             vram_mb: None,
             integrated: false,
             adapters: Vec::new(),
+            notice: None,
         };
         let input = egui::RawInput {
             screen_rect: Some(screen),

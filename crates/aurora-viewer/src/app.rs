@@ -55,6 +55,7 @@ mod env_day_editor;
 mod env_editor;
 mod external_links;
 mod gestures;
+mod graphics_start;
 mod hover_height;
 mod hover_tips;
 mod hud_drag;
@@ -776,6 +777,17 @@ fn wanted_high_contrast(settings: &Settings) -> bool {
     settings.high_contrast
 }
 
+/// The interface colours: the preferences', or in demo mode
+/// `AURORA_DEMO_COLORS` (a capture's, never saved).
+fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::InterfaceColors {
+    if std::env::var_os("AURORA_DEMO").is_some()
+        && let Some(colors) = crate::interface_colors::demo_override()
+    {
+        return colors;
+    }
+    settings.interface_colors.clone()
+}
+
 /// Test overrides of the settings (used by automated captures): the
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
@@ -862,6 +874,7 @@ impl App {
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
+        crate::interface_colors::set(wanted_interface_colors(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
@@ -1259,6 +1272,9 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        if self.blender_live.local_command(&cmd, &self.world) {
+            return;
+        }
         self.world.rlva_configure(self.settings.rlva_enabled);
         self.world.rlva.preferences.clone_from(&self.settings.rlva);
         if !self.settings.rlva_enabled {
@@ -4362,8 +4378,49 @@ impl App {
                     self.world.media_filter.apply(Edit::Set(site.into(), action));
                 }
             }
+            // media on an item we wear (on our back, or a HUD), on a site the
+            // list does not know: no question unless `-ask` turns
+            // filter_trust_own_worn off; `-blocked` puts the site in the list
+            // as blocked
+            "worn" | "worn-ask" | "worn-blocked" | "hud" | "hud-ask" | "hud-blocked" => {
+                let url = "https://media.example.com/earring/index.html";
+                self.settings.media.filter_trust_own_worn = !mode.ends_with("-ask");
+                if mode.ends_with("-blocked") {
+                    self.world.media_filter.apply(Edit::Set("media.example.com".into(), Action::Deny));
+                }
+                if mode.starts_with("hud") {
+                    self.demo_hud_media(url);
+                } else {
+                    if std::env::var_os("AURORA_DEMO_WORN").is_none() {
+                        for ev in crate::demo::worn::events() {
+                            self.world.apply(ev);
+                        }
+                    }
+                    self.media.demo_entry(crate::demo::worn::root().full_id, 0, url);
+                }
+            }
             _ => log::warn!("AURORA_DEMO_MEDIA_FILTER: unknown mode {mode}"),
         }
+    }
+
+    /// AURORA_DEMO_HUDS=media (and the media filter's `hud` modes): a worn
+    /// HUD screen with media on `url`, playing at once.
+    fn demo_hud_media(&mut self, url: &str) {
+        let mut hud = crate::demo::hud::object(35, false);
+        let face = crate::demo::media_screen().2;
+        hud.scale = Vec3::new(0.012, 0.7, 0.394);
+        if let Some(te) = hud.texture_entry.as_mut() {
+            let tf = &mut Arc::make_mut(te).faces[face as usize];
+            tf.texture = aurora_prim::te::BLANK_TEXTURE;
+            tf.color = [1.0; 4];
+            tf.scale_t = 576.0 / 1024.0;
+            tf.offset_t = -(1.0 - tf.scale_t) * 0.5;
+        }
+        self.media.demo_entry(hud.full_id, face, url);
+        self.world.apply(NetEvent::ObjectUpdates {
+            handle: self.world.main_region.unwrap_or_default(),
+            objects: vec![hud],
+        });
     }
 
     fn update_audio(&mut self) {
@@ -6678,6 +6735,9 @@ impl App {
         self.frame_profile.lap(Lap::Events);
         self.poll_ao();
         self.sync_static_eyes();
+        if self.in_world() {
+            self.step_gestures();
+        }
         if self.in_world() && self.last_social_poll.elapsed() > Duration::from_millis(500) {
             self.last_social_poll = Instant::now();
             self.poll_names();
@@ -7594,11 +7654,6 @@ impl App {
                     self.world.apply(ev);
                 }
             }
-            self.options_ui.vram = (gfx.renderer.info.vram_mb, gfx.renderer.info.integrated);
-            if self.options_ui.gpus.is_empty() {
-                self.options_ui.gpus = gfx.renderer.info.adapters.clone();
-                self.options_ui.gpu_in_use = gfx.renderer.info.name.clone();
-            }
             // Preferences › Debug › Detail levels: what the overlay labels
             self.lod_infos = if self.settings.debug.lod_info {
                 let range = ui::debug_overlay::RANGE;
@@ -8040,7 +8095,7 @@ impl App {
         if self.demo
             && self.capture.is_some()
             && (ui::color_picker::demo::mode().is_some()
-                || self.chat_ui.demo_reorder
+                || self.chat_ui.demo_reorder.is_some()
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
@@ -8488,12 +8543,18 @@ impl App {
             if self.settings.vsync != vsync {
                 gfx.renderer.set_vsync(self.settings.vsync);
             }
-            // a new colour blindness or contrast: the palette again, at once
+            // a new colour blindness, contrast or interface colour: the
+            // palette again, at once
             let vision = wanted_vision(&self.settings);
             let high_contrast = wanted_high_contrast(&self.settings);
-            if vision != crate::colorblind::current() || high_contrast != crate::high_contrast::current() {
+            let interface_colors = wanted_interface_colors(&self.settings);
+            if vision != crate::colorblind::current()
+                || high_contrast != crate::high_contrast::current()
+                || interface_colors != crate::interface_colors::current()
+            {
                 crate::colorblind::set(vision);
                 crate::high_contrast::set(high_contrast);
+                crate::interface_colors::set(interface_colors);
                 self.palette = self.skin.theme.palette();
                 self.cursors.set_palette(&self.palette);
             }
@@ -12299,7 +12360,7 @@ impl App {
                             self.options_ui.output_devices = aurora_audio::output_devices();
                         }
                         // done by the window before it returns
-                        ui::chat::ConvAction::PopOut(_) | ui::chat::ConvAction::DockBack(_) => {}
+                        ui::chat::ConvAction::PopOut(_) | ui::chat::ConvAction::DockBack(_) | ui::chat::ConvAction::PopOutAt(..) => {}
                     }
                 }
                 self.panels.chat = open;
@@ -13491,6 +13552,7 @@ impl ApplicationHandler for App {
             Ok(w) => Arc::new(w),
             Err(e) => {
                 log::error!("cannot create window: {e}");
+                graphics_start::report(&e.to_string(), capture);
                 event_loop.exit();
                 return;
             }
@@ -13503,7 +13565,14 @@ impl ApplicationHandler for App {
         // the GPU of Preferences › Graphics; AURORA_GPU=<number|name|auto>
         // overrides it for this launch (adapter_choice.rs)
         let gpu = std::env::var("AURORA_GPU").unwrap_or_else(|_| self.settings.gpu_adapter.clone());
-        let renderer = match Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu) {
+        // AURORA_GPU_START_FAIL=1: as if no card could draw, to see the
+        // message the user gets then (graphics_start.rs)
+        let created = if std::env::var_os("AURORA_GPU_START_FAIL").is_some() {
+            Err(aurora_render::RenderError::NoAdapter("AURORA_GPU_START_FAIL".into()))
+        } else {
+            Renderer::new(window.clone(), size.width, size.height, self.settings.vsync, &gpu)
+        };
+        let renderer = match created {
             Ok(r) => r,
             Err(e) => {
                 log::error!("renderer initialisation failed: {e}");
@@ -13511,6 +13580,9 @@ impl ApplicationHandler for App {
                     "{}",
                     aurora_i18n::tr!("app-aurora-viewer-unable-to-initialize-vulkan", e = format!("{}", e))
                 );
+                // the window is still hidden: without this the viewer just
+                // vanished (#894)
+                graphics_start::report(&e.to_string(), capture);
                 event_loop.exit();
                 return;
             }
@@ -13544,6 +13616,13 @@ impl ApplicationHandler for App {
             self.settings.save();
         }
         renderer.apply_settings(self.settings.render_settings());
+        // what Preferences › Graphics shows of the GPUs, from the renderer's
+        // own list: here, not with the world's frames, so the login screen
+        // has it too (#894: only "Automatic" was offered before login)
+        self.options_ui.vram = (renderer.info.vram_mb, renderer.info.integrated);
+        self.options_ui.gpus = renderer.info.adapters.clone();
+        self.options_ui.gpu_in_use = renderer.info.name.clone();
+        self.options_ui.gpu_notice = renderer.info.notice;
         self.screen_rate.poll(&window, Instant::now());
         let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
         let egui_state = egui_winit::State::new(
@@ -15320,9 +15399,11 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.chat_ui.demo_menu = Some(kind.trim().to_owned());
             }
-            if std::env::var_os("AURORA_DEMO_CONV_REORDER").is_some() {
+            // AURORA_DEMO_CONV_REORDER=1|hold|out|nearby: an entry of the
+            // list dragged (with AURORA_DEMO_CONV)
+            if let Ok(mode) = std::env::var("AURORA_DEMO_CONV_REORDER") {
                 self.panels.chat = true;
-                self.chat_ui.demo_reorder = true;
+                self.chat_ui.demo_reorder = Some(ui::chat::ReorderDemo::parse(&mode));
             }
             // AURORA_DEMO_KEYWORDS: the alerts on for the run, with the
             // Conversations window open on the nearby chat
@@ -15489,21 +15570,7 @@ impl ApplicationHandler for App {
                     }
                 }
                 if mode == "media" {
-                    let mut hud = crate::demo::hud::object(35, false);
-                    let face = crate::demo::media_screen().2;
-                    hud.scale = Vec3::new(0.012, 0.7, 0.394);
-                    if let Some(te) = hud.texture_entry.as_mut() {
-                        let tf = &mut Arc::make_mut(te).faces[face as usize];
-                        tf.texture = aurora_prim::te::BLANK_TEXTURE;
-                        tf.color = [1.0; 4];
-                        tf.scale_t = 576.0 / 1024.0;
-                        tf.offset_t = -(1.0 - tf.scale_t) * 0.5;
-                    }
-                    self.media.demo_entry(hud.full_id, face, crate::demo::demo_media_page());
-                    self.world.apply(NetEvent::ObjectUpdates {
-                        handle: self.world.main_region.unwrap_or_default(),
-                        objects: vec![hud],
-                    });
+                    self.demo_hud_media(crate::demo::demo_media_page());
                 }
             }
             // AURORA_DEMO_PARCEL_MEDIA=<url> (1: the test page): parcel media
@@ -15670,16 +15737,19 @@ impl ApplicationHandler for App {
                     let mods = self.mods();
                     let build_keyboard =
                         self.in_world() && !self.egui_ctx.egui_wants_keyboard_input() && !egui::Popup::is_any_open(&self.egui_ctx);
-                    let ui_shortcut = pressed
-                        && crate::build::ui::Shortcut::take_native_key(
-                            &ke.logical_key,
-                            code,
-                            mods,
-                            self.build.open,
-                            build_keyboard,
-                            &mut self.down,
-                        )
-                        .is_some();
+                    let build_shortcut = pressed
+                        .then(|| {
+                            crate::build::ui::Shortcut::take_native_key(
+                                &ke.logical_key,
+                                code,
+                                mods,
+                                self.build.open,
+                                build_keyboard,
+                                &mut self.down,
+                            )
+                        })
+                        .flatten();
+                    let ui_shortcut = build_shortcut.is_some();
                     let command_key = pressed && self.settings.keybinds.triggered(&input, mods).is_some();
                     if ui_shortcut || command_key {
                         self.down.remove(&input);
@@ -15698,7 +15768,7 @@ impl ApplicationHandler for App {
                         self.gesture_state.manager.release(Some(key));
                     }
                     if pressed
-                        && !ui_shortcut
+                        && !build_shortcut.is_some_and(|s| s.takes_gesture_key(self.build.open))
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing
                         && self.in_world()

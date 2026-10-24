@@ -271,6 +271,25 @@ mod tests {
     }
 
     #[test]
+    fn blender_lods_static_sources_keep_all_levels_unskinned() {
+        let (mut value, request, supported) = fixture();
+        for level in value["levels"].as_array_mut().expect("levels") {
+            level["mesh"]["joints"] = serde_json::json!([]);
+            level["mesh"]["inverse_bind"] = serde_json::json!([]);
+            for face in level["mesh"]["faces"].as_array_mut().expect("faces") {
+                for vertex in face["vertices"].as_array_mut().expect("vertices") {
+                    vertex["weights"] = serde_json::json!([0, 0, 0, 0]);
+                }
+            }
+        }
+        let bundle = decode(&serde_json::to_vec(&value).expect("JSON"), request, &supported).expect("static LODs");
+        assert!(!bundle.high.rigged());
+        for level in &bundle.lods {
+            assert!(level.models.iter().all(|model| model.skin.is_none()));
+        }
+    }
+
+    #[test]
     fn blender_lods_validate_all_levels_and_pad_missing_materials_without_losing_skin() {
         let (mut data, request, supported) = fixture();
         let mut second = data["levels"][3]["mesh"]["faces"][0].clone();

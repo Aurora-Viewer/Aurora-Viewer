@@ -31,6 +31,14 @@ pub fn c(v: Rgba) -> Color32 {
     )
 }
 
+/// A configured colour for text on the windows (chat lines, names, links):
+/// `c`, then moved in lightness to read on a background chosen in
+/// Preferences › Appearance (`crate::interface_colors::on_panel`). The
+/// world's and the maps' colours keep `c`.
+pub fn text(v: Rgba) -> Color32 {
+    crate::interface_colors::on_panel(c(v))
+}
+
 /// Contact-set colours are stored in linear RGBA in the Legacy-compatible
 /// file. Apply the existing colour-blind adaptation after conversion.
 pub fn set_color(v: [f32; 4]) -> Color32 {
@@ -41,13 +49,19 @@ pub fn set_color(v: [f32; 4]) -> Color32 {
 }
 
 pub fn resident_name(world: &World, id: &Uuid, fallback: Color32) -> Color32 {
-    world.contact_sets.appearance(id).ui_name.map(set_color).unwrap_or(fallback)
+    world
+        .contact_sets
+        .appearance(id)
+        .ui_name
+        .map(|v| crate::interface_colors::on_panel(set_color(v)))
+        .unwrap_or(fallback)
 }
 
 pub fn contact_chat_color(line: &ChatLine, world: &World) -> Option<Color32> {
     matches!(line.kind, ChatKind::Local(_) | ChatKind::Im | ChatKind::Own)
         .then(|| world.contact_sets.appearance(&line.source).chat_text.map(set_color))
         .flatten()
+        .map(crate::interface_colors::on_panel)
 }
 
 pub fn contact_sender_color(line: &ChatLine, world: &World) -> Option<Color32> {
@@ -57,6 +71,7 @@ pub fn contact_sender_color(line: &ChatLine, world: &World) -> Option<Color32> {
             a.chat_name.or(a.ui_name).map(set_color)
         })
         .flatten()
+        .map(crate::interface_colors::on_panel)
 }
 
 /// Linden Lab staff ("First Linden" / "first.linden").
@@ -90,7 +105,7 @@ pub fn keyword_color(line: &ChatLine) -> Option<Color32> {
     ) {
         return None;
     }
-    crate::keywords::color(&line.from, &line.text, line.kind != ChatKind::Im).map(c)
+    crate::keywords::color(&line.from, &line.text, line.kind != ChatKind::Im).map(text)
 }
 
 /// Text color of a chat line (LLViewerChat::getChatColor): the keyword
@@ -125,15 +140,15 @@ pub fn chat_color(line: &ChatLine, world: &World) -> Color32 {
             }
         }
     };
-    c(v)
+    text(v)
 }
 
 /// Color of a sender's name in the conversation headers.
 pub fn sender_color(line: &ChatLine) -> Color32 {
     let k = get();
     match line.kind {
-        ChatKind::Object(_) | ChatKind::ObjectIm => c(k.sender_object),
-        _ => c(k.sender_avatar),
+        ChatKind::Object(_) | ChatKind::ObjectIm => text(k.sender_object),
+        _ => text(k.sender_avatar),
     }
 }
 
@@ -155,7 +170,8 @@ pub fn tag_color(world: &World, id: &Uuid, name: &str, custom_display_name: bool
     } else {
         k.tag_match
     };
-    c(v)
+    // on plates drawn in the windows' colours
+    text(v)
 }
 
 /// Minimap marker color of an avatar.

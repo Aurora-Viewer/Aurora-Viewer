@@ -1418,6 +1418,18 @@ cli-aurora-viewer = { "Aurora Viewer " }{ $version }
 cli-aurora-viewer-2 = { "Aurora Viewer " }{ $version }{ " - " }{ $t }
 common-aurora-viewer = { "Aurora Viewer " }{ $value0 }
 app-aurora-viewer-unable-to-initialize-vulkan = { "Aurora Viewer: impossible d'initialiser Vulkan : " }{ $e }
+app-graphics-start-failed-title = Aurora Viewer ne peut pas démarrer
+app-graphics-start-failed =
+    Aurora Viewer n'a pu ouvrir aucune carte graphique pour dessiner sa fenêtre.
+
+    À essayer :
+    • mettre à jour le pilote de la carte graphique ;
+    • sur un PC à deux cartes graphiques, vérifier qu'elles sont toutes deux activées dans le Gestionnaire de périphériques, et que l'écran est branché sur la carte qui doit dessiner ;
+    • redémarrer le PC.
+
+    Détails : { $e }
+
+    Le journal de ce démarrage : { $log }
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora n'a pas encore d'animation overrider (AO).
 cmdline-mod-use-hover-height-in-appearance = Ajustez la hauteur de survol de votre avatar dans Apparence → Hauteur de survol.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni vos informations de paiement.
@@ -2760,6 +2772,19 @@ ui-options-contrast = Contraste
 ui-options-high-contrast = Contraste élevé
 ui-options-high-contrast-help = Pour une vue faible : texte blanc sur des surfaces noires opaques, une seule couleur d’accent claire et une bordure visible autour des boutons, des champs et des fenêtres, à la place des couleurs de l’habillage. Chaque texte atteint au moins 7:1 contre son fond.
 ui-options-high-contrast-skin = Quand le contraste élevé est activé (Accessibilité), il remplace les couleurs de l’habillage.
+ui-options-interface-colors = Couleurs de l’interface
+ui-options-interface-colors-help = Choisissez l’accent, le fond des fenêtres et le texte : les barres, les champs, les boutons, les survols et le texte secondaire en découlent.
+ui-options-interface-colors-high-contrast = Le contraste élevé est activé : il garde ses propres couleurs. Celles-ci reviendront quand il sera désactivé.
+ui-options-accent-color = Couleur d’accent
+ui-options-accent-color-help = Les boutons principaux, la sélection, les interrupteurs et les cases cochés, les curseurs et les onglets actifs.
+ui-options-surface-color = Fond des fenêtres
+ui-options-surface-color-help = Les barres, les champs et les boutons en découlent.
+ui-options-text-color = Texte
+ui-options-text-color-help = Le texte secondaire en découle. Il est éclairci ou foncé si besoin pour rester lisible sur le fond.
+ui-options-all-interface-colors = Toutes les couleurs de l’interface
+ui-options-reset-all = Réinitialiser tout
+ui-options-interface-colors-text-adjusted = Le texte a été ajusté pour rester lisible sur ce fond (contraste de 4,5:1 au moins).
+ui-options-interface-colors-accent-adjusted = L’accent a été ajusté pour rester visible sur ce fond (contraste de 3:1 au moins).
 ui-options-color-blindness = Daltonisme
 ui-options-color-blindness-help = Les couleurs de l'interface s'adaptent à votre vision des couleurs : ce qui se distingue par la couleur (en ligne, absent, occupé, réussite, avertissements, erreurs…) reste facile à distinguer. Les pastilles de statut se distinguent aussi par leur forme.
 ui-options-color-blindness-strength = Intensité
@@ -3643,6 +3668,8 @@ build-ui-texture-multiple-media = Médias multiples
 ui-options-scripted-media = Médias par script
 ui-options-media-filter = Filtre média
 ui-options-media-filter-help = Demander avant qu'un média ou une musique se charge depuis un site absent de la liste (MediaEnableFilter)
+ui-options-media-filter-own-worn = Faire confiance à mes objets portés
+ui-options-media-filter-own-worn-help = Les médias de ce que vous portez (attachements, HUD) se chargent sans question ; les sites bloqués restent bloqués. Pour les objets des autres avatars, la question reste posée
 ui-options-media-filter-list = Sites
 ui-options-media-filter-list-help = Domaines (avec leurs sous-domaines) et adresses que ce compte autorise ou bloque
 ui-options-media-filter-empty = Aucun site pour l'instant : les réponses gardées depuis la question apparaissent ici.
@@ -4917,6 +4944,8 @@ ui-options-graphics-card-automatic = Automatique
 ui-options-graphics-card-help = Automatique prend d'abord la carte dédiée. Appliqué au prochain démarrage.
 ui-options-graphics-card-in-use = En cours : { $name }.
 ui-options-graphics-card-choice = Carte à utiliser
+ui-options-graphics-card-no-discrete = Seule la carte graphique intégrée est visible par le viewer. Sur un PC avec une carte NVIDIA, choisissez la carte NVIDIA comme « Processeur graphique préféré » pour aurora-viewer.exe dans le panneau de configuration NVIDIA, puis redémarrez le PC si elle n'apparaît toujours pas.
+ui-options-graphics-card-cannot-present = La carte dédiée ne peut pas dessiner la fenêtre du viewer : branchez l'écran sur les sorties de la carte dédiée, pas sur celles de la carte mère.
 ui-perf-vertical-synchronization-frame-rate-limit-presentation-render-thread-wait = Synchronisation verticale, limite d'images/s, présentation, attente du thread de rendu
 build-ui-texture-synchronize-materials = Synchroniser les matériaux
 common-system = Système
@@ -9372,6 +9401,8 @@ gesture-trigger = Déclencheur
 gesture-key = Touche
 gesture-replacement = Substitution
 gesture-shortcut = Raccourci
+gesture-shortcut-taken = { $shortcut } est un raccourci des outils de construction : il ne jouera pas ce geste.
+gesture-shortcut-taken-building = { $shortcut } ne jouera pas ce geste tant que les outils de construction, qui l’utilisent, sont ouverts.
 gesture-activate = Activer
 gesture-deactivate = Désactiver
 gesture-active = Actif
@@ -9423,6 +9454,7 @@ gesture-demo-replacement = Bonjour !
 gesture-demo-chat = Bonjour depuis le geste de démonstration !
 gesture-demo-animation-name = Pose de démonstration
 gesture-demo-sound-name = Carillon de démonstration
+gesture-demo-clap-name = Applaudissements de démonstration
 gesture-demo-finished = L’animation du geste est terminée.
 gesture-builtin-express-afraid = Effrayé
 gesture-builtin-express-anger = En colère
@@ -11025,7 +11057,7 @@ build-material-specular-tint = Teinte spéculaire
 build-material-base-tint = Teinte de base
 build-material-emissive-tint = Teinte émissive
 
-blender-live-title = Blender Live
+blender-live-title = LiveMesh
 blender-live-invalid-source = Identifiant d’objet live invalide ou en double.
 blender-live-connection = Connexion
 blender-live-objects = Objets
@@ -11053,7 +11085,7 @@ blender-shape-success = Shape importée dans Blender sous forme d’un nouveau c
 blender-shape-failed = Échec du transfert de la shape : { $error }
 blender-shape-invalid = Cette shape ne contient pas de définition d’avatar valide et utilisable.
 blender-shape-too-large = Cette shape dépasse la limite de transfert de 8 Mio.
-blender-live-bundled-version = Aurora Live Mesh { $version }
+blender-live-bundled-version = Aurora LiveMesh { $version }
 blender-live-detect = Actualiser
 blender-live-choose-blender = Choisir Blender…
 blender-live-manual-install = Installation manuelle (ZIP)
@@ -11080,8 +11112,8 @@ blender-live-empty = Aucun objet dans cet aperçu.
 blender-live-visible = Afficher cet objet sur mon avatar
 blender-live-upload = Importer
 blender-live-restore = Restaurer les objets retirés
-blender-live-upload-frozen = Copie de Blender Live. Les retouches live suivantes ne modifient pas ce brouillon. Utilisez à nouveau Importer pour prendre une nouvelle copie.
-blender-live-upload-source = Blender Live · copie figée
+blender-live-upload-frozen = Copie de LiveMesh. Les retouches live suivantes ne modifient pas ce brouillon. Utilisez à nouveau Importer pour prendre une nouvelle copie.
+blender-live-upload-source = LiveMesh · copie figée
 blender-live-upload-materials = Couleurs et textures de base incluses. Importez les matériaux PBR séparément.
 blender-live-invalid-material = Matériau, dimensions d’image, budget de pixels ou référence de texture live invalide.
 blender-live-material-busy = Préparation des images de matériaux live ; nouvel essai automatique.
@@ -11093,7 +11125,7 @@ blender-live-addon-error = Impossible d’enregistrer le plugin : { $error }
 blender-live-invalid-size = Un état du maillage doit contenir au plus 64 Mio.
 blender-live-invalid-protocol = Protocole incompatible ou plus de 32 objets maillés.
 blender-live-invalid-name = Nom de maillage invalide.
-blender-live-invalid-joints = Un maillage doit avoir entre 1 et 110 articulations et autant de matrices de liaison inverses.
+blender-live-invalid-joints = Un maillage riggé doit avoir entre 1 et 110 articulations et autant de matrices de liaison inverses ; un maillage statique ne doit avoir ni l’un ni l’autre.
 blender-live-unknown-joint = Articulation d’avatar inconnue ou en double : { $joint }
 blender-live-invalid-bind = Matrice de liaison inverse invalide.
 blender-live-invalid-surfaces = Un maillage doit avoir entre 1 et 32 surfaces de matériau.
@@ -11119,7 +11151,14 @@ blender-live-counts =
 blender-live-revision = Révision { $revision }
 blender-live-error = Aperçu : { $error }
 blender-live-no-avatar = Votre avatar n’est pas encore disponible. Renvoyez le maillage après son apparition.
-blender-live-instructions = Dans Blender, installez Aurora Live Mesh, sélectionnez vos maillages riggés, puis ouvrez le panneau latéral › Aurora › Connecter à Aurora.
+blender-live-instructions = Dans Blender, installez Aurora LiveMesh, sélectionnez vos maillages, puis ouvrez le panneau latéral › Aurora › Connecter à Aurora.
+blender-object-world = Objet local dans le monde
+blender-object-detached = Ni rezzé ni attaché
+blender-object-attached = Attaché localement : { $point }
+blender-object-edit = Modifier
+blender-object-rez = Rezzer
+blender-object-drop = Poser au sol
+blender-object-derez = Dérezzer
 blender-live-local-only = Cet aperçu est visible uniquement par vous, sans import automatique. Fermer cette fenêtre le laisse actif ; Arrêter le retire.
 
 inventory-menu-new = Nouveau...
@@ -11170,3 +11209,22 @@ inventory-menu-editor-open = Ouvrir / Téléporter
 inventory-menu-editor-gesture = Activer / Désactiver le geste
 inventory-menu-editor-protect = Verrouiller / Déverrouiller le dossier
 inventory-menu-editor-detach = Enlever / Détacher
+
+blender-live-invalid-link = Parentage d’objet live invalide.
+blender-object-root = { $name } (root)
+blender-object-child = { $name } — lié à { $root }
+blender-object-child-frame = Position et rotation relatives au root : { $root }
+
+blender-live-linkset-counts =
+    { $objects ->
+        [one] { $objects } objet
+       *[other] { $objects } objets
+    } · { $prims ->
+        [one] { $prims } prim
+       *[other] { $prims } prims
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-object-linkset = { $name } — root #1 · { $prims } prims
+blender-object-linked-prim = #{ $number } · { $name }

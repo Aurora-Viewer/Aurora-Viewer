@@ -1,6 +1,6 @@
 # Aurora Viewer architecture
 
-`blender_live/` owns the opt-in loopback Blender transport, bounded v1 rest-mesh
+`blender_live/` implements LiveMesh: the opt-in loopback Blender transport, bounded v1 rest-mesh
 snapshots and UI. Both matching Blender package layouts are bundled by
 `blender_live/addon.rs` and exported to ZIP on a worker, using the shared atomic
 file writer: a native extension for 4.2+ or a classic add-on for 2.93–4.1.
@@ -19,15 +19,39 @@ while preserving unrelated add-ons/settings. Manually
 selected executables are stored in `blender-installations.json` under Aurora's
 configuration directory. Existing Blender windows are never restarted or closed.
 A dedicated thread validates, normalizes and encodes the latest snapshot;
-`app/blender_live.rs` maintains render-only attachments under
-our avatar in `world::objects::PREVIEW_REGION`. These have no simulator identity
-or edit/touch target. Arrival cleanup excludes these private roots from stale
+`app/blender_live.rs` maintains private objects in `world::objects::PREVIEW_REGION`.
+Rigged sources remain render-only attachments under our avatar. Static sources
+use ordinary normalized mesh geometry, with stable source/batch UUIDs and one
+editable local linkset per independent Blender source. Negotiated `object-links`
+retains distinct parented static sources with one root and metre-based offsets;
+`blender_live/links.rs` owns hierarchy placement, reparenting, family bounds and
+parent resolution. Nested Blender parenting is flattened to a single mesh root.
+Every static draw prim is a direct child of one root, including material
+batches. The source tree and object/prim counts reflect that hierarchy. Native
+object context menus and the shared Edit linked mode govern selection; local
+menu actions resolve before simulator/inventory handlers. `blender_live/objects.rs` owns their
+session placement, scale multipliers, world-origin rebasing, body/HUD attachment
+and derez state. Local tool commands are consumed before network/demo dispatch;
+right-click uses the native object menu with local actions. These objects
+have no simulator identity or touch action. Arrival cleanup excludes these private roots from stale
 simulator attachments. Normal GPU skinning supplies animations and avatar shape;
 existing draw objects retain their geometry while replacement meshes load.
-`scene/blender_live.rs` retires obsolete assets as soon as their geometry has
+`scene/blender_live.rs` resolves local rez/drop support through the shared
+triangle picker (including elevated floors), and retires obsolete assets as soon as their geometry has
 no references or pending jobs. `blender/aurora_live/` is the shared Blender 2.93+
 implementation, with main-thread rest capture, a separate socket worker and a
-single latest-snapshot mailbox. Per-scene automatic/manual settings gate dirty
+single latest-snapshot mailbox. `tracking.py` stores scene-owned synchronization
+groups independently of Blender parents: multi-add chooses the active static
+root, transient row selection supports click/Ctrl/Cmd/Shift in display order,
+and Make root reassigns a complete family. Group uses only selected entries;
+Ungroup expands a selected root to its entire family, otherwise detaching only
+selected children. Removing a root from the list promotes a member. Stable
+source IDs anchor range selection across reordering without retaining deleted
+objects. Group IDs, root flags and explicit
+independence survive save/load and Undo/Redo; their signature schedules updates
+even when RNA callbacks are not replayed. `exporter.static_roots` resolves both
+explicit groups and inherited parenting into the existing flat `object-links`
+format. Per-scene automatic/manual settings gate dirty
 captures at a seconds-based interval, including membership changes; an explicit
 refresh captures immediately or waits for the handshake. Initial connections
 always capture. Comparing prepared content suppresses identical automatic
@@ -46,7 +70,7 @@ four File LODs already assigned. Preparation never requests a quote or upload;
 the normal review, quote and confirmed upload workflow follows. Preview-only
 elbow/knee flexion inspects skinning without altering the uploaded mesh.
 Hidden/removed sources keep receiving edits, with no simulator traffic.
-The Blender Live floater separates connection, objects and plug-in controls
+The LiveMesh floater separates connection, objects and plug-in controls
 with shared horizontal dividers in a brighter palette tone and plain section
 headings. Connection status shares its title row; port, loopback address and
 start/stop share a single control row. Each source row requests its own fresh LOD bundle;
@@ -1330,7 +1354,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `aurora-net/src/outfits.rs`, `aurora-net/src/outfits/categories.rs` | Writing of the outfit links, favourites, names and images through AIS InventoryAPIv3, move to the trash; confirmation and read-back of the folders / items |
 | `aurora-net/src/freeze.rs`, `release_notes.rs`, `sim_console.rs`, `voice_moderation.rs`, `postcard.rs`, `session/sim_requests.rs`, `world/sim_console.rs`, `world/voice_moderation.rs`, `ui/sim_console.rs`, `demo_sim_extras.rs` | The small simulator features: being frozen (ViewerFrozenMessage, the state shown by a snowflake among the parcel icons, and the AvatarFrozen alerts worded by the viewer); Help › Server release notes (ServerReleaseNotes, its `Location` opened); Advanced › Region console of estate managers (SimConsoleAsync, its output from the event queue's SimConsoleResponse); nearby voice moderation (SpatialVoiceModerationRequest: who may moderate, the entries under a resident's voice row, the notice when a moderator mutes us); a photo by e-mail (SendPostcard, the photo window's E-mail destination in `ui/snapshot.rs` and `app/snapshot.rs`); their demo (`AURORA_DEMO_FREEZE`, `AURORA_DEMO_SIM_CONSOLE`, `AURORA_DEMO_VOICE_MODERATION`) |
 | `slurl.rs`, `slapp.rs`, `link_trust.rs` | Links in texts: SLURL (navigation bar, "Region (x,y,z)" labels of the place links); the other `secondlife:///app/...` commands (`slapp.rs`: group, parcel, objectim, inventory, experience, classified, event, map, chat, search, agent verbs, the ones refused from a text received; their labels and menus in `ui/chat/app_links.rs`, what a click runs in `app/app_links.rs`, the remote object inspector in `ui/remote_object.rs`); trust of web links (trusted site, unknown, dangerous: shorteners, fake official names, IP addresses…), judged locally on the URL |
-| `link_preview.rs` | Link previews of the conversations (issues #538, #739): which links of a message get a picture under them (a picture's file, a YouTube video) and whether it loads by itself (Preferences › Chat: trusted sites by default, the others after a click; never a link that hides its destination), the download (no cookie or referrer, redirects kept on trusted sites, 8 MB at most) and the decoding off the frame (PNG, JPEG, GIF frames, WebP, BMP, kept at the size drawn), YouTube's oEmbed title, the loopback page that holds a video's player (YouTube's player wants a referrer), and the demo's pictures made without network |
+| `link_preview.rs`, `link_preview/services.rs` | Link previews of the conversations (issues #538, #739): which links of a message get a picture under them (a picture's file, a YouTube video, the page of an image service: Gyazo and Flickr through their oEmbed, Imgur and Lightshot through the page's `og:image`, Reddit through the post's Atom feed, #923; the picture found must be on the service's own servers, Reddit's blurred until clicked; saved answers with made-up ids in `link_preview/fixtures/` for the tests and the demo) and whether it loads by itself (Preferences › Chat: trusted sites by default, the others after a click; never a link that hides its destination), the download (no cookie or referrer, redirects kept on trusted sites, 8 MB at most) and the decoding off the frame (PNG, JPEG, GIF frames, WebP, BMP, kept at the size drawn), YouTube's oEmbed title, the loopback page that holds a video's player (YouTube's player wants a referrer), and the demo's pictures made without network |
 | `ui/search.rs`, `ui/search/details.rs`, `ui/search/aurora.rs`, `ui/search/aurora_details.rs`, `ui/place_card.rs`, `world/search.rs`, `aurora-net/src/search.rs`, `aurora-net/src/session_search.rs`, `demo_search.rs` | "Search" (the Legacy Viewer's search): directory queries and their flags, reading of the replies and of the event / group details (`aurora-net/src/search.rs`, pure; sending and receiving in `session_search.rs`); one result list per tab with the pending query, pages of 100, statuses, sorting and selection (`world/search.rs`); window with seven tabs, forms, sortable list and web page in the built-in browser (`ui/search.rs`, the Legacy look), detail cards and their actions (`ui/search/details.rs`); Aurora's look, the default: one field, type chips with their counts, the chip's filters on one line, rich rows and the sections of "All" (`ui/search/aurora.rs`), the details pane beside them (`ui/search/aurora_details.rs`); the place card shared with the windows that list places (`ui/place_card.rs`: snapshot, name, region, rating, trailing figures; the rows of Aurora's Places, their favourites dragged by a grip); offline directory of the demo (`demo_search.rs`, AURORA_DEMO_SEARCH) |
 | `ui/group_profile.rs`, `ui/group_profile/`, `world/group_data.rs`, `aurora-net/src/groups.rs`, `aurora-net/src/session_groups.rs`, `demo_group.rs` | Group profile: LLGroupMgr's data of a group (members by the GroupMemberData capability or GroupMembersRequest, roles, role / member pairs, titles, notice list; replies and request ids in `aurora-net/src/groups.rs`, pure; sending and receiving in `session_groups.rs`), kept per group with stale replies dropped (`world/group_data.rs`); window in the Aurora look (`group_profile/view.rs` header and tabs, `home.rs`, `members.rs` with `admin_members.rs` and the abilities catalogue `abilities.rs`, `notices.rs`, `invite.rs`, `administration.rs`) or the classic one; "Create a group" (`create.rs`: LLPanelGroupCreate's rules, the profile's header and the identity cards of `administration.rs`, or Firestorm's creation panel; CreateGroupRequest and its name rules in `aurora-net/src/groups.rs`); demo group server (`demo_group.rs`, AURORA_DEMO_GROUP_PROFILE, AURORA_DEMO_GROUP_CREATE) |
 | `ui/find_shortcut.rs` | Ctrl+F requested by three features: the single rule (`owner`) that gives it to the window one of whose fields has the keyboard (script editor, conversation), otherwise to the conversation under the pointer, otherwise to the viewer's shortcut ("Search"); the windows with a search bar declare themselves to it every frame (`take`), the application queries it before running its shortcut (`window_takes_it`) |
@@ -1373,6 +1397,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/presence.rs` | Status of a resident and the color and shape of its dot, shared by the name plates, the lists, the profiles and our own status: in our regions from the away / do not disturb animations, else a friend's online status, else an automatic response until the next message, else unknown. The shape (`Shape`, `paint_mark`: a disc online, a crescent away, a barred disc in do not disturb, a hollow ring offline) says the status without its colour (#418) |
 | `colorblind.rs`, `ui/options/pages/accessibility.rs` | Colour blindness (#418, Preferences › Accessibility): the deficiency and its strength, process-wide (`set` / `current`), read by `Theme::palette`. `palette` moves only the colours that carry a meaning and collide for the deficiency, to an Okabe–Ito hue of the same luminance (success blue for red–green, warning orange and links sky blue for blue–yellow, a ladder of greys for monochrome); `adapt` daltonises the other colours (`ui/colors.rs`, the complexity ramp of the name tags) from the simulation of Machado et al. 2009. `options/pages/accessibility.rs` is the page, with a preview of the status dots |
 | `high_contrast.rs` | High contrast (#906, Preferences › Accessibility): process-wide (`set` / `current`), read by `Theme::palette`, which then takes its palette instead of the skin's (before the colour blindness adaptation): opaque black surfaces, white text, one light violet accent, states apart by lightness. `Palette::high_contrast` gives buttons, fields, windows, islands and dividers a light border (`Theme::apply`, `widgets::border_stroke`). Its tests measure the WCAG ratios of every text / surface pair |
+| `interface_colors.rs` | Interface colours (Preferences › Appearance › Skin): the user's accent, windows' background and text, process-wide (`set` / `current`), applied by `Theme::palette` over the skin's colours (not in high contrast, before the colour blindness adaptation). The other roles follow by the skin's own relations: the accent family in OKLCH (lightness step, chroma ratio, hue turn), the surfaces and the muted texts by their place between the background and the text in OKLab, so that the skin's bases give back every colour exactly. Lightness moves until text reads 4.5:1 on the panel and the accent 3:1, and so do the states and the links' teal (hue kept); `on_panel` does the same for the chat's configurable colours and the name tags (`ui/colors.rs`, `text`); `on_accent` switches to navy when white no longer reads |
 | `ui/chat/input_history.rs` | Sent-message recall per conversation, shared by both nearby chat fields, with independent browsing and drafts per editor. Ctrl+Up/Down applies in every chat style; in memory, without a count limit, consecutive duplicates skipped. |
 | `ui/chat/keys.rs` | The keyboard of the Conversations tabs (#651), in every chat style: Alt + the arrows go round the conversations as the list shows them while the keyboard is in the window; Ctrl+W closes the conversation shown and shows the next one, or the window on a tab that cannot be closed. |
 | `ui/chat/latest.rs` | The button back to the latest messages (#558), in every chat style: it fades in over the bottom of a conversation's lines once the reader is away from the end (`view.rs` keeps how far, and from which line the messages are new), says how many came in since, and puts the scroll offset past the end, where the scroll area sticks to it again. |

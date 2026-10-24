@@ -82,7 +82,8 @@ def _reduced(context, high, target):
             mod.use_collapse_triangulate = True
         # Reattach the rig solely for rest capture; exporter removes it on its
         # own temporary copy, so the current pose is never baked into a LOD.
-        clone.modifiers.new("Aurora import rig", "ARMATURE").object = high.find_armature()
+        if exporter.armature_for(high):
+            clone.modifiers.new("Aurora import rig", "ARMATURE").object = exporter.armature_for(high)
         context.view_layer.update()
         return clone
     except Exception:
@@ -108,7 +109,7 @@ def _palette(meshes):
         remap = [names.index(name) for name in mesh["joints"]]
         for face in mesh["faces"]:
             for vertex in face["vertices"]:
-                vertex["joints"] = [remap[index] for index in vertex["joints"]]
+                vertex["joints"] = [remap[index] for index in vertex["joints"]] if remap else [0] * 4
         mesh["joints"], mesh["inverse_bind"] = names, [binds[name] for name in names]
 
 
@@ -137,7 +138,7 @@ def prepare(context, request, supported, axes):
             if obj is None:
                 target = spec.triangles if spec.budget == "TRIANGLES" else max(1, round(high_count * spec.ratio / 100))
                 temporary = obj = _reduced(context, high, target)
-            if obj.find_armature() != high.find_armature():
+            if exporter.armature_for(obj) != exporter.armature_for(high):
                 raise ValueError("LOD objects must use the same avatar rig as High")
             mesh, slots = _capture(obj, supported, forward, axes, capture)
             mapping = []
@@ -174,7 +175,7 @@ def prepare(context, request, supported, axes):
 
 def draw(layout, context):
     prefs = context.scene.aurora_live
-    if not prefs.objects or prefs.object_index >= len(prefs.objects):
+    if not 0 <= prefs.object_index < len(prefs.objects):
         return
     entry = prefs.objects[prefs.object_index]
     layout.prop(prefs, "show_lods", text="Import / LOD", icon="MOD_DECIM")

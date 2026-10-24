@@ -13,7 +13,10 @@
 //! Deliberate differences, each for the resident:
 //! * media on a prim is filtered too (the Legacy Viewer filters the parcel
 //!   media and music only), and the check comes before anything reaches the
-//!   site, the request that discovers the media type included;
+//!   site, the request that discovers the media type included; media on our
+//!   own worn items (attachments, HUDs) is not asked about by default (the
+//!   list's refusals still apply), closer to the Legacy Viewer, which asks
+//!   about no prim media at all;
 //! * a domain rule matches that domain and its subdomains at a dot
 //!   (`example.com` no longer matches `badexample.com`), and the most
 //!   precise rule wins (the URL, then the longest domain) instead of the
@@ -265,6 +268,17 @@ impl MediaFilter {
     /// to load: the list, then this session's answers, else the question.
     /// A refusal is told in the local chat.
     pub fn check(&mut self, url: &str, source: Source) -> Verdict {
+        self.decide(url, source, true)
+    }
+
+    /// The same for a media the resident trusts without being asked (on
+    /// their own worn items): a site the list or this session refused stays
+    /// refused, any other loads, and no question is queued.
+    pub fn check_trusted(&mut self, url: &str, source: Source) -> Verdict {
+        self.decide(url, source, false)
+    }
+
+    fn decide(&mut self, url: &str, source: Source, ask: bool) -> Verdict {
         let url = url.trim();
         let Some(host) = domain(url) else {
             return Verdict::Allow;
@@ -281,6 +295,7 @@ impl MediaFilter {
                 }
                 Verdict::Deny
             }
+            None if !ask => Verdict::Allow,
             None => {
                 let now = Instant::now();
                 match self.questions.iter_mut().find(|q| q.url == url) {
@@ -467,6 +482,26 @@ mod tests {
         // a rule outweighs an earlier answer of the session
         f.apply(Edit::Set("a.example".into(), Action::Deny));
         assert_eq!(f.check("http://a.example/1", Source::ParcelMedia), Verdict::Deny);
+    }
+
+    #[test]
+    fn trusted_media_is_never_asked_about_but_refusals_hold() {
+        let mut f = MediaFilter::default();
+        // no rule: loads, no question
+        assert_eq!(f.check_trusted("http://a.example/1", Source::PrimMedia), Verdict::Allow);
+        assert!(f.question().is_none());
+        // the list's refusal, for the domain or the exact address
+        f.apply(Edit::Set("b.example".into(), Action::Deny));
+        f.apply(Edit::Set("http://c.example/x".into(), Action::Deny));
+        assert_eq!(f.check_trusted("http://media.b.example/", Source::PrimMedia), Verdict::Deny);
+        assert_eq!(f.check_trusted("http://c.example/x", Source::PrimMedia), Verdict::Deny);
+        assert_eq!(f.messages.len(), 2, "the refusals are told");
+        // a refusal of this session too
+        f.check("http://d.example/", Source::PrimMedia);
+        f.answer("http://d.example/", false, Remember::Once);
+        assert_eq!(f.check_trusted("http://d.example/", Source::PrimMedia), Verdict::Deny);
+        // the same site elsewhere is still asked about
+        assert_eq!(f.check("http://a.example/1", Source::PrimMedia), Verdict::Ask);
     }
 
     #[test]

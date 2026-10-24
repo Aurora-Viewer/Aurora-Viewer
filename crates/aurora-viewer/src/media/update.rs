@@ -188,7 +188,9 @@ impl MediaManager {
             forget_slot(&mut self.slot_ids, idx, &o.full_id);
             return;
         }
-        let on_other_avatar = attachment_avatar(world, idx).is_some_and(|a| a != world.agent_id);
+        let avatar = attachment_avatar(world, idx);
+        let on_other_avatar = avatar.is_some_and(|a| a != world.agent_id);
+        let on_own_avatar = !world.agent_id.is_nil() && avatar == Some(world.agent_id);
         let e = self.objects.entry(o.full_id).or_default();
         if e.idx != idx {
             forget_slot(&mut self.slot_ids, e.idx, &o.full_id);
@@ -198,6 +200,7 @@ impl MediaManager {
         e.owner = o.owner_id;
         e.hud = hud(idx);
         e.on_other_avatar = on_other_avatar;
+        e.on_own_avatar = on_own_avatar;
         e.changed_by = entry::media_version_agent(&o.media_url);
         if let Some(local) = local {
             if e.data.is_none() {
@@ -328,8 +331,10 @@ impl MediaManager {
 
     /// The media filter (filterMediaUrl), before any plugin or type request
     /// reaches the site: a wanted media whose site has no answer yet waits
-    /// unloaded, a refused one is no longer wanted.
+    /// unloaded, a refused one is no longer wanted. Media on our own worn
+    /// items is not asked about (`filter_trust_own_worn`).
     fn apply_filter(&mut self, world: &mut World, f: &MediaFrame) {
+        let objects = &self.objects;
         for m in &mut self.impls {
             m.filter_hold = false;
             if !f.settings.filter || !m.wanted {
@@ -339,7 +344,12 @@ impl MediaManager {
                 MediaKey::Parcel => Source::ParcelMedia,
                 MediaKey::Prim { .. } => Source::PrimMedia,
             };
-            match world.media_filter.check(&m.url, source) {
+            let verdict = if trusted_by_filter(objects, m.key, f.settings) {
+                world.media_filter.check_trusted(&m.url, source)
+            } else {
+                world.media_filter.check(&m.url, source)
+            };
+            match verdict {
                 Verdict::Allow => {}
                 Verdict::Ask => m.filter_hold = true,
                 Verdict::Deny => {
@@ -852,6 +862,18 @@ fn forget_slot(slot_ids: &mut HashMap<usize, Uuid>, idx: usize, id: &Uuid) {
     }
 }
 
+/// Whether the media filter loads a media without asking: on our own worn
+/// items (attachments and HUDs) when the option is on. Another avatar's
+/// attachments, objects in the world, the parcel media, and an item whose
+/// avatar has not arrived yet are asked about.
+fn trusted_by_filter(objects: &HashMap<Uuid, ObjMedia>, key: MediaKey, settings: &MediaSettings) -> bool {
+    settings.filter_trust_own_worn
+        && match key {
+            MediaKey::Prim { object, .. } => objects.get(&object).is_some_and(|om| om.on_own_avatar),
+            MediaKey::Parcel => false,
+        }
+}
+
 /// Root avatar of an attachment.
 fn attachment_avatar(world: &World, mut idx: usize) -> Option<Uuid> {
     for _ in 0..16 {
@@ -1060,6 +1082,62 @@ mod tests {
         let later = m.last_refresh + Duration::from_millis(600);
         m.track_objects(&mut w, &|_| false, later);
         assert_eq!(m.objects.get(&screen).map(|e| e.on_other_avatar), Some(true));
+    }
+
+    #[test]
+    fn only_media_on_our_own_worn_items_skips_the_filter_question() {
+        let (mut w, screen) = world();
+        w.agent_id = crate::demo::DEMO_AGENT;
+        let own = w
+            .objects
+            .iter()
+            .find(|(_, o)| o.full_id == crate::demo::DEMO_AGENT)
+            .map(|(_, o)| o.key.local_id)
+            .expect("our avatar");
+        let mut m = MediaManager::default();
+        let on = MediaSettings::default();
+        let off = MediaSettings {
+            filter_trust_own_worn: false,
+            ..MediaSettings::default()
+        };
+        let key = MediaKey::Prim { object: screen, face: 0 };
+        let idx = w.objects.index_of_uuid(&screen).expect("screen");
+        let parent_to = |w: &mut World, parent: u32| {
+            if let Some(o) = w.objects.get_mut(idx) {
+                o.parent_id = parent;
+            }
+        };
+        // in the world
+        track(&mut m, &mut w);
+        assert!(!trusted_by_filter(&m.objects, key, &on));
+        // worn by us, as an attachment or a HUD
+        parent_to(&mut w, own);
+        track(&mut m, &mut w);
+        assert!(trusted_by_filter(&m.objects, key, &on));
+        assert!(!trusted_by_filter(&m.objects, key, &off), "the option off asks again");
+        m.track_objects(&mut w, &|_| true, m.last_refresh);
+        assert!(trusted_by_filter(&m.objects, key, &on), "a HUD of ours");
+        // worn, but the avatar (or a parent) has not arrived: asked
+        parent_to(&mut w, 0xdead);
+        track(&mut m, &mut w);
+        assert!(!trusted_by_filter(&m.objects, key, &on));
+        // worn by someone else
+        let (ev, _, _) = crate::demo::media_screen();
+        let aurora_net::NetEvent::ObjectUpdates { handle, mut objects } = ev else {
+            panic!("object update");
+        };
+        let mut avatar = objects.remove(0);
+        avatar.pcode = aurora_prim::params::LL_PCODE_LEGACY_AVATAR;
+        avatar.texture_entry = None;
+        avatar.full_id = Uuid::from_u128(0xa1);
+        avatar.local_id = 0xa1a1;
+        w.objects.upsert(handle, avatar);
+        parent_to(&mut w, 0xa1a1);
+        track(&mut m, &mut w);
+        assert!(m.objects.get(&screen).is_some_and(|e| e.on_other_avatar));
+        assert!(!trusted_by_filter(&m.objects, key, &on));
+        // the parcel media never
+        assert!(!trusted_by_filter(&m.objects, MediaKey::Parcel, &on));
     }
 
     #[test]

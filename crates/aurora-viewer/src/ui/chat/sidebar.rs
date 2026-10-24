@@ -332,6 +332,10 @@ pub(super) fn show(
                 let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
                 super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
                 super::conv_menu::attach(&picked.resp, p, world, actions, None);
+                st.reorder.local_row(&picked.resp);
+                if st.reorder.dragging(None) {
+                    ghost(ui.ctx(), p, st, e, rail, Pinned::Local);
+                }
                 if picked.resp.clicked() {
                     st.select_tab(None);
                 }
@@ -396,6 +400,7 @@ pub(super) fn show(
                         flash,
                         popped: st.popped.contains(Some(id)),
                     };
+                    st.reorder.space_before(ui, id);
                     let picked = entry(ui, p, &e, rail, entry_id(Pinned::Conversation(id)));
                     if reveal == Some(id) {
                         picked.resp.scroll_to_me(None);
@@ -404,6 +409,10 @@ pub(super) fn show(
                     super::conv_menu::demo_mark(ui.ctx(), world, st, Some(id), picked.resp.rect);
                     super::conv_menu::attach(&picked.resp, p, world, actions, Some(id));
                     st.reorder.row(world, id, &picked.resp);
+                    st.reorder.space_after(ui, id);
+                    if st.reorder.dragging(Some(id)) {
+                        ghost(ui.ctx(), p, st, e, rail, Pinned::Conversation(id));
+                    }
                     if picked.close {
                         actions.push(ConvAction::Close(id));
                     } else if picked.resp.clicked() {
@@ -412,7 +421,9 @@ pub(super) fn show(
                     }
                 }
             }
-            st.reorder.finish(ui, p, st.demo_reorder);
+            if let Some(out) = st.reorder.finish(ui, p, st.demo_reorder) {
+                actions.push(ConvAction::PopOutAt(out.conversation, out.pos));
+            }
             // the search starts new conversations: friends without one, and
             // the resident search
             if !filter.is_empty() && !rail {
@@ -624,12 +635,36 @@ fn plain_head(ui: &mut egui::Ui, p: &Palette, title: &str) {
     ui.add_space(2.0);
 }
 
+/// The entry being dragged, under the pointer, as the conversation shown:
+/// its picture alone in the rail, and the mark of a window of its own
+/// while a drop pops it out there (`reorder::Ghost`).
+fn ghost(ctx: &egui::Context, p: &Palette, st: &ChatUi, e: Entry, rail: bool, pinned: Pinned) {
+    let Some(g) = st.reorder.ghost(ctx) else { return };
+    let e = Entry {
+        current: true,
+        unread: 0,
+        close: None,
+        flash: 0.0,
+        popped: g.out,
+        ..e
+    };
+    crate::ui::widgets::drag_ghost(ctx, p, "conversation_drag_ghost", g.pos, |ui| {
+        ui.set_width(g.size.x);
+        // the column's colour under it, which the entry's own face washes
+        let face = egui::Rect::from_min_size(ui.cursor().min, g.size);
+        ui.painter().rect_filled(face, ui.visuals().window_corner_radius, p.bar);
+        entry(ui, p, &e, rail, entry_id(pinned).with("ghost"));
+    });
+}
+
 /// One entry of the column (or of the rail: its picture alone, the name
 /// in its tooltip).
 fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) -> Picked {
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ENTRY_H), egui::Sense::hover());
-    let sense = if e.close.is_some() {
+    // a conversation's entry drags, to its place or out of the window; the
+    // nearby chat's, pinned, out of the window (#910)
+    let sense = if e.close.is_some() || id == entry_id(Pinned::Local) {
         egui::Sense::click_and_drag()
     } else {
         egui::Sense::click()

@@ -47,6 +47,13 @@ const TRUSTED: &[&str] = &[
     "facebook.com",
     "imgur.com",
     "gyazo.com",
+    // the short links and picture servers of the image services whose
+    // pages get a picture preview (#923, link_preview/services.rs)
+    "flic.kr",
+    "staticflickr.com",
+    "redd.it",
+    "prnt.sc",
+    "prntscr.com",
 ];
 
 /// URL shorteners and link hubs: the real destination is hidden.
@@ -298,6 +305,15 @@ mod tests {
             "https://www.firestormviewer.org/downloads",
             "https://discord.gg/abc",
             "https://www.flickr.com/photos/x",
+            // the image services of the previews (#923)
+            "https://flic.kr/p/2nDemoAb",
+            "https://live.staticflickr.com/65535/1_2_c.jpg",
+            "https://i.redd.it/demo01picture.jpeg",
+            "https://preview.redd.it/demo01picture.jpg?width=640",
+            "https://prnt.sc/demo42",
+            "https://image.prntscr.com/image/Dm0Aur0raExample.png",
+            "https://i.gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png",
+            "https://i.imgur.com/DemoAb1.jpeg",
         ] {
             assert_eq!(classify(url), Trust::Trusted, "{url}");
         }
@@ -360,6 +376,24 @@ mod tests {
             assert!(matches!(classify_with(url, &sites), Trust::Dangerous(_)), "{url}");
         }
         assert_eq!(classify_with("https://my-club.example", &TrustedSites::default()), Trust::Unknown);
+    }
+
+    /// The list saved in Preferences holds what the user changed, not the
+    /// whole list: domains built in later are trusted for everyone at once,
+    /// except one the user had already removed.
+    #[test]
+    fn domains_built_in_later_reach_a_list_saved_before() {
+        let saved: TrustedSites = serde_json::from_str(r#"{"added":["my-club.example"],"removed":["x.com"]}"#).unwrap();
+        for url in ["https://prnt.sc/demo42", "https://i.redd.it/a.jpg", "https://flic.kr/p/2nDemoAb"] {
+            assert_eq!(classify_with(url, &saved), Trust::Trusted, "{url}");
+        }
+        assert_eq!(classify_with("https://my-club.example", &saved), Trust::Trusted);
+        assert_eq!(classify_with("https://x.com/someone", &saved), Trust::Unknown);
+        let removed = TrustedSites {
+            removed: vec!["prnt.sc".into()],
+            ..TrustedSites::default()
+        };
+        assert_eq!(classify_with("https://prnt.sc/demo42", &removed), Trust::Unknown);
     }
 
     #[test]

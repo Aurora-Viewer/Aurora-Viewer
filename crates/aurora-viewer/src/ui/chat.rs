@@ -25,6 +25,7 @@ mod offer_card;
 mod popout;
 pub mod previews;
 mod reorder;
+pub use reorder::Demo as ReorderDemo;
 pub(crate) mod select;
 mod sidebar;
 pub mod snooze;
@@ -84,8 +85,9 @@ pub struct ChatUi {
     /// `AURORA_DEMO_CONV_MENU=local|im|group|conference`: the conversation
     /// of the list whose right-click menu the demo opens.
     pub demo_menu: Option<String>,
-    /// Explicit offline pointer fixture for conversation rearrangement.
-    pub demo_reorder: bool,
+    /// Explicit offline pointer fixture for conversation rearrangement
+    /// (`AURORA_DEMO_CONV_REORDER`).
+    pub demo_reorder: Option<ReorderDemo>,
     /// `AURORA_DEMO_CONV_SCROLL`: this conversation goes to its top once it
     /// is shown with its lines laid out; `demo_scrolled` once it is there.
     pub demo_scroll: Option<uuid::Uuid>,
@@ -280,6 +282,28 @@ impl ChatUi {
             self.select_tab(conversation);
             self.reveal = conversation;
             super::notifications::open_conversations(ctx, open);
+        }
+    }
+
+    /// The nearby chat is in its own window (#910): the chat island's
+    /// button shows and hides that window.
+    pub fn nearby_apart(&self) -> bool {
+        self.popped.contains(None)
+    }
+
+    /// The nearby chat's own window is on screen, expanded.
+    pub fn nearby_window_shown(&self, ctx: &egui::Context) -> bool {
+        self.popped.shown(None) && !super::widgets::floater_minimized(ctx, &popout::floater_id(None))
+    }
+
+    /// The chat island's button with the nearby chat in its own window:
+    /// that window shown (expanded, in front, its field taking the
+    /// keyboard) or put away.
+    pub fn toggle_nearby_window(&mut self, ctx: &egui::Context) {
+        if self.nearby_window_shown(ctx) {
+            self.popped.set_hidden(None, true);
+        } else {
+            self.popped.raise(None, true);
         }
     }
 
@@ -545,7 +569,7 @@ fn place_link(
         action_marker::Action::place(place.teleport),
         &place.label,
         size,
-        super::colors::c(k.chat_slurl),
+        super::colors::text(k.chat_slurl),
         None,
     );
     place_menu(&r, p, u, &place);
@@ -603,7 +627,7 @@ pub(crate) fn text_with_links(
                 Seg::Text(t) => plain(ui, t),
                 Seg::Url(u) => web_link(ui, p, u, u, size),
                 Seg::Slurl(u) => {
-                    select::label(ui, RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
+                    select::label(ui, RichText::new(u).size(size).color(super::colors::text(k.chat_slurl))).on_hover_text(u);
                 }
                 Seg::Place(u, place) => place_link(ui, p, &world.map.ratings, u, place, size),
                 Seg::Labelled(label, inner) => match *inner {
@@ -834,11 +858,11 @@ fn line_job(
         let fmt = match &link {
             None => text_fmt.clone(),
             Some(Link::Url(_)) => egui::TextFormat {
-                color: super::colors::c(k.chat_urls),
+                color: super::colors::text(k.chat_urls),
                 ..text_fmt.clone()
             },
             Some(_) => egui::TextFormat {
-                color: super::colors::c(k.chat_slurl),
+                color: super::colors::text(k.chat_slurl),
                 ..text_fmt.clone()
             },
         };
@@ -934,6 +958,9 @@ pub enum ConvAction {
     /// the nearby chat; `popout.rs`). Done by `show` before it returns.
     PopOut(Option<uuid::Uuid>),
     DockBack(Option<uuid::Uuid>),
+    /// An entry dragged out of the window (#910): its conversation in its
+    /// own window, the window's top left corner where the entry was let go.
+    PopOutAt(Option<uuid::Uuid>, egui::Pos2),
 }
 
 use super::widgets::initials;
@@ -1370,13 +1397,17 @@ pub(crate) fn chat_text_marked(
                 Seg::Text(t) => marked_run(ui, emoji, t, size, color, italics, mark),
                 Seg::Url(u) => web_link(ui, p, u, u, size),
                 Seg::Slurl(u) => {
-                    select::label(ui, RichText::new(u).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
+                    select::label(ui, RichText::new(u).size(size).color(super::colors::text(k.chat_slurl))).on_hover_text(u);
                 }
                 Seg::Labelled(label, inner) => match *inner {
                     Seg::Url(u) => web_link(ui, p, u, &label, size),
                     Seg::Agent(id) | Seg::Mention(id) => agent_link(ui, p, world, id, &label, size),
                     Seg::Slurl(u) => {
-                        select::label(ui, RichText::new(label.as_ref()).size(size).color(super::colors::c(k.chat_slurl))).on_hover_text(u);
+                        select::label(
+                            ui,
+                            RichText::new(label.as_ref()).size(size).color(super::colors::text(k.chat_slurl)),
+                        )
+                        .on_hover_text(u);
                     }
                     Seg::App(u, link) => app_links::link(ui, p, world, u, &link, &label, size),
                     _ => marked_run(ui, emoji, &label, size, color, italics, mark),
@@ -1419,7 +1450,9 @@ fn web_link(ui: &mut egui::Ui, p: &Palette, url: &str, text: &str, size: f32) {
     let k = super::colors::get();
     link_badge(ui, p, url, size);
     let behind = select::atom_begin(ui);
-    let r = ui.add(egui::Link::new(RichText::new(text).size(size).color(super::colors::c(k.chat_urls))));
+    let r = ui.add(egui::Link::new(
+        RichText::new(text).size(size).color(super::colors::text(k.chat_urls)),
+    ));
     select::atom_end(ui, behind, text, r.rect);
     if r.on_hover_text(url).clicked() {
         open_web_link(ui.ctx(), url);
@@ -1436,7 +1469,14 @@ fn agent_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: uuid::Uuid, tex
     };
     let text = projected.as_str();
     let k = super::colors::get();
-    let r = action_marker::link(ui, action_marker::Action::Profile, text, size, super::colors::c(k.chat_slurl), None);
+    let r = action_marker::link(
+        ui,
+        action_marker::Action::Profile,
+        text,
+        size,
+        super::colors::text(k.chat_slurl),
+        None,
+    );
     name_menu(&r, p, world, id);
     if r.on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(aurora_i18n::tr!("common-view-profile"))
@@ -2225,10 +2265,13 @@ fn list_entry(
     close: Option<&str>,
     // the violet wash of a conversation with news (`flash.rs`), 0 for none
     flash: f32,
+    // it drags out of the window (the nearby chat's, #910); a closable
+    // entry drags anyway, to its place too
+    drags: bool,
 ) -> ListEntry {
     // narrower beside the list's scroll bar, when it shows
     let width = ENTRY_W.min(ui.available_width());
-    let sense = if close.is_some() {
+    let sense = if close.is_some() || drags {
         egui::Sense::click_and_drag()
     } else {
         egui::Sense::click()
@@ -2340,6 +2383,29 @@ fn scrolling_list<R>(ui: &mut egui::Ui, height: f32, entries: impl FnOnce(&mut e
         .animated(false)
         .show(ui, entries)
         .inner
+}
+
+/// The entry of the tabs' list being dragged, under the pointer, as the
+/// tab shown, with the mark of a window of its own while a drop pops it
+/// out there (#910).
+fn list_ghost(
+    ctx: &egui::Context,
+    p: &Palette,
+    g: reorder::Ghost,
+    label: &str,
+    pic: Option<Option<&egui::TextureHandle>>,
+    status: Option<presence::Status>,
+) {
+    super::widgets::drag_ghost(ctx, p, "conversation_drag_ghost", g.pos, |ui| {
+        ui.set_width(g.size.x);
+        // the list's colour under it, which the entry's own face washes
+        let face = egui::Rect::from_min_size(ui.cursor().min, g.size);
+        ui.painter().rect_filled(face, 0.0, p.bar);
+        let entry = list_entry(ui, p, label, pic.map(|t| (t, label)), status, true, 0, None, 0.0, false);
+        if g.out {
+            popout::paint_mark(ui, p, trailing_slot(entry.resp.rect));
+        }
+    });
 }
 
 /// Size of the window before the user resizes it, where there is room.
@@ -2497,9 +2563,20 @@ pub fn show(
                 // entry brings its own window up (Firestorm has the toolbar
                 // button for that)
                 if show_contacts_tab
-                    && list_entry(ui, p, aurora_i18n::tr!("common-contacts"), None, None, st.contacts, 0, None, 0.0)
-                        .resp
-                        .clicked()
+                    && list_entry(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("common-contacts"),
+                        None,
+                        None,
+                        st.contacts,
+                        0,
+                        None,
+                        0.0,
+                        false,
+                    )
+                    .resp
+                    .clicked()
                 {
                     if docked {
                         st.contacts = true;
@@ -2518,6 +2595,7 @@ pub fn show(
                     if local_shown { 0 } else { world.chat_badge },
                     None,
                     0.0,
+                    true,
                 )
                 .resp;
                 if st.popped.contains(None) && !local_shown && world.chat_badge == 0 && !ui.rect_contains_pointer(local.rect) {
@@ -2525,6 +2603,12 @@ pub fn show(
                 }
                 conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
                 conv_menu::attach(&local, p, world, &mut actions, None);
+                st.reorder.local_row(&local);
+                if st.reorder.dragging(None)
+                    && let Some(g) = st.reorder.ghost(ui.ctx())
+                {
+                    list_ghost(ui.ctx(), p, g, aurora_i18n::tr!("common-nearby-chat"), None, None);
+                }
                 if local.clicked() {
                     st.select_tab(None);
                 }
@@ -2557,16 +2641,19 @@ pub fn show(
                             .then(|| typing::text(&[world.social.display_name_of(&other)]))
                             .flatten()
                             .map(|t| if st.typing_chevron { format!("> {t}") } else { t });
+                        st.reorder.space_before(ui, other);
+                        let status = (!world.is_group_session(&other)).then(|| presence::of(world, &other));
                         let entry = list_entry(
                             ui,
                             p,
                             typing.as_deref().unwrap_or(&name),
                             Some((pics.get(&other), &name)),
-                            (!world.is_group_session(&other)).then(|| presence::of(world, &other)),
+                            status,
                             shown,
                             unread,
                             Some(close_tip(world, &other)),
                             flash,
+                            true,
                         );
                         if reveal == Some(other) {
                             entry.resp.scroll_to_me(None);
@@ -2578,6 +2665,12 @@ pub fn show(
                         conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
                         conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
                         st.reorder.row(world, other, &entry.resp);
+                        st.reorder.space_after(ui, other);
+                        if st.reorder.dragging(Some(other))
+                            && let Some(g) = st.reorder.ghost(ui.ctx())
+                        {
+                            list_ghost(ui.ctx(), p, g, &name, Some(pics.get(&other)), status);
+                        }
                         if entry.close {
                             actions.push(ConvAction::Close(other));
                         } else if entry.resp.clicked() {
@@ -2585,7 +2678,9 @@ pub fn show(
                             st.select_tab(Some(other));
                         }
                     }
-                    st.reorder.finish(ui, p, st.demo_reorder);
+                    if let Some(out) = st.reorder.finish(ui, p, st.demo_reorder) {
+                        actions.push(ConvAction::PopOutAt(out.conversation, out.pos));
+                    }
                 });
             });
             if st.contacts {
@@ -2620,6 +2715,11 @@ pub fn show(
         }
         ConvAction::DockBack(c) => {
             st.dock_back(ctx, *c, open);
+            false
+        }
+        ConvAction::PopOutAt(c, pos) => {
+            st.pop_out(*c);
+            super::widgets::move_floater(ctx, &popout::floater_id(*c), *pos);
             false
         }
         _ => true,
@@ -3179,7 +3279,7 @@ fn line_extras(
             }
             LinkBadge::Action(action) => {
                 let k = super::colors::get();
-                action.paint(painter, b, super::colors::c(k.chat_slurl).gamma_multiply(alpha));
+                action.paint(painter, b, super::colors::text(k.chat_slurl).gamma_multiply(alpha));
             }
         }
     }
@@ -4407,7 +4507,7 @@ mod tests {
     fn entry(ui: &mut egui::Ui, label: &str, pic: bool, sel: bool, unread: usize, closable: bool) -> ListEntry {
         let p = crate::theme::Theme::default().palette();
         let close = closable.then_some(CLOSE_TIP);
-        list_entry(ui, &p, label, pic.then_some((None, label)), None, sel, unread, close, 0.0)
+        list_entry(ui, &p, label, pic.then_some((None, label)), None, sel, unread, close, 0.0, false)
     }
 
     #[test]
