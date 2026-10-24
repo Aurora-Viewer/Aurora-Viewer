@@ -68,7 +68,8 @@ fn texts(env: &LineEnv, line: &ChatLine, v: &Invite) -> Texts {
 /// The sender's message without its last line when that line is the SLURL
 /// of the invitation's own place (send_lures adds where the sender stands):
 /// the card already shows the place at its head. A SLURL of another place
-/// stays; the transcript keeps the whole message.
+/// stays; the transcript keeps the whole message. The lure destination can
+/// differ from send_lures' SLURL by a few metres (#899), beyond rounding.
 fn without_own_place<'a>(message: &'a str, place: Option<&Place>) -> &'a str {
     let Some((place, region)) = place.and_then(|p| Some((p, p.region.as_deref()?))) else {
         return message;
@@ -81,7 +82,7 @@ fn without_own_place<'a>(message: &'a str, place: Option<&Place>) -> &'a str {
         return message;
     }
     match crate::slurl::parse(last) {
-        Some(at) if at.region.eq_ignore_ascii_case(region) && (at.pos - place.pos).abs().max_element() <= 1.5 => head.trim_end(),
+        Some(at) if at.region.eq_ignore_ascii_case(region) && (at.pos - place.pos).abs().max_element() <= 3.0 => head.trim_end(),
         _ => message,
     }
 }
@@ -297,6 +298,23 @@ mod tests {
             grid: (1000, 1000),
             pos: Vec3::new(128.0, 130.0, 25.0),
             region: region.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn teleport_invitation_removes_the_nearby_sender_slurl() {
+        let destination = place(Some("Aurora Demo"));
+        // The report's links differ by 2 m horizontally and 1 m vertically.
+        let message = "Join me\r\nhttp://maps.secondlife.com/secondlife/Aurora%20Demo/130/130/24";
+        assert_eq!(without_own_place(message, Some(&destination)), "Join me");
+        assert_eq!(without_own_place(message, Some(&place(None))), message);
+        assert_eq!(without_own_place(message, None), message);
+        for other in [
+            "Join me\nhttp://maps.secondlife.com/secondlife/Aurora%20Demo/160/130/25",
+            "Join me\nhttp://maps.secondlife.com/secondlife/Aurora%20Demo/128/130/1000",
+            "Join me\nhttp://maps.secondlife.com/secondlife/Other%20Region/130/130/24",
+        ] {
+            assert_eq!(without_own_place(other, Some(&destination)), other);
         }
     }
 

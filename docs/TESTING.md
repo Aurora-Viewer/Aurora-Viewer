@@ -4598,7 +4598,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   message, "Offer a teleport?", Yes / No; Yes writes "Teleport offer sent to
   Tess …" in her conversation. `offer-card` / `request-card`: her
   conversation in sight with the card (teal edge, Teleport / Decline or
-  Yes / No), and no toast. `card-answered`: the offer accepted from the
+  Yes / No), and no toast. The offer's appended SLURL differs from the lure
+  destination by 2 m horizontally and 1 m vertically (#899): each chat card
+  should show only the destination link and retain the invitation text.
+  `card-answered`: the offer accepted from the
   card: "Accepted" on the card, the list empty, the teleport starts and fails
   offline. `notification-answered`: the offer declined from its entry:
   "Declined" on the card. `legacy`: the card as one line of the legacy
