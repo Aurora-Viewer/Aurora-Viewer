@@ -15,6 +15,10 @@
 //! - Not restored at the next login. While it lives, the window keeps its
 //!   place; a new one opens where the last one was, cascaded from the
 //!   windows already open (floater_fs_im_session.xml, save_rect).
+//! - An entry of the list dragged out of the Conversations window pops its
+//!   conversation out where it is let go (#910, `reorder.rs`).
+//! - The nearby chat in its own window: the chat island's button shows and
+//!   hides that window alone (#910), until it is docked back.
 //!
 //! Each window draws the pane of the Conversations window (the workspace's
 //! or the tabs'): what that pane keeps for its window (the conversation
@@ -85,6 +89,9 @@ struct Window {
     raise: bool,
     /// Not drawn this frame (`Popped::hold`).
     held: bool,
+    /// Put away by the chat island's button (the nearby chat): not drawn
+    /// until shown again, still out of the Conversations window.
+    hidden: bool,
 }
 
 /// The conversations in their own windows, in the order they were popped out.
@@ -110,6 +117,7 @@ impl Popped {
     pub(super) fn pop_out(&mut self, conversation: Option<Uuid>, members_open: bool, stage_mini: bool, focus: bool) {
         if let Some(w) = self.windows.iter_mut().find(|w| w.conversation == conversation) {
             w.raise = true;
+            w.hidden = false;
             w.view.conv_focus_request |= focus;
             return;
         }
@@ -125,6 +133,7 @@ impl Popped {
             },
             raise: true,
             held: false,
+            hidden: false,
         });
     }
 
@@ -137,12 +146,32 @@ impl Popped {
         }
     }
 
-    /// Raise the window of `conversation`; false when it has none.
+    /// Raise the window of `conversation`, shown again if put away; false
+    /// when it has none.
     pub(super) fn raise(&mut self, conversation: Option<Uuid>, focus: bool) -> bool {
         match self.windows.iter_mut().find(|w| w.conversation == conversation) {
             Some(w) => {
                 w.raise = true;
+                w.hidden = false;
                 w.view.conv_focus_request |= focus;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The window of `conversation` is on screen: popped out, not put away.
+    pub(super) fn shown(&self, conversation: Option<Uuid>) -> bool {
+        self.windows.iter().any(|w| w.conversation == conversation && !w.hidden)
+    }
+
+    /// Put the window of `conversation` away, or show it back; false when
+    /// it has none.
+    pub(super) fn set_hidden(&mut self, conversation: Option<Uuid>, hidden: bool) -> bool {
+        match self.windows.iter_mut().find(|w| w.conversation == conversation) {
+            Some(w) => {
+                w.hidden = hidden;
+                w.raise |= !hidden;
                 true
             }
             None => false,
@@ -351,6 +380,9 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
     let mut closed = Vec::new();
     let mut docked = Vec::new();
     for w in &mut windows {
+        if w.hidden {
+            continue;
+        }
         if std::mem::take(&mut w.held) {
             ctx.request_repaint();
             continue;
@@ -428,7 +460,7 @@ pub(super) fn in_sight<'a>(ctx: &'a egui::Context, popped: &'a Popped) -> impl I
     popped
         .windows
         .iter()
-        .filter(|w| !crate::ui::widgets::floater_minimized(ctx, &w.floater))
+        .filter(|w| !w.hidden && !crate::ui::widgets::floater_minimized(ctx, &w.floater))
         .map(|w| w.conversation)
 }
 
@@ -703,6 +735,27 @@ mod tests {
         assert!(!popped.remove(id(1)));
         assert!(!popped.contains(id(1)));
         assert!(popped.contains(None));
+    }
+
+    /// The nearby chat's window put away by the chat island's button stays
+    /// out of the Conversations window, out of sight; a click on its entry
+    /// (a raise) or popping it out again shows it back.
+    #[test]
+    fn a_window_put_away_is_out_of_sight_until_shown_back() {
+        let ctx = egui::Context::default();
+        let mut popped = Popped::default();
+        assert!(!popped.set_hidden(None, true), "no window to put away");
+        popped.pop_out(None, false, false, false);
+        assert!(popped.shown(None));
+        assert!(popped.set_hidden(None, true));
+        assert!(popped.contains(None) && !popped.shown(None));
+        assert_eq!(in_sight(&ctx, &popped).count(), 0);
+        assert!(popped.raise(None, true));
+        assert!(popped.shown(None) && popped.windows[0].view.conv_focus_request);
+        assert_eq!(in_sight(&ctx, &popped).collect::<Vec<_>>(), [None]);
+        popped.set_hidden(None, true);
+        popped.pop_out(None, false, false, false);
+        assert!(popped.shown(None));
     }
 
     #[test]

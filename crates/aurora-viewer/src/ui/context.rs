@@ -77,6 +77,9 @@ pub struct ContextMenu {
 /// llviewermenu.cpp), worked out every frame while the menu is open.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ObjectFacts {
+    /// Local meshes use the ordinary object menu and build selection, with
+    /// only actions that can be carried out without a simulator identity.
+    pub local_preview: bool,
     pub local_hud_scale: Option<f32>,
     pub saved_hud_scale: bool,
     pub hud_move_locked: bool,

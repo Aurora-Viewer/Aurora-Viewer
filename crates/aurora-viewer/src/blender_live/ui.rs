@@ -47,6 +47,7 @@ pub(super) fn show(live: &mut Live, ctx: &egui::Context, p: &crate::theme::Palet
                 });
                 shape_controls(live, ui, p);
                 object_list(live, ui, p, can_upload);
+                object_controls(live, ui, p);
                 let error = live
                     .error
                     .clone()
@@ -224,8 +225,16 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
     let sources = live.snapshot.as_ref().map(|s| s.sources.clone()).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
         ui.label(aurora_i18n::tr!(
-            "blender-live-counts",
-            objects = sources.iter().filter(|s| live.state(s.id) == SourceState::Visible).count(),
+            "blender-live-linkset-counts",
+            objects = sources
+                .iter()
+                .filter(|s| s.link.is_none() && live.state(s.id) == SourceState::Visible)
+                .count(),
+            prims = live.snapshot.as_ref().map_or(0, |s| s
+                .meshes
+                .iter()
+                .filter(|m| live.state(m.source) == SourceState::Visible && live.state(live.linked_root(m.source)) == SourceState::Visible)
+                .count()),
             triangles = live.triangles
         ));
         if ui
@@ -250,13 +259,17 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
         .id_salt("blender_live_objects")
         .max_height(190.0)
         .show(ui, |ui| {
-            for source in &sources {
+            for row in live.linkset_rows() {
+                let source = &row.source;
                 let state = live.state(source.id);
                 if state == SourceState::Removed {
                     continue;
                 }
                 ui.push_id(source.id, |ui| {
                     ui.horizontal(|ui| {
+                        if source.link.is_some() {
+                            ui.add_space(22.0);
+                        }
                         let mut visible = state == SourceState::Visible;
                         if widgets::checkbox(ui, p, &mut visible, "")
                             .on_hover_text(aurora_i18n::tr!("blender-live-visible"))
@@ -267,14 +280,21 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                         let import_label = aurora_i18n::tr!("blender-live-upload");
                         let import_width = widgets::action_button_fit(ui, "file-upload-filled", import_label);
                         let name_width = (ui.available_width() - import_width - ui.spacing().item_spacing.x).max(1.0);
+                        let name = if source.link.is_some() {
+                            aurora_i18n::tr!("blender-object-linked-prim", number = row.number, name = source.name.as_str())
+                        } else if row.prims > 1 {
+                            aurora_i18n::tr!("blender-object-linkset", name = source.name.as_str(), prims = row.prims)
+                        } else {
+                            source.name.clone()
+                        };
                         if ui
                             .add_sized(
                                 Vec2::new(name_width, 26.0),
                                 egui::Button::selectable(live.selected == Some(source.id), "")
-                                    .left_text(&source.name)
+                                    .left_text(&name)
                                     .truncate(),
                             )
-                            .on_hover_text(&source.name)
+                            .on_hover_text(&name)
                             .clicked()
                         {
                             live.selected = Some(source.id);
@@ -297,6 +317,146 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                 });
             }
         });
+}
+
+fn object_controls(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette) {
+    use super::objects::{Action, Location};
+    use crate::ui::menu;
+    use glam::{EulerRot, Quat, Vec3};
+    let Some(source) = live
+        .selected
+        .and_then(|id| live.snapshot.as_ref()?.sources.iter().find(|source| source.id == id))
+        .cloned()
+    else {
+        return;
+    };
+    if source.rigged() {
+        return;
+    }
+    let Some(placement) = live.placements.get(&source.id).copied() else {
+        return;
+    };
+    ui.add_space(8.0);
+    ui.label(&source.name);
+    if let Some(link) = source.link {
+        let root = live
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.sources.iter().find(|s| s.id == link.parent))
+            .map_or("", |s| s.name.as_str());
+        ui.weak(aurora_i18n::tr!("blender-object-child-frame", root = root));
+    }
+    let location = live
+        .placements
+        .get(&live.linked_root(source.id))
+        .map_or(placement.location, |p| p.location);
+    let attached = matches!(location, Location::Attachment(_));
+    let present = live.source_present(source.id);
+    let status = match location {
+        Location::World => aurora_i18n::tr!("blender-object-world").to_owned(),
+        Location::Detached => aurora_i18n::tr!("blender-object-detached").to_owned(),
+        Location::Attachment(point) => live
+            .attach_choices
+            .iter()
+            .find(|choice| choice.0 == point)
+            .map_or_else(String::new, |choice| {
+                aurora_i18n::tr!("blender-object-attached", point = choice.2.as_str())
+            }),
+    };
+    ui.weak(status);
+    ui.horizontal_wrapped(|ui| {
+        for (action, label, enabled) in [
+            (
+                Action::Edit,
+                aurora_i18n::tr!("blender-object-edit"),
+                present && live.root(source.id).is_some(),
+            ),
+            (Action::Rez, aurora_i18n::tr!("blender-object-rez"), !present),
+            (Action::Drop, aurora_i18n::tr!("blender-object-drop"), present),
+            (Action::Derez, aurora_i18n::tr!("blender-object-derez"), present && !attached),
+            (Action::Detach, aurora_i18n::tr!("common-detach"), attached),
+        ] {
+            if ui.add_enabled_ui(enabled, |ui| widgets::flat_button(ui, p, label)).inner.clicked() {
+                live.object_action = Some((source.id, action));
+            }
+        }
+        for hud in [false, true] {
+            let label = if hud {
+                aurora_i18n::tr!("common-attach-to-hud")
+            } else {
+                aurora_i18n::tr!("common-attach-to")
+            };
+            menu::button(ui, p, egui::Button::new(label), |ui| {
+                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                    for (point, is_hud, name) in &live.attach_choices {
+                        if *is_hud == hud && menu::item(ui, p, if hud { "device-desktop-filled" } else { "man-filled" }, name) {
+                            live.object_action = Some((source.id, Action::Attach(*point)));
+                        }
+                    }
+                });
+            });
+        }
+    });
+    ui.add_enabled_ui(present && (source.link.is_none() || live.edit_linked), |ui| {
+        let mut position = placement.position.to_array();
+        let (z, y, x) = placement.rotation.to_euler(EulerRot::ZYX);
+        let mut rotation = [x.to_degrees(), y.to_degrees(), z.to_degrees()];
+        let mut size = (placement.size * placement.scale).to_array();
+        let mut changed = false;
+        egui::Grid::new("blender_object_transform").num_columns(4).show(ui, |ui| {
+            for (label, values, speed, range) in [
+                (
+                    aurora_i18n::tr!("build-ui-object-position-meters"),
+                    &mut position,
+                    0.01,
+                    -65536.0..=65536.0,
+                ),
+                (
+                    aurora_i18n::tr!("build-ui-object-rotation-degrees"),
+                    &mut rotation,
+                    1.0,
+                    -360.0..=360.0,
+                ),
+                (aurora_i18n::tr!("build-ui-object-size-meters"), &mut size, 0.01, 0.01..=64.0),
+            ] {
+                ui.label(label);
+                for (axis, value) in ["X ", "Y ", "Z "].into_iter().zip(values.iter_mut()) {
+                    changed |= ui
+                        .add(
+                            egui::DragValue::new(value)
+                                .prefix(axis)
+                                .speed(speed)
+                                .range(range.clone())
+                                .max_decimals(3),
+                        )
+                        .changed();
+                }
+                ui.end_row();
+            }
+        });
+        if changed {
+            let mut position = Vec3::from_array(position);
+            if placement.parent.is_none()
+                && let Location::Attachment(point) = placement.location
+                && live.attach_choices.iter().any(|choice| choice.0 == point && !choice.1)
+            {
+                position = position.clamp_length_max(crate::build::MAX_ATTACHMENT_DIST);
+            }
+            live.object_action = Some((
+                source.id,
+                Action::Transform {
+                    position,
+                    rotation: Quat::from_euler(
+                        EulerRot::ZYX,
+                        rotation[2].to_radians(),
+                        rotation[1].to_radians(),
+                        rotation[0].to_radians(),
+                    ),
+                    scale: Vec3::from_array(size) / placement.size,
+                },
+            ));
+        }
+    });
 }
 
 fn section(ui: &mut egui::Ui, p: &crate::theme::Palette, icon: &str, title: &str) {

@@ -9418,6 +9418,8 @@ gesture-trigger = Trigger
 gesture-key = Key
 gesture-replacement = Replacement
 gesture-shortcut = Shortcut
+gesture-shortcut-taken = { $shortcut } is a shortcut of the build tools: it will not play this gesture.
+gesture-shortcut-taken-building = { $shortcut } will not play this gesture while the build tools are open, which use it.
 gesture-activate = Activate
 gesture-deactivate = Deactivate
 gesture-active = Active
@@ -9469,6 +9471,7 @@ gesture-demo-replacement = Hello!
 gesture-demo-chat = Hello from the demo gesture!
 gesture-demo-animation-name = Demo pose
 gesture-demo-sound-name = Demo chime
+gesture-demo-clap-name = Demo clap
 gesture-demo-finished = The gesture animation has finished.
 gesture-builtin-express-afraid = Afraid
 gesture-builtin-express-anger = Angry
@@ -11071,7 +11074,7 @@ build-material-specular-tint = Specular tint
 build-material-base-tint = Base tint
 build-material-emissive-tint = Emissive tint
 
-blender-live-title = Blender Live
+blender-live-title = LiveMesh
 blender-live-invalid-source = Invalid or duplicate live object identifier.
 blender-live-connection = Connection
 blender-live-objects = Objects
@@ -11099,7 +11102,7 @@ blender-shape-success = Shape imported in Blender as a new rigged reference body
 blender-shape-failed = Shape transfer failed: { $error }
 blender-shape-invalid = This shape does not contain a valid, usable avatar definition.
 blender-shape-too-large = This shape exceeds the 8 MiB transfer limit.
-blender-live-bundled-version = Aurora Live Mesh { $version }
+blender-live-bundled-version = Aurora LiveMesh { $version }
 blender-live-detect = Refresh
 blender-live-choose-blender = Choose Blender…
 blender-live-manual-install = Manual installation (ZIP)
@@ -11126,8 +11129,8 @@ blender-live-empty = No objects in this preview.
 blender-live-visible = Show this object on my avatar
 blender-live-upload = Import
 blender-live-restore = Restore removed objects
-blender-live-upload-frozen = Blender Live snapshot. Further live edits do not change this draft. Use Import again for a new snapshot.
-blender-live-upload-source = Blender Live · frozen snapshot
+blender-live-upload-frozen = LiveMesh snapshot. Further live edits do not change this draft. Use Import again for a new snapshot.
+blender-live-upload-source = LiveMesh · frozen snapshot
 blender-live-upload-materials = Includes base colors and textures. Upload PBR materials separately.
 blender-live-invalid-material = Invalid live material, image dimensions, pixel budget or texture reference.
 blender-live-material-busy = Preparing live material images; retrying automatically.
@@ -11139,7 +11142,7 @@ blender-live-addon-error = Could not save the plug-in: { $error }
 blender-live-invalid-size = A snapshot must contain at most 64 MiB.
 blender-live-invalid-protocol = Unsupported protocol or more than 32 mesh objects.
 blender-live-invalid-name = Invalid mesh name.
-blender-live-invalid-joints = A mesh needs 1 to 110 joints and matching inverse binds.
+blender-live-invalid-joints = A rigged mesh needs 1 to 110 joints and matching inverse binds; a static mesh needs neither.
 blender-live-unknown-joint = Unsupported or duplicate avatar joint: { $joint }
 blender-live-invalid-bind = Invalid inverse bind matrix.
 blender-live-invalid-surfaces = A mesh needs 1 to 32 material surfaces.
@@ -11165,7 +11168,14 @@ blender-live-counts =
 blender-live-revision = Revision { $revision }
 blender-live-error = Preview: { $error }
 blender-live-no-avatar = Your avatar is not available yet. Send again after it appears.
-blender-live-instructions = In Blender, install Aurora Live Mesh, select your rigged meshes, then open Sidebar › Aurora › Connect to Aurora.
+blender-live-instructions = In Blender, install Aurora LiveMesh, select your meshes, then open Sidebar › Aurora › Connect to Aurora.
+blender-object-world = Local object in the world
+blender-object-detached = Not rezzed or attached
+blender-object-attached = Attached locally: { $point }
+blender-object-edit = Edit
+blender-object-rez = Rez
+blender-object-drop = Drop to ground
+blender-object-derez = Derez
 blender-live-local-only = Only you see this preview. No asset upload. Closing this window keeps it active; Stop removes it.
 
 inventory-menu-new = New...
@@ -11216,3 +11226,22 @@ inventory-menu-editor-open = Open / Teleport
 inventory-menu-editor-gesture = Activate / Deactivate gesture
 inventory-menu-editor-protect = Lock / Unlock folder
 inventory-menu-editor-detach = Take off / Detach
+
+blender-live-invalid-link = Invalid live object parenting.
+blender-object-root = { $name } (root)
+blender-object-child = { $name } — linked to { $root }
+blender-object-child-frame = Position and rotation relative to root: { $root }
+
+blender-live-linkset-counts =
+    { $objects ->
+        [one] { $objects } object
+       *[other] { $objects } objects
+    } · { $prims ->
+        [one] { $prims } prim
+       *[other] { $prims } prims
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-object-linkset = { $name } — root #1 · { $prims } prims
+blender-object-linked-prim = #{ $number } · { $name }

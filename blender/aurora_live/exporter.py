@@ -37,6 +37,12 @@ def _column_major(matrix):
     return [float(matrix[row][column]) for column in range(4) for row in range(4)]
 
 
+def armature_for(source):
+    # A prop parented to a bone is rigid. find_armature() alone also returns
+    # that parent even though no armature modifier deforms the mesh.
+    return source.find_armature() if any(mod.type == "ARMATURE" and mod.object for mod in source.modifiers) else None
+
+
 def coordinate_basis(armature, forward="AUTO"):
     """Map rest-data axes to SL +X; object placement is removed separately.
 
@@ -63,17 +69,16 @@ def coordinate_basis(armature, forward="AUTO"):
 
 def _mesh(source, supported, forward, rest_axes, capture, include_slots=False):
     source.update_from_editmode()
-    armature = source.find_armature()
-    if armature is None:
-        raise ValueError(source.name + ": add an Armature modifier")
+    armature = armature_for(source)
     # Ignore the armature's scene placement but retain its authored scale.
-    root = Matrix.Translation(armature.matrix_world.translation) @ armature.matrix_world.to_quaternion().to_matrix().to_4x4()
+    root = (Matrix.Translation(armature.matrix_world.translation) @ armature.matrix_world.to_quaternion().to_matrix().to_4x4()
+            if armature else Matrix.Translation(source.matrix_world.translation))
     unit = bpy.context.scene.unit_settings.scale_length
-    basis = coordinate_basis(armature, forward)
+    basis = coordinate_basis(armature, forward) if armature else coordinate_basis(None, "NATIVE" if forward == "AUTO" else forward)
     transform = basis @ Matrix.Scale(unit, 4) @ root.inverted() @ source.matrix_world
-    bone_transform = basis @ Matrix.Scale(unit, 4) @ root.inverted() @ armature.matrix_world
+    bone_transform = basis @ Matrix.Scale(unit, 4) @ root.inverted() @ armature.matrix_world if armature else None
     normal_transform = transform.to_3x3().inverted().transposed()
-    bone_names = {bone.name: str(bone.get("aurora_joint", bone.name)) for bone in armature.data.bones
+    bone_names = {bone.name: str(bone.get("aurora_joint", bone.name)) for bone in (armature.data.bones if armature else [])
                   if bone.use_deform and not bone.get("aurora_control", False)}
     group_names = {group.index: bone_names[group.name] for group in source.vertex_groups if group.name in bone_names}
     group_bones = {group.index: group.name for group in source.vertex_groups if group.name in bone_names}
@@ -121,13 +126,14 @@ def _mesh(source, supported, forward, rest_axes, capture, include_slots=False):
                     used.add(group_names[group.group])
                     weighted_bones.add(group_bones[group.group])
         names = sorted(used)
-        if not names or len(names) > 110:
+        if armature and (not names or len(names) > 110):
             raise ValueError(source.name + ": expected 1 to 110 weighted avatar joints")
         unknown = used - supported
         if unknown:
             raise ValueError("Unsupported weighted bones: " + ", ".join(sorted(unknown)))
         palette = {name: index for index, name in enumerate(names)}
-        weights = {int(index): influences(captured.vertices[int(index)].groups, group_names, palette) for index in referenced}
+        weights = {int(index): (influences(captured.vertices[int(index)].groups, group_names, palette)
+                               if armature else ([0] * 4, [0.0] * 4)) for index in referenced}
         heads = {}
         for source_name in sorted(weighted_bones):
             name = bone_names[source_name]
@@ -201,7 +207,40 @@ def _mesh(source, supported, forward, rest_axes, capture, include_slots=False):
         bpy.context.view_layer.update()
 
 
-def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, source_ids=None):
+def static_roots(objects, overrides=None):
+    """Resolve explicit LiveMesh groups and inherited Blender parents to one root."""
+    static = {obj.as_pointer(): obj for obj in objects if armature_for(obj) is None}
+    parents = {}
+    for key, obj in static.items():
+        if overrides is not None and key in overrides:
+            parent = overrides[key]
+        else:
+            parent = obj.parent
+            while parent is not None and parent.as_pointer() not in static:
+                parent = parent.parent
+        parents[key] = parent.as_pointer() if parent is not None and parent.as_pointer() in static else None
+    roots = {}
+    for key in static:
+        chain, current = set(), key
+        while parents[current] is not None:
+            if current in chain:
+                raise ValueError("Invalid LiveMesh grouping")
+            chain.add(current)
+            current = parents[current]
+        roots[key] = static[current]
+    return roots
+
+
+def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, source_ids=None, link_roots=None):
+    valid = []
+    for source in objects:
+        try:
+            if source.name in bpy.data.objects and source.type == "MESH":
+                valid.append(source)
+        except ReferenceError:
+            pass
+    objects = valid
+    roots = static_roots(objects, link_roots)
     meshes = []
     capture = Capture()
     for source in objects:
@@ -213,6 +252,13 @@ def snapshot(objects, supported, revision, forward="AUTO", rest_axes=None, sourc
             mesh = _mesh(source, supported, forward, rest_axes or {}, capture)
             if source_ids and source.as_pointer() in source_ids:
                 mesh["source_id"] = source_ids[source.as_pointer()]
+                root = roots.get(source.as_pointer())
+                if root is not None and root != source:
+                    if root.as_pointer() in source_ids:
+                        basis = coordinate_basis(None, "NATIVE" if forward == "AUTO" else forward)
+                        offset = basis.to_3x3() @ (source.matrix_world.translation - root.matrix_world.translation)
+                        mesh["link"] = {"parent": source_ids[root.as_pointer()],
+                                        "offset": list(offset * bpy.context.scene.unit_settings.scale_length)}
             meshes.append(mesh)
     if len(meshes) > 32:
         raise ValueError("Select at most 32 mesh objects")
