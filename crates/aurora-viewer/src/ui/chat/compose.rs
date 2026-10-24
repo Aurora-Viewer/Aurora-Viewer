@@ -132,18 +132,10 @@ pub(super) fn show(
                             st.emoji_open = !st.emoji_open;
                             st.gif_open = false;
                         }
-                        if st.gifs.settings.enabled {
-                            let usable = st.gifs.usable();
-                            let tip = if usable {
-                                aurora_i18n::tr!("ui-chat-gif").to_owned()
-                            } else {
-                                aurora_i18n::tr!("ui-chat-gif-no-key-tip").to_owned()
-                            };
-                            let b = ui.add_enabled_ui(usable, |ui| box_button(ui, p, "gif", &tip, st.gif_open)).inner;
-                            if b.clicked() && usable {
-                                st.gif_open = !st.gif_open;
-                                st.emoji_open = false;
-                            }
+                        // shown once a key is entered (Preferences › Chat › GIFs)
+                        if st.gifs.usable() {
+                            let b = box_button(ui, p, "gif", aurora_i18n::tr!("ui-chat-gif"), st.gif_open);
+                            super::gif_picker::button(&b, p, st);
                         }
                         // narrow, only its icon. An IM has no attach button:
                         // inventory is given by dropping it on the
@@ -311,20 +303,13 @@ fn box_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, active: boo
         ui.painter()
             .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field.gamma_multiply(0.8));
     }
-    let tint = if !ui.is_enabled() {
-        p.muted.gamma_multiply(0.45)
-    } else if active || resp.hovered() {
-        p.ink
-    } else {
-        p.muted
-    };
     super::thread::paint_icon(
         ui.painter(),
         icon,
         egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(19.0)),
-        tint,
+        if active || resp.hovered() { p.ink } else { p.muted },
     );
-    resp.on_hover_text(tip).on_disabled_hover_text(tip)
+    resp.on_hover_text(tip)
 }
 
 /// The volume of the nearby chat: its icon, its name when `named`, and a

@@ -1047,8 +1047,12 @@ impl<'a> Cx<'a> {
         if let Some(at) = flash {
             let age = (now - at) as f32;
             if age < 1.8 {
-                if std::mem::take(&mut self.st.flash_scroll) {
+                // asked again for a quarter of a second: a window opened by
+                // "Preferences…" lays out its first frames without keeping
+                // a scroll, which left a row far down the page out of sight
+                if self.st.flash_scroll {
                     self.ui.scroll_to_rect(row, Some(egui::Align::Center));
+                    self.st.flash_scroll = age < 0.25;
                 }
                 let strength = (1.0 - age / 1.8).clamp(0.0, 1.0) * 0.42;
                 self.ui

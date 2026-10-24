@@ -2886,22 +2886,10 @@ fn classic_pane(
                 st.emoji_open = !st.emoji_open;
                 st.gif_open = false;
             }
-            if st.gifs.settings.enabled {
-                let usable = st.gifs.usable();
-                let tip = if usable {
-                    aurora_i18n::tr!("ui-chat-gif").to_owned()
-                } else {
-                    aurora_i18n::tr!("ui-chat-gif-no-key-tip").to_owned()
-                };
-                let b = ui
-                    .add_enabled_ui(usable, |ui| tool_resp(ui, p, icons, "gif", st.gif_open))
-                    .inner
-                    .on_hover_text(tip.as_str())
-                    .on_disabled_hover_text(tip.as_str());
-                if b.clicked() && usable {
-                    st.gif_open = !st.gif_open;
-                    st.emoji_open = false;
-                }
+            // shown once a key is entered (Preferences › Chat › GIFs)
+            if st.gifs.usable() {
+                let b = tool_resp(ui, p, icons, "gif", st.gif_open).on_hover_text(aurora_i18n::tr!("ui-chat-gif"));
+                gif_picker::button(&b, p, st);
             }
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
@@ -3278,7 +3266,8 @@ fn line_extras(
 /// `AURORA_DEMO_BARS=chatname`: a click on a resident's name in the pills
 /// at frame 700 (its profile opens); `AURORA_DEMO_CONV_MENU`'s right click
 /// on a conversation of the list (`conv_menu`); `AURORA_DEMO_CONV_GIVE`'s
-/// inventory carried to an IM (`workspace`).
+/// inventory carried to an IM (`workspace`); `AURORA_DEMO_GIFS=menu`'s
+/// right click on the GIF button (`gif_picker`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let line_menu = line_menu::demo_events(ctx, frame);
     if !line_menu.is_empty() {
@@ -3299,6 +3288,10 @@ pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     let menu = conv_menu::demo_events(ctx, frame);
     if !menu.is_empty() {
         return menu;
+    }
+    let gif_menu = gif_picker::demo_events(ctx, frame);
+    if !gif_menu.is_empty() {
+        return gif_menu;
     }
     if !super::bars::demo::get().click_name || !(700..=701).contains(&frame) {
         return Vec::new();

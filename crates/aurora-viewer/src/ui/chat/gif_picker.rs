@@ -155,6 +155,8 @@ pub struct GifPicker {
     drawn: Vec<(egui::Rect, String)>,
     /// `AURORA_DEMO_GIFS=sent`: the first GIF is sent once its tile shows.
     demo_send: bool,
+    /// `AURORA_DEMO_GIFS=menu`: the button's right-click menu opens once.
+    demo_menu: bool,
     tx: mpsc::Sender<Answer>,
     rx: mpsc::Receiver<Answer>,
     runtime: Option<tokio::runtime::Runtime>,
@@ -190,6 +192,7 @@ impl Default for GifPicker {
             active: false,
             drawn: Vec::new(),
             demo_send: false,
+            demo_menu: false,
             tx,
             rx,
             runtime: None,
@@ -207,14 +210,15 @@ impl GifPicker {
                 self.query = "dance".into();
             }
             crate::demo::Gifs::Sent => self.demo_send = true,
+            crate::demo::Gifs::Menu => self.demo_menu = true,
             _ => {}
         }
     }
 
-    /// The GIF button can open it: on in Preferences, a service with a key
-    /// (any service in demo mode).
+    /// The GIF button shows: turned on and a service with a key (both
+    /// services and no key in the demo's scenarios).
     pub fn usable(&self) -> bool {
-        self.settings.enabled && (self.demo || self.settings.usable())
+        self.demo || self.settings.usable()
     }
 
     fn key(&self, provider: Provider) -> Option<String> {
@@ -224,17 +228,24 @@ impl GifPicker {
         self.settings.key(provider)
     }
 
-    /// The tab shown: the one chosen, else the settings' last one with a
-    /// key, else the first with one.
+    /// The services with a key: one tab each.
+    fn providers(&self) -> Vec<Provider> {
+        if self.demo {
+            return Provider::ALL.to_vec();
+        }
+        self.settings.providers()
+    }
+
+    /// The tab shown: the one chosen, else the settings' last one, when
+    /// they have a key; else the first with one.
     fn tab(&self) -> Provider {
-        self.tab.unwrap_or_else(|| {
-            let last = self.settings.provider;
-            if self.key(last).is_some() {
-                last
-            } else {
-                Provider::ALL.into_iter().find(|p| self.key(*p).is_some()).unwrap_or(last)
-            }
-        })
+        let providers = self.providers();
+        let last = self.settings.provider;
+        self.tab
+            .filter(|t| providers.contains(t))
+            .or_else(|| providers.contains(&last).then_some(last))
+            .or_else(|| providers.first().copied())
+            .unwrap_or(last)
     }
 
     /// The request the picker should show at `now`, when it is not the one
@@ -580,7 +591,8 @@ impl GifPicker {
         // ---- the services, then the favourites
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            for provider in Provider::ALL {
+            // a tab for each service with a key
+            for provider in self.providers() {
                 if tab_button(ui, p, provider.name(), tab == provider && !self.favorites).clicked() {
                     self.tab = Some(provider);
                     self.favorites = false;
@@ -821,6 +833,54 @@ impl GifPicker {
         }
         clicked
     }
+}
+
+/// Where `AURORA_DEMO_GIFS=menu` finds the GIF button.
+const DEMO_BUTTON: &str = "gif_button_demo";
+
+/// `AURORA_DEMO_GIFS=menu`: a right click on the GIF button at frame 700.
+pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    if !(700..=702).contains(&frame) {
+        return Vec::new();
+    }
+    let Some(rect) = ctx.data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(DEMO_BUTTON))) else {
+        return Vec::new();
+    };
+    let pos = rect.center();
+    let press = |pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    match frame {
+        700 => vec![egui::Event::PointerMoved(pos)],
+        701 => vec![press(true)],
+        _ => vec![press(false)],
+    }
+}
+
+/// The GIF button of a conversation's field: a click opens the picker (and
+/// closes the emoji one); its right-click menu hides it (Preferences shows
+/// it again) or opens its settings.
+pub(super) fn button(resp: &egui::Response, p: &Palette, st: &mut super::ChatUi) {
+    if resp.clicked() {
+        st.gif_open = !st.gif_open;
+        st.emoji_open = false;
+    }
+    if st.gifs.demo_menu {
+        resp.ctx.data_mut(|d| d.insert_temp(egui::Id::unique(DEMO_BUTTON), resp.rect));
+    }
+    crate::ui::menu::context_menu_of_button(resp, p, |ui| {
+        if crate::ui::menu::item(ui, p, "eye-off", aurora_i18n::tr!("ui-chat-gif-hide")) {
+            st.gifs.settings.hide();
+            st.gifs.changed = true;
+            st.gif_open = false;
+        }
+        if crate::ui::menu::item(ui, p, "settings-filled", aurora_i18n::tr!("ui-chat-gif-settings-menu")) {
+            st.gifs.open_settings = true;
+        }
+    });
 }
 
 /// The GIF picker of a conversation's field, above `anchor` (its left

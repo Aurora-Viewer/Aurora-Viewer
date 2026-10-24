@@ -165,29 +165,91 @@ fn closing_frees_everything_once() {
 }
 
 #[test]
-fn without_a_key_the_button_is_greyed_out() {
+fn the_button_shows_only_turned_on_with_a_key() {
     let mut picker = GifPicker::default();
-    if !gs::Settings::built_in(Provider::Giphy) && !gs::Settings::built_in(Provider::Klipy) {
-        assert!(!picker.usable());
-        assert_eq!(picker.wanted(0.0), None, "no key: nothing is asked");
-    }
+    assert!(!picker.usable(), "hidden by default");
+    assert_eq!(picker.wanted(0.0), None, "no key: nothing is asked");
+    picker.settings.show_button = true;
+    assert!(!picker.usable(), "turned on, no key: no button");
     picker.settings.giphy_key = "own-key".into();
     assert!(picker.usable());
     assert_eq!(picker.tab(), Provider::Giphy);
-    picker.settings.enabled = false;
+    picker.settings.show_button = false;
     assert!(!picker.usable());
-    assert!(demo_picker().usable(), "the demo needs no key");
+    assert!(demo_picker().usable(), "the demo's scenarios need no key");
 }
 
 #[test]
-fn the_tab_with_a_key_comes_first() {
+fn one_key_one_tab() {
     let mut picker = GifPicker::default();
-    if gs::Settings::built_in(Provider::Giphy) {
-        return;
-    }
+    picker.settings.show_button = true;
     picker.settings.provider = Provider::Giphy;
     picker.settings.klipy_key = "own-key".into();
-    assert_eq!(picker.tab(), Provider::Klipy, "GIPHY has no key here");
+    assert_eq!(picker.providers(), [Provider::Klipy], "GIPHY has no key: no tab");
+    assert_eq!(picker.tab(), Provider::Klipy);
+    // a tab chosen earlier whose key was removed gives way
+    picker.tab = Some(Provider::Giphy);
+    assert_eq!(picker.tab(), Provider::Klipy);
+    picker.settings.giphy_key = "other-key".into();
+    assert_eq!(picker.providers(), [Provider::Giphy, Provider::Klipy]);
+    assert_eq!(picker.tab(), Provider::Giphy);
+}
+
+/// The button's right-click menu: "Hide the GIF button" turns it off for
+/// good (a key entered later no longer shows it).
+#[test]
+fn the_right_click_menu_hides_the_button() {
+    let mut f = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let mut st = crate::ui::chat::ChatUi::default();
+    st.gifs.settings.giphy_key = "own-key".into();
+    st.gifs.settings.key_changed();
+    assert!(st.gifs.usable());
+    let rect = std::cell::Cell::new(egui::Rect::NOTHING);
+    let run = |f: &mut Frames, st: &mut crate::ui::chat::ChatUi, events: Vec<egui::Event>| {
+        f.run(events, |ui| {
+            let (r, resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
+            rect.set(r);
+            button(&resp, &p, st);
+        })
+    };
+    run(&mut f, &mut st, Vec::new());
+    let pos = rect.get().center();
+    let press = |button: egui::PointerButton, pressed| egui::Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: Default::default(),
+    };
+    run(&mut f, &mut st, vec![egui::Event::PointerMoved(pos)]);
+    run(&mut f, &mut st, vec![press(egui::PointerButton::Secondary, true)]);
+    run(&mut f, &mut st, vec![press(egui::PointerButton::Secondary, false)]);
+    for _ in 0..3 {
+        run(&mut f, &mut st, Vec::new());
+    }
+    // the menu's rows: find "Hide the GIF button" among the painted texts
+    let hide = aurora_i18n::tr!("ui-chat-gif-hide");
+    let mut row = None;
+    for t in run(&mut f, &mut st, Vec::new()) {
+        if t.source == hide {
+            row = Some(t.rect.center());
+        }
+    }
+    let at = row.expect("the menu shows its Hide row");
+    let click = |pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    run(&mut f, &mut st, vec![egui::Event::PointerMoved(at)]);
+    run(&mut f, &mut st, vec![click(true)]);
+    run(&mut f, &mut st, vec![click(false)]);
+    assert!(!st.gifs.settings.show_button && st.gifs.settings.hidden_by_user && st.gifs.changed);
+    assert!(!st.gifs.usable(), "the button is gone");
+    st.gifs.settings.klipy_key = "second".into();
+    st.gifs.settings.key_changed();
+    assert!(!st.gifs.usable(), "hidden by the user: a new key does not bring it back");
 }
 
 #[test]

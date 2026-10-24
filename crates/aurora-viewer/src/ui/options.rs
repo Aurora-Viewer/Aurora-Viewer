@@ -252,6 +252,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "plates" => row(Page::Avatars, 0, tr!("ui-options-plate-click")),
         "attention" => row(Page::Chat, 1, tr!("ui-options-flash-on-message")),
         "keywords" => row(Page::Chat, 2, tr!("ui-options-keywords-on")),
+        "gifs" => row(Page::Chat, 0, tr!("ui-options-gifs-show")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         _ => None,
     };
@@ -469,7 +470,7 @@ impl OptionsUi {
     /// Opens Preferences › Chat on the GIF picker's settings (#932).
     pub fn open_gifs(&mut self) {
         self.open(Page::Chat, 0);
-        self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-gifs-enable")));
+        self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-gifs-show")));
     }
 
     /// Opens the Sound and voice page on one of its parts.

@@ -18,9 +18,10 @@
 //! * their attribution: "Powered by GIPHY"; "Search KLIPY" as the search
 //!   field's placeholder.
 //!
-//! The key comes from the user's Preferences, else from the build
-//! (`AURORA_GIPHY_KEY` / `AURORA_KLIPY_KEY` at compile time, never in the
-//! repository). Without one, the GIF button stays greyed out.
+//! Each user brings their own key (Preferences › Chat › GIFs): a key built
+//! into an open viewer would be shared by everyone, and a free key allows
+//! about 100 requests an hour in all. The button is hidden by default; a
+//! key entered shows it, unless the user hid it themselves.
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -100,15 +101,19 @@ pub struct Favorite {
 pub const MAX_FAVORITES: usize = 48;
 
 /// The GIF picker of Preferences › Chat.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Settings {
-    /// The GIF button of the Conversations field.
-    pub enabled: bool,
+    /// The GIF button of the Conversations field (off by default; shown
+    /// only with a key).
+    pub show_button: bool,
+    /// The user turned the button off themselves: a key entered later no
+    /// longer turns it on.
+    pub hidden_by_user: bool,
     /// The service of the picker's tab, the last one used.
     pub provider: Provider,
     pub rating: Rating,
-    /// The user's own keys, over the build's.
+    /// The user's own keys, kept in the settings file in plain text.
     pub giphy_key: String,
     pub klipy_key: String,
     /// A random id, the same for every search of this viewer: both
@@ -116,24 +121,6 @@ pub struct Settings {
     pub customer_id: String,
     pub favorites: Vec<Favorite>,
 }
-
-impl Default for Settings {
-    fn default() -> Self {
-        Settings {
-            enabled: true,
-            provider: Provider::default(),
-            rating: Rating::default(),
-            giphy_key: String::new(),
-            klipy_key: String::new(),
-            customer_id: String::new(),
-            favorites: Vec::new(),
-        }
-    }
-}
-
-/// The keys the build was given, if any.
-const BUILT_GIPHY: Option<&str> = option_env!("AURORA_GIPHY_KEY");
-const BUILT_KLIPY: Option<&str> = option_env!("AURORA_KLIPY_KEY");
 
 /// A key that is no key: empty, or not made of URL-safe characters.
 fn usable(key: &str) -> Option<String> {
@@ -143,29 +130,36 @@ fn usable(key: &str) -> Option<String> {
 }
 
 impl Settings {
-    /// The key of `provider`: the user's, else the build's.
+    /// The user's key of `provider`.
     pub fn key(&self, provider: Provider) -> Option<String> {
-        let (own, built) = match provider {
-            Provider::Giphy => (&self.giphy_key, BUILT_GIPHY),
-            Provider::Klipy => (&self.klipy_key, BUILT_KLIPY),
-        };
-        usable(own).or_else(|| built.and_then(usable))
+        usable(match provider {
+            Provider::Giphy => &self.giphy_key,
+            Provider::Klipy => &self.klipy_key,
+        })
     }
 
-    /// The build has a key of `provider` (Preferences says the user's own
-    /// is optional).
-    pub fn built_in(provider: Provider) -> bool {
-        match provider {
-            Provider::Giphy => BUILT_GIPHY,
-            Provider::Klipy => BUILT_KLIPY,
-        }
-        .and_then(usable)
-        .is_some()
+    /// The services with a key, in the tabs' order.
+    pub fn providers(&self) -> Vec<Provider> {
+        Provider::ALL.into_iter().filter(|p| self.key(*p).is_some()).collect()
     }
 
-    /// The GIF button works: it is on, and a service has a key.
+    /// The GIF button shows: turned on, and a service has a key.
     pub fn usable(&self) -> bool {
-        self.enabled && Provider::ALL.iter().any(|p| self.key(*p).is_some())
+        self.show_button && !self.providers().is_empty()
+    }
+
+    /// A key was typed: a usable one shows the button, unless the user hid
+    /// it themselves.
+    pub fn key_changed(&mut self) {
+        if !self.hidden_by_user && !self.providers().is_empty() {
+            self.show_button = true;
+        }
+    }
+
+    /// The user hides the button (its right-click menu, or Preferences).
+    pub fn hide(&mut self) {
+        self.show_button = false;
+        self.hidden_by_user = true;
     }
 
     /// The random id, made on first use. True when it was just made (the

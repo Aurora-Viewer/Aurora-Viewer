@@ -850,11 +850,20 @@ pub enum Gifs {
     Klipy,
     /// `sent`: the first GIF sent, its preview under the message.
     Sent,
-    /// `nokey`: no key: the button greyed out.
+    /// `menu`: the GIF button's right-click menu open.
+    Menu,
+    /// `nokey`: the real settings, no key: no button.
     NoKey,
-    /// `net`: open, the real services with the real keys (Preferences or
-    /// the build).
+    /// `net`: open, the real services with the keys of Preferences.
     Net,
+}
+
+impl Gifs {
+    /// The picker answers with the demo's GIFs, as if both services had a
+    /// key (the button shows).
+    pub fn made_here(self) -> bool {
+        !matches!(self, Gifs::NoKey | Gifs::Net)
+    }
 }
 
 pub fn gifs_scenario() -> Option<Gifs> {
@@ -863,6 +872,7 @@ pub fn gifs_scenario() -> Option<Gifs> {
         "1" | "open" => Some(Gifs::Open),
         "klipy" => Some(Gifs::Klipy),
         "sent" => Some(Gifs::Sent),
+        "menu" => Some(Gifs::Menu),
         "nokey" => Some(Gifs::NoKey),
         "net" => Some(Gifs::Net),
         other => {

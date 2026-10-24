@@ -167,24 +167,47 @@ fn categories_of_both_services() {
 }
 
 #[test]
-fn a_service_without_a_key_is_not_usable() {
+fn the_button_is_hidden_until_a_key_is_entered() {
     let mut s = Settings::default();
-    // the build of the tests has no key
-    if !Settings::built_in(Provider::Giphy) && !Settings::built_in(Provider::Klipy) {
-        assert!(!s.usable(), "no key: the button is greyed out");
-        assert_eq!(s.key(Provider::Giphy), None);
-    }
+    assert!(!s.show_button && !s.usable(), "hidden by default");
+    assert!(s.providers().is_empty());
+    // turned on with no key: still no button
+    s.show_button = true;
+    assert!(!s.usable(), "no key: no button even when turned on");
+    s.show_button = false;
+    // a key typed shows it
     s.klipy_key = "  my-own_Key1  ".into();
+    s.key_changed();
     assert_eq!(s.key(Provider::Klipy).as_deref(), Some("my-own_Key1"));
+    assert!(s.show_button && s.usable(), "a key shows the button");
+    assert_eq!(s.providers(), [Provider::Klipy], "one key: one service");
+    // a key that would change the address is no key
+    s.giphy_key = "not a key/../".into();
+    assert_eq!(s.key(Provider::Giphy), None);
+}
+
+#[test]
+fn a_button_hidden_by_the_user_stays_hidden() {
+    let mut s = Settings {
+        giphy_key: "k1".into(),
+        ..Settings::default()
+    };
+    s.key_changed();
     assert!(s.usable());
-    s.enabled = false;
-    assert!(!s.usable(), "turned off in Preferences");
-    s.enabled = true;
-    s.klipy_key = "not a key/../".into();
-    assert!(
-        Settings::built_in(Provider::Klipy) || s.key(Provider::Klipy).is_none(),
-        "a key with spaces or slashes would change the address"
-    );
+    // the right-click menu's "Hide the GIF button"
+    s.hide();
+    assert!(!s.show_button && !s.usable() && s.hidden_by_user);
+    s.klipy_key = "k2".into();
+    s.key_changed();
+    assert!(!s.show_button, "a key entered after an explicit hide does not show it again");
+    assert_eq!(s.providers(), [Provider::Giphy, Provider::Klipy]);
+    // turned on again in Preferences
+    s.show_button = true;
+    assert!(s.usable());
+    // a key typed before any hide, then emptied: the toggle stays as it was
+    let mut fresh = Settings::default();
+    fresh.key_changed();
+    assert!(!fresh.show_button, "no key, nothing to show");
 }
 
 #[test]
