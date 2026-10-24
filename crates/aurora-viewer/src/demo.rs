@@ -1094,20 +1094,24 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         ),
                         line(ago(5), &me, Uuid::nil(), ChatKind::Own, "https://youtube.com/shorts/DemoShort01"),
                     ]
-                } else if mode == "services" {
+                } else if let Some(only) = mode.strip_prefix("services") {
                     // the pages of image services (#923), from saved
                     // answers: a removed screenshot and a text post first
-                    // (no card), then a picture per service
+                    // (no card), then a picture per service;
+                    // `services:gyazo,imgur` keeps those services only
+                    let only: Vec<&str> = only.trim_start_matches(':').split(',').filter(|s| !s.is_empty()).collect();
                     [
-                        "https://prnt.sc/removed1",
-                        "https://redd.it/demo02",
-                        "https://gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
-                        "https://flic.kr/p/2nDemoAb",
-                        "https://imgur.com/a/DemoAlb",
-                        "https://prnt.sc/demo42",
-                        "https://www.reddit.com/r/AuroraDemo/comments/demo01/a_new_build/",
+                        ("none", "https://prnt.sc/removed1"),
+                        ("none", "https://redd.it/demo02"),
+                        ("gyazo", "https://gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9"),
+                        ("flickr", "https://flic.kr/p/2nDemoAb"),
+                        ("imgur", "https://imgur.com/a/DemoAlb"),
+                        ("lightshot", "https://prnt.sc/demo42"),
+                        ("reddit", "https://www.reddit.com/r/AuroraDemo/comments/demo01/a_new_build/"),
                     ]
                     .iter()
+                    .filter(|(key, _)| only.is_empty() || only.contains(key))
+                    .map(|(_, url)| url)
                     .enumerate()
                     .map(|(i, url)| {
                         let (who, id, kind) = if i % 2 == 1 {
