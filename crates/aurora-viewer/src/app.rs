@@ -8261,6 +8261,7 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
+            ui::inventory::bulk_permissions_demo(self.frame_count, &mut self.inventory_ui);
             if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
                 match self.frame_count {
                     650 => ui::widgets::minimize_floater(&ctx, "inventory"),
@@ -15067,8 +15068,6 @@ impl ApplicationHandler for App {
                         self.inventory_ui.selection.extend(ids.iter().copied());
                         if view == "bulk-permissions" {
                             self.inventory_ui.open_bulk_permissions(ids);
-                        } else {
-                            self.inventory_ui.demo_menu = Some(ids[0]);
                         }
                     }
                     if view == "permissions" {

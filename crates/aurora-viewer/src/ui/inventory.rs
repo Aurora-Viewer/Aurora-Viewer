@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 mod aurora;
 mod bulk_permissions;
+pub use bulk_permissions::demo_menu as bulk_permissions_demo;
 mod clipboard;
 pub use clipboard::demo_events as clipboard_demo_events;
 mod context;
