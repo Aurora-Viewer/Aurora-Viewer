@@ -361,21 +361,16 @@ pub(super) fn settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, w
                 .max_height((bottom - work.top() - 24.0).max(80.0))
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let heading = if tool.ui.layout.organizing {
-                            "build-layout-hidden"
-                        } else {
-                            "build-layout-settings"
-                        };
-                        common::section(ui, p, aurora_i18n::text(heading));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if compact::icon_button(ui, p, "x", aurora_i18n::tr!("common-close"), true).clicked() {
-                                tool.ui.layout.open = false;
-                                tool.ui.layout.organizing = false;
-                                tool.ui.layout.drag = None;
-                            }
-                        });
-                    });
+                    let heading = if tool.ui.layout.organizing {
+                        "build-layout-hidden"
+                    } else {
+                        "build-layout-settings"
+                    };
+                    if widgets::organization_header(ui, p, aurora_i18n::text(heading)).clicked() {
+                        tool.ui.layout.open = false;
+                        tool.ui.layout.organizing = false;
+                        tool.ui.layout.drag = None;
+                    }
                     if tool.ui.layout.organizing {
                         widgets::surface(ui, p, |ui| {
                             panel(ui, p, tool, world, s, mods, Panel::Hidden);
@@ -454,15 +449,7 @@ pub(super) fn finish(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, s: 
     if let Some(item) = tool.ui.layout.drag {
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         if let Some(pos) = ctx.pointer_interact_pos() {
-            egui::Area::new(egui::Id::unique("build-layout-drag"))
-                .order(egui::Order::Tooltip)
-                .fixed_pos(pos + egui::vec2(12.0, 12.0))
-                .interactable(false)
-                .show(ctx, |ui| {
-                    widgets::overlay(ui, p, egui::Margin::same(6), |ui| {
-                        common::label(ui, p, title(item));
-                    });
-                });
+            widgets::organization_drag_preview(ctx, p, egui::Id::unique("build-layout-drag"), title(item));
             if ctx.input(|i| i.pointer.any_released()) {
                 if let Some((target, panel, rect)) = tool
                     .ui

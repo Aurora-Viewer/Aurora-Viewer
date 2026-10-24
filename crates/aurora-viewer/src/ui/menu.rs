@@ -30,6 +30,7 @@ pub fn not_yet() -> &'static str {
 enum End<'a> {
     None,
     Caret,
+    Down,
     Check(bool),
     /// The keys of the entry's shortcut, or a detail of the entry (where a
     /// landmark leads), muted at the right end.
@@ -84,7 +85,12 @@ fn stock_frame(shape: &egui::Shape, faces: [Color32; 2], border: Color32) -> Opt
 /// menus instead of one call per menu. An opaque skin (panel_alpha = 255)
 /// keeps its plain menus.
 pub fn glaze(ctx: &egui::Context, p: &Palette) {
-    if p.panel_alpha == 255 {
+    let distinct = ctx
+        .data(|d| d.get_temp::<(u64, Vec<LayerId>)>(Id::unique("distinct_menu_surfaces")))
+        .filter(|(frame, _)| *frame == ctx.cumulative_frame_nr())
+        .map(|(_, layers)| layers)
+        .unwrap_or_default();
+    if p.panel_alpha == 255 && distinct.is_empty() {
         return;
     }
     let tint = Color32::from_rgba_unmultiplied(p.panel.r(), p.panel.g(), p.panel.b(), p.panel_alpha);
@@ -105,9 +111,41 @@ pub fn glaze(ctx: &egui::Context, p: &Palette) {
             list.mutate_shape(egui::layers::ShapeIdx(0), |first| {
                 if let Some((rect, radius)) = stock_frame(&first.shape, faces, p.raised) {
                     let frame = std::mem::replace(&mut first.shape, egui::Shape::Noop);
-                    first.shape = egui::Shape::Vec(vec![frame, aurora_render::glass_panel(rect.shrink(1.0), radius, tint)]);
+                    let mut shapes = vec![frame];
+                    if p.panel_alpha < 255 {
+                        let tint = if distinct.contains(&layer) {
+                            Color32::from_rgba_unmultiplied(p.bar.r(), p.bar.g(), p.bar.b(), p.panel_alpha.max(245))
+                        } else {
+                            tint
+                        };
+                        shapes.push(aurora_render::glass_panel(rect.shrink(1.0), radius, tint));
+                    }
+                    if distinct.contains(&layer) {
+                        shapes.push(egui::Shape::rect_stroke(
+                            rect,
+                            radius,
+                            Stroke::new(1.0, p.muted_dim),
+                            egui::StrokeKind::Inside,
+                        ));
+                    }
+                    first.shape = egui::Shape::Vec(shapes);
                 }
             });
+        }
+    });
+}
+
+/// A denser menu face and clearer edge when its parent uses the same panel face.
+/// Registration keeps all surface painting in the shared menu glass pass.
+pub fn distinct_surface(ui: &Ui) {
+    let frame = ui.ctx().cumulative_frame_nr();
+    ui.ctx().data_mut(|d| {
+        let surfaces = d.get_temp_mut_or_default::<(u64, Vec<LayerId>)>(Id::unique("distinct_menu_surfaces"));
+        if surfaces.0 != frame {
+            *surfaces = (frame, Vec::new());
+        }
+        if !surfaces.1.contains(&ui.layer_id()) {
+            surfaces.1.push(ui.layer_id());
         }
     });
 }
@@ -314,6 +352,20 @@ fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: En
 }
 
 fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, end: End, open: bool) -> egui::Response {
+    row_lead_sensed(
+        ui,
+        p,
+        lead,
+        label,
+        enabled,
+        end,
+        open,
+        if enabled { Sense::click() } else { Sense::hover() },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn row_lead_sensed(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, end: End, open: bool, sense: Sense) -> egui::Response {
     let font = FontId::proportional(12.5);
     let ink = if enabled { p.ink } else { p.muted_dim };
     let galley = ui.painter().layout_no_wrap(label.to_owned(), font, ink);
@@ -334,7 +386,6 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
     } else {
         ui.available_width().max(natural)
     };
-    let sense = if enabled { Sense::click() } else { Sense::hover() };
     let text_height = galley.size().y.max(keys.as_ref().map_or(0.0, |keys| keys.size().y));
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, ROW_H.max(text_height + 6.0)), sense);
     let hot = enabled && (resp.hovered() || open);
@@ -388,6 +439,7 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
     match end {
         End::None | End::Check(false) => {}
         End::Caret => paint_icon(painter, "caret-right-filled", end_rect, if enabled { p.muted } else { p.muted_dim }),
+        End::Down => paint_icon(painter, "caret-down-filled", end_rect, if enabled { p.muted } else { p.muted_dim }),
         End::Check(true) => paint_icon(painter, "check", end_rect, if enabled { p.violet_light } else { p.muted_dim }),
         End::Keys(_) => {
             if let Some(keys) = keys {
@@ -408,6 +460,188 @@ fn row_lead(ui: &mut Ui, p: &Palette, lead: Lead, label: &str, enabled: bool, en
         }
     }
     resp
+}
+
+/// A menu row whose response belongs to a layout editor. Inactive commands
+/// stay grey but can still be rearranged; the caller guards command execution.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn editable_row(
+    ui: &mut Ui,
+    p: &Palette,
+    icon: &str,
+    label: &str,
+    enabled: bool,
+    checked: Option<bool>,
+    down: Option<bool>,
+    editable: bool,
+) -> egui::Response {
+    let end = match down {
+        Some(true) => End::Down,
+        Some(false) => End::Caret,
+        None => checked.map_or(End::None, End::Check),
+    };
+    let sense = if editable {
+        Sense::click_and_drag()
+    } else if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    row_lead_sensed(ui, p, Lead::Icon(icon), label, enabled, end, false, sense)
+}
+
+/// One absolute cell of an editable menu toolbar, including its empty cells.
+pub(crate) fn icon_cell(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, editable: bool, size: Vec2) -> egui::Response {
+    let sense = if editable {
+        Sense::click_and_drag()
+    } else if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(size, sense);
+    if editable {
+        ui.painter().rect_stroke(
+            rect.shrink(1.0),
+            ui.visuals().widgets.inactive.corner_radius,
+            Stroke::new(1.0, p.raised),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if resp.hovered() && (editable || enabled) {
+        ui.painter()
+            .rect_filled(rect, ui.visuals().window_corner_radius, p.violet.gamma_multiply(0.35));
+    }
+    if !icon.is_empty() {
+        paint_icon(
+            ui.painter(),
+            icon,
+            egui::Rect::from_center_size(rect.center(), Vec2::splat(ICON)),
+            if enabled { p.violet_light } else { p.muted_dim },
+        );
+    }
+    if label.is_empty() { resp } else { resp.on_hover_text(label) }
+}
+
+/// Preserve the parent when a child editor handles its own dismissal.
+pub(crate) fn keep_parent_open_this_pass(ui: &Ui) {
+    let id = ui.layer_id().id.with("menu_child_close_guard");
+    egui::containers::menu::MenuState::from_ui(ui, |state, _| state.open_item = Some(id));
+    egui::containers::menu::MenuState::mark_shown(ui.ctx(), id);
+}
+
+/// Child choice panel using the same surface and popup hierarchy as menus.
+pub(crate) fn choice_panel(ui: &Ui, p: &Palette, id: Id, pos: egui::Pos2, open: &mut bool, body: impl FnOnce(&mut Ui)) {
+    // Register the child in egui's menu hierarchy so a click in its name
+    // field does not dismiss the menu being edited underneath it.
+    egui::containers::menu::MenuState::from_ui(ui, |state, _| state.open_item = Some(id));
+    Popup::new(id, ui.ctx().clone(), PopupAnchor::Position(pos), ui.layer_id())
+        .kind(PopupKind::Menu)
+        .align(egui::RectAlign::BOTTOM_START)
+        .align_alternatives(&[])
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+        .style(style(p))
+        .open_bool(open)
+        .show(body);
+}
+
+/// A menu's editing companion, kept beside its owner until it is locked again.
+pub(crate) fn settings_panel(ui: &Ui, p: &Palette, id: Id, body: impl FnOnce(&mut Ui)) {
+    ui.ctx().data_mut(|d| d.insert_temp(ui.layer_id().id.with("editing_companion"), id));
+    let deepest = egui::containers::menu::MenuState::is_deepest_open_sub_menu(ui.ctx(), ui.layer_id().id);
+    egui::containers::menu::MenuState::from_ui(ui, |state, _| {
+        if deepest {
+            state.open_item = Some(id);
+        }
+    });
+    let anchor = ui.min_rect().expand(4.0);
+    let work = ui.ctx().content_rect();
+    let left = anchor.left() - work.left() - 8.0;
+    let right = work.right() - anchor.right() - 8.0;
+    let width = left.max(right).clamp(160.0, 340.0).min(work.width());
+    let (align, other) = if right >= left {
+        (egui::RectAlign::RIGHT_END, egui::RectAlign::LEFT_END)
+    } else {
+        (egui::RectAlign::LEFT_END, egui::RectAlign::RIGHT_END)
+    };
+    Popup::new(id, ui.ctx().clone(), PopupAnchor::ParentRect(anchor), ui.layer_id())
+        .kind(PopupKind::Menu)
+        .align(align)
+        .align_alternatives(&[other])
+        .gap(8.0)
+        .layout(egui::Layout::top_down_justified(egui::Align::Min))
+        .close_behavior(PopupCloseBehavior::IgnoreClicks)
+        .style(style(p))
+        .frame(egui::Frame::NONE)
+        .open(true)
+        .show(|ui| {
+            let spacing = ui.ctx().global_style().spacing.item_spacing;
+            ui.spacing_mut().item_spacing = spacing;
+            super::widgets::overlay(ui, p, egui::Margin::same(12), |ui| {
+                ui.set_width((width - 24.0).max(1.0));
+                super::widgets::organization_typography(ui);
+                body(ui);
+            });
+        });
+}
+
+/// Editing can cross between the menu, its submenus and the settings shelf.
+/// The owner handles clicks outside that complete region in editing mode.
+pub(crate) fn editable_submenu(
+    ui: &mut Ui,
+    p: &Palette,
+    response: &egui::Response,
+    editing: bool,
+    click_only: bool,
+    body: impl FnOnce(&mut Ui),
+) {
+    if click_only {
+        if response.clicked() {
+            response.request_focus();
+        }
+        let id = egui::containers::menu::SubMenu::id_from_widget_id(response.id);
+        let open = egui::containers::menu::MenuState::from_ui(ui, |state, _| state.open_item == Some(id));
+        if open && response.clicked_by(egui::PointerButton::Primary) {
+            egui::containers::menu::MenuState::from_ui(ui, |state, _| state.open_item = None);
+            return;
+        }
+    }
+    let mut submenu = egui::containers::menu::SubMenu::new();
+    if editing {
+        // The companion only guards the parent's outside clicks. It must not
+        // count as an already open submenu, which would suppress hover opening.
+        let companion = ui.ctx().data(|d| d.get_temp::<Id>(ui.layer_id().id.with("editing_companion")));
+        egui::containers::menu::MenuState::from_ui(ui, |state, _| {
+            if state.open_item == companion {
+                state.open_item = None;
+            }
+        });
+        submenu = submenu.config(
+            egui::containers::menu::MenuConfig::new()
+                .close_behavior(PopupCloseBehavior::IgnoreClicks)
+                .style(style(p)),
+        );
+    }
+    let hover_guard = response.id.with("click_only_hover_guard");
+    if click_only {
+        // A temporary sibling suppresses native hover opening, while the
+        // submenu still handles pointer activation, focus and arrow keys.
+        egui::containers::menu::MenuState::mark_shown(ui.ctx(), hover_guard);
+        egui::containers::menu::MenuState::from_ui(ui, |state, _| {
+            if state.open_item.is_none() {
+                state.open_item = Some(hover_guard);
+            }
+        });
+    }
+    submenu.show(ui, response, body);
+    if click_only {
+        egui::containers::menu::MenuState::from_ui(ui, |state, _| {
+            if state.open_item == Some(hover_guard) {
+                state.open_item = None;
+            }
+        });
+    }
 }
 
 /// Horizontal room inside a tag.

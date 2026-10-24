@@ -211,6 +211,68 @@ pub fn surface<R>(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::U
         .inner
 }
 
+/// Shared presentation of the construction and inventory layout editors.
+pub(crate) fn organization_typography(ui: &mut egui::Ui) {
+    let style = ui.style_mut();
+    for text in [egui::TextStyle::Body, egui::TextStyle::Button, egui::TextStyle::Monospace] {
+        if let Some(font) = style.text_styles.get_mut(&text) {
+            font.size = 12.0;
+        }
+    }
+    if let Some(font) = style.text_styles.get_mut(&egui::TextStyle::Small) {
+        font.size = 11.0;
+    }
+}
+
+pub(crate) fn organization_section(ui: &mut egui::Ui, p: &Palette, title: &str) {
+    ui.add_space(4.0);
+    ui.label(RichText::new(title).size(13.0).strong().color(p.violet_light));
+    ui.add_space(1.0);
+}
+
+/// Violet section heading with the unobtrusive close action at its right.
+pub(crate) fn organization_header(ui: &mut egui::Ui, p: &Palette, title: &str) -> egui::Response {
+    ui.horizontal(|ui| {
+        organization_section(ui, p, title);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let (rect, response) = ui.allocate_exact_size(Vec2::new(22.0, 24.0), Sense::click());
+            if response.hovered() {
+                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.raised);
+            }
+            paint_glyph(
+                ui.painter(),
+                "x",
+                rect.center(),
+                14.0,
+                if response.hovered() { p.ink } else { p.muted },
+            );
+            let title = aurora_i18n::tr!("common-close");
+            response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
+            response.on_hover_text(title)
+        })
+        .inner
+    })
+    .inner
+}
+
+pub(crate) fn organization_drag_preview(ctx: &egui::Context, p: &Palette, id: egui::Id, title: &str) {
+    ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+    if let Some(pos) = ctx.pointer_interact_pos() {
+        egui::Area::new(id)
+            .order(egui::Order::Tooltip)
+            .fixed_pos(pos + egui::vec2(12.0, 12.0))
+            .interactable(false)
+            .show(ctx, |ui| {
+                // This Area is reused for different commands. Its previous
+                // short label must not constrain the next label's wrapping.
+                ui.set_max_width(ui.spacing().tooltip_width.min(ctx.content_rect().width()));
+                overlay(ui, p, egui::Margin::same(6), |ui| {
+                    ui.add(egui::Label::new(RichText::new(title).size(12.0).color(p.muted)).wrap());
+                });
+            });
+    }
+}
+
 pub fn section_header(ui: &mut egui::Ui, p: &Palette, icon: &str, title: &str) {
     ui.horizontal(|ui| {
         glyph(ui, icon, p.violet_light, 17.0);
@@ -610,6 +672,50 @@ impl Modal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn organization_drag_preview_grows_after_short_labels_and_stays_on_screen() {
+        fn text<'a>(shape: &'a egui::Shape, title: &str) -> Option<&'a egui::epaint::TextShape> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text() == title => Some(text),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|shape| text(shape, title)),
+                _ => None,
+            }
+        }
+        for x in [40.0, 390.0] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(400.0, 300.0));
+            for title in [
+                "x",
+                "Attacher au HUD",
+                "Copier l’UUID de l’objet",
+                "x",
+                "Créer un dossier avec la sélection",
+            ] {
+                let mut output = None;
+                for _ in 0..6 {
+                    output = Some(crate::ui::login::test_output(ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(screen),
+                            events: vec![egui::Event::PointerMoved(egui::pos2(x, 100.0))],
+                            ..Default::default()
+                        },
+                        |_ui| organization_drag_preview(&ctx, &p, egui::Id::unique("changing_drag_title"), title),
+                    )));
+                }
+                let output = output.unwrap();
+                let drawn = output.shapes.iter().find_map(|shape| text(&shape.shape, title)).unwrap();
+                assert_eq!(drawn.galley.rows.len(), 1, "short previous labels must not squeeze {title:?}");
+                let natural = ctx.fonts_mut(|fonts| fonts.layout_no_wrap(title.into(), egui::FontId::proportional(12.0), p.muted));
+                assert!((drawn.galley.size().x - natural.size().x).abs() < 1.0);
+                let rect = egui::Rect::from_min_size(drawn.pos, drawn.galley.size());
+                assert!(screen.expand(1.0).contains_rect(rect), "preview text left the viewport: {rect:?}");
+            }
+        }
+    }
 
     #[test]
     fn login_glass_blurs_lower_layers_before_the_translucent_frame_and_skips_opaque_skins() {

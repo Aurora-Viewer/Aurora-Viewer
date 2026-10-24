@@ -277,6 +277,8 @@ impl Filters {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InventoryPreferences {
+    /// One menu arrangement is shared by all inventory types and accounts.
+    pub context_menus: super::menu_layout::Preferences,
     pub notecard_view: super::markdown::View,
     pub protected: HashSet<Uuid>,
     pub upload_folders: [Uuid; 5],
@@ -303,6 +305,7 @@ pub struct InventoryPreferences {
 impl Default for InventoryPreferences {
     fn default() -> Self {
         Self {
+            context_menus: Default::default(),
             notecard_view: Default::default(),
             protected: HashSet::new(),
             upload_folders: [Uuid::nil(); 5],

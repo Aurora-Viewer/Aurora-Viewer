@@ -9,11 +9,11 @@ use crate::world::appearance::Action as Wear;
 /// (indra/newview/llinventorybridge.cpp, indra/llcommon/llassettype.cpp).
 /// An inventory item's UUID is not its asset UUID. Links have their own
 /// clipboard entries and must never expose their target item as an asset.
-fn exposes_asset_uuid(kind: i32) -> bool {
+pub(super) fn exposes_asset_uuid(kind: i32) -> bool {
     matches!(kind, 0 | 1 | 3 | 5 | 7 | 13 | 20 | 21 | 56 | 57 | 58 | 59)
 }
 
-fn copyable_asset_uuid(item: &aurora_net::inventory::InvItem) -> Option<Uuid> {
+pub(super) fn copyable_asset_uuid(item: &aurora_net::inventory::InvItem) -> Option<Uuid> {
     let full_perm = rules::COPY | rules::MODIFY | rules::TRANSFER;
     (exposes_asset_uuid(item.asset_type) && item.owner_mask & full_perm == full_perm && !item.asset_id.is_nil()).then_some(item.asset_id)
 }
@@ -293,615 +293,26 @@ pub(super) fn show(
     facts: &Facts,
     actions: &mut Vec<InvAction>,
 ) {
-    // Scroll on small screens; an inactive entry must keep the menu open.
-    // Area's initial height is 400 px; let the menu measure its full content
-    // instead of permanently clipping it to that first-frame estimate.
-    let height = (ui.ctx().content_rect().height() - 32.0).max(100.0);
-    ui.set_max_height(height);
-    egui::ScrollArea::vertical().max_height(height).show(ui, |ui| {
-        let folder = inv.folders.get(&id);
-        let item = inv.items.get(&id);
-        let target = rules::original(inv, id);
-        let original = target.and_then(|id| inv.items.get(&id));
-        let kind = original.or(item).map_or(-1, |it| it.asset_type);
-        let ids = st.selected_ids(id);
-        let single = ids.len() == 1;
-        let ready = st.pending.is_none();
-        let writable = rules::mutable(inv, id, &prefs.protected);
-        let movable = ids.iter().all(|id| rules::movable(inv, *id, &prefs.protected));
-        let worn = target.is_some_and(|id| facts.worn.contains(&id));
-        let trash = rules::in_type(inv, id, 14);
-        let linked = item.is_some_and(|it| matches!(it.asset_type, 24 | 25));
-        if trash {
-            if folder.is_some_and(|f| f.info.type_default == 14) {
-                if menu::item_if(
-                    ui,
-                    p,
-                    "trash-filled",
-                    aurora_i18n::tr!("common-empty-trash"),
-                    ready && folder.is_some_and(|f| f.state == FetchState::Fetched && (!f.items.is_empty() || !f.children.is_empty())),
-                ) {
-                    st.dialog = Some(EditDialog::Empty(id));
-                }
-            } else {
-                if menu::item_if(
-                    ui,
-                    p,
-                    "restore",
-                    aurora_i18n::tr!("ui-inventory-context-restore-object"),
-                    ready && movable && single,
-                ) && let Some(to) = rules::default_folder(inv, id)
-                {
-                    submit(st, actions, rules::move_selection(inv, &ids, to, &prefs.protected, &facts.worn));
-                }
-                if menu::item_if(
-                    ui,
-                    p,
-                    "trash-filled",
-                    aurora_i18n::tr!("ui-inventory-context-purge-object"),
-                    ready && super::delete::allowed(inv, &ids, prefs, facts),
-                ) {
-                    st.dialog = Some(EditDialog::Delete(ids.clone(), true));
-                }
-            }
-            menu::separator(ui, p);
-        } else {
-            let share = ready && writable && ids.iter().all(|id| rules::offer(inv, *id, &prefs.protected, &facts.worn).is_ok());
-            if menu::item_if(ui, p, "share", aurora_i18n::tr!("common-share"), share) {
-                st.share_items = ids.clone();
-                st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
-            }
-            if let Some(f) = folder {
-                new_menu(
-                    ui,
-                    p,
-                    id,
-                    ready && single && rules::destination(inv, id, &prefs.protected) && f.info.type_default != 16,
-                    st,
-                    prefs,
-                    actions,
-                );
-                let content = crate::world::appearance::wearable_contents(inv, id);
-                // LLFolderBridge::buildContextMenuOptions starts the recursive
-                // inventory fetch before enabling the outfit entries.
-                if single && content.is_err() && !rules::library(inv, id) {
-                    actions.push(InvAction::PrepareOutfit(id));
-                }
-                let content = content.unwrap_or_default();
-                let can_wear = single && !facts.appearance_busy && !content.is_empty() && !rules::library(inv, id);
-                menu::separator(ui, p);
-                entry(
-                    ui,
-                    p,
-                    "shirt-filled",
-                    aurora_i18n::tr!("ui-inventory-context-replace-current-outfit"),
-                    can_wear,
-                    InvAction::Appearance(Wear::WearContents {
-                        folder: id,
-                        mode: crate::world::appearance::WearMode::ReplaceOutfit,
-                    }),
-                    actions,
-                );
-                entry(
-                    ui,
-                    p,
-                    "plus",
-                    aurora_i18n::tr!("ui-inventory-context-add-to-current-outfit"),
-                    can_wear,
-                    InvAction::Appearance(Wear::WearContents {
-                        folder: id,
-                        mode: crate::world::appearance::WearMode::Append,
-                    }),
-                    actions,
-                );
-                entry(
-                    ui,
-                    p,
-                    "hanger-2-filled",
-                    aurora_i18n::tr!("ui-inventory-context-wear-objects"),
-                    can_wear,
-                    InvAction::Appearance(Wear::WearContents {
-                        folder: id,
-                        mode: crate::world::appearance::WearMode::ReplaceItems,
-                    }),
-                    actions,
-                );
-                entry(
-                    ui,
-                    p,
-                    "circle-x-filled",
-                    aurora_i18n::tr!("ui-inventory-context-remove-from-current-outfit"),
-                    can_wear && content.iter().any(|l| facts.worn.contains(&l.target)),
-                    InvAction::Appearance(Wear::RemoveOutfit(id)),
-                    actions,
-                );
-                menu::separator(ui, p);
-            } else {
-                let opens = single && target.is_some() && matches!(kind, 0 | 1 | 2 | 3 | 7 | 10 | 20 | 21 | 56 | 57);
-                let (icon, label) = if kind == 3 {
-                    ("location-filled", aurora_i18n::tr!("common-teleport"))
-                } else {
-                    ("folder-open-filled", aurora_i18n::tr!("common-open"))
-                };
-                if menu::item_if(ui, p, icon, label, opens) {
-                    open(inv, id, st, actions);
-                }
-                if let Some(landmark) = original.filter(|it| it.asset_type == 3)
-                    && menu::item_if(
-                        ui,
-                        p,
-                        "info-circle-filled",
-                        aurora_i18n::tr!("ui-inventory-context-about-landmark"),
-                        single && !landmark.asset_id.is_nil(),
-                    )
-                {
-                    actions.push(InvAction::AboutLandmark(landmark.id, landmark.asset_id));
-                }
-                if menu::item_if(ui, p, "info-circle-filled", aurora_i18n::tr!("common-properties"), single) {
-                    st.property_edit = None;
-                    st.dialog = Some(EditDialog::Properties(id));
-                }
-            }
-            let rename = ready && single && rules::renameable(inv, id, &prefs.protected);
-            if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-rename"), rename) {
-                st.begin_rename(inv, id);
-            }
-            if menu::item_if(
-                ui,
-                p,
-                "photo-filled",
-                aurora_i18n::tr!("common-image-2"),
-                ready && single && writable && !linked,
-            ) {
-                st.thumbnail.open(id);
-            }
-            if let Some(f) = folder {
-                if matches!(f.info.type_default, -1 | 47) && !f.library {
-                    let protected = prefs.protected.contains(&id);
-                    if menu::item(
-                        ui,
-                        p,
-                        "lock-filled",
-                        if protected {
-                            aurora_i18n::tr!("ui-inventory-context-unlock")
-                        } else {
-                            aurora_i18n::tr!("ui-inventory-context-lock")
-                        },
-                    ) {
-                        if protected {
-                            prefs.protected.remove(&id);
-                        } else {
-                            prefs.protected.insert(id);
-                        }
-                    }
-                }
-                if menu::item_if(
-                    ui,
-                    p,
-                    "refresh",
-                    aurora_i18n::tr!("ui-inventory-context-reload-folder"),
-                    single && id != inv.root && id != inv.lib_root,
-                ) {
-                    st.message.clear();
-                    actions.push(InvAction::Preview(id));
-                }
-                if menu::item_if(
-                    ui,
-                    p,
-                    "external-link-filled",
-                    aurora_i18n::tr!("ui-inventory-context-show-in-a-new-window"),
-                    single,
-                ) {
-                    st.open_folder_window(id);
-                }
-                menu::separator(ui, p);
-                if menu::item_if(
-                    ui,
-                    p,
-                    "folder-open-filled",
-                    aurora_i18n::tr!("ui-inventory-context-open-in-a-new-window"),
-                    single,
-                ) {
-                    st.open_folder_window(id);
-                }
-            } else if let Some(it) = item {
-                let asset = copyable_asset_uuid(it);
-                // Unlike the reference's disabled rows for these types,
-                // hide the action when no asset of this type can expose a UUID.
-                if exposes_asset_uuid(it.asset_type)
-                    && menu::item_tip(
-                        ui,
-                        p,
-                        "copy-filled",
-                        aurora_i18n::tr!("ui-inventory-context-copy-object-uuid"),
-                        single && asset.is_some(),
-                        aurora_i18n::tr!("inventory-copy-asset-uuid-help"),
-                    )
-                    && let Some(asset) = asset
-                {
-                    ui.ctx().copy_text(asset.to_string());
-                }
-                // listed for an object that is not worn (LLObjectBridge::buildContextMenu)
-                if kind == 6 && !worn {
-                    entry(
-                        ui,
-                        p,
-                        "restore",
-                        aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
-                        single && writable,
-                        InvAction::Restore(target.unwrap_or(id)),
-                        actions,
-                    );
-                }
-            }
-        }
-        menu::separator(ui, p);
-        let copyable = clipboard::copy_allowed(inv, &ids);
-        if menu::item_if(ui, p, "copy-filled", aurora_i18n::tr!("common-copy-2"), ready && copyable) {
-            clipboard::store(ui.ctx(), st, ids.clone(), false);
-        }
-        if menu::item_if(ui, p, "cut", aurora_i18n::tr!("common-cut"), ready && movable) {
-            clipboard::store(ui.ctx(), st, ids.clone(), true);
-        }
-        if menu::item_if(ui, p, "folder-filled", aurora_i18n::tr!("inventory-move-to"), ready && movable) {
-            st.begin_move_to(id);
-        }
-        let to = folder.map(|_| id).or_else(|| rules::parent(inv, id));
-        let paste = ready
-            && single
-            && to.is_some_and(|to| rules::paste_allowed(inv, &st.clipboard, to, st.cut, false, &prefs.protected, &facts.worn));
-        let paste_links = ready
-            && single
-            && to.is_some_and(|to| rules::paste_allowed(inv, &st.clipboard, to, false, true, &prefs.protected, &facts.worn))
-            && !st.cut;
-        if menu::item_if(ui, p, "clipboard-text-filled", aurora_i18n::tr!("common-paste"), paste)
-            && let Some(to) = to
-        {
-            clipboard::paste(inv, to, false, st, prefs, facts, actions);
-        }
-        if menu::item_if(
-            ui,
-            p,
-            "link-filled",
-            aurora_i18n::tr!("ui-inventory-context-paste-as-link"),
-            paste_links,
-        ) && let Some(to) = to
-        {
-            clipboard::paste(inv, to, true, st, prefs, facts, actions);
-        }
-        if linked {
-            if menu::item_if(
-                ui,
-                p,
-                "external-link-filled",
-                aurora_i18n::tr!("ui-inventory-context-find-original"),
-                single && target.is_some(),
-            ) && let Some(target) = target
-            {
-                st.show_original(inv, target);
-            }
-        } else if menu::item_if(
-            ui,
-            p,
-            "link-filled",
-            aurora_i18n::tr!("ui-inventory-context-find-all-links"),
-            single,
-        ) {
-            st.search.clear();
-            if st.saved_filters.is_none() {
-                st.saved_filters = Some(st.filters.clone());
-            }
-            st.filters.links = super::view::Links::Only;
-            st.filters.always_folders = false;
-            st.filters_initialized = true;
-            st.links_filter = Some(id);
-            st.fetch_all = true;
-            st.tab = 0;
-        }
-        if item.is_some()
-            && menu::item_if(
-                ui,
-                p,
-                "link-filled",
-                aurora_i18n::tr!("common-replace-links"),
-                single && ready && target.is_some() && !rules::library(inv, id),
-            )
-        {
-            st.dialog = Some(EditDialog::ReplaceLinks(target.unwrap_or(id), None));
-            st.fetch_all = true;
-        }
-        if !trash {
-            menu::separator(ui, p);
-            let removable = super::delete::allowed(inv, &ids, prefs, facts);
-            if menu::item_if(ui, p, "trash-filled", aurora_i18n::tr!("common-delete"), ready && removable) {
-                st.dialog = Some(EditDialog::Delete(ids.clone(), false));
-            }
-            if folder.is_none()
-                && menu::item_if(
-                    ui,
-                    p,
-                    "folder-filled",
-                    aurora_i18n::tr!("ui-inventory-context-move-to-default-folder"),
-                    ready && movable && single,
-                )
-                && let Some(to) = rules::default_folder(inv, id)
-            {
-                submit(st, actions, rules::move_selection(inv, &ids, to, &prefs.protected, &facts.worn));
-            }
-            menu::separator(ui, p);
-            if menu::item_if(
-                ui,
-                p,
-                "folder-filled",
-                aurora_i18n::tr!("ui-inventory-context-create-folder-from-selection"),
-                ready && movable,
-            ) {
-                submit(st, actions, rules::group(inv, &ids, &prefs.protected, &facts.worn));
-            }
-            if let Some(f) = folder
-                && menu::item_if(
-                    ui,
-                    p,
-                    "arrows-maximize",
-                    aurora_i18n::tr!("ui-inventory-context-ungroup-folder-items"),
-                    ready
-                        && movable
-                        && single
-                        && f.state == FetchState::Fetched
-                        && (!f.items.is_empty() || !f.children.is_empty())
-                        && f.info.type_default != 47,
-                )
-            {
-                st.dialog = Some(EditDialog::Ungroup(id));
-            }
-            let favorites_ready = ready
-                && ids
-                    .iter()
-                    .all(|id| rules::original(inv, *id).is_some_and(|target| !rules::library(inv, target) && target != inv.root));
-            for favorite in [true, false] {
-                if ids.iter().any(|id| rules::is_favorite(inv, *id) != favorite)
-                    && menu::item_if(
-                        ui,
-                        p,
-                        "star-filled",
-                        if favorite {
-                            aurora_i18n::tr!("common-add-to-favorites")
-                        } else {
-                            aurora_i18n::tr!("common-remove-from-favorites")
-                        },
-                        favorites_ready,
-                    )
-                {
-                    let change = if single {
-                        rules::toggle_favorite(inv, id)
-                    } else {
-                        rules::set_favorites(inv, &ids, favorite)
-                    };
-                    submit(st, actions, change);
-                }
-            }
-            if folder.is_none() {
-                menu::separator(ui, p);
-                if kind == 20 {
-                    let asset = original.map(|it| it.asset_id).unwrap_or_default();
-                    entry(
-                        ui,
-                        p,
-                        "player-play-filled",
-                        aurora_i18n::tr!("ui-inventory-context-play-in-second-life"),
-                        single && !asset.is_nil(),
-                        InvAction::Animation {
-                            asset,
-                            local: false,
-                            start: true,
-                        },
-                        actions,
-                    );
-                    entry(
-                        ui,
-                        p,
-                        "player-play-filled",
-                        aurora_i18n::tr!("common-play-locally"),
-                        single && !asset.is_nil(),
-                        InvAction::Animation {
-                            asset,
-                            local: true,
-                            start: true,
-                        },
-                        actions,
-                    );
-                }
-                if kind == 1 {
-                    entry(
-                        ui,
-                        p,
-                        "volume",
-                        aurora_i18n::tr!("common-play"),
-                        single && original.is_some_and(|it| !it.asset_id.is_nil()),
-                        InvAction::Sound(original.map(|it| it.asset_id).unwrap_or_default()),
-                        actions,
-                    );
-                }
-                let selected_items: Vec<_> = ids.iter().filter_map(|id| rules::original(inv, *id)).collect();
-                if kind == 21 {
-                    let active = selected_items.iter().all(|id| facts.active_gestures.contains(id));
-                    entry(
-                        ui,
-                        p,
-                        "player-play-filled",
-                        aurora_i18n::tr!("common-play"),
-                        single && ready,
-                        InvAction::Gesture(crate::ui::gestures::Action::Play(target.unwrap_or(id))),
-                        actions,
-                    );
-                    entry(
-                        ui,
-                        p,
-                        "check",
-                        if active {
-                            aurora_i18n::tr!("gesture-deactivate")
-                        } else {
-                            aurora_i18n::tr!("gesture-activate")
-                        },
-                        ready && !selected_items.is_empty() && selected_items.iter().all(|id| !rules::library(inv, *id)),
-                        InvAction::Gesture(crate::ui::gestures::Action::Active(selected_items.clone(), !active)),
-                        actions,
-                    );
-                }
-                if single
-                    && original.is_some_and(|it| {
-                        ((it.asset_type == 13 && it.flags & 0xff == 0) || crate::physics_editor::is_physics(it))
-                            && facts.worn.contains(&it.id)
-                    })
-                    && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"))
-                {
-                    crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(target.unwrap_or(id)));
-                }
-                let wear = ready
-                    && !facts.appearance_busy
-                    && selected_items.len() == ids.len()
-                    && selected_items.iter().all(|id| {
-                        !facts.worn.contains(id)
-                            && !rules::library(inv, *id)
-                            && !rules::in_type(inv, *id, 14)
-                            && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6 | 13))
-                    });
-                let objects = selected_items
-                    .iter()
-                    .all(|id| inv.items.get(id).is_some_and(|it| it.asset_type == 6));
-                let add = wear
-                    && selected_items
-                        .iter()
-                        .all(|id| inv.items.get(id).is_some_and(|it| it.asset_type != 13));
-                // LLObjectBridge::buildContextMenu: a worn object lists
-                // "Touch", "Edit" and "Detach from yourself" in place
-                // of the entries that wear it
-                let worn_objects = objects && !selected_items.is_empty() && selected_items.iter().all(|id| facts.worn.contains(id));
-                if worn_objects {
-                    let item = target.unwrap_or(id);
-                    if menu::item_if(
-                        ui,
-                        p,
-                        "click-filled",
-                        aurora_i18n::tr!("ui-context-touch"),
-                        single && facts.touchable.contains(&item),
-                    ) {
-                        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::TouchWorn(item));
-                    }
-                    // get_is_item_editable: any worn object
-                    if menu::item_if(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit"), single) {
-                        crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(item));
-                    }
-                } else {
-                    entry(
-                        ui,
-                        p,
-                        "shirt-filled",
-                        aurora_i18n::tr!("common-wear"),
-                        wear && single,
-                        InvAction::Appearance(Wear::WearItem {
-                            item: target.unwrap_or(id),
-                            replace: true,
-                            point: 0,
-                        }),
-                        actions,
-                    );
-                    entry(
-                        ui,
-                        p,
-                        "plus",
-                        aurora_i18n::tr!("common-add"),
-                        add,
-                        InvAction::Appearance(Wear::WearItems {
-                            items: selected_items.clone(),
-                            replace: false,
-                            point: 0,
-                        }),
-                        actions,
-                    );
-                }
-                let attach_menus: &[bool] = if worn_objects { &[] } else { &[false, true] };
-                for &hud in attach_menus {
-                    menu::submenu(
-                        ui,
-                        p,
-                        if hud { "device-desktop-filled" } else { "man-filled" },
-                        if hud {
-                            aurora_i18n::tr!("common-attach-to-hud")
-                        } else {
-                            aurora_i18n::tr!("common-attach-to")
-                        },
-                        wear && objects,
-                        |ui| {
-                            egui::ScrollArea::vertical().max_height(450.0).show(ui, |ui| {
-                                for (point, is_hud, name) in facts.points.iter().filter(|(_, is_hud, _)| *is_hud == hud) {
-                                    let label = if *is_hud { name.clone() } else { format!("{name} ({point})") };
-                                    entry(
-                                        ui,
-                                        p,
-                                        "man-filled",
-                                        &label,
-                                        true,
-                                        InvAction::Appearance(Wear::WearItems {
-                                            items: selected_items.clone(),
-                                            replace: false,
-                                            point: *point,
-                                        }),
-                                        actions,
-                                    );
-                                }
-                            });
-                        },
-                    );
-                }
-                if selected_items.iter().any(|id| facts.worn.contains(id)) {
-                    entry(
-                        ui,
-                        p,
-                        "circle-x-filled",
-                        if kind == 6 {
-                            aurora_i18n::tr!("ui-inventory-context-detach-from-yourself")
-                        } else {
-                            aurora_i18n::tr!("common-remove")
-                        },
-                        ready
-                            && !facts.appearance_busy
-                            && selected_items.len() == ids.len()
-                            && selected_items
-                                .iter()
-                                .all(|id| facts.worn.contains(id) && inv.items.get(id).is_some_and(|it| matches!(it.asset_type, 5 | 6))),
-                        InvAction::Appearance(Wear::RemoveItems(selected_items)),
-                        actions,
-                    );
-                }
-            }
-            if kind == 56
-                && let Some(it) = original
-            {
-                entry(
-                    ui,
-                    p,
-                    "sun-filled",
-                    aurora_i18n::tr!("common-apply-to-myself-only"),
-                    single && !it.asset_id.is_nil(),
-                    InvAction::Environment(it.asset_id, it.flags),
-                    actions,
-                );
-            }
-            menu::separator(ui, p);
-            for (copy, label) in [
-                (true, aurora_i18n::tr!("ui-inventory-context-copy-to-marketplace-listings")),
-                (false, aurora_i18n::tr!("ui-inventory-context-move-to-marketplace-listings")),
-            ] {
-                let plan = rules::marketplace(inv, &ids, copy, &prefs.protected, &facts.worn);
-                if menu::item_if(ui, p, "tag-filled", label, ready && st.merchant && plan.is_ok()) {
-                    submit(st, actions, plan);
-                }
-            }
-        }
-    });
+    let mut catalog = super::context_catalog::build(inv, id, st, prefs, facts);
+    let scope = super::context_catalog::scope(inv, id);
+    prefs.context_menus.unify();
+    st.menu_editor
+        .prepare(ui.ctx(), id, ui.layer_id().id, &scope, &mut prefs.context_menus);
+    let profile = prefs.context_menus.profiles.entry(scope.clone()).or_default();
+    if profile.locked
+        && let Some(folder) = catalog.prepare_outfit
+    {
+        actions.push(InvAction::PrepareOutfit(folder));
+    }
+    let editing = (!profile.locked).then(|| super::context_catalog::editing_entries(&catalog.entries, facts));
+    let entries = editing.as_deref().unwrap_or(&catalog.entries);
+    if let Some(index) = super::context_customize::show(ui, p, id, &scope, entries, profile, &mut st.menu_editor)
+        && let Some(command) = catalog.commands.get_mut(index).and_then(Option::take)
+    {
+        super::context_catalog::execute(command, ui, inv, st, prefs, facts, actions);
+        ui.close();
+    }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1145,7 +556,6 @@ mod tests {
             aurora_i18n::tr!("ui-inventory-context-about-landmark"),
             aurora_i18n::tr!("common-properties"),
             aurora_i18n::tr!("common-rename"),
-            aurora_i18n::tr!("common-delete"),
         ] {
             assert!(
                 output.shapes.iter().any(|s| text_position(&s.shape, label).is_some()),
@@ -1199,7 +609,7 @@ mod tests {
         }
     }
     #[test]
-    fn the_entire_folder_menu_is_visible_including_the_last_marketplace_row() {
+    fn folder_menu_keeps_navigation_and_default_expanded_organize_visible_without_edit_controls() {
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let mut inv = Inventory::default();
@@ -1209,13 +619,9 @@ mod tests {
         }
         let output = frame(&ctx, &inv, Uuid::from_u128(8000));
         for label in [
-            aurora_i18n::tr!("common-new-script"),
-            aurora_i18n::tr!("ui-inventory-context-new-clothes"),
-            aurora_i18n::tr!("ui-inventory-context-new-body-parts"),
-            aurora_i18n::tr!("ui-inventory-context-new-settings"),
             aurora_i18n::tr!("common-rename"),
             aurora_i18n::tr!("ui-inventory-context-reload-folder"),
-            aurora_i18n::tr!("common-cut"),
+            aurora_i18n::tr!("inventory-menu-organize"),
             aurora_i18n::tr!("ui-inventory-context-create-folder-from-selection"),
             aurora_i18n::tr!("ui-inventory-context-move-to-marketplace-listings"),
         ] {
@@ -1227,9 +633,20 @@ mod tests {
             assert!(clip.contains(position), "clipped {label}: {position:?}");
             assert!(position.y < 900.0);
         }
+        for hidden in [
+            aurora_i18n::tr!("inventory-menu-create-group"),
+            aurora_i18n::tr!("inventory-menu-reset"),
+            aurora_i18n::tr!("inventory-menu-hidden"),
+            aurora_i18n::tr!("common-new-script"),
+        ] {
+            assert!(
+                !output.shapes.iter().any(|s| text_position(&s.shape, hidden).is_some()),
+                "unexpected expanded option: {hidden}"
+            );
+        }
     }
     #[test]
-    fn animation_menu_exposes_both_play_modes_and_the_attachment_submenus() {
+    fn animation_menu_exposes_both_play_modes_without_attachment_controls() {
         let ctx = egui::Context::default();
         crate::theme::Theme::default().apply(&ctx, 1.0);
         let mut inv = Inventory::default();
@@ -1243,13 +660,18 @@ mod tests {
             aurora_i18n::tr!("common-properties"),
             aurora_i18n::tr!("ui-inventory-context-play-in-second-life"),
             aurora_i18n::tr!("common-play-locally"),
-            aurora_i18n::tr!("common-attach-to"),
-            aurora_i18n::tr!("common-attach-to-hud"),
         ] {
             assert!(
                 output.shapes.iter().any(|s| text_position(&s.shape, label).is_some()),
                 "missing {label}"
             );
+        }
+        for hidden in [
+            aurora_i18n::tr!("common-attach-to"),
+            aurora_i18n::tr!("common-attach-to-hud"),
+            aurora_i18n::tr!("inventory-menu-attachments"),
+        ] {
+            assert!(!output.shapes.iter().any(|s| text_position(&s.shape, hidden).is_some()));
         }
     }
 
@@ -1464,6 +886,12 @@ mod tests {
                 touchable: Default::default(),
                 names: Default::default(),
             };
+            // These commands were dragged out of the icon submenu into text.
+            let mut preferences = InventoryPreferences::default();
+            let profile = preferences.context_menus.profiles.entry("shared".into()).or_default();
+            for key in ["favorite", "favorite-add", "favorite-remove"] {
+                profile.layout.placements.insert(key.into(), "text".into());
+            }
             let mut actions = Vec::new();
             let mut open = true;
             let mut frame = |events| {
@@ -1481,16 +909,7 @@ mod tests {
                             &mut open,
                             &p,
                             |ui| {
-                                show(
-                                    ui,
-                                    &p,
-                                    &inv,
-                                    ids[0],
-                                    &mut state,
-                                    &mut InventoryPreferences::default(),
-                                    &facts,
-                                    &mut actions,
-                                );
+                                show(ui, &p, &inv, ids[0], &mut state, &mut preferences, &facts, &mut actions);
                             },
                         );
                     },

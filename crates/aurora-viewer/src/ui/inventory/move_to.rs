@@ -632,6 +632,14 @@ mod tests {
                 ..Default::default()
             };
             let mut open = true;
+            let mut preferences = InventoryPreferences::default();
+            preferences
+                .context_menus
+                .profiles
+                .entry(super::super::context_catalog::scope(&inv, source))
+                .or_default()
+                .open
+                .insert("organize".into(), true);
             let mut position = None;
             for pass in 0..5 {
                 let events = if pass >= 3 {
@@ -661,16 +669,7 @@ mod tests {
                             &mut open,
                             &p,
                             |ui| {
-                                super::super::context::show(
-                                    ui,
-                                    &p,
-                                    &inv,
-                                    source,
-                                    &mut st,
-                                    &mut InventoryPreferences::default(),
-                                    &facts(),
-                                    &mut Vec::new(),
-                                );
+                                super::super::context::show(ui, &p, &inv, source, &mut st, &mut preferences, &facts(), &mut Vec::new());
                             },
                         );
                     },
