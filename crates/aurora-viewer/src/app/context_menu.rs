@@ -154,6 +154,9 @@ impl App {
                 }
             }
             Some(Target::Avatar { id, .. }) => {
+                f.avatar_travel = !self.native_anchor.blocks_walk(w.agent.seated, w.agent.ground_sit)
+                    && crate::autopilot::avatar_position(w, *id).is_some();
+                f.following = w.following_avatar == Some(*id);
                 f.complexity = w
                     .objects
                     .index_of_uuid(id)
@@ -314,6 +317,9 @@ impl App {
                 }
             }
             CtxAction::Zoom(p) => self.camera.zoom_to(p, &mut self.world.agent, &self.settings.camera),
+            CtxAction::GoToAvatar(id) => self.travel_to_avatar(id, false),
+            CtxAction::FollowAvatar(id) => self.travel_to_avatar(id, true),
+            CtxAction::StopFollowing => self.stop_autopilot(true),
             CtxAction::AboutLand(point) => {
                 let (gx, gy) = ui::minimap::to_global(&self.world, point);
                 ui::land::LandUi::select_at_global(&mut self.world, gx, gy);

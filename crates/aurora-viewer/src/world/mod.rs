@@ -240,6 +240,8 @@ pub struct World {
     pub script_debug: script_debug::Messages,
     pub sun: Option<(SunInfo, Instant)>,
     pub agent: AgentState,
+    /// Session-only UI readback of the active avatar follow.
+    pub following_avatar: Option<Uuid>,
     /// The controls our scripts took (llTakeControls): who gets the left
     /// button's clicks (app/script_clicks.rs).
     pub script_controls: aurora_net::script_controls::ScriptControls,
@@ -552,6 +554,7 @@ impl World {
             script_debug: script_debug::Messages::default(),
             sun: None,
             agent: AgentState::default(),
+            following_avatar: None,
             script_controls: Default::default(),
             coarse: HashMap::new(),
             parked: HashMap::new(),

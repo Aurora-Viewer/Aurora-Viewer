@@ -15,6 +15,8 @@ pub(crate) enum Group {
     Animation,
     Sound,
     Gesture,
+    /// A conversation in its own window (floater_fs_im_session.xml).
+    Conversation,
     Inventory(i32),
 }
 
@@ -35,7 +37,10 @@ impl Group {
     fn saves_rect(self) -> bool {
         // The corresponding Firestorm XUI files use save_rect="true".
         // Resource sizes have their own human-requested preferences.
-        matches!(self, Self::Notecard | Self::Script | Self::Animation | Self::Sound | Self::Gesture)
+        matches!(
+            self,
+            Self::Notecard | Self::Script | Self::Animation | Self::Sound | Self::Gesture | Self::Conversation
+        )
     }
 
     fn saved_id(self) -> Id {

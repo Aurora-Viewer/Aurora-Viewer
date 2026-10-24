@@ -485,9 +485,25 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-block-particle-owner"));
 }
 
+fn avatar_navigation(ui: &mut Builder, f: &Facts, id: Uuid) {
+    ui.item_if(
+        "walk",
+        aurora_i18n::tr!("ui-context-go-to-avatar"),
+        f.avatar_travel,
+        CtxAction::GoToAvatar(id),
+    );
+    let (label, action) = if f.following {
+        (aurora_i18n::tr!("ui-context-stop-following"), CtxAction::StopFollowing)
+    } else {
+        (aurora_i18n::tr!("common-follow"), CtxAction::FollowAvatar(id))
+    };
+    ui.item_if("current-location-filled", label, f.avatar_travel || f.following, action);
+}
+
 /// menu_avatar_other.xml
 fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     ui.item("user-filled", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
+    avatar_navigation(ui, f, id);
     ui.item_if(
         "user-plus",
         aurora_i18n::tr!("common-become-friends"),
@@ -595,6 +611,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
 /// out the same way.
 fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid, point: Vec3) {
     ui.item("user-filled", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
+    avatar_navigation(ui, f, id);
     ui.item_if(
         "user-plus",
         aurora_i18n::tr!("common-become-friends"),
@@ -888,6 +905,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn avatar_navigation_addresses_the_wearer_and_keeps_stop_available() {
+        let id = Uuid::from_u128(7);
+        for attachment in [None, Some(Uuid::from_u128(8))] {
+            let target = Target::Avatar {
+                id,
+                own: false,
+                attachment,
+            };
+            let mut facts = Facts {
+                avatar_travel: true,
+                ..Default::default()
+            };
+            let entries = world_menu(&target, &facts, Vec3::ZERO);
+            assert!(
+                entries
+                    .iter()
+                    .any(|e| e.enabled && matches!(e.kind, Kind::Action(CtxAction::GoToAvatar(who)) if who == id))
+            );
+            assert!(
+                entries
+                    .iter()
+                    .any(|e| e.enabled && matches!(e.kind, Kind::Action(CtxAction::FollowAvatar(who)) if who == id))
+            );
+            facts.avatar_travel = false;
+            facts.following = true;
+            let entries = world_menu(&target, &facts, Vec3::ZERO);
+            assert!(
+                entries
+                    .iter()
+                    .any(|e| e.enabled && matches!(e.kind, Kind::Action(CtxAction::StopFollowing)))
+            );
+            assert!(
+                entries
+                    .iter()
+                    .any(|e| !e.enabled && matches!(e.kind, Kind::Action(CtxAction::GoToAvatar(_))))
+            );
+        }
+    }
+
+    #[test]
     fn hud_move_lock_menu_is_checked_reversible_and_available_without_modify_permission() {
         let key = ObjKey { region: 1, local_id: 2 };
         let mut facts = Facts::default();
@@ -945,6 +1002,8 @@ mod tests {
         let expected = |exception: bool| {
             let mut keys = vec![
                 "common-view-profile",
+                "ui-context-go-to-avatar",
+                "common-follow",
                 "common-become-friends",
                 "ui-context-add-to-contact-set>",
                 "ui-context-send-im",

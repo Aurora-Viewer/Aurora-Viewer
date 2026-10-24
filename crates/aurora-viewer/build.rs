@@ -24,6 +24,14 @@ fn main() {
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         windows_resources();
+        // The hybrid-GPU hints of main.rs (gpu_hints) in the exe's export
+        // table, where the NVIDIA and AMD drivers look for them: a Rust
+        // executable exports nothing on its own
+        if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            for symbol in ["NvOptimusEnablement", "AmdPowerXpressRequestHighPerformance"] {
+                println!("cargo:rustc-link-arg-bin=aurora-viewer=/EXPORT:{symbol},DATA");
+            }
+        }
     }
 }
 
