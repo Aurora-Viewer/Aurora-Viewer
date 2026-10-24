@@ -106,6 +106,16 @@ impl Builder {
 
 pub(super) fn world_menu(target: &Target, f: &Facts, point: Vec3) -> Vec<Entry> {
     let mut entries = Builder::default();
+    if f.object.local_preview {
+        if let Target::Object { key, full_id, .. } = target {
+            preview_menu(&mut entries, f, *key, *full_id, point, false);
+            return entries.0;
+        }
+        if let Target::Attachment { key } = target {
+            preview_menu(&mut entries, f, *key, f.object.id, point, true);
+            return entries.0;
+        }
+    }
     match target {
         Target::Object { key, full_id, offset } => object_menu(&mut entries, f, *key, *full_id, *offset, point),
         Target::Attachment { key } => attachment_self_menu(&mut entries, f, *key),
@@ -119,6 +129,30 @@ pub(super) fn world_menu(target: &Target, f: &Facts, point: Vec3) -> Vec<Entry> 
         Target::Ground => land_menu(&mut entries, f, point),
     }
     entries.0
+}
+
+/// Local linksets keep the normal Edit / Edit linked / Inspect interaction.
+/// Inventory, scripts and simulator operations have no local counterpart.
+fn preview_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, point: Vec3, worn: bool) {
+    ui.item("pencil-filled", aurora_i18n::tr!("common-edit"), CtxAction::Edit(id));
+    ui.check(
+        "cube-3d-sphere",
+        aurora_i18n::tr!("ui-context-edit-linked-parts"),
+        f.edit_linked,
+        true,
+        CtxAction::EditLinkedParts(!f.edit_linked),
+    );
+    ui.item("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"), CtxAction::Inspect(id));
+    if f.object.local_hud_scale.is_none() {
+        ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    }
+    if worn {
+        ui.item("paperclip", aurora_i18n::tr!("common-detach"), CtxAction::Detach(key));
+        ui.item("package", aurora_i18n::tr!("blender-object-drop"), CtxAction::Drop(key));
+    } else {
+        put_on_submenu(ui, f, id);
+        ui.item("trash-filled", aurora_i18n::tr!("common-delete"), CtxAction::Delete(id));
+    }
 }
 
 pub(super) fn draw_list(ui: &mut egui::Ui, p: &crate::theme::Palette, entries: &[Entry]) {
@@ -1471,6 +1505,60 @@ mod tests {
 #[cfg(test)]
 mod bridge_query_tests {
     use super::*;
+    #[test]
+    fn local_linksets_use_native_edit_linked_inspect_and_attachment_actions() {
+        let id = Uuid::from_u128(101);
+        let key = ObjKey {
+            region: crate::world::objects::PREVIEW_REGION,
+            local_id: 1,
+        };
+        let mut facts = Facts::default();
+        facts.object.local_preview = true;
+        facts.object.id = id;
+        facts.object.wear = true;
+        let world = world_menu(
+            &Target::Object {
+                key,
+                full_id: id,
+                offset: Vec3::ZERO,
+            },
+            &facts,
+            Vec3::ZERO,
+        );
+        assert!(
+            world
+                .iter()
+                .any(|e| e.enabled && matches!(e.kind,Kind::Action(CtxAction::Edit(who)) if who==id))
+        );
+        let toggle = world
+            .iter()
+            .find(|e| matches!(e.kind, Kind::Action(CtxAction::EditLinkedParts(true))))
+            .expect("explicit part editing");
+        assert_eq!(toggle.checked, Some(false));
+        assert!(
+            world
+                .iter()
+                .any(|e| matches!(e.kind,Kind::Action(CtxAction::Inspect(who)) if who==id))
+        );
+        assert!(
+            world
+                .iter()
+                .any(|e| matches!(e.kind,Kind::Action(CtxAction::Delete(who)) if who==id))
+        );
+        assert!(!world.iter().any(|e| matches!(
+            e.kind,
+            Kind::Action(CtxAction::Sit { .. } | CtxAction::Take(_) | CtxAction::Pay(_) | CtxAction::Return(_))
+        )));
+        facts.edit_linked = true;
+        let worn = world_menu(&Target::Attachment { key }, &facts, Vec3::ZERO);
+        assert!(worn.iter().any(|e| matches!(e.kind,Kind::Action(CtxAction::Detach(k)) if k==key)));
+        assert!(worn.iter().any(|e| matches!(e.kind,Kind::Action(CtxAction::Drop(k)) if k==key)));
+        assert!(
+            worn.iter()
+                .any(|e| e.checked == Some(true) && matches!(e.kind, Kind::Action(CtxAction::EditLinkedParts(false))))
+        );
+    }
+
     #[test]
     fn object_submenu_dispatches_separate_script_and_extended_information_for_the_selected_object() {
         let object = Uuid::from_u128(101);

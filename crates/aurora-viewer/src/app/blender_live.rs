@@ -31,6 +31,7 @@ impl App {
     }
 
     pub(super) fn show_blender_live(&mut self, ctx: &egui::Context, palette: &Palette) {
+        self.blender_live.edit_linked = self.settings.build.edit_linked;
         self.blender_live.attach_choices = self
             .world
             .avatar_lib
@@ -109,15 +110,26 @@ impl App {
         if let Some((source, action)) = self.blender_live.object_action.take() {
             let source = if matches!(
                 action,
-                crate::blender_live::objects::Action::Transform { .. } | crate::blender_live::objects::Action::Edit
+                crate::blender_live::objects::Action::Transform { .. }
+                    | crate::blender_live::objects::Action::Edit
+                    | crate::blender_live::objects::Action::EditLinked(_)
             ) {
                 source
             } else {
                 self.blender_live.linked_root(source)
             };
-            if matches!(action, crate::blender_live::objects::Action::Edit) {
-                if let Some(idx) = self.blender_live.root(source).and_then(|id| self.world.objects.index_of_uuid(&id)) {
-                    self.settings.build.edit_linked = self.blender_live.linked_root(source) != source;
+            if matches!(
+                action,
+                crate::blender_live::objects::Action::Edit | crate::blender_live::objects::Action::EditLinked(_)
+            ) {
+                if let crate::blender_live::objects::Action::EditLinked(on) = action {
+                    self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
+                }
+                if let Some(idx) = self
+                    .blender_live
+                    .edit_target(source, self.settings.build.edit_linked)
+                    .and_then(|id| self.world.objects.index_of_uuid(&id))
+                {
                     self.build.open_build(crate::build::Tool::Edit);
                     self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
                     self.flush_build();
@@ -263,14 +275,19 @@ impl App {
                 source
             };
             self.blender_live.selected = Some(source);
+            if mode == "static-linked-child" {
+                self.build.set_edit_linked(&mut self.world, &mut self.settings.build, true);
+            }
             let action = match mode.as_str() {
-                "static-hud" | "static-linked-hud" => Action::Attach(31),
+                "static-hud" | "static-linked-hud" | "static-linked-hud-menu" => Action::Attach(31),
                 "static-attached" | "static-linked-attached" => Action::Attach(6),
                 "static-detached" | "static-linked-detached" => Action::Detach,
                 _ => Action::Edit,
             };
-            if matches!(mode.as_str(), "static" | "static-linked" | "static-linked-child")
-                && let Some(placement) = self.blender_live.placements.get(&source)
+            if matches!(
+                mode.as_str(),
+                "static" | "static-linked" | "static-linked-child" | "static-linked-menu"
+            ) && let Some(placement) = self.blender_live.placements.get(&source)
             {
                 let position = if let Some(parent) = placement.parent.and_then(|id| self.blender_live.placements.get(&id)) {
                     parent.position + parent.rotation * placement.position
@@ -285,6 +302,43 @@ impl App {
                 );
             }
             self.blender_live.object_action = Some((source, action));
+        }
+        if self.demo
+            && self.frame_count == 520
+            && std::env::var("AURORA_DEMO_BLENDER_LIVE")
+                .is_ok_and(|mode| matches!(mode.as_str(), "static-linked-menu" | "static-linked-hud-menu"))
+            && let Some(source) = self
+                .blender_live
+                .snapshot
+                .as_ref()
+                .and_then(|s| s.sources.iter().find(|s| s.link.is_some()))
+            && let Some(idx) = self
+                .blender_live
+                .root(source.id)
+                .and_then(|id| self.world.objects.index_of_uuid(&id))
+            && let Some(object) = self.world.objects.get(idx)
+        {
+            let key = object.key;
+            let id = object.full_id;
+            let point = Scene::object_transform(&self.world, idx, Instant::now(), 0).map_or(Vec3::ZERO, |xf| xf.0);
+            let worn = crate::ui::context::wearer(&self.world, idx) == Some(self.world.agent_id);
+            self.build.select_for_menu(&mut self.world, &self.settings.build, idx);
+            self.flush_build();
+            self.context_menu = Some(crate::ui::context::ContextMenu {
+                pos: egui::pos2(700.0, 180.0),
+                point,
+                target: if worn {
+                    crate::ui::context::Target::Attachment { key }
+                } else {
+                    crate::ui::context::Target::Object {
+                        key,
+                        full_id: id,
+                        offset: Vec3::ZERO,
+                    }
+                },
+                pie_path: Vec::new(),
+                pie_input_frame: None,
+            });
         }
         if self.demo
             && std::env::var("AURORA_DEMO_BLENDER_LIVE").as_deref() == Ok("lods")
@@ -442,8 +496,10 @@ impl App {
                 _ => None,
             });
             let object_parent = self.blender_live.preview_parent(mesh.source, key.1, rigged, parent, &roots);
-            let position = placement.map_or(Vec3::ZERO, |p| if key.1 == 0 { p.position } else { Vec3::ZERO });
-            let rotation = placement.map_or(Quat::IDENTITY, |p| if key.1 == 0 { p.rotation } else { Quat::IDENTITY });
+            let (position, rotation) = self
+                .blender_live
+                .preview_transform(mesh.source, key.1)
+                .unwrap_or((Vec3::ZERO, Quat::IDENTITY));
             let update = ObjectUpdate {
                 local_id,
                 full_id: id,

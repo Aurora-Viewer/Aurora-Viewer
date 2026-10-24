@@ -21,10 +21,13 @@ Parented static meshes stay **separate objects in one linked set**. Add the
 parent and children to the synchronization list: the highest synchronized mesh
 parent is the **root**, and Aurora preserves each mesh's relative position,
 rotation and size. Nested parents are flattened to the same root, including
-intermediate empty objects. The source list identifies the root and names each
-child's root. Select the root to edit the set together, or select a child and
-click **Edit** to enable the normal **Edit linked** tools for that mesh. Rez,
-drop, derez, body/HUD attachment and detach apply to the complete set, even when
+intermediate empty objects. The source list groups the linked prims under one
+root, numbered #1, #2 and onward, with an object/prim counter matching the build
+tools. Clicking Edit uses the whole linkset by default. Enable **Edit linked parts** explicitly to
+select a child alone; the same option is shared with the normal build tools.
+All static draw prims, including extra material batches, are direct children
+of the same root rather than nested objects. Rez, drop, derez, body/HUD attachment
+and detach apply to the complete set, even when
 requested from a child. Unparenting in Blender creates independent previews and
 preserves their current placement. Paused or absent parents are not referenced.
 This requires plug-in 0.13.0 and the viewer's `object-links` capability.
@@ -37,8 +40,11 @@ the list and subsequent Blender edits never rez it automatically. The visible
 checkbox remains independent. **Stop** clears all session previews and placement.
 
 **Edit** uses the normal Aurora translation, rotation and size tools, with the
-same controls for body attachments and HUDs. Right-clicking the static object
-opens its source's Blender Live controls and selects it for editing. Numeric
+same controls for body attachments and HUDs. Right-clicking any prim opens the
+ordinary object context menu, with Edit, Edit linked parts, Inspect and supported
+local attachment/removal actions.
+Inspect shows one object with its separate root and linked prims. Link/unlink
+authoring remains in Blender, which supplies the synchronized parentage. Numeric
 position, rotation and size are also available below the source list; attachment
 positions use the attachment point's local frame. Dropping a body attachment
 retains its current orientation and horizontal location, resting its rotated

@@ -26,10 +26,13 @@ editable local linkset per independent Blender source. Negotiated `object-links`
 retains distinct parented static sources with one root and metre-based offsets;
 `blender_live/links.rs` owns hierarchy placement, reparenting, family bounds and
 parent resolution. Nested Blender parenting is flattened to a single mesh root.
-Each child remains editable through the ordinary linked-object build tools. `blender_live/objects.rs` owns their
+Every static draw prim is a direct child of one root, including material
+batches. The source tree and object/prim counts reflect that hierarchy. Native
+object context menus and the shared Edit linked mode govern selection; local
+menu actions resolve before simulator/inventory handlers. `blender_live/objects.rs` owns their
 session placement, scale multipliers, world-origin rebasing, body/HUD attachment
 and derez state. Local tool commands are consumed before network/demo dispatch;
-right-click opens the selected source's Blender Live controls. These objects
+right-click uses the native object menu with local actions. These objects
 have no simulator identity or touch action. Arrival cleanup excludes these private roots from stale
 simulator attachments. Normal GPU skinning supplies animations and avatar shape;
 existing draw objects retain their geometry while replacement meshes load.

@@ -219,6 +219,7 @@ pub enum Action {
     Attach(u8),
     Detach,
     Edit,
+    EditLinked(bool),
     Transform { position: Vec3, rotation: Quat, scale: Vec3 },
 }
 
@@ -261,10 +262,12 @@ impl Live {
                     object.render.needs_records = true;
                 }
                 let Some(object) = world.objects.get(index) else { continue };
+                let moved = placement.parent.is_some()
+                    && (!placement.position.abs_diff_eq(object.position, 1e-6) || !placement.rotation.abs_diff_eq(object.rotation, 1e-6));
                 placement.position = object.position;
                 placement.rotation = object.rotation;
                 let scale = object.scale / placement.size;
-                if !placement.scale.abs_diff_eq(scale, 1e-6) {
+                if moved || !placement.scale.abs_diff_eq(scale, 1e-6) {
                     resized.push(source);
                 }
                 placement.scale = scale;
@@ -317,7 +320,7 @@ impl Live {
             }
             let placement = self.placements.get(&id).unwrap_or(placement);
             if let Some(object) = world.objects.index_of_uuid(object).and_then(|idx| world.objects.get_mut(idx)) {
-                if part == 0 {
+                if part == 0 || placement.parent.is_some() {
                     object.position = placement.position;
                     object.rotation = placement.rotation;
                 }
@@ -329,7 +332,7 @@ impl Live {
     }
 
     pub fn place_object(&mut self, source: Uuid, action: Action, world: &World) {
-        let source = if matches!(action, Action::Transform { .. } | Action::Edit) {
+        let source = if matches!(action, Action::Transform { .. } | Action::Edit | Action::EditLinked(_)) {
             source
         } else {
             self.linked_root(source)
@@ -390,7 +393,7 @@ impl Live {
                 placement.rotation = rotation.normalize();
                 placement.scale = scale;
             }
-            Action::Edit => return,
+            Action::Edit | Action::EditLinked(_) => return,
         }
         if matches!(action, Action::Rez | Action::Drop) {
             let offset = self.floor_offset(source);

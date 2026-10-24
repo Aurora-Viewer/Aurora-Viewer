@@ -5,7 +5,42 @@ use crate::world::{World, objects::ObjKey};
 use glam::{Mat3, Quat, Vec3};
 use uuid::Uuid;
 
+pub(super) struct Row {
+    pub source: super::protocol::PreparedSource,
+    pub number: usize,
+    pub prims: usize,
+}
+
 impl Live {
+    pub(super) fn linkset_rows(&self) -> Vec<Row> {
+        let Some(snapshot) = &self.snapshot else { return Vec::new() };
+        let count = |id| snapshot.meshes.iter().filter(|mesh| mesh.source == id).count();
+        let mut rows = Vec::new();
+        for root in snapshot.sources.iter().filter(|source| source.link.is_none()) {
+            let children: Vec<_> = snapshot
+                .sources
+                .iter()
+                .filter(|source| source.link.is_some_and(|link| link.parent == root.id))
+                .collect();
+            let prims = count(root.id) + children.iter().map(|child| count(child.id)).sum::<usize>();
+            rows.push(Row {
+                source: root.clone(),
+                number: if prims > 1 { 1 } else { 0 },
+                prims,
+            });
+            let mut number = count(root.id) + 1;
+            for child in children {
+                rows.push(Row {
+                    source: child.clone(),
+                    number,
+                    prims: count(child.id),
+                });
+                number += count(child.id);
+            }
+        }
+        rows
+    }
+
     pub fn preview_parent(
         &self,
         source: Uuid,
@@ -18,15 +53,28 @@ impl Live {
             return Some(avatar);
         }
         let placement = self.placements.get(&source)?;
-        if part != 0 {
-            roots.get(&source).copied()
-        } else if let Some(parent) = placement.parent {
-            roots.get(&parent).copied()
+        if part != 0 || placement.parent.is_some() {
+            // A simulator linkset is flat: every prim, including additional
+            // material batches, is a direct child of its single root.
+            roots.get(&placement.parent.unwrap_or(source)).copied()
         } else if matches!(placement.location, Location::Attachment(_)) {
             Some(avatar)
         } else {
             None
         }
+    }
+
+    pub fn preview_transform(&self, source: Uuid, part: usize) -> Option<(Vec3, Quat)> {
+        let placement = self.placements.get(&source)?;
+        Some(if part == 0 || placement.parent.is_some() {
+            (placement.position, placement.rotation)
+        } else {
+            (Vec3::ZERO, Quat::IDENTITY)
+        })
+    }
+
+    pub fn edit_target(&self, source: Uuid, linked: bool) -> Option<Uuid> {
+        self.root(if linked { source } else { self.linked_root(source) })
     }
 
     pub fn linked_root(&self, source: Uuid) -> Uuid {

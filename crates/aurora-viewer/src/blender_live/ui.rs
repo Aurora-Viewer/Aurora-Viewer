@@ -225,8 +225,16 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
     let sources = live.snapshot.as_ref().map(|s| s.sources.clone()).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
         ui.label(aurora_i18n::tr!(
-            "blender-live-counts",
-            objects = sources.iter().filter(|s| live.state(s.id) == SourceState::Visible).count(),
+            "blender-live-linkset-counts",
+            objects = sources
+                .iter()
+                .filter(|s| s.link.is_none() && live.state(s.id) == SourceState::Visible)
+                .count(),
+            prims = live.snapshot.as_ref().map_or(0, |s| s
+                .meshes
+                .iter()
+                .filter(|m| live.state(m.source) == SourceState::Visible && live.state(live.linked_root(m.source)) == SourceState::Visible)
+                .count()),
             triangles = live.triangles
         ));
         if ui
@@ -251,13 +259,17 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
         .id_salt("blender_live_objects")
         .max_height(190.0)
         .show(ui, |ui| {
-            for source in &sources {
+            for row in live.linkset_rows() {
+                let source = &row.source;
                 let state = live.state(source.id);
                 if state == SourceState::Removed {
                     continue;
                 }
                 ui.push_id(source.id, |ui| {
                     ui.horizontal(|ui| {
+                        if source.link.is_some() {
+                            ui.add_space(22.0);
+                        }
                         let mut visible = state == SourceState::Visible;
                         if widgets::checkbox(ui, p, &mut visible, "")
                             .on_hover_text(aurora_i18n::tr!("blender-live-visible"))
@@ -268,11 +280,10 @@ fn object_list(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette, ca
                         let import_label = aurora_i18n::tr!("blender-live-upload");
                         let import_width = widgets::action_button_fit(ui, "file-upload-filled", import_label);
                         let name_width = (ui.available_width() - import_width - ui.spacing().item_spacing.x).max(1.0);
-                        let name = if let Some(link) = source.link {
-                            let root = sources.iter().find(|s| s.id == link.parent).map_or("", |s| s.name.as_str());
-                            aurora_i18n::tr!("blender-object-child", name = source.name.as_str(), root = root)
-                        } else if sources.iter().any(|s| s.link.is_some_and(|link| link.parent == source.id)) {
-                            aurora_i18n::tr!("blender-object-root", name = source.name.as_str())
+                        let name = if source.link.is_some() {
+                            aurora_i18n::tr!("blender-object-linked-prim", number = row.number, name = source.name.as_str())
+                        } else if row.prims > 1 {
+                            aurora_i18n::tr!("blender-object-linkset", name = source.name.as_str(), prims = row.prims)
                         } else {
                             source.name.clone()
                         };
@@ -353,6 +364,9 @@ fn object_controls(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette
             }),
     };
     ui.weak(status);
+    if widgets::checkbox(ui, p, &mut live.edit_linked, aurora_i18n::tr!("ui-context-edit-linked-parts")).changed() {
+        live.object_action = Some((source.id, Action::EditLinked(live.edit_linked)));
+    }
     ui.horizontal_wrapped(|ui| {
         for (action, label, enabled) in [
             (
@@ -386,7 +400,7 @@ fn object_controls(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette
             });
         }
     });
-    ui.add_enabled_ui(present, |ui| {
+    ui.add_enabled_ui(present && (source.link.is_none() || live.edit_linked), |ui| {
         let mut position = placement.position.to_array();
         let (z, y, x) = placement.rotation.to_euler(EulerRot::ZYX);
         let mut rotation = [x.to_degrees(), y.to_degrees(), z.to_degrees()];

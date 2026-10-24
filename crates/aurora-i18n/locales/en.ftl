@@ -11187,3 +11187,17 @@ blender-live-invalid-link = Invalid live object parenting.
 blender-object-root = { $name } (root)
 blender-object-child = { $name } — linked to { $root }
 blender-object-child-frame = Position and rotation relative to root: { $root }
+
+blender-live-linkset-counts =
+    { $objects ->
+        [one] { $objects } object
+       *[other] { $objects } objects
+    } · { $prims ->
+        [one] { $prims } prim
+       *[other] { $prims } prims
+    } · { $triangles ->
+        [one] { $triangles } triangle
+       *[other] { $triangles } triangles
+    }
+blender-object-linkset = { $name } — root #1 · { $prims } prims
+blender-object-linked-prim = #{ $number } · { $name }

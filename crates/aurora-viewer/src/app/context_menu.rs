@@ -65,12 +65,11 @@ impl App {
             .filter(|object| object.is_editable_preview())
             .and_then(|object| self.blender_live.source_for_object(object.full_id))
         {
-            self.context_menu = None;
-            self.build.release_menu_selection(&self.world);
-            self.blender_live.open = true;
-            self.blender_live.selected = Some(source);
-            self.blender_live.object_action = Some((source, crate::blender_live::objects::Action::Edit));
-            return;
+            self.blender_live.selected = Some(if self.settings.build.edit_linked {
+                source
+            } else {
+                self.blender_live.linked_root(source)
+            });
         }
         // the previous menu's selection goes, as deselectUnused would
         self.build.release_menu_selection(&self.world);
@@ -229,6 +228,11 @@ impl App {
             f.hud_move_locked = w.hud_locks.locked(root.full_id);
         }
         self.object_menu_facts(idx, &mut f);
+        f.local_preview = o.is_editable_preview();
+        if f.local_preview {
+            f.wear = true;
+            f.drop = true;
+        }
         f
     }
 
@@ -304,6 +308,16 @@ impl App {
             }
             CtxAction::AttachmentInventory(item) => self.apply_appearance_action(crate::world::appearance::Action::ShowOriginal(item)),
             CtxAction::Detach(key) => {
+                if let Some(source) = self
+                    .world
+                    .objects
+                    .index_of(&key)
+                    .and_then(|idx| self.world.objects.get(idx))
+                    .and_then(|o| self.blender_live.source_for_object(o.full_id))
+                {
+                    self.blender_live.object_action = Some((source, crate::blender_live::objects::Action::Detach));
+                    return;
+                }
                 if let Some(idx) = self.world.objects.index_of(&key)
                     && ui::context::wearer(&self.world, idx) == Some(self.world.agent_id)
                     && let Some(item) = self
@@ -469,6 +483,10 @@ impl App {
                 }
             }
             CtxAction::Delete(id) => {
+                if let Some(source) = self.blender_live.source_for_object(id) {
+                    self.blender_live.object_action = Some((source, crate::blender_live::objects::Action::Derez));
+                    return;
+                }
                 let Some(idx) = self.world.objects.index_of_uuid(&id) else {
                     return;
                 };
@@ -517,7 +535,19 @@ impl App {
             CtxAction::Return(id) => self.ask_return(id),
             CtxAction::Wear { id, point, add } => self.wear_object(id, point, add),
             CtxAction::Scripts { id, action } => self.ask_scripts(id, action),
-            CtxAction::Drop(key) => self.ask_drop(key),
+            CtxAction::Drop(key) => {
+                if let Some(source) = self
+                    .world
+                    .objects
+                    .index_of(&key)
+                    .and_then(|idx| self.world.objects.get(idx))
+                    .and_then(|o| self.blender_live.source_for_object(o.full_id))
+                {
+                    self.blender_live.object_action = Some((source, crate::blender_live::objects::Action::Drop));
+                } else {
+                    self.ask_drop(key);
+                }
+            }
             CtxAction::BlockParticleOwner(owner) => self.block_particle_owner(owner),
             CtxAction::AttachmentFavorite(item) => self.attachment_favorite(item),
             CtxAction::EditLinkedParts(on) => {

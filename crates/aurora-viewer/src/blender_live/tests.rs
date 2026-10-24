@@ -139,6 +139,26 @@ fn blender_live_linked_sources_validate_parentage_and_install_roots_before_child
 }
 
 #[test]
+fn blender_live_objects_are_grouped_as_linksets_with_stable_native_prim_numbers() {
+    let mut value = linked_objects();
+    let mut separate = triangle()["meshes"][0].clone();
+    separate["source_id"] = serde_json::json!(Uuid::from_u128(3));
+    value["meshes"].as_array_mut().expect("meshes").insert(1, separate);
+    let mut live = Live::default();
+    live.receive(prepare(&value).expect("snapshot"));
+    let rows = live.linkset_rows();
+    assert_eq!(
+        rows.iter().map(|r| r.source.id).collect::<Vec<_>>(),
+        // Keep the original root order; children follow their own root.
+        [Uuid::from_u128(3), Uuid::from_u128(1), Uuid::from_u128(2)]
+    );
+    assert_eq!(
+        rows.iter().map(|r| (r.number, r.prims)).collect::<Vec<_>>(),
+        [(0, 1), (1, 3), (2, 2)]
+    );
+}
+
+#[test]
 fn blender_live_linked_meshes_are_individually_editable_and_follow_the_root() {
     use crate::{
         build::{BuildSettings, BuildTool},
@@ -173,8 +193,7 @@ fn blender_live_linked_meshes_are_individually_editable_and_follow_the_root() {
         object.local_id = 1 + i as u32;
         object.state = 0;
         object.scale = p.size * p.scale;
-        object.position = if *part == 0 { p.position } else { Vec3::ZERO };
-        object.rotation = p.rotation;
+        (object.position, object.rotation) = live.preview_transform(mesh.source, *part).expect("preview transform");
         object.update_flags |= crate::ui::context::flags::OBJECT_MOVE | crate::ui::context::flags::OBJECT_MODIFY;
         let id = object.full_id;
         let index = world
@@ -189,6 +208,19 @@ fn blender_live_linked_meshes_are_individually_editable_and_follow_the_root() {
     let ri = world.objects.index_of(&roots[&root]).expect("root");
     let ci = world.objects.index_of(&roots[&child]).expect("child");
     assert_eq!(crate::build::root_of(&world, ci), ri);
+    assert_eq!(live.edit_target(child, false), live.root(root));
+    assert_eq!(live.edit_target(child, true), live.root(child));
+    assert_eq!(
+        world.objects.children_of(&roots[&root]).len(),
+        2,
+        "every linked prim has the same single root"
+    );
+    assert!(
+        world.objects.children_of(&roots[&child]).is_empty(),
+        "linked prims are not nested linksets"
+    );
+    let batch = world.objects.index_of_uuid(&live.instances[&(child, 1)]).expect("child batch");
+    assert_eq!(world.objects.get(batch).expect("batch").position, live.placements[&child].position);
     let mut build = BuildTool::default();
     let mut settings = BuildSettings::default();
     build.click_select(&mut world, &settings, Some(ci), false);
@@ -196,11 +228,13 @@ fn blender_live_linked_meshes_are_individually_editable_and_follow_the_root() {
     settings.edit_linked = true;
     build.click_select(&mut world, &settings, Some(ci), false);
     assert_eq!(build.selection, [roots[&child]]);
+    assert_eq!(build.selected_link_number(&world), Some(2));
     let now = std::time::Instant::now();
     let initial = Scene::object_transform(&world, ci, now, 0).expect("child transform").0;
     build.set_transform(&mut world, &settings, Some(initial + Vec3::Y), None, None, true);
     live.capture_placements(&mut world);
     assert!(live.placements[&child].position.abs_diff_eq(Vec3::new(1.0, 1.0, -1.0), 1e-5));
+    assert_eq!(world.objects.get(batch).expect("batch").position, live.placements[&child].position);
     let root_placement = live.placements[&root];
     live.place_object(
         root,
@@ -214,6 +248,12 @@ fn blender_live_linked_meshes_are_individually_editable_and_follow_the_root() {
     live.apply_transform(root, &mut world);
     let p = Scene::object_transform(&world, ci, now, 0).expect("rotated child").0;
     assert!(p.abs_diff_eq(root_placement.position + Vec3::new(-2.0, 2.0, -2.0), 1e-4));
+    assert!(
+        Scene::object_transform(&world, batch, now, 0)
+            .expect("batch")
+            .0
+            .abs_diff_eq(p, 1e-4)
+    );
     value["revision"] = 2.into();
     value["meshes"][0]["name"] = "Renamed child".into();
     let update = prepare(&value).expect("update");

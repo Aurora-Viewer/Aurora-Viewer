@@ -1810,7 +1810,7 @@ To check with these scenarios:
 | `AURORA_DEMO_GROUNDING=slope\|steps\|landing` | Standard standing feet on uneven support and landing recovery; append `-off` for original poses |
 | `AURORA_DEMO_AO=<mode>` | Offline AO manager, compact toolbar controls and movement scenarios |
 | `AURORA_DEMO_ANIMESH=1` | Animated objects (animesh) |
-| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, static object placement, LOD import and shape transfer |
+| `AURORA_DEMO_BLENDER_LIVE=1\|objects\|static\|static-hud\|static-attached\|static-detached\|static-linked\|static-linked-child\|static-linked-hud\|static-linked-attached\|static-linked-detached\|static-linked-menu\|static-linked-hud-menu\|upload\|lods\|shape\|shape-readonly\|shape-apply` | Local Blender bridge, static object placement, LOD import and shape transfer |
 | `AURORA_DEMO_BLENDER_PORT=<1024..65535>` | Private loopback port for the Blender demo; use the same `--port` in the native bridge script to avoid already-open Blender clients |
 | `AURORA_DEMO_ANIMESH_TRIS=<n>` | Triangles added to the demo's rigged mesh |
 | `AURORA_DEMO_HAND_IK=<mode>` | Local or observed motorcycle contacts on linked targets |
@@ -1835,7 +1835,10 @@ the green root, sent child-first to verify order-independent parentage. The
 list shows both sources and their root relationship; editing the root selects
 the linked set. `static-linked-child` selects only the child with Edit linked.
 `static-linked-hud`, `static-linked-attached` and `static-linked-detached`
-exercise whole-family attachment or removal. `static-hud` attaches it at HUD Center;
+exercise whole-family attachment or removal. `static-linked-menu` opens the
+native object menu on the child, preserving whole-linkset selection;
+`static-linked-hud-menu` exercises the worn local menu. Check the single root,
+indented prim numbers, object/prim counts and explicit Edit linked checkbox. `static-hud` attaches it at HUD Center;
 `static-attached` attaches it to the right hand; `static-detached` removes its
 draw object while retaining the source row. Check numeric/gizmo transforms,
 body/HUD menus, detach/rez, source visibility and geometry updates, with the
