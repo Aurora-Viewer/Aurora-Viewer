@@ -398,7 +398,13 @@ pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
             let Some(second) = rects.second else {
                 return Vec::new();
             };
-            egui::pos2(second.left() + second.width() * 0.4, second.bottom() - 6.0)
+            // held, the ghost stands in the gap that opens under the second
+            let y = if demo == Demo::Hold {
+                second.bottom() + (source.center().y - source.top()) + 2.0
+            } else {
+                second.bottom() - 6.0
+            };
+            egui::pos2(second.left() + second.width() * 0.4, y)
         }
         // at the left of the window, where there is room
         Demo::Out | Demo::Nearby => egui::pos2((rects.window.left() - 220.0).max(60.0), rects.window.top() + 60.0),
