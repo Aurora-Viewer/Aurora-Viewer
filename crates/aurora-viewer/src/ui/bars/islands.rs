@@ -395,7 +395,7 @@ fn account(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo, island: Rect, action
 fn readouts(st: &StatusInfo) -> (String, String, String) {
     let s = st.system_island;
     (
-        clock::text(s.clock_zone, s.clock_seconds),
+        clock::text(s),
         format!("{} ms", st.ping_ms),
         aurora_i18n::number(f64::from(st.fps), 1),
     )
@@ -483,8 +483,9 @@ pub(super) fn loss_color(p: &Palette, loss: f32) -> Color32 {
     }
 }
 
-/// The system island: as its right click chooses, the clock (SLT, local
-/// time or UTC, a left click shows the next; its seconds), region latency, frame rate (a click opens Performance),
+/// The system island: as its right click chooses, the clock (SLT or local
+/// time, which a left click switches; its seconds, 12 or 24 hours), region
+/// latency, frame rate (a click opens Performance),
 /// Firestorm's traffic indicator, then media, music and volume. A right
 /// click anywhere on it, its buttons too, opens its menu. Returns the audio
 /// controls' action and whether the pointer is over the readouts (the
@@ -740,6 +741,21 @@ fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusI
                 ..s
             });
         }
+        // and its 12 / 24 hours (Preferences › Layout too)
+        if icon == "clock-filled" {
+            use crate::settings::ClockFormat;
+            menu::submenu(ui, p, "clock-filled", aurora_i18n::tr!("ui-bars-clock-format"), s.clock, |ui| {
+                for (format, label) in [
+                    (ClockFormat::Auto, aurora_i18n::tr!("ui-options-clock-format-auto")),
+                    (ClockFormat::H12, aurora_i18n::tr!("ui-options-clock-format-12")),
+                    (ClockFormat::H24, aurora_i18n::tr!("ui-options-clock-format-24")),
+                ] {
+                    if menu::check(ui, p, "clock-filled", label, s.clock_format == format, true) {
+                        *action = BarAction::SystemIsland(crate::settings::SystemIsland { clock_format: format, ..s });
+                    }
+                }
+            });
+        }
     }
     if menu::check(
         ui,
@@ -768,7 +784,7 @@ const TIP_ROW: f32 = 18.0;
 const TIP_CURVE: f32 = 28.0;
 
 /// The system island's detailed tooltip (the mockup's hover state), under
-/// the island at its right end: SLT, local time and UTC, date, latency, frame rate, losses
+/// the island at its right end: SLT and local time, date, latency, frame rate, losses
 /// and bandwidth with the network's last minute (`perf::net_curve`, the
 /// Performance window's data), parcel music, what the clicks do. It shows
 /// after egui's tooltip delay over the readouts and stays while the
@@ -862,10 +878,9 @@ fn tip_body(
         month = crate::ui::land::months()[month - 1]
     );
     let (_, ping, fps) = readouts(st);
-    let [slt, local, utc] = clock::tip_values(st.system_island.clock_seconds);
+    let [slt, local] = clock::tip_values(st.system_island);
     tip_row(ui, p, icons, "clock-filled", aurora_i18n::tr!("ui-bars-tip-slt"), &slt, p.ink);
     tip_row(ui, p, icons, "home-filled", aurora_i18n::tr!("ui-bars-tip-local"), &local, p.ink);
-    tip_row(ui, p, icons, "world-filled", aurora_i18n::tr!("ui-bars-tip-utc"), &utc, p.ink);
     tip_row(ui, p, icons, "calendar-filled", aurora_i18n::tr!("ui-bars-tip-date"), &date, p.ink);
     tip_row(
         ui,
@@ -1430,9 +1445,9 @@ mod tests {
             (rect.right(), rect.top(), rect.width()),
             (system.right(), system.bottom() + MARGIN, TIP_W)
         );
-        // the network row: the seventh row (SLT, local time, UTC, date,
-        // latency, frame rate before it) and its curve
-        let network = Pos2::new(rect.center().x, rect.top() + 6.0 + TIP_ROW * 6.0 + TIP_ROW);
+        // the network row: the sixth row (SLT, local time, date, latency,
+        // frame rate before it) and its curve
+        let network = Pos2::new(rect.center().x, rect.top() + 6.0 + TIP_ROW * 5.0 + TIP_ROW);
         frame_at(&ctx, &st, 0.9, vec![egui::Event::PointerMoved(network)]);
         assert!(open(), "kept while the pointer goes into it");
         frame_at(&ctx, &st, 0.95, vec![press(network, egui::PointerButton::Primary, true)]);

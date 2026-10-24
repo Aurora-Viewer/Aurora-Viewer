@@ -17,9 +17,9 @@
 //! (its detailed tooltip shown), `sysmenu` (its right click),
 //! `netgraph` (Firestorm's traffic indicator shown), `sysperf` /
 //! `sysnet` (Performance opened from the island at frame 300, by its frame
-//! rate / its network, under the island); the clock: `clocklocal` /
-//! `clockutc` (local time / UTC, whatever is saved: a click then does not
-//! change it), `noseconds` (without its seconds). The hidden interface: `hidden`
+//! rate / its network, under the island); the clock: `clocklocal` (local
+//! time, whatever is saved: a click then does not change it), `noseconds`
+//! (without its seconds), `clock12` / `clock24` (12 / 24 hours). The hidden interface: `hidden`
 //! (hidden at frame 600, its hint shown), `peek` (hidden, the pointer held at
 //! the top edge: the top islands back), `peekleft` (hidden, the pointer held
 //! at the left edge: the left toolbar back); with `legacy`, Firestorm's
@@ -73,6 +73,7 @@ pub struct DemoBars {
     /// The clock's time and seconds, whatever is saved.
     pub clock_zone: Option<crate::settings::ClockZone>,
     pub clock_seconds: Option<bool>,
+    pub clock_format: Option<crate::settings::ClockFormat>,
     /// Performance opened from the system island.
     pub perf: Option<Perf>,
     /// The interface hidden at frame 600; true: the pointer at the top edge.
@@ -142,7 +143,8 @@ pub fn parse(value: &str) -> DemoBars {
             "sysmenu" => d.open = Some(Open::System),
             "netgraph" => d.net_stats = Some(true),
             "clocklocal" => d.clock_zone = Some(crate::settings::ClockZone::Local),
-            "clockutc" => d.clock_zone = Some(crate::settings::ClockZone::Utc),
+            "clock12" => d.clock_format = Some(crate::settings::ClockFormat::H12),
+            "clock24" => d.clock_format = Some(crate::settings::ClockFormat::H24),
             "noseconds" => d.clock_seconds = Some(false),
             "sysperf" => d.perf = Some(Perf::Fps),
             "sysnet" => d.perf = Some(Perf::Network),
@@ -200,6 +202,7 @@ mod tests {
         let clock = parse("clocklocal,noseconds");
         assert_eq!(clock.clock_zone, Some(crate::settings::ClockZone::Local));
         assert_eq!(clock.clock_seconds, Some(false));
+        assert_eq!(parse("clock12").clock_format, Some(crate::settings::ClockFormat::H12));
         let peek = parse("peekleft");
         assert!(peek.peek_left && peek.hidden == Some(false) && peek.classic == Some(false));
         assert_eq!(

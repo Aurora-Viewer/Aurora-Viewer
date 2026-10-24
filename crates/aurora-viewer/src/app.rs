@@ -802,6 +802,8 @@ impl App {
     pub fn new() -> anyhow::Result<App> {
         // found on a background thread while the rest starts
         ui::fonts::fallback::start();
+        // the regional 12 / 24 hours of the bars' clock, read once
+        ui::bars::clock::read_system_format();
         let mut settings = Settings::load();
         aurora_i18n::select(&settings.language, crate::cli::get().language.as_deref());
         if std::env::var_os("AURORA_DEMO").is_some() && std::env::var_os("AURORA_DEMO_KEYBOARD").is_some() {
@@ -11477,6 +11479,7 @@ impl App {
                         crate::settings::SystemIsland {
                             clock_zone: demo.clock_zone.unwrap_or(s.clock_zone),
                             clock_seconds: demo.clock_seconds.unwrap_or(s.clock_seconds),
+                            clock_format: demo.clock_format.unwrap_or(s.clock_format),
                             ..s
                         }
                     } else {

@@ -1524,15 +1524,12 @@ pub fn top_bars(
                     }
                     ui.label(small(format!("{} ms", st.ping_ms), p.muted))
                         .on_hover_text(aurora_i18n::tr!("ui-bars-region-latency"));
-                    // a left click shows the next time (SLT, local, UTC)
+                    // a left click switches SLT and local time
                     let island = st.system_island;
                     let clock = ui
-                        .add(
-                            egui::Label::new(small(clock::text(island.clock_zone, island.clock_seconds), p.muted))
-                                .sense(egui::Sense::click()),
-                        )
+                        .add(egui::Label::new(small(clock::text(island), p.muted)).sense(egui::Sense::click()))
                         .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .on_hover_text(clock::hover_text(island.clock_seconds));
+                        .on_hover_text(clock::hover_text(island));
                     if clock.clicked() {
                         action = BarAction::SystemIsland(crate::settings::SystemIsland {
                             clock_zone: clock::next(island.clock_zone),

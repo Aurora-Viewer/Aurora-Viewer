@@ -52,12 +52,24 @@ pub struct SystemIsland {
     pub fps: bool,
     /// Media, music and volume.
     pub media: bool,
-    /// The time the bars' clock shows; a left click on it moves to the
-    /// next (#453, `ui/bars/clock.rs`).
+    /// The time the bars' clock shows; a left click on it switches to the
+    /// other (#453, `ui/bars/clock.rs`).
+    #[serde(deserialize_with = "clock_zone_or_slt")]
     pub clock_zone: ClockZone,
     /// The clock's seconds (the Legacy Viewer's FSStatusBarTimeFormat
     /// "Seconds" formats); on, as Aurora's clock always showed them.
     pub clock_seconds: bool,
+    /// 12 or 24 hours, by default as the system's regional format.
+    pub clock_format: ClockFormat,
+}
+
+/// A saved clock time: UTC, a choice of the clock's first version, and
+/// anything unknown fall back to SLT rather than failing the whole file.
+fn clock_zone_or_slt<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ClockZone, D::Error> {
+    Ok(match String::deserialize(d)?.as_str() {
+        "Local" => ClockZone::Local,
+        _ => ClockZone::Slt,
+    })
 }
 
 impl Default for SystemIsland {
@@ -69,18 +81,28 @@ impl Default for SystemIsland {
             media: true,
             clock_zone: ClockZone::Slt,
             clock_seconds: true,
+            clock_format: ClockFormat::Auto,
         }
     }
 }
 
-/// The time of the bars' clock: Second Life time (US Pacific), the
-/// computer's own, or UTC.
+/// The time of the bars' clock: Second Life time (US Pacific) or the
+/// computer's own.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ClockZone {
     #[default]
     Slt,
     Local,
-    Utc,
+}
+
+/// The hours of the bars' clock: as the system's regional format (Windows'
+/// short time, LC_TIME elsewhere), 12 hours with AM / PM, or 24 hours.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ClockFormat {
+    #[default]
+    Auto,
+    H12,
+    H24,
 }
 
 /// How notifications arrive (Preferences › Aurora): unrolled from the bell
@@ -2419,6 +2441,24 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    /// UTC, a clock time of the first version (#453), and an unknown name
+    /// come back as SLT, the rest of the island kept.
+    #[test]
+    fn a_saved_utc_clock_falls_back_to_slt() {
+        let read = |json: &str| serde_json::from_str::<super::SystemIsland>(json).expect("system island");
+        let utc = read(r#"{"clock_zone":"Utc","clock_seconds":false,"ping":false}"#);
+        assert_eq!(utc.clock_zone, super::ClockZone::Slt);
+        assert!(!utc.clock_seconds && !utc.ping);
+        assert_eq!(read(r#"{"clock_zone":"Mars"}"#).clock_zone, super::ClockZone::Slt);
+        assert_eq!(read(r#"{"clock_zone":"Local"}"#).clock_zone, super::ClockZone::Local);
+        assert_eq!(read("{}").clock_format, super::ClockFormat::Auto);
+        let local = super::SystemIsland {
+            clock_zone: super::ClockZone::Local,
+            ..Default::default()
+        };
+        assert_eq!(read(&serde_json::to_string(&local).expect("json")), local);
+    }
+
     #[test]
     fn plate_click_preferences_preserve_old_settings_and_independent_choices() {
         let old: super::Settings = serde_json::from_str(r#"{"plate_click":"Profile"}"#).expect("old plate setting");
