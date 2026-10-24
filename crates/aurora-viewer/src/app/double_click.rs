@@ -243,30 +243,16 @@ impl App {
         };
         ap.set_flying(self.world.agent.flying, position);
         autopilot::land_near_target(&mut self.world, ap);
-        // Fly from physical extrapolation, independently of drawable damping
-        // and prediction lead. Landing uses actual reports, as World::auto_land
-        // does, so a predicted arrival cannot brake descent before contact.
-        let steering = if ap.landing() {
-            self.world.agent.server_pos
-        } else if ap.flying {
-            self.world.agent.predicted_position()
-        } else {
-            position
-        };
+        // Flight plans its coast from physical reports; flight_response adds
+        // their age and the link delay exactly once, without drawable lead.
+        let steering = if ap.flying { self.world.agent.server_pos } else { position };
         let rtt = self.demo_link.as_ref().map_or_else(
             || self.net.stats.ping_avg_ms.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0,
             |link| link.cfg.ping + link.cfg.jitter,
         );
         let calibration = &self.world.agent.prediction.calibration;
-        let response = autopilot::flight_response(calibration, rtt);
-        let step = ap.step_moving(
-            steering,
-            self.world.agent.velocity,
-            yaw,
-            dt.clamp(1e-3, 0.1),
-            response,
-            calibration.speed(crate::own_motion::Mode::Fly),
-        );
+        let response = autopilot::flight_response(calibration, rtt, self.world.agent.server_age());
+        let step = ap.step_moving(steering, self.world.agent.velocity, yaw, dt.clamp(1e-3, 0.1), response);
         let run = ap.run;
         self.world.agent.yaw += step.yaw;
         self.autopilot_flags = step.flags;
@@ -513,8 +499,9 @@ impl App {
             601 | 901 | 1201 | 1400 | 1501 | 2000 | 2101 | 2400 | 2600 | 2701 | 3200 | 4400
         ) {
             let distance = autopilot::avatar_position(&self.world, id).map(|p| (p - self.world.agent.position).truncate().length());
+            let height_error = autopilot::avatar_position(&self.world, id).map(|p| p.z - self.world.agent.position.z);
             log::info!(
-                "demo avatar travel: mode={mode}, frame={frame}, distance={distance:?}, active={}, following={}, flying={}, landing={}, altitude={:.3}, flags={:#x}, running={}, speed={:.3}",
+                "demo avatar travel: mode={mode}, frame={frame}, distance={distance:?}, height_error={height_error:?}, active={}, following={}, flying={}, landing={}, altitude={:.3}, flags={:#x}, running={}, speed={:.3}",
                 self.autopilot.is_some(),
                 self.world.following_avatar.is_some(),
                 self.world.agent.flying,

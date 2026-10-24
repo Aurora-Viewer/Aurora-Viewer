@@ -368,12 +368,16 @@ when unfocused") is ignored during a screenshot.
   approaches a hovering target 35 m farther away. Combine it with
   `AURORA_DEMO_LINK=300,jitter=40,aurora,native-flight` or
   `300,jitter=40,firestorm,native-flight` and
-  capture after frame 4400: the follower must settle near the target without
-  repeated crossings. The delayed native demo exercises the network/prediction
+  capture after frame 4400: the follower must stop beside the target at its
+  height after one continuous burn per axis, with no final approach impulses
+  or repeated crossings. The delayed native demo exercises the network/prediction
   path; `native-flight` adds full-speed flight and inertia to that simulator.
   Use `AURORA_DEMO_LINK=0,native-flight` with the other flight scenarios too.
-  The deterministic regression additionally covers different frame rates.
-  Logs include our flight state, landing phase and altitude. A stationary
+  The deterministic regression additionally covers different frame rates,
+  short/high-latency approaches, ascent/descent, height alignment and one burn
+  per axis. A nearby stationary hover must remain still; a leader moving away
+  horizontally or vertically must restart the follow.
+  Logs include our flight state, landing phase, altitude and height error. A stationary
   hover must cause takeoff; jump/fall or missing signals must not cause a
   spurious flight change. Takeoff respects region, parcel and RLVa permissions.
   Capture the menu at 620 and the final follow at 2450; milestone distances,
@@ -388,7 +392,8 @@ when unfocused") is ignored during a screenshot.
   never merely on the leader's landing signal or our predicted arrival.
   Repeat Go to on an airborne resident, follow a runner who walks/stops,
   then approach a stationary flyer from 30 m or more: our avatar must brake
-  and remain nearby instead of passing back and forth through the target.
+  once beside the target at the same height, then remain there without small
+  approach impulses or passing back and forth through the target.
   These actions do not route around walls.
 
 - **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle|sit-ground`**:
