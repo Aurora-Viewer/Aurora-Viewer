@@ -1,5 +1,7 @@
-//! UI fonts: Inter (default), Noto Sans and Roboto are embedded with their
-//! semi-bold face (SIL OFL, see assets/fonts/LICENSE-*.txt); installed
+//! UI fonts: Inter (default), Noto Sans, Roboto and OpenDyslexic (its
+//! letters weighted at the bottom, easier to read with dyslexia; #851) are
+//! embedded with their semi-bold face (SIL OFL, see
+//! assets/fonts/LICENSE-*.txt); installed
 //! system fonts are listed too. Characters none of them has come from the
 //! system's fonts (`fallback`).
 
@@ -11,6 +13,7 @@ pub mod fallback;
 pub const INTER: &str = "Inter";
 pub const NOTO: &str = "Noto Sans";
 pub const ROBOTO: &str = "Roboto";
+pub const OPEN_DYSLEXIC: &str = "OpenDyslexic";
 
 /// The interface font of a new profile, and of a choice that cannot be
 /// loaded any more.
@@ -23,6 +26,9 @@ static NOTO_SEMIBOLD_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSans-Se
 static ROBOTO_TTF: &[u8] = include_bytes!("../../assets/fonts/Roboto-Regular.ttf");
 // Roboto has no static SemiBold: Medium is its emphasis weight
 static ROBOTO_MEDIUM_TTF: &[u8] = include_bytes!("../../assets/fonts/Roboto-Medium.ttf");
+// OpenDyslexic has no semi-bold: Bold is its emphasis weight
+static OPEN_DYSLEXIC_OTF: &[u8] = include_bytes!("../../assets/fonts/OpenDyslexic-Regular.otf");
+static OPEN_DYSLEXIC_BOLD_OTF: &[u8] = include_bytes!("../../assets/fonts/OpenDyslexic-Bold.otf");
 
 /// An embedded interface font: its regular face and the face of its
 /// semi-bold texts.
@@ -33,7 +39,7 @@ pub struct Builtin {
 }
 
 /// The embedded fonts, in the order of the Preferences.
-pub const BUILTINS: [Builtin; 3] = [
+pub const BUILTINS: [Builtin; 4] = [
     Builtin {
         name: INTER,
         regular: INTER_TTF,
@@ -48,6 +54,11 @@ pub const BUILTINS: [Builtin; 3] = [
         name: ROBOTO,
         regular: ROBOTO_TTF,
         semibold: ROBOTO_MEDIUM_TTF,
+    },
+    Builtin {
+        name: OPEN_DYSLEXIC,
+        regular: OPEN_DYSLEXIC_OTF,
+        semibold: OPEN_DYSLEXIC_BOLD_OTF,
     },
 ];
 
@@ -723,7 +734,15 @@ mod tests {
     #[test]
     fn each_builtin_font_has_its_own_semibold_face() {
         let face = |defs: &egui::FontDefinitions, name: &str| defs.font_data.get(name).map(|d| d.bytes().to_vec());
-        for choice in ["", INTER, NOTO, ROBOTO, "system:Z:\\no such font.ttf", "Retired Font"] {
+        for choice in [
+            "",
+            INTER,
+            NOTO,
+            ROBOTO,
+            OPEN_DYSLEXIC,
+            "system:Z:\\no such font.ttf",
+            "Retired Font",
+        ] {
             let defs = definitions_for(choice, &[]);
             let b = builtin(choice).unwrap_or(&BUILTINS[0]);
             assert_eq!(face(&defs, "aurora-main").as_deref(), Some(b.regular), "{choice}");
@@ -732,11 +751,14 @@ mod tests {
         }
         assert_eq!(builtin("").map(|b| b.name), Some(INTER));
         // the semi-bold faces are a heavier design of the same family
+        // (OpenDyslexic's Bold, declared 800: it has no lighter emphasis
+        // weight)
         for b in &BUILTINS {
             let weight = |ttf| ttf_parser::Face::parse(ttf, 0).expect("embedded font").weight().to_number();
             let family = |ttf| font_family_name(ttf).expect("family name");
             assert_eq!(weight(b.regular), 400, "{}", b.name);
-            assert!((500..=600).contains(&weight(b.semibold)), "{}", b.name);
+            let heaviest = if b.name == OPEN_DYSLEXIC { 800 } else { 600 };
+            assert!((500..=heaviest).contains(&weight(b.semibold)), "{}", b.name);
             assert_eq!(family(b.regular), b.name);
             assert_eq!(family(b.semibold), b.name);
         }
