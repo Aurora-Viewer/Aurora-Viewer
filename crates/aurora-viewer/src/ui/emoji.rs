@@ -90,6 +90,13 @@ const SEARCH_ID: &str = "emoji_picker_search";
 /// ([`picker_open`]).
 const OPEN_ID: &str = "emoji_picker_open";
 
+/// Another picker of the Conversations field (the GIF picker) was drawn in
+/// this pass: Escape is its own too ([`picker_open`]).
+pub fn note_picker_shown(ctx: &egui::Context) {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::unique(OPEN_ID), pass));
+}
+
 /// A picker was drawn in the last pass: Escape is its own, not the camera's
 /// (the window events come before the pass that would consume the key).
 pub fn picker_open(ctx: &egui::Context) -> bool {

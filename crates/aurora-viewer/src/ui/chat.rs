@@ -11,6 +11,7 @@ mod console;
 mod conv_menu;
 mod find;
 mod flash;
+mod gif_picker;
 mod head;
 mod header;
 pub mod history;
@@ -105,6 +106,13 @@ pub struct ChatUi {
     /// Laid-out rows of each conversation.
     views: HashMap<Option<uuid::Uuid>, view::View>,
     pub emoji_open: bool,
+    /// The GIF picker of the conversation's field is open (one picker at a
+    /// time: opening it closes the emoji one, and the other way round).
+    pub gif_open: bool,
+    /// The GIF picker's search and tiles, shared by the windows like the
+    /// emoji picker's (`gif_picker.rs`); its settings given every frame by
+    /// the app.
+    pub gifs: gif_picker::GifPicker,
     /// The emoji picker of the chat island's field is open.
     pub bar_emoji_open: bool,
     /// The lines' style of the settings, given every frame by the app
@@ -2386,6 +2394,7 @@ pub fn show(
     }
     let style = st.demo_style.unwrap_or(st.style);
     popout::one_picker(st);
+    st.gifs.close_if_hidden(ctx.cumulative_pass_nr());
     // every entry of the window, whatever the column's search: it never
     // shows a conversation that is in its own window (`popout.rs`)
     let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)
@@ -2788,6 +2797,24 @@ fn classic_pane(
             emoji_btn = Some(b.rect);
             if b.on_hover_text(aurora_i18n::tr!("ui-chat-emoji")).clicked() {
                 st.emoji_open = !st.emoji_open;
+                st.gif_open = false;
+            }
+            if st.gifs.settings.enabled {
+                let usable = st.gifs.usable();
+                let tip = if usable {
+                    aurora_i18n::tr!("ui-chat-gif").to_owned()
+                } else {
+                    aurora_i18n::tr!("ui-chat-gif-no-key-tip").to_owned()
+                };
+                let b = ui
+                    .add_enabled_ui(usable, |ui| tool_resp(ui, p, icons, "gif", st.gif_open))
+                    .inner
+                    .on_hover_text(tip.as_str())
+                    .on_disabled_hover_text(tip.as_str());
+                if b.clicked() && usable {
+                    st.gif_open = !st.gif_open;
+                    st.emoji_open = false;
+                }
             }
             // leave exactly the send button + spacing (else the row overflows
             // and the resizable window grows every frame)
@@ -2849,6 +2876,8 @@ fn classic_pane(
             ui.ctx().memory_mut(|m| m.request_focus(conv_input));
         }
     }
+    let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
+    gif_picker::popup(ui.ctx(), p, icons, st, anchor, 4.0, conv_input, ChatType::Normal, actions);
     if st.conv_focus_request {
         st.conv_focus_request = false;
         resp.request_focus();

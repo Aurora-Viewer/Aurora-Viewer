@@ -1,0 +1,69 @@
+{
+  "data": [
+    {
+      "type": "gif",
+      "id": "AbCdEf0001",
+      "url": "https://giphy.com/gifs/test-hello-AbCdEf0001",
+      "title": "Waving Hello GIF",
+      "rating": "g",
+      "images": {
+        "fixed_width_small": {
+          "url": "https://media1.giphy.com/media/v1.Y2lkPTAwMDAwMDAw/AbCdEf0001/100w.gif?cid=00000000&ep=v1_gifs_search&rid=100w.gif&ct=g",
+          "width": "100",
+          "height": "75",
+          "size": "61234"
+        },
+        "downsized": {
+          "url": "https://media1.giphy.com/media/v1.Y2lkPTAwMDAwMDAw/AbCdEf0001/giphy-downsized.gif?cid=00000000&ep=v1_gifs_search&rid=giphy-downsized.gif&ct=g",
+          "width": "480",
+          "height": "360",
+          "size": "1534211"
+        },
+        "original": {
+          "url": "https://media1.giphy.com/media/v1.Y2lkPTAwMDAwMDAw/AbCdEf0001/giphy.gif?cid=00000000&ep=v1_gifs_search&rid=giphy.gif&ct=g",
+          "width": "480",
+          "height": "360"
+        }
+      },
+      "analytics": {
+        "onload": { "url": "https://giphy-analytics.giphy.com/v2/pingback_simple?analytics_response_payload=AAAA&action_type=SEEN" },
+        "onclick": { "url": "https://giphy-analytics.giphy.com/v2/pingback_simple?analytics_response_payload=AAAA&action_type=CLICK" },
+        "onsent": { "url": "https://giphy-analytics.giphy.com/v2/pingback_simple?analytics_response_payload=AAAA&action_type=SENT" }
+      }
+    },
+    {
+      "type": "gif",
+      "id": "AbCdEf0002",
+      "title": "No downsized",
+      "images": {
+        "fixed_width_small": {
+          "url": "https://media2.giphy.com/media/AbCdEf0002/100w.gif",
+          "width": 100,
+          "height": 100
+        },
+        "downsized": { "url": "" },
+        "original": { "url": "https://media2.giphy.com/media/AbCdEf0002/giphy.gif" }
+      }
+    },
+    {
+      "type": "gif",
+      "id": "AbCdEf0003",
+      "title": "Off the media servers",
+      "images": {
+        "fixed_width_small": { "url": "https://example.com/AbCdEf0003/100w.gif", "width": "100", "height": "60" },
+        "downsized": { "url": "https://media.giphy.com/media/AbCdEf0003/giphy.gif" }
+      }
+    },
+    {
+      "type": "gif",
+      "id": "AbCdEf0004",
+      "title": "Plain http",
+      "images": {
+        "fixed_width_small": { "url": "http://media.giphy.com/media/AbCdEf0004/100w.gif", "width": "100", "height": "60" },
+        "downsized": { "url": "https://media.giphy.com/media/AbCdEf0004/giphy.gif" }
+      }
+    }
+  ],
+  "pagination": { "total_count": 120, "count": 24, "offset": 24 },
+  "meta": { "status": 200, "msg": "OK", "response_id": "made-up" }
+}

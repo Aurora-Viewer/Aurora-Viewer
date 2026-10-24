@@ -1,0 +1,43 @@
+{
+  "result": true,
+  "data": {
+    "data": [
+      {
+        "id": 1000000000000001,
+        "slug": "made-up-hello-1",
+        "title": "Hello",
+        "file": {
+          "hd": { "gif": { "url": "https://static.klipy.com/ii/0000/aa/hd1.gif", "width": 498, "height": 498, "size": 3000000 } },
+          "md": { "gif": { "url": "https://static.klipy.com/ii/0000/aa/md1.gif", "width": 320, "height": 320, "size": 1400000 } },
+          "sm": { "gif": { "url": "https://static.klipy.com/ii/0000/aa/sm1.gif", "width": 220, "height": 220, "size": 200000 } },
+          "xs": { "gif": { "url": "https://static1.klipy.com/ii/0000/aa/xs1.gif", "width": 90, "height": 90, "size": 64000 } }
+        },
+        "tags": ["hello"],
+        "type": "gif"
+      },
+      {
+        "id": 1000000000000002,
+        "slug": "made-up-no-xs-2",
+        "title": "Only small and large",
+        "file": {
+          "hd": { "gif": { "url": "https://static2.klipy.com/ii/0000/bb/hd2.gif", "width": 400, "height": 300 } },
+          "sm": { "gif": { "url": "https://static2.klipy.com/ii/0000/bb/sm2.gif", "width": 200, "height": 150 } }
+        },
+        "type": "gif"
+      },
+      {
+        "id": 1000000000000003,
+        "slug": "made-up-elsewhere-3",
+        "title": "Elsewhere",
+        "file": {
+          "md": { "gif": { "url": "https://klipy.com.example.net/md3.gif", "width": 320, "height": 320 } },
+          "xs": { "gif": { "url": "https://static.klipy.com/ii/0000/cc/xs3.gif", "width": 90, "height": 90 } }
+        },
+        "type": "gif"
+      }
+    ],
+    "current_page": 1,
+    "per_page": 24,
+    "has_next": true
+  }
+}

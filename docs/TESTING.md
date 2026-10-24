@@ -3328,6 +3328,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services; `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
+| `AURORA_DEMO_GIFS=1\|klipy\|sent\|nokey\|net` | Conversations open on the GIF picker of the field, its results made here; `sent` sends the first GIF; `nokey` the greyed button; `net` the real services |
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
@@ -4347,6 +4348,23 @@ failure. Grid validation and any paid upload are performed by the human.
   player's volume icon shows one wave instead of two at frame 1500; no
   `video volume kept` line follows (the player's own 100 % before it is
   set is not taken for a change).
+- **`AURORA_DEMO_GIFS=1|klipy|sent|nokey|net`** (#932): the Conversations
+  window open on the friend's conversation (or the one of
+  `AURORA_DEMO_CONV`), its field's GIF picker open (`gif_picker.rs`,
+  `gif_search.rs`). `1` / `open`: GIPHY's tab on its trending, 24 tiles of
+  dots going round drawn by the demo (no network, no key), the categories
+  row, "Powered by GIPHY" under the grid; scrolling to the end asks the
+  second page. `klipy`: KLIPY's tab, "dance" searched (the field's
+  placeholder reads "Search KLIPY"). `sent`: the first GIF is sent once its
+  tile shows: its link becomes our message, and its card animates under it
+  (with the previews of `AURORA_DEMO_CONV_PREVIEWS`' demo, made here).
+  Searching `none` shows the empty grid, the popup the same size. `nokey`:
+  the picker made by the real code, without the demo's key: the GIF button
+  greyed out, its tooltip pointing to Preferences › Chat › GIFs (unless the
+  build has a key). `net`: the real services, with the keys of
+  Preferences or of the build (`AURORA_GIPHY_KEY` / `AURORA_KLIPY_KEY` at
+  compile time); network needed, and a test key allows about 100 requests
+  an hour. Capture at frame 900 or later.
 - **`AURORA_DEMO_CONV_SELECT=all|part`**: the Conversations window open on
   the local chat with a selection made as soon as its lines are drawn: `all`
   as Ctrl+A (every line, out of sight included), `part` from the middle of

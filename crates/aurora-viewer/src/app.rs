@@ -12140,6 +12140,14 @@ impl App {
                 // plugins' browser
                 self.chat_ui.previews.settings.clone_from(&self.settings.link_previews);
                 self.chat_ui.previews.demo = self.demo && crate::demo::previews_offline();
+                // the GIF picker of the fields (#932): made here in demo
+                // mode, unless AURORA_DEMO_GIFS=net|nokey
+                self.chat_ui.gifs.settings.clone_from(&self.settings.gifs);
+                self.chat_ui.gifs.demo = self.demo
+                    && !matches!(
+                        crate::demo::gifs_scenario(),
+                        Some(crate::demo::Gifs::Net | crate::demo::Gifs::NoKey)
+                    );
                 let volume = self.media_volume();
                 self.chat_ui.previews.web = self.chat_ui.previews.playing().then(|| ui::chat::previews::WebEnv {
                     paths: self.media.plugins(&self.settings.media).cloned(),
@@ -12363,7 +12371,16 @@ impl App {
                     self.panels.settings = true;
                     self.options_ui.open_videos();
                 }
-                // a YouTube video playing in its window, or a card's that
+                // the GIF picker's favourites, its last tab or its random id
+                if std::mem::take(&mut self.chat_ui.gifs.changed) {
+                    self.settings.gifs.clone_from(&self.chat_ui.gifs.settings);
+                    self.settings.save();
+                }
+                if std::mem::take(&mut self.chat_ui.gifs.open_settings) {
+                    self.chat_ui.gif_open = false;
+                    self.panels.settings = true;
+                    self.options_ui.open_gifs();
+                } // a YouTube video playing in its window, or a card's that
                 // stopped being drawn
                 self.chat_ui.previews.player_window(&ctx, &p);
                 if self.settings.friends_list != friends_before {
@@ -14373,6 +14390,18 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 self.chat_ui.selected = Some(crate::demo::DEMO_GROUP1);
                 self.chat_ui.show_profile = true;
+            }
+            // AURORA_DEMO_GIFS=open|klipy|sent|nokey|net: the GIF picker of
+            // the friend's conversation (#932), with AURORA_DEMO_CONV or alone
+            if let Some(mode) = crate::demo::gifs_scenario() {
+                if std::env::var_os("AURORA_DEMO_CONV").is_none() {
+                    self.panels.chat = true;
+                    self.panels.perf = false;
+                    self.chat_ui.selected = Some(crate::demo::DEMO_FRIEND);
+                    ui::widgets::place_floater(&self.egui_ctx, "conversations", egui::pos2(460.0, 230.0), egui::vec2(700.0, 560.0));
+                }
+                self.chat_ui.gif_open = mode != crate::demo::Gifs::NoKey;
+                self.chat_ui.gifs.demo_scene(mode);
             }
             // captures: AURORA_DEMO_MAP=1 opens the mini-map and the world map
             // (with a tracked spot east of the plaza)

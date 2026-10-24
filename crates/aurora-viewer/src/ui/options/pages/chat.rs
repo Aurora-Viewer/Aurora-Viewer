@@ -69,6 +69,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 );
             });
             link_previews(cx);
+            gifs(cx);
         }
         1 => notifications(cx),
         2 => keyword_alerts(cx),
@@ -288,6 +289,59 @@ fn videos(cx: &mut Cx) {
                     changed
                 },
             );
+        });
+    });
+}
+
+/// The GIF button of the conversations' field and its picker (#932,
+/// `gif_search.rs`): on, how strict the services' filter is, and the
+/// user's own keys, over those of the build.
+fn gifs(cx: &mut Cx) {
+    use crate::gif_search::{Provider, Rating, Settings};
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-gifs"), |cx| {
+        cx.toggle(
+            tr!("ui-options-gifs-enable"),
+            tr!("ui-options-gifs-enable-hint"),
+            &field!(gifs.enabled),
+        );
+        let off = !cx.s.gifs.enabled;
+        cx.subs(off, |cx| {
+            cx.choice(
+                tr!("ui-options-gifs-rating"),
+                tr!("ui-options-gifs-rating-hint"),
+                &field!(gifs.rating),
+                &[
+                    (Rating::Strict, tr!("ui-options-gifs-rating-strict"), true),
+                    (Rating::Moderate, tr!("ui-options-gifs-rating-moderate"), true),
+                    (Rating::Relaxed, tr!("ui-options-gifs-rating-relaxed"), true),
+                ],
+            );
+            for provider in Provider::ALL {
+                let hint = if Settings::built_in(provider) {
+                    tr!("ui-options-gifs-key-built-in", service = provider.name())
+                } else {
+                    tr!("ui-options-gifs-key-needed", service = provider.name())
+                };
+                let label = tr!("ui-options-gifs-key", service = provider.name());
+                let changed_field = match provider {
+                    Provider::Giphy => field!(gifs.giphy_key),
+                    Provider::Klipy => field!(gifs.klipy_key),
+                };
+                cx.keywords("GIF").wide().row(&label, &hint, &changed_field, |ui, s| {
+                    let key = match provider {
+                        Provider::Giphy => &mut s.gifs.giphy_key,
+                        Provider::Klipy => &mut s.gifs.klipy_key,
+                    };
+                    ui.add(
+                        egui::TextEdit::singleline(key)
+                            .password(true)
+                            .desired_width(super::super::COMBO_W)
+                            .hint_text(tr!("ui-options-gifs-key-placeholder")),
+                    )
+                    .changed()
+                });
+            }
         });
     });
 }

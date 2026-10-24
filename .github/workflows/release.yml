@@ -33,8 +33,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # the version comes from the tag; a dry run keeps the one Git describes
       # (aurora-version refuses a tag that is not the checked-out commit's)
+      # the GIF picker's keys (#932), from the repository's secrets: empty
+      # when unset, and the GIF button stays greyed out until a user
+      # enters their own
       - name: Build
         shell: pwsh
+        env:
+          AURORA_GIPHY_KEY: ${{ secrets.AURORA_GIPHY_KEY }}
+          AURORA_KLIPY_KEY: ${{ secrets.AURORA_KLIPY_KEY }}
         run: |
           if ($env:GITHUB_EVENT_NAME -eq 'push') { $env:AURORA_VERSION_TAG = $env:TAG }
           cargo build --release --locked -p aurora-viewer
@@ -123,6 +129,8 @@ jobs:
       - name: Build
         env:
           CARGO_PROFILE_RELEASE_STRIP: debuginfo
+          AURORA_GIPHY_KEY: ${{ secrets.AURORA_GIPHY_KEY }}
+          AURORA_KLIPY_KEY: ${{ secrets.AURORA_KLIPY_KEY }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then export AURORA_VERSION_TAG="$TAG"; fi
           cargo build --release --locked -p aurora-viewer

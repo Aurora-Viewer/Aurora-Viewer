@@ -43,6 +43,7 @@ pub(super) struct View {
     conv_focus_request: bool,
     selection: (Option<Uuid>, select::Selection),
     emoji_open: bool,
+    gif_open: bool,
     show_profile: bool,
     members_open: bool,
     stage_mini: bool,
@@ -61,6 +62,7 @@ impl View {
         std::mem::swap(&mut self.conv_focus_request, &mut st.conv_focus_request);
         std::mem::swap(&mut self.selection, &mut st.selection);
         std::mem::swap(&mut self.emoji_open, &mut st.emoji_open);
+        std::mem::swap(&mut self.gif_open, &mut st.gif_open);
         std::mem::swap(&mut self.show_profile, &mut st.show_profile);
         std::mem::swap(&mut self.members_open, &mut st.members_open);
         std::mem::swap(&mut self.stage_mini, &mut st.stage_mini);
@@ -173,15 +175,22 @@ pub(super) fn window() -> WindowKey {
     WINDOW.with(std::cell::Cell::get)
 }
 
-/// One emoji picker open at a time: the windows share the picker's state
-/// (`emoji::Emoji`: its search, its tab, its field). Before the frame, the
-/// picker opened last stays and the others close.
+/// One picker open at a time, emoji or GIF: the windows share the
+/// pickers' state (`emoji::Emoji`: its search, its tab, its field; the GIF
+/// picker's search and tiles). Before the frame, the picker opened last
+/// stays and the others close; with none left, the GIF picker frees its
+/// tiles.
 pub(super) fn one_picker(st: &mut ChatUi) {
-    let open: Vec<WindowKey> = st
-        .emoji_open
+    let open: Vec<WindowKey> = (st.emoji_open || st.gif_open)
         .then_some(None)
         .into_iter()
-        .chain(st.popped.windows.iter().filter(|w| w.view.emoji_open).map(|w| Some(w.conversation)))
+        .chain(
+            st.popped
+                .windows
+                .iter()
+                .filter(|w| w.view.emoji_open || w.view.gif_open)
+                .map(|w| Some(w.conversation)),
+        )
         .collect();
     let keep = open
         .iter()
@@ -190,15 +199,23 @@ pub(super) fn one_picker(st: &mut ChatUi) {
         .or_else(|| open.first().copied());
     for w in open.into_iter().filter(|w| Some(*w) != keep) {
         match w {
-            None => st.emoji_open = false,
+            None => {
+                st.emoji_open = false;
+                st.gif_open = false;
+            }
             Some(c) => {
                 if let Some(other) = st.popped.windows.iter_mut().find(|o| o.conversation == c) {
                     other.view.emoji_open = false;
+                    other.view.gif_open = false;
                 }
             }
         }
     }
     st.picker_window = keep;
+    let gif_shown = st.gif_open || st.popped.windows.iter().any(|w| w.view.gif_open);
+    if !gif_shown {
+        st.gifs.close();
+    }
 }
 
 /// The emoji picker may draw in this frame: none drew yet. One opened by

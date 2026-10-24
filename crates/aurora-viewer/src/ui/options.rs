@@ -466,6 +466,12 @@ impl OptionsUi {
         self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-video-volume")));
     }
 
+    /// Opens Preferences › Chat on the GIF picker's settings (#932).
+    pub fn open_gifs(&mut self) {
+        self.open(Page::Chat, 0);
+        self.reveal = Some((Page::Chat, 0, aurora_i18n::tr!("ui-options-gifs-enable")));
+    }
+
     /// Opens the Sound and voice page on one of its parts.
     pub fn open_audio(&mut self, section: AudioSection) {
         self.open(Page::Sound, 2);

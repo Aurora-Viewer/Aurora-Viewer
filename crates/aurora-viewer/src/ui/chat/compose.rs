@@ -130,6 +130,20 @@ pub(super) fn show(
                         emoji_btn = Some(b.rect);
                         if b.clicked() {
                             st.emoji_open = !st.emoji_open;
+                            st.gif_open = false;
+                        }
+                        if st.gifs.settings.enabled {
+                            let usable = st.gifs.usable();
+                            let tip = if usable {
+                                aurora_i18n::tr!("ui-chat-gif").to_owned()
+                            } else {
+                                aurora_i18n::tr!("ui-chat-gif-no-key-tip").to_owned()
+                            };
+                            let b = ui.add_enabled_ui(usable, |ui| box_button(ui, p, "gif", &tip, st.gif_open)).inner;
+                            if b.clicked() && usable {
+                                st.gif_open = !st.gif_open;
+                                st.emoji_open = false;
+                            }
                         }
                         // narrow, only its icon. An IM has no attach button:
                         // inventory is given by dropping it on the
@@ -200,6 +214,9 @@ pub(super) fn show(
                     ui.ctx().memory_mut(|m| m.request_focus(conv_input));
                 }
             }
+            let anchor = emoji_btn.unwrap_or(resp.rect).left_top();
+            let chat_type = st.volume.chat_type();
+            super::gif_picker::popup(ui.ctx(), p, icons, st, anchor, 8.0, conv_input, chat_type, actions);
             if st.conv_focus_request {
                 st.conv_focus_request = false;
                 resp.request_focus();
@@ -294,13 +311,20 @@ fn box_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, active: boo
         ui.painter()
             .rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field.gamma_multiply(0.8));
     }
+    let tint = if !ui.is_enabled() {
+        p.muted.gamma_multiply(0.45)
+    } else if active || resp.hovered() {
+        p.ink
+    } else {
+        p.muted
+    };
     super::thread::paint_icon(
         ui.painter(),
         icon,
         egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(19.0)),
-        if active || resp.hovered() { p.ink } else { p.muted },
+        tint,
     );
-    resp.on_hover_text(tip)
+    resp.on_hover_text(tip).on_disabled_hover_text(tip)
 }
 
 /// The volume of the nearby chat: its icon, its name when `named`, and a
