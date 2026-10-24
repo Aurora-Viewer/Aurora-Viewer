@@ -1952,6 +1952,45 @@ mod tests {
         }
     }
 
+    /// The eyes' yaw in the head's frame (radians, left positive).
+    fn eye_yaw(rig: &Rig, pose: &[[[f32; 4]; 4]]) -> f32 {
+        let rot = |name: &str| Mat4::from_cols_array_2d(&pose[rig.names[name]]).to_scale_rotation_translation().1;
+        let f = (rot("mHead").inverse() * rot("mEyeLeft")) * Vec3::X;
+        f.y.atan2(f.x)
+    }
+
+    /// A cleared look-at ("none") stops the head and leaves the eyes on
+    /// their last point, as the Legacy Viewer does for any avatar; looking
+    /// ahead (no target even for us) brings the eyes straight again at
+    /// once, at the same instant, so with the same random eye movement.
+    #[test]
+    fn eyes_keep_a_cleared_target_and_come_back_ahead() {
+        let rig = rig();
+        let t0 = Instant::now();
+        let at = |s: f32| t0 + Duration::from_secs_f32(s);
+        let mut controller = synchronized_controller();
+        let mut pose = vec![Mat4::IDENTITY.to_cols_array_2d(); PALETTE_JOINTS];
+        // looking back over the left shoulder, beyond what the head turns:
+        // the eyes at their limit (EYE_ROT_LIMIT_ANGLE), eased in
+        controller.look = Some(Vec3::new(-1.0, 1.5, 0.0));
+        controller.evaluate(&rig, t0, None, &mut pose);
+        controller.evaluate(&rig, at(1.0), None, &mut pose);
+        // the random look-away may switch on the frame after a jitter: let
+        // it, so the next frames keep the same random offset
+        controller.evaluate(&rig, at(1.005), None, &mut pose);
+        let left = eye_yaw(&rig, &pose);
+        // cleared: the eyes stay where they were
+        controller.look_cleared = true;
+        controller.evaluate(&rig, at(1.01), None, &mut pose);
+        assert!((eye_yaw(&rig, &pose) - left).abs() < 0.02, "the eyes keep their point");
+        // ahead: the eyes turn back by the whole look (EYE_ROT_LIMIT_ANGLE)
+        controller.look_cleared = false;
+        controller.look = None;
+        controller.evaluate(&rig, at(1.02), None, &mut pose);
+        let ahead = eye_yaw(&rig, &pose);
+        assert!(left - ahead > 0.4, "eyes back ahead: {left} -> {ahead}");
+    }
+
     #[test]
     fn name_tag_height_updates_with_shape_and_mesh_offsets_but_not_look_at() {
         let rig = rig();
