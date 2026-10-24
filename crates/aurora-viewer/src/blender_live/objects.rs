@@ -219,7 +219,6 @@ pub enum Action {
     Attach(u8),
     Detach,
     Edit,
-    EditLinked(bool),
     Transform { position: Vec3, rotation: Quat, scale: Vec3 },
 }
 
@@ -332,7 +331,7 @@ impl Live {
     }
 
     pub fn place_object(&mut self, source: Uuid, action: Action, world: &World) {
-        let source = if matches!(action, Action::Transform { .. } | Action::Edit | Action::EditLinked(_)) {
+        let source = if matches!(action, Action::Transform { .. } | Action::Edit) {
             source
         } else {
             self.linked_root(source)
@@ -393,7 +392,7 @@ impl Live {
                 placement.rotation = rotation.normalize();
                 placement.scale = scale;
             }
-            Action::Edit | Action::EditLinked(_) => return,
+            Action::Edit => return,
         }
         if matches!(action, Action::Rez | Action::Drop) {
             let offset = self.floor_offset(source);

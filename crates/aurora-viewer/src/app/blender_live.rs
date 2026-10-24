@@ -110,21 +110,13 @@ impl App {
         if let Some((source, action)) = self.blender_live.object_action.take() {
             let source = if matches!(
                 action,
-                crate::blender_live::objects::Action::Transform { .. }
-                    | crate::blender_live::objects::Action::Edit
-                    | crate::blender_live::objects::Action::EditLinked(_)
+                crate::blender_live::objects::Action::Transform { .. } | crate::blender_live::objects::Action::Edit
             ) {
                 source
             } else {
                 self.blender_live.linked_root(source)
             };
-            if matches!(
-                action,
-                crate::blender_live::objects::Action::Edit | crate::blender_live::objects::Action::EditLinked(_)
-            ) {
-                if let crate::blender_live::objects::Action::EditLinked(on) = action {
-                    self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);
-                }
+            if matches!(action, crate::blender_live::objects::Action::Edit) {
                 if let Some(idx) = self
                     .blender_live
                     .edit_target(source, self.settings.build.edit_linked)

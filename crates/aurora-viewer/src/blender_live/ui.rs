@@ -364,9 +364,6 @@ fn object_controls(live: &mut Live, ui: &mut egui::Ui, p: &crate::theme::Palette
             }),
     };
     ui.weak(status);
-    if widgets::checkbox(ui, p, &mut live.edit_linked, aurora_i18n::tr!("ui-context-edit-linked-parts")).changed() {
-        live.object_action = Some((source.id, Action::EditLinked(live.edit_linked)));
-    }
     ui.horizontal_wrapped(|ui| {
         for (action, label, enabled) in [
             (

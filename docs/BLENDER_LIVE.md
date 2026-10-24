@@ -23,8 +23,8 @@ parent is the **root**, and Aurora preserves each mesh's relative position,
 rotation and size. Nested parents are flattened to the same root, including
 intermediate empty objects. The source list groups the linked prims under one
 root, numbered #1, #2 and onward, with an object/prim counter matching the build
-tools. Clicking Edit uses the whole linkset by default. Enable **Edit linked parts** explicitly to
-select a child alone; the same option is shared with the normal build tools.
+tools. Clicking Edit uses the whole linkset by default. Enable **Edit linked parts**
+in the normal build tools or object context menu to select a child alone.
 All static draw prims, including extra material batches, are direct children
 of the same root rather than nested objects. Rez, drop, derez, body/HUD attachment
 and detach apply to the complete set, even when
