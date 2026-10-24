@@ -1033,6 +1033,30 @@ pub(crate) fn toolstrip<R>(
     shown.inner
 }
 
+/// What is being dragged, drawn by `add` under the pointer above every
+/// window, at `pos`, with a window's shadow under it (the favourites of the
+/// bars, a conversation's entry). It takes no pointer: the drop is read
+/// under it.
+pub(crate) fn drag_ghost(ctx: &egui::Context, p: &Palette, id: &str, pos: egui::Pos2, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Area::new(egui::Id::unique(id))
+        .order(egui::Order::Tooltip)
+        .interactable(false)
+        .fade_in(false)
+        .fixed_pos(pos)
+        .show(ctx, |ui| {
+            let shadow = ui.painter().add(egui::Shape::Noop);
+            add(ui);
+            let shape = egui::epaint::Shadow {
+                offset: [0, 8],
+                blur: 24,
+                spread: 0,
+                color: p.navy.gamma_multiply(0.5),
+            }
+            .as_shape(ui.min_rect(), ui.visuals().window_corner_radius);
+            ui.painter().set(shadow, shape);
+        });
+}
+
 /// Move a dependent floater without changing its size or minimized state.
 pub fn move_floater(ctx: &egui::Context, id: &str, pos: egui::Pos2) {
     super::layout::reanchor(ctx, egui::Id::unique(id));
