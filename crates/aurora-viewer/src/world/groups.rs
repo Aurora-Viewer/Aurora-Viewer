@@ -8,7 +8,11 @@
 //! - opening a group chat ourselves sends IM_SESSION_GROUP_START (session id
 //!   = group id), answered by ChatterBoxSessionStartReply, then the recent
 //!   messages are fetched ("fetch history", FetchGroupChatHistory);
-//! - closing sends IM_SESSION_LEAVE; a blocked group chat is left at once.
+//! - closing sends IM_SESSION_LEAVE; a blocked group chat is left at once;
+//! - snoozing a group chat closes it without leaving: its messages are
+//!   dropped until the snooze ends, then the next one opens it again
+//!   (LLIMMgr::leaveSession with CLOSE_SNOOZE, checkSnoozeExpiration,
+//!   restoreSnoozedSession).
 //!
 //! The lines live in `social.ims` like 1:1 conversations (keyed by session
 //! id); this module keeps what is specific to multi-agent sessions.
@@ -18,7 +22,7 @@ use super::{ChatKind, ChatLine, Origin, World};
 use aurora_net::{GroupMembership, NetCommand, NetEvent, SessionAgent, SessionMethod};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use uuid::Uuid;
 
 /// Pinned groups of the account (FSFavoriteGroups, a per-account setting in
@@ -64,6 +68,9 @@ pub struct GroupChats {
     /// Group chats that arrived before the mute list (restored once it is
     /// loaded, exoGroupMuteList::addDeferredGroupChat).
     deferred: Vec<Uuid>,
+    /// Snoozed group chats and when their snooze ends
+    /// (LLIMMgr::mSnoozedSessions).
+    snoozed: HashMap<Uuid, Instant>,
     /// FSMuteAllGroups / FSMuteGroupWhenNoticesDisabled (from the settings).
     pub mute_all_groups: bool,
     pub mute_when_notices_off: bool,
@@ -93,6 +100,21 @@ impl GroupChats {
 
     pub fn is_member(&self, id: &Uuid) -> bool {
         self.group(id).is_some()
+    }
+
+    /// Snooze a group chat until `until`; a second snooze moves the end.
+    fn snooze(&mut self, group: Uuid, until: Instant) {
+        self.snoozed.insert(group, until);
+    }
+
+    /// LLIMMgr::checkSnoozeExpiration: snoozed, and over at `now`.
+    fn snooze_over(&self, group: &Uuid, now: Instant) -> bool {
+        self.snoozed.get(group).is_some_and(|until| *until <= now)
+    }
+
+    /// The group chat is no longer snoozed (it was opened again).
+    fn unsnooze(&mut self, group: &Uuid) -> bool {
+        self.snoozed.remove(group).is_some()
     }
 
     /// Groups sorted like LLGroupComparator: pinned ones first, then by
@@ -303,6 +325,7 @@ impl World {
             // opening it means receiving it again (exoGroupMuteList::remove)
             self.set_group_chat_blocked(group, false);
         }
+        self.groups.unsnooze(&group);
         self.social.focus_im = Some(group);
         let known = self.groups.sessions.get(&group).is_some_and(|s| s.active && !s.closed);
         self.info_mut(group, &g.name);
@@ -342,7 +365,26 @@ impl World {
         if self.groups.sessions.remove(&session).is_some() {
             self.groups.im(session, dialog::SESSION_LEAVE, session, String::new());
         }
+        self.groups.unsnooze(&session);
         self.social.ims.retain(|s| s.other != session);
+    }
+
+    /// Snooze a group chat for `seconds` (FSFloaterIM::snooze, then
+    /// LLIMMgr::leaveSession with CLOSE_SNOOZE): the conversation closes but
+    /// the session is not left, so the server keeps sending its messages;
+    /// they are dropped until the snooze ends, and the first one after it
+    /// opens the conversation again. 0 seconds only closes it until the next
+    /// message. False when it is not one of our group chats.
+    pub fn snooze_group_chat(&mut self, group: Uuid, seconds: u32) -> bool {
+        // LLIMSession::isGroupSessionType: only group chats are snoozed
+        if !self.groups.sessions.get(&group).is_some_and(|s| s.group) {
+            return false;
+        }
+        self.groups.sessions.remove(&group);
+        self.social.ims.retain(|s| s.other != group);
+        self.groups.snooze(group, Instant::now() + Duration::from_secs(seconds.into()));
+        log::info!("group chat snoozed for {seconds} s: {group}");
+        true
     }
 
     /// Block / unblock a group's chat (exoGroupMuteList "Group:<id>").
@@ -398,15 +440,36 @@ impl World {
                 continue;
             };
             log::info!("restoring group chat from {}", g.name);
-            self.info_mut(group, &g.name);
-            self.session_lines(group);
-            self.groups.im(group, dialog::SESSION_GROUP_START, group, String::new());
+            self.reopen_group_chat(group, &g.name);
             self.im_messages.push(crate::ui_sound::ImMessage {
                 kind: crate::ui_sound::ImKind::Group,
                 session: group,
                 new_session: true,
             });
         }
+    }
+
+    /// A group chat comes back without its invitation (a deferred or a
+    /// snoozed one): its conversation opens and the session is joined again
+    /// (LLIMMgr::addSession, LLIMModel::sendStartSession).
+    fn reopen_group_chat(&mut self, group: Uuid, name: &str) {
+        self.info_mut(group, name);
+        self.session_lines(group);
+        self.groups.im(group, dialog::SESSION_GROUP_START, group, String::new());
+    }
+
+    /// LLIMMgr::restoreSnoozedSession, for a message of a snoozed group chat
+    /// whose snooze is over: true when the conversation opened again.
+    fn restore_snoozed_group_chat(&mut self, group: Uuid) -> bool {
+        if !self.groups.unsnooze(&group) {
+            return false;
+        }
+        let Some(g) = self.groups.group(&group).cloned() else {
+            return false;
+        };
+        log::info!("group chat snooze over, reopening {}", g.name);
+        self.reopen_group_chat(group, &g.name);
+        true
     }
 
     /// Network events of groups and chat sessions; returns the event when it
@@ -609,6 +672,9 @@ impl World {
         }
         if !self.mutes.text_muted(&inv.from, &inv.from_name) {
             let new = !self.groups.sessions.contains_key(&session);
+            // an invitation opens the chat even when snoozed, as in the
+            // Legacy Viewer (LLViewerChatterBoxInvitation does not look)
+            self.groups.unsnooze(&session);
             self.info_mut(session, &inv.session_name).participants.insert(inv.from);
             self.session_sound(session, new);
             if !inv.from_name.is_empty() {
@@ -641,12 +707,26 @@ impl World {
             return false;
         }
         let session = im.session_id;
+        let mut reopened = false;
         if !self.groups.sessions.contains_key(&session) {
             // only shown once a session is open (after its invitation)
             if self.groups.deferred.contains(&session) && self.mutes.is_loaded() {
                 self.restore_deferred_group_chats();
             }
+            // a snoozed group chat: dropped until its snooze is over, then
+            // the message opens it again (llimprocessing.cpp, IM_SESSION_SEND:
+            // not for a blocked sender nor a group we left)
+            if !self.groups.sessions.contains_key(&session)
+                && self.groups.is_member(&session)
+                && !self.mutes.text_muted(&im.from_agent_id, &im.from_name)
+                && self.groups.snooze_over(&session, Instant::now())
+            {
+                reopened = self.restore_snoozed_group_chat(session);
+            }
             if !self.groups.sessions.contains_key(&session) {
+                if self.groups.snoozed.contains_key(&session) {
+                    log::info!("snoozed group chat {session}: message dropped");
+                }
                 return true;
             }
         }
@@ -666,7 +746,9 @@ impl World {
             im.from_agent_id,
             SystemTime::now(),
         );
-        self.session_sound(session, false);
+        // a snoozed chat that opens again sounds as a new one
+        // (UISndNewIncomingGroupIMSession in restoreSnoozedSession)
+        self.session_sound(session, reopened);
         // on receipt, whether or not the chat is in front (FIRE-10178)
         let open = super::attention::Open::Conversation(session);
         self.keyword_alert(im.from_agent_id, &im.from_name, &im.message, false, open);
@@ -820,6 +902,94 @@ mod tests {
         w.on_session_invite(invite(10, stranger, "Tess Touch"));
         assert!(w.groups.sessions.contains_key(&group));
         assert!(left(&mut w).is_empty());
+    }
+
+    /// LLIMMgr::checkSnoozeExpiration: over once its time has come; a second
+    /// snooze moves the end; reopening forgets it.
+    #[test]
+    fn a_snooze_ends_at_its_time() {
+        let (mut chats, group, t) = (GroupChats::default(), Uuid::from_u128(10), Instant::now());
+        assert!(!chats.snooze_over(&group, t), "not snoozed");
+        chats.snooze(group, t + Duration::from_secs(60));
+        assert!(!chats.snooze_over(&group, t));
+        assert!(chats.snooze_over(&group, t + Duration::from_secs(60)));
+        chats.snooze(group, t + Duration::from_secs(120));
+        assert!(!chats.snooze_over(&group, t + Duration::from_secs(60)));
+        assert!(chats.unsnooze(&group));
+        assert!(!chats.snooze_over(&group, t + Duration::from_secs(600)));
+        assert!(!chats.unsnooze(&group));
+    }
+
+    /// FSFloaterIM::snooze and LLIMMgr::restoreSnoozedSession: the chat
+    /// closes without leaving, its messages are dropped during the snooze,
+    /// the first one after it opens the chat again and joins the session.
+    #[test]
+    fn a_snoozed_group_chat_drops_its_messages_until_the_snooze_is_over() {
+        let (group, tess) = (Uuid::from_u128(10), Uuid::from_u128(7));
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Builders".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+        w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
+        w.on_session_invite(aurora_net::SessionInvite {
+            session: group,
+            from: tess,
+            from_name: "Tess Touch".into(),
+            message: "hi".into(),
+            session_name: "Builders".into(),
+            offline: false,
+            timestamp: 0,
+        });
+        assert!(w.groups.sessions.contains_key(&group));
+        let im = |text: &str| aurora_net::InstantMessage {
+            from_agent_id: tess,
+            from_name: "Tess Touch".into(),
+            to_agent_id: Uuid::nil(),
+            dialog: dialog::SESSION_SEND,
+            session_id: group,
+            message: text.into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: Vec::new(),
+            timestamp: 0,
+        };
+        let sent = |w: &mut World| -> Vec<u8> {
+            std::mem::take(&mut w.groups.out)
+                .into_iter()
+                .filter_map(|c| match c {
+                    NetCommand::SendImDialog { dialog, .. } => Some(dialog),
+                    _ => None,
+                })
+                .collect()
+        };
+        sent(&mut w);
+        // an hour: closed, not left
+        assert!(w.snooze_group_chat(group, 3600));
+        assert!(!w.groups.sessions.contains_key(&group));
+        assert!(w.social.ims.iter().all(|s| s.other != group));
+        assert!(sent(&mut w).is_empty(), "the session is not left");
+        // during it, nothing opens
+        assert!(w.on_session_im(&im("during")));
+        assert!(!w.groups.sessions.contains_key(&group), "dropped");
+        assert!(sent(&mut w).is_empty());
+        // once it is over, the next message opens it and joins again
+        w.groups.snooze(group, Instant::now());
+        assert!(w.on_session_im(&im("after")));
+        assert!(w.groups.sessions.contains_key(&group));
+        assert_eq!(sent(&mut w), vec![dialog::SESSION_GROUP_START]);
+        let lines = w.social.ims.iter().find(|s| s.other == group).map(|s| s.lines.len());
+        assert_eq!(lines, Some(1), "only the message after the snooze");
+        assert!(!w.groups.snooze_over(&group, Instant::now()), "forgotten once open");
+        // a conference is not snoozed; closing a chat still leaves it
+        assert!(!w.snooze_group_chat(Uuid::from_u128(99), 60));
+        w.leave_session(group);
+        assert_eq!(sent(&mut w), vec![dialog::SESSION_LEAVE]);
     }
 
     #[test]
