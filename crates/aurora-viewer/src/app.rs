@@ -776,6 +776,17 @@ fn wanted_high_contrast(settings: &Settings) -> bool {
     settings.high_contrast
 }
 
+/// The interface colours: the preferences', or in demo mode
+/// `AURORA_DEMO_COLORS` (a capture's, never saved).
+fn wanted_interface_colors(settings: &Settings) -> crate::interface_colors::InterfaceColors {
+    if std::env::var_os("AURORA_DEMO").is_some()
+        && let Some(colors) = crate::interface_colors::demo_override()
+    {
+        return colors;
+    }
+    settings.interface_colors.clone()
+}
+
 /// Test overrides of the settings (used by automated captures): the
 /// graphics level first, so that the single settings after it still change
 /// it. Applied at start, and again after a new profile's level is chosen.
@@ -862,6 +873,7 @@ impl App {
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
+        crate::interface_colors::set(wanted_interface_colors(&settings));
         let skin = Skin::load(&egui_ctx, "aurora", settings.font_scale);
         crate::crash::update(&skin.theme, &settings);
         let palette = skin.theme.palette();
@@ -8474,12 +8486,18 @@ impl App {
             if self.settings.vsync != vsync {
                 gfx.renderer.set_vsync(self.settings.vsync);
             }
-            // a new colour blindness or contrast: the palette again, at once
+            // a new colour blindness, contrast or interface colour: the
+            // palette again, at once
             let vision = wanted_vision(&self.settings);
             let high_contrast = wanted_high_contrast(&self.settings);
-            if vision != crate::colorblind::current() || high_contrast != crate::high_contrast::current() {
+            let interface_colors = wanted_interface_colors(&self.settings);
+            if vision != crate::colorblind::current()
+                || high_contrast != crate::high_contrast::current()
+                || interface_colors != crate::interface_colors::current()
+            {
                 crate::colorblind::set(vision);
                 crate::high_contrast::set(high_contrast);
+                crate::interface_colors::set(interface_colors);
                 self.palette = self.skin.theme.palette();
                 self.cursors.set_palette(&self.palette);
             }

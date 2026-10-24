@@ -3271,6 +3271,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_VOICE_PREFS=<modes>` | Voice preference overrides for offline comparisons |
 | `AURORA_DEMO_COLORBLIND=protan\|deutan\|tritan\|mono[:strength]` | Colour blindness of this run (Preferences › Accessibility), never saved |
 | `AURORA_DEMO_CONTRAST=1\|0` | High contrast palette on or off for this run (Preferences › Accessibility), never saved |
+| `AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>` | Interface colours of this run (Preferences › Appearance › Skin), never saved |
 | `AURORA_DEMO_PERF=compact`, `full`, `network` or `monitor-<section>` | Opens the Performance window: compact, the resource monitor, or one of its sections |
 | `AURORA_DEMO_BUY_CURRENCY=<mode>` | Demo balance and "Buy L$" window |
 | `AURORA_DEMO_BUY_LAND=<mode>[:confirm]` | Plaza parcel for sale and "Buy Land" window |
@@ -4110,6 +4111,16 @@ failure. Grid validation and any paid upload are performed by the human.
   and the bar islands, black text on the light violet accent; combine with
   `AURORA_DEMO_OPTIONS=14` (the Accessibility page) or
   `AURORA_DEMO_COLORBLIND`, which applies after it.
+- **`AURORA_DEMO_COLORS=accent:<hex>,surface:<hex>,text:<hex>`**: the
+  interface colours for this run, any of the three, as Preferences ›
+  Appearance › Skin › Interface colours does, without touching the saved
+  settings (for example `accent:#14B8A6` for a teal accent, or
+  `accent:#EC4899,surface:#3A2433,text:#FCE7F3` for a pink interface).
+  What to look for: the accent on the main buttons, switches, sliders,
+  selection and the 3D selection outline; the bars, fields and button
+  faces in the background's hue; the secondary text in the text's hue;
+  text that still reads on its background. `AURORA_DEMO_CONTRAST=1`
+  ignores them. Combine with `AURORA_DEMO_OPTIONS=appearance/2` (the page).
 - **`AURORA_DEMO_COLORPICK=1`**: at frame 300, opens the compact colour
   picker (`widgets::color_button`) of the first colour swatch
   drawn. To be combined with `AURORA_DEMO_OPTIONS=5` (Appearance ›
