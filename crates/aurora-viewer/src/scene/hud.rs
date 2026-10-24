@@ -125,19 +125,25 @@ impl Scene {
     }
 
     pub fn hud_pick(&self, world: &World, cursor: (f32, f32), include_hidden: bool) -> Option<(usize, Vec3, (Vec3, Vec3))> {
-        self.hud_pick_impl(world, cursor, include_hidden || self.debug_alpha.is_some(), false)
+        self.hud_pick_impl(
+            world,
+            cursor,
+            include_hidden || self.debug_alpha.is_some(),
+            false,
+            picking::FacePick::Surface,
+        )
     }
 
     /// The HUD move gesture reaches IGNORE prims, but respects texture holes.
     pub fn hud_move_pick(&self, world: &World, cursor: (f32, f32)) -> Option<usize> {
-        self.hud_pick_impl(world, cursor, self.debug_alpha.is_some(), true)
+        self.hud_pick_impl(world, cursor, self.debug_alpha.is_some(), true, picking::FacePick::HudMove)
             .map(|(idx, _, _)| idx)
     }
 
     /// Editing and right-click selection also reach CLICK_ACTION_IGNORE
     /// prims, as LLViewerWindow::cursorIntersect does in build mode.
     pub fn hud_edit_pick(&self, world: &World, cursor: (f32, f32)) -> Option<(usize, Vec3, (Vec3, Vec3))> {
-        self.hud_pick_impl(world, cursor, true, true)
+        self.hud_pick_impl(world, cursor, true, true, picking::FacePick::Surface)
     }
 
     fn hud_pick_impl(
@@ -146,6 +152,7 @@ impl Scene {
         cursor: (f32, f32),
         include_hidden: bool,
         include_ignored: bool,
+        mode: picking::FacePick,
     ) -> Option<(usize, Vec3, (Vec3, Vec3))> {
         let view = self.lists.hud_view?;
         let ray = view.ray(cursor.0, cursor.1);
@@ -171,7 +178,7 @@ impl Scene {
             {
                 continue;
             }
-            if let Some(hit) = self.face_hit(world, idx, ray, now, include_hidden)
+            if let Some(hit) = self.face_hit_mode(world, idx, ray, now, include_hidden, mode)
                 && hit.t < nearest
             {
                 nearest = hit.t;

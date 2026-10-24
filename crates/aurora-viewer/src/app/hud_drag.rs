@@ -149,7 +149,8 @@ impl App {
     }
 
     pub(super) fn hud_drag_requested(&self) -> bool {
-        self.settings.keybinds.held(Action::HudDrag, &self.down, self.mods())
+        // Build tools own their modifiers, including Ctrl for rotation.
+        !self.build.open && self.settings.keybinds.held(Action::HudDrag, &self.down, self.mods())
     }
 
     fn demo_hud_drag_binding(&self) -> Option<crate::keybinds::Binding> {
@@ -177,6 +178,14 @@ impl App {
         }
     }
     pub(super) fn update_hud_drag(&mut self, view: Option<HudView>) {
+        if self.build.open {
+            // Finish any gesture already underway before editing took over,
+            // without following the pointer into a build operation.
+            if let Some(cmd) = self.hud_drag.take().and_then(|drag| drag.release(&self.world)) {
+                self.send(NetCommand::Build(cmd));
+            }
+            return;
+        }
         if let Some(drag) = &self.hud_drag
             && !view.is_some_and(|view| drag.update(&mut self.world, view, self.cursor_pos))
         {
@@ -315,13 +324,19 @@ impl App {
                     view.height * 0.5 - pos.z * view.height * view.zoom,
                 );
                 self.demo_hud_drag_key(true);
-                let before = self.world.hud_zoom;
+                let position = self.world.objects.get(root).map(|o| o.position);
+                let scale = self.world.hud_scale(root);
+                self.on_left_press();
+                let dragged = self.hud_drag.is_some();
+                self.cursor_pos.0 += 40.0;
+                self.update_hud_drag(Some(view));
+                self.on_left_release();
                 let handled = self.on_hud_scroll(1.0);
                 self.demo_hud_drag_key(false);
                 log::info!(
-                    "demo HUD editing local: handled={handled}, local_scale={:.3}, view_unchanged={}",
-                    self.world.hud_scale(root),
-                    self.world.hud_zoom == before
+                    "demo HUD editing gesture: drag={dragged}, position_unchanged={}, local_scale_unchanged={}, wheel_handled={handled}",
+                    self.world.objects.get(root).map(|o| o.position) == position,
+                    self.world.hud_scale(root) == scale
                 );
             }
         } else if self.frame_count == 920 {
