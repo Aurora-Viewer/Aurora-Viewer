@@ -3325,7 +3325,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `net` from the real sites |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services; `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
@@ -4292,8 +4292,16 @@ failure. Grid validation and any paid upload are performed by the human.
   title and picture come from YouTube. `videos` (#848): Nova's 4:3 clip
   ("Me at the zoo") and our upright short, each card in its video's shape
   (the short as tall as a landscape card is wide, its card no narrower
-  than 200 points; the thumbnails without their black bands). In the
-  Legacy lines (`bubbles:legacy`) no card at all. Capture at frame 900
+  than 200 points; the thumbnails without their black bands). `services`
+  (#923): links to the pages of image services, read from the saved answers
+  of `link_preview/fixtures/` (made-up ids, no network): a removed Lightshot
+  screenshot and a Reddit text post (the links alone, no card), then a
+  Gyazo page, a Flickr short link, an Imgur album, a Lightshot screenshot
+  and a Reddit post, each with its picture (the demo draws it); the Reddit
+  one blurred until clicked. `services:gyazo,flickr` keeps the listed
+  services only (`gyazo`, `flickr`, `imgur`, `lightshot`, `reddit`, `none`
+  for the two links without a card). In the Legacy lines (`bubbles:legacy`) no card
+  at all. Capture at frame 900
   (1500 with `net`).
 - **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy`**: with `AURORA_DEMO_CONV`
   and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture

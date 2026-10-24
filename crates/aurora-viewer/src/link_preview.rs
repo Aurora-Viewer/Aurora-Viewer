@@ -17,10 +17,16 @@
 //!   more; the decoding runs on a blocking thread, within pixel limits;
 //! * pictures are kept at the size they are drawn at, the frames of an
 //!   animated GIF within a memory budget.
+//!
+//! The page of an image service (Gyazo, Flickr, Imgur, Lightshot, Reddit)
+//! leads to its picture first (`services.rs`, #923), within the same rules.
 
 use crate::link_trust::Trust;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+mod services;
+pub use services::{Service, blurred_until_clicked};
 
 /// Largest download.
 pub const MAX_BYTES: u64 = 8 * 1024 * 1024;
@@ -180,6 +186,8 @@ pub enum Place {
 pub enum Target {
     Picture,
     Video(Video),
+    /// The page of an image service, which leads to its picture.
+    Page(Service),
 }
 
 /// A YouTube video.
@@ -396,8 +404,9 @@ fn start_seconds(v: &str) -> u32 {
     total
 }
 
-/// What a link shows, if anything: a YouTube video, or a picture (a file
-/// whose name says so; the answer's type decides in the end).
+/// What a link shows, if anything: a YouTube video, a picture (a file whose
+/// name says so; the answer's type decides in the end), or the page of an
+/// image service.
 pub fn target(url: &str) -> Option<Target> {
     let parsed = reqwest::Url::parse(url).ok()?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -424,7 +433,10 @@ pub fn target(url: &str) -> Option<Target> {
     let picture = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
         .iter()
         .any(|ext| path.ends_with(ext));
-    picture.then_some(Target::Picture)
+    if picture {
+        return Some(Target::Picture);
+    }
+    services::recognize(url).map(|(service, _)| Target::Page(service))
 }
 
 /// The preview a link of a message gets in a conversation: none, or what it
@@ -475,6 +487,12 @@ pub struct VideoInfo {
 pub enum Content {
     Picture(Picture),
     Video(VideoInfo),
+    /// The picture of a service's page, with the address it came from (the
+    /// enlargement asks it again in more detail).
+    Page {
+        picture: Picture,
+        source: String,
+    },
 }
 
 /// Why a link has no picture.
@@ -567,6 +585,99 @@ async fn fetch_picture_sized(client: &reqwest::Client, url: &str, side: u32) -> 
     })
     .await
     .unwrap_or(Err(Failure::NotPicture))
+}
+
+/// The most of a page or a feed read for the picture it names: the tags
+/// that name it are in the head.
+const HEAD_BYTES: usize = 256 * 1024;
+/// The longest pause a server's rate limit gets.
+const MAX_PAUSE: Duration = Duration::from_secs(300);
+
+/// Reddit answers one request a minute or so to a client without an
+/// account: after it says to wait, no request reaches it until then.
+static REDDIT_PAUSE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// The beginning of a text answer, up to `HEAD_BYTES` or the end of the
+/// head (or of the feed's first entry), and the pause the server asked for
+/// (`x-ratelimit-reset` once nothing is left, or a 429).
+async fn text_head(client: &reqwest::Client, url: &str, accept: &str, end: &str) -> (Result<String, Failure>, Option<Duration>) {
+    let mut resp = match client.get(url).header(reqwest::header::ACCEPT, accept).send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            log::debug!("link preview {url}: {e}");
+            return (Err(Failure::Unavailable), None);
+        }
+    };
+    let header = |name: &str| {
+        resp.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<f64>().ok())
+    };
+    let exhausted = header("x-ratelimit-remaining").is_some_and(|left| left < 1.0);
+    let pause = (exhausted || resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS).then(|| {
+        let secs = header("x-ratelimit-reset").or_else(|| header("retry-after")).unwrap_or(60.0);
+        Duration::from_secs_f64(secs.clamp(1.0, MAX_PAUSE.as_secs_f64()))
+    });
+    if !resp.status().is_success() {
+        log::debug!("link preview {url}: {}", resp.status());
+        return (Err(Failure::Unavailable), pause);
+    }
+    let mut body = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => body.extend_from_slice(&chunk),
+            Ok(None) => break,
+            Err(_) => return (Err(Failure::Unavailable), pause),
+        }
+        if body.len() >= HEAD_BYTES || body.windows(end.len()).any(|w| w.eq_ignore_ascii_case(end.as_bytes())) {
+            break;
+        }
+    }
+    body.truncate(HEAD_BYTES);
+    (Ok(String::from_utf8_lossy(&body).into_owned()), pause)
+}
+
+/// The picture an image service's page leads to: the address of the
+/// picture, judged as a link would be, then the picture. `trusted_only`: a
+/// load allowed by the trust of the site stays on trusted sites.
+pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool) -> Result<(Picture, String), Failure> {
+    use services::Step;
+    let (service, step) = services::recognize(url).ok_or(Failure::NotPicture)?;
+    let source = match step {
+        Step::Direct(source) => Some(source),
+        Step::OEmbed(endpoint) => download(client, &endpoint, "application/json", 64 * 1024)
+            .await
+            .ok()
+            .and_then(|(body, _)| services::from_oembed(service, &body)),
+        Step::Head(page) => text_head(client, &page, "text/html", "</head>")
+            .await
+            .0
+            .ok()
+            .and_then(|html| services::from_head(service, &html)),
+        Step::Feed(feed) => {
+            let now = std::time::Instant::now();
+            if REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until) {
+                return Err(Failure::Unavailable);
+            }
+            let (answer, pause) = text_head(client, &feed, "application/atom+xml", "</entry>").await;
+            if let (Some(pause), Ok(mut until)) = (pause, REDDIT_PAUSE.lock()) {
+                *until = Some(now + pause);
+            }
+            answer.ok().and_then(|xml| services::from_feed(&xml))
+        }
+    };
+    let Some(source) = source else {
+        log::debug!("link preview {url}: no picture on the page");
+        return Err(Failure::Unavailable);
+    };
+    match crate::link_trust::classify(&source) {
+        Trust::Dangerous(_) => return Err(Failure::Unavailable),
+        Trust::Unknown if trusted_only => return Err(Failure::Unavailable),
+        _ => {}
+    }
+    let picture = fetch_picture(client, &source).await?;
+    Ok((picture, source))
 }
 
 /// Title, channel and picture of a video.
@@ -727,6 +838,17 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
         })),
         Target::Picture if file.ends_with(".gif") => Ok(Content::Picture(demo_gif())),
         Target::Picture => Ok(Content::Picture(demo_still(640, 480, 0))),
+        // the saved answers of each service lead to the picture's address
+        Target::Page(service) => {
+            let source = services::demo_source(url).ok_or(Failure::Unavailable)?;
+            let picture = match service {
+                Service::Gyazo => demo_still(640, 360, 0),
+                Service::Imgur => demo_still(480, 600, 1),
+                Service::Lightshot => demo_still(640, 400, 1),
+                Service::Flickr | Service::Reddit => demo_still(640, 480, 0),
+            };
+            Ok(Content::Page { picture, source })
+        }
     }
 }
 
@@ -820,9 +942,99 @@ mod tests {
         assert_eq!(target("https://i.imgur.com/k3Xr9Qa.JPG"), Some(Target::Picture));
         assert_eq!(target("https://i.gyazo.com/5f2c0e.gif?x=1"), Some(Target::Picture));
         assert_eq!(target("http://pics.example.net/scene.webp"), Some(Target::Picture));
-        assert_eq!(target("https://imgur.com/gallery/abc"), None);
+        // a page of Imgur leads to its picture (#923), another site's does not
+        assert_eq!(target("https://imgur.com/gallery/abc"), Some(Target::Page(Service::Imgur)));
+        assert_eq!(target("https://example.net/gallery/abc"), None);
         assert_eq!(target("ftp://example.net/scene.png"), None);
         assert_eq!(target("https://example.net/scene.png.html"), None);
+    }
+
+    /// The page of an image service gets a picture card, which loads by
+    /// itself: the services are trusted sites (#923). Their pictures' own
+    /// files stay pictures.
+    #[test]
+    fn image_service_pages_get_a_picture_that_loads_by_itself() {
+        let s = Settings::default();
+        for (url, service) in [
+            ("https://gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9", Service::Gyazo),
+            ("https://flic.kr/p/2nDemoAb", Service::Flickr),
+            ("https://imgur.com/a/DemoAlb", Service::Imgur),
+            ("https://prnt.sc/demo42", Service::Lightshot),
+            ("https://redd.it/demo01", Service::Reddit),
+            ("https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2Fa.jpeg", Service::Reddit),
+        ] {
+            assert_eq!(target(url), Some(Target::Page(service)), "{url}");
+            assert_eq!(decide(&s, Place::Im, url), Some((Target::Page(service), Start::Load)), "{url}");
+        }
+        for url in [
+            "https://i.redd.it/demo01picture.jpeg",
+            "https://preview.redd.it/demo01picture.jpg?width=640&s=1",
+            "https://live.staticflickr.com/65535/1_2_c.jpg",
+            "https://image.prntscr.com/image/Dm0Aur0raExample.png",
+        ] {
+            assert_eq!(decide(&s, Place::Im, url), Some((Target::Picture, Start::Load)), "{url}");
+        }
+        // a hidden site hides its pages too
+        let hidden = Settings {
+            hidden_sites: vec!["prnt.sc".into()],
+            ..s
+        };
+        assert_eq!(decide(&hidden, Place::Im, "https://prnt.sc/demo42"), None);
+    }
+
+    /// A page or a feed is read up to its head only, and the pause a rate
+    /// limit asks for is kept.
+    #[test]
+    fn a_page_is_read_to_its_head_and_its_rate_limit_kept() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let client = test_client();
+        let head = "<html><head><meta property=og:image content=x></head>";
+        let tail = "<body>".to_owned() + &"x".repeat(HEAD_BYTES * 2) + "</body></html>";
+        let (base, thread) = server(vec![
+            format!(
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/html\r\nx-ratelimit-remaining: 0.0\r\nx-ratelimit-reset: 42\r\n\r\n{head}{tail}"
+            )
+            .into_bytes(),
+            b"HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".to_vec(),
+            format!("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Type: text/html\r\n\r\n{tail}").into_bytes(),
+        ]);
+        let get = |path: &str| rt.block_on(text_head(&client, &format!("{base}/{path}"), "text/html", "</head>"));
+        let (page, pause) = get("a");
+        let page = page.ok().unwrap();
+        assert!(page.starts_with(head) && page.len() <= HEAD_BYTES, "{}", page.len());
+        assert_eq!(pause, Some(Duration::from_secs(42)));
+        let (page, pause) = get("b");
+        assert_eq!(page.err(), Some(Failure::Unavailable));
+        assert_eq!(pause, Some(Duration::from_secs(60)));
+        // no head: never more than the limit
+        let (page, pause) = get("c");
+        assert_eq!(page.ok().map(|p| p.len()), Some(HEAD_BYTES));
+        assert_eq!(pause, None);
+        thread.join().unwrap();
+    }
+
+    /// One live answer of each service that has public examples, from this
+    /// machine: `cargo test --workspace live_image_services -- --ignored
+    /// --nocapture`. Reddit answers once a minute or so.
+    #[test]
+    #[ignore = "network"]
+    fn live_image_services() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let client = client(true).unwrap();
+        for url in [
+            // the example of Flickr's API documentation, and its short link
+            "https://www.flickr.com/photos/bees/2341623661/",
+            "https://flic.kr/p/4yVr8K",
+            // a well-known public post
+            "https://www.reddit.com/r/pics/comments/haucpf/",
+            // no such picture: no card
+            "https://gyazo.com/0123456789abcdef0123456789abcdef",
+        ] {
+            match rt.block_on(fetch_page(&client, url, true)) {
+                Ok((p, source)) => println!("{url}: {}x{} from {source}", p.size[0], p.size[1]),
+                Err(f) => println!("{url}: {f:?}"),
+            }
+        }
     }
 
     #[test]
