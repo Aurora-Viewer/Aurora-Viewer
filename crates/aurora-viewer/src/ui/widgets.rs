@@ -1158,7 +1158,12 @@ pub fn attention_mark(painter: &egui::Painter, p: &Palette, rect: egui::Rect, ra
     if wash > 0.0 {
         painter.rect_filled(rect, radius, p.violet.gamma_multiply(wash));
     }
-    painter.rect_stroke(rect, radius, Stroke::new(1.5 + 4.0 * wash, p.violet_light), egui::StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(1.5 + 4.0 * wash, p.violet_light),
+        egui::StrokeKind::Inside,
+    );
 }
 
 /// Is the floater `id` reduced to its title bar?

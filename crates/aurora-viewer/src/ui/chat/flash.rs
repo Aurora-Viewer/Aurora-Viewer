@@ -111,6 +111,10 @@ pub struct ButtonFlash {
     since: Option<f64>,
     /// A message came while the window was closed: the button stays tinted.
     lit: bool,
+    /// The same for a resident's line of nearby chat, out of sight: on its
+    /// own, as nearby chat may live in its own window (#910).
+    nearby_since: Option<f64>,
+    lit_nearby: bool,
     /// Preferences › Chat › "Flash the Conversations button" is on.
     on: bool,
     /// Preferences › Accessibility › Reduce motion: a steady light instead
@@ -133,9 +137,10 @@ impl ButtonFlash {
         self.still = still;
     }
 
-    /// The wash of the latest flash, risen and fallen or held still.
-    fn wash(&self, now: f64) -> (f32, bool) {
-        let (wash, moving) = if self.still { hold(self.since, now) } else { breathe(self.since, now) };
+    /// The wash of the flash begun at `since`, risen and fallen or held
+    /// still.
+    fn wash(&self, since: Option<f64>, now: f64) -> (f32, bool) {
+        let (wash, moving) = if self.still { hold(since, now) } else { breathe(since, now) };
         (BUTTON * wash, moving)
     }
 
@@ -146,19 +151,31 @@ impl ButtonFlash {
         self.lit |= closed;
     }
 
-    /// The window is shown, minimized or not: the button goes out.
+    /// A resident's line of nearby chat, out of sight (`nearby_flashes`).
+    pub fn nearby(&mut self, now: f64) {
+        self.nearby_since = Some(now);
+        self.lit_nearby = true;
+    }
+
+    /// The window is shown, minimized or not: the button goes out for the
+    /// conversations.
     pub fn shown(&mut self) {
         self.lit = false;
+    }
+
+    /// Nearby chat is on screen (the Conversations window, or its own
+    /// window): the button goes out for it.
+    pub fn nearby_seen(&mut self) {
+        self.lit_nearby = false;
     }
 
     /// The violet's strength on the button (0: none), and whether it moves:
     /// twice an entry's wash on so small a face, still below the 0.40 of
     /// an open window's button.
     pub fn button(&self, now: f64) -> (f32, bool) {
-        if !self.lit {
-            return (0.0, false);
-        }
-        self.wash(now)
+        let of = |lit: bool, since| if lit { self.wash(since, now) } else { (0.0, false) };
+        let (a, b) = (of(self.lit, self.since), of(self.lit_nearby, self.nearby_since));
+        (a.0.max(b.0), a.1 || b.1)
     }
 
     /// The violet of the minimized bar while unread messages wait inside,
@@ -168,19 +185,26 @@ impl ButtonFlash {
         if !self.on {
             return (0.0, false);
         }
-        self.wash(now)
+        self.wash(self.since, now)
     }
 }
 
 /// A resident's line of nearby chat flashes the Conversations button
-/// (FSNotifyNearbyChatFlash, from on_new_message in llimview.cpp): only
-/// while the window is closed, not minimized nor with nearby chat in its own
-/// window, never in do not disturb, and not when the button's right-click
-/// menu (or Preferences › Chat) leaves nearby chat out. The Legacy Viewer
-/// flashes for objects' lines too; here only residents' lines do, or a
-/// chatty script would never let the button rest.
-pub fn nearby_flashes(button_on: bool, nearby_on: bool, window_closed: bool, nearby_in_sight: bool, dnd: bool) -> bool {
-    button_on && nearby_on && window_closed && !nearby_in_sight && !dnd
+/// (FSNotifyNearbyChatFlash, from on_new_message in llimview.cpp) while
+/// nearby chat is out of sight (`nearby_out_of_sight`), never in do not
+/// disturb, and not when the button's right-click menu (or Preferences ›
+/// Chat) leaves nearby chat out. The Legacy Viewer flashes for objects'
+/// lines too; here only residents' lines do, or a chatty script would never
+/// let the button rest.
+pub fn nearby_flashes(button_on: bool, nearby_on: bool, out_of_sight: bool, dnd: bool) -> bool {
+    button_on && nearby_on && out_of_sight && !dnd
+}
+
+/// Nearby chat is out of sight: in the Conversations window (`apart`
+/// false), that window closed (minimized it still shows, as in the Legacy
+/// Viewer); in its own window (#910), that window put away or minimized.
+pub fn nearby_out_of_sight(apart: bool, conversations_open: bool, nearby_window_shown: bool) -> bool {
+    if apart { !nearby_window_shown } else { !conversations_open }
 }
 
 /// What the Conversations button's right-click menu asks for.
@@ -204,7 +228,14 @@ pub fn button_menu(ui: &mut egui::Ui, p: &crate::theme::Palette, nearby_on: bool
         out = Some(ButtonMenu::Open);
     }
     menu::separator(ui, p);
-    if menu::check(ui, p, "bell-off", aurora_i18n::tr!("ui-bars-conversations-no-nearby-flash"), !nearby_on, true) {
+    if menu::check(
+        ui,
+        p,
+        "bell-off",
+        aurora_i18n::tr!("ui-bars-conversations-no-nearby-flash"),
+        !nearby_on,
+        true,
+    ) {
         out = Some(ButtonMenu::NearbyFlash(!nearby_on));
     }
     out
@@ -280,18 +311,41 @@ mod tests {
     /// `World::message_flashes_conversations`).
     #[test]
     fn nearby_chat_flashes_the_closed_button_unless_left_out() {
-        assert!(nearby_flashes(true, true, true, false, false));
-        assert!(!nearby_flashes(true, false, true, false, false), "left out by the menu");
-        assert!(!nearby_flashes(false, true, true, false, false), "the button's flash off");
-        assert!(!nearby_flashes(true, true, false, false, false), "the window open or minimized");
-        assert!(!nearby_flashes(true, true, true, true, false), "nearby chat in its own window");
-        assert!(!nearby_flashes(true, true, true, false, true), "do not disturb");
-        // the flash itself does not know where a message came from: an IM
-        // after nearby chat was left out still lights the button
+        assert!(nearby_flashes(true, true, true, false));
+        assert!(!nearby_flashes(true, false, true, false), "left out by the menu");
+        assert!(!nearby_flashes(false, true, true, false), "the button's flash off");
+        assert!(!nearby_flashes(true, true, false, false), "nearby chat in sight");
+        assert!(!nearby_flashes(true, true, true, true), "do not disturb");
+        // in the Conversations window: out of sight only while it is closed
+        assert!(nearby_out_of_sight(false, false, false));
+        assert!(!nearby_out_of_sight(false, true, false), "open or minimized");
+        // in its own window (#910): out of sight while that one is put away,
+        // whatever the Conversations window does
+        assert!(nearby_out_of_sight(true, true, false));
+        assert!(!nearby_out_of_sight(true, false, true));
+    }
+
+    /// Nearby chat and the conversations light the button each on its own:
+    /// seeing nearby chat (its own window shown) leaves an IM's tint, and
+    /// opening the Conversations window leaves nearby chat's while it lives
+    /// apart; the minimized bar only flashes for the conversations.
+    #[test]
+    fn nearby_chat_and_the_conversations_light_the_button_apart() {
         let mut b = ButtonFlash::default();
         b.set_on(true);
-        b.message(1.0, true);
-        assert!(b.button(1.25).0 > BUTTON * REST);
+        b.nearby(1.0);
+        assert!(b.button(1.25).1, "nearby chat flashes the button");
+        assert_eq!(b.bar(1.25), (BUTTON * REST, false), "not the minimized bar");
+        b.message(2.0, true);
+        b.nearby_seen();
+        assert!(b.button(2.25).0 > BUTTON * REST, "the IM keeps it lit");
+        b.shown();
+        assert_eq!(b.button(2.3), (0.0, false));
+        b.nearby(3.0);
+        b.shown();
+        assert_eq!(b.button(7.5), (BUTTON * REST, false), "nearby chat's tint stays");
+        b.nearby_seen();
+        assert_eq!(b.button(7.6), (0.0, false));
     }
 
     /// Nearby chat flashes by default (FSNotifyNearbyChatFlash), for a
@@ -302,8 +356,10 @@ mod tests {
         assert!(Settings::default().flash_conversations_nearby);
         let old: Settings = serde_json::from_str("{}").expect("an old profile");
         assert!(old.flash_conversations_nearby);
-        let mut s = Settings::default();
-        s.flash_conversations_nearby = false;
+        let s = Settings {
+            flash_conversations_nearby: false,
+            ..Default::default()
+        };
         let back: Settings = serde_json::from_str(&serde_json::to_string(&s).expect("saved")).expect("read back");
         assert!(!back.flash_conversations_nearby);
     }

@@ -11,7 +11,7 @@ mod console;
 mod conv_menu;
 mod find;
 mod flash;
-pub use flash::{ButtonMenu, button_menu, nearby_flashes};
+pub use flash::{ButtonMenu, button_menu, nearby_flashes, nearby_out_of_sight};
 mod head;
 mod header;
 pub mod history;

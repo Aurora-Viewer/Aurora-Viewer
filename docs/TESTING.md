@@ -3327,6 +3327,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
 | `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
+| `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object` | Notification center: cards, burst, paused bell, history, Legacy toasts and object inventory offers |
@@ -3995,6 +3996,18 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_FPS_LIMIT=60`, at `850,900,1160` for `1` and `bell`, and
   `835,1240,1310` for the click modes. Add `AURORA_DEMO_SOUND=1` to hear the
   existing sounds.
+- **`AURORA_DEMO_CONV_BUTTON=1|mute|still|menu`**: the Conversations window
+  closed, Tess says something in nearby chat at frame 700 and Nova writes an
+  IM at 900. The demo's group chat already lit the chat island's button
+  (faint tint and light outline, as a minimized conversations bar); each of
+  the two messages flashes it again (eight rises over four seconds, the
+  outline widening with the wash). `mute` leaves nearby chat out for the run
+  (never saved): 700 stays at the tint, 900 flashes. `still` turns Reduce
+  motion on for the run: the button holds the top of a rise for the four
+  seconds instead of rising and falling. `menu` right-clicks the button at
+  700: "Open conversations", then "Don't flash for nearby chat" (unchecked).
+  Capture with `AURORA_FPS_LIMIT=60` at `690,715,730,915,1200` (715 and 915:
+  the top of a rise; 730: its bottom), `760` for `menu`.
 - **`AURORA_DEMO_KEYWORDS=1|prefs`**: keyword alerts on for the run, never saved
   (the two keywords of `demo-keywords-words`, "party, builders" in English,
   "fête, constructeurs" in French; colour change and sound on), with the

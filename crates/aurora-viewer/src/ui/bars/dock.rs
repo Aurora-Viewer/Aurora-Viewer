@@ -391,9 +391,9 @@ fn conversations_button(
         };
     let resp = ui.interact(button, Id::unique("chat_island_open"), Sense::click());
     slot_face(ui, p, button, resp.hovered(), shown);
-    // its flash while the window is closed (`ButtonFlash`), the minimized
-    // bar's own mark
-    if row.flash > 0.0 && !panels.chat {
+    // its flash while what it opens is put away (`ButtonFlash`), the
+    // minimized bar's own mark
+    if row.flash > 0.0 && !shown {
         crate::ui::widgets::attention_mark(ui.painter(), p, button, ui.visuals().window_corner_radius, row.flash);
     }
     // its right click: nearby chat left out of the flash
@@ -447,12 +447,7 @@ fn conversations_button(
 
 /// The Conversations window on `target` (the newest unread conversation),
 /// else on the local chat.
-fn open_conversations(
-    ctx: &egui::Context,
-    panels: &mut Panels,
-    chat: &mut crate::ui::chat::ChatUi,
-    target: Option<uuid::Uuid>,
-) {
+fn open_conversations(ctx: &egui::Context, panels: &mut Panels, chat: &mut crate::ui::chat::ChatUi, target: Option<uuid::Uuid>) {
     match target {
         Some(id) => chat.open(id),
         None => {
@@ -687,6 +682,8 @@ mod tests {
     #[test]
     fn the_conversations_button_menu_opens_the_window_and_leaves_nearby_chat_out() {
         let mut bench = Bench::shown();
+        // the window closed: what the button opens is put away
+        bench.panels.chat = false;
         bench.flash = 0.3;
         bench.frame(vec![]);
         let button = bench.ctx.read_response(Id::unique("chat_island_open")).expect("the button").rect;
@@ -704,7 +701,9 @@ mod tests {
         assert_eq!(bench.chat.button_menu.take(), Some(crate::ui::chat::ButtonMenu::NearbyFlash(false)));
         assert!(!bench.panels.chat);
         bench.click(button.center(), egui::PointerButton::Secondary);
-        let open = bench.text_rect(aurora_i18n::tr!("ui-bars-conversations-open")).expect("the open row");
+        let open = bench
+            .text_rect(aurora_i18n::tr!("ui-bars-conversations-open"))
+            .expect("the open row");
         bench.click(open.center(), egui::PointerButton::Primary);
         assert!(bench.panels.chat, "the window opened");
         assert_eq!(bench.chat.button_menu, None, "handled by the button");
