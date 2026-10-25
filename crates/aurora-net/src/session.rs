@@ -288,13 +288,21 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         Err(e) => {
             let (mfa, tos) = (matches!(e, LoginError::MfaRequired(_)), matches!(e, LoginError::TosRequired(_)));
             let bad_credentials = matches!(&e, LoginError::Refused { reason, .. } if reason == "key");
+            let previous_session = e.previous_session();
+            // The grid's own words (LLLoginInstance shows the message as it
+            // comes), without the "login refused (presence)" prefix.
+            let error = match &e {
+                LoginError::Refused { message, .. } if previous_session && !message.trim().is_empty() => message.trim().to_owned(),
+                _ => e.to_string(),
+            };
             emit(
                 sh,
                 NetEvent::LoginFailed {
-                    error: e.to_string(),
+                    error,
                     mfa_required: mfa,
                     tos_required: tos,
                     bad_credentials,
+                    previous_session,
                 },
             );
             return;
@@ -322,6 +330,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
                     mfa_required: false,
                     tos_required: false,
                     bad_credentials: false,
+                    previous_session: false,
                 },
             );
             return;
@@ -516,6 +525,14 @@ impl Session<'_> {
         if let Some(a) = self.main {
             self.send(a, msg, reliable);
         }
+    }
+
+    /// LLAppViewer::sendLogoutRequest: the region ends this session.
+    fn send_logout_request(&mut self) {
+        let mut m = LogoutRequest::default();
+        m.agent_data.agent_id = self.agent_id();
+        m.agent_data.session_id = self.session_id();
+        self.send_main(&m, true);
     }
 
     /// `login`: the first region of the session, whose UseCircuitCode has
@@ -1135,6 +1152,11 @@ impl Session<'_> {
                 log::warn!("no AgentMovementComplete 5 s after CompleteAgentMovement: agent updates (movement) paused");
             }
             if !self.agent_moved && t.elapsed() > Duration::from_secs(90) {
+                // STATE_AGENT_WAIT's timeout (llstartup.cpp): "Session was
+                // created, don't just hang up on server, send a logout
+                // request", or the grid keeps this session and the next
+                // login finds it still there.
+                self.send_logout_request();
                 emit(
                     self.sh,
                     NetEvent::Disconnected {
@@ -1300,10 +1322,7 @@ impl Session<'_> {
             NetCommand::Login(_) => log::warn!("already logged in"),
             NetCommand::Logout => {
                 if self.logout_started.is_none() {
-                    let mut m = LogoutRequest::default();
-                    m.agent_data.agent_id = self.agent_id();
-                    m.agent_data.session_id = self.session_id();
-                    self.send_main(&m, true);
+                    self.send_logout_request();
                     self.logout_started = Some(Instant::now());
                 }
             }
@@ -5482,15 +5501,8 @@ mod event_queue_tests {
 mod script_dialog_tests {
     use super::*;
 
-    #[tokio::test]
-    async fn script_dialog_replies_reach_the_original_simulator_with_exact_wire_fields() {
-        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
-        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
-        let neighbour = UdpSocket::bind("127.0.0.1:0").await.expect("object simulator");
-        let main_addr = main.local_addr().expect("main address");
-        let neighbour_addr = neighbour.local_addr().expect("object address");
-        let (events, received) = crossbeam_channel::unbounded();
-        let sh = Shared {
+    fn test_shared(events: crossbeam_channel::Sender<(Instant, NetEvent)>) -> Shared {
+        Shared {
             http: reqwest::Client::new(),
             caps_http: reqwest::Client::new(),
             events: crate::EventSender(events),
@@ -5499,15 +5511,18 @@ mod script_dialog_tests {
             object_cache_dir: Arc::new(Mutex::new(None)),
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
             bandwidth_kbps: Default::default(),
-        };
-        let login = Arc::new(LoginResponse {
+        }
+    }
+
+    fn test_login(main_port: u16) -> Arc<LoginResponse> {
+        Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
             session_id: Uuid::from_u128(2),
             secure_session_id: Uuid::nil(),
             first_name: String::new(),
             last_name: String::new(),
             sim_ip: Ipv4Addr::LOCALHOST,
-            sim_port: main_addr.port(),
+            sim_port: main_port,
             circuit_code: 0,
             region_x: 0,
             region_y: 0,
@@ -5520,17 +5535,20 @@ mod script_dialog_tests {
             inventory_root: Uuid::nil(),
             mfa_hash: None,
             raw: Llsd::Undef,
-        });
+        })
+    }
+
+    fn test_session<'a>(sh: &'a Shared, sock: Arc<UdpSocket>, sims: HashMap<SocketAddr, Sim>, main: SocketAddr) -> Session<'a> {
         let (eq_tx, _) = mpsc::unbounded_channel();
         let (caps_tx, _) = mpsc::unbounded_channel();
         let (notecard_copy_tx, _) = mpsc::unbounded_channel();
         let (inventory_move_tx, _) = mpsc::unbounded_channel();
-        let mut session = Session {
-            sh: &sh,
-            sock: sock.clone(),
-            login,
-            sims: [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into(),
-            main: Some(main_addr),
+        Session {
+            sh,
+            sock,
+            login: test_login(main.port()),
+            sims,
+            main: Some(main),
             eq_tx,
             caps_tx,
             notecard_copy_tx,
@@ -5565,8 +5583,102 @@ mod script_dialog_tests {
             inventory_copies: super::inventory_copies::Pending::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
-        };
+        }
+    }
 
+    /// The next LogoutRequest the simulator receives, past the other packets
+    /// a tick sends (pings, agent updates).
+    async fn logout_request_from(sim: &UdpSocket) -> LogoutRequest {
+        let mut datagram = [0; 1500];
+        loop {
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), sim.recv_from(&mut datagram))
+                .await
+                .expect("a LogoutRequest reaches the region")
+                .expect("packet");
+            let packet = parse_packet(&datagram[..size]).expect("datagram");
+            if packet.id == LogoutRequest::ID {
+                assert!(packet.reliable());
+                return packet.decode().expect("LogoutRequest");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_session_ends_with_a_logout_request_answered_or_timed_out() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let main_addr = main.local_addr().expect("main address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let one_sim = || [(main_addr, Sim::new(main_addr, 10))].into();
+        let ended = |received: &crossbeam_channel::Receiver<(Instant, NetEvent)>| {
+            received
+                .try_iter()
+                .map(|(_, event)| event)
+                .find(|event| matches!(event, NetEvent::LoggedOut | NetEvent::Disconnected { .. }))
+        };
+        let ago = |seconds| Instant::now().checked_sub(Duration::from_secs(seconds)).expect("uptime");
+        sock.writable().await.expect("socket ready");
+
+        // Log out: one LogoutRequest, the session ends on the region's reply.
+        let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
+        session.on_command(NetCommand::Logout);
+        let request = logout_request_from(&main).await;
+        assert_eq!(
+            (request.agent_data.agent_id, request.agent_data.session_id),
+            (Uuid::from_u128(1), Uuid::from_u128(2))
+        );
+        assert!(session.logout_started.is_some() && !session.finished);
+        session.on_command(NetCommand::Logout);
+        assert!(main.try_recv_from(&mut [0; 1500]).is_err(), "asked once");
+        let mut reply = LogoutReply::default();
+        reply.agent_data.agent_id = Uuid::from_u128(1);
+        reply.agent_data.session_id = Uuid::from_u128(2);
+        reply.inventory_data.push(Default::default());
+        let mut bytes = Vec::new();
+        aurora_msg::build_packet(&reply, 1, true, false, &[], &mut bytes);
+        session
+            .dispatch(main_addr, &parse_packet(&bytes).expect("reply packet"))
+            .expect("dispatch reply");
+        assert!(session.finished);
+        assert!(matches!(ended(&received), Some(NetEvent::LoggedOut)));
+
+        // No reply: the session ends 6 s later all the same (LOGOUT_REQUEST_TIME).
+        let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
+        session.on_command(NetCommand::Logout);
+        logout_request_from(&main).await;
+        session.tick();
+        assert!(!session.finished, "waits for the reply");
+        session.logout_started = Some(ago(7));
+        session.tick();
+        assert!(session.finished);
+        assert!(matches!(ended(&received), Some(NetEvent::LoggedOut)));
+
+        // The region never confirms the arrival (a previous session of the
+        // account still there, #956): STATE_AGENT_WAIT's time-out logs the
+        // new session out before going back to the login screen.
+        let mut session = test_session(&sh, sock.clone(), one_sim(), main_addr);
+        session.cam_requested_at = Some(ago(89));
+        session.tick();
+        assert!(!session.finished);
+        session.cam_requested_at = Some(ago(91));
+        session.tick();
+        logout_request_from(&main).await;
+        assert!(session.finished);
+        assert!(matches!(ended(&received), Some(NetEvent::Disconnected { lost: true, .. })));
+    }
+
+    #[tokio::test]
+    async fn script_dialog_replies_reach_the_original_simulator_with_exact_wire_fields() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let neighbour = UdpSocket::bind("127.0.0.1:0").await.expect("object simulator");
+        let main_addr = main.local_addr().expect("main address");
+        let neighbour_addr = neighbour.local_addr().expect("object address");
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        let sims = [(main_addr, Sim::new(main_addr, 10)), (neighbour_addr, Sim::new(neighbour_addr, 20))].into();
+        let mut session = test_session(&sh, sock.clone(), sims, main_addr);
         sock.writable().await.expect("socket ready");
         let object = Uuid::from_u128(3);
         // Main-region HUD, neighbouring object's menu and a menu answered

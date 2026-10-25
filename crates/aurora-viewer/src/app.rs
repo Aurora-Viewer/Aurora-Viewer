@@ -80,6 +80,7 @@ mod plate_click;
 mod pointing;
 mod region_restart;
 mod region_window;
+mod relogin;
 mod report_abuse;
 mod reset_skeleton;
 mod rlva;
@@ -239,6 +240,8 @@ pub struct App {
     /// `AURORA_DEMO_LOGIN=add-mfa`: when the offline login server asks for
     /// the second factor, after the request has been pending a moment.
     demo_mfa_challenge: Option<std::time::Instant>,
+    /// The wait for a previous session still on the grid (#956).
+    relogin: relogin::Relogin,
     panels: Panels,
     chat_ui: ChatUi,
     toolbar_ui: ui::toolbar::ToolbarUi,
@@ -966,6 +969,7 @@ impl App {
             // bug_report: Default::default(),
             login_progress: None,
             demo_mfa_challenge: None,
+            relogin: Default::default(),
             panels,
             chat_ui: ChatUi::default(),
             toolbar_ui: Default::default(),
@@ -2074,6 +2078,13 @@ impl App {
     // ------------------------------------------------------------------ login
 
     fn start_login(&mut self) {
+        // a previous session of this account may still be on the grid
+        if self.hold_login() {
+            return;
+        }
+        if self.demo && self.demo_refusal() {
+            return;
+        }
         if self.demo {
             let mode = std::env::var("AURORA_DEMO_LOGIN").unwrap_or_default();
             // Which identity the offline server received: the account being
@@ -2176,6 +2187,7 @@ impl App {
                 .map_or_else(String::new, |authorization| authorization.hash.clone()),
             mac,
             id0,
+            last_exec: self.last_exec(),
         };
         self.login_form.busy = true;
         self.login_form.error = None;
@@ -2740,7 +2752,13 @@ impl App {
                 mfa_required,
                 tos_required,
                 bad_credentials,
+                previous_session,
             } => {
+                // the grid still logs out a previous session: try again in a
+                // minute, the countdown on the login screen
+                if previous_session && self.retry_after_refusal(&error) {
+                    return;
+                }
                 self.login_form.busy = false;
                 self.login_form.transition = None;
                 self.login_form.focused = false;
@@ -2770,6 +2788,7 @@ impl App {
                 }
             }
             NetEvent::LoggedIn(l) => {
+                self.session_started(l.session_id);
                 self.named_teleport = Default::default();
                 if !self.demo {
                     let root = self.world.inventory.root;
@@ -2991,6 +3010,7 @@ impl App {
                 }
             }
             NetEvent::LoggedOut => {
+                self.session_ended();
                 self.back_to_login(None);
             }
             // both windows estimate L$: the one that asked takes the answer
@@ -6679,6 +6699,9 @@ impl App {
                 ui::exit::Action::Logout => self.back_to_login(None),
                 ui::exit::Action::Cancel => {}
             }
+        }
+        if self.in_world() {
+            self.session_heartbeat(now);
         }
         if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_hold.held() {
             self.set_mouselook_grab(true);
@@ -11421,6 +11444,7 @@ impl App {
                         mfa_required: true,
                         tos_required: false,
                         bad_credentials: false,
+                        previous_session: false,
                     });
                 } else if self.demo_mfa_challenge.is_some() {
                     ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -11432,6 +11456,7 @@ impl App {
                     .login_block_reason()
                     .or_else(|| aurora_updater::test_environment().map(|_| aurora_i18n::tr!("update-login-test")));
                 self.command_line_login();
+                self.poll_login_wait(&ctx);
                 let progress = self.login_progress.as_ref().map(|(m, f)| (m.as_str(), *f));
                 a.login = ui::login::show(
                     ui,
