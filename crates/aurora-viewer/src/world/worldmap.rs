@@ -598,6 +598,7 @@ impl WorldMap {
     /// open map centres on it.
     pub fn track_avatar(&mut self, id: Uuid, name: &str) {
         self.friend_join = None;
+        self.friend_join_flight = None;
         if let Some(a) = self.avatar.as_mut().filter(|a| a.id == id) {
             a.teleport = None;
             if let Some(t) = self.track.as_mut() {
@@ -643,6 +644,7 @@ impl WorldMap {
     /// LLAvatarTracker::untrack.
     fn stop_avatar(&mut self) {
         self.friend_join = None;
+        self.friend_join_flight = None;
         if self.avatar.take().is_some() {
             self.out.push(NetCommand::TrackAgent(Uuid::nil()));
         }
@@ -677,6 +679,7 @@ impl WorldMap {
             return;
         }
         self.friend_join = None;
+        self.friend_join_flight = None;
         if let Some(t) = self.track.as_mut() {
             t.z = z;
             if let Some(a) = self.avatar.as_mut() {

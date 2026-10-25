@@ -10,6 +10,8 @@ use uuid::Uuid;
 
 const ARRIVAL_TIMEOUT: Duration = Duration::from_secs(90);
 const POSITION_TIMEOUT: Duration = Duration::from_secs(30);
+const FLIGHT_TIMEOUT: Duration = Duration::from_secs(5);
+const HOVER_OBSERVATION: Duration = Duration::from_millis(300);
 
 pub(crate) struct FriendJoin {
     avatar: Uuid,
@@ -17,21 +19,30 @@ pub(crate) struct FriendJoin {
     started: Instant,
     arrived: Option<Instant>,
     fresh_object: bool,
+    fresh_physics: bool,
     flight: Option<bool>,
     coarse: Option<Vec3>,
 }
 
 pub(crate) struct FriendJoinTeleport {
     pub command: NetCommand,
+    pub avatar: Uuid,
+    pub fresh_physics: bool,
     pub fly_on_arrival: bool,
 }
 
 pub(super) struct FriendJoinFlight {
+    avatar: Uuid,
     region: RegionHandle,
     started: Instant,
     was_flying: bool,
+    wants_flight: bool,
+    arrival_flight: bool,
+    fresh_physics: bool,
+    hover_since: Option<Instant>,
     local_reply: bool,
-    arrived: bool,
+    arrived: Option<Instant>,
+    waiting_parcel: bool,
 }
 
 impl World {
@@ -64,6 +75,7 @@ impl World {
             started: Instant::now(),
             arrived: None,
             fresh_object: false,
+            fresh_physics: false,
             flight: None,
             coarse: None,
         })
@@ -80,31 +92,45 @@ impl World {
 
     pub(crate) fn cancel_friend_join(&mut self) {
         self.map.friend_join = None;
+        self.cancel_friend_join_flight();
     }
 
     /// Arm before sending the local hop, including a synchronous demo reply.
     /// Taking off must wait until its position has actually been applied.
-    pub(crate) fn defer_friend_join_flight(&mut self, fly: bool) {
-        self.map.friend_join_flight = self.main_region.filter(|_| fly).map(|region| FriendJoinFlight {
+    pub(crate) fn defer_friend_join_flight(&mut self, avatar: Uuid, fly: bool, fresh_physics: bool) {
+        self.map.friend_join_flight = self.main_region.map(|region| FriendJoinFlight {
+            avatar,
             region,
             started: Instant::now(),
             was_flying: self.agent.flying,
+            wants_flight: fly,
+            arrival_flight: false,
+            fresh_physics,
+            hover_since: None,
             local_reply: false,
-            arrived: false,
+            arrived: None,
+            waiting_parcel: false,
         });
+        log::info!(
+            "friend join: flight observation armed (requested {fly}, already flying {})",
+            self.agent.flying
+        );
+        self.log_friend_join_physics();
     }
 
     pub(crate) fn cancel_friend_join_flight(&mut self) {
         self.map.friend_join_flight = None;
     }
 
-    pub(super) fn friend_join_local_flight(&mut self) -> Option<bool> {
+    pub(super) fn friend_join_local_flight(&mut self, flying: bool) -> Option<bool> {
         let flight = self.map.friend_join_flight.as_mut()?;
         if self.received.is_some_and(|at| at < flight.started) || flight.started.elapsed() >= ARRIVAL_TIMEOUT {
             self.cancel_friend_join_flight();
             return None;
         }
         flight.local_reply = true;
+        flight.arrival_flight = flying || self.fly_after_teleport;
+        flight.wants_flight |= flight.arrival_flight;
         Some(flight.was_flying && self.agent.flying && !self.rlva.has("fly"))
     }
 
@@ -115,33 +141,167 @@ impl World {
             && self.received.is_none_or(|at| at >= flight.started)
             && flight.started.elapsed() < ARRIVAL_TIMEOUT
         {
-            flight.arrived = true;
+            flight.arrived.get_or_insert_with(Instant::now);
         } else {
             self.cancel_friend_join_flight();
         }
     }
 
-    /// Consume once after AgentMovementComplete. Recheck policy at the
-    /// landing point, and respect a later choice to stop existing flight.
+    /// Observe briefly after arrival too: the target's flight animation and
+    /// the landing parcel can arrive after TeleportLocal. Never consume a
+    /// negative early snapshot as the final answer, or reuse another parcel.
     pub(crate) fn take_friend_join_flight(&mut self) -> bool {
-        if !self.map.friend_join_flight.as_ref().is_some_and(|f| f.arrived) {
+        let Some(flight) = &self.map.friend_join_flight else { return false };
+        let Some(arrived) = flight.arrived else { return false };
+        if arrived.elapsed() >= FLIGHT_TIMEOUT
+            || self.main_region != Some(flight.region)
+            || (flight.was_flying && !self.agent.flying)
+            || !self.social.can_map_friend(flight.avatar)
+        {
+            log::info!("friend join: flight observation expired or superseded");
+            self.log_friend_join_physics();
+            self.cancel_friend_join_flight();
             return false;
         }
-        self.map
-            .friend_join_flight
-            .take()
-            .is_some_and(|f| (!f.was_flying || self.agent.flying) && crate::autopilot::can_fly_for_join(self))
+        let inferred_hover = !flight.wants_flight;
+        if inferred_hover {
+            let hovering = self.friend_join_hover_candidate(flight);
+            let Some(flight) = &mut self.map.friend_join_flight else {
+                return false;
+            };
+            if !hovering {
+                flight.hover_since = None;
+                return false;
+            }
+            if flight.hover_since.get_or_insert_with(Instant::now).elapsed() < HOVER_OBSERVATION {
+                return false;
+            }
+        }
+        let Some(flight) = &self.map.friend_join_flight else { return false };
+        if !flight.was_flying
+            && self
+                .objects
+                .index_of_uuid(&flight.avatar)
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|o| o.parent_id != 0)
+        {
+            self.cancel_friend_join_flight();
+            return false;
+        }
+        let parcel_is_current = self.parcel.as_ref().is_none_or(|p| {
+            p.bitmap.is_empty()
+                || self.main_origin().is_some_and(|origin| {
+                    let position = self.agent.position.as_dvec3() + glam::DVec3::new(origin.0 as f64, origin.1 as f64, 0.0);
+                    super::landmarks::in_parcel(&p.bitmap, origin, position)
+                })
+        });
+        if !parcel_is_current {
+            if let Some(flight) = &mut self.map.friend_join_flight
+                && !flight.waiting_parcel
+            {
+                flight.waiting_parcel = true;
+                log::info!("friend join: waiting for the landing parcel before flight");
+            }
+            return false;
+        }
+        self.cancel_friend_join_flight();
+        let allowed = crate::autopilot::can_fly_for_join(self);
+        if !allowed {
+            log::info!("friend join: flight blocked by current landing policy");
+        } else if inferred_hover {
+            log::info!("friend join: stable unsupported hover without a native flight signal");
+        }
+        allowed
+    }
+
+    /// AO overrides can remove the native hover signal (AOEngine::enable,
+    /// indra/newview/aoengine.cpp). LLWorld::resolveStepHeightGlobal
+    /// (indra/newview/llworld.cpp) uses
+    /// the foot plane as a possible support height, not as a contact flag:
+    /// the last ground plane can remain far below a flying avatar.
+    fn friend_join_hover_candidate(&self, flight: &FriendJoinFlight) -> bool {
+        if !flight.fresh_physics {
+            return false;
+        }
+        let Some(o) = self.objects.index_of_uuid(&flight.avatar).and_then(|i| self.objects.get(i)) else {
+            return false;
+        };
+        if o.key.region != flight.region
+            || o.parent_id != 0
+            || o.foot_plane.is_none_or(|plane| !plane.is_finite())
+            || !o.velocity.is_finite()
+            || o.velocity.z.abs() > 0.25
+            || !o.acceleration.is_finite()
+            || o.acceleration.z.abs() > 0.5
+            || !o.scale.z.is_finite()
+            || o.scale.z <= 0.0
+        {
+            return false;
+        }
+        let mut signals = self.animations.get(&flight.avatar).into_iter().flatten().map(|a| a.id);
+        if crate::autopilot::flight_from_signals(false, signals.clone()).is_some()
+            || signals.any(|id| {
+                matches!(
+                    crate::ao::State::from_motion(id),
+                    Some(crate::ao::State::Jumping | crate::ao::State::PreJumping | crate::ao::State::Falling)
+                )
+            })
+        {
+            return false;
+        }
+        crate::autopilot::avatar_target(self, flight.avatar, o.scale.z).is_some_and(|target| target.flight.flying.is_none())
+    }
+
+    fn log_friend_join_physics(&self) {
+        let Some(flight) = &self.map.friend_join_flight else { return };
+        if let Some(o) = self.objects.index_of_uuid(&flight.avatar).and_then(|i| self.objects.get(i)) {
+            let observed = crate::autopilot::avatar_target(self, flight.avatar, o.scale.z).map(|target| target.flight.flying);
+            log::info!(
+                "friend join: target physics fresh {}, same region {}, seated {}, height {:.2}, scale {:.2}, plane {:?}, vz {:.3}, az {:.3}, observed flight {:?}",
+                flight.fresh_physics,
+                o.key.region == flight.region,
+                o.parent_id != 0,
+                o.position.z,
+                o.scale.z,
+                o.foot_plane,
+                o.velocity.z,
+                o.acceleration.z,
+                observed
+            );
+        } else {
+            log::info!("friend join: target physics not loaded");
+        }
     }
 
     pub(super) fn note_friend_join_animations(&mut self, avatar: Uuid) {
+        if !self.map.friend_join.as_ref().is_some_and(|j| j.avatar == avatar)
+            && !self.map.friend_join_flight.as_ref().is_some_and(|f| f.avatar == avatar)
+        {
+            return;
+        }
+        let flying = crate::autopilot::flight_from_signals(false, self.animations.get(&avatar).into_iter().flatten().map(|a| a.id));
+        let jumping_or_falling = self.animations.get(&avatar).into_iter().flatten().any(|a| {
+            matches!(
+                crate::ao::State::from_motion(a.id),
+                Some(crate::ao::State::Jumping | crate::ao::State::PreJumping | crate::ao::State::Falling)
+            )
+        });
         if let Some(join) = &mut self.map.friend_join
             && join.avatar == avatar
             && self.received.is_none_or(|at| at >= join.started)
         {
-            join.flight = Some(
-                crate::autopilot::flight_from_signals(false, self.animations.get(&avatar).into_iter().flatten().map(|a| a.id))
-                    == Some(true),
-            );
+            join.flight = flying;
+        }
+        if let Some(flight) = &mut self.map.friend_join_flight
+            && flight.avatar == avatar
+            && self.received.is_none_or(|at| at >= flight.started)
+        {
+            if let Some(flying) = flying {
+                flight.wants_flight = flight.was_flying || flight.arrival_flight || flying;
+            } else if jumping_or_falling {
+                flight.wants_flight = flight.was_flying || flight.arrival_flight;
+            }
+            log::info!("friend join: target flight signal {flying:?}");
         }
     }
 
@@ -162,11 +322,19 @@ impl World {
         })
     }
 
-    pub(super) fn note_friend_join_object(&mut self, handle: RegionHandle, avatar: Uuid) {
+    pub(super) fn note_friend_join_object(&mut self, handle: RegionHandle, avatar: Uuid, foot_plane: Option<glam::Vec4>) {
         if self.friend_join_report_matches(handle, avatar)
             && let Some(join) = &mut self.map.friend_join
         {
             join.fresh_object = true;
+            join.fresh_physics |= foot_plane.is_some();
+        }
+        if let Some(flight) = &mut self.map.friend_join_flight
+            && flight.avatar == avatar
+            && flight.region == handle
+            && self.received.is_none_or(|at| at >= flight.started)
+        {
+            flight.fresh_physics |= foot_plane.is_some();
         }
     }
 
@@ -226,11 +394,6 @@ impl World {
         if !position.is_finite() {
             return None;
         }
-        // Position can precede AvatarAnimation. Wait for flight signals when
-        // we can use them; a known flight restriction must not block the hop.
-        if !self.agent.flying && join.flight.is_none() && crate::autopilot::can_fly_for_join(self) {
-            return None;
-        }
         let seated = join.fresh_object
             && self
                 .objects
@@ -239,12 +402,20 @@ impl World {
                 .is_some_and(|o| o.parent_id != 0);
         let fly_on_arrival = self.agent.flying || (!seated && join.flight == Some(true));
         let avatar = join.avatar;
+        let fresh_physics = join.fresh_physics;
+        log::info!(
+            "friend join: local hop (target flight {:?}, already flying {})",
+            join.flight,
+            self.agent.flying
+        );
         self.cancel_friend_join();
         let (x, y) = aurora_net::handle_to_origin(main);
         self.map
             .agent_found(avatar, x as f64 + position.x as f64, y as f64 + position.y as f64, Some(position.z));
         Some(FriendJoinTeleport {
             command: super::worldmap::teleport_command(x as f64 + position.x as f64, y as f64 + position.y as f64, position.z),
+            avatar,
+            fresh_physics,
             fly_on_arrival,
         })
     }
@@ -530,32 +701,188 @@ mod tests {
     }
 
     #[test]
-    fn flying_friend_waits_for_new_flight_state_without_delaying_the_hop_for_policy() {
+    fn friend_join_hops_before_flight_signals_and_accepts_them_after_arrival() {
         for known_policy in [false, true] {
+            for initial in [None, Some(crate::ao::State::Standing), Some(crate::ao::State::Typing)] {
+                let mut w = first_leg(true);
+                arrive(&mut w, destination());
+                avatar_data(&mut w, 2400.0);
+                if let Some(initial) = initial {
+                    signals(&mut w, initial);
+                }
+                let hop = w
+                    .finish_friend_join(Instant::now(), false)
+                    .expect("position is enough for the local hop");
+                assert!(!hop.fly_on_arrival);
+                assert!(matches!(hop.command, NetCommand::TeleportTo { position, .. } if position.z == 2400.0));
+                w.begin_teleport(false);
+                w.defer_friend_join_flight(hop.avatar, hop.fly_on_arrival, hop.fresh_physics);
+                w.apply_received(
+                    NetEvent::AvatarAnimations {
+                        avatar: friend(),
+                        anims: vec![(crate::ao::State::Hovering.motion(), 1)],
+                        sources: vec![],
+                    },
+                    Instant::now() - Duration::from_secs(10),
+                );
+                local_arrival(&mut w, false);
+                assert!(!w.take_friend_join_flight(), "old flight state is not enough");
+                assert!(!w.agent.flying && w.agent.position.z == 2400.0);
+                w.apply(NetEvent::AvatarAnimations {
+                    avatar: Uuid::from_u128(8),
+                    anims: vec![(crate::ao::State::Flying.motion(), 1)],
+                    sources: vec![],
+                });
+                assert!(!w.take_friend_join_flight(), "another avatar's flight does not enable ours");
+                if known_policy {
+                    allow_flight(&mut w);
+                }
+                signals(&mut w, crate::ao::State::Hovering);
+                assert!(
+                    w.take_friend_join_flight(),
+                    "a new flight report after arrival still enables flight"
+                );
+                assert!(!w.agent.flying, "takeoff is deferred until the local hop arrives");
+            }
+        }
+    }
+
+    #[test]
+    fn friend_join_waits_for_the_landing_parcel_instead_of_consuming_departure_policy() {
+        for allow in [false, true] {
             let mut w = first_leg(true);
             arrive(&mut w, destination());
-            avatar_data(&mut w, 2400.0);
-            assert!(w.finish_friend_join(Instant::now(), false).is_none());
-            w.apply_received(
-                NetEvent::AvatarAnimations {
-                    avatar: friend(),
-                    anims: vec![(crate::ao::State::Hovering.motion(), 1)],
-                    sources: vec![],
-                },
-                Instant::now() - Duration::from_secs(10),
-            );
-            assert!(
-                w.finish_friend_join(Instant::now(), false).is_none(),
-                "old flight state is not enough"
-            );
-            signals(&mut w, crate::ao::State::Hovering);
-            if known_policy {
-                allow_flight(&mut w);
+            allow_flight(&mut w);
+            let parcel = |x: usize, y: usize, allow: bool| {
+                let mut bitmap = vec![0; 512];
+                let cell = y / 4 * 64 + x / 4;
+                bitmap[cell / 8] |= 1 << (cell % 8);
+                std::sync::Arc::new(aurora_net::ParcelInfo {
+                    bitmap,
+                    flags: if allow { aurora_net::parcel_flags::ALLOW_FLY } else { 0 },
+                    ..Default::default()
+                })
+            };
+            w.parcel = Some(parcel(100, 100, !allow));
+            w.begin_teleport(false);
+            w.defer_friend_join_flight(friend(), true, true);
+            local_arrival(&mut w, false);
+            assert!(!w.take_friend_join_flight(), "the old parcel cannot approve or deny this landing");
+            assert!(w.map.friend_join_flight.is_some());
+            w.apply(NetEvent::AgentParcel(parcel(60, 200, allow)));
+            assert_eq!(w.take_friend_join_flight(), allow);
+            assert!(w.map.friend_join_flight.is_none());
+        }
+    }
+
+    #[test]
+    fn friend_join_late_flight_observation_is_bounded_and_standing_never_takes_off() {
+        for standing in [false, true] {
+            let mut w = first_leg(true);
+            arrive(&mut w, destination());
+            allow_flight(&mut w);
+            w.begin_teleport(false);
+            w.defer_friend_join_flight(friend(), false, true);
+            local_arrival(&mut w, false);
+            if standing {
+                signals(&mut w, crate::ao::State::Standing);
             }
-            let hop = w.finish_friend_join(Instant::now(), false).unwrap();
-            assert!(hop.fly_on_arrival);
-            assert!(!w.agent.flying, "takeoff is deferred until the local hop arrives");
-            assert!(matches!(hop.command, NetCommand::TeleportTo { position, .. } if position.z == 2400.0));
+            assert!(!w.take_friend_join_flight() && !w.agent.flying);
+            w.map.friend_join_flight.as_mut().unwrap().arrived = Some(Instant::now() - FLIGHT_TIMEOUT);
+            arrive(&mut w, destination());
+            assert!(!w.take_friend_join_flight());
+            signals(&mut w, crate::ao::State::Flying);
+            assert!(!w.take_friend_join_flight(), "later flight is outside the accepted join");
+        }
+    }
+
+    #[test]
+    fn friend_join_late_flight_respects_stop_map_edits_other_teleports_and_rights_loss() {
+        for cancel in 0..6 {
+            let mut w = first_leg(true);
+            arrive(&mut w, destination());
+            allow_flight(&mut w);
+            w.begin_teleport(false);
+            w.defer_friend_join_flight(friend(), false, true);
+            local_arrival(&mut w, false);
+            match cancel {
+                0 => w.cancel_friend_join(),
+                1 => w.map.set_track_altitude(50.0),
+                2 => w.map.track_avatar(Uuid::from_u128(8), "Other demo friend"),
+                3 => w.begin_teleport(false),
+                4 => w.social.friends[0].rights_has = 0,
+                _ => w.cancel_friend_join_flight(),
+            }
+            signals(&mut w, crate::ao::State::Hovering);
+            assert!(!w.take_friend_join_flight() && !w.agent.flying, "cancellation {cancel}");
+        }
+    }
+
+    #[test]
+    fn friend_join_custom_animation_needs_a_fresh_sustained_unsupported_hover() {
+        for case in 0..15 {
+            let mut w = first_leg(true);
+            arrive(&mut w, destination());
+            allow_flight(&mut w);
+            avatar_data(&mut w, 2400.0);
+            signals(&mut w, crate::ao::State::Typing);
+            let idx = w.objects.index_of_uuid(&friend()).unwrap();
+            let o = w.objects.get_mut(idx).unwrap();
+            o.foot_plane = Some(glam::Vec4::ZERO);
+            o.velocity = Vec3::ZERO;
+            o.acceleration = Vec3::ZERO;
+            o.scale.z = 1.8;
+            match case {
+                1 => o.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, 2399.1)),
+                2 => o.foot_plane = None,
+                3 => o.velocity.z = -3.0,
+                4 => o.acceleration.z = -9.8,
+                7 => o.parent_id = 99,
+                9 => o.position.z = 0.9,
+                12 => o.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, 20.0)),
+                13 => o.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 2.0, 40.0)),
+                14 => o.foot_plane = Some(glam::Vec4::splat(f32::NAN)),
+                _ => {}
+            }
+            if case == 6 {
+                signals(&mut w, crate::ao::State::Standing);
+            }
+            w.begin_teleport(false);
+            w.defer_friend_join_flight(friend(), matches!(case, 5 | 10 | 11), case != 8);
+            match case {
+                5 => signals(&mut w, crate::ao::State::Falling),
+                10 => signals(&mut w, crate::ao::State::Jumping),
+                11 => signals(&mut w, crate::ao::State::PreJumping),
+                _ => {}
+            }
+            local_arrival(&mut w, false);
+            assert!(!w.take_friend_join_flight(), "a single observation must never start flight");
+            if let Some(f) = &mut w.map.friend_join_flight
+                && f.hover_since.is_some()
+            {
+                f.hover_since = Some(Instant::now() - HOVER_OBSERVATION);
+            }
+            assert_eq!(w.take_friend_join_flight(), matches!(case, 0 | 12 | 13), "physical case {case}");
+            assert!(!w.agent.flying, "only the app enables flight after this decision");
+        }
+    }
+
+    #[test]
+    fn friend_join_defers_but_preserves_server_and_saved_flight_on_arrival() {
+        for server_flying in [false, true] {
+            for preference in [false, true] {
+                let mut w = first_leg(true);
+                arrive(&mut w, destination());
+                allow_flight(&mut w);
+                w.fly_after_teleport = preference;
+                w.begin_teleport(false);
+                w.defer_friend_join_flight(friend(), false, false);
+                w.apply(NetEvent::TeleportLocal { flying: server_flying });
+                signals(&mut w, crate::ao::State::Standing);
+                assert!(!w.agent.flying && !w.take_friend_join_flight());
+                arrive(&mut w, destination());
+                assert_eq!(w.take_friend_join_flight(), server_flying || preference);
+            }
         }
     }
 
@@ -587,7 +914,7 @@ mod tests {
             assert!(matches!(hop.command, NetCommand::TeleportTo { position, .. } if position.z == 2400.0));
             assert!(!w.agent.flying && w.map.friend_join.is_none());
             w.begin_teleport(false);
-            w.defer_friend_join_flight(hop.fly_on_arrival);
+            w.defer_friend_join_flight(hop.avatar, hop.fly_on_arrival, hop.fresh_physics);
             local_arrival(&mut w, false);
             assert_eq!(w.agent.position.z, 2400.0, "the hop still arrives when flight is blocked");
             assert!(!w.take_friend_join_flight() && !w.agent.flying);
@@ -623,7 +950,7 @@ mod tests {
             w.fly_after_teleport = false;
             w.agent.flying = true;
             w.begin_teleport(false);
-            w.defer_friend_join_flight(true);
+            w.defer_friend_join_flight(friend(), true, true);
             w.apply(NetEvent::TeleportLocal { flying: server_flying });
             assert!(w.agent.flying);
             arrive(&mut w, destination());
@@ -635,14 +962,14 @@ mod tests {
             assert!(!w.agent.flying);
             w.agent.flying = true;
             w.begin_teleport(false);
-            w.defer_friend_join_flight(true);
+            w.defer_friend_join_flight(friend(), true, true);
             w.apply(NetEvent::TeleportFailed {
                 reason: "Offline test".into(),
             });
             assert!(w.map.friend_join_flight.is_none());
             w.begin_teleport(false);
             w.agent.flying = true;
-            w.defer_friend_join_flight(true);
+            w.defer_friend_join_flight(friend(), true, true);
             w.agent.flying = false;
             local_arrival(&mut w, false);
             assert!(
@@ -669,7 +996,7 @@ mod tests {
             allow_flight(&mut w);
             w.fly_after_teleport = false;
             w.begin_teleport(false);
-            w.defer_friend_join_flight(true);
+            w.defer_friend_join_flight(friend(), true, true);
             assert!(!w.agent.flying && !w.take_friend_join_flight());
             w.apply(NetEvent::TeleportLocal { flying: server_flying });
             assert_eq!(w.agent.position.z, 0.0);
@@ -698,7 +1025,7 @@ mod tests {
             arrive(&mut w, destination());
             allow_flight(&mut w);
             w.begin_teleport(false);
-            w.defer_friend_join_flight(true);
+            w.defer_friend_join_flight(friend(), true, true);
             match block {
                 0 => {
                     let r = w.regions.get_mut(&destination()).unwrap();
@@ -723,7 +1050,7 @@ mod tests {
             arrive(&mut w, destination());
             allow_flight(&mut w);
             w.begin_teleport(false);
-            w.defer_friend_join_flight(true);
+            w.defer_friend_join_flight(friend(), true, true);
             match cancel {
                 0 => w.begin_teleport(false),
                 1 => {

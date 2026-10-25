@@ -654,15 +654,27 @@ The intent expires after 90 seconds before arrival or 30 seconds waiting for
 position, and cancels on movement, Stop/Escape, another teleport, permission
 loss, map selection/height edits or failure. Lures, explicit Z and local
 teleports never arm this continuation; both legs pass normal RLVa preflight.
-When we are not flying and flight is not known to be forbidden, the join also waits for new target animation signals.
-Native hover/flight motions request takeoff; height alone does not. Known
+The local hop does not wait for flight signals: animation packets may only
+arrive once we are beside the target. Native hover/flight motions request
+takeoff; unknown signals remain unknown and height alone does not. Known
 region/parcel/RLVa restrictions prevent takeoff but never cancel the local
 jump. Missing policy packets do not delay it either. After teleport preflight,
 the application arms flight for this local hop without taking off. Only its
 local reply and applied arrival in the expected region allow the application
 to enable flight and send FLY controls. The local reply's flying flag also
 waits for the position while this intent is active. Policy is rechecked at arrival;
-failure, another teleport, manual flight changes or timeout discard the intent.
+An early standing or unknown animation does not consume the observation:
+for up to five seconds after arrival, new target animation and landing-parcel
+packets can still enable flight. A parcel bitmap must cover the landing point
+before its allow/deny policy is used. Failure, another teleport, manual
+movement/flight changes, Stop, map edits, loss of rights or timeout discard
+the intent.
+When an AO hides the native motion, fresh target physics can establish a
+hover after 300 ms: finite contact data, negligible vertical velocity/
+acceleration and no support at the avatar's feet. The navigation resolver
+compares terrain and the reported plane with foot height: a nonzero plane
+far below the avatar is compatible with flight. Sitting, ground motions,
+jumping/falling, missing/invalid contact data or old objects veto this fallback.
 Existing flight survives the local reply. This does not change Fly After
 Teleport or the flags of later teleports/invitations.
 

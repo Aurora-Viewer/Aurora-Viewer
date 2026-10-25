@@ -476,6 +476,8 @@ pub struct App {
     /// Only the friend-join demo changes regions and delays target data.
     demo_tp_region: Option<aurora_net::RegionHandle>,
     demo_friend_join_target: Option<(Instant, Vec3)>,
+    /// Delayed flight signal, then the landing parcel for join-fly-late.
+    demo_friend_join_flight: Option<(Instant, bool)>,
     /// AURORA_DEMO_RADAR=tp: the radar starts in another region.
     demo_radar_tp: bool,
     /// Destination of the teleport being started (teleport screen).
@@ -1121,6 +1123,7 @@ impl App {
             demo_tp_dest: None,
             demo_tp_region: None,
             demo_friend_join_target: None,
+            demo_friend_join_flight: None,
             demo_radar_tp: false,
             tp_dest: None,
             geom_changed: None,
@@ -1509,7 +1512,10 @@ impl App {
                     if Some(*handle) == self.world.main_region {
                         self.demo_unseat_on_teleport();
                         self.world.apply(NetEvent::TeleportLocal {
-                            flying: self.world.agent.flying || crate::demo::friend_join_flight_scenario(),
+                            flying: self.world.agent.flying
+                                || (crate::demo::friend_join_flight_scenario()
+                                    && !crate::demo::friend_join_late_flight_scenario()
+                                    && !crate::demo::friend_join_custom_flight_scenario()),
                         });
                         if let Some(ev) = self.world.apply(NetEvent::AgentMovementComplete {
                             handle: *handle,
@@ -2996,18 +3002,7 @@ impl App {
                 }
                 self.scene.textures.mark_arrival();
                 self.loading_stage = aurora_i18n::tr!("app-loading-scene").into();
-                if self.world.take_friend_join_flight() {
-                    if !self.world.agent.flying {
-                        self.toggle_fly();
-                    }
-                    let mut controls = *self.net.controls.lock();
-                    controls.control_flags |= control::FLY;
-                    self.net.set_controls(controls);
-                    log::info!(
-                        "friend join: flight enabled after local arrival at {:.1?}",
-                        self.world.agent.position
-                    );
-                }
+                self.start_friend_join_flight();
             }
             NetEvent::SitResponse {
                 object,
@@ -5713,23 +5708,38 @@ impl App {
 
     /// Preflight before UI/simulation side effects, including offline demos.
     fn request_user_teleport(&mut self, command: NetCommand, dest: String, show_progress: bool) -> bool {
-        self.request_user_teleport_with_arrival_flight(command, dest, show_progress, false)
-    }
-
-    fn request_user_teleport_with_arrival_flight(
-        &mut self,
-        command: NetCommand,
-        dest: String,
-        show_progress: bool,
-        fly_on_arrival: bool,
-    ) -> bool {
         if self.user_teleport_allowed(&command) {
             self.begin_teleport(dest, show_progress);
-            self.world.defer_friend_join_flight(fly_on_arrival);
             self.send(command);
             true
         } else {
             false
+        }
+    }
+
+    fn request_friend_join_teleport(&mut self, command: NetCommand, avatar: uuid::Uuid, fly_on_arrival: bool, fresh_physics: bool) -> bool {
+        if self.user_teleport_allowed(&command) {
+            self.begin_teleport(String::new(), false);
+            self.world.defer_friend_join_flight(avatar, fly_on_arrival, fresh_physics);
+            self.send(command);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn start_friend_join_flight(&mut self) {
+        if self.world.take_friend_join_flight() {
+            if !self.world.agent.flying {
+                self.toggle_fly();
+            }
+            let mut controls = *self.net.controls.lock();
+            controls.control_flags |= control::FLY;
+            self.net.set_controls(controls);
+            log::info!(
+                "friend join: flight enabled after local arrival at {:.1?}",
+                self.world.agent.position
+            );
         }
     }
 
@@ -6757,8 +6767,12 @@ impl App {
             || i.joystick_pitch.abs() > 0.001
             || self.mouse_mode == MouseMode::Steer;
         if let Some(join) = self.world.finish_friend_join(Instant::now(), moved) {
-            self.request_user_teleport_with_arrival_flight(join.command, String::new(), false, join.fly_on_arrival);
+            self.request_friend_join_teleport(join.command, join.avatar, join.fly_on_arrival, join.fresh_physics);
         }
+        if moved {
+            self.world.cancel_friend_join_flight();
+        }
+        self.start_friend_join_flight();
         self.minimap_ui.prune(&self.world);
         // parcel overlays of regions we left (their lines would be stale on return)
         let regions = &self.world.regions;
@@ -9580,19 +9594,28 @@ impl App {
                     info.region_flags |= aurora_net::region_flags::BLOCK_FLY;
                 }
                 self.world.apply(NetEvent::RegionHandshake(Arc::new(info)));
-                self.world.apply(NetEvent::AgentParcel(Arc::new(aurora_net::ParcelInfo {
-                    flags: aurora_net::parcel_flags::ALLOW_FLY,
-                    ..Default::default()
-                })));
+                let late = crate::demo::friend_join_late_flight_scenario();
+                let parcel_position = if late { Vec3::new(100.0, 100.0, 0.0) } else { position };
+                self.world.apply(NetEvent::AgentParcel(Arc::new(crate::demo::friend_join_parcel(
+                    parcel_position,
+                    !late,
+                ))));
             }
             let mut target = crate::demo::action_avatar(false);
             target.full_id = crate::demo::DEMO_FRIEND;
             target.position = position;
+            if crate::demo::friend_join_custom_flight_scenario() {
+                target.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, 20.0));
+                target.velocity = Vec3::ZERO;
+                target.acceleration = Vec3::ZERO;
+            }
             self.world.apply(NetEvent::ObjectUpdates {
                 handle,
                 objects: vec![target],
             });
-            let state = if crate::demo::friend_join_flight_scenario() {
+            let state = if crate::demo::friend_join_custom_flight_scenario() {
+                crate::ao::State::Typing
+            } else if crate::demo::friend_join_flight_scenario() && !crate::demo::friend_join_late_flight_scenario() {
                 crate::ao::State::Hovering
             } else {
                 crate::ao::State::Standing
@@ -9603,6 +9626,29 @@ impl App {
                 sources: vec![],
             });
             log::info!("demo friend join: fresh target position at {:.0} m", position.z);
+            if crate::demo::friend_join_late_flight_scenario() {
+                self.demo_friend_join_flight = Some((Instant::now() + Duration::from_millis(400), false));
+            }
+        }
+        if self.demo
+            && self.demo_friend_join_flight.as_ref().is_some_and(|(at, _)| Instant::now() >= *at)
+            && let Some((_, parcel)) = self.demo_friend_join_flight.take()
+        {
+            if parcel {
+                self.world.apply(NetEvent::AgentParcel(Arc::new(crate::demo::friend_join_parcel(
+                    Vec3::new(60.0, 200.0, 2400.0),
+                    true,
+                ))));
+                log::info!("demo friend join: delayed landing parcel allows flight");
+            } else {
+                self.world.apply(NetEvent::AvatarAnimations {
+                    avatar: crate::demo::DEMO_FRIEND,
+                    anims: vec![(crate::ao::State::Hovering.motion(), 1)],
+                    sources: vec![],
+                });
+                log::info!("demo friend join: delayed hover signal");
+                self.demo_friend_join_flight = Some((Instant::now() + Duration::from_millis(400), true));
+            }
         }
         // AURORA_DEMO_NAVEDIT=1: click in the location field at frame 230
         if self.demo && self.frame_count == 230 && std::env::var_os("AURORA_DEMO_NAVEDIT").is_some() {

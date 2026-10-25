@@ -3493,7 +3493,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude\|join-map\|join-contact\|join-fly\|join-fly-blocked` | Remote friend's received map rights in contact, conversation and profile actions |
+| `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude\|join-map\|join-contact\|join-fly\|join-fly-blocked\|join-fly-late\|join-fly-custom` | Remote friend's received map rights in contact, conversation and profile actions |
 | `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out` | Detached conversations, or nearby chat alone before any IM (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
@@ -4437,7 +4437,7 @@ failure. Grid validation and any paid upload are performed by the human.
   it once the end is less than half the height in sight away (with nothing
   new).
 
-- **`AURORA_DEMO_FRIEND_LOCATION=allowed|denied|offline|altitude|join-map|join-contact|join-fly|join-fly-blocked`** (#999): removes
+- **`AURORA_DEMO_FRIEND_LOCATION=allowed|denied|offline|altitude|join-map|join-contact|join-fly|join-fly-blocked|join-fly-late|join-fly-custom`** (#999): removes
   Nova's nearby object and coarse location at frame 60. The online friend
   grants us map rights in `allowed`, withholds them in `denied` (we still
   grant ours), and is offline in `offline`. Combine with
@@ -4482,6 +4482,22 @@ failure. Grid validation and any paid upload are performed by the human.
   takeoff is not enabled, but the second jump must still happen.
   Check that an already flying user remains flying, a standing skybox friend
   does not enable flight, and accepting a later invitation keeps its own flags.
+  `join-fly-late` supplies Standing first and a local reply without the flying
+  flag, then a hover signal 400 ms after the jump and the allowed landing
+  parcel another 400 ms later. The cached parcel's bitmap covers a different
+  position and must neither approve nor reject flight. Scoped logs must show
+  arrival, the delayed hover, waiting for the landing parcel, then flight
+  activation. Some height is lost before the delayed replies; flight must
+  then hold altitude. A join observes new flight/parcel data for at most five
+  seconds after arrival; standing/unknown signals alone never enable flight.
+  `join-fly-custom` supplies no native locomotion signal (Typing represents
+  an unclassified AO motion), but fresh physics with no vertical movement
+  and a nonzero plane at 20 m while the target hovers at 2,400 m. That plane
+  must not be confused with actual support beneath the avatar's feet.
+  Flight must start after a sustained 300 ms
+  hover observation following arrival. The log identifies the inferred hover.
+  A standing skybox target with a contact plane, a seated avatar, missing
+  physical data, a jump or a fall must never trigger this fallback.
 
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click

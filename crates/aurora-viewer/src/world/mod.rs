@@ -2009,8 +2009,9 @@ impl World {
                         self.unregister_attachment(idx);
                     }
                     self.on_camera_parent_change(handle, &u);
+                    let foot_plane = u.foot_plane;
                     self.objects.upsert_at(handle, u, self.received);
-                    self.note_friend_join_object(handle, avatar_id);
+                    self.note_friend_join_object(handle, avatar_id, foot_plane);
                     if is_me {
                         let at = self.agent_report_time();
                         self.agent
@@ -2039,7 +2040,7 @@ impl World {
                             mine = o.full_id == me;
                             seated = o.parent_id != 0;
                             let id = o.full_id;
-                            self.note_friend_join_object(handle, id);
+                            self.note_friend_join_object(handle, id, t.foot_plane);
                         }
                         if mine {
                             let at = self.agent_report_time();
@@ -2362,7 +2363,7 @@ impl World {
                 // A friend hop preserves existing flight here, but defers
                 // taking off (even if flagged by the server) until its
                 // arrival position has been applied.
-                self.agent.flying = self.friend_join_local_flight().unwrap_or(flying || self.fly_after_teleport);
+                self.agent.flying = self.friend_join_local_flight(flying).unwrap_or(flying || self.fly_after_teleport);
                 None
             }
             NetEvent::TeleportStarted => {

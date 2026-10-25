@@ -3631,12 +3631,36 @@ fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
 }
 
 pub fn friend_join_scenario() -> bool {
-    std::env::var("AURORA_DEMO_FRIEND_LOCATION")
-        .is_ok_and(|m| matches!(m.as_str(), "join-map" | "join-contact" | "join-fly" | "join-fly-blocked"))
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION").is_ok_and(|m| {
+        matches!(
+            m.as_str(),
+            "join-map" | "join-contact" | "join-fly" | "join-fly-blocked" | "join-fly-late" | "join-fly-custom"
+        )
+    })
 }
 
 pub fn friend_join_flight_scenario() -> bool {
-    std::env::var("AURORA_DEMO_FRIEND_LOCATION").is_ok_and(|m| matches!(m.as_str(), "join-fly" | "join-fly-blocked"))
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION")
+        .is_ok_and(|m| matches!(m.as_str(), "join-fly" | "join-fly-blocked" | "join-fly-late" | "join-fly-custom"))
+}
+
+pub fn friend_join_late_flight_scenario() -> bool {
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-fly-late")
+}
+
+pub fn friend_join_custom_flight_scenario() -> bool {
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-fly-custom")
+}
+
+pub fn friend_join_parcel(position: Vec3, allow_fly: bool) -> aurora_net::ParcelInfo {
+    let mut bitmap = vec![0; 512];
+    let cell = (position.y as usize / 4).min(63) * 64 + (position.x as usize / 4).min(63);
+    bitmap[cell / 8] |= 1 << (cell % 8);
+    aurora_net::ParcelInfo {
+        bitmap,
+        flags: if allow_fly { aurora_net::parcel_flags::ALLOW_FLY } else { 0 },
+        ..Default::default()
+    }
 }
 
 /// Make the conversation's friend remote without keeping a nearby object
@@ -3647,7 +3671,16 @@ pub fn friend_location(world: &mut crate::world::World) {
     };
     if !matches!(
         mode.as_str(),
-        "allowed" | "denied" | "offline" | "altitude" | "join-map" | "join-contact" | "join-fly" | "join-fly-blocked"
+        "allowed"
+            | "denied"
+            | "offline"
+            | "altitude"
+            | "join-map"
+            | "join-contact"
+            | "join-fly"
+            | "join-fly-blocked"
+            | "join-fly-late"
+            | "join-fly-custom"
     ) {
         return;
     }
