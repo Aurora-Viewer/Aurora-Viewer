@@ -5100,6 +5100,13 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the run; `hidden` disables it with Contacts initially selected, showing
   the fallback to nearby chat. The saved preference defaults to off
   (Preferences > Chat > Show the Contacts tab).
+    In Aurora's look, Friends has no display-options gear: search, profile
+    pictures and friendship rights stay available. Contact-set lists always
+    show pictures; names use the set's explicit UI-name appearance and
+    priority. Legacy column/list options stay in the contact table's
+    right-click Options menu, and search stays visible there too. The old
+    hidden-search and column settings must not alter the modern pane;
+    regressions cover saved settings in the workspace and detached window.
   In the Aurora and Compact conversation styles, test at full width,
   700 points and 460 points: a double-click on a friend starts their IM.
   At full width the detail panel is always present: retain the selected

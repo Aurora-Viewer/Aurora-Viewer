@@ -10,7 +10,7 @@
 //! the other tabs keep their simple lists below.
 
 use super::Panels;
-use super::contacts::{ContactsSettings, ContactsUi};
+use super::contacts::ContactsUi;
 use super::context::{self, AvatarList};
 use super::menu;
 use super::widgets::{self, Floater};
@@ -115,7 +115,6 @@ pub(super) struct Ctx<'a> {
     pub p: &'a Palette,
     pub world: &'a World,
     pub contacts: &'a mut ContactsUi,
-    pub contact_settings: &'a mut ContactsSettings,
     pub friends: &'a mut FriendsSettings,
     /// Group insignias.
     pub images: &'a HashMap<Uuid, egui::TextureHandle>,
@@ -353,11 +352,10 @@ pub fn nearby(world: &World) -> Vec<(Uuid, String, Vec3, f32)> {
     out
 }
 
-/// What the People window needs of the contact list (its dialogs, its
-/// settings) and the group insignias.
+/// The contact list's shared dialogs and the group insignias. Aurora's
+/// rows do not depend on the Legacy table's presentation settings.
 pub struct ContactsParts<'a> {
     pub ui: &'a mut ContactsUi,
-    pub settings: &'a mut ContactsSettings,
     pub images: &'a HashMap<Uuid, egui::TextureHandle>,
 }
 
@@ -408,7 +406,6 @@ pub fn people_window(
                 p,
                 world,
                 contacts: &mut *contacts.ui,
-                contact_settings: &mut *contacts.settings,
                 friends: &mut *friends,
                 images: contacts.images,
                 actions: &mut actions,
@@ -490,14 +487,7 @@ pub struct FriendsPane<'a, 'r> {
 /// The friends tab drawn in `ui` (Conversations › Contacts). No window
 /// widens for a sheet there: it shows beside the list when the pane has
 /// room, alone otherwise.
-pub fn friends_pane(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    world: &World,
-    pane: FriendsPane,
-    contacts: &mut ContactsUi,
-    contact_settings: &mut ContactsSettings,
-) -> Vec<PeopleAction> {
+pub fn friends_pane(ui: &mut egui::Ui, p: &Palette, world: &World, pane: FriendsPane, contacts: &mut ContactsUi) -> Vec<PeopleAction> {
     let FriendsPane {
         st,
         data,
@@ -516,7 +506,6 @@ pub fn friends_pane(
         p,
         world,
         contacts: &mut *contacts,
-        contact_settings,
         friends: settings,
         images,
         actions: &mut actions,

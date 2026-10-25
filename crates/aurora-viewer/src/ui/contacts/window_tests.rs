@@ -131,6 +131,95 @@ fn the_torn_off_window_keeps_the_legacy_look() {
     assert!(!drawn(&texts, aurora_i18n::tr!("people-friends-filter")), "not the friends pane");
 }
 
+/// An old hidden-search preference cannot hide the field or disable its
+/// filter, either before or after switching the detached window's look.
+#[test]
+fn contacts_search_ignores_the_saved_hidden_setting_in_both_looks() {
+    let mut frames = Frames::new();
+    let mut state = State::new(true);
+    state.settings.show_search = false;
+    state.people.filter = "Friend 03".into();
+    state.contacts.friend_filter = "Friend 03".into();
+    for aurora in [true, false, true] {
+        state.aurora = aurora;
+        let texts = settle(&mut frames, &mut state);
+        assert!(drawn(&texts, "Friend 03"), "the filtered friend in either look");
+        assert!(
+            !drawn(&texts, "Friend 05"),
+            "the field still filters when saved show_search is false"
+        );
+        assert!(!state.settings.show_search, "rendering preserves the old settings");
+    }
+}
+
+/// A username-only Legacy table and hidden permission columns do not
+/// change Aurora's displayed name or take its rights controls away.
+#[test]
+fn contacts_modern_rows_ignore_saved_legacy_columns() {
+    let mut frames = Frames::new();
+    let mut state = State::new(true);
+    let id = Uuid::from_u128(0xF000);
+    state.world.social.avatar_names.on_display_names(
+        &[aurora_net::AvatarNameData {
+            id,
+            username: "stored.username".into(),
+            display_name: "Visible Name".into(),
+            legacy_first: "Stored".into(),
+            legacy_last: "Username".into(),
+            ..Default::default()
+        }],
+        &[],
+        None,
+    );
+    state.settings.column_username = true;
+    state.settings.column_display_name = false;
+    state.settings.column_full_name = false;
+    state.settings.full_name_display_first = false;
+    state.people.filter = "Visible Name".into();
+    let mut previous = None;
+    for permissions in [true, false] {
+        state.settings.column_permissions = permissions;
+        let texts = settle(&mut frames, &mut state);
+        assert!(drawn(&texts, "Visible Name"), "the modern name follows global name preferences");
+        let cells: Vec<_> = frames.ctx.viewport(|v| {
+            v.this_pass
+                .widgets
+                .get_layer(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("contacts")))
+                .filter(|w| w.rect.size() == egui::vec2(20.0, 22.0))
+                .map(|w| w.rect)
+                .collect()
+        });
+        assert!(!cells.is_empty(), "the rights remain available");
+        if let Some(previous) = &previous {
+            assert_eq!(&cells, previous, "the Legacy permission switch cannot move or hide modern rights");
+        }
+        previous = Some(cells);
+    }
+    state.world.social.avatar_names.options.use_display_names = false;
+    state.people.filter = "Stored Username".into();
+    let texts = settle(&mut frames, &mut state);
+    assert!(drawn(&texts, "Stored Username"), "global name preferences still apply");
+}
+
+/// Legacy-specific choices remain available only in the table's Options
+/// menu, while search is no longer optional.
+#[test]
+fn contacts_legacy_options_keep_columns_and_list_choices() {
+    let mut frames = Frames::new();
+    let p = crate::theme::Theme::default().palette();
+    let mut settings = ContactsSettings::default();
+    let texts = frames.run(Vec::new(), |ui| super::options_menu(ui, &p, &mut settings));
+    for key in [
+        "ui-contacts-show-username-column",
+        "ui-contacts-show-permission-columns",
+        "ui-contacts-show-profile-pictures-in-contact-set-lists",
+        "ui-contacts-friend-list-color-based-on-contact-set",
+    ] {
+        assert!(drawn(&texts, aurora_i18n::text(key)), "Legacy option {key}");
+    }
+    assert!(!drawn(&texts, aurora_i18n::tr!("ui-contacts-show-search")));
+}
+
 /// The look follows the setting while the window is torn off, and the
 /// pane keeps the docked tab's state (its filter here).
 #[test]

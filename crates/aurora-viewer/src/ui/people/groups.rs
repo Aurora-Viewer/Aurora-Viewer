@@ -622,7 +622,6 @@ mod tests {
             pics: &pics,
         };
         let mut contacts = crate::ui::contacts::ContactsUi::default();
-        let mut contact_settings = crate::ui::contacts::ContactsSettings::default();
         let mut friends = super::super::FriendsSettings::default();
         let mut actions = Vec::new();
         let mut st = PeopleUi::default();
@@ -632,7 +631,6 @@ mod tests {
                     p: &p,
                     world: &world,
                     contacts: &mut contacts,
-                    contact_settings: &mut contact_settings,
                     friends: &mut friends,
                     images: &images,
                     actions: &mut actions,

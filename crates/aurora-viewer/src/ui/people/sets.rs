@@ -3,7 +3,7 @@
 //! fspanelcontactsets.cpp, panel_fs_contacts_sets.xml, LGGContactSets) with
 //! the sets as colored pills, "New", and a gear for the set's color, name
 //! and deletion (FSFloaterContactSetConfiguration), the pseudo-sets (all,
-//! none, with a nickname, non-friends) and the list's options. The members
+//! none, with a nickname, non-friends). The members
 //! are rich rows; under the pointer a row offers to move the resident to
 //! another set, to take them out of this one (confirmed) and its menu.
 //! Non-friends stay in their sets. Nicknames are in the sheet.
@@ -152,7 +152,7 @@ fn set_pills(ui: &mut egui::Ui, c: &mut Ctx, set: &str) {
         }
         let gear = rows::gear(ui, p, aurora_i18n::tr!("people-sets-gear"));
         let mutable = !ContactSets::is_internal(set);
-        let (contacts, cs) = (&mut *c.contacts, &mut *c.contact_settings);
+        let contacts = &mut *c.contacts;
         menu::dropdown(&gear, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             if menu::item_if(
                 ui,
@@ -184,21 +184,6 @@ fn set_pills(ui: &mut egui::Ui, c: &mut Ctx, set: &str) {
                     chosen = Some(s.to_owned());
                 }
             }
-            menu::separator(ui, p);
-            menu::toggle(
-                ui,
-                p,
-                "photo-filled",
-                aurora_i18n::tr!("ui-contacts-show-profile-pictures-in-contact-set-lists"),
-                &mut cs.set_list_icons,
-            );
-            menu::toggle(
-                ui,
-                p,
-                "palette-filled",
-                aurora_i18n::tr!("ui-contacts-friend-list-color-based-on-contact-set"),
-                &mut cs.colorize_friends,
-            );
         });
     });
     if let Some(s) = chosen {
@@ -236,15 +221,13 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let icons = c.contact_settings.set_list_icons;
-    if icons && !data.pics.contains_key(&id) {
+    if !data.pics.contains_key(&id) {
         st.want_pic(id, ui.input(|i| i.time));
     }
     let selected = st.sel.contains(&id) || st.sheet == Some(id);
     let hot = (ui.rect_contains_pointer(rect) && !resp.dragged()) || st.row_menu == Some(id) || st.demo_hover == Some(id);
     rows::face(ui, p, rect, selected, hot);
-    let pic = if icons { data.pics.get(&id) } else { None };
-    let left = rows::picture(ui, p, world, rect, pic, id, name, false);
+    let left = rows::picture(ui, p, world, rect, data.pics.get(&id), id, name, false);
     let friend = world.social.is_friend(&id);
     let mutable = !ContactSets::is_internal(set);
     // under the pointer: move, take out, the menu; else the friend's heart
@@ -280,15 +263,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         }
         _ => {}
     }
-    let color = if c.contact_settings.colorize_friends {
-        world
-            .contact_sets
-            .friend_color(&id, |x| world.social.is_friend(x))
-            .map_or(p.ink, crate::ui::contacts::color32)
-    } else {
-        p.ink
-    };
-    let color = crate::ui::colors::resident_name(world, &id, color);
+    let color = crate::ui::colors::resident_name(world, &id, p.ink);
     let cut = rows::names(ui, p, rect, left, end.names_right, name, color, &second_line(c, &id), None, None);
     let action = rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id);
     if action.sheet {
@@ -350,4 +325,86 @@ fn hover_actions(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi, set: &str, i
         }
     }
     super::keep_row_menu(st, id, menu_open);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Modern rows always request their picture and use only explicit
+    /// UI-name attributes, resolved by set priority, rather than the old
+    /// smallest-set color fallback.
+    #[test]
+    fn modern_set_rows_keep_pictures_and_follow_appearance_priority() {
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        let p = crate::theme::Theme::default().palette();
+        let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = Uuid::from_u128(0xF000);
+        world.social.friends.push(crate::world::social::Friend {
+            id,
+            online: true,
+            rights_given: 1,
+            rights_has: 1,
+        });
+        world.social.names.insert(id, "Example Person".into());
+        for (name, color) in [("First", [0.7, 0.2, 0.6, 1.0]), ("Second", [0.2, 0.7, 0.6, 1.0])] {
+            world.contact_sets.add_set(name);
+            world.contact_sets.set_color(name, color);
+            world.contact_sets.add_to_set(&[id], name, |_| true);
+        }
+        let mut contacts = crate::ui::contacts::ContactsUi::default();
+        let mut friends = super::super::FriendsSettings::default();
+        let mut st = PeopleUi::default();
+        let mut actions = Vec::new();
+        let radar = crate::world::radar::Radar::default();
+        let mut radar_settings = super::super::RadarSettings::default();
+        let (voice, pics) = (std::collections::HashMap::new(), std::collections::HashMap::new());
+        let data = super::super::RadarData {
+            radar: &radar,
+            settings: &mut radar_settings,
+            voice: &voice,
+            draw_distance: 64.0,
+            now: 0.0,
+            pics: &pics,
+        };
+        for enabled in [false, true, false] {
+            for name in ["First", "Second"] {
+                world.contact_sets.set_visuals(
+                    name,
+                    crate::world::contact_sets::Visuals {
+                        ui_name: enabled,
+                        ..Default::default()
+                    },
+                );
+            }
+            world.contact_sets.move_priority("Second", true);
+            let expected = if enabled {
+                crate::interface_colors::on_panel(crate::ui::colors::set_color([0.2, 0.7, 0.6, 1.0]))
+            } else {
+                p.ink
+            };
+            let shapes = frames.shapes(Vec::new(), |ui| {
+                let mut c = Ctx {
+                    p: &p,
+                    world: &world,
+                    contacts: &mut contacts,
+                    friends: &mut friends,
+                    images: &pics,
+                    actions: &mut actions,
+                    embedded_contacts: false,
+                    contact_sheet_on_click: false,
+                };
+                row(ui, &mut c, &data, &mut st, "First", id, "Example Person", &[id]);
+            });
+            let name = shapes
+                .iter()
+                .find_map(|shape| match shape {
+                    egui::Shape::Text(t) if t.galley.text() == "Example Person" => Some(t),
+                    _ => None,
+                })
+                .expect("the member's name is drawn");
+            assert_eq!(name.galley.job.sections[0].format.color, expected);
+            assert!(st.wanted_pics.contains(&id), "modern members always request their picture");
+        }
+    }
 }
