@@ -203,7 +203,8 @@ fn calc_data_size_j2c(w: i64, h: i64, discard_level: i64, rate: f32) -> usize {
     let total_bits = if w <= 0 || h <= 0 {
         scaled_bits(BASE_LAYER_AREA)
     } else {
-        let surface = w * h;
+        // A header can claim 2^32 - 1 on both sides: the product overflows.
+        let surface = w.saturating_mul(h);
         let mut layer_area = BASE_LAYER_AREA;
         let mut nb_layers: i64 = 1;
         let mut total = scaled_bits(layer_area);
@@ -737,5 +738,18 @@ mod tests {
         assert_eq!(sizes[5], 64 * 64 * 32 / 8 / 8 + 600);
         // Clamped like LLImageJ2C::calcDataSize.
         assert_eq!(bytes_for_discard(&info, 200), sizes[5]);
+    }
+
+    /// Found by fuzzing: a SIZ header claiming 2^32 - 1 on both sides
+    /// overflowed the surface (a panic in the overflow-checked CI profile).
+    #[test]
+    fn data_size_estimate_of_the_largest_claimed_size() {
+        let huge = J2kInfo {
+            width: u32::MAX,
+            height: u32::MAX,
+            components: 4,
+            levels: 5,
+        };
+        assert!(bytes_for_discard(&huge, 0) > bytes_for_discard(&huge, 5));
     }
 }
