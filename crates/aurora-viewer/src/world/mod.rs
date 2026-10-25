@@ -25,6 +25,7 @@ pub mod estate;
 pub mod experiences;
 pub mod favorites;
 pub mod flying_at_exit;
+mod friend_join;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -923,6 +924,9 @@ impl World {
     /// track local teleports without showing progress. Intentional difference
     /// requested for Aurora: local teleports are also silent.
     pub fn begin_teleport(&mut self, show_progress: bool) {
+        self.cancel_friend_join_flight();
+        self.cancel_friend_join();
+        self.map.cancel_avatar_teleport();
         self.teleporting = true;
         self.tp_show_progress = show_progress;
         self.tp_failed = false;
@@ -1945,6 +1949,8 @@ impl World {
                 self.teleporting = false;
                 self.park_far_regions();
                 self.land_if_fly_blocked(handle);
+                self.friend_join_flight_arrived(handle);
+                self.friend_join_arrived(handle);
                 Some(NetEvent::AgentMovementComplete { handle, position, look_at })
             }
             NetEvent::ObjectUpdates { handle, objects } => {
@@ -1990,6 +1996,7 @@ impl World {
                         );
                     }
                     let is_me = u.full_id == me;
+                    let avatar_id = u.full_id;
                     let pos = u.position;
                     let velocity = u.velocity;
                     let acceleration = u.acceleration;
@@ -2005,7 +2012,9 @@ impl World {
                         self.unregister_attachment(idx);
                     }
                     self.on_camera_parent_change(handle, &u);
+                    let foot_plane = u.foot_plane;
                     self.objects.upsert_at(handle, u, self.received);
+                    self.note_friend_join_object(handle, avatar_id, foot_plane);
                     if is_me {
                         let at = self.agent_report_time();
                         self.agent
@@ -2033,6 +2042,8 @@ impl World {
                         if let Some(o) = self.objects.get(idx) {
                             mine = o.full_id == me;
                             seated = o.parent_id != 0;
+                            let id = o.full_id;
+                            self.note_friend_join_object(handle, id, t.foot_plane);
                         }
                         if mine {
                             let at = self.agent_report_time();
@@ -2272,6 +2283,24 @@ impl World {
                 None
             }
             NetEvent::CoarseLocations { handle, positions } => {
+                self.note_friend_join_coarse(handle, &positions);
+                // LLViewerRegion::processCoarseUpdate updates the followed
+                // friend's position, including the coarse (4 m) altitude.
+                if let Some(a) = &self.map.avatar
+                    && let Some((_, pos)) = positions.iter().find(|(id, _)| *id == a.id)
+                {
+                    // Full object updates retain exact height above the
+                    // coarse protocol's 1,020 m ceiling.
+                    let pos = self
+                        .objects
+                        .index_of_uuid(&a.id)
+                        .and_then(|i| self.objects.get(i))
+                        .filter(|o| o.key.region == handle)
+                        .map_or(*pos, |o| o.position);
+                    let (ox, oy) = aurora_net::handle_to_origin(handle);
+                    self.map
+                        .agent_found(a.id, ox as f64 + pos.x as f64, oy as f64 + pos.y as f64, Some(pos.z));
+                }
                 self.coarse.insert(handle, positions);
                 None
             }
@@ -2324,16 +2353,27 @@ impl World {
                 Some(NetEvent::TeleportFinished { handle })
             }
             NetEvent::TeleportLocal { flying } => {
+                if !self.teleporting {
+                    self.cancel_friend_join_flight();
+                    self.cancel_friend_join();
+                    self.map.cancel_avatar_teleport();
+                }
                 // process_teleport_local, indra/newview/llviewermessage.cpp.
                 // This also covers server-initiated teleports: the following
                 // AgentMovementComplete must record the arrival in history.
                 self.teleporting = true;
                 self.tp_show_progress = false;
-                self.agent.flying = flying || self.fly_after_teleport;
+                // A friend hop preserves existing flight here, but defers
+                // taking off (even if flagged by the server) until its
+                // arrival position has been applied.
+                self.agent.flying = self.friend_join_local_flight(flying).unwrap_or(flying || self.fly_after_teleport);
                 None
             }
             NetEvent::TeleportStarted => {
                 if !self.teleporting {
+                    self.cancel_friend_join_flight();
+                    self.cancel_friend_join();
+                    self.map.cancel_avatar_teleport();
                     self.tp_show_progress = false;
                     log::info!("TeleportStart (arrived {})", self.arrived_once);
                 }
@@ -2348,6 +2388,8 @@ impl World {
                 None
             }
             NetEvent::TeleportFailed { reason } => {
+                self.cancel_friend_join_flight();
+                self.cancel_friend_join();
                 self.tp_history.failed();
                 self.teleporting = false;
                 self.tp_failed = true;
@@ -2619,6 +2661,7 @@ impl World {
                     list.push(preview);
                 }
                 self.animations.insert(avatar, list);
+                self.note_friend_join_animations(avatar);
                 None
             }
             NetEvent::Environment {
@@ -3060,7 +3103,15 @@ impl World {
                 None
             }
             NetEvent::AgentFound { prey, x, y } => {
-                self.map.agent_found(prey, x, y, self.agent.position.z);
+                // FindAgent only gives global X/Y. A loaded target in the
+                // same spot can supply Z; a distant reply must not reuse our
+                // own altitude (for example, a skybox at 3,000 m).
+                let altitude = self.avatar_map_position(prey).and_then(|pos| {
+                    let (ox, oy) = self.main_origin()?;
+                    let nearby = (ox as f64 + pos.x as f64 - x).hypot(oy as f64 + pos.y as f64 - y) < 8.0;
+                    nearby.then_some(pos.z)
+                });
+                self.map.agent_found(prey, x, y, altitude);
                 None
             }
             NetEvent::ParcelCollision {

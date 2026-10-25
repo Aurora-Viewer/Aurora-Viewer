@@ -153,7 +153,7 @@ pub(super) fn show(
             .max_rect(bottom)
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    footer(&mut foot, p, world, id, row.is_some(), friend.as_ref());
+    footer(&mut foot, p, world, id, friend.as_ref());
     closed
 }
 
@@ -567,14 +567,14 @@ fn nearby(ui: &mut egui::Ui, p: &Palette, data: &RadarData, row: &Row) {
 }
 
 /// The map, the payment and the friendship, at the bottom.
-fn footer(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, here: bool, friend: Option<&Friend>) {
+fn footer(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, friend: Option<&Friend>) {
     if id == world.agent_id {
         return;
     }
     ui.spacing_mut().item_spacing.x = 5.0;
     let size = Vec2::new(0.0, BUTTON_H);
     // a friend who lets us see them on the map can be shown there from afar
-    let mappable = here || friend.is_some_and(|f| f.online && f.rights_has & rights::MAP_LOCATION != 0);
+    let mappable = world.can_locate_avatar(id);
     if widgets::action_button_if(ui, p, "map", aurora_i18n::tr!("common-map"), ActionKind::Flat, size, mappable).clicked() {
         context::request(ui.ctx(), CtxAction::ShowOnMap(id));
     }

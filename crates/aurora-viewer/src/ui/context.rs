@@ -489,15 +489,7 @@ pub fn take_requests(ctx: &egui::Context) -> Vec<CtxAction> {
 /// Where an avatar is (render space): its object if loaded, else its
 /// coarse location (the radar's positions).
 pub fn avatar_position(world: &World, id: &Uuid) -> Option<Vec3> {
-    if let Some(o) = world.objects.index_of_uuid(id).and_then(|i| world.objects.get(i))
-        && let Some(off) = world.region_offset(o.key.region)
-    {
-        return Some(off + o.position);
-    }
-    world
-        .coarse
-        .iter()
-        .find_map(|(h, list)| Some(world.region_offset(*h)? + *list.iter().find(|(i, _)| i == id).map(|(_, p)| p)?))
+    world.avatar_map_position(*id)
 }
 
 /// egui temp data: row hovered last frame in the world menu.
@@ -650,6 +642,7 @@ fn avatar_menu_reporting(
     let friend = world.social.friends.iter().find(|f| f.id == id).cloned();
     let blocked = world.is_avatar_blocked(&id);
     let here = avatar_position(world, &id).is_some();
+    let mappable = world.can_locate_avatar(id);
     let travel = !world.agent.is_sitting() && crate::autopilot::avatar_position(world, id).is_some();
     let following = world.following_avatar == Some(id);
     let online = friend.as_ref().is_none_or(|f| f.online);
@@ -704,7 +697,7 @@ fn avatar_menu_reporting(
         }
     };
     let tp_to = |ui: &mut egui::Ui| {
-        if menu::item_if(ui, p, "location-filled", aurora_i18n::tr!("common-teleport-to"), here) {
+        if menu::item_if(ui, p, "location-filled", aurora_i18n::tr!("common-teleport-to"), mappable) {
             act(CtxAction::TeleportToAvatar(id));
         }
     };
@@ -803,7 +796,7 @@ fn avatar_menu_reporting(
             }
             menu::separator(ui, p);
             zoom(ui);
-            if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), here) {
+            if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), mappable) {
                 act(CtxAction::ShowOnMap(id));
             }
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));
@@ -829,6 +822,9 @@ fn avatar_menu_reporting(
             contact_set_submenu(ui, p, world, &[id], aurora_i18n::tr!("common-add-to-contact-set"));
             zoom(ui);
             tp_to(ui);
+            if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), mappable) {
+                act(CtxAction::ShowOnMap(id));
+            }
             offer_tp(ui);
             request_tp(ui);
             if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
@@ -1189,6 +1185,65 @@ pub fn external_link_confirm(ctx: &egui::Context, p: &Palette, url: &str, dont_w
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_friend_menu_location_clicks_follow_live_received_rights() {
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        use crate::world::social::{Friend, rights};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = Uuid::from_u128(7);
+        world.social.friends.push(Friend {
+            id,
+            online: true,
+            rights_given: rights::MAP_LOCATION,
+            rights_has: 0,
+        });
+        let p = crate::theme::Theme::default().palette();
+        for kind in [AvatarList::Friend, AvatarList::Name, AvatarList::Nearby] {
+            for (key, map) in [
+                ("common-teleport-to", false),
+                ("common-show-on-map-2", true),
+                ("common-zoom-2", false),
+            ] {
+                if map && kind == AvatarList::Name {
+                    continue;
+                }
+                let mut frames = Frames::new();
+                let mut point = egui::Pos2::ZERO;
+                for (received, online) in [(0, true), (rights::MAP_LOCATION, true), (0, true), (rights::MAP_LOCATION, false)] {
+                    world.social.friends[0].rights_has = received;
+                    world.social.friends[0].online = online;
+                    for _ in 0..2 {
+                        let texts = frames.run(Vec::new(), |ui| avatar_list_menu(ui, &p, &world, id, kind));
+                        point = painted(&texts, aurora_i18n::text(key)).rect.center();
+                    }
+                    for pressed in [true, false] {
+                        frames.run(
+                            vec![
+                                egui::Event::PointerMoved(point),
+                                egui::Event::PointerButton {
+                                    pos: point,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                },
+                            ],
+                            |ui| avatar_list_menu(ui, &p, &world, id, kind),
+                        );
+                    }
+                    let actions = take_requests(&frames.ctx);
+                    let enabled = received != 0 && online && key != "common-zoom-2";
+                    assert_eq!(actions.len(), usize::from(enabled), "{kind:?}, {key}, {received}, {online}");
+                    if enabled {
+                        assert!(
+                            matches!(actions[0], CtxAction::ShowOnMap(i) if map && i == id)
+                                || matches!(actions[0], CtxAction::TeleportToAvatar(i) if !map && i == id)
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn rlva_hidden_identity_menu_keeps_zoom_and_block_without_profile_or_clipboard_routes() {

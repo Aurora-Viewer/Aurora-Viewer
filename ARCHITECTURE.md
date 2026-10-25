@@ -653,6 +653,57 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`World::can_locate_avatar` and `locate_avatar` share nearby positions and
+received map rights across contact, conversation and profile actions.
+Remote friends use the existing `world/worldmap.rs` TrackAgent/FindAgent
+tracking; an explicit remote teleport consumes one matching reply within a
+lookup interval, then uses the ordinary map teleport/RLVa path. Before
+dispatch, `take_map_commands` cancels tracking and queued teleports if the
+friend went offline, revoked map rights or ended the friendship. Camera zoom
+and nearby navigation still require local geometry/positions. This extends
+the Legacy Viewer's nearby-only radar Teleport To to authorized remote friends.
+FindAgent has no altitude: use the target's matching local position when
+available, otherwise ground level (0 m), never the observer's altitude.
+Coarse updates refine the followed friend's position at their 4 m height
+resolution. Both map layouts identify unavailable altitude and allow an
+explicit teleport height; a height-only edit in the full-frame map survives
+tracking replies but is cleared for another friend or a direct Teleport To.
+`world/friend_join.rs` scopes a two-stage join to accepted map/contact
+teleports with unknown height. After the expected region arrival, new target
+object/terse or usable coarse reports drive one ordinary local teleport;
+cached positions and unknown coarse heights (0/1,020 m) cannot trigger it.
+Loaded positions use the navigation resolver, including seated parent chains.
+The intent expires after 90 seconds before arrival or 30 seconds waiting for
+position, and cancels on movement, Stop/Escape, another teleport, permission
+loss, map selection/height edits or failure. Lures, explicit Z and local
+teleports never arm this continuation; both legs pass normal RLVa preflight.
+The local hop does not wait for flight signals: animation packets may only
+arrive once we are beside the target. Native hover/flight motions request
+takeoff; unknown signals remain unknown and height alone does not. Known
+region/parcel/RLVa restrictions prevent takeoff but never cancel the local
+jump. Missing policy packets do not delay it either. After teleport preflight,
+the application arms flight without taking off. Friend teleports with an
+already known height arm the same observation for their direct arrival;
+Contacts preserves the friend identity when tracking that position. The
+applied arrival in the expected region allows the application to enable flight
+and send FLY controls, without requiring a separate TeleportLocal message.
+A local reply's flying flag also waits for the position while this intent is
+active. Policy is rechecked at arrival.
+An early standing or unknown animation does not consume the observation:
+for up to five seconds after arrival, new target animation and landing-parcel
+packets can still enable flight. A parcel bitmap must cover the landing point
+before its allow/deny policy is used. Failure, another teleport, manual
+movement/flight changes, Stop, map edits, loss of rights or timeout discard
+the intent.
+When an AO hides the native motion, fresh target physics can establish a
+hover after 300 ms: finite contact data, negligible vertical velocity/
+acceleration and no support at the avatar's feet. The navigation resolver
+compares terrain and the reported plane with foot height: a nonzero plane
+far below the avatar is compatible with flight. Sitting, ground motions,
+jumping/falling, missing/invalid contact data or old objects veto this fallback.
+Existing flight survives the local reply. This does not change Fly After
+Teleport or the flags of later teleports/invitations.
+
 `world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
 roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,
 `world/bridge/ik.lsl`, with independent Mono memory and no movement, HTTP or

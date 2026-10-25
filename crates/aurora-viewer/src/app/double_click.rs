@@ -162,6 +162,9 @@ impl App {
 
     /// stopAutoPilot: the avatar stops (AGENT_CONTROL_STOP this frame).
     pub(super) fn stop_autopilot(&mut self, user_cancel: bool) {
+        if user_cancel {
+            self.world.cancel_friend_join();
+        }
         self.follow_ui.open = false;
         self.follow_recovery = None;
         self.world.following_avatar = None;
