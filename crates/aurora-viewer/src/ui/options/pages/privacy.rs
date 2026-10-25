@@ -249,6 +249,22 @@ pub(super) fn page(cx: &mut Cx) {
             },
         );
     });
+    // The project's privacy policy, on the website.
+    cx.group(tr!("ui-options-your-data"), |cx| {
+        let p = cx.p;
+        cx.row(
+            tr!("ui-options-privacy-policy"),
+            tr!("ui-options-privacy-policy-hint"),
+            &Nothing,
+            |ui, _| {
+                let read = tr!("ui-options-privacy-policy-open");
+                if widgets::action_button(ui, &p, "external-link", read, widgets::ActionKind::Flat, egui::Vec2::new(0.0, 24.0)).clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(crate::links::PRIVACY_POLICY));
+                }
+                false
+            },
+        );
+    });
 }
 
 #[cfg(test)]
