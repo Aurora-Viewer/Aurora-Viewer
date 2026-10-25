@@ -31,7 +31,7 @@ pub use anim::{Animation, JointMotion, parse_animation, parse_animation_upload};
 pub use j2k::{DecodeTimings, DecodedImage, J2kInfo, bytes_for_discard, decode_j2k, decode_j2k_timed, j2k_info};
 pub use llm::{LlmMesh, LlmMorph, parse_llm};
 pub use material::{AlphaMode, PbrMaterial, TextureTransform, parse_material_asset};
-pub use mesh::{MeshFace, MeshHeader, SkinInfo, decode_mesh_lod, decode_skin, parse_mesh_header};
+pub use mesh::{MeshFace, MeshHeader, SkinInfo, decode_mesh_lod, decode_skin, legacy_triangle_order, parse_mesh_header};
 pub use skeleton::{Joint, Skeleton};
 
 /// Error type shared by all asset decoders.

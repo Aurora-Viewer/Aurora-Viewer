@@ -478,6 +478,14 @@ pub fn volume_to_faces(mesh: &aurora_prim::VolumeMesh) -> (Vec<FaceData>, Vec3, 
     (faces, min, max)
 }
 
+/// Mesh faces draw their triangles in the Legacy Viewer's order
+/// (`aurora_assets::legacy_triangle_order`); `AURORA_MESH_ORDER=asset` keeps
+/// the order of the asset, as before (#935). Read once.
+pub fn legacy_triangle_order() -> bool {
+    static LEGACY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *LEGACY.get_or_init(|| std::env::var("AURORA_MESH_ORDER").map_or(true, |v| v.trim() != "asset"))
+}
+
 /// Convert decoded mesh faces, optionally applying a transform (bind shape)
 /// and remapping skin joints to rig indices (`joint_map[mesh joint] = palette index`).
 pub fn mesh_to_faces(
@@ -533,6 +541,9 @@ pub fn mesh_to_faces(
                     }
                     None => super::tangents::pack_volume_tangents(&mut verts, &f.indices),
                 }
+            }
+            if legacy_triangle_order() {
+                aurora_assets::legacy_triangle_order(&mut indices, verts.len());
             }
             let skin: Option<Vec<SkinVertex>> = match joint_map {
                 Some(map) if !map.is_empty() && f.joints.len() == f.positions.len() && f.weights.len() == f.positions.len() => Some(

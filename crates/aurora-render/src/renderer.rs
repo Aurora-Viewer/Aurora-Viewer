@@ -762,6 +762,10 @@ struct Pipelines {
     blend_depth_color: wgpu::RenderPipeline,
     /// Their depth where nearly opaque, before their colour (`Runs`).
     blend_depth_opaque: wgpu::RenderPipeline,
+    /// `Split`: their texels at least half covered, writing depth as they
+    /// are drawn, then the fainter ones, depth tested only.
+    blend_depth_solid: wgpu::RenderPipeline,
+    blend_depth_fringe: wgpu::RenderPipeline,
     particles: wgpu::RenderPipeline,
     water_particles: wgpu::RenderPipeline,
     water_particles_under: wgpu::RenderPipeline,
@@ -3036,6 +3040,27 @@ impl Backend {
             constants: &[("BLEND_EARLY_DISCARD", 1.0)],
             ..base("blend rigged colour", "vs_main", "fs_blend")
         });
+        // `RiggedBlendDepth::Split` (#935): first the texels at least half
+        // covered, each writing its depth as it is drawn, as the Legacy
+        // Viewer's rigged alpha pass does from 1/255 (LLDrawPoolAlpha::
+        // forwardRender(true), LEQUAL); then the fainter ones over them,
+        // depth tested, writing nothing
+        let blend_depth_solid = pipe(PipeDesc {
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: true,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            constants: &[("BLEND_EARLY_DISCARD", 1.0), ("BLEND_SPLIT", 1.0)],
+            ..base("blend rigged solid", "vs_main", "fs_blend")
+        });
+        let blend_depth_fringe = pipe(PipeDesc {
+            blend: Some(suppress),
+            write_mask: wgpu::ColorWrites::ALL,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            constants: &[("BLEND_EARLY_DISCARD", 1.0), ("BLEND_SPLIT", 2.0)],
+            ..base("blend rigged fringe", "vs_main", "fs_blend")
+        });
         let particles = pipe(PipeDesc {
             vb: Vb::Particle,
             cull: None,
@@ -3398,6 +3423,8 @@ impl Backend {
             blend_depth_mask,
             blend_depth_color,
             blend_depth_opaque,
+            blend_depth_solid,
+            blend_depth_fringe,
             particles,
             water_particles,
             water_particles_under,
@@ -6601,6 +6628,27 @@ impl Backend {
                     let mut pass = begin_scene_b(&mut encoder, t, "scene b rigged blend depth", false, true);
                     bind_mesh(&mut pass, &self.groups.a);
                     draw(&mut pass, &self.pipelines.blend_depth_mask, (b0, n_depth));
+                }
+                RiggedBlendDepth::Split => {
+                    // object by object in their drawing order, what is at
+                    // least half covered, hiding what is drawn after it
+                    // behind it, then the object's fringes (#935); the glow
+                    // once, with the first
+                    let mut pass = begin_scene_b(&mut encoder, &self.targets, "scene b rigged blend", false, true);
+                    bind_mesh(&mut pass, &self.groups.a);
+                    let mut from = 0;
+                    for end in lists.blend_depth_runs.iter().map(|&e| e.min(n_depth)).chain([n_depth]) {
+                        if end <= from {
+                            continue;
+                        }
+                        blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
+                        draw(
+                            &mut pass,
+                            &self.pipelines.blend_depth_fringe,
+                            (b0 + from as u64 * stride, end - from),
+                        );
+                        from = end;
+                    }
                 }
                 RiggedBlendDepth::Runs => {
                     // their depth where nearly opaque, then run by run

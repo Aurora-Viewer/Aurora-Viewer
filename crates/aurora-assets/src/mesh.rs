@@ -299,6 +299,24 @@ fn decode_face(face_index: usize, sm: &Llsd) -> MeshFace {
     face
 }
 
+/// The order the Legacy Viewer draws the triangles of a mesh face in: it
+/// reorders every face for the GPU's vertex cache once the mesh is loaded
+/// (end of LLVolumeFace::cacheOptimize, indra/llmath/llvolume.cpp, originally
+/// LGPL 2.1: meshopt_optimizeVertexCache on the welded vertices). Nothing
+/// sorts the triangles of one face by depth afterwards, so the strand cards
+/// of a blended mesh hair blend and hide one another in this order, the one
+/// its creator saw (#935). Indices out of range leave the face as it is.
+pub fn legacy_triangle_order(indices: &mut [u16], vertex_count: usize) {
+    if indices.len() < 6 || !indices.len().is_multiple_of(3) || indices.iter().any(|&i| usize::from(i) >= vertex_count) {
+        return;
+    }
+    let wide: Vec<u32> = indices.iter().map(|&i| u32::from(i)).collect();
+    for (to, from) in indices.iter_mut().zip(meshopt::optimize_vertex_cache(&wide, vertex_count)) {
+        // (every output index is one of the input ones, below vertex_count)
+        *to = from as u16;
+    }
+}
+
 /// Packed weight format: per vertex up to 4 `(joint u8, weight u16 LE)` pairs,
 /// terminated by a 0xFF joint byte unless all 4 influences are present.
 fn unpack_weights(face_index: usize, w: &[u8], num_verts: usize) -> (Vec<[u8; 4]>, Vec<[f32; 4]>) {
@@ -625,5 +643,33 @@ mod tests {
 
         assert!(decode_skin(&zip(&Llsd::Array(vec![]))).is_err());
         assert!(decode_skin(b"\x78\x9c garbage").is_err());
+    }
+
+    /// The triangles stay the same, each with its winding; the two of one
+    /// card come together whatever order the asset gave them in, as the
+    /// vertex cache wants; a face it cannot reorder is left as it is.
+    #[test]
+    fn faces_draw_their_triangles_in_the_legacy_viewers_order() {
+        // two cards (quads 0-3 and 4-7), their triangles interleaved
+        let mut indices = vec![0u16, 1, 2, 4, 5, 6, 0, 2, 3, 4, 6, 7];
+        let before = indices.clone();
+        legacy_triangle_order(&mut indices, 8);
+        let canonical = |t: &[u16]| {
+            // a triangle's rotation that starts at its smallest index
+            let k = (0..3).min_by_key(|&k| t[k]).unwrap_or(0);
+            [t[k], t[(k + 1) % 3], t[(k + 2) % 3]]
+        };
+        let mut a: Vec<_> = before.chunks(3).map(canonical).collect();
+        let mut b: Vec<_> = indices.chunks(3).map(canonical).collect();
+        let card = |t: &[u16; 3]| t[0] / 4;
+        assert_eq!(card(&b[0]), card(&b[1]), "{indices:?}");
+        assert_eq!(card(&b[2]), card(&b[3]), "{indices:?}");
+        a.sort_unstable();
+        b.sort_unstable();
+        assert_eq!(a, b);
+
+        let mut out_of_range = vec![0u16, 1, 2, 0, 2, 9];
+        legacy_triangle_order(&mut out_of_range, 4);
+        assert_eq!(out_of_range, [0, 1, 2, 0, 2, 9]);
     }
 }

@@ -1248,8 +1248,24 @@ fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec
 // comparison (AURORA_BLEND_EARLY_DISCARD=0): same image.
 override BLEND_EARLY_DISCARD: bool = true;
 
+// RiggedBlendDepth::Split (#935): 1 draws only the texels at least half
+// covered (writing their depth as they are drawn), 2 only the fainter ones
+// (depth tested, nothing written); 0, every other use, draws them all.
+override BLEND_SPLIT: u32 = 0u;
+
 @fragment
 fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    // RiggedBlendDepth::Split: the texels at least half covered, then the
+    // fainter ones, by the alpha of fs_depth_contact (the occlusion's depth
+    // holds the same ones); tested before the material, which the other
+    // pass's texels then never evaluate
+    if (BLEND_SPLIT != 0u) {
+        let rec = records[in.record];
+        let half = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a >= 0.5;
+        if ((BLEND_SPLIT == 1u) != half) {
+            discard;
+        }
+    }
     let m = eval_material(in, front);
     if (BLEND_EARLY_DISCARD && m.color.a < 0.004) {
         discard;

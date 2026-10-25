@@ -153,7 +153,11 @@ pub fn posed_bounds(bounds: &[JointBounds], mut matrix: impl FnMut(u8) -> Option
 /// back of the head (`head`, the rest position of mHead, joint `joint`), at
 /// several distances from it, in a shuffled order rather than back to front,
 /// both sides of each card, as the strand cards of a mesh hair (#935).
-fn demo_hair_cards(head: Vec3, joint: usize, n: u32) -> super::jobs::FaceGeom {
+/// `layered`: listed from the head outwards as a hair is made, the inner
+/// cards on the dark half of the texture, the outer ones on the light half,
+/// then drawn in the Legacy Viewer's triangle order like a mesh asset;
+/// `outer_first`: listed from the outside in.
+fn demo_hair_cards(head: Vec3, joint: usize, n: u32, layered: bool, outer_first: bool) -> super::jobs::FaceGeom {
     let mut face = super::jobs::FaceGeom {
         vertices: Vec::new(),
         indices: Vec::new(),
@@ -166,14 +170,26 @@ fn demo_hair_cards(head: Vec3, joint: usize, n: u32) -> super::jobs::FaceGeom {
         seed ^= seed << 5;
         (seed >> 8) as f32 / (1u32 << 24) as f32
     };
-    for _ in 0..n {
-        // around -x, the back of the head the default camera looks at
-        let angle = std::f32::consts::PI + (rand() - 0.5) * 3.4;
-        let radius = 0.11 + 0.09 * rand();
+    let mut cards: Vec<(f32, f32, f32, f32, f32)> = (0..n)
+        .map(|_| {
+            // around -x, the back of the head the default camera looks at
+            let angle = std::f32::consts::PI + (rand() - 0.5) * 3.4;
+            let radius = 0.11 + 0.09 * rand();
+            (angle, radius, rand(), rand(), rand())
+        })
+        .collect();
+    if layered {
+        cards.sort_by(|a, b| if outer_first { b.1.total_cmp(&a.1) } else { a.1.total_cmp(&b.1) });
+    }
+    for (angle, radius, r_width, r_length, r_u) in cards {
         let (out, side) = (Vec3::new(angle.cos(), angle.sin(), 0.0), Vec3::new(-angle.sin(), angle.cos(), 0.0));
         let center = head + Vec3::new(0.0, 0.0, 0.04) + out * radius;
-        let (half_width, top, bottom) = (0.05 + 0.03 * rand(), 0.12, -0.32 - 0.12 * rand());
-        let u0 = (rand() * 4.0).floor() * 0.25;
+        let (half_width, top, bottom) = (0.05 + 0.03 * r_width, 0.12, -0.32 - 0.12 * r_length);
+        let u0 = if layered {
+            (r_u * 2.0).floor() * 0.25 + if radius < 0.155 { 0.0 } else { 0.5 }
+        } else {
+            (r_u * 4.0).floor() * 0.25
+        };
         for facing in [1.0f32, -1.0] {
             let base = face.vertices.len() as u16;
             for (dz, v) in [(top, 0.0), (bottom, 1.0)] {
@@ -192,6 +208,9 @@ fn demo_hair_cards(head: Vec3, joint: usize, n: u32) -> super::jobs::FaceGeom {
             let quad = if facing > 0.0 { [0, 2, 3, 0, 3, 1] } else { [0, 3, 2, 0, 1, 3] };
             face.indices.extend(quad.map(|k| base + k));
         }
+    }
+    if layered && super::jobs::legacy_triangle_order() {
+        aurora_assets::legacy_triangle_order(&mut face.indices, face.vertices.len());
     }
     face
 }
@@ -504,7 +523,13 @@ impl super::Scene {
         {
             meshes.push((
                 crate::demo::HAIR_CARDS_MESH,
-                vec![Some(demo_hair_cards(rest[j].w_axis.truncate(), j, demo.cards))],
+                vec![Some(demo_hair_cards(
+                    rest[j].w_axis.truncate(),
+                    j,
+                    demo.cards,
+                    demo.layered,
+                    demo.outer_first,
+                ))],
             ));
         }
         if demo.lashes {
