@@ -4,12 +4,12 @@ The viewer queries the public releases in the background and shows the login
 screen immediately. Its button stays disabled during the initial check
 (eight seconds at most), then if the update is required. The reason is
 shown under the button and also applies to Enter and to accepting the terms.
-Only stable SemVer tags are considered; drafts, pre-releases and `assets-1`
-are ignored. The Git metadata after a tag does not change its SemVer
-priority. Without a network, the automatic check logs the failure without a
-window and releases this login check. Development builds and the demo do
-not check the releases. The manual check shows its result and bypasses the
-skipped tag.
+Only stable SemVer tags are considered, plus the betas on the Beta channel
+(below); drafts, other pre-releases and `assets-1` are ignored. The Git
+metadata after a tag does not change its SemVer priority. Without a
+network, the automatic check logs the failure without a window and releases
+this login check. Development builds and the demo do not check the
+releases. The manual check shows its result and bypasses the skipped tag.
 
 The dialog stays sharp in front of a background blurred on the GPU, without
 a grey veil. A required offer shows only Quit and Update; neither Esc nor a
@@ -21,6 +21,56 @@ required only, ask, download automatically. Aurora chooses "Ask before
 downloading" by default, to meet the request for an offer at launch;
 The Legacy Viewer chooses 0. The automatic mode prepares the files and waits for
 the user's agreement before quitting and restarting their session.
+
+## Beta channel
+
+Preferences › Language and updates › Versions chooses **Stable** (the
+default) or **Beta** (`update_channel`). Beta testers get the changes of
+main a few days before a stable version, to catch crashes before everyone.
+
+- **Builds.** The Nightly workflow (`.github/workflows/nightly.yml`) runs
+  every 12 hours, at 11:00 and 23:00 UTC: noon and midnight in France in
+  winter (CET), 1 pm and 1 am in summer (CEST), since a GitHub schedule is
+  in UTC only; and on demand ("Run workflow" on main). A run whose commit
+  already has a version tag (nothing new since the last beta or release)
+  does nothing. When main has a commit without a version tag, `scripts/nightly-tag.ps1` pushes
+  the next beta tag on it and the Release workflow builds and publishes it
+  (it is called by the Nightly workflow: a tag pushed with the workflow
+  token starts no workflow by itself), as a GitHub pre-release with the
+  same files as a stable release: the Windows zip, its symbols (crash
+  reports of betas are symbolized like the others), the update policy and
+  the Linux archive.
+- **Versions.** The patch after the newest stable version, then
+  `beta.<UTC date>.<n>`: after v0.7.6, `v0.7.7-beta.20261025.1` at 11:00
+  UTC, `.2` at 23:00 UTC the same day. SemVer ranks every beta above the earlier ones and
+  below the stable version of its number, so a beta tester moves on to
+  v0.7.7 (or any later stable) once it is out, then to the next betas.
+  The beta's update policy takes over the thresholds of the newest stable
+  tag (`Aurora-Update-Policy` line), under its own version.
+- **Retention.** `scripts/nightly-prune.ps1` keeps the ten newest betas and
+  deletes the older ones with their tags; stable releases and other
+  pre-releases are never touched.
+- **What follows the channel.** The Stable channel, the website and the
+  login news read stable releases only (GitHub's pre-release flag must
+  agree with the version: a stable number marked pre-release is skipped).
+  A beta build keeps checking for updates; a development build (Git
+  distance after the tag) never does.
+- **Back to Stable.** The installed beta stays until a stable version newer
+  than it is out, usually the stable of the same number a few days later:
+  no downgrade, since a beta may already have migrated the settings or the
+  cache in a way the older stable does not read. Switching channel checks
+  again at once.
+- **Signing.** Betas are not signed: code signing (SignPath, not set up
+  yet) asks for a manual approval of every release, which a build every
+  12 hours cannot wait for. Its step must skip the tags with a pre-release
+  part (`-`). Beta testers are told to expect an unknown-publisher warning.
+
+`scripts/test-nightly.ps1` holds the fixture tests of the versions, the
+next tag, the pruning and the policy line; the Nightly workflow runs them on
+the pull requests that change these files. `./scripts/nightly-tag.ps1
+-DryRun` prints the tag the next nightly would create. A beta update is
+tried locally with `scripts/test-update.ps1 -Beta`
+([TESTING.md](TESTING.md#interface)).
 
 ## Package and release policy
 

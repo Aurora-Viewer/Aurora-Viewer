@@ -1,0 +1,79 @@
+name: Nightly
+
+# Every 12 hours, when main has changed since the last release or beta, the
+# next beta version is tagged (scripts/nightly-tag.ps1: the patch after the
+# newest stable version, then `beta.<UTC date>.<n>`, e.g.
+# v0.7.7-beta.20261025.1) and the Release workflow builds and publishes it
+# as a GitHub pre-release, with its symbols, update policy and Linux
+# archive. Viewers on the Beta channel (Preferences › Language and updates)
+# are offered it; the Stable channel, the website and the login news ignore
+# pre-releases. Only the newest betas are kept (scripts/nightly-prune.ps1).
+# Run by hand ("Run workflow" on main) for a beta now. Pull requests that
+# change these files run the fixture tests.
+on:
+  schedule:
+    # 11:00 and 23:00 UTC: noon and midnight in France in winter (CET), 1 pm
+    # and 1 am in summer (CEST); a schedule is UTC only
+    - cron: '0 11,23 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/nightly.yml
+      - scripts/nightly-tag.ps1
+      - scripts/nightly-prune.ps1
+      - scripts/test-nightly.ps1
+      - scripts/tools/nightly.ps1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.next.outputs.tag }}
+    steps:
+      # the commit the release job will build: the same one
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          filter: blob:none
+      - name: Next beta tag
+        id: next
+        shell: pwsh
+        run: ./scripts/nightly-tag.ps1
+
+  release:
+    needs: tag
+    if: needs.tag.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+
+  prune:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts
+      - name: Delete old betas
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./scripts/nightly-prune.ps1 -Keep 10
+
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fixture tests
+        shell: pwsh
+        run: ./scripts/test-nightly.ps1

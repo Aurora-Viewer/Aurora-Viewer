@@ -46,6 +46,16 @@ pub fn page(cx: &mut Cx) {
                 (Mode::Automatic, tr!("update-mode-auto")),
             ],
         );
+        use aurora_updater::feed::Channel;
+        cx.combo(
+            tr!("update-channel"),
+            tr!("update-channel-help"),
+            &field!(update_channel),
+            &[
+                (Channel::Stable, tr!("update-channel-stable")),
+                (Channel::Beta, tr!("update-channel-beta")),
+            ],
+        );
     });
     // the system's state, not a saved setting, so outside the page's reset;
     // the Legacy Viewer's installer asks it once

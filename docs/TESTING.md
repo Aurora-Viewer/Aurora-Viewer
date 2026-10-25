@@ -4661,8 +4661,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the files built into the viewer. The demo and the update test
   installation never download the news, even with this
   variable.
-- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored`**, with `AURORA_DEMO=1`: offer
-  of a synthetic version, download at 42% or download finished.
+- **`AURORA_DEMO_UPDATE=1|progress|ready|ignored|beta`**, with `AURORA_DEMO=1`: offer
+  of a synthetic version, download at 42% or download finished; `beta`
+  offers a nightly beta (`0.7.7-beta.20261025.1`), as a viewer on the Beta
+  channel sees it.
   "Update" animates a simulated progress; "Cancel" goes back to the
   offer. No download and no file replacement. Login
   is inert and the login preferences stay intact.
@@ -4720,6 +4722,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   restart: the title must go from 0.2.100 to 0.2.101. Close the viewer and stop
   the displayed server PID before cleaning up. The title, language and
   FPS limit arguments given to the script are kept after the restart.
+  `-Beta` serves `0.2.101-beta.20261025.1` as a GitHub pre-release and starts
+  the isolated profile on the Beta channel: the offer shows; Preferences ›
+  Language and updates › Versions › Stable hides it, Beta brings it back.
+  The script needs PowerShell 7 (`pwsh`).
   Add `-ClearCache` and/or `-ResetSettings` to the script to test the
   publishing choices. The dialog must announce the effects before download
   and restart. After the new viewer is closed, `cache/update-marker.txt`

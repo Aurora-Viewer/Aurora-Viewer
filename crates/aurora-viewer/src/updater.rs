@@ -7,7 +7,7 @@ use crate::{
 };
 use aurora_updater::{
     Cancel, Failure, Progress,
-    feed::{Release, Source},
+    feed::{Channel, Release, Source},
     install::Workspace,
 };
 
@@ -43,6 +43,8 @@ pub struct Updater {
     pub open: bool,
     pub enabled: bool,
     source: Source,
+    /// The releases followed (Preferences); a change checks again at once.
+    channel: Channel,
     tx: crossbeam_channel::Sender<Event>,
     rx: crossbeam_channel::Receiver<Event>,
     manual: bool,
@@ -55,12 +57,17 @@ pub struct Updater {
 pub fn checks_enabled() -> bool {
     std::env::var_os("AURORA_DEMO").is_none()
         && (aurora_updater::test_environment().is_some()
-            || (env!("AURORA_BUILD_PROFILE") == "release"
-                && aurora_updater::feed::version(aurora_version::version()).is_some_and(|v| v.pre.is_empty() && v.build.is_empty())))
+            || (env!("AURORA_BUILD_PROFILE") == "release" && published_version(aurora_version::version())))
+}
+
+/// A version the Release workflow published: a stable one, or a beta. A
+/// development build (Git distance and commit after the tag) never updates.
+fn published_version(version: &str) -> bool {
+    aurora_updater::feed::version(version).is_some_and(|v| Channel::Beta.accepts(&v))
 }
 
 impl Updater {
-    pub fn new(runtime: &tokio::runtime::Handle) -> Self {
+    pub fn new(runtime: &tokio::runtime::Handle, channel: Channel) -> Self {
         let (tx, rx) = crossbeam_channel::unbounded();
         let test = aurora_updater::test_environment();
         let enabled = checks_enabled();
@@ -72,6 +79,7 @@ impl Updater {
             open: rollback,
             enabled,
             source,
+            channel,
             tx,
             rx,
             manual: false,
@@ -126,20 +134,35 @@ impl Updater {
         self.state = State::Checking;
         self.open = manual;
         let source = self.source.clone();
+        let channel = self.channel;
         let tx = self.tx.clone();
         runtime.spawn(async move {
-            let result = async { tokio::time::timeout(std::time::Duration::from_secs(8), source.check(aurora_version::version())).await? }
-                .await
-                .map_err(|e: anyhow::Error| {
-                    log::warn!("release check: {e:#}");
-                    Failure::Network
-                });
+            let result =
+                async { tokio::time::timeout(std::time::Duration::from_secs(8), source.check(aurora_version::version(), channel)).await? }
+                    .await
+                    .map_err(|e: anyhow::Error| {
+                        log::warn!("release check: {e:#}");
+                        Failure::Network
+                    });
             let _ = tx.send(Event::Checked(result));
         });
     }
 
     pub fn poll(&mut self, settings: &Settings, info: &mut LoginInfo, runtime: &tokio::runtime::Handle) -> bool {
         info.can_check_updates = self.enabled;
+        // Joining the Beta channel shows its newest beta now; leaving it
+        // forgets an offered beta (a stable newer than the installed one
+        // comes at the next check).
+        if settings.update_channel != self.channel && !self.busy() {
+            self.channel = settings.update_channel;
+            if matches!(self.state, State::Offer | State::Ready) {
+                self.prepared.take();
+                self.release = None;
+                self.state = State::Idle;
+                self.open = false;
+            }
+            self.check(runtime, false);
+        }
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Checked(Ok(release)) => {
@@ -294,9 +317,23 @@ mod tests {
         assert!(!should_offer(false, false, Mode::Disabled, "", "v0.3.1"));
     }
     #[test]
+    fn a_beta_keeps_checking_for_updates_a_development_build_does_not() {
+        for (version, checks) in [
+            ("0.7.6", true),
+            ("0.7.7-beta.20261025.1", true),
+            ("0.7.7-rc.1", false),
+            ("0.7.6+3.gabcdef123", false),
+            ("0.7.7-beta.20261025.1+2.gabcdef123", false),
+            ("0.0.0+0.gunknown", false),
+        ] {
+            assert_eq!(published_version(version), checks, "{version}");
+        }
+    }
+
+    #[test]
     fn initial_policy_check_blocks_login_until_a_result_or_network_failure() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
-        let mut updater = Updater::new(rt.handle());
+        let mut updater = Updater::new(rt.handle(), Channel::Stable);
         updater.policy_pending = true;
         assert!(updater.blocks_login());
         assert!(updater.login_block_reason().is_some());
@@ -309,7 +346,7 @@ mod tests {
     #[test]
     fn rollback_keeps_required_update_blocking_login() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
-        let mut updater = Updater::new(rt.handle());
+        let mut updater = Updater::new(rt.handle(), Channel::Stable);
         updater.rollback_notice = true;
         updater.state = State::Rollback;
         let release = Release {

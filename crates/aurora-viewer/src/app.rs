@@ -885,7 +885,7 @@ impl App {
         net.set_agent_language(aurora_i18n::language(), settings.language_is_public);
         let voice_http = net.caps_http();
         let login_info = ui::news::LoginInfo::start(net.runtime());
-        let updater = crate::updater::Updater::new(net.runtime());
+        let updater = crate::updater::Updater::new(net.runtime(), settings.update_channel);
         let plugin_pack = crate::media::pack::PluginPack::new(crate::settings::media_plugins_dir());
         let mut media = crate::media::MediaManager::default();
         media.set_pack_dir(plugin_pack.dir());

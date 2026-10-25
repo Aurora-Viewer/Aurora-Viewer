@@ -3,7 +3,7 @@
 
 use aurora_updater::{
     Cancel, Failure,
-    feed::{Asset, Release, Source},
+    feed::{Asset, Channel, Release, Source},
     install, media_pack, package,
 };
 use sha2::{Digest, Sha256};
@@ -525,11 +525,66 @@ fn release_filter_ignores_assets_drafts_prereleases_and_retrieves_minimum_versio
             .expect("response");
         }
     });
-    let result = run(Source::local(&format!("{base}/releases")).expect("feed").check("0.2.0+8.gabc123"))
-        .expect("check")
-        .expect("release");
+    let result = run(Source::local(&format!("{base}/releases"))
+        .expect("feed")
+        .check("0.2.0+8.gabc123", Channel::Stable))
+    .expect("check")
+    .expect("release");
     thread.join().expect("server");
     assert_eq!(result.version, "0.3.0");
     assert_eq!(result.notes, "Real notes");
     assert!(result.required);
+}
+
+/// One answer per request, in order, on a loopback feed.
+fn serve(listener: TcpListener, answers: Vec<String>) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        for data in answers {
+            let (mut socket, _) = listener.accept().expect("request");
+            let mut request = [0; 4096];
+            let _ = socket.read(&mut request);
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}",
+                data.len()
+            )
+            .expect("response");
+        }
+    })
+}
+
+#[test]
+fn the_beta_channel_takes_betas_and_moves_on_to_the_stable_of_the_same_number() {
+    let feed = |base: &str| {
+        serde_json::json!([
+            {"tag_name":"v0.8.0-beta.20261026.1","prerelease":true,"html_url":format!("{base}/beta-next")},
+            {"tag_name":"v0.7.7-rc.1","prerelease":true,"html_url":format!("{base}/rc")},
+            {"tag_name":"v0.9.0","prerelease":true,"html_url":format!("{base}/mislabelled")},
+            {"tag_name":"v0.7.7-beta.20261025.2","prerelease":false,"html_url":format!("{base}/mislabelled-beta")},
+            {"tag_name":"v0.7.7-beta.20261025.1","prerelease":true,"html_url":format!("{base}/beta")},
+            {"tag_name":"v0.7.6","html_url":format!("{base}/stable")}
+        ])
+        .to_string()
+    };
+    let check = |current: &str, channel: Channel, drop_newest: bool| {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("loopback");
+        let base = format!("http://{}", listener.local_addr().expect("address"));
+        let mut list: Vec<serde_json::Value> = serde_json::from_str(&feed(&base)).expect("fixture");
+        if drop_newest {
+            list.remove(0);
+            list.insert(0, serde_json::json!({"tag_name":"v0.7.7","html_url":format!("{base}/stable-next")}));
+        }
+        let server = serve(listener, vec![serde_json::Value::from(list).to_string()]);
+        let result = run(Source::local(&format!("{base}/releases")).expect("feed").check(current, channel)).expect("check");
+        server.join().expect("server");
+        result.map(|r| r.version)
+    };
+    // Stable never sees a beta, nor a stable number GitHub marks pre-release.
+    assert_eq!(check("0.7.5", Channel::Stable, false).as_deref(), Some("0.7.6"));
+    // Beta takes the newest beta; an rc or a mislabelled release is skipped.
+    assert_eq!(check("0.7.6", Channel::Beta, false).as_deref(), Some("0.8.0-beta.20261026.1"));
+    // Once the stable of that number is out, the beta tester moves on to it.
+    assert_eq!(check("0.7.7-beta.20261025.1", Channel::Beta, true).as_deref(), Some("0.7.7"));
+    // Back on Stable, a beta waits for the next stable instead of a downgrade.
+    assert_eq!(check("0.7.7-beta.20261025.1", Channel::Stable, false), None);
 }
