@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
+key validity in a condition but does not define unary `!` for a key. An integer
+helper preserves rejection of malformed and null UUIDs in both HTTP requests
+and incoming consent messages. The shared handshake version forces existing
+attachments to compile the corrected query source through the usual factory.
+
 `ui/follow.rs` provides the compact controller opened by avatar Follow;
 `app/follow.rs` applies live distance changes and opt-in blocked-follow recovery
 through the ordinary teleport/RLVa path. Saved `autopilot::FollowSettings` default

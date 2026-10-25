@@ -1,10 +1,10 @@
-// Aurora LSL Bridge query and posing-consent services v1.34: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge query and posing-consent services v1.35: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.34";
+string VERSION = "1.35";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -16,6 +16,12 @@ integer POSE_CHANNEL = -184735220;
 list gPosePeers;
 integer gPaired;
 float gNextHello;
+
+// Keys have a validity test in conditions; LSL's ! operator requires an integer.
+integer validKey(key value) {
+    if (value) return TRUE;
+    return FALSE;
+}
 
 announce() {
     if (gURL != "") llOwnerSay("<auroraBridgeQuery>" + VERSION + "|" + FOLDER + "|" + gURL + "|" + (string)gToken + "</auroraBridgeQuery>");
@@ -43,7 +49,7 @@ query(key request, string kind, string targets) {
         string action = llList2String(fields, 0);
         key nonce = llList2Key(fields, 1);
         key target = llList2Key(fields, 2);
-        if (llGetListLength(fields) != 3 || !nonce || !target || target == gOwner
+        if (llGetListLength(fields) != 3 || !validKey(nonce) || !validKey(target) || target == gOwner
             || llListFindList(["request", "accept", "refuse", "cancel", "withdraw"], [action]) < 0) {
             llHTTPResponse(request, 400, "invalid"); return;
         }
@@ -128,9 +134,9 @@ default {
             if (llGetListLength(fields) != 4 || llList2String(fields, 0) != "pose1" || llList2Key(fields, 3) != gOwner) return;
             key nonce = llList2Key(fields, 1);
             string action = llList2String(fields, 2);
-            if (!nonce || llListFindList(["request", "accept", "refuse", "cancel", "withdraw"], [action]) < 0) return;
+            if (!validKey(nonce) || llListFindList(["request", "accept", "refuse", "cancel", "withdraw"], [action]) < 0) return;
             key peer = llGetOwnerKey(sender);
-            if (!peer || peer == sender || peer == gOwner) return;
+            if (!validKey(peer) || peer == sender || peer == gOwner) return;
             list attached = llGetObjectDetails(sender, [OBJECT_ATTACHED_POINT]);
             if (llGetListLength(attached) != 1 || llList2Integer(attached, 0) <= 0) return;
             if (action == "request") {
