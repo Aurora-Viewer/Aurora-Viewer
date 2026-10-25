@@ -464,6 +464,10 @@ pub struct Settings {
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
     pub gpu_adapter: String,
+    /// The graphics driver whose "out of date" warning the user dismissed
+    /// on the login screen (`gpu_driver::Notice::key`): a newer driver that
+    /// is still too old warns again.
+    pub gpu_driver_dismissed: String,
     /// Let other programs' overlay layers (Steam overlay, RivaTuner, Epic…)
     /// into the viewer (Preferences › Graphics); off: kept out at startup
     /// (`aurora_render::vulkan_layers`), read by `allow_overlays_at_start`.
@@ -1424,6 +1428,7 @@ impl Default for Settings {
             start_region: String::new(),
             draw_distance: 96.0,
             gpu_adapter: String::new(),
+            gpu_driver_dismissed: String::new(),
             allow_overlays: false,
             vsync: false,
             shadows: true,

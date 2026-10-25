@@ -3366,6 +3366,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
 | `AURORA_CRASH_CAPTURE_EXIT=1` | Closes the window after its screenshot in demo |
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
+| `AURORA_DEMO_GPU_DRIVER=old\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
@@ -3413,7 +3414,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_POPOUT=1\|option` | Conversations in their own windows: the friend's IM and a group popped out, or a group opened with the option on (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out` | Detached conversations, or nearby chat alone before any IM (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
@@ -4368,7 +4369,7 @@ failure. Grid validation and any paid upload are performed by the human.
   (`aurora:conference`): Close, Hang up during its call, the transcript;
   `local`: the transcript only. The transcript rows are greyed in the demo
   (no transcript folder).
-- **`AURORA_DEMO_CONV_POPOUT=1|option`** (#717): with an `AURORA_DEMO_CONV`
+- **`AURORA_DEMO_CONV_POPOUT=1|option|nearby|nearby-out`** (#717, #995): with an `AURORA_DEMO_CONV`
   scenario (`aurora`, `aurora:compact`, `bubbles` or `bubbles:legacy`), at
   frame 640: `1` pops the friend's IM (Nova) and the Aurora Builders group
   out into their own windows, at the left of the screen, one above the
@@ -4380,8 +4381,12 @@ failure. Grid validation and any paid upload are performed by the human.
   field, the "Attach to Conversations" button in its title bar; the column
   (or the tabs) keeps their entries with the "Detach" icon where the unread
   count goes; the Conversations window shows another conversation and its
-  title bar a "Detach" button (none when the nearby chat alone is left
-  there). With `AURORA_DEMO_CONV_MENU=im` and `1`: the friend's menu starts
+  title bar a "Detach" button, including when nearby chat alone is left
+  there. `nearby` clears the open IMs and shows nearby chat alone: Detach
+  must already be available. `nearby-out` also detaches it: its own window
+  stays open, the empty Conversations window closes, and "Attach to
+  Conversations" reopens it on nearby chat. Opening a private conversation
+  afterwards must leave nearby chat detached. With `AURORA_DEMO_CONV_MENU=im` and `1`: the friend's menu starts
   with "Attach to Conversations"; without `AURORA_DEMO_CONV_POPOUT`, with
   "Detach".
 - **`AURORA_DEMO_CONV_EMOJI=1`**: with `AURORA_DEMO_CONV=aurora`,
@@ -4616,6 +4621,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   In a small window, the button stays reachable at the top right.
   `AURORA_DEMO_UPDATE_MAINTENANCE=cache|settings|both` shows the forced effects;
   when absent, the dialog announces the usual preservation and migrations.
+- **`AURORA_DEMO_GPU_DRIVER=old|aged`**, with `AURORA_DEMO=1`: the driver check
+  (`gpu_driver.rs`) reads a made-up card instead of the real one: `old` a
+  GeForce GTX 1060 on NVIDIA 546.33 (under the 572.16 minimum), `aged` an AMD
+  card whose driver was installed three years ago. The login screen shows the
+  caution-edged card in its top left corner (with `AURORA_DEMO_LOGIN=cards` or
+  `empty`); "Get the … driver" opens the vendor's page, "Ignore for this
+  driver" hides it and saves `gpu_driver_dismissed` in the demo profile
+  (clear it there to see the card again). Without the variable the real
+  driver is checked: the log line `graphics driver:` says the verdict.
 - **Isolated real installation**: `scripts/test-update.ps1` prepares packages
   0.2.100 and 0.2.101 in `.scratch`, serves the second on loopback and
   launches the first.

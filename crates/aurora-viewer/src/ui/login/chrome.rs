@@ -35,6 +35,11 @@ fn version(ui: &mut egui::Ui, p: &Palette) {
 pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sidebar_visible: bool, form: &mut LoginForm) -> LoginAction {
     let mut action = LoginAction::None;
     let screen = ctx.content_rect();
+    if let Some(notice) = &form.driver_notice
+        && super::driver_notice::show(ctx, p, icons, notice)
+    {
+        action = LoginAction::DismissDriverNotice;
+    }
     egui::Area::new(Id::unique("login_links"))
         .anchor(egui::Align2::LEFT_BOTTOM, Vec2::new(25.0, -20.0))
         .show(ctx, |ui| {

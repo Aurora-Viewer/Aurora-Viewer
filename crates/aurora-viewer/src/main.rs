@@ -38,6 +38,7 @@ mod frame_par;
 mod frame_profile;
 mod gestures;
 mod gif_search;
+mod gpu_driver;
 mod graphics_presets;
 mod grids;
 mod high_contrast;
