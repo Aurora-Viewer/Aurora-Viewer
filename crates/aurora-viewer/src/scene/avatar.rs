@@ -59,6 +59,8 @@ pub struct AttachPoint {
     pub position: Vec3,
     pub rotation: Quat,
     pub hud: bool,
+    /// Native avatar_lad.xml visibility, including Bento facial points.
+    pub visible_in_first_person: bool,
     /// Skeleton-space (feet at z = 0) rest position, and the rig joint the
     /// point follows when the avatar is animated.
     pub skel_position: Vec3,
@@ -276,6 +278,7 @@ impl AvatarLibrary {
                                     position: jp + pos - pelvis,
                                     rotation,
                                     hud,
+                                    visible_in_first_person: c.attr("visible_in_first_person") == Some("true"),
                                     skel_position: jp + pos,
                                     local_position: pos,
                                     rest_joint: Mat4::from_translation(jp),
@@ -385,6 +388,20 @@ impl AvatarLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn first_person_attachment_flags_include_bento_facial_points() {
+        let lib = AvatarLibrary::load();
+        let hidden = [2, 11, 12, 13, 14, 15, 16, 17, 47, 48, 49, 50, 51, 52];
+        for (&id, point) in &lib.attach_points {
+            assert_eq!(point.visible_in_first_person, !hidden.contains(&id), "point {id}");
+        }
+        assert!(
+            lib.attach_points[&47].group != 2,
+            "Bento visibility must not be inferred from the old head group"
+        );
+        assert!((31..=38).all(|id| lib.attach_points[&id].hud && lib.attach_points[&id].visible_in_first_person));
+    }
 
     #[test]
     fn attachment_rotations_match_firestorms_local_axes() {

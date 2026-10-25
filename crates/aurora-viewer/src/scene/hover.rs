@@ -598,6 +598,10 @@ pub struct HoverCache {
 }
 
 impl HoverCache {
+    pub(super) fn invalidate(&mut self) {
+        self.kept = None;
+    }
+
     /// AURORA_HOVER_LEGACY, this second: what the cursor is over is
     /// searched as before (no class, no triangle hierarchy, every object
     /// of the scene looked at for the HUD pick).
@@ -1003,6 +1007,7 @@ mod tests {
             glow_pool: false,
             rez_glow: false,
             system: None,
+            first_person_hidden: false,
         }
     }
 

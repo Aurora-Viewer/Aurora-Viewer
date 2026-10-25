@@ -1533,6 +1533,7 @@ mod tests {
             blend: vec![cmd(12)],
         });
         scene.gpu = Some(crate::gpu_cull::GpuCullView {
+            first_person: None,
             planes: [Vec4::ZERO; 6],
             eye: Vec3::ONE,
             draw_distance: 128.0,

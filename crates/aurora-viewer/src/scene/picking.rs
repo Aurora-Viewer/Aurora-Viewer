@@ -593,6 +593,7 @@ impl Scene {
             .copied()
             .chain(all)
             .filter_map(|idx| Some((idx, self.gpu.get(idx)?)))
+            .filter(|(idx, gpu)| self.first_person_object_visible(*idx, gpu))
     }
 
     pub fn click_bounds(&self, world: &World, idx: usize) -> Option<(Vec3, Vec3)> {
@@ -645,6 +646,9 @@ impl Scene {
     ) -> Option<pick::FaceHit> {
         let o = world.objects.get(idx)?;
         let g = self.gpu.get(idx)?;
+        if !self.first_person_object_visible(idx, g) {
+            return None;
+        }
         // The CPU triangles of a rigged mesh are in the bind pose. They must
         // never divert a touch from the surface actually drawn by the GPU
         // (#416, #419).
@@ -1750,6 +1754,7 @@ pub(super) mod tests {
             glow_pool: false,
             rez_glow: false,
             system: None,
+            first_person_hidden: false,
         };
         for idx in [front, back] {
             scene.gpu[idx].geom = Some(key);

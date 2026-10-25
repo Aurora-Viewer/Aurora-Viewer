@@ -71,6 +71,8 @@ const OBJ_RIGGED: u32 = 4u;
 const OBJ_HUD: u32 = 8u;
 const OBJ_NO_PROBE: u32 = 16u;
 const OBJ_POSED: u32 = 32u;
+const OBJ_FIRST_PERSON_HIDDEN: u32 = 64u;
+const FACE_FIRST_PERSON_HIDDEN: u32 = 16u;
 
 // a skeleton's own anchor, from the first joint of its palette (common.wgsl)
 const SKELETON_ANCHOR: u32 = 160u;
@@ -98,6 +100,8 @@ const F_SPOT: u32 = 256u;
 const F_WATER_AIR: u32 = 1024u;
 // blended faces that are not rigged cast too (off: AURORA_BLEND_SHADOWS=0)
 const F_BLEND_CASTS: u32 = 2048u;
+const F_FIRST_PERSON: u32 = 4096u;
+const F_SHOW_SELF: u32 = 8192u;
 
 struct CullFace {
     index_count: u32,
@@ -337,6 +341,10 @@ fn face_mask(i: u32) -> u32 {
         return 0u;
     }
     let is_avatar = (o.flags & OBJ_AVATAR) != 0u;
+    let own_first_person = (frame.sizes.w & F_FIRST_PERSON) != 0u && frame.groups.y != 0u && o.avatar == frame.groups.y - 1u;
+    if (own_first_person && (frame.sizes.w & F_SHOW_SELF) == 0u) {
+        return 0u;
+    }
     // avatar limit (impostors are pictured by the CPU), too complex
     // (silhouette without attachments), still loading (cloud)
     if (o.avatar < n) {
@@ -353,7 +361,8 @@ fn face_mask(i: u32) -> u32 {
         return 0u;
     }
     let fl = frame.sizes.w;
-    let in_view = sphere_in(frame.planes, c, r);
+    // LLAgent::needsRenderHead / LLVOAvatarSelf::updateAttachmentVisibility.
+    let in_view = sphere_in(frame.planes, c, r) && !(own_first_person && ((o.flags & OBJ_FIRST_PERSON_HIDDEN) != 0u || (f.bits & FACE_FIRST_PERSON_HIDDEN) != 0u));
     let casts = (fl & F_SHADOWS) != 0u && d - r < frame.dist.x;
     let reflects = (fl & F_REFLECTIONS) != 0u && d - r < frame.dist.y;
     if (!in_view && !casts && !reflects) {

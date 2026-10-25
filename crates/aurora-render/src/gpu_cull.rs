@@ -48,6 +48,8 @@ pub mod pass {
 
 /// `CullFace::bits`: the object's first face (counts the visible objects).
 pub const FACE_FIRST: u32 = 8;
+/// System head, eyes, hair or eyelashes: hidden only in the main first-person view.
+pub const FACE_FIRST_PERSON_HIDDEN: u32 = 16;
 
 /// `CullObject::flags`.
 pub mod object_flags {
@@ -61,6 +63,8 @@ pub mod object_flags {
     /// Rigged mesh posed by the GPU: its sphere is computed each frame from
     /// its joint boxes (`CullObject::boxes`) and its skeleton's palette.
     pub const POSED: u32 = 32;
+    /// Attachment point marked invisible in first person by avatar_lad.xml.
+    pub const FIRST_PERSON_HIDDEN: u32 = 64;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -130,6 +134,8 @@ pub mod frame_flags {
     /// Blended faces that are not rigged cast too
     /// (`shadow_cull::blend_casts`).
     pub const BLEND_CASTS: u32 = 2048;
+    pub const FIRST_PERSON: u32 = 4096;
+    pub const SHOW_SELF: u32 = 8192;
 }
 
 const CLASSIFY_GROUP: u32 = 128;
@@ -317,7 +323,7 @@ pub struct CullFrame {
     pub dist: [f32; 4],
     /// Faces, objects, slots per bin, `frame_flags`.
     pub sizes: [u32; 4],
-    /// Classify workgroups.
+    /// Classify workgroups; y is first-person avatar index + 1 (0: none).
     pub groups: [u32; 4],
 }
 
@@ -338,6 +344,12 @@ impl CullFrame {
         mut flags: u32,
     ) -> CullFrame {
         let planes = |vp: Mat4| view_planes(vp).map(|p| p.to_array());
+        if let Some((_, show)) = view.first_person {
+            flags |= frame_flags::FIRST_PERSON;
+            if show {
+                flags |= frame_flags::SHOW_SELF;
+            }
+        }
         for (k, s) in spots.iter().enumerate() {
             if s.is_some() {
                 flags |= frame_flags::SPOT << k;
@@ -357,7 +369,7 @@ impl CullFrame {
             eye: view.eye.extend(view.draw_distance).to_array(),
             dist: [view.shadow_distance, view.reflection_distance, view.pixel_scale, merge_size],
             sizes: [0, 0, 0, flags],
-            groups: [0; 4],
+            groups: [0, view.first_person.and_then(|(id, _)| id.checked_add(1)).unwrap_or(0), 0, 0],
         }
     }
 }
@@ -366,6 +378,8 @@ impl CullFrame {
 /// renderer adds the views it computes itself: cascades, reflections).
 #[derive(Debug, Clone, Copy)]
 pub struct GpuCullView {
+    /// Own avatar slot and FirstPersonAvatarVisible; None outside mouselook.
+    pub first_person: Option<(u32, bool)>,
     /// Main view frustum (`CullView` planes; may be the frozen debug view).
     pub planes: [Vec4; 6],
     pub eye: Vec3,
@@ -421,6 +435,10 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let is_avatar = o.flags & object_flags::AVATAR != 0;
+    let own_first_person = frame.sizes[3] & frame_flags::FIRST_PERSON != 0 && frame.groups[1] != 0 && o.avatar == frame.groups[1] - 1;
+    if own_first_person && frame.sizes[3] & frame_flags::SHOW_SELF == 0 {
+        return (0, false);
+    }
     if o.avatar < n {
         let st = objects[o.avatar as usize].state;
         if st & avatar_state::FULL == 0 || (st & avatar_state::TOO_COMPLEX != 0 && !is_avatar) || st & avatar_state::LOADING != 0 {
@@ -433,7 +451,8 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let fl = frame.sizes[3];
-    let in_view = sphere_in(&frame.planes, c, r);
+    let in_view = sphere_in(&frame.planes, c, r)
+        && !(own_first_person && (o.flags & object_flags::FIRST_PERSON_HIDDEN != 0 || f.bits & FACE_FIRST_PERSON_HIDDEN != 0));
     let casts = fl & frame_flags::SHADOWS != 0 && d - r < frame.dist[0];
     let reflects = fl & frame_flags::REFLECTIONS != 0 && d - r < frame.dist[1];
     if !in_view && !casts && !reflects {
@@ -1065,7 +1084,7 @@ impl GpuCull {
         frame.sizes[0] = faces;
         frame.sizes[1] = objects;
         frame.sizes[2] = self.cap;
-        frame.groups = [self.groups, 0, 0, 0];
+        frame.groups[0] = self.groups;
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
     }
 
@@ -1294,6 +1313,78 @@ mod tests {
         const { assert!(COUNT_SHADOW + SHADOW_STATS <= COUNTS && COUNT_PRE2 + MAIN_BINS <= COUNT_SHADOW) };
     }
 
+    #[test]
+    fn first_person_visibility_hides_own_head_only_in_the_main_view() {
+        let mut frame = frame_for_tests();
+        frame.sizes[1] = 3;
+        frame.sizes[3] = frame_flags::SHADOWS | frame_flags::REFLECTIONS | frame_flags::WATER | frame_flags::MIRROR;
+        let mut objects = vec![
+            CullObject {
+                flags: object_flags::ACTIVE | object_flags::AVATAR,
+                avatar: 0,
+                state: avatar_state::FULL,
+                ..CullObject::NONE
+            };
+            3
+        ];
+        objects[1].flags = object_flags::ACTIVE | object_flags::RIGGED | object_flags::FIRST_PERSON_HIDDEN;
+        objects[1].avatar = 0;
+        objects[2].avatar = 2;
+        let spheres = vec![(Vec3::ZERO, 1.0); 3];
+        let faces = [
+            CullFace {
+                object: 0,
+                bits: pass::OPAQUE | FACE_FIRST,
+                ..CullFace::NONE
+            },
+            CullFace {
+                object: 0,
+                bits: pass::OPAQUE | FACE_FIRST_PERSON_HIDDEN,
+                ..CullFace::NONE
+            },
+            CullFace {
+                object: 1,
+                bits: pass::OPAQUE | FACE_FIRST,
+                ..CullFace::NONE
+            },
+            CullFace {
+                object: 2,
+                bits: pass::OPAQUE | FACE_FIRST_PERSON_HIDDEN,
+                ..CullFace::NONE
+            },
+        ];
+        let original: Vec<_> = (0..faces.len()).map(|i| face_bins(&frame, &faces, &objects, &spheres, i)).collect();
+        assert!(original.iter().all(|v| v.0 & 1 != 0));
+        frame.groups[1] = 1;
+        frame.sizes[3] |= frame_flags::FIRST_PERSON | frame_flags::SHOW_SELF;
+        for (i, original_mask) in original.iter().enumerate() {
+            let (mask, _) = face_bins(&frame, &faces, &objects, &spheres, i);
+            if i == 1 || i == 2 {
+                assert_eq!(mask & 15, 0, "own head/attachment must not enter depth or colour bins");
+                assert_eq!(
+                    mask & !15,
+                    original_mask.0 & !15,
+                    "the enabled body's secondary views remain complete"
+                );
+            } else {
+                assert_eq!(mask, original_mask.0, "body and other avatars stay visible");
+            }
+        }
+        frame.sizes[3] &= !frame_flags::SHOW_SELF;
+        for i in 0..3 {
+            assert_eq!(face_bins(&frame, &faces, &objects, &spheres, i), (0, false));
+        }
+        assert_eq!(face_bins(&frame, &faces, &objects, &spheres, 3), original[3]);
+        frame.sizes[3] &= !frame_flags::FIRST_PERSON;
+        for (i, expected) in original.into_iter().enumerate() {
+            assert_eq!(
+                face_bins(&frame, &faces, &objects, &spheres, i),
+                expected,
+                "leaving mouselook restores immediately"
+            );
+        }
+    }
+
     /// The constants shared with the shader have the same values.
     #[test]
     fn constants_match_wgsl() {
@@ -1312,7 +1403,11 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 42] = [
+        let pairs: [(&str, u32); 46] = [
+            ("F_FIRST_PERSON", frame_flags::FIRST_PERSON),
+            ("F_SHOW_SELF", frame_flags::SHOW_SELF),
+            ("OBJ_FIRST_PERSON_HIDDEN", object_flags::FIRST_PERSON_HIDDEN),
+            ("FACE_FIRST_PERSON_HIDDEN", FACE_FIRST_PERSON_HIDDEN),
             ("PASS_WATER_EXCLUSION", pass::WATER_EXCLUSION),
             ("BIN_WATER_EXCLUSION", BIN_WATER_EXCLUSION as u32),
             ("BIN_SHADOW_ALPHA", BIN_SHADOW_ALPHA as u32),
@@ -1835,6 +1930,23 @@ mod tests {
             } else {
                 o
             };
+            let o = if i < 32 {
+                CullObject {
+                    sphere: [0.0, i as f32 * 0.1, 0.0, 2.0],
+                    flags: object_flags::ACTIVE
+                        | if i == 0 { object_flags::AVATAR } else { object_flags::RIGGED }
+                        | if i.is_multiple_of(2) {
+                            object_flags::FIRST_PERSON_HIDDEN
+                        } else {
+                            0
+                        },
+                    avatar: 0,
+                    state: avatar_state::FULL,
+                    ..CullObject::NONE
+                }
+            } else {
+                o
+            };
             tables.objects.set(i as usize, o);
             objects.push(o);
         }
@@ -1858,7 +1970,7 @@ mod tests {
                     first_index: rand(100_000),
                     base_vertex: rand(100_000) as i32,
                     object: rand(n_obj),
-                    bits: rand(7) | if rand(4) == 0 { FACE_FIRST } else { 0 },
+                    bits: rand(7) | if rand(4) == 0 { FACE_FIRST } else { 0 } | if rand(4) == 0 { FACE_FIRST_PERSON_HIDDEN } else { 0 },
                     _pad: [0; 3],
                 }
             })
@@ -1882,7 +1994,10 @@ mod tests {
         });
         queue.write_buffer(&visibility, 0, bytemuck::cast_slice(&was));
         let mut frame = frame_for_tests();
-        frame.sizes[3] = frame_flags::SHADOWS
+        frame.groups[1] = 1;
+        frame.sizes[3] = frame_flags::FIRST_PERSON
+            | frame_flags::SHOW_SELF
+            | frame_flags::SHADOWS
             | frame_flags::REFLECTIONS
             | frame_flags::WATER
             | frame_flags::WATER_AIR

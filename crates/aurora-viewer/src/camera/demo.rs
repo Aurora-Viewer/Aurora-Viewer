@@ -19,6 +19,9 @@
 //! - `tag`: left press on our own name tag at frame 600, drag (steer the
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
+//! - `ground-ml-body-on|off`: ground sit at 520, enter at 600, stand at 760.
+//! - `ml-eyes-on-body-on|ml-eyes-off-body-on`: animate the head with optional
+//!   eye following; prefix `ground-` to exercise ground sitting.
 //! - `wheel`: 3 wheel clicks out at 600, 12 in at 650 (into mouselook)
 //! - `ml-zoom`: into mouselook at 600, right button held at 640 (no zoom
 //!   yet: the normal angle stays until the wheel sets one), 3 wheel clicks in at
@@ -30,6 +33,8 @@
 //! - `fly`: flying forward from frame 300 (camera lag)
 //! - `sit`: sit on a turning seat with a sit camera at frame 300, stand up
 //!   at 700 (demo::sit_events)
+//! - `sit-ml` / `sit-ml-reclined`: the same seat, upright or tilted, delayed
+//!   400 frames past the loading fade; first person with mouse look on both axes.
 //! - `right-click,x,y` / `right-jitter,x,y`: right click with small motion / repeated
 //!   back-and-forth motion: the camera stays still and the menu opens on release
 //! - `right-drag,x,y` / `right-slow,x,y`: held right button with fast / slow motion:
@@ -60,6 +65,7 @@ pub enum Step {
     /// Enable toggle crouch and hold / release its Down input.
     Crouch(bool),
     ToggleMouselook,
+    GroundSit,
     /// Wheel clicks, SL sign (positive zooms out).
     Wheel(f32),
     Fly,
@@ -70,6 +76,11 @@ pub enum Step {
 }
 
 pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
+    let frame = if spec.starts_with("sit-ml") {
+        frame.saturating_sub(400)
+    } else {
+        frame
+    };
     let parts: Vec<&str> = spec.split(',').map(str::trim).collect();
     let num = |i: usize| parts.get(i).and_then(|v| v.parse::<f32>().ok());
     let mut out = Vec::new();
@@ -230,6 +241,25 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             661 => out.extend([Step::Release, Step::Log]),
             _ => {}
         },
+        mode @ ("ml-body-on"
+        | "ml-body-off"
+        | "ground-ml-body-on"
+        | "ground-ml-body-off"
+        | "ml-eyes-on-body-on"
+        | "ml-eyes-off-body-on"
+        | "ground-ml-eyes-on-body-on"
+        | "ground-ml-eyes-off-body-on") => match frame {
+            520 | 760 if mode.starts_with("ground-") => out.push(Step::GroundSit),
+            600 | 700 => out.extend([Step::ToggleMouselook, Step::Log]),
+            620..=640 => {
+                out.push(Step::Drag(0.0, 8.0));
+                if matches!(frame, 620 | 625) {
+                    out.push(Step::Log);
+                }
+            }
+            605 | 610 | 615 | 650 | 680 | 740 | 800 => out.push(Step::Log),
+            _ => {}
+        },
         "ml" => match frame {
             600 | 700 => out.extend([Step::ToggleMouselook, Step::Log]),
             604 | 608 | 612 | 620 | 640 | 704 | 708 | 712 | 720 | 740 => out.push(Step::Log),
@@ -272,12 +302,29 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             610 | 630 | 660 => out.push(Step::Log),
             _ => {}
         },
-        mode @ ("sit" | "scripted-sit") => {
+        mode @ ("sit"
+        | "scripted-sit"
+        | "sit-ml"
+        | "sit-ml-reclined"
+        | "sit-ml-body-on"
+        | "sit-ml-body-off"
+        | "sit-ml-reclined-body-on"
+        | "sit-ml-reclined-body-off") => {
             if (250..=700).contains(&frame) {
                 out.push(Step::SitEvents);
             }
             if mode == "scripted-sit" && matches!(frame, 320 | 500) {
                 out.push(Step::FollowEvents);
+            }
+            if mode.starts_with("sit-ml") {
+                match frame {
+                    360 | 660 => out.push(Step::ToggleMouselook),
+                    480..=500 => out.push(Step::Drag(0.0, -5.0)),
+                    550..=570 => out.push(Step::Drag(0.0, 10.0)),
+                    620..=640 => out.push(Step::Drag(5.0, 0.0)),
+                    460 | 520 | 590 | 650 | 680 => out.push(Step::Log),
+                    _ => {}
+                }
             }
             if matches!(frame, 290 | 302 | 320 | 360 | 400 | 500 | 600 | 700 | 702 | 720 | 760) {
                 out.push(Step::Log);
@@ -298,6 +345,27 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
         _ => {}
     }
     out
+}
+
+pub fn sit_events(spec: &str, frame: u64) -> Vec<aurora_net::NetEvent> {
+    let frame = if spec.starts_with("sit-ml") {
+        frame.saturating_sub(400)
+    } else {
+        frame
+    };
+    let mut events = crate::demo::sit_events(frame);
+    if spec.starts_with("sit-ml-reclined") {
+        for event in &mut events {
+            if let aurora_net::NetEvent::ObjectUpdates { objects, .. } = event {
+                for object in objects {
+                    if object.local_id == 950 {
+                        object.rotation *= glam::Quat::from_rotation_y(1.1);
+                    }
+                }
+            }
+        }
+    }
+    events
 }
 
 pub fn sit_follow_events(frame: u64, handle: aurora_net::RegionHandle, subject: glam::Vec3) -> Vec<aurora_net::NetEvent> {

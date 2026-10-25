@@ -544,6 +544,74 @@ pub fn outfit_attachment(item: &aurora_net::AttachRequest) -> ObjectUpdate {
     o
 }
 
+/// Own chest and facial attachments, including a linked skull child, for
+/// the first-person visibility scenarios. No grid assets are requested.
+pub fn first_person_visibility_events() -> Vec<NetEvent> {
+    let volume = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut objects = Vec::new();
+    for (local, point, color) in [
+        (29_001, 2u8, [0.9, 0.1, 0.1, 1.0]),
+        (29_002, 47, [0.9, 0.2, 0.1, 1.0]),
+        (29_003, 1, [0.9, 0.8, 0.1, 1.0]),
+    ] {
+        let mut object = prim(
+            local,
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            Vec3::splat(0.22),
+            volume,
+            te(color, 0, true, 0.0),
+            ExtraParams::default(),
+            "",
+        );
+        object.parent_id = 9000;
+        object.state = point.rotate_right(4);
+        objects.push(object);
+    }
+    let mut child = objects[0].clone();
+    child.local_id = 29_004;
+    child.full_id = action_id(child.local_id);
+    child.parent_id = 29_001;
+    child.position = Vec3::new(0.3, 0.0, 0.0);
+    child.state = 0;
+    objects.push(child);
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
+/// Head turn and nod for testing eye-position following without camera rotation.
+pub fn first_person_eye_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, RotKey};
+    let mut animation = idle_animation();
+    animation.base_priority = 6;
+    animation.joints.clear();
+    animation.joints.push(JointMotion {
+        joint_name: "mHead".into(),
+        priority: -1,
+        rot_keys: [(0.0, 0.0), (1.0, 0.9), (2.0, 0.0), (3.0, -0.9), (4.0, 0.0)]
+            .into_iter()
+            .map(|(time, angle)| RotKey {
+                time,
+                rotation: Quat::from_rotation_z(angle) * Quat::from_rotation_y(angle * 0.6),
+            })
+            .collect(),
+        pos_keys: Vec::new(),
+    });
+    animation
+}
+
+/// Ground-sit fixture: the demo asset fallback is an idle, so supply a
+/// folded-leg pose with a lowered pelvis without requesting a grid asset.
+pub fn first_person_ground_animation() -> aurora_assets::Animation {
+    let mut animation = seat_animation();
+    animation.ease_in = 0.0;
+    if let Some(pelvis) = animation.joints.iter_mut().find(|joint| joint.joint_name == "mPelvis") {
+        for key in &mut pelvis.pos_keys {
+            key.position.z = -0.65;
+        }
+    }
+    animation
+}
+
 /// The Photo Album (FT_SNAPSHOT_CATEGORY), empty until a photo is saved.
 const PHOTO_ALBUM_FOLDER: u128 = 31;
 

@@ -494,7 +494,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -521,6 +521,35 @@ when unfocused") is ignored during a screenshot.
   and `zoom` scenarios. The crouch control must remain active throughout
   (`down=true` in the log); add `AURORA_DEMO_LINK=0,firestorm` to exercise
   the crouch-walk through the offline simulator too.
+  `sit-ml` and `sit-ml-reclined` use that seat upright or tilted by 1.1 radians,
+  delayed 400 frames past the loading fade. First person runs from 760 to 1060;
+  mouse motion looks up at 880–900, down at 950–970 and sideways at 1020–1040.
+  Capture at 860, 920, 990 and 1050:
+  the camera must follow the animated eyes without orbiting around the head;
+  returning to third person at 1060 restores the seat camera, then standing at
+  1100 restores the normal rear view.
+  `ml-body-on` / `ml-body-off` set the own-avatar preference for this demo,
+  enter first person at 600, look down at 620–640 and leave at 700. Capture at
+  650 and 740. The enabled body and yellow chest attachment stay visible below
+  the camera; the system head, red skull/Jaw attachments and linked skull child
+  are absent from the direct view. With the preference off, the whole own body
+  and its 3D attachments disappear. Other avatars and HUDs remain visible.
+  `sit-ml-body-on|sit-ml-body-off` and
+  `sit-ml-reclined-body-on|sit-ml-reclined-body-off` exercise the same rules while
+  seated (the same frame numbers as the seated camera scenarios). Returning to
+  third person restores every own part. Preferences › Camera › Mouselook has
+  the persisted switch, initially off; `AURORA_DEMO_OPTIONS=camera/2` opens it.
+  Capture 605/610/615/620/625 during entry: the head and head attachments stay
+  visible through the approach and disappear only when the camera reaches
+  first person. `ground-ml-body-on|ground-ml-body-off` sit on the ground at
+  520 with a folded-leg/lowered-pelvis fixture (instead of the demo asset's idle
+  fallback), use the same first-person sequence, and stand at 760; capture 650/800
+  to check posed eye height and standing restoration. The separate persisted
+  **Attach the camera between the eyes** preference defaults off. With it on,
+  every mouselook pose follows the current eye midpoint's position while the
+  viewing direction remains controlled by the mouse. `ml-eyes-on-body-on` /
+  `ml-eyes-off-body-on` animate the head for comparison (650/680); prefix
+  `ground-` to exercise the same setting on the ground.
   Right-button scenarios also take physical cursor coordinates `(x,y)`:
   `right-click,x,y` moves slightly on both axes; `right-jitter,x,y` repeats
   small back-and-forth movements for 60 frames. Both must keep the camera
