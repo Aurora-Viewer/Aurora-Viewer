@@ -248,6 +248,12 @@ are planned or in progress: they are not in the viewer yet.
   of the prim you are about to create, outlines that stay visible while you
   move transparent objects, and parcel boundary shortcuts in the terrain
   menus.
+- **Area search**: find the objects rezzed around you from World › Area
+  search or a toolbar button. Search their name, description, owner,
+  creator, group or UUID as you type, keep to the current parcel or reach
+  into neighbouring regions, filter by ownership, sale, physical, phantom,
+  temporary or distance, sort the results, then inspect an object, zoom to
+  it or copy its UUID.
 
 ### An interface made for today
 
@@ -413,7 +419,8 @@ The texture memory budget is set automatically from the detected VRAM.
   import; an [IK workbench](docs/IK_EDIT.md) with shared contact profiles.
 - **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
   sky, water and day-cycle editors, world sounds, parcel music and media
-  on prims, with Aurora's downloadable media plugins pack.
+  on prims, with Aurora's downloadable media plugins pack; an area search
+  for the objects rezzed around you, with filters and sortable results.
 - **Photos and camera** — a full-screen viewfinder with face autofocus, lens
   rings, focus peaking, a live histogram, exposure lock and a self-timer;
   snapshots up to 8K to disk, inventory or
@@ -493,6 +500,11 @@ press Enter) to connect: a short password prompt appears only when needed,
 then the MFA code if the grid asks for it. Left / Right, the wheel or a
 horizontal drag browse more than three accounts. With no saved account, the
 full login form appears directly; afterwards **Add account** opens it.
+
+Logging in again right after a logout or a crash no longer hangs: the grid
+needs a moment to end the previous session, so the login button counts down
+the few seconds left (Esc cancels), then connects by itself. Other accounts
+never wait.
 
 **Manage** lists the accounts with a search: forget a password or a 2FA
 authorization, remove an account, or drag the rows to reorder the cards. Each
