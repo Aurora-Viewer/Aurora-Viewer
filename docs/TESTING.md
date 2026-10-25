@@ -8516,5 +8516,5 @@ Rust, with AddressSanitizer (OpenJPEG is C), 10 minutes per target
 (`workflow_dispatch` takes another duration). The corpus each target grows
 is kept from one run to the next; a failing input is uploaded as the job's
 artifact. Locally on Linux:
-`cargo +nightly fuzz run mesh --features libfuzzer --fuzz-dir fuzz`. Pull
+`cargo +nightly fuzz run -O mesh --features libfuzzer`. Pull
 requests that change `fuzz/` only check that every target reads its seeds.
