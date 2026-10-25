@@ -589,6 +589,10 @@ when unfocused") is ignored during a screenshot.
   above the water, then the same plaza (objects, floating texts, other
   avatar, particle fountain). In `perf summary`, `objects=` goes from 57 to
   1 then back to 57, with the same `visible=` and `draws=` as before.
+  The arrival away also forgets the demo region's coarse locations
+  (#1000): with `AURORA_DEMO_CONV=aurora` and `AURORA_DEMO_CONV_MENU=im`,
+  a frame-900 capture shows Zoom and Teleport To disabled for Nova; back
+  at frame 960 the demo region sends its list again.
 - **`AURORA_DEMO_AGENT_JITTER=<mm>`**: our avatar receives five times a
   second (at 60 fps) a position correction of at most this size, like those
   a simulator sends to an avatar standing at altitude. With
