@@ -4536,9 +4536,9 @@ failure. Grid validation and any paid upload are performed by the human.
   choice; `connected` starts with an authorization, `preview` opens on the
   preview, `authorize` also starts the connection (code `DEMO-1234`, then
   authorized after three seconds), `sent` shows a report already sent as
-  issue 4242, `fail` makes the creation fail. `always,connected` sends at
-  once and shows "Sending…" then the issue; `always` alone asks to send
-  once to connect. A real authorization and a real issue are only tested
+  issue 4242, `fail` makes the creation fail. `always` opens straight on
+  the preview and, like every mode, publishes only once a few words are
+  written in "What were you doing". A real authorization and a real issue are only tested
   by the human, outside the demo.
 - **`AURORA_DEMO_BUG_REPORT=1|details|image|image-ui|direct`**: no effect
   while the built-in bug report form is disabled ("Report a bug" opens

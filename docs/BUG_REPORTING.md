@@ -15,8 +15,8 @@ issue to publish: exactly `public-report.md` (below), preceded by what the
 tester writes in "What were you doing when it happened?" (at least a few
 words: publishing waits for them, since a stack alone rarely says what led
 to it) and their answer to "My graphics card drivers are up to date" (the
-driver found is shown beside it). An automatic report (Always, below) has
-neither. "Connect to
+driver found is shown beside it). Nothing is published without those
+words, whatever the Preferences say. "Connect to
 GitHub" starts the GitHub App's Device Flow (`crash/github.rs`): the tester
 enters the code shown on github.com, in their browser; the viewer never sees
 a password. "Publish on GitHub" then creates the issue in the tester's
@@ -37,11 +37,12 @@ number so a reopened window never sends twice. No server of our own and no
 file upload: nothing else leaves the PC.
 
 Preferences › Privacy › Crash reports chooses Ask (the default), Always or
-Never. Always publishes the report as soon as the crash window opens, once
-an authorization is kept (until then the window asks to send one report to
-connect). Never removes the send button: the report stays on the PC. The
-Legacy Viewer always sends by default, to its own server; here a report is
-a public issue in the tester's name, hence Ask.
+Never. Always opens the crash window straight on the report to publish; it
+still waits for the tester's words (a report without them could rarely be
+reproduced), so nothing is ever sent by itself. Never removes the send
+button: the report stays on the PC. The Legacy Viewer always sends by
+default, to its own server; here a report is a public issue in the
+tester's name, hence Ask.
 
 Each crash session folder also holds `public-report.md`: what an automatic
 crash report would publish (version, commit, crash kind, system, GPU, the

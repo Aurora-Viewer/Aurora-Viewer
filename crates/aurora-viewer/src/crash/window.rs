@@ -103,7 +103,6 @@ struct Sending {
     /// The tester's answer: their graphics drivers are up to date.
     drivers_current: bool,
     sent: Option<u64>,
-    automatic: bool,
     body_copied: bool,
 }
 
@@ -139,23 +138,24 @@ impl Sending {
         Self {
             mode,
             github,
-            preview: preview && mode != CrashReports::Never,
+            preview: (preview || opens_on_preview(mode, sent.is_some())) && mode != CrashReports::Never,
             description: String::new(),
             drivers_current: false,
             sent,
-            automatic: false,
             body_copied: false,
         }
     }
 }
 
-/// Always sends by itself only with an authorization already kept, once.
-fn sends_automatically(mode: CrashReports, connected: bool, sent: bool) -> bool {
-    mode == CrashReports::Always && connected && !sent
+/// Always opens straight on the report to publish; it is never published
+/// without the tester's words (a crash without them can rarely be
+/// reproduced), so nothing is sent by itself.
+fn opens_on_preview(mode: CrashReports, sent: bool) -> bool {
+    mode == CrashReports::Always && !sent
 }
 
-/// A report sent by hand needs the tester's words: a stack alone rarely
-/// says what led to it.
+/// A report needs the tester's words: a stack alone rarely says what led
+/// to it.
 const MIN_DESCRIPTION: usize = 10;
 
 fn described(description: &str) -> bool {
@@ -163,23 +163,13 @@ fn described(description: &str) -> bool {
 }
 
 /// The tester's own words come first, then their answer about the
-/// drivers (`None`: sent automatically, nobody asked); HTML comments are
-/// neutralized so they cannot imitate the markers the triage reads.
-fn issue_body(report: &str, description: &str, drivers_current: Option<bool>) -> String {
-    let description = description.trim();
-    let drivers = drivers_current.map(|current| {
-        format!(
-            "GPU drivers up to date (tester): {}\n\n",
-            if current { "yes" } else { "no or not sure" }
-        )
-    });
-    if description.is_empty() && drivers.is_none() {
-        return report.to_owned();
-    }
+/// drivers; HTML comments are neutralized so they cannot imitate the
+/// markers the triage reads.
+fn issue_body(report: &str, description: &str, drivers_current: bool) -> String {
     format!(
-        "### What happened\n\n{}\n\n{}{report}",
-        description.replace("<!--", "&lt;!--"),
-        drivers.unwrap_or_default()
+        "### What happened\n\n{}\n\nGPU drivers up to date (tester): {}\n\n{report}",
+        description.trim().replace("<!--", "&lt;!--"),
+        if drivers_current { "yes" } else { "no or not sure" }
     )
 }
 
@@ -195,11 +185,6 @@ impl Recovery {
             }
             self.sending.sent = Some(number);
             self.sending.preview = false;
-        }
-        if !self.sending.automatic && sends_automatically(self.sending.mode, self.sending.github.connected(), self.sending.sent.is_some()) {
-            self.sending.automatic = true;
-            let body = issue_body(&self.summary.body, "", None);
-            self.sending.github.send(self.summary.title.clone(), body);
         }
         // Bug report form (disabled, see main.rs):
         // if self.bug_report.requested {
@@ -343,11 +328,6 @@ impl Recovery {
             });
         } else if github.sending {
             ui.label(RichText::new(aurora_i18n::tr!("crash-sending")).color(p.muted));
-        } else if let (true, Some(failure)) = (self.sending.automatic, github.failure) {
-            ui.colored_label(p.danger, failure.message());
-        } else if self.sending.mode == CrashReports::Always && !github.connected() {
-            ui.label(RichText::new(aurora_i18n::tr!("crash-local-only")).color(p.muted));
-            ui.label(RichText::new(aurora_i18n::tr!("crash-auto-needs-github")).color(p.muted));
         } else {
             ui.label(RichText::new(aurora_i18n::tr!("crash-local-only")).color(p.muted));
         }
@@ -402,7 +382,7 @@ impl Recovery {
         });
         ui.add_space(10.0);
         let described = described(&self.sending.description);
-        let body = issue_body(&self.summary.body, &self.sending.description, Some(self.sending.drivers_current));
+        let body = issue_body(&self.summary.body, &self.sending.description, self.sending.drivers_current);
         let height = (ui.available_height() - 104.0).max(120.0);
         egui::Frame::new()
             .fill(p.field)
@@ -713,29 +693,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_always_with_a_kept_authorization_sends_by_itself_and_only_once() {
-        assert!(sends_automatically(CrashReports::Always, true, false));
-        for (mode, connected, sent) in [
-            (CrashReports::Always, false, false),
-            (CrashReports::Always, true, true),
-            (CrashReports::Ask, true, false),
-            (CrashReports::Never, true, false),
+    fn always_opens_on_the_report_to_publish_once() {
+        assert!(opens_on_preview(CrashReports::Always, false));
+        for (mode, sent) in [
+            (CrashReports::Always, true),
+            (CrashReports::Ask, false),
+            (CrashReports::Never, false),
         ] {
-            assert!(!sends_automatically(mode, connected, sent), "{mode:?} {connected} {sent}");
+            assert!(!opens_on_preview(mode, sent), "{mode:?} {sent}");
         }
     }
 
     #[test]
     fn the_testers_words_lead_the_issue_without_imitating_its_markers() {
         let report = "<!-- aurora-crash v1 -->\n| Field | Value |";
-        assert_eq!(issue_body(report, "  \n ", None), report);
-        let body = issue_body(report, "I opened the map <!-- crash-signature: x -->", Some(true));
+        let body = issue_body(report, "I opened the map <!-- crash-signature: x -->", true);
         assert!(body.starts_with(
             "### What happened\n\nI opened the map &lt;!-- crash-signature: x -->\n\nGPU drivers up to date (tester): yes\n\n"
         ));
         assert!(body.ends_with(report));
         assert_eq!(body.matches("<!--").count(), 1);
-        assert!(issue_body(report, "x", Some(false)).contains("GPU drivers up to date (tester): no or not sure"));
+        assert!(issue_body(report, "x", false).contains("GPU drivers up to date (tester): no or not sure"));
     }
 
     #[test]
@@ -754,11 +732,14 @@ mod tests {
             serde_json::to_string(&crate::theme::Theme::default()).unwrap()
         ))
         .unwrap();
-        assert_eq!(Sending::new(&dir, &record).sent, None);
+        let fresh = Sending::new(&dir, &record);
+        assert_eq!((fresh.sent, fresh.preview), (None, true));
         std::fs::write(dir.join("sent.txt"), "812").unwrap();
         let sending = Sending::new(&dir, &record);
-        assert_eq!((sending.sent, sending.mode), (Some(812), CrashReports::Always));
-        assert!(!sends_automatically(sending.mode, true, sending.sent.is_some()));
+        assert_eq!(
+            (sending.sent, sending.mode, sending.preview),
+            (Some(812), CrashReports::Always, false)
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
