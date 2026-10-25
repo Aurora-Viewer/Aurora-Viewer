@@ -1,20 +1,26 @@
 //! Local lights of a frame: the prim lights around the camera, as
-//! LLPipeline::renderDeferredLighting collects them (indra/newview/
-//! pipeline.cpp, originally LGPL 2.1, Linden Research / Firestorm). A light
-//! with a light texture is a projector (LLVOVolume::isLightSpotlight): it
-//! lights the frustum that leaves its prim, through that texture. Two
+//! LLPipeline::calcNearbyLights and renderDeferredLighting collect them
+//! (indra/newview/pipeline.cpp, originally LGPL 2.1, Linden Research). A
+//! light with a light texture is a projector (LLVOVolume::isLightSpotlight):
+//! it lights the frustum that leaves its prim, through that texture. Two
 //! projectors at a time cast shadows (LLPipeline::generateSunShadow,
 //! mShadowSpotLight / mTargetShadowSpotLight).
+//!
+//! The Legacy Viewer keeps the 256 nearest lights within the draw distance
+//! (RenderLocalLightCount) and draws those in the camera's frustum. The
+//! shaders here hold 64 (one bit each in the light sets of `light_tiles`):
+//! the lights whose sphere reaches the frustum come first, nearest first,
+//! then the others while room is left. Nearest by distance alone, the worn
+//! lights of a crowd around and behind the camera filled the list and the
+//! lights in front of it went out as it turned (#1032).
 
-use super::Scene;
+use super::{CullView, Scene};
 use crate::world::World;
 use aurora_render::{PointLight, Projector, Renderer, SpotShadow};
 use glam::Vec3;
 use std::time::Instant;
 use uuid::Uuid;
 
-/// Lights further than this from the camera (plus their reach) are left out.
-const LIGHT_RANGE: f32 = 96.0;
 /// Size of the frame's light list (`MAX_LIGHTS` of the shaders).
 const MAX_LIGHTS: usize = 64;
 /// Pixels asked of a projected texture: LL keeps it at full size while its
@@ -22,21 +28,66 @@ const MAX_LIGHTS: usize = 64;
 const PROJECTED_PIXELS: f32 = 512.0;
 
 /// The camera of a frame, for its lights.
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct LightView {
     pub eye: Vec3,
     pub forward: Vec3,
+    /// The main view's frustum: the lights that reach it come first.
+    pub frustum: CullView,
+    /// The draw distance: lights whose sphere starts beyond it are left out
+    /// (calcNearbyLights' max_dist, RenderFarClip).
+    pub range: f32,
     /// Seconds since the previous frame.
     pub dt: f32,
     /// Projectors cast shadows (the setting, with the sun's shadows on).
     pub projector_shadows: bool,
 }
 
+/// A light that may enter the frame's list.
+#[derive(Debug, Clone, Copy)]
+struct Candidate {
+    /// Its sphere reaches the main view's frustum.
+    in_view: bool,
+    /// From the camera to its sphere (calc_light_dist).
+    dist: f32,
+    /// Object index.
+    idx: usize,
+    light: PointLight,
+    /// A projector's texture, given a table slot once the light is kept.
+    texture: Option<Uuid>,
+}
+
+/// LLPipeline's calc_light_dist (pipeline.cpp): from the camera to the
+/// light's sphere, 0 inside it.
+fn light_dist(center: Vec3, radius: f32, eye: Vec3) -> f32 {
+    (center.distance(eye) - radius).max(0.0)
+}
+
+/// Whether a light gives any light: calc_light_dist leaves out an intensity
+/// under 0.001, renderDeferredLighting a colour (times intensity) whose
+/// squared length is under 0.001 and a reach of 1 mm or less.
+fn gives_light(color: [f32; 4], radius: f32) -> bool {
+    let linear = Vec3::new(color[0], color[1], color[2]) * color[3];
+    color[3] >= 0.001 && linear.length_squared() >= 0.001 && radius * 1.5 > 0.001
+}
+
+/// Keep the frame's lights: those that reach the view first, then the
+/// nearest (equal distances in object order, the order they came in).
+fn select(lights: &mut Vec<Candidate>) {
+    // (unstable: a stable sort allocates a buffer as long as the list)
+    lights.sort_unstable_by(|a, b| {
+        b.in_view
+            .cmp(&a.in_view)
+            .then(a.dist.total_cmp(&b.dist))
+            .then(a.idx.cmp(&b.idx))
+    });
+    lights.truncate(MAX_LIGHTS);
+}
+
 /// The light list's working buffers, kept between frames for their room.
 #[derive(Default)]
 pub struct Scratch {
-    /// (distance, object index, light)
-    lights: Vec<(f32, usize, PointLight)>,
+    lights: Vec<Candidate>,
     /// Objects whose projector is in the list.
     projecting: Vec<usize>,
     /// `Scene::light_objects`, copied: the loop borrows the scene.
@@ -115,8 +166,8 @@ fn worn(world: &World, o: &crate::world::objects::Object) -> bool {
 }
 
 impl Scene {
-    /// The lights nearest to the eye, nearest first, and those of them
-    /// that cast shadows.
+    /// The lights that reach the view, nearest first, then the other
+    /// nearest ones (`select`), and those of them that cast shadows.
     pub fn local_lights(&mut self, world: &World, renderer: &mut Renderer, view: &LightView) -> (Vec<PointLight>, [Option<SpotShadow>; 2]) {
         let eye = view.eye;
         let now = Instant::now();
@@ -139,11 +190,11 @@ impl Scene {
             let Some((center, hud)) = self.gpu.get(idx).map(|g| (g.center, g.hud)) else {
                 continue;
             };
-            if hud || (!self.attached_lights && worn(world, o)) {
+            if hud || (!self.attached_lights && worn(world, o)) || !gives_light(l.color, l.radius) {
                 continue;
             }
-            let d = center.distance(eye);
-            if d > LIGHT_RANGE + l.radius * 1.5 {
+            let dist = light_dist(center, l.radius, eye);
+            if dist >= view.range {
                 continue;
             }
             // deferred SL lights reach 1.5x their radius with half the
@@ -152,30 +203,40 @@ impl Scene {
             let radius = (l.radius * 1.5).clamp(0.1, 30.0);
             let mut position = center;
             let mut projector = None;
+            let mut texture = None;
             if let Some(image) = o.extra.light_image.filter(|i| !i.texture.is_nil())
                 && let Some((pos, rot, _)) = Self::object_transform(world, idx, now, 0)
             {
-                // the frustum leaves the prim itself, not its drawn bounds
+                // the frustum leaves the prim itself, not its drawn bounds;
+                // its texture slot is taken once the light is kept
                 position = pos;
-                let slot = self.projected_texture(renderer, idx, image.texture);
-                projecting.push(idx);
-                projector = Some(Projector::new(pos, rot, o.visual_scale(), radius, image.params, slot));
+                texture = Some(image.texture);
+                projector = Some(Projector::new(pos, rot, o.visual_scale(), radius, image.params, 0));
             }
             // the packed light color is already linear (LLLightParams::unpack ->
             // setLinearColor; pipeline.cpp sends getLightLinearColor() as is),
             // times 3.25 for the PBR punctual intensity (multiPointLightF)
             let color = Vec3::new(l.color[0], l.color[1], l.color[2]) * l.color[3] * 3.25;
-            lights.push((
-                d,
+            lights.push(Candidate {
+                in_view: view.frustum.sphere_visible(position, radius),
+                dist,
                 idx,
-                PointLight {
+                light: PointLight {
                     position,
                     radius,
                     color,
                     falloff: l.falloff * 0.5,
                     projector,
                 },
-            ));
+                texture,
+            });
+        }
+        select(&mut lights);
+        for c in &mut lights {
+            if let (Some(id), Some(p)) = (c.texture, c.light.projector.as_mut()) {
+                p.texture = self.projected_texture(renderer, c.idx, id);
+                projecting.push(c.idx);
+            }
         }
         // textures of the projectors that left the list
         let textures = &mut self.textures;
@@ -186,16 +247,12 @@ impl Scene {
             }
             kept
         });
-        // (unstable: a stable sort allocates a buffer as long as the list;
-        // equal distances stay in index order, the order they came in)
-        lights.sort_unstable_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        lights.truncate(MAX_LIGHTS);
         // the two projectors of the list that weigh most on screen, among
         // those that reach into the half-space in front of the camera
         if view.projector_shadows {
             let mut ranked: Vec<(f32, usize)> = lights
                 .iter()
-                .filter_map(|(_, idx, l)| {
+                .filter_map(|Candidate { idx, light: l, .. }| {
                     let p = l.projector?;
                     let ahead = view.forward.dot(l.position - eye) > -l.radius;
                     ahead.then(|| (spot_priority(l.position, p.direction, l.radius / 1.5, view), *idx))
@@ -210,13 +267,13 @@ impl Scene {
         let slots = &self.spot_shadows;
         let shadows = std::array::from_fn(|k| {
             let idx = slots.lights[k]?;
-            let light = lights.iter().position(|(_, i, l)| *i == idx && l.projector.is_some())?;
+            let light = lights.iter().position(|c| c.idx == idx && c.light.projector.is_some())?;
             Some(SpotShadow {
                 light: light as u32,
                 fade: slots.fade[k],
             })
         });
-        let list = lights.iter().map(|(_, _, l)| *l).collect();
+        let list = lights.iter().map(|c| c.light).collect();
         lights.clear();
         projecting.clear();
         self.light_scratch = Scratch {
@@ -297,14 +354,94 @@ mod tests {
         assert_eq!(slots.lights, [Some(1), None]);
     }
 
-    #[test]
-    fn the_projector_that_weighs_most_on_screen_comes_first() {
-        let view = LightView {
-            eye: Vec3::ZERO,
-            forward: Vec3::X,
+    /// A camera at `eye` looking along `forward`, 60° of vertical field, 16:9.
+    fn camera(eye: Vec3, forward: Vec3) -> LightView {
+        let fov = 60f32.to_radians();
+        let view = glam::camera::rh::view::look_to_mat4(eye, forward, Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 16.0 / 9.0, 0.1);
+        LightView {
+            eye,
+            forward,
+            frustum: CullView::new(proj * view, eye, 900.0, fov),
+            range: 128.0,
             dt: 0.016,
             projector_shadows: true,
-        };
+        }
+    }
+
+    fn candidate(view: &LightView, idx: usize, position: Vec3, radius: f32) -> Candidate {
+        Candidate {
+            in_view: view.frustum.sphere_visible(position, radius * 1.5),
+            dist: light_dist(position, radius, view.eye),
+            idx,
+            light: PointLight {
+                position,
+                radius: radius * 1.5,
+                color: Vec3::ONE,
+                falloff: 0.0,
+                projector: None,
+            },
+            texture: None,
+        }
+    }
+
+    /// #1032: a crowd's worn lights around and behind the camera no longer
+    /// push out the lights it looks at, whichever way it turns.
+    #[test]
+    fn the_lights_in_view_come_before_nearer_ones_out_of_it() {
+        for forward in [Vec3::X, Vec3::NEG_Y, Vec3::new(1.0, 0.0, -1.0).normalize()] {
+            let view = camera(Vec3::new(128.0, 128.0, 25.0), forward);
+            let side = forward.cross(Vec3::Z).normalize_or(Vec3::Y);
+            let mut lights = Vec::new();
+            // 80 small worn lights within 4 m behind the camera
+            for i in 0..80 {
+                let p = view.eye - forward * (3.0 + (i % 8) as f32 * 0.1) + side * ((i / 8) as f32 * 0.3 - 1.5);
+                lights.push(candidate(&view, i, p, 0.5));
+            }
+            // 10 lights 5 to 20 m in front of it
+            for i in 0..10 {
+                let p = view.eye + forward * (5.0 + i as f32 * 1.5) + side * (i as f32 - 5.0) * 0.5;
+                lights.push(candidate(&view, 100 + i, p, 3.0));
+            }
+            select(&mut lights);
+            assert_eq!(lights.len(), MAX_LIGHTS);
+            let kept: Vec<usize> = lights.iter().map(|c| c.idx).collect();
+            assert_eq!(kept[..10], (100..110).collect::<Vec<_>>(), "looking along {forward}");
+            // the room left goes to the nearest of the others
+            assert!(lights[10..].iter().all(|c| !c.in_view && c.idx < 100));
+            assert!(lights[10..].windows(2).all(|w| w[0].dist <= w[1].dist));
+        }
+    }
+
+    #[test]
+    fn a_light_behind_the_camera_that_reaches_the_view_is_in_view() {
+        let view = camera(Vec3::ZERO, Vec3::X);
+        // 2 m behind, 3 m of reach: it lights what is just in front
+        assert!(candidate(&view, 0, Vec3::new(-2.0, 0.0, 0.0), 2.0).in_view);
+        assert!(!candidate(&view, 0, Vec3::new(-5.0, 0.0, 0.0), 2.0).in_view);
+        // beside the field, its sphere crossing the side plane
+        assert!(candidate(&view, 0, Vec3::new(4.0, 6.0, 0.0), 3.0).in_view);
+    }
+
+    #[test]
+    fn distance_to_the_sphere_like_calc_light_dist() {
+        assert_eq!(light_dist(Vec3::new(10.0, 0.0, 0.0), 4.0, Vec3::ZERO), 6.0);
+        assert_eq!(light_dist(Vec3::new(1.0, 0.0, 0.0), 4.0, Vec3::ZERO), 0.0);
+    }
+
+    #[test]
+    fn lights_that_give_no_light_are_left_out() {
+        assert!(gives_light([1.0, 0.8, 0.5, 1.0], 5.0));
+        // no intensity, black, or no reach: they took a place in the list
+        assert!(!gives_light([1.0, 1.0, 1.0, 0.0], 5.0));
+        assert!(!gives_light([0.0, 0.0, 0.0, 1.0], 5.0));
+        assert!(!gives_light([0.01, 0.01, 0.01, 1.0], 5.0));
+        assert!(!gives_light([1.0, 1.0, 1.0, 1.0], 0.0));
+    }
+
+    #[test]
+    fn the_projector_that_weighs_most_on_screen_comes_first() {
+        let view = camera(Vec3::ZERO, Vec3::X);
         let down = Vec3::NEG_Z;
         let near = spot_priority(Vec3::new(10.0, 0.0, 3.0), down, 10.0, &view);
         let far = spot_priority(Vec3::new(40.0, 0.0, 3.0), down, 10.0, &view);
