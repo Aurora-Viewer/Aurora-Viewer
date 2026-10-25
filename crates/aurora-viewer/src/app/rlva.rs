@@ -589,7 +589,7 @@ impl App {
         }
     }
 
-    fn rlva_demo_message(&mut self, message: String) {
+    pub(super) fn rlva_demo_message(&mut self, message: String) {
         self.world.apply(NetEvent::Chat(aurora_net::ChatMessage {
             from_name: "RLVa demo object".to_owned(),
             source_id: Uuid::from_u128(0x726c7661),

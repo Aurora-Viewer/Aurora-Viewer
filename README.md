@@ -180,7 +180,8 @@ are planned or in progress: they are not in the viewer yet.
   animations and sounds; they keep their rhythm, and talk to your HUDs on
   negative channels too.
 - **Go to and Follow** a resident from their menu: Follow keeps up when they
-  run, take off or land.
+  run, take off or land. Its compact window adjusts the target distance and
+  stops the follow; an optional teleport resumes following when blocked.
 - **Your own sky and water**, with EEP sky, water and day-cycle editors,
   personal previews and parcel or region environment settings.
 - **Smoother avatars**: movement of the people around you extrapolated and
