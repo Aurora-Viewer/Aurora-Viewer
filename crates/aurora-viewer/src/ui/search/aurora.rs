@@ -136,7 +136,7 @@ pub struct Aurora {
     /// "Price ≤" and "Area ≥" of land sales: empty, no limit.
     land_price: String,
     land_area: String,
-    /// Parcels and classifieds whose details a row asked for.
+    /// Parcels, classifieds and groups whose details a visible row asked for.
     asked: HashSet<Uuid>,
     /// The text the grid's web page was opened with: the field's when the
     /// Web chip was chosen, or when Enter is pressed on it.
@@ -466,9 +466,10 @@ impl SearchUi {
             }
         });
         ui.add_space(6.0);
-        // the chips, the web page at the end
+        // Counts and translated labels can exceed the minimum width. Wrap
+        // whole chips, including Web, so every directory stays reachable.
         let mut picked = None;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             for kind in Kind::CHIPS {
                 let count = self.chip_count(&world.search, kind);
@@ -476,21 +477,19 @@ impl SearchUi {
                     picked = Some(kind);
                 }
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let web_chip = widgets::pill_tab(
-                    ui,
-                    p,
-                    Kind::Web.icon(),
-                    Kind::Web.label(),
-                    None,
-                    false,
-                    self.aurora.kind == Kind::Web,
-                    true,
-                );
-                if web_chip.on_hover_text(aurora_i18n::tr!("search-aurora-web-tip")).clicked() {
-                    picked = Some(Kind::Web);
-                }
-            });
+            let web_chip = widgets::pill_tab(
+                ui,
+                p,
+                Kind::Web.icon(),
+                Kind::Web.label(),
+                None,
+                false,
+                self.aurora.kind == Kind::Web,
+                true,
+            );
+            if web_chip.on_hover_text(aurora_i18n::tr!("search-aurora-web-tip")).clicked() {
+                picked = Some(Kind::Web);
+            }
         });
         if let Some(kind) = picked.filter(|k| *k != self.aurora.kind) {
             self.aurora.kind = kind;
@@ -998,18 +997,31 @@ impl SearchUi {
                 })
             }
             (Tab::Groups, Key::Id(id)) => {
+                let profile = world.search.groups.get(&id);
+                if profile.is_none() {
+                    ask(&mut self.aurora.asked, id, SearchAction::RefreshGroup(id));
+                }
+                let insignia = profile
+                    .map(|g| g.insignia)
+                    .filter(|i| !i.is_nil())
+                    .or_else(|| world.groups.group(&id).map(|g| g.insignia).filter(|i| !i.is_nil()));
+                if let Some(i) = insignia {
+                    c.wanted_images.insert(i);
+                }
+                let texture = insignia.and_then(|i| c.images.get(&i));
                 let initials = widgets::initials(&row.name);
                 let (pale, font) = (p.violet_pale, semibold.clone());
                 let paint = move |painter: &egui::Painter, rect: Rect| {
                     let g = painter.layout_no_wrap(initials.clone(), FontId::new(13.0, font.clone()), pale);
                     widgets::paint_ink_centered(painter, g, rect.center(), pale);
                 };
-                let members = match row.values.first() {
-                    Some(Value::Int(n)) => aurora_i18n::tr!("search-group-members", count = *n),
-                    _ => String::new(),
-                };
+                let count = world.group_member_count(id).or_else(|| match row.values.first() {
+                    Some(Value::Int(n)) => Some(*n),
+                    _ => None,
+                });
+                let members = count.map_or_else(String::new, |n| aurora_i18n::tr!("search-group-members", count = n));
                 let card = place_card::Row {
-                    thumb: Thumb::Paint(&paint),
+                    thumb: texture.map_or(Thumb::Paint(&paint), |t| Thumb::Picture(Some(t))),
                     title: &row.name,
                     subtitle: &members,
                     rating: None,

@@ -246,6 +246,11 @@ pub fn split_im(text: &str) -> Vec<&str> {
 }
 
 impl World {
+    /// The current count shared by group profiles and search results.
+    pub fn group_member_count(&self, id: Uuid) -> Option<i64> {
+        self.group_data.member_count(id, self.search.groups.get(&id))
+    }
+
     /// A multi-agent session (group or conference).
     pub fn is_group_session(&self, session: &Uuid) -> bool {
         self.groups.sessions.contains_key(session)

@@ -139,6 +139,15 @@ impl GroupMgr {
         self.groups.get(group)
     }
 
+    /// Completed member replies supersede profile counts; directory
+    /// counts can lag behind both (LLGroupMgr's member count).
+    pub(super) fn member_count(&self, id: Uuid, profile: Option<&aurora_net::search::GroupProfile>) -> Option<i64> {
+        self.get(&id)
+            .filter(|g| g.members_complete)
+            .map(|g| i64::from(g.member_total.max(0)))
+            .or_else(|| profile.map(|g| i64::from(g.members.max(0))))
+    }
+
     pub fn take_commands(&mut self) -> Vec<NetCommand> {
         std::mem::take(&mut self.out)
     }

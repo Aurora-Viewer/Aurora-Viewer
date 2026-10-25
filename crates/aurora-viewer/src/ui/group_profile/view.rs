@@ -35,6 +35,7 @@ pub struct View<'a> {
     pub member: Option<&'a GroupMembership>,
     pub data: Option<&'a GroupData>,
     pub active: bool,
+    member_count: Option<i64>,
 }
 
 impl<'a> View<'a> {
@@ -56,6 +57,7 @@ impl<'a> View<'a> {
             member,
             data: world.group_data.get(&id),
             active: world.groups.active == id && !id.is_nil(),
+            member_count: world.group_member_count(id),
         }
     }
 
@@ -75,11 +77,7 @@ impl<'a> View<'a> {
 
     /// The member count: the list's once complete, else the profile's.
     pub fn member_count(&self) -> Option<i64> {
-        match (self.data.filter(|d| d.members_complete), self.profile) {
-            (Some(d), _) => Some(d.member_total.max(0) as i64),
-            (None, Some(p)) => Some(i64::from(p.members.max(0))),
-            _ => None,
-        }
+        self.member_count
     }
 
     /// The title we wear: the selected one of GroupTitlesReply, else the

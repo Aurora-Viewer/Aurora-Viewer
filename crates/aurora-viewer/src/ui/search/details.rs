@@ -382,7 +382,7 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
         Btn::new("refresh", aurora_i18n::tr!("search-refresh")),
         Btn::new("messages-filled", aurora_i18n::tr!("search-group-chat")).enabled(member),
         // LLGroupActions::join: fee confirmation and JoinGroupRequest
-        Btn::new("users-plus", aurora_i18n::tr!("search-group-join")).not_yet(),
+        Btn::new("users-plus", aurora_i18n::tr!("search-group-join")).enabled(!member && data.is_some_and(|g| g.open_enrollment)),
     ];
     if !standalone {
         // LLGroupActions::show
@@ -413,9 +413,9 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
                         ui.ctx().copy_text(name.clone());
                     }
                 });
-                if let Some(g) = data {
+                if let Some(members) = world.group_member_count(id) {
                     ui.label(
-                        RichText::new(aurora_i18n::tr!("search-group-members", count = g.members as i64))
+                        RichText::new(aurora_i18n::tr!("search-group-members", count = members))
                             .size(12.0)
                             .color(p.ink),
                     );
@@ -470,6 +470,7 @@ pub(super) fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, st
     match clicked {
         Some(0) => actions.push(SearchAction::RefreshGroup(id)),
         Some(1) => context::request(ui.ctx(), CtxAction::GroupChat(id)),
+        Some(2) => actions.push(SearchAction::JoinGroup(id)),
         Some(3) => crate::ui::group_profile::request_open(ui.ctx(), id),
         _ => {}
     }

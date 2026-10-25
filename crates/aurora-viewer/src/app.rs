@@ -10897,6 +10897,7 @@ impl App {
                     }
                 }
                 SearchAction::RefreshGroup(id) => self.send(NetCommand::GroupProfileRequest(id)),
+                SearchAction::JoinGroup(id) => self.group_profile_ui.join(&self.world, id),
                 SearchAction::ShowOnMap(g) => {
                     self.world.map.track_location(g.x, g.y, g.z as f32, false);
                     self.panels.world_map = true;

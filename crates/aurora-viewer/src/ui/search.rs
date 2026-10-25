@@ -73,8 +73,10 @@ pub enum SearchAction {
     Teleport(DVec3),
     /// onBtnMap: trackLocation and the world map.
     ShowOnMap(DVec3),
-    /// Ask the selected group's profile again.
+    /// Ask for a group's profile for a visible row or an explicit refresh.
     RefreshGroup(Uuid),
+    /// LLGroupActions::join: use the group's fee and limit confirmation.
+    JoinGroup(Uuid),
     /// The saved choices changed.
     SettingsChanged,
     /// A row of Aurora's window shows a parcel (place, land sale) whose

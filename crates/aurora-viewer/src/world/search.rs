@@ -633,7 +633,7 @@ impl Request {
 
 pub struct Search {
     lists: [List; 6],
-    /// GroupProfileReply of the groups selected.
+    /// GroupProfileReply of selected groups and visible group rows.
     pub groups: HashMap<Uuid, GroupProfile>,
     /// EventInfoReply of the events selected.
     pub events: HashMap<u32, EventInfo>,
@@ -876,6 +876,22 @@ impl Search {
             let first = list.sorted().first().map(|r| r.key);
             if let Some(key) = first {
                 self.select(tab, key);
+            }
+        }
+    }
+
+    /// Reconcile directory counts when profiles, member lists or a new
+    /// search page arrive. Update the values so sorting uses them too.
+    pub(super) fn refresh_group_counts(&mut self, data: &super::group_data::GroupMgr) {
+        let Some(list) = Tab::Groups.list_index().and_then(|i| self.lists.get_mut(i)) else {
+            return;
+        };
+        for row in &mut list.rows {
+            if let Key::Id(id) = row.key
+                && let Some(count) = data.member_count(id, self.groups.get(&id))
+                && let Some(value) = row.values.first_mut()
+            {
+                *value = Value::Int(count);
             }
         }
     }

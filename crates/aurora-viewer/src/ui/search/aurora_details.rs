@@ -227,7 +227,7 @@ fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions: &mut
         Btn::new("messages-filled", aurora_i18n::tr!("search-group-chat"))
     } else {
         // LLGroupActions::join: fee confirmation and JoinGroupRequest
-        Btn::new("users-plus", aurora_i18n::tr!("search-group-join")).not_yet()
+        Btn::new("users-plus", aurora_i18n::tr!("search-group-join")).enabled(data.is_some_and(|g| g.open_enrollment))
     };
     let buttons = [
         Btn::new("users-group", aurora_i18n::tr!("search-aurora-group-profile")).primary(),
@@ -262,7 +262,9 @@ fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions: &mut
             }
             ui.vertical(|ui| {
                 ui.add_space(14.0);
-                let members = data.map_or_else(String::new, |g| aurora_i18n::tr!("search-group-members", count = g.members as i64));
+                let members = world
+                    .group_member_count(id)
+                    .map_or_else(String::new, |n| aurora_i18n::tr!("search-group-members", count = n));
                 head(ui, p, &name, None, content, &members);
                 if member {
                     pill(ui, aurora_i18n::tr!("search-aurora-member"), p.violet_pale, p.raised);
@@ -303,6 +305,7 @@ fn group(ui: &mut egui::Ui, c: &mut Ctx, id: Uuid, row_name: &str, actions: &mut
     match clicked {
         Some(0) => crate::ui::group_profile::request_open(ui.ctx(), id),
         Some(1) if member => context::request(ui.ctx(), CtxAction::GroupChat(id)),
+        Some(1) => actions.push(SearchAction::JoinGroup(id)),
         _ => {}
     }
 }
