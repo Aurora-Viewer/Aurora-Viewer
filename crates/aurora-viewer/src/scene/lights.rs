@@ -75,12 +75,7 @@ fn gives_light(color: [f32; 4], radius: f32) -> bool {
 /// nearest (equal distances in object order, the order they came in).
 fn select(lights: &mut Vec<Candidate>) {
     // (unstable: a stable sort allocates a buffer as long as the list)
-    lights.sort_unstable_by(|a, b| {
-        b.in_view
-            .cmp(&a.in_view)
-            .then(a.dist.total_cmp(&b.dist))
-            .then(a.idx.cmp(&b.idx))
-    });
+    lights.sort_unstable_by(|a, b| b.in_view.cmp(&a.in_view).then(a.dist.total_cmp(&b.dist)).then(a.idx.cmp(&b.idx)));
     lights.truncate(MAX_LIGHTS);
 }
 
