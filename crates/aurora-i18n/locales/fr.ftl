@@ -7147,12 +7147,9 @@ crash-reason-rust = Panique Rust
 crash-reason-native = Plantage natif
 crash-reason-unknown = Arrêt inattendu
 crash-reason-freeze = Figé, puis arrêté
-<<<<<<< HEAD
+crash-reason-gpu = Carte graphique sans réponse
 crash-reason-thread = Une partie du viewer a cessé de fonctionner
 crash-reason-oom = Mémoire insuffisante
-=======
-crash-reason-gpu = Carte graphique sans réponse
->>>>>>> origin/main
 crash-send-report = Envoyer un rapport de plantage
 crash-sent = Rapport de plantage envoyé : issue n° { $number }.
 crash-sending = Envoi du rapport de plantage à GitHub…

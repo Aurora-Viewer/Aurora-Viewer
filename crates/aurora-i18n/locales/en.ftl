@@ -7154,12 +7154,9 @@ crash-reason-rust = Rust panic
 crash-reason-native = Native crash
 crash-reason-unknown = Unexpected shutdown
 crash-reason-freeze = Frozen, then ended
-<<<<<<< HEAD
+crash-reason-gpu = Graphics card not responding
 crash-reason-thread = A part of the viewer stopped working
 crash-reason-oom = Out of memory
-=======
-crash-reason-gpu = Graphics card not responding
->>>>>>> origin/main
 crash-send-report = Send a crash report
 crash-sent = Crash report sent as issue #{ $number }.
 crash-sending = Sending the crash report to GitHub…
