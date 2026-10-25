@@ -34,6 +34,7 @@ impl App {
             && (std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
                 || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
                 || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some()
+                || std::env::var("AURORA_DEMO_SOUND_EXPLORER").is_ok_and(|m| m.starts_with("rez-blocks"))
                 || crate::ao::water_demo::mode().is_some()
                 || folder_names)
         {
@@ -41,8 +42,10 @@ impl App {
             if self.ao_demo.is_none() {
                 crate::ao::demo::inventory_services(&mut self.world, true);
             }
-            self.movelock_ui.open =
-                crate::ao::water_demo::mode().is_none() && !folder_names && std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_none();
+            self.movelock_ui.open = crate::ao::water_demo::mode().is_none()
+                && !folder_names
+                && std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_none()
+                && !std::env::var("AURORA_DEMO_SOUND_EXPLORER").is_ok_and(|m| m.starts_with("rez-blocks"));
             if std::env::var("AURORA_DEMO_BRIDGE_QUERY").is_ok_and(|m| m == "radar") {
                 crate::world::bridge::demo::seed_queries(&mut self.world);
                 self.panels.people = true;
@@ -74,6 +77,7 @@ impl App {
                 || std::env::var_os("AURORA_DEMO_MOVELOCK").is_some()
                 || std::env::var_os("AURORA_DEMO_MOVEMENT").is_some()
                 || std::env::var_os("AURORA_DEMO_BRIDGE_QUERY").is_some()
+                || std::env::var("AURORA_DEMO_SOUND_EXPLORER").is_ok_and(|m| m.starts_with("rez-blocks"))
                 || crate::ao::water_demo::mode().is_some()
                 || folder_names);
         if !online {

@@ -10,6 +10,7 @@ pub mod backdrop;
 pub mod bars;
 pub mod blacklist;
 pub mod bumps;
+pub mod sound_explorer;
 // Bug report form (disabled, see main.rs):
 // pub mod bug_report;
 pub mod beacons;
@@ -157,6 +158,7 @@ pub struct Panels {
     /// "Search" (Firestorm's legacy search floater, Ctrl+F).
     pub search: bool,
     pub area_search: bool,
+    pub sound_explorer: bool,
     /// "Asset blacklist" (World menu): the derendered objects and residents.
     pub asset_blacklist: bool,
     /// "Money tracker" (Me menu): the L$ received and paid.
@@ -207,6 +209,7 @@ impl Panels {
             places: false,
             search: false,
             area_search: false,
+            sound_explorer: false,
             asset_blacklist: false,
             money_tracker: false,
             bumps: false,

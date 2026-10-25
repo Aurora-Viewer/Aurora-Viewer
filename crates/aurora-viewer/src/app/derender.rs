@@ -93,7 +93,7 @@ impl App {
         let action = self.blacklist_ui.show(ctx, p, &self.world.derender, &mut open);
         self.panels.asset_blacklist = open;
         match action {
-            Some(ui::blacklist::BlacklistAction::Remove(ids)) => self.world.underender(&ids),
+            Some(ui::blacklist::BlacklistAction::Remove(rows)) => self.world.remove_blacklist_rows(&rows),
             Some(ui::blacklist::BlacklistAction::ClearTemporary) => self.world.clear_temporary_derenders(),
             None => {}
         }

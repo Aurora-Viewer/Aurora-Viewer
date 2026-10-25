@@ -22,6 +22,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+pub mod history;
+
 pub const FETCH_KIND_SOUND: u64 = 5 << 60;
 
 /// LL_SOUND_FLAG_*.
@@ -125,6 +127,8 @@ struct Playing {
 
 /// Sound of an object (LLAudioSourceVO).
 struct Source {
+    owner: Uuid,
+    first_seen: Instant,
     sound: Uuid,
     gain: f32,
     flags: u8,
@@ -137,6 +141,9 @@ struct Source {
 
 /// Sound triggered at a place (LLAudioEngine::triggerSound).
 struct Triggered {
+    source: Uuid,
+    owner: Uuid,
+    region: Option<aurora_net::RegionHandle>,
     sound: Uuid,
     /// Render-space position, or an object to follow.
     pos: Vec3,
@@ -154,7 +161,15 @@ pub struct Listener {
     pub underwater: bool,
 }
 
+pub struct Origin {
+    pub object: Uuid,
+    pub owner: Uuid,
+    pub region: Option<aurora_net::RegionHandle>,
+}
+
 pub struct SoundManager {
+    pub history: history::History,
+    previews: HashMap<Uuid, (Instant, Option<Playing>)>,
     clips: HashMap<Uuid, Clip>,
     by_key: HashMap<u64, Uuid>,
     next_key: u64,
@@ -196,6 +211,8 @@ impl SoundManager {
         let _ = std::fs::create_dir_all(cache_dir.join("sound"));
         let (tx, rx) = crossbeam_channel::unbounded();
         SoundManager {
+            history: Default::default(),
+            previews: HashMap::new(),
             clips: HashMap::new(),
             by_key: HashMap::new(),
             next_key: 1,
@@ -275,6 +292,8 @@ impl SoundManager {
         }
         self.want(sound);
         let s = self.sources.entry(object).or_insert(Source {
+            owner: Uuid::nil(),
+            first_seen: Instant::now(),
             sound,
             gain,
             flags,
@@ -318,12 +337,30 @@ impl SoundManager {
 
     /// A sound played once at a place (or following an object).
     pub fn trigger(&mut self, sound: Uuid, pos: Vec3, follow: Option<Uuid>, gain: f32) {
+        let source = follow.unwrap_or_default();
+        self.trigger_owned(
+            sound,
+            pos,
+            follow,
+            gain,
+            Origin {
+                object: source,
+                owner: source,
+                region: None,
+            },
+        );
+    }
+
+    pub fn trigger_owned(&mut self, sound: Uuid, pos: Vec3, follow: Option<Uuid>, gain: f32, origin: Origin) {
         let gain = if gain.is_finite() { gain.clamp(0.0, 1.0) } else { 0.0 };
         if sound.is_nil() || gain < f32::EPSILON * 2.0 || self.triggered.len() > 128 {
             return;
         }
         self.want(sound);
         self.triggered.push(Triggered {
+            source: origin.object,
+            owner: origin.owner,
+            region: origin.region,
             sound,
             pos,
             follow,
@@ -346,6 +383,8 @@ impl SoundManager {
 
     /// Stop everything (region change, logout).
     pub fn clear(&mut self, engine: Option<&AudioEngine>) {
+        self.stop_previews(engine);
+        self.history.sync(std::iter::empty(), Instant::now());
         if let Some(e) = engine {
             for s in self.sources.values() {
                 if let Some(p) = s.playing {
@@ -477,6 +516,37 @@ impl SoundManager {
 
     /// Start, place and end the sounds (every frame).
     pub fn update(&mut self, engine: Option<&AudioEngine>, world: &World, l: &Listener, now: Instant) {
+        self.update_previews(engine, world, now);
+        // Blacklist checks cover pending assets and already playing sounds,
+        // including AttachedSound packets whose snapshot still contains nil.
+        let blocked: Vec<_> = self
+            .sources
+            .iter()
+            .filter_map(|(id, s)| {
+                let owner = world
+                    .objects
+                    .index_of_uuid(id)
+                    .and_then(|i| world.objects.get(i))
+                    .map_or(s.owner, |o| if s.owner.is_nil() { o.owner_id } else { s.owner });
+                (world.sound_blocked(id, &owner) || world.sound_blacklisted(s.sound, *id, owner)).then_some(*id)
+            })
+            .collect();
+        for id in blocked {
+            if let Some(s) = self.sources.remove(&id)
+                && let (Some(p), Some(e)) = (s.playing, engine)
+            {
+                e.stop_world(p.voice);
+            }
+        }
+        self.triggered.retain(|t| {
+            if !world.sound_blocked(&t.source, &t.owner) && !world.sound_blacklisted(t.sound, t.source, t.owner) {
+                return true;
+            }
+            if let (Some(p), Some(e)) = (t.playing, engine) {
+                e.stop_world(p.voice);
+            }
+            false
+        });
         // interface sounds whose clip arrived
         let mut ui_play = Vec::new();
         self.ui_pending.retain(|(id, at)| {
@@ -561,6 +631,38 @@ impl SoundManager {
         active.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut voices = 0usize;
         for (_, kind, key, pos, within_radius) in active {
+            let waiting = if kind == 0 {
+                world
+                    .objects
+                    .index_of_uuid(&key)
+                    .and_then(|i| world.objects.get(i))
+                    .is_some_and(|o| {
+                        !o.is_avatar()
+                            && self
+                                .sources
+                                .get(&key)
+                                .is_some_and(|s| world.rez_sound_blocks.waiting(key, o.key.region, s.first_seen, now))
+                    })
+            } else {
+                self.triggered.get(key.as_u128() as usize).is_some_and(|t| {
+                    t.source != t.owner
+                        && t.region
+                            .or(world.main_region)
+                            .is_some_and(|region| world.rez_sound_blocks.waiting(t.source, region, t.asked, now))
+                })
+            };
+            if waiting {
+                let p = if kind == 0 {
+                    self.sources.get(&key).and_then(|s| s.playing)
+                } else {
+                    self.triggered.get(key.as_u128() as usize).and_then(|t| t.playing)
+                };
+                if let (Some(p), Some(e)) = (p, engine) {
+                    e.stop_world(p.voice);
+                }
+                self.set_playing(kind, key, None, true);
+                continue;
+            }
             let (sound, gain, looped, playing) = if kind == 0 {
                 let Some(s) = self.sources.get(&key) else {
                     continue;
@@ -622,6 +724,164 @@ impl SoundManager {
             Some(p) => p.length.is_none_or(|len| now.duration_since(p.started) < len),
             None => now.duration_since(t.asked) < ONE_SHOT_PATIENCE,
         });
+        let (x, y) = world.main_origin().unwrap_or_default();
+        let origin = glam::DVec3::new(f64::from(x), f64::from(y), 0.0);
+        let attached = self.sources.iter().filter_map(|(id, s)| {
+            let p = s.playing?;
+            let (idx, mut pos, hud) = pos_of(id)?;
+            if hud
+                && let Some((_, wearer)) = Scene::wearer_avatar(world, idx)
+                && let Some(t) = Scene::object_transform(world, wearer, now, 0)
+            {
+                pos = t.0;
+            }
+            let owner = if s.owner.is_nil() {
+                world.objects.get(idx)?.owner_id
+            } else {
+                s.owner
+            };
+            Some(history::Entry {
+                id: p.voice,
+                asset: s.sound,
+                source: *id,
+                owner,
+                position: origin + pos.as_dvec3(),
+                started: p.started,
+                stopped: None,
+                triggered: false,
+                looped: s.flags & FLAG_LOOP != 0,
+            })
+        });
+        let triggered = self.triggered.iter().filter_map(|t| {
+            let p = t.playing?;
+            Some(history::Entry {
+                id: p.voice,
+                asset: t.sound,
+                source: t.source,
+                owner: t.owner,
+                position: origin + t.pos.as_dvec3(),
+                started: p.started,
+                stopped: None,
+                triggered: true,
+                looped: false,
+            })
+        });
+        self.history.sync(attached.chain(triggered), now);
+    }
+
+    pub fn set_owner(&mut self, object: Uuid, owner: Uuid) {
+        if let Some(s) = self.sources.get_mut(&object) {
+            s.owner = owner;
+        }
+    }
+
+    /// A bounded set of nearest world sources; never scan the entire scene
+    /// for bridge metadata. Invisible triggers retain their event region.
+    pub fn object_sources(&self, world: &World, listener: Vec3) -> Vec<(Uuid, aurora_net::RegionHandle)> {
+        let now = Instant::now();
+        let attached = self
+            .sources
+            .iter()
+            .filter(|(_, s)| s.playing.is_some() || s.pending.is_some())
+            .filter_map(|(id, _)| {
+                let idx = world.objects.index_of_uuid(id)?;
+                let o = world.objects.get(idx)?;
+                if o.is_avatar() {
+                    return None;
+                }
+                let pos = Scene::object_transform(world, idx, now, 0).map_or(o.position, |t| if t.2 { listener } else { t.0 });
+                Some((pos.distance_squared(listener), *id, o.key.region))
+            });
+        let triggered = self
+            .triggered
+            .iter()
+            .filter(|t| !t.source.is_nil() && t.source != t.owner)
+            .filter_map(|t| Some((t.pos.distance_squared(listener), t.source, t.region.or(world.main_region)?)));
+        let mut sources: Vec<_> = attached.chain(triggered).collect();
+        sources.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut seen = std::collections::HashSet::new();
+        sources.retain(|(_, id, _)| seen.insert(*id));
+        sources.truncate(192);
+        sources.into_iter().map(|(_, id, region)| (id, region)).collect()
+    }
+
+    /// Stop the selected playback, never a newer sound from the same source.
+    pub fn stop_logged(&mut self, engine: Option<&AudioEngine>, ids: &[u64]) {
+        for s in self.sources.values_mut() {
+            if let Some(p) = s.playing.filter(|p| ids.contains(&p.voice)) {
+                if let Some(e) = engine {
+                    e.stop_world(p.voice);
+                }
+                s.playing = None;
+                s.pending = None;
+                s.queued = None;
+            }
+        }
+        self.triggered.retain(|t| {
+            if let Some(p) = t.playing.filter(|p| ids.contains(&p.voice)) {
+                if let Some(e) = engine {
+                    e.stop_world(p.voice);
+                }
+                return false;
+            }
+            true
+        });
+        for id in ids {
+            self.history.stop(*id, Instant::now());
+        }
+    }
+
+    pub fn preview(&mut self, assets: impl Iterator<Item = Uuid>) {
+        for asset in assets {
+            if self.previews.len() >= MAX_VOICES {
+                break;
+            }
+            self.want(asset);
+            self.previews.entry(asset).or_insert((Instant::now(), None));
+        }
+    }
+
+    pub fn previewing(&self) -> bool {
+        !self.previews.is_empty()
+    }
+
+    pub fn stop_previews(&mut self, engine: Option<&AudioEngine>) {
+        for (_, (_, p)) in self.previews.drain() {
+            if let (Some(p), Some(e)) = (p, engine) {
+                e.stop_world(p.voice);
+            }
+        }
+    }
+
+    fn update_previews(&mut self, engine: Option<&AudioEngine>, world: &World, now: Instant) {
+        self.previews.retain(|asset, (asked, playing)| {
+            if world.derender.sound_blocked(*asset, Uuid::nil(), 0) {
+                if let (Some(p), Some(e)) = (*playing, engine) {
+                    e.stop_world(p.voice);
+                }
+                return false;
+            }
+            if let Some(p) = playing {
+                return p.length.is_some_and(|len| now.saturating_duration_since(p.started) < len);
+            }
+            if now.saturating_duration_since(*asked) > ONE_SHOT_PATIENCE {
+                return false;
+            }
+            if let Some(c) = self.clips.get(asset).and_then(|c| c.clip.as_ref()) {
+                let voice = self.next_voice;
+                self.next_voice += 1;
+                if let Some(e) = engine {
+                    e.play_world(voice, Channel::Ui, c, false, (1.0, 1.0));
+                }
+                *playing = Some(Playing {
+                    voice,
+                    started: now,
+                    length: Some(c.duration()),
+                    gain: (1.0, 1.0),
+                });
+            }
+            true
+        });
     }
 
     /// Record what a source / triggered sound plays. `keep_pending`: a loop
@@ -663,6 +923,182 @@ impl SoundManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sound_explorer_logs_actual_playback_and_stops_only_that_voice() {
+        let world = hud_world();
+        let object = object_id(&world, crate::demo::hud::CHILD);
+        let asset = Uuid::from_u128(17);
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-sound-explorer-tests"));
+        let l = Listener {
+            pos: Vec3::ZERO,
+            right: Vec3::X,
+            underwater: false,
+        };
+        let now = Instant::now();
+        sounds.set_attached(None, object, asset, 1.0, FLAG_LOOP);
+        sounds.update(None, &world, &l, now);
+        assert_eq!(sounds.history.entries().count(), 0, "pending assets are not playing");
+        sounds.insert(asset, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
+        sounds.update(None, &world, &l, now + Duration::from_millis(10));
+        let first = sounds.history.entries().next().unwrap().clone();
+        assert!(first.looped && first.stopped.is_none());
+        sounds.set_attached(None, object, asset, 1.0, 0);
+        sounds.update(None, &world, &l, now + Duration::from_millis(20));
+        let second = sounds.sources[&object].playing.unwrap().voice;
+        assert_ne!(first.id, second);
+        sounds.stop_logged(None, &[first.id]);
+        assert_eq!(
+            sounds.sources[&object].playing.unwrap().voice,
+            second,
+            "a frozen row cannot stop its replacement"
+        );
+        sounds.stop_logged(None, &[second]);
+        sounds.update(None, &world, &l, now + Duration::from_millis(30));
+        assert!(sounds.sources[&object].playing.is_none());
+        assert!(sounds.history.entries().all(|e| e.stopped.is_some()));
+        sounds.preview([asset, asset].into_iter());
+        sounds.update(None, &world, &l, now + Duration::from_millis(40));
+        assert_eq!(sounds.previews.len(), 1, "preview unique assets only");
+        assert_eq!(sounds.history.entries().count(), 2, "previews never enter the world log");
+        sounds.stop_previews(None);
+        assert!(!sounds.previewing());
+    }
+
+    #[test]
+    fn sound_explorer_blacklisting_stops_current_and_pending_sources_and_previews() {
+        use crate::world::derender::{Entry, Kind};
+        let mut world = hud_world();
+        let object = object_id(&world, crate::demo::hud::CHILD);
+        let asset = Uuid::from_u128(21);
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-sound-explorer-tests"));
+        let l = Listener {
+            pos: Vec3::ZERO,
+            right: Vec3::X,
+            underwater: false,
+        };
+        let now = Instant::now();
+        sounds.insert(asset, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
+        sounds.set_attached(None, object, asset, 1.0, FLAG_LOOP);
+        sounds.preview(std::iter::once(asset));
+        sounds.trigger_owned(
+            asset,
+            Vec3::ZERO,
+            None,
+            1.0,
+            Origin {
+                object: world.agent_id,
+                owner: world.agent_id,
+                region: None,
+            },
+        );
+        sounds.update(None, &world, &l, now);
+        assert_eq!(sounds.voices(), 2);
+        world.derender.add_sound(
+            asset,
+            Entry {
+                name: String::new(),
+                region: String::new(),
+                kind: Kind::Sound(0),
+                date: 0,
+                permanent: false,
+            },
+        );
+        sounds.update(None, &world, &l, now + Duration::from_millis(10));
+        assert_eq!(sounds.voices(), 0);
+        assert!(!sounds.previewing());
+        assert!(sounds.history.entries().all(|e| e.stopped.is_some()));
+        sounds.set_attached(None, object, asset, 1.0, FLAG_LOOP);
+        sounds.update(None, &world, &l, now + Duration::from_millis(20));
+        assert_eq!(sounds.voices(), 0, "a blocked pending source cannot restart");
+        world.derender.remove(&[asset]);
+        sounds.set_attached(None, object, asset, 1.0, FLAG_LOOP);
+        sounds.update(None, &world, &l, now + Duration::from_millis(30));
+        assert_eq!(sounds.voices(), 1, "removal permits future playback");
+    }
+
+    #[test]
+    fn rez_sound_blocks_hold_new_audio_then_mute_only_confirmed_descendants() {
+        use crate::world::mutes::{Mute, MuteType};
+        use crate::world::rez_sound_blocks::Scope;
+        use aurora_net::bridge::query::{Reply, Rezzer};
+        let mut world = hud_world();
+        let child = object_id(&world, crate::demo::hud::CHILD);
+        let other = Uuid::from_u128(555);
+        let blocked = Uuid::from_u128(888);
+        let owner = world.agent_id;
+        world.mutes.reset(owner);
+        world
+            .mutes
+            .add(
+                Mute {
+                    id: blocked,
+                    name: "Rezzer".into(),
+                    kind: MuteType::Object,
+                    flags: 0,
+                },
+                0,
+            )
+            .unwrap();
+        let scope = Scope {
+            agent: owner,
+            region: world.main_region,
+            session: Some(Uuid::from_u128(99)),
+        };
+        world.rez_sound_blocks.configure(true, scope, &world.mutes);
+        let now = Instant::now();
+        world.rez_sound_blocks.set_live(&[child, other], now);
+        let (request, _) = world.rez_sound_blocks.request(now).unwrap();
+        let asset = Uuid::from_u128(21);
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-rez-sound-tests"));
+        sounds.insert(asset, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
+        sounds.set_attached(None, child, asset, 1.0, FLAG_LOOP);
+        sounds.set_owner(child, owner);
+        sounds.trigger_owned(
+            asset,
+            Vec3::ZERO,
+            None,
+            1.0,
+            Origin {
+                object: other,
+                owner,
+                region: world.main_region,
+            },
+        );
+        let listener = Listener {
+            pos: Vec3::ZERO,
+            right: Vec3::X,
+            underwater: false,
+        };
+        sounds.update(None, &world, &listener, now);
+        assert_eq!(sounds.voices(), 0, "no first sound leaks while provenance is pending");
+        world.rez_sound_blocks.reply(
+            request,
+            Ok(Reply::Rezzers(vec![
+                Rezzer {
+                    object: child,
+                    root: child,
+                    rezzer: blocked,
+                },
+                Rezzer {
+                    object: other,
+                    root: other,
+                    rezzer: Uuid::nil(),
+                },
+            ])),
+            true,
+            scope,
+            now,
+        );
+        sounds.update(None, &world, &listener, now + Duration::from_millis(10));
+        assert_eq!(sounds.voices(), 1, "unrelated source with the same owner is audible");
+        assert!(sounds.history.entries().all(|e| e.source == other));
+        world.mutes.remove(&blocked, "", 0);
+        world.rez_sound_blocks.configure(true, scope, &world.mutes);
+        sounds.set_attached(None, child, asset, 1.0, FLAG_LOOP);
+        sounds.update(None, &world, &listener, now + Duration::from_millis(20));
+        assert_eq!(sounds.voices(), 2);
+    }
 
     fn hud_world() -> World {
         let mut world = World::new(Arc::new(crate::scene::avatar::AvatarLibrary::load()));

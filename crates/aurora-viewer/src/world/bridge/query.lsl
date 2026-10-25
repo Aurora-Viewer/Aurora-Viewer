@@ -1,10 +1,10 @@
-// Aurora LSL Bridge query and posing-consent services v1.35: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge query and posing-consent services v1.36: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.35";
+string VERSION = "1.36";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -56,6 +56,31 @@ query(key request, string kind, string targets) {
         // Explicit commands only: no advertisement, discovery or viewer probe.
         llRegionSayTo(target, POSE_CHANNEL, "pose1|" + (string)nonce + "|" + action + "|" + (string)target);
         llHTTPResponse(request, 200, "[]");
+    } else if (kind == "rezzers") {
+        integer length = llStringLength(targets);
+        integer count = (length + 1) / 37;
+        if (count < 1 || count > 16 || length != count * 37 - 1) { llHTTPResponse(request, 400, "invalid"); return; }
+        string output;
+        integer i;
+        for (i = 0; i < count; ++i) {
+            integer at = i * 37;
+            if (i && llGetSubString(targets, at - 1, at - 1) != ",") { llHTTPResponse(request, 400, "invalid"); return; }
+            key object = llGetSubString(targets, at, at + 35);
+            if (!validKey(object)) { llHTTPResponse(request, 400, "invalid"); return; }
+            list details = llGetObjectDetails(object, [OBJECT_ROOT, OBJECT_REZZER_KEY]);
+            if (llGetListLength(details) == 2) {
+                key root = llList2Key(details, 0);
+                key rezzer = llList2Key(details, 1);
+                // A linked child uses the linkset root's rez provenance.
+                if (root != object) {
+                    details = llGetObjectDetails(root, [OBJECT_REZZER_KEY]);
+                    if (llGetListLength(details) == 1) rezzer = llList2Key(details, 0);
+                    else root = NULL_KEY;
+                }
+                if (root) output += ",\"" + (string)object + "\",\"" + (string)root + "\",\"" + (string)rezzer + "\"";
+            }
+        }
+        llHTTPResponse(request, 200, "[" + llDeleteSubString(output, 0, 0) + "]");
     } else if (kind == "altitudes") {
         // Comma-separated 36-character keys, read at a fixed stride.
         integer length = llStringLength(targets);

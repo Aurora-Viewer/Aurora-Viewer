@@ -4,13 +4,13 @@
 //! menu_fs_asset_blacklist.xml) for the entries Aurora acts on: a filter,
 //! the list with its name, region, type, date and permanent columns,
 //! sortable, several rows selected with Ctrl / Shift, "Remove selected"
-//! (also in the rows' right-click menu) and "Clear temporary". Sounds,
-//! textures and animations have no entry in Aurora: the sound buttons are
-//! left out.
+//! (also in the rows' right-click menu) and "Clear temporary". Sound Explorer
+//! adds sound assets and owner categories to this same list. Textures and
+//! animations remain preserved from imported files without being applied.
 
 use super::widgets::{self, ActionKind, Floater};
 use crate::theme::Palette;
-use crate::world::derender::{Derender, Entry, Kind};
+use crate::world::derender::{Derender, Entry, Kind, RowId};
 use egui::{Rect, RichText, Sense, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -44,9 +44,9 @@ impl Column {
     fn weight(self) -> f32 {
         match self {
             Column::Name => 2.2,
-            Column::Region => 1.4,
-            Column::Type => 0.9,
-            Column::Date => 1.3,
+            Column::Region => 1.1,
+            Column::Type => 1.8,
+            Column::Date => 1.2,
             Column::Permanent => 0.8,
         }
     }
@@ -56,7 +56,7 @@ impl Column {
 #[derive(Debug, Clone, PartialEq)]
 pub enum BlacklistAction {
     /// FSAssetBlacklist::removeItemsFromBlacklist.
-    Remove(Vec<Uuid>),
+    Remove(Vec<RowId>),
     /// LLViewerObjectList::resetDerenderList(true).
     ClearTemporary,
 }
@@ -64,9 +64,9 @@ pub enum BlacklistAction {
 #[derive(Default)]
 pub struct BlacklistUi {
     filter: String,
-    selected: HashSet<Uuid>,
+    selected: HashSet<RowId>,
     /// The row Shift extends a selection from.
-    anchor: Option<Uuid>,
+    anchor: Option<RowId>,
     /// Column sorted on and whether descending; None: newest first.
     sort: Option<(Column, bool)>,
 }
@@ -75,6 +75,11 @@ fn kind_label(kind: Kind) -> &'static str {
     match kind {
         Kind::Object => aurora_i18n::tr!("common-object"),
         Kind::Resident => aurora_i18n::tr!("common-resident"),
+        Kind::Sound(0) => aurora_i18n::tr!("sound-explorer-asset"),
+        Kind::Sound(1) => aurora_i18n::tr!("sound-explorer-worn"),
+        Kind::Sound(2) => aurora_i18n::tr!("sound-explorer-rezzed"),
+        Kind::Sound(4) => aurora_i18n::tr!("sound-explorer-gestures"),
+        Kind::Sound(_) => aurora_i18n::tr!("sound-explorer-owner-sounds"),
     }
 }
 
@@ -109,11 +114,18 @@ fn date_text(secs: i64) -> String {
     )
 }
 
-fn cell_text(e: &Entry, column: Column) -> String {
+fn row_kind(e: &Entry, id: RowId) -> Kind {
+    match e.kind {
+        Kind::Sound(_) if id.flag != 0 => Kind::Sound(id.flag),
+        kind => kind,
+    }
+}
+
+fn cell_text(e: &Entry, column: Column, id: RowId) -> String {
     match column {
         Column::Name => name_of(e).to_owned(),
         Column::Region => region_of(e).to_owned(),
-        Column::Type => kind_label(e.kind).to_owned(),
+        Column::Type => kind_label(row_kind(e, id)).to_owned(),
         Column::Date => date_text(e.date),
         // asset_permanent: a check mark, drawn as an icon
         Column::Permanent => String::new(),
@@ -122,11 +134,20 @@ fn cell_text(e: &Entry, column: Column) -> String {
 
 /// The rows the filter keeps (on the name, FSScrollListCtrl filter column
 /// 0, without regard to case), in the table's order.
-fn rows<'a>(list: impl Iterator<Item = (&'a Uuid, &'a Entry)>, filter: &str, sort: Option<(Column, bool)>) -> Vec<(Uuid, &'a Entry)> {
+fn rows<'a>(list: impl Iterator<Item = (&'a Uuid, &'a Entry)>, filter: &str, sort: Option<(Column, bool)>) -> Vec<(RowId, &'a Entry)> {
     let filter = filter.trim().to_lowercase();
-    let mut rows: Vec<(Uuid, &Entry)> = list
+    let mut rows: Vec<(RowId, &Entry)> = list
         .filter(|(_, e)| filter.is_empty() || name_of(e).to_lowercase().contains(&filter))
-        .map(|(id, e)| (*id, e))
+        .flat_map(|(id, e)| {
+            let flags = match e.kind {
+                Kind::Sound(flags) => flags,
+                _ => 0,
+            };
+            [0, 1, 2, 4]
+                .into_iter()
+                .filter(move |flag| if flags == 0 { *flag == 0 } else { *flag != 0 && flags & flag != 0 })
+                .map(move |flag| (RowId { id: *id, flag }, e))
+        })
         .collect();
     let text = |a: &str, b: &str| a.to_lowercase().cmp(&b.to_lowercase());
     rows.sort_by(|(ia, a), (ib, b)| {
@@ -136,7 +157,7 @@ fn rows<'a>(list: impl Iterator<Item = (&'a Uuid, &'a Entry)>, filter: &str, sor
                 let o = match column {
                     Column::Name => text(name_of(a), name_of(b)),
                     Column::Region => text(region_of(a), region_of(b)),
-                    Column::Type => text(kind_label(a.kind), kind_label(b.kind)),
+                    Column::Type => text(kind_label(row_kind(a, *ia)), kind_label(row_kind(b, *ib))),
                     Column::Date => a.date.cmp(&b.date),
                     Column::Permanent => a.permanent.cmp(&b.permanent),
                 };
@@ -195,7 +216,7 @@ impl BlacklistUi {
 
     /// A click on a row: alone, Ctrl to add or take it out, Shift for the
     /// rows from the last one clicked.
-    fn click(&mut self, id: Uuid, order: &[Uuid], modifiers: egui::Modifiers) {
+    fn click(&mut self, id: RowId, order: &[RowId], modifiers: egui::Modifiers) {
         if modifiers.shift
             && let Some(anchor) = self.anchor
             && let (Some(a), Some(b)) = (order.iter().position(|i| *i == anchor), order.iter().position(|i| *i == id))
@@ -238,8 +259,8 @@ impl BlacklistUi {
             });
             ui.add_space(6.0);
             let shown = rows(list.entries(), &self.filter, self.sort);
-            let order: Vec<Uuid> = shown.iter().map(|(id, _)| *id).collect();
-            self.selected.retain(|id| list.contains(id));
+            let order: Vec<RowId> = shown.iter().map(|(id, _)| *id).collect();
+            self.selected.retain(|id| list.has_row(*id));
             let footer = BUTTONS + 6.0 + ui.spacing().item_spacing.y;
             let height = (ui.available_height() - footer).max(0.0);
             ui.allocate_ui_with_layout(
@@ -277,11 +298,12 @@ impl BlacklistUi {
                                     }
                                     continue;
                                 }
-                                let text = cell_text(entry, column);
+                                let text = cell_text(entry, column, *id);
                                 let left = egui::pos2(cell.left() + 8.0, cell.center().y);
                                 let color = if column == Column::Name { p.ink } else { p.muted };
                                 widgets::paint_elided(ui, &text, left, cell.width() - 12.0, egui::FontId::proportional(12.5), color);
                             }
+                            resp.clone().on_hover_text(cell_text(entry, Column::Type, *id));
                             if resp.clicked() {
                                 let modifiers = ui.input(|i| i.modifiers);
                                 self.click(*id, &order, modifiers);
@@ -380,9 +402,13 @@ mod tests {
         assert_eq!(names("", Some((Column::Permanent, true))), ["Lantern", "barrel", "Big lantern"]);
         // an object without a name, and without a region
         let unnamed = entry("", 0, false);
-        assert_eq!(cell_text(&unnamed, Column::Name), aurora_i18n::tr!("blacklist-unknown-object"));
-        assert_eq!(cell_text(&unnamed, Column::Region), aurora_i18n::tr!("blacklist-unknown-region"));
-        assert_eq!(cell_text(&unnamed, Column::Date), "");
+        let id = RowId::whole(Uuid::nil());
+        assert_eq!(cell_text(&unnamed, Column::Name, id), aurora_i18n::tr!("blacklist-unknown-object"));
+        assert_eq!(
+            cell_text(&unnamed, Column::Region, id),
+            aurora_i18n::tr!("blacklist-unknown-region")
+        );
+        assert_eq!(cell_text(&unnamed, Column::Date, id), "");
     }
 
     #[test]
@@ -404,7 +430,7 @@ mod tests {
 
     #[test]
     fn ctrl_and_shift_choose_several_rows() {
-        let order: Vec<Uuid> = (1..=4).map(Uuid::from_u128).collect();
+        let order: Vec<RowId> = (1..=4).map(Uuid::from_u128).map(RowId::whole).collect();
         let mut ui = BlacklistUi::default();
         let none = egui::Modifiers::default();
         let ctrl = egui::Modifiers {
@@ -423,4 +449,43 @@ mod tests {
         ui.click(order[3], &order, none);
         assert_eq!(ui.selected, [order[3]].into_iter().collect::<HashSet<_>>());
     }
+
+    #[test]
+    fn blacklist_sound_categories_have_independent_rows_selection_and_labels() {
+        let owner = Uuid::from_u128(45);
+        let mut e = entry("Demo resident", 10, true);
+        e.kind = Kind::Sound(7);
+        let list = HashMap::from([(owner, e)]);
+        let shown = rows(list.iter(), "DEMO", None);
+        let order: Vec<_> = shown.iter().map(|(id, _)| *id).collect();
+        assert_eq!(order, [1, 2, 4].map(|flag| RowId { id: owner, flag }));
+        let labels: Vec<_> = shown.iter().map(|(id, e)| cell_text(e, Column::Type, *id)).collect();
+        assert_eq!(
+            labels,
+            [
+                aurora_i18n::tr!("sound-explorer-worn"),
+                aurora_i18n::tr!("sound-explorer-rezzed"),
+                aurora_i18n::tr!("sound-explorer-gestures")
+            ]
+        );
+        let mut ui = BlacklistUi::default();
+        ui.click(order[0], &order, Default::default());
+        ui.click(
+            order[2],
+            &order,
+            egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(ui.selected, HashSet::from([order[0], order[2]]));
+        assert!(
+            !ui.selected.contains(&order[1]),
+            "the shared resident UUID is not the selection identity"
+        );
+    }
 }
+
+#[cfg(test)]
+#[path = "blacklist_sound_tests.rs"]
+mod sound_tests;

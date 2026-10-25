@@ -100,6 +100,37 @@ impl Demo {
                 } else {
                     Ok(match query {
                         Query::Pose { .. } => Reply::Pose,
+                        Query::Rezzers(ids) => Reply::Rezzers(
+                            ids.iter()
+                                .map(|object| {
+                                    let local = world
+                                        .objects
+                                        .index_of_uuid(object)
+                                        .and_then(|i| world.objects.get(i))
+                                        .map(|o| o.key.local_id);
+                                    let rez_mode = std::env::var("AURORA_DEMO_SOUND_EXPLORER").is_ok_and(|m| m.starts_with("rez-blocks"));
+                                    let parent = if rez_mode {
+                                        match local {
+                                            Some(102) => Some(101),
+                                            Some(103) => Some(102),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                    let rezzer = parent
+                                        .and_then(|local| {
+                                            world.objects.iter().find(|(_, o)| o.key.local_id == local).map(|(_, o)| o.full_id)
+                                        })
+                                        .unwrap_or(if *object == world.agent_id { Uuid::nil() } else { world.agent_id });
+                                    aurora_net::bridge::query::Rezzer {
+                                        object: *object,
+                                        root: *object,
+                                        rezzer,
+                                    }
+                                })
+                                .collect(),
+                        ),
                         Query::Altitudes(ids) => Reply::Altitudes(
                             ids.iter()
                                 .filter(|id| **id == SKY_VISITOR)

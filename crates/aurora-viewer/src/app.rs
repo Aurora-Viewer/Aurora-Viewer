@@ -31,6 +31,8 @@ mod attention;
 mod bridge;
 mod movelock;
 mod poser;
+mod rez_sound_blocks;
+mod sound_explorer;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
 mod avatar_health;
@@ -513,6 +515,7 @@ pub struct App {
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
     area_search_ui: ui::area_search::AreaSearchUi,
+    sound_explorer_ui: ui::sound_explorer::SoundExplorer,
     area_search_feed: area_search::Feed,
     /// "Asset blacklist" (World menu).
     blacklist_ui: ui::blacklist::BlacklistUi,
@@ -1147,6 +1150,7 @@ impl App {
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             area_search_ui: Default::default(),
+            sound_explorer_ui: Default::default(),
             area_search_feed: Default::default(),
             blacklist_ui: Default::default(),
             bumps_ui: Default::default(),
@@ -2307,6 +2311,8 @@ impl App {
             self.world.social.avatar_names.save(&path);
         }
         self.scene.sounds.clear(self.audio_engine.as_ref());
+        self.scene.sounds.history = Default::default();
+        self.sound_explorer_ui = Default::default();
         self.blender_live.stop();
         self.clear_blender_preview();
         self.blender_live = Default::default();
@@ -2374,7 +2380,16 @@ impl App {
             return;
         }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
-            let _ = self.sync_bridge_queries();
+            let endpoint = self.sync_bridge_queries();
+            if self.world.rez_sound_blocks.owns(request) {
+                self.bridge_runtime
+                    .query_reply(&self.world, result.as_ref().err().map(String::as_str), Instant::now());
+                let scope = self.rez_sound_scope(endpoint.as_ref());
+                self.world
+                    .rez_sound_blocks
+                    .reply(request, result, self.settings.audio.mute_rez_descendants, scope, Instant::now());
+                return;
+            }
             if self.bridge_services.owns(request) {
                 let error = result.as_ref().err().map(String::as_str);
                 self.bridge_runtime.query_reply(&self.world, error, Instant::now());
@@ -3028,7 +3043,9 @@ impl App {
                 position,
                 gain,
             } => {
-                if self.world.sound_blocked(&object, &owner) || (!parent.is_nil() && self.world.sound_blocked(&parent, &uuid::Uuid::nil()))
+                if self.world.sound_blocked(&object, &owner)
+                    || self.world.sound_blacklisted(sound, object, owner)
+                    || (!parent.is_nil() && self.world.sound_blocked(&parent, &uuid::Uuid::nil()))
                 {
                     return;
                 }
@@ -3041,7 +3058,17 @@ impl App {
                     return;
                 }
                 if let Some(off) = self.world.region_offset(handle) {
-                    self.scene.sounds.trigger(sound, off + position, None, gain);
+                    self.scene.sounds.trigger_owned(
+                        sound,
+                        off + position,
+                        None,
+                        gain,
+                        crate::scene::sounds::Origin {
+                            object,
+                            owner,
+                            region: Some(handle),
+                        },
+                    );
                 }
             }
             NetEvent::AttachedSound {
@@ -3052,12 +3079,13 @@ impl App {
                 flags,
             } => {
                 self.flush_object_sounds();
-                if !sound.is_nil() && self.world.sound_blocked(&object, &owner) {
+                if !sound.is_nil() && (self.world.sound_blocked(&object, &owner) || self.world.sound_blacklisted(sound, object, owner)) {
                     return;
                 }
                 self.scene
                     .sounds
                     .set_attached(self.audio_engine.as_ref(), object, sound, gain, flags);
+                self.scene.sounds.set_owner(object, owner);
             }
             NetEvent::AttachedSoundGain { object, gain } => {
                 self.flush_object_sounds();
@@ -3065,7 +3093,9 @@ impl App {
             }
             NetEvent::PreloadSounds(sounds) => {
                 for sound in sounds {
-                    self.scene.sounds.want(sound.sound);
+                    if !self.world.sound_blacklisted(sound.sound, sound.object, sound.owner) {
+                        self.scene.sounds.want(sound.sound);
+                    }
                 }
             }
             NetEvent::LoggedOut => {
@@ -4137,16 +4167,17 @@ impl App {
     fn flush_object_sounds(&mut self) {
         let engine = self.audio_engine.as_ref();
         // the block list changed: silence / restore the sounds it covers
-        let version = self.world.mutes.version.wrapping_add(self.world.anti_spam.version);
+        let version = self
+            .world
+            .mutes
+            .version
+            .wrapping_add(self.world.anti_spam.version)
+            .wrapping_add(self.world.derender.generation)
+            .wrapping_add(self.world.rez_sound_blocks.generation);
         let recheck = self.sound_blocks.0 != version;
         self.sound_blocks.0 = version;
-        let mutes = &self.world.mutes;
-        let anti_spam = &self.world.anti_spam;
-        let blocked = |o: &crate::world::objects::Object| {
-            mutes.is_muted_id(&o.full_id)
-                || (!o.owner_id.is_nil() && mutes.sounds_muted(&o.owner_id))
-                || anti_spam.is_blocked(crate::world::anti_spam::Queue::Sound, o.full_id)
-                || anti_spam.is_blocked(crate::world::anti_spam::Queue::Sound, o.owner_id)
+        let blocked = |world: &World, o: &crate::world::objects::Object| {
+            world.sound_blocked(&o.full_id, &o.owner_id) || world.sound_blacklisted(o.sound.id, o.full_id, o.owner_id)
         };
         if recheck {
             // rare: every object with a sound, but for those whose update is
@@ -4157,7 +4188,7 @@ impl App {
                 if o.sound_update {
                     continue;
                 }
-                if blocked(o) {
+                if blocked(&self.world, o) {
                     if self.sound_blocks.1.insert(o.full_id) {
                         self.scene.sounds.apply_object_sound(
                             engine,
@@ -4186,7 +4217,10 @@ impl App {
             if !std::mem::take(&mut o.sound_update) {
                 continue;
             }
-            if blocked(o) {
+            let Some(o) = self.world.objects.get(idx) else {
+                continue;
+            };
+            if blocked(&self.world, o) {
                 self.sound_blocks.1.insert(o.full_id);
                 self.scene.sounds.apply_object_sound(
                     engine,
@@ -4268,6 +4302,7 @@ impl App {
     }
 
     fn update_sounds(&mut self) {
+        self.update_rez_sound_blocks();
         self.flush_object_sounds();
         let ui = &self.settings.audio.ui;
         let w = &mut self.world;
@@ -13470,6 +13505,7 @@ impl App {
                 }
                 self.blacklist_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
+                self.sound_explorer_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 ui::beacons::show(&ctx, &p, &mut self.panels.beacons, &mut self.settings);
                 if ui::owned_land::show(&ctx, &p, &mut self.world, &mut self.panels.owned_land) {
@@ -15205,6 +15241,9 @@ impl ApplicationHandler for App {
             // AURORA_DEMO_AREA_SEARCH: a native object list and filter fixtures.
             if let Ok(mode) = std::env::var("AURORA_DEMO_AREA_SEARCH") {
                 self.demo_area_search(&mode);
+            }
+            if let Ok(mode) = std::env::var("AURORA_DEMO_SOUND_EXPLORER") {
+                self.demo_sound_explorer(&mode);
             }
             // AURORA_DEMO_OBJECT_CHAT: two notices among the lines, each with
             // its topic's icon when compact

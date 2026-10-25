@@ -199,9 +199,39 @@ impl World {
     /// process_attached_sound).
     pub fn sound_blocked(&self, object: &Uuid, owner: &Uuid) -> bool {
         self.mutes.is_muted_id(object)
+            || self.rez_sound_blocks.blocked(*object)
             || (!owner.is_nil() && self.mutes.sounds_muted(owner))
             || self.anti_spam.is_blocked(super::anti_spam::Queue::Sound, *object)
             || self.anti_spam.is_blocked(super::anti_spam::Queue::Sound, *owner)
+    }
+
+    /// is_sound_blacklisted (indra/newview/llviewermessage.cpp): flags distinguish
+    /// gestures, attachments (including linked children), and rezzed objects.
+    pub fn sound_blacklisted(&self, asset: Uuid, object: Uuid, owner: Uuid) -> bool {
+        if self.derender.is_empty() {
+            return false;
+        }
+        let flag = if object == owner && !owner.is_nil() {
+            4
+        } else {
+            let mut idx = self.objects.index_of_uuid(&object);
+            if idx.is_none() {
+                return self.derender.sound_blocked(asset, owner, 0);
+            }
+            let mut worn = false;
+            for _ in 0..64 {
+                let Some(o) = idx.and_then(|i| self.objects.get(i)) else {
+                    break;
+                };
+                if o.is_avatar() {
+                    worn = true;
+                    break;
+                }
+                idx = self.objects.parent_of(o);
+            }
+            if worn { 1 } else { 2 }
+        };
+        self.derender.sound_blocked(asset, owner, flag)
     }
 
     /// Particles of a blocked owner (LLViewerPartSourceScript).

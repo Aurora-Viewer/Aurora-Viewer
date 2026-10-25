@@ -46,6 +46,30 @@ Hidden linksets release their draw records and visual asset references before
 geometry preparation. Lights, particles, world labels and beacons share the
 visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.
 
+`world/rez_sound_blocks.rs` implements the opt-in sound-mute inheritance graph.
+`app/rez_sound_blocks.rs` reads only the nearest active/pending sound sources
+and necessary ancestors through Bridge 1.36's batched `OBJECT_ROOT` /
+`OBJECT_REZZER_KEY` query. Metadata and requests are scoped to account, region
+and bridge endpoint; late/relinked replies are rejected. Batches hold at most
+16 UUIDs, with one in flight and 250 ms spacing; cache and traversal are bounded.
+New world sources may wait up to three seconds for verified provenance; failed
+or unavailable lookups never create a guessed permanent block. The mixer holds
+pending voices and stops confirmed descendants, while unrelated objects of the
+same owner and UI/gesture previews retain their normal behavior. This Aurora
+option defaults off and requires an active Bridge in the current region.
+
+`scene/sounds/history.rs` records actual world playback with stable voice IDs,
+owner/source identity and global positions, retaining up to 256 rows. UI sounds
+and independent local previews never enter the log. `ui/sound_explorer.rs` owns
+the virtualized table, filters, frozen snapshot and multiple selection;
+`app/sound_explorer.rs` resolves privacy-aware names and applies preview, stop,
+camera and blacklist actions. Sound entries in `world/derender.rs` reuse the
+account's Legacy asset-blacklist XML (AT_SOUND and worn/rezzed/gesture flags)
+without derendering their owners. The blacklist projects each owner's flags
+into separate rows keyed by UUID and category, and removes only the selected
+bits in one atomic save. Removing the final category removes the stored entry;
+object/resident entries still restore their hidden objects as before.
+
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer
 helper preserves rejection of malformed and null UUIDs in both HTTP requests
