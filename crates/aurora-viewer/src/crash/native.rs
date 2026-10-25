@@ -20,9 +20,9 @@ mod platform {
         Foundation::{CloseHandle, FILETIME, HANDLE, HWND, LPARAM, LRESULT, WAIT_OBJECT_0, WPARAM},
         System::{
             Diagnostics::Debug::{
-                EXCEPTION_EXECUTE_HANDLER, EXCEPTION_POINTERS, IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW,
-                IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_NT_HEADERS64, IMAGE_NT_OPTIONAL_HDR64_MAGIC, RaiseException, RtlCaptureStackBackTrace,
-                RtlPcToFileHeader, SetUnhandledExceptionFilter,
+                AddVectoredExceptionHandler, EXCEPTION_CONTINUE_SEARCH, EXCEPTION_EXECUTE_HANDLER, EXCEPTION_POINTERS,
+                IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_NT_HEADERS64,
+                IMAGE_NT_OPTIONAL_HDR64_MAGIC, RaiseException, RtlCaptureStackBackTrace, RtlPcToFileHeader, SetUnhandledExceptionFilter,
             },
             LibraryLoader::GetModuleHandleW,
             Threading::{
@@ -39,6 +39,9 @@ mod platform {
 
     static TRACE: OnceLock<std::fs::File> = OnceLock::new();
     static WRITING: AtomicBool = AtomicBool::new(false);
+    static OOM: OnceLock<std::fs::File> = OnceLock::new();
+    static OOM_WRITING: AtomicBool = AtomicBool::new(false);
+    const STATUS_STACK_OVERFLOW: i32 = 0xC000_00FDu32 as i32;
     const FRAMES: usize = 64;
 
     struct Process(HANDLE);
@@ -336,13 +339,44 @@ mod platform {
     pub fn install(dir: &Path) -> anyhow::Result<()> {
         let file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("native.txt"))?;
         let _ = TRACE.set(file);
-        // SAFETY: callback has the ABI expected by Windows and only accesses
-        // static storage that lives until process termination.
-        unsafe { SetUnhandledExceptionFilter(Some(exception)) };
+        let oom = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("oom.txt"))?;
+        let _ = OOM.set(oom);
+        // SAFETY: both callbacks have the ABI Windows expects and only touch
+        // static storage that lives until the process ends.
+        unsafe {
+            SetUnhandledExceptionFilter(Some(exception));
+            // First in line: by the time the unhandled filter would run, the
+            // standard library's own handler has used part of the little
+            // stack the overflowed thread has left.
+            AddVectoredExceptionHandler(1, Some(overflow));
+        }
         Ok(())
     }
 
+    /// A stack overflow is written as soon as it is raised, on the stack
+    /// Windows keeps for it (the standard library asks 20 KB per thread,
+    /// `SetThreadStackGuarantee`), then left to end the process as before.
+    unsafe extern "system" fn overflow(info: *mut EXCEPTION_POINTERS) -> i32 {
+        // SAFETY: Windows supplies live records for the callback's duration.
+        let code = unsafe { info.as_ref().and_then(|i| i.ExceptionRecord.as_ref()).map(|r| r.ExceptionCode) };
+        if code == Some(STATUS_STACK_OVERFLOW) {
+            // SAFETY: the same live pointers, handed on unchanged.
+            unsafe { write_exception(info) };
+        }
+        EXCEPTION_CONTINUE_SEARCH
+    }
+
     unsafe extern "system" fn exception(info: *const EXCEPTION_POINTERS) -> i32 {
+        // SAFETY: the pointers Windows gave this filter, handed on unchanged.
+        unsafe { write_exception(info) };
+        EXCEPTION_EXECUTE_HANDLER
+    }
+
+    /// The exception's code, fault and stack into `native.txt`, once.
+    ///
+    /// # Safety
+    /// `info` is null or the live record Windows passes an exception handler.
+    unsafe fn write_exception(info: *const EXCEPTION_POINTERS) {
         if !WRITING.swap(true, Ordering::Relaxed) && !info.is_null() {
             // SAFETY: Windows supplies live exception/context records for the
             // duration of the callback. Check the nested pointer before use.
@@ -372,7 +406,23 @@ mod platform {
                 let _ = file.sync_all();
             }
         }
-        EXCEPTION_EXECUTE_HANDLER
+    }
+
+    /// From the allocator, when an allocation fails: its size and the
+    /// failing thread's stack, before the standard library aborts the
+    /// process (a fast fail no handler sees). No allocation here: the file
+    /// was opened at start and the stack goes through fixed arrays. An
+    /// allocation that fails without ending the process (`try_reserve`)
+    /// writes it too; the report only uses it for a fast fail (summary.rs).
+    pub fn out_of_memory(size: usize) {
+        if let Some(mut file) = OOM.get()
+            && !OOM_WRITING.swap(true, Ordering::Relaxed)
+        {
+            let _ = writeln!(file, "Out of memory: {size} bytes");
+            write_stack(&mut file);
+            let _ = file.sync_all();
+            OOM_WRITING.store(false, Ordering::Relaxed);
+        }
     }
 
     /// The current thread's stack as module + offset, for a Rust panic.
@@ -645,6 +695,7 @@ mod platform {
         Ok(())
     }
     pub fn write_stack(_out: &mut impl std::io::Write) {}
+    pub fn out_of_memory(_size: usize) {}
     pub fn boot_unix() -> Option<u64> {
         None
     }

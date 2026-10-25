@@ -3391,7 +3391,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
-| `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window, or a frozen viewer ended from outside |
+| `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window, a frozen viewer ended from outside, out of memory, stack overflow or a critical thread's death |
 | `AURORA_DEMO_CRASH_DIR=<folder>` | Isolates the crash reports of offline tests |
 | `AURORA_DEMO_CRASH_SEND=<options>` | Crash report sending with a simulated GitHub |
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
@@ -4546,7 +4546,7 @@ failure. Grid validation and any paid upload are performed by the human.
   proportions (the 2D font's images are wider than tall), and the same
   colour emojis, same size, in the input field and in the sent line.
   `AURORA_EMOJI_FONT=<file>` compares two fonts.
-- **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery|freeze`**, only
+- **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery|freeze|oom|overflow|thread`**, only
   with `AURORA_DEMO`: triggers a Rust panic, a native Windows
   exception, an abnormal exit without a trace, a normal close or an
   exit without a watcher. The `recovery` mode makes it possible to check the
@@ -4556,7 +4556,16 @@ failure. Grid validation and any paid upload are performed by the human.
   later the process ends itself with exit code 1, as Task Manager's End task
   would. The window then says "Frozen, then ended" and `public-report.md`
   holds `| Crash | Freeze |`, `| Window | not answering for the last … s |`,
-  the main and render threads' stacks and the "Last state" table. The window must keep the language
+  the main and render threads' stacks and the "Last state" table. `oom`
+  asks for 64 TB at start: the allocator's failure path writes `oom.txt`
+  and the process fails fast (`0xC0000409`); the report says
+  `| Crash | Out of memory (70368744177664 bytes) |` with the allocation's
+  stack. `overflow` recurses until the stack overflows (`0xC00000FD`): the
+  report is a native exception with its stack, written by the vectored
+  handler. `thread`, once the window shows, makes a thread named
+  `aurora-net` panic: the viewer ends the session at its next frame, the
+  window says "A part of the viewer stopped working" and the report adds
+  `| Thread | aurora-net (the session was ended) |` to the panic. The window must keep the language
   and the theme of the stopped session, allow the trace to be selected and
   copied and open its folder; no window after a normal
   close. The screenshots are taken after three frames of the independent

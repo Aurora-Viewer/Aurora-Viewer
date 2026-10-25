@@ -127,6 +127,13 @@ try {
     $stallSig = Get-CrashSignature $stall (Get-SymbolizedFrames $stall $symFile)
     Assert-Triage ($stallSig.Id -ne $freezeSig.Id) 'A GPU stall is not a freeze at the same place.'
     Assert-Triage ((Get-TriageTitle $stall $stallSig) -eq 'Crash: GPU stall in aurora_render::cull') 'Unexpected GPU stall title.'
+    # Out of memory: the allocation's own frames are skipped like the panic machinery.
+    $oom = Read-CrashReport (New-Report 'Out of memory (70368744177664 bytes)' @('00 aurora_viewer+0x3005', '01 aurora_viewer+0x2011'))
+    Assert-Triage ($oom.Kind -eq 'Out of memory') 'An out of memory report must be read.'
+    $oomSig = Get-CrashSignature $oom (Get-SymbolizedFrames $oom $symFile)
+    Assert-Triage ((@($oomSig.Frames) -join '|') -eq 'aurora_viewer::run::closure') "Unexpected out of memory signature frames: $(@($oomSig.Frames) -join '|')"
+    Assert-Triage ((Get-TriageTitle $oom $oomSig) -eq 'Crash: out of memory in aurora_viewer::run::closure') 'Unexpected out of memory title.'
+    Assert-Triage ($null -eq (Read-CrashReport (New-Report 'Out of memory (lots bytes)' @('00 aurora_viewer+0x3005')))) 'A malformed size is not a known kind.'
 
     # Without symbols: offsets of this exact build.
     $bare = Get-SymbolizedFrames $r $null

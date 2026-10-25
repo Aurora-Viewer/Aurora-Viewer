@@ -8775,6 +8775,7 @@ impl App {
             log::info!("startup window shown after the first presented frame");
             crate::crash::watch_window(&gfx.window);
             crate::crash::demo_freeze();
+            crate::crash::demo_thread_death();
         }
         if stats.presented && !self.update_acknowledged {
             self.update_acknowledged = true;
@@ -8784,6 +8785,15 @@ impl App {
             crate::crash::failure("The render thread terminated unexpectedly.");
             // the render thread is gone (its panic is in the log): nothing
             // more can be shown, leave cleanly
+            self.gfx = Some(gfx);
+            self.shutdown(event_loop);
+            return;
+        }
+        // a background thread the session cannot go on without panicked
+        // (crash/threads.rs): leave cleanly, the crash window says which
+        if let Some(thread) = crate::crash::thread_died() {
+            log::error!("the {thread} thread stopped after a panic: ending the session");
+            crate::crash::failure(&format!("The {thread} thread stopped after a panic."));
             self.gfx = Some(gfx);
             self.shutdown(event_loop);
             return;
