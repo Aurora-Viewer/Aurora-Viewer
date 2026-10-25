@@ -30,6 +30,9 @@ Une ligne vide commence un nouveau paragraphe.
 LiveMesh montre votre mesh Blender dans le viewer pendant que vous le modifiez, sans rien envoyer : les mesh riggés sur votre avatar, les mesh statiques et les linksets comme objets locaux à poser, déplacer ou porter. Le nouveau Poser pose votre avatar, vos animesh ou les avatars proches qui l'acceptent, os par os, pour vos photos, avec une bibliothèque de poses et l'export BVH.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/blob/main/docs/BLENDER_LIVE.md)
 
+## 2026-10-25 — Retrouvez n'importe quel objet autour de vous
+La recherche de zone, dans le menu Monde ou en bouton de barre d'outils, liste les objets posés autour de vous et les filtre pendant que vous tapez : nom, description, propriétaire, créateur, groupe ou UUID, la parcelle actuelle ou les régions voisines, à vendre, physiques, fantômes, temporaires ou selon la distance. Triez les résultats, puis inspectez un objet, zoomez dessus ou copiez son UUID.
+
 ## 2026-10-25 — Des conversations à votre façon
 Détachez une conversation dans sa propre fenêtre, ou faites-la simplement glisser hors de la liste. Les liens vers Gyazo, Flickr, Imgur, Lightshot et Reddit affichent leur image, le lecteur YouTube garde la forme de chaque vidéo, et un sélecteur de GIF apparaît à côté des émojis dès que vous ajoutez votre propre clé gratuite. Les messages des objets peuvent tenir sur une petite ligne discrète.
 
@@ -37,7 +40,7 @@ Détachez une conversation dans sa propre fenêtre, ou faites-la simplement glis
 Une nouvelle page Accessibilité réunit les réglages qui aident, avec un bouton sur l'écran de connexion. Essayez la palette à contraste élevé, la police OpenDyslexic, les curseurs de volume perceptifs, ou choisissez vos propres couleurs d'accent, de fond et de texte.
 
 ## 2026-10-25 — Corrigé grâce à vos retours
-Les PC portables à deux cartes graphiques utilisent maintenant la carte dédiée, Overwolf n'empêche plus le viewer de démarrer, les cheveux en couches ne sont plus transparents et les gestes atteignent vos HUD sur les canaux négatifs. Votre avatar se lève quand vous vous téléportez depuis un siège, et la fenêtre Apparence reste fluide avec des milliers de tenues.
+Les PC portables à deux cartes graphiques utilisent maintenant la carte dédiée, Overwolf n'empêche plus le viewer de démarrer, les cheveux en couches ne sont plus transparents et les gestes atteignent vos HUD sur les canaux négatifs. Votre avatar se lève quand vous vous téléportez depuis un siège, et la fenêtre Apparence reste fluide avec des milliers de tenues. Se reconnecter juste après une déconnexion ou un plantage affiche maintenant un court compte à rebours au lieu de bloquer.
 
 ## 2026-10-22 — RLVa, quand vous le voulez
 Depuis la version 0.7.4, Aurora comprend RLVa : les restrictions, exceptions et commandes dont se servent les tenues scriptées, les meubles et les expériences. Il reste éteint tant que vous ne l'activez pas dans Préférences › Protections, et l'éteindre libère tout d'un coup.
