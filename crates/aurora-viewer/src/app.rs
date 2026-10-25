@@ -2174,7 +2174,7 @@ impl App {
         } else {
             start
         };
-        let (mac, id0) = self.settings.hashed_ids();
+        let crate::machine_id::LoginIds { mac, id0 } = crate::machine_id::login_ids();
         // typed password first, else the remembered one (already hashed)
         let password = match (&self.login_form.stored, self.login_form.password.is_empty()) {
             (Some(h), true) => h.clone(),

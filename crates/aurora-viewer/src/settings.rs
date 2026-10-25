@@ -569,8 +569,6 @@ pub struct Settings {
     pub window_x: Option<i32>,
     pub window_y: Option<i32>,
     pub window_maximized: bool,
-    /// Random stable machine identifier (hashed before being sent).
-    pub machine_id: String,
     /// Legacy single-account authorization, read once for migration only.
     #[serde(skip_serializing)]
     pub mfa_hash: String,
@@ -1482,7 +1480,6 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
-            machine_id: uuid::Uuid::new_v4().to_string(),
             mfa_hash: String::new(),
             font: crate::ui::fonts::DEFAULT.into(),
             font_scale: 1.0,
@@ -2174,9 +2171,6 @@ impl Settings {
         } else {
             10.0
         };
-        if uuid::Uuid::parse_str(&self.machine_id).is_err() {
-            self.machine_id = uuid::Uuid::new_v4().to_string();
-        }
         self
     }
 
@@ -2347,13 +2341,6 @@ impl Settings {
             3 => 0.75,
             _ => 1.0,
         }
-    }
-
-    /// Hashed identifiers sent at login (`mac`, `id0`).
-    pub fn hashed_ids(&self) -> (String, String) {
-        let mac = format!("{:x}", md5::compute(format!("mac:{}", self.machine_id)));
-        let id0 = format!("{:x}", md5::compute(format!("id0:{}", self.machine_id)));
-        (mac, id0)
     }
 }
 
