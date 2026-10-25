@@ -3493,7 +3493,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude` | Remote friend's received map rights in contact, conversation and profile actions |
+| `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude\|join-map\|join-contact` | Remote friend's received map rights in contact, conversation and profile actions |
 | `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out` | Detached conversations, or nearby chat alone before any IM (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
@@ -4437,7 +4437,7 @@ failure. Grid validation and any paid upload are performed by the human.
   it once the end is less than half the height in sight away (with nothing
   new).
 
-- **`AURORA_DEMO_FRIEND_LOCATION=allowed|denied|offline|altitude`** (#999): removes
+- **`AURORA_DEMO_FRIEND_LOCATION=allowed|denied|offline|altitude|join-map|join-contact`** (#999): removes
   Nova's nearby object and coarse location at frame 60. The online friend
   grants us map rights in `allowed`, withholds them in `denied` (we still
   grant ours), and is offline in `offline`. Combine with
@@ -4455,10 +4455,24 @@ failure. Grid validation and any paid upload are performed by the human.
   current height. Both map layouts explain unavailable friend altitude;
   coarse updates refine a local target's height in 4 m steps. Set Z for a
   remote sky platform; the full-frame map retains an explicit height while
-  following the same friend. `altitude` is the allowed remote scenario with
+  following the same friend. When a map/contact teleport starts without a
+  chosen Z or known friend height, arrival in the destination region arms
+  one local TP To using new target data. Old cache and coarse unknown Z
+  values (0/1,020 m) cannot trigger it. Movement, Stop/Escape, a new teleport,
+  map/height edits, revoked rights, failure or timeout cancel it; accepted
+  teleport invitations do not arm it. The wait is bounded to 90 seconds
+  before arrival and 30 seconds for target data after arrival.
+  `altitude` is the allowed remote scenario with
   our avatar at 3,000 m: opening the friend's map must show Z=0 and the
   unavailable-altitude note. On the grid, the human checks a departure from
   a high skybox to a friend near ground level and a manually chosen Z.
+  `join-map` and `join-contact` start a map/contact teleport at frame 700/720,
+  arrive in another region, then deliver the friend's object at 2,400 m
+  after a 700 ms delay. Capture at frame 1,450: the second local teleport
+  must put us at 2,400 m and update the map height, without a third teleport.
+  On the grid, test friends near ground and on a skybox, delayed appearance,
+  movement/cancellation and permission revocation. Accepting a teleport
+  offer or choosing Z explicitly must keep the supplied landing point.
 
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click

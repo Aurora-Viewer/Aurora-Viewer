@@ -473,6 +473,9 @@ pub struct App {
     demo_mmo_start: Option<u64>,
     /// Where the offline demo teleport lands (the asked position).
     demo_tp_dest: Option<Vec3>,
+    /// Only the friend-join demo changes regions and delays target data.
+    demo_tp_region: Option<aurora_net::RegionHandle>,
+    demo_friend_join_target: Option<(Instant, Vec3)>,
     /// AURORA_DEMO_RADAR=tp: the radar starts in another region.
     demo_radar_tp: bool,
     /// Destination of the teleport being started (teleport screen).
@@ -1116,6 +1119,8 @@ impl App {
             demo_tp_triggered: false,
             demo_mmo_start: None,
             demo_tp_dest: None,
+            demo_tp_region: None,
+            demo_friend_join_target: None,
             demo_radar_tp: false,
             tp_dest: None,
             geom_changed: None,
@@ -1521,6 +1526,7 @@ impl App {
                         );
                         self.demo_tp_start = Some(Instant::now());
                         self.demo_tp_dest = Some(*position);
+                        self.demo_tp_region = crate::demo::friend_join_scenario().then_some(*handle);
                     }
                 }
                 NetCommand::ObjectGrab { local_id, surface, .. } => {
@@ -6702,12 +6708,32 @@ impl App {
         }
         for c in self.world.take_map_commands() {
             if let NetCommand::TeleportTo { handle, .. } = &c {
+                let join = self.world.prepare_friend_join(&c);
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
                 let show = Some(*handle) != self.world.main_region;
-                self.request_user_teleport(c, dest, show);
+                if self.request_user_teleport(c, dest, show)
+                    && let Some(join) = join
+                {
+                    self.world.arm_friend_join(join);
+                }
             } else {
                 self.send(c);
             }
+        }
+        let i = &self.input;
+        let moved = i.forward
+            || i.back
+            || i.turn_left
+            || i.turn_right
+            || i.strafe_left
+            || i.strafe_right
+            || i.up
+            || i.down
+            || i.joystick_yaw.abs() > 0.001
+            || i.joystick_pitch.abs() > 0.001
+            || self.mouse_mode == MouseMode::Steer;
+        if let Some(command) = self.world.finish_friend_join(Instant::now(), moved) {
+            self.request_user_teleport(command, String::new(), false);
         }
         self.minimap_ui.prune(&self.world);
         // parcel overlays of regions we left (their lines would be stale on return)
@@ -7958,7 +7984,14 @@ impl App {
                 self.demo_tp_start = None;
                 w.tp_progress = 0.6;
                 w.tp_status = aurora_i18n::tr!("common-loading-region").into();
-                if let (Some(position), Some(handle)) = (self.demo_tp_dest.take(), w.main_region) {
+                let region = self.demo_tp_region.take().or(w.main_region);
+                if let (Some(position), Some(handle)) = (self.demo_tp_dest.take(), region) {
+                    if crate::demo::friend_join_scenario() {
+                        self.demo_friend_join_target = Some((
+                            Instant::now() + Duration::from_millis(700),
+                            Vec3::new(position.x, position.y, 2400.0),
+                        ));
+                    }
                     self.demo_unseat_on_teleport();
                     aurora_net::transition::step(|| "AgentMovementComplete (demo)".to_string());
                     aurora_net::transition::arrived(Duration::from_secs(20));
@@ -9489,6 +9522,33 @@ impl App {
         if self.demo && self.frame_count == 60 {
             crate::demo::people::seed(&mut self.world);
             crate::demo::friend_location(&mut self.world);
+        }
+        if self.demo && matches!(self.frame_count, 700 | 720) && crate::demo::friend_join_scenario() {
+            if self.frame_count == 700 {
+                let contact = std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-contact");
+                self.world.locate_avatar(crate::demo::DEMO_FRIEND, contact);
+                self.panels.world_map = true;
+            } else if std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-map")
+                && let Some(t) = &self.world.map.track
+                && !t.pending
+                && !t.invalid
+            {
+                self.world.map.push(crate::world::worldmap::teleport_command(t.x, t.y, t.z));
+            }
+        }
+        if self.demo
+            && self.demo_friend_join_target.as_ref().is_some_and(|(at, _)| Instant::now() >= *at)
+            && let Some((_, position)) = self.demo_friend_join_target.take()
+            && let Some(handle) = self.world.main_region
+        {
+            let mut target = crate::demo::action_avatar(false);
+            target.full_id = crate::demo::DEMO_FRIEND;
+            target.position = position;
+            self.world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![target],
+            });
+            log::info!("demo friend join: fresh target position at {:.0} m", position.z);
         }
         // AURORA_DEMO_NAVEDIT=1: click in the location field at frame 230
         if self.demo && self.frame_count == 230 && std::env::var_os("AURORA_DEMO_NAVEDIT").is_some() {

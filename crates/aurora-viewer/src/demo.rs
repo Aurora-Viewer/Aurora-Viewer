@@ -3630,13 +3630,20 @@ fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
     }
 }
 
+pub fn friend_join_scenario() -> bool {
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION").is_ok_and(|m| matches!(m.as_str(), "join-map" | "join-contact"))
+}
+
 /// Make the conversation's friend remote without keeping a nearby object
 /// or coarse position. Combine with existing contacts/profile/map scenarios.
 pub fn friend_location(world: &mut crate::world::World) {
     let Ok(mode) = std::env::var("AURORA_DEMO_FRIEND_LOCATION") else {
         return;
     };
-    if !matches!(mode.as_str(), "allowed" | "denied" | "offline" | "altitude") {
+    if !matches!(
+        mode.as_str(),
+        "allowed" | "denied" | "offline" | "altitude" | "join-map" | "join-contact"
+    ) {
         return;
     }
     if let Some(idx) = world.objects.index_of_uuid(&DEMO_FRIEND) {
@@ -3650,7 +3657,7 @@ pub fn friend_location(world: &mut crate::world::World) {
         f.rights_given = 3;
         f.rights_has = if mode == "denied" { 1 } else { 3 };
     }
-    if mode == "altitude" {
+    if mode == "altitude" || friend_join_scenario() {
         world
             .agent
             .get_off(glam::Vec3::new(world.agent.position.x, world.agent.position.y, 3000.0));

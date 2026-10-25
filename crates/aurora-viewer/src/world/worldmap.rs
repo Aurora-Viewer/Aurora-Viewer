@@ -237,6 +237,7 @@ pub struct WorldMap {
     pub track: Option<Track>,
     /// The friend `track` follows, if any.
     pub avatar: Option<AvatarTrack>,
+    pub(super) friend_join: Option<super::friend_join::FriendJoin>,
     /// The parcel asked for the tracked spot.
     pub track_parcel: Option<TrackParcel>,
     /// Centre the open map on `track` once its region is known
@@ -595,6 +596,7 @@ impl WorldMap {
     /// on the map; the track points at them once the grid answers, and the
     /// open map centres on it.
     pub fn track_avatar(&mut self, id: Uuid, name: &str) {
+        self.friend_join = None;
         if let Some(a) = self.avatar.as_mut().filter(|a| a.id == id) {
             a.teleport = None;
             if let Some(t) = self.track.as_mut() {
@@ -639,6 +641,7 @@ impl WorldMap {
 
     /// LLAvatarTracker::untrack.
     fn stop_avatar(&mut self) {
+        self.friend_join = None;
         if self.avatar.take().is_some() {
             self.out.push(NetCommand::TrackAgent(Uuid::nil()));
         }
@@ -672,12 +675,43 @@ impl WorldMap {
         if !z.is_finite() {
             return;
         }
+        self.friend_join = None;
         if let Some(t) = self.track.as_mut() {
             t.z = z;
             if let Some(a) = self.avatar.as_mut() {
                 a.altitude_override = Some(z);
             }
         }
+    }
+
+    pub(super) fn unknown_height_teleport_avatar(&self, command: &NetCommand) -> Option<Uuid> {
+        let NetCommand::TeleportTo { handle, position, .. } = command else {
+            return None;
+        };
+        let a = self
+            .avatar
+            .as_ref()
+            .filter(|a| a.found && !a.altitude_known && a.altitude_override.is_none())?;
+        let t = self.track.as_ref().filter(|t| !t.pending && !t.invalid)?;
+        let NetCommand::TeleportTo {
+            handle: expected,
+            position: at,
+            ..
+        } = teleport_command(t.x, t.y, t.z)
+        else {
+            return None;
+        };
+        (*handle == expected && *position == at).then_some(a.id)
+    }
+
+    pub(super) fn cancel_avatar_teleport(&mut self) {
+        if let Some(a) = &mut self.avatar {
+            a.teleport = None;
+        }
+        if let Some(t) = &mut self.track {
+            t.teleport = false;
+        }
+        self.out.retain(|c| !matches!(c, NetCommand::TeleportTo { .. }));
     }
 
     /// LLFloaterWorldMap::trackLocation → requestParcelInfo: ask the parcel

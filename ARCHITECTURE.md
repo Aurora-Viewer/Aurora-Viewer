@@ -645,6 +645,15 @@ Coarse updates refine the followed friend's position at their 4 m height
 resolution. Both map layouts identify unavailable altitude and allow an
 explicit teleport height; a height-only edit in the full-frame map survives
 tracking replies but is cleared for another friend or a direct Teleport To.
+`world/friend_join.rs` scopes a two-stage join to accepted map/contact
+teleports with unknown height. After the expected region arrival, new target
+object/terse or usable coarse reports drive one ordinary local teleport;
+cached positions and unknown coarse heights (0/1,020 m) cannot trigger it.
+Loaded positions use the navigation resolver, including seated parent chains.
+The intent expires after 90 seconds before arrival or 30 seconds waiting for
+position, and cancels on movement, Stop/Escape, another teleport, permission
+loss, map selection/height edits or failure. Lures, explicit Z and local
+teleports never arm this continuation; both legs pass normal RLVa preflight.
 
 `world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
 roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,
