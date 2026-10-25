@@ -6447,10 +6447,7 @@ pub struct HairDemo {
 pub fn hair_demo() -> Option<HairDemo> {
     let cards_var = std::env::var("AURORA_DEMO_HAIR_CARDS").unwrap_or_default();
     let mut cards_args = cards_var.split(',').map(str::trim);
-    let cards = cards_args
-        .next()
-        .and_then(|v| v.parse::<u32>().ok())
-        .map_or(0, |n| n.clamp(1, 400));
+    let cards = cards_args.next().and_then(|v| v.parse::<u32>().ok()).map_or(0, |n| n.clamp(1, 400));
     let cards_args: Vec<&str> = cards_args.collect();
     let layered = cards > 0 && cards_args.contains(&"layered");
     let outer_first = layered && cards_args.contains(&"outer");
@@ -6745,7 +6742,12 @@ fn hair_card_layered_texture() -> (Vec<u8>, u32, u32) {
 /// The procedural texture `id` takes a mip chain (the others are the
 /// 64-texel test panels, kept as they are).
 pub fn local_texture_mips(id: &Uuid) -> bool {
-    *id == TEX_HAIR || *id == TEX_HAIR_CARD || *id == TEX_HAIR_CARD_LAYERED || *id == TEX_PROJECTED || *id == TEX_FOLIAGE || plants::is_texture(id)
+    *id == TEX_HAIR
+        || *id == TEX_HAIR_CARD
+        || *id == TEX_HAIR_CARD_LAYERED
+        || *id == TEX_PROJECTED
+        || *id == TEX_FOLIAGE
+        || plants::is_texture(id)
 }
 
 #[cfg(test)]

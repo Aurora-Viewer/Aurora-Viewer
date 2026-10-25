@@ -523,7 +523,13 @@ impl super::Scene {
         {
             meshes.push((
                 crate::demo::HAIR_CARDS_MESH,
-                vec![Some(demo_hair_cards(rest[j].w_axis.truncate(), j, demo.cards, demo.layered, demo.outer_first))],
+                vec![Some(demo_hair_cards(
+                    rest[j].w_axis.truncate(),
+                    j,
+                    demo.cards,
+                    demo.layered,
+                    demo.outer_first,
+                ))],
             ));
         }
         if demo.lashes {

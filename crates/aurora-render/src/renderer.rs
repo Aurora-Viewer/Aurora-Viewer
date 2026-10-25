@@ -6642,7 +6642,11 @@ impl Backend {
                             continue;
                         }
                         blended(&mut pass, &self.pipelines.blend_depth_solid, from, end);
-                        draw(&mut pass, &self.pipelines.blend_depth_fringe, (b0 + from as u64 * stride, end - from));
+                        draw(
+                            &mut pass,
+                            &self.pipelines.blend_depth_fringe,
+                            (b0 + from as u64 * stride, end - from),
+                        );
                         from = end;
                     }
                 }
