@@ -456,16 +456,35 @@ pub fn body(v: &ViewerSide, n: &NetCounters, sim_fps: f64, unix_now: i64, region
     }
 }
 
-/// Post a report (`messageHttpPost`, fire and forget): a failure is only
-/// logged, and nothing is sent again before the next report.
+/// Post a report (`messageHttpPost`, fire and forget): any 2xx answer is a
+/// success whatever its body, a failure is only logged, and nothing is sent
+/// again before the next report. The log never holds the capability's URL
+/// (a secret), which reqwest's errors quote: only the kind of failure.
 pub async fn post(http: &reqwest::Client, url: &str, body: &Llsd) -> bool {
-    match crate::caps::post_llsd(http, url, body).await {
-        Ok(_) => {
+    let sent = http
+        .post(url)
+        .header("Content-Type", "application/llsd+xml")
+        .body(aurora_llsd::to_xml(body))
+        .send()
+        .await;
+    match sent {
+        Ok(reply) if reply.status().is_success() => {
             log::debug!("viewer statistics posted to the simulator");
             true
         }
+        Ok(reply) => {
+            log::debug!("viewer statistics not posted: status {}", reply.status().as_u16());
+            false
+        }
         Err(e) => {
-            log::debug!("viewer statistics not posted: {e}");
+            let kind = if e.is_timeout() {
+                "timed out"
+            } else if e.is_connect() {
+                "no connection"
+            } else {
+                "request failed"
+            };
+            log::debug!("viewer statistics not posted: {kind}");
             false
         }
     }

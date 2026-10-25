@@ -329,3 +329,20 @@ fn the_logged_report_hides_the_machine_identifiers() {
     assert!(!logged.contains(&"b".repeat(32)), "{logged}");
     assert!(logged.contains("NVIDIA GeForce RTX 4090"), "{logged}");
 }
+
+#[tokio::test]
+async fn any_2xx_answer_is_a_post_even_with_an_empty_body() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let url = format!("http://{}/cap", listener.local_addr().expect("address"));
+    tokio::spawn(async move {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = [0; 65536];
+            let _ = stream.read(&mut buf).await;
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+        }
+    });
+    let http = reqwest::Client::new();
+    let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
+    assert!(post(&http, &url, &report).await);
+}
