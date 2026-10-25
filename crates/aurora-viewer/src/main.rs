@@ -61,6 +61,7 @@ mod machine_id;
 mod media;
 mod movement;
 mod net_profile;
+mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
 mod report_abuse;
@@ -102,8 +103,12 @@ mod gpu_hints {
 }
 
 fn main() -> anyhow::Result<()> {
-    // SAFETY: the first line of main, before any other thread starts.
-    let vulkan_layers_off = unsafe { aurora_render::vulkan_layers::disable() };
+    // Preferences › Graphics › Overlays, read from the file alone: nothing
+    // else of the viewer has started yet
+    let allow_overlays = settings::Settings::allow_overlays_at_start();
+    // SAFETY: the first lines of main, before any other thread starts (the
+    // read above starts none).
+    let vulkan_layers_off = unsafe { aurora_render::vulkan_layers::disable(allow_overlays) };
     if aurora_updater::install::run_helper()? {
         return Ok(());
     }
@@ -131,12 +136,16 @@ fn main() -> anyhow::Result<()> {
     crash::start();
     logging::init();
     if !vulkan_layers_off.is_empty() {
-        let names: Vec<_> = vulkan_layers_off.iter().map(|l| l.name).collect();
+        let names: Vec<_> = vulkan_layers_off.iter().map(|l| format!("{} ({})", l.name, l.program)).collect();
         log::info!(
-            "Vulkan layers kept out of the viewer (they crash at startup, #901): {} (AURORA_VULKAN_LAYERS=keep loads them)",
-            names.join(", ")
+            "Vulkan layers kept out of the viewer (overlays: crashes and lost images, #901): {}; overlays {} in Preferences › Graphics, AURORA_VULKAN_LAYERS=keep loads them all",
+            names.join(", "),
+            if allow_overlays { "allowed" } else { "not allowed" }
         );
     }
+    // the hooks injected later (Discord's overlay…) cannot be kept out:
+    // they are named in the log when they arrive
+    overlay_hooks::start();
 
     let result = run_viewer();
     if let Err(error) = &result {
