@@ -104,8 +104,9 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     let Some(mode) = demo_mode() else { return };
     if frame == 2 {
         let size = match mode {
-            "aurora-medium" => egui::vec2(800.0, 640.0),
+            "aurora-medium" | "aurora-sidebar-medium" => egui::vec2(800.0, 640.0),
             "aurora-wide"
+            | "aurora-sidebar-wide"
             | "aurora-keyboard-wide"
             | "aurora-rights"
             | "aurora-received-filing"
@@ -761,6 +762,88 @@ mod tests {
                 h.double_click(sub);
                 assert_eq!(h.st.browse, Uuid::from_u128(8001), "{width} px");
             }
+        }
+    }
+
+    fn sidebar_inventory(width: f32) -> Harness {
+        let mut h = Harness::new(width);
+        crate::world::inventory::demo::seed_sidebar(&mut h.inv);
+        h.frames(4);
+        h
+    }
+
+    #[test]
+    fn clicking_sidebar_folders_keeps_their_position() {
+        for width in [800.0, WIDE_SIZE] {
+            let mut h = sidebar_inventory(width);
+            for scrolled in [false, true] {
+                if scrolled {
+                    let (_, viewport) = h.st.side.scroll.expect("sidebar");
+                    h.run(vec![
+                        egui::Event::PointerMoved(viewport.center()),
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0.0, -493.0),
+                            phase: egui::TouchPhase::Move,
+                            source: egui::MouseWheelSource::Wheel,
+                            modifiers: Default::default(),
+                        },
+                    ]);
+                    h.frames(60);
+                }
+                let (before_offset, viewport) = h.st.side.scroll.expect("sidebar");
+                if scrolled {
+                    assert!(before_offset > 0.0, "the mouse wheel scrolled the sidebar");
+                }
+                for bottom in [true, false] {
+                    let (&id, &before) =
+                        h.st.side
+                            .drawn
+                            .iter()
+                            .filter(|(_, rect)| viewport.intersects(**rect))
+                            .min_by(|(_, a), (_, b)| {
+                                let order = a.top().total_cmp(&b.top());
+                                if bottom { order.reverse() } else { order }
+                            })
+                            .expect("visible folder");
+                    h.frames(40);
+                    let y = before.center().y.clamp(viewport.top() + 1.0, viewport.bottom() - 1.0);
+                    h.click(egui::pos2(before.right() - 30.0, y), Default::default());
+                    assert_eq!(h.st.browse, id, "{width} px: the click opens the folder");
+                    let after = h.st.side.drawn.get(&id).expect("clicked folder still drawn");
+                    assert!((after.top() - before.top()).abs() < 0.1, "{width} px: {before:?} -> {after:?}");
+                    let (after_offset, _) = h.st.side.scroll.expect("sidebar");
+                    assert!((after_offset - before_offset).abs() < 0.1, "a click leaves the scroll offset alone");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn navigating_to_offscreen_sidebar_folders_reveals_them_at_the_nearest_edge() {
+        for width in [800.0, WIDE_SIZE] {
+            let mut h = sidebar_inventory(width);
+            let last = Uuid::from_u128(30_079);
+            assert!(!h.st.side.drawn.contains_key(&last), "the target starts below the viewport");
+            h.st.show_folder(&h.inv, last);
+            h.frames(4);
+            let (_, viewport) = h.st.side.scroll.expect("sidebar");
+            let row = h.st.side.drawn.get(&last).expect("revealed folder");
+            assert!(viewport.contains_rect(*row), "{width} px: {row:?} in {viewport:?}");
+            assert!(
+                (row.bottom() - viewport.bottom()).abs() < 1.0,
+                "{width} px: reveal only scrolls to the nearest edge: {row:?} in {viewport:?}"
+            );
+            let first = Uuid::from_u128(30_000);
+            h.st.show_folder(&h.inv, first);
+            h.frames(4);
+            let (_, viewport) = h.st.side.scroll.expect("sidebar");
+            let row = h.st.side.drawn.get(&first).expect("revealed folder above");
+            assert!(viewport.contains_rect(*row), "{width} px: {row:?} in {viewport:?}");
+            assert!(
+                (row.top() - viewport.top()).abs() < 1.0,
+                "{width} px: reveal above uses the top edge: {row:?} in {viewport:?}"
+            );
         }
     }
 

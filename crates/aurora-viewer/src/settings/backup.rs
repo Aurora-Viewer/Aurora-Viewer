@@ -38,7 +38,6 @@ const THIS_PC: &[&str] = &[
     "window_x",
     "window_y",
     "window_maximized",
-    "machine_id",
     "cache_location",
     "chat_log_location",
 ];
@@ -268,7 +267,6 @@ impl Settings {
         self.window_x = current.window_x;
         self.window_y = current.window_y;
         self.window_maximized = current.window_maximized;
-        self.machine_id = current.machine_id.clone();
         self.cache_location = current.cache_location.clone();
         self.chat_log_location = current.chat_log_location.clone();
         self.audio.output_device = current.audio.output_device.clone();

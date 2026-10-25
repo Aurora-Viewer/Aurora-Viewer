@@ -55,6 +55,7 @@ mod env_apply;
 mod env_day_editor;
 mod env_editor;
 mod external_links;
+mod follow;
 mod gestures;
 mod graphics_start;
 mod hover_height;
@@ -96,6 +97,7 @@ mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod viewer_stats;
 mod viewfinder;
 mod world_click_demo;
 mod worn_demo;
@@ -243,6 +245,8 @@ pub struct App {
     demo_mfa_challenge: Option<std::time::Instant>,
     /// The wait for a previous session still on the grid (#956).
     relogin: relogin::Relogin,
+    /// The viewer's part of Linden Lab's viewer statistics (app/viewer_stats.rs).
+    viewer_stats: viewer_stats::Tracker,
     panels: Panels,
     chat_ui: ChatUi,
     toolbar_ui: ui::toolbar::ToolbarUi,
@@ -335,6 +339,8 @@ pub struct App {
     double_click: crate::autopilot::DoubleClickDetector,
     double_press: bool,
     autopilot: Option<crate::autopilot::AutoPilot>,
+    follow_ui: ui::follow::FollowUi,
+    follow_recovery: Option<follow::Recovery>,
     /// The control flags the walk asks for this frame.
     autopilot_flags: u32,
     autopilot_stop_pending: bool,
@@ -973,6 +979,7 @@ impl App {
             login_progress: None,
             demo_mfa_challenge: None,
             relogin: Default::default(),
+            viewer_stats: Default::default(),
             panels,
             chat_ui: ChatUi::default(),
             toolbar_ui: Default::default(),
@@ -1117,6 +1124,8 @@ impl App {
             create_landmark_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            follow_ui: Default::default(),
+            follow_recovery: None,
             report_abuse: Default::default(),
             dof_focus: Default::default(),
             snapshots: Default::default(),
@@ -2170,7 +2179,7 @@ impl App {
         } else {
             start
         };
-        let (mac, id0) = self.settings.hashed_ids();
+        let crate::machine_id::LoginIds { mac, id0 } = crate::machine_id::login_ids();
         // typed password first, else the remembered one (already hashed)
         let password = match (&self.login_form.stored, self.login_form.password.is_empty()) {
             (Some(h), true) => h.clone(),
@@ -2233,6 +2242,8 @@ impl App {
             self.settings.release_hover_account();
         }
         self.hover_height_ui = Default::default();
+        self.follow_ui = Default::default();
+        self.follow_recovery = None;
         self.inventory_ui = Default::default();
         self.texture_library.reset();
         self.library_drag = Default::default();
@@ -2312,6 +2323,11 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if matches!(&ev, NetEvent::AgentMovementComplete { .. })
+            && let Some(recovery) = &mut self.follow_recovery
+        {
+            recovery.arrived = true;
+        }
         if self.world.rlva_offer_event(&ev) || self.world.rlva_rename_event(&ev, Instant::now()) {
             if let NetEvent::InventoryEdited { request, .. } = ev {
                 self.world_edits.remove(&request);
@@ -4679,6 +4695,13 @@ impl App {
             self.release_bridge();
             self.net.send(NetCommand::Logout);
             std::thread::sleep(Duration::from_millis(300));
+        }
+        // the last viewer statistics report, posted before the LogoutRequest
+        // (here or by the exit prompt's logout), may still be on its way: the
+        // process must not end under it (the Legacy Viewer's finishes while
+        // it waits for the LogoutReply). No wait when none is.
+        if !self.net.wait_viewer_stats(Duration::from_secs(2)) {
+            log::debug!("the last viewer statistics report was still being posted at exit");
         }
         if let Some(g) = self.gfx.as_ref().filter(|_| forced_window_size().is_none()) {
             self.settings.window_maximized = g.window.is_maximized();
@@ -8769,6 +8792,7 @@ impl App {
         let paced = self.frame_start.elapsed();
         self.frame_start = Instant::now();
         self.frame_count += 1;
+        self.note_viewer_stats(paced, &gfx.renderer.info);
         if self.demo
             && self.frame_count == 1500
             && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| matches!(v.as_str(), "image-photo" | "image-photo-save"))
@@ -13080,6 +13104,7 @@ impl App {
                 self.photo_ui(&ctx, &p, projector, renderer);
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
+                self.follow_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 let automatic_base = self.scene.automatic_hover_base(&self.world);
@@ -15134,6 +15159,8 @@ impl ApplicationHandler for App {
                         | "aurora"
                         | "aurora-medium"
                         | "aurora-wide"
+                        | "aurora-sidebar-medium"
+                        | "aurora-sidebar-wide"
                         | "aurora-rights"
                         | "favorites"
                         | "favorites-multi"
@@ -15175,6 +15202,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
                     }
                     if view.starts_with("aurora") {
+                        if view.starts_with("aurora-sidebar-") {
+                            crate::world::inventory::demo::seed_sidebar(&mut self.world.inventory);
+                        }
                         // Aurora's window at each width, on the demo object
                         // of the right-click tests, a favourite beside it.
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));

@@ -56,7 +56,7 @@ impl App {
                 return;
             }
             let was_mouselook = self.camera.mouselook();
-            self.autopilot = None;
+            self.stop_autopilot(true);
             self.camera.change_to_default(&mut self.world.agent, &self.settings.camera);
             self.camera.end_free(&self.settings.camera);
             self.snapshots.ui.free.on = false;

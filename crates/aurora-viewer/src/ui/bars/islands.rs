@@ -1566,6 +1566,8 @@ mod tests {
             max_textures: 0,
             vram_mb: None,
             integrated: false,
+            vendor_id: 0,
+            max_texture_size: 0,
             adapters: Vec::new(),
             notice: None,
         };

@@ -46,6 +46,7 @@ pub mod throttle;
 pub mod transition;
 pub mod types;
 pub mod user_info;
+pub mod viewer_stats;
 pub mod voice_moderation;
 pub mod xmlrpc;
 
@@ -94,6 +95,9 @@ pub struct NetClient {
     /// Bandwidth setting, in kb/s (throttle.rs).
     bandwidth_kbps: Arc<std::sync::atomic::AtomicU32>,
     caps_http: reqwest::Client,
+    /// The viewer's part of Linden Lab's viewer statistics (viewer_stats.rs).
+    viewer_stats: Arc<Mutex<viewer_stats::ViewerSide>>,
+    viewer_stats_posts: Arc<viewer_stats::PostsInFlight>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -150,6 +154,8 @@ impl NetClient {
         let object_cache_dir = Arc::new(Mutex::new(None));
         let bandwidth_kbps = Arc::new(std::sync::atomic::AtomicU32::new(throttle::DEFAULT_KBPS as u32));
         let agent_language = Arc::new(Mutex::new((aurora_i18n::language().to_owned(), true)));
+        let viewer_stats = Arc::new(Mutex::new(viewer_stats::ViewerSide::default()));
+        let viewer_stats_posts = Arc::new(viewer_stats::PostsInFlight::default());
         // Asset GETs (ViewerAsset, bake service): same trust as the caps,
         // but like Firestorm's llcorehttp GET (curl without
         // CURLOPT_ENCODING): no Accept-Encoding and no transparent
@@ -178,6 +184,8 @@ impl NetClient {
             object_cache_dir: object_cache_dir.clone(),
             agent_language: agent_language.clone(),
             bandwidth_kbps: bandwidth_kbps.clone(),
+            viewer_stats: viewer_stats.clone(),
+            viewer_stats_posts: viewer_stats_posts.clone(),
         };
         rt.spawn(async move {
             while let Some(cmd) = cmd_rx.recv().await {
@@ -205,7 +213,23 @@ impl NetClient {
             bandwidth_kbps,
             agent_language,
             caps_http: shared_caps_http,
+            viewer_stats,
+            viewer_stats_posts,
         })
+    }
+
+    /// Before the process ends: wait, `timeout` at most, for the viewer
+    /// statistics reports still being posted (the last one leaves with the
+    /// logout). Returns at once when none is; true when they all finished.
+    pub fn wait_viewer_stats(&self, timeout: std::time::Duration) -> bool {
+        self.viewer_stats_posts.wait(timeout)
+    }
+
+    /// The viewer's part of the next viewer statistics report, refreshed
+    /// about once a second; the session posts it on its own schedule
+    /// (viewer_stats.rs).
+    pub fn set_viewer_stats(&self, side: viewer_stats::ViewerSide) {
+        *self.viewer_stats.lock() = side;
     }
 
     /// Directory for the per-region object caches (None disables them);

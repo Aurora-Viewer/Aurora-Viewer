@@ -40,7 +40,8 @@ pub struct LoginRequest {
     pub read_critical: bool,
     pub mfa_token: String,
     pub mfa_hash: String,
-    /// Stable hashed machine identifiers.
+    /// The device ids of LLLoginInstance::constructAuthParams
+    /// (lllogininstance.cpp:232, 239), hashed by the viewer.
     pub mac: String,
     pub id0: String,
     /// How the previous session of this account ended.
@@ -237,6 +238,8 @@ fn build_params(req: &LoginRequest) -> Llsd {
     p.insert("address_size".into(), 64.into());
     p.insert("mac".into(), req.mac.clone().into());
     p.insert("id0".into(), req.id0.clone().into());
+    // the HostID setting, empty outside hosted instances (lllogininstance.cpp:240)
+    p.insert("host_id".into(), "".into());
     p.insert("agree_to_tos".into(), req.agree_to_tos.into());
     p.insert("read_critical".into(), req.read_critical.into());
     p.insert("last_exec_event".into(), req.last_exec.event.into());

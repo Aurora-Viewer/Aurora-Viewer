@@ -75,6 +75,19 @@ pub struct NetStats {
     pub seq_gaps: AtomicU64,
     pub seq_late: AtomicU64,
     pub agent_updates: AtomicU64,
+    /// Zero-coded packets received, their received bytes and their bytes
+    /// once decoded (LLMessageSystem's mCompressedPacketsIn,
+    /// mCompressedBytesIn and mUncompressedBytesIn), and the packets that
+    /// came from no circuit of ours (mOffCircuitPackets): for the viewer
+    /// statistics (viewer_stats.rs).
+    pub zero_coded_in: AtomicU64,
+    pub zero_coded_bytes_in: AtomicU64,
+    pub zero_decoded_bytes_in: AtomicU64,
+    pub off_circuit: AtomicU64,
+    /// Texture and mesh bytes the fetcher received (the statistics'
+    /// TEXTURE_NETWORK_DATA_RECEIVED and LLMeshRepository::sBytesReceived).
+    pub texture_bytes: AtomicU64,
+    pub mesh_bytes: AtomicU64,
     /// Oldest change of the control flags not sent yet (`note_controls`).
     control_changed: Mutex<Option<Instant>>,
     /// Longest wait of a control change before its AgentUpdate, and longest
