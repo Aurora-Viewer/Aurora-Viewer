@@ -2735,6 +2735,26 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 sources: Vec::new(),
             }]
         }
+        // A line on a script channel is heard by listening scripts only,
+        // never echoed as local chat: the demo's worn listener answers it,
+        // as a HUD driven by a gesture would (#952).
+        aurora_net::NetCommand::Chat { message, channel, .. } if *channel != 0 => {
+            log::info!("demo channel chat: channel={channel} message={message:?}");
+            let channel = channel.to_string();
+            vec![NetEvent::Chat(aurora_net::ChatMessage {
+                from_name: aurora_i18n::tr!("demo-channel-listener-name").into(),
+                source_id: Uuid::from_u128(0xA0E0_A6E1_0000_0000_0000_0000_0000_0952),
+                owner_id: DEMO_AGENT,
+                source_type: aurora_net::ChatSourceType::Object,
+                chat_type: aurora_net::ChatType::OwnerSay,
+                position: Vec3::ZERO,
+                message: aurora_i18n::tr!(
+                    "demo-channel-listener-heard",
+                    channel = channel.as_str(),
+                    message = message.as_str()
+                ),
+            })]
+        }
         // local chat echoes back like the simulator does
         aurora_net::NetCommand::Chat { message, chat_type, .. } => vec![NetEvent::Chat(aurora_net::ChatMessage {
             from_name: "Aurora Demo".into(),

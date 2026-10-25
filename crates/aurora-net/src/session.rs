@@ -1324,6 +1324,27 @@ impl Session<'_> {
                     }
                     let (part, r) = rest.split_at(cut);
                     rest = r;
+                    // really_send_chat_from_viewer (fsnearbychathub.cpp): an
+                    // avatar cannot speak on a negative channel, the
+                    // simulator drops such a ChatFromViewer. The line goes
+                    // as a ScriptDialogReply from the agent itself, its
+                    // text as the button label (a 255-byte field), which
+                    // llListen hears on that channel like a dialog answer.
+                    if channel < 0 {
+                        let mut end = part.len().min(254);
+                        while !part.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        let mut m = ScriptDialogReply::default();
+                        m.agent_data.agent_id = self.agent_id();
+                        m.agent_data.session_id = self.session_id();
+                        m.data.object_id = self.agent_id();
+                        m.data.chat_channel = channel;
+                        m.data.button_index = 0;
+                        m.data.button_label = str_field(&part[..end]);
+                        self.send_main(&m, true);
+                        continue;
+                    }
                     let mut m = ChatFromViewer::default();
                     m.agent_data.agent_id = self.agent_id();
                     m.agent_data.session_id = self.session_id();
@@ -5634,5 +5655,40 @@ mod script_dialog_tests {
             label: "old menu".into(),
         });
         assert!(main.try_recv_from(&mut datagram).is_err());
+
+        // Chat on a negative channel (a gesture's "/-4242 ping", #952) goes
+        // as the agent's own dialog answer, as really_send_chat_from_viewer
+        // does; a positive channel stays a ChatFromViewer.
+        let long = "é".repeat(200);
+        for (channel, message) in [(-4242, "ping"), (-1, long.as_str()), (5, "cmd")] {
+            session.on_command(NetCommand::Chat {
+                message: message.into(),
+                channel,
+                chat_type: ChatType::Normal,
+            });
+            let (size, _) = tokio::time::timeout(Duration::from_secs(2), main.recv_from(&mut datagram))
+                .await
+                .expect("channel chat reaches main")
+                .expect("channel chat packet");
+            let packet = parse_packet(&datagram[..size]).expect("channel chat datagram");
+            assert!(packet.reliable());
+            if channel < 0 {
+                assert_eq!(packet.id, ScriptDialogReply::ID);
+                let reply: ScriptDialogReply = packet.decode().expect("negative channel as a dialog answer");
+                assert_eq!(reply.agent_data.agent_id, Uuid::from_u128(1));
+                assert_eq!(reply.data.object_id, Uuid::from_u128(1));
+                assert_eq!((reply.data.chat_channel, reply.data.button_index), (channel, 0));
+                let label = field_str(&reply.data.button_label);
+                assert!(label.len() <= 254 && message.starts_with(&label) && !label.is_empty());
+                assert_eq!(reply.data.button_label.len(), label.len() + 1, "kept its NUL");
+            } else {
+                assert_eq!(packet.id, ChatFromViewer::ID);
+                let chat: ChatFromViewer = packet.decode().expect("positive channel chat");
+                assert_eq!(
+                    (chat.chat_data.channel, field_str(&chat.chat_data.message)),
+                    (channel, message.to_owned())
+                );
+            }
+        }
     }
 }
