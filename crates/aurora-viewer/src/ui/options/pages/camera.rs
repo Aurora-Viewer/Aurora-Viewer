@@ -218,6 +218,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 &field!(camera.enable_mouselook),
             );
             cx.toggle(
+                tr!("ui-options-camera-show-avatar-mouselook"),
+                tr!("ui-options-camera-show-avatar-mouselook-tip"),
+                &field!(camera.show_avatar_in_mouselook),
+            );
+            cx.toggle(
                 tr!("ui-options-camera-alt-right-click-menu"),
                 tr!("ui-options-camera-alt-right-click-menu-tip"),
                 &field!(camera.mouselook_alt_right_menu),

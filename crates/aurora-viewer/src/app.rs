@@ -3192,6 +3192,14 @@ impl App {
     /// AURORA_DEMO_CAMERA: scripted camera input (camera/demo.rs).
     fn demo_camera_steps(&mut self, spec: &str) {
         use crate::camera::demo::Step;
+        if spec.ends_with("-body-on") || spec.ends_with("-body-off") {
+            self.settings.camera.show_avatar_in_mouselook = spec.ends_with("-body-on");
+            if self.frame_count == 500 {
+                for event in crate::demo::first_person_visibility_events() {
+                    self.world.apply(event);
+                }
+            }
+        }
         for step in crate::camera::demo::steps(spec, self.frame_count) {
             match step {
                 Step::Cursor(x, y) => self.cursor_pos = (x, y),
@@ -7769,6 +7777,8 @@ impl App {
             let overlays = self.settings.world_overlays;
             self.scene
                 .update_land_overlays(&mut gfx.renderer, &self.world, overlays, &self.palette);
+            self.scene
+                .set_first_person(self.camera.mouselook().then_some(self.settings.camera.show_avatar_in_mouselook));
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
             let preview = if (self.focused || self.demo && self.capture.is_some())
                 && !covered

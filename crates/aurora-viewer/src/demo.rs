@@ -544,6 +544,40 @@ pub fn outfit_attachment(item: &aurora_net::AttachRequest) -> ObjectUpdate {
     o
 }
 
+/// Own chest and facial attachments, including a linked skull child, for
+/// the first-person visibility scenarios. No grid assets are requested.
+pub fn first_person_visibility_events() -> Vec<NetEvent> {
+    let volume = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    let mut objects = Vec::new();
+    for (local, point, color) in [
+        (29_001, 2u8, [0.9, 0.1, 0.1, 1.0]),
+        (29_002, 47, [0.9, 0.2, 0.1, 1.0]),
+        (29_003, 1, [0.9, 0.8, 0.1, 1.0]),
+    ] {
+        let mut object = prim(
+            local,
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            Vec3::splat(0.22),
+            volume,
+            te(color, 0, true, 0.0),
+            ExtraParams::default(),
+            "",
+        );
+        object.parent_id = 9000;
+        object.state = point.rotate_right(4);
+        objects.push(object);
+    }
+    let mut child = objects[0].clone();
+    child.local_id = 29_004;
+    child.full_id = action_id(child.local_id);
+    child.parent_id = 29_001;
+    child.position = Vec3::new(0.3, 0.0, 0.0);
+    child.state = 0;
+    objects.push(child);
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
 /// The Photo Album (FT_SNAPSHOT_CATEGORY), empty until a photo is saved.
 const PHOTO_ALBUM_FOLDER: u128 = 31;
 

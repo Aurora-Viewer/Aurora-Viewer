@@ -334,6 +334,7 @@ pub struct FaceDraw {
     pub rez_glow: bool,
     /// Part of a system avatar body: its pass follows the avatar pool.
     pub system: Option<SystemPart>,
+    pub first_person_hidden: bool,
 }
 
 impl FaceDraw {
@@ -399,6 +400,7 @@ pub struct ObjGpu {
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
     pub owner_avatar: Option<usize>,
+    pub first_person_hidden: bool,
     /// Reflection probe flagged as a mirror (box); listed in
     /// `Scene::mirror_objects`.
     pub mirror: bool,
@@ -485,6 +487,7 @@ impl ObjGpu {
             (self.hud, object_flags::HUD),
             (avatar.is_some() || self.skeleton_owner.is_some(), object_flags::NO_PROBE),
             (posed.is_some(), object_flags::POSED),
+            (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
         ] {
             if on {
                 fl |= bit;
@@ -609,7 +612,12 @@ fn cull_face(f: &FaceDraw, idx: usize, first: bool) -> CullFace {
             aurora_render::gpu_cull::pass::WATER_EXCLUSION
         } else {
             f.pass.gpu_code()
-        } | if first { FACE_FIRST } else { 0 },
+        } | if first { FACE_FIRST } else { 0 }
+            | if f.first_person_hidden {
+                aurora_render::gpu_cull::FACE_FIRST_PERSON_HIDDEN
+            } else {
+                0
+            },
         _pad: [0; 3],
     }
 }
@@ -899,6 +907,8 @@ pub struct Scene {
     env_tex: [(Uuid, u32); 6],
     /// Index of the agent avatar (always drawn).
     pub agent_idx: Option<usize>,
+    /// FirstPersonAvatarVisible while in mouselook; None otherwise.
+    pub first_person: Option<bool>,
     rlva_render_state: (Option<Uuid>, bool, bool),
     pub lists: DrawLists,
     pub creation_preview: creation_preview::CreationPreview,
@@ -1425,6 +1435,7 @@ impl Scene {
             fov_y: 1.0,
             env_tex: [(Uuid::nil(), 0); 6],
             agent_idx: None,
+            first_person: None,
             rlva_render_state: (None, false, false),
             lists: DrawLists::default(),
             creation_preview: creation_preview::CreationPreview::default(),
@@ -3025,6 +3036,7 @@ impl Scene {
         let wanted = Self::object_geom_key(o, lod);
         let wearer = Self::wearer_avatar(world, idx);
         let owner_avatar = wearer.map(|(_, i)| i);
+        let first_person_hidden = Self::attachment_first_person_hidden(world, idx);
         // what its mesh is asked for at: its size on screen, and ours first
         let rank_radius = sync_plan::mesh_rank_radius(lod_radius, wearer.is_some());
         let need = MeshNeed {
@@ -3038,6 +3050,7 @@ impl Scene {
         let g = &mut self.gpu[idx];
         g.hud = hud;
         g.owner_avatar = owner_avatar;
+        g.first_person_hidden = first_person_hidden;
         // reflection probe with the box and mirror flags (LLReflectionProbeParams)
         let mirror = o.extra.reflection_probe.is_some_and(|p| p.flags & 0x4 != 0 && p.flags & 0x1 != 0);
         if mirror != g.mirror {
@@ -3514,6 +3527,7 @@ impl Scene {
                 glow_pool: false,
                 rez_glow: false,
                 system: None,
+                first_person_hidden: false,
             });
         }
         for t in old_tex {
@@ -3536,6 +3550,41 @@ impl Scene {
             idx = world.objects.parent_of(o)?;
         }
         None
+    }
+
+    /// LLVOAvatarSelf::updateAttachmentVisibility uses the root attachment's
+    /// avatar_lad.xml flag for all its linked prims, rigged or not.
+    fn attachment_first_person_hidden(world: &World, mut idx: usize) -> bool {
+        for _ in 0..64 {
+            let Some(object) = world.objects.get(idx) else { return false };
+            let Some(parent) = world.objects.parent_of(object) else {
+                return false;
+            };
+            if world.objects.get(parent).is_some_and(|p| p.is_avatar()) {
+                return world
+                    .avatar_lib
+                    .attach_points
+                    .get(&object.attachment_point())
+                    .is_some_and(|p| !p.hud && !p.visible_in_first_person);
+            }
+            idx = parent;
+        }
+        false
+    }
+
+    fn first_person_object_visible(&self, idx: usize, g: &ObjGpu) -> bool {
+        g.hud
+            || self.first_person.is_none()
+            || self.agent_idx.is_none()
+            || g.avatar(idx) != self.agent_idx
+            || (self.first_person == Some(true) && !g.first_person_hidden)
+    }
+
+    pub fn set_first_person(&mut self, show: Option<bool>) {
+        if self.first_person != show {
+            self.first_person = show;
+            self.hover.invalidate();
+        }
     }
 
     /// Object `idx` changed or arrived through the store: if it is worn, what
@@ -3737,6 +3786,7 @@ impl Scene {
                     glow_pool: false,
                     rez_glow: false,
                     system: Some(SystemPart::of(part.name)),
+                    first_person_hidden: matches!(part.name, "head" | "hair" | "eyelashes" | "eye_left" | "eye_right"),
                 });
             }
             for t in old_tex {
@@ -4185,6 +4235,12 @@ impl Scene {
             if g.faces.is_empty() || g.hud {
                 return l;
             }
+            let own_first_person = self
+                .first_person
+                .filter(|_| self.agent_idx.is_some() && g.avatar(idx) == self.agent_idx);
+            if own_first_person == Some(false) {
+                return l;
+            }
             // avatar limit: far avatars and everything they wear are drawn
             // as impostors; pictured ones give their draws to the picture
             let avatar = g.avatar(idx);
@@ -4245,6 +4301,7 @@ impl Scene {
             let blend_d = (blend_center - view.eye).length();
             for f in &g.faces {
                 // object sphere for the GPU occlusion test
+                let in_view = in_view && !(own_first_person == Some(true) && (g.first_person_hidden || f.first_person_hidden));
                 let cmd = f.cmd.with_bounds(sc, sr);
                 let pass = f.pass;
                 // blended faces glow in their sorted place; hidden faces do not glow
@@ -4426,6 +4483,7 @@ impl Scene {
         self.lists.select_child = result.select_child;
         if gpu_mode {
             self.lists.gpu = Some(GpuCullView {
+                first_person: self.agent_idx.and_then(|own| self.first_person.map(|show| (own as u32, show))),
                 planes: view.planes,
                 eye: view.eye,
                 draw_distance: dd,
@@ -5401,6 +5459,73 @@ mod tests {
     use aurora_net::NetEvent;
 
     #[test]
+    fn first_person_visibility_uses_attachment_roots_and_preserves_huds_and_other_avatars() {
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        let events = crate::demo::first_person_visibility_events();
+        let handle = match &events[0] {
+            NetEvent::ObjectUpdates { handle, .. } => *handle,
+            _ => unreachable!(),
+        };
+        world.apply(NetEvent::MainRegionChanged { handle });
+        world.apply(NetEvent::ObjectUpdates {
+            handle,
+            objects: vec![crate::demo::action_avatar(false)],
+        });
+        for event in events {
+            world.apply(event);
+        }
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let mut scene = Scene::new(Default::default(), lib);
+        scene.agent_idx = Some(own);
+        let body = ObjGpu {
+            is_avatar: true,
+            ..Default::default()
+        };
+        let other = own + world.objects.len() + 1;
+        for mode in [None, Some(false), Some(true), None] {
+            scene.set_first_person(mode);
+            assert_eq!(scene.first_person_object_visible(own, &body), mode != Some(false));
+            assert!(scene.first_person_object_visible(other, &body));
+            for (id, hidden) in [(29_001, true), (29_002, true), (29_003, false), (29_004, true)] {
+                let idx = world.objects.index_of_uuid(&crate::demo::action_id(id)).unwrap();
+                assert_eq!(Scene::attachment_first_person_hidden(&world, idx), hidden);
+                let attachment = ObjGpu {
+                    owner_avatar: Some(own),
+                    first_person_hidden: hidden,
+                    rigged: true,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    scene.first_person_object_visible(idx, &attachment),
+                    mode.is_none() || mode == Some(true) && !hidden
+                );
+                let rigid = ObjGpu {
+                    rigged: false,
+                    ..attachment
+                };
+                assert_eq!(
+                    scene.first_person_object_visible(idx, &rigid),
+                    mode.is_none() || mode == Some(true) && !hidden
+                );
+                let other_attachment = ObjGpu {
+                    owner_avatar: Some(other),
+                    ..rigid
+                };
+                assert!(scene.first_person_object_visible(idx, &other_attachment));
+                let hud = ObjGpu {
+                    hud: true,
+                    owner_avatar: Some(own),
+                    first_person_hidden: hidden,
+                    ..Default::default()
+                };
+                assert!(scene.first_person_object_visible(idx, &hud));
+            }
+        }
+    }
+
+    #[test]
     fn a_worn_prim_changing_has_its_wearers_bake_slots_looked_at_again() {
         let lib = Arc::new(AvatarLibrary::load());
         let mut world = World::new(lib.clone());
@@ -6030,6 +6155,7 @@ mod tests {
             glow_pool: false,
             rez_glow: false,
             system: None,
+            first_person_hidden: false,
         }
     }
 
@@ -6345,6 +6471,7 @@ mod tests {
             reflections: true,
         };
         let gview = GpuCullView {
+            first_person: None,
             planes: view.planes,
             eye,
             draw_distance: ctx.draw_distance,

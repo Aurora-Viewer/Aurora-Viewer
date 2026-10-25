@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+First-person avatar visibility follows `LLAgent::needsRenderAvatar/Head` and
+`LLVOAvatarSelf::updateAttachmentVisibility`: `CameraSettings::show_avatar_in_mouselook`
+defaults off. System head faces and `avatar_lad.xml` attachment-point visibility
+are classified once, independently of their material or skinning. Mouselook and
+the own-avatar slot travel in the existing culling frame; GPU and CPU main lists
+hide those faces without rebuilding records or disturbing the enabled body's
+shadow/reflection geometry. HUDs and other avatars keep their ordinary visibility.
+
 Seated first-person camera updates run after `Scene::update_poses`, sharing the
 current animated eye positions used by look-at (`Scene::eyes_offset`). The camera
 transforms that offset through the avatar and seat, applying shape and optional

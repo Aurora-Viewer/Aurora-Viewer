@@ -5,6 +5,24 @@
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+mod first_person_tests {
+    use super::*;
+
+    #[test]
+    fn first_person_avatar_visibility_defaults_off_and_keeps_a_saved_choice() {
+        let migrated: CameraSettings = serde_json::from_str("{}").unwrap();
+        assert!(!migrated.show_avatar_in_mouselook);
+        let chosen = CameraSettings {
+            show_avatar_in_mouselook: true,
+            ..migrated
+        };
+        let saved = serde_json::to_string(&chosen).unwrap();
+        let loaded: CameraSettings = serde_json::from_str(&saved).unwrap();
+        assert!(loaded.show_avatar_in_mouselook);
+    }
+}
+
 /// Firestorm camera presets (app_settings/camera/*.xml).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum CameraPreset {
@@ -90,6 +108,8 @@ pub struct CameraSettings {
     pub track_focus_object: bool,
     /// EnableMouselook.
     pub enable_mouselook: bool,
+    /// FirstPersonAvatarVisible (Legacy Viewer), off by default.
+    pub show_avatar_in_mouselook: bool,
     /// FSScrollWheelExitsMouselook.
     pub wheel_exits_mouselook: bool,
     /// The angle of the right-button zoom in mouselook, remembered from one
@@ -131,6 +151,7 @@ impl Default for CameraSettings {
             hover_affects_camera: false,
             track_focus_object: true,
             enable_mouselook: true,
+            show_avatar_in_mouselook: false,
             wheel_exits_mouselook: true,
             // no zoom until the wheel is turned once while the button is held
             mouselook_zoom_fov: None,

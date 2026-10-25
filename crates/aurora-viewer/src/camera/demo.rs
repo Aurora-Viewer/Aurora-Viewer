@@ -237,6 +237,12 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             661 => out.extend([Step::Release, Step::Log]),
             _ => {}
         },
+        "ml-body-on" | "ml-body-off" => match frame {
+            600 | 700 => out.extend([Step::ToggleMouselook, Step::Log]),
+            620..=640 => out.push(Step::Drag(0.0, 8.0)),
+            650 | 740 => out.push(Step::Log),
+            _ => {}
+        },
         "ml" => match frame {
             600 | 700 => out.extend([Step::ToggleMouselook, Step::Log]),
             604 | 608 | 612 | 620 | 640 | 704 | 708 | 712 | 720 | 740 => out.push(Step::Log),
@@ -279,7 +285,14 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             610 | 630 | 660 => out.push(Step::Log),
             _ => {}
         },
-        mode @ ("sit" | "scripted-sit" | "sit-ml" | "sit-ml-reclined") => {
+        mode @ ("sit"
+        | "scripted-sit"
+        | "sit-ml"
+        | "sit-ml-reclined"
+        | "sit-ml-body-on"
+        | "sit-ml-body-off"
+        | "sit-ml-reclined-body-on"
+        | "sit-ml-reclined-body-off") => {
             if (250..=700).contains(&frame) {
                 out.push(Step::SitEvents);
             }
@@ -324,7 +337,7 @@ pub fn sit_events(spec: &str, frame: u64) -> Vec<aurora_net::NetEvent> {
         frame
     };
     let mut events = crate::demo::sit_events(frame);
-    if spec == "sit-ml-reclined" {
+    if spec.starts_with("sit-ml-reclined") {
         for event in &mut events {
             if let aurora_net::NetEvent::ObjectUpdates { objects, .. } = event {
                 for object in objects {

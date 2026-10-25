@@ -528,6 +528,17 @@ when unfocused") is ignored during a screenshot.
   the camera must follow the animated eyes without orbiting around the head;
   returning to third person at 1060 restores the seat camera, then standing at
   1100 restores the normal rear view.
+  `ml-body-on` / `ml-body-off` set the own-avatar preference for this demo,
+  enter first person at 600, look down at 620–640 and leave at 700. Capture at
+  650 and 740. The enabled body and yellow chest attachment stay visible below
+  the camera; the system head, red skull/Jaw attachments and linked skull child
+  are absent from the direct view. With the preference off, the whole own body
+  and its 3D attachments disappear. Other avatars and HUDs remain visible.
+  `sit-ml-body-on|sit-ml-body-off` and
+  `sit-ml-reclined-body-on|sit-ml-reclined-body-off` exercise the same rules while
+  seated (the same frame numbers as the seated camera scenarios). Returning to
+  third person restores every own part. Preferences › Camera › Mouselook has
+  the persisted switch, initially off; `AURORA_DEMO_OPTIONS=camera/2` opens it.
   Right-button scenarios also take physical cursor coordinates `(x,y)`:
   `right-click,x,y` moves slightly on both axes; `right-jitter,x,y` repeats
   small back-and-forth movements for 60 frames. Both must keep the camera
