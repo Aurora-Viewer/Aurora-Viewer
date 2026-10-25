@@ -876,6 +876,7 @@ pub fn native_shortcut_key(key: &winit::keyboard::Key, code: KeyCode) -> Option<
         K::KeyE => Some(E::E),
         K::KeyG => Some(E::G),
         K::KeyL => Some(E::L),
+        K::KeyW => Some(E::W),
         K::KeyX => Some(E::X),
         K::KeyZ => Some(E::Z),
         K::KeyY => Some(E::Y),

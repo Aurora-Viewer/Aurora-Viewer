@@ -1263,6 +1263,14 @@ No real L$ and no connection to a grid.
   a tracked spot of the plaza region, at 118 m; nothing teleports until the
   map's Teleport button. `tp-door-ready` stops before the click.
 - `buy-confirm`, `pay-confirm`: confirm the simulated transaction.
+- `pay-menu`, `pay-linked-menu` (#997): open Pay through the context-menu
+  action on a Touch object, or its linked child (only the root takes money).
+  The normal click action stays Touch; suggested amounts must still load.
+  Add `-confirm` to pay L$ 10 at frame 320. The log must contain one
+  `demo payment confirmed` with the clicked prim's UUID (972 or 974),
+  `dialog=false` and one `demo action: paiement L$ 10`; the window closes.
+  Without `-confirm`, the window stays open for manual input. Check both
+  Pay window looks in Preferences > Aurora. No real currency is transferred.
 - `linked-touch`, `linked-sit`: hollow root with Touch and child seat with
   Sit, overlapping bounding boxes; checks the prim actually aimed at.
 - `transparent-menu`, `transparent-build`: cube with 60% transparency,
@@ -1436,6 +1444,24 @@ wrapped status message and a 64-item object inventory at two heights.
 
 **`AURORA_DEMO_LSL_BRIDGE=1`** — messages of the Firestorm LSL bridge
 (hidden) between two "owner say" lines.
+
+**Bundled Aurora bridge scripts:** Rust embeds the `.lsl` sources as text;
+`check.ps1` and the offline factory do not compile them. Type-check all three
+scripts in Mono mode with `lslint` when changing them:
+
+```powershell
+foreach ($script in 'bridge', 'query', 'ik') {
+    lslint -m "crates/aurora-viewer/src/world/bridge/$script.lsl"
+}
+```
+
+Bridge 1.35 repairs four invalid unary `!` operations on keys in the query
+script's posing-consent paths. The human grid check is to let an existing
+attachment upgrade, confirm all three scripts are running, then request Script
+information and Object information on a rezzed object and an attachment.
+Confirm the reports appear in nearby chat and exercise posing consent between
+two clients. The LSL check supplements actual simulator compilation and runtime
+validation.
 
 **Bridge IK relay:** `AURORA_DEMO_MOVELOCK=1` exercises the three-script
 attachment factory and movement controller; capture at frame 1600 after its

@@ -2967,7 +2967,10 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             }])]
         }
         aurora_net::NetCommand::SendAbuseReport(_) => vec![NetEvent::AbuseReportSent(Ok(()))],
-        aurora_net::NetCommand::RequestPayPrice { object, .. } if *object == action_id(972) => {
+        aurora_net::NetCommand::RequestPayPrice { object, .. }
+            if *object == action_id(972)
+                || (*object == action_id(974) && std::env::var("AURORA_DEMO_ACTIONS").is_ok_and(|m| m.starts_with("pay-linked-menu"))) =>
+        {
             let (default, buttons) = match std::env::var("AURORA_DEMO_ACTIONS").unwrap_or_default().as_str() {
                 "pay-layout" => (1956, vec![1956, 3913, 5870, 7826]),
                 "pay-hidden" => (-1, vec![1956, -1, 5870, -1]),
@@ -3151,6 +3154,9 @@ pub fn stand_from_prim(seat: Vec3, size: Vec3) -> Vec<NetEvent> {
 }
 
 pub fn action_mode_id(mode: &str) -> u32 {
+    if mode.starts_with("pay-linked-menu") {
+        return 974;
+    }
     match mode {
         "linked-touch" => return 985,
         "linked-sit" => return 986,
@@ -3390,12 +3396,20 @@ pub fn action_events() -> Vec<NetEvent> {
         ExtraParams::default(),
         aurora_i18n::tr!("demo-inherited-buy"),
     );
-    child.parent_id = 971;
+    child.parent_id = if mode.starts_with("pay-linked-menu") { 972 } else { 971 };
     objects.push(child);
+    if (mode.starts_with("pay-menu") || mode.starts_with("pay-linked-menu"))
+        && let Some(object) = objects.iter_mut().find(|o| o.local_id == 972)
+    {
+        object.click_action = crate::interaction::code::TOUCH;
+        object.update_flags |= 1 << 7;
+    }
     let selected = action_mode_id(&mode);
     if selected != 0 {
         objects.retain(|o| {
-            o.local_id == selected || ((selected == 971 || selected == 980 || selected == 981) && (o.local_id == 971 || o.local_id == 974))
+            o.local_id == selected
+                || (selected == 974 && o.local_id == 972)
+                || ((selected == 971 || selected == 980 || selected == 981) && (o.local_id == 971 || o.local_id == 974))
         });
         if selected >= 975
             && selected != 980

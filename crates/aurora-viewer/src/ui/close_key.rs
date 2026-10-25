@@ -12,7 +12,24 @@
 //! is for it ([`take`]). The Conversations window asks first, to close its
 //! conversation shown instead (LLMultiFloater::closeDockedFloater).
 
+use crate::keybinds::{Input, Mods};
 use egui::{Id, LayerId, Order};
+use std::collections::HashSet;
+use winit::keyboard::{Key as NativeKey, KeyCode};
+
+/// Reserve Ctrl+W before native movement/gestures, including repeats. egui
+/// still receives the event and decides what closes (or edits a word with
+/// no window). LLViewerInput::scanKey (indra/newview/llviewerinput.cpp)
+/// likewise leaves menu accelerators out of held controls. Drop an earlier
+/// hold too, so releasing Ctrl before W cannot resume movement.
+pub fn take_native_key(key: &NativeKey, code: KeyCode, mods: Mods, down: &mut HashSet<Input>) -> bool {
+    if mods.ctrl && !mods.alt && !mods.shift && crate::keybinds::native_shortcut_key(key, code) == Some(egui::Key::W) {
+        down.remove(&Input::key(code));
+        true
+    } else {
+        false
+    }
+}
 
 /// The windows drawn on the last frame, and the one Ctrl+W closes this
 /// frame.
@@ -89,6 +106,96 @@ pub fn take(ctx: &egui::Context, id: Id) -> bool {
 mod tests {
     use super::*;
     use crate::ui::widgets::elide_tests::Frames;
+
+    #[test]
+    fn ctrl_w_never_holds_movement_even_after_ctrl_is_released() {
+        use crate::keybinds::{Action, Binding, KeyBindings};
+
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        for (code, letter) in [
+            (KeyCode::KeyW, "w"),
+            (KeyCode::KeyZ, "w"), // AZERTY
+            (KeyCode::KeyW, "W"),
+            (KeyCode::KeyW, "ц"), // egui's non-Latin fallback
+        ] {
+            let input = Input::key(code);
+            let other = Input::key(KeyCode::ArrowDown);
+            let key = NativeKey::Character(letter.into());
+            let mut bindings = KeyBindings::default();
+            let actions = [Action::Forward, Action::CamZoomIn, Action::PushToTalk, Action::HudDrag];
+            for action in actions {
+                bindings.set(action, 0, Some(Binding::captured(input.clone(), Mods::default())));
+            }
+            // The same press/repeat path also cancels a pre-existing hold.
+            let mut down = HashSet::from([input.clone(), other.clone()]);
+            for _ in 0..3 {
+                assert!(take_native_key(&key, code, ctrl, &mut down));
+                assert_eq!(down, HashSet::from([other.clone()]));
+                for mods in [ctrl, Mods::default()] {
+                    for action in actions {
+                        assert!(!bindings.held(action, &down, mods), "{letter}: {action:?}");
+                    }
+                }
+            }
+            let _ = bindings.update_held_input(&mut down, &input, false, Mods::default());
+            assert!(!bindings.held(Action::Forward, &down, Mods::default()));
+            let _ = bindings.update_held_input(&mut down, &input, true, Mods::default());
+            assert!(
+                bindings.held(Action::Forward, &down, Mods::default()),
+                "a fresh plain press still moves"
+            );
+        }
+    }
+
+    #[test]
+    fn native_close_reservation_keeps_other_keys_and_modifier_combinations() {
+        let input = Input::key(KeyCode::KeyW);
+        for (letter, mods) in [
+            ("w", Mods::default()),
+            (
+                "w",
+                Mods {
+                    ctrl: true,
+                    shift: true,
+                    alt: false,
+                },
+            ),
+            (
+                "w",
+                Mods {
+                    ctrl: true,
+                    alt: true,
+                    shift: false,
+                },
+            ),
+            (
+                "w",
+                Mods {
+                    alt: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "z",
+                Mods {
+                    ctrl: true,
+                    ..Default::default()
+                },
+            ), // AZERTY Ctrl+Z
+        ] {
+            let mut down = HashSet::from([input.clone()]);
+            assert!(!take_native_key(
+                &NativeKey::Character(letter.into()),
+                KeyCode::KeyW,
+                mods,
+                &mut down
+            ));
+            assert!(down.contains(&input));
+        }
+    }
 
     fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
         egui::Event::Key {
