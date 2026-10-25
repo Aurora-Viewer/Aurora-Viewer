@@ -26,6 +26,19 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-10-25 — Aurora 0.7.5: tools for creators
+LiveMesh shows your Blender mesh in the viewer while you edit it, with nothing uploaded: rigged meshes on your avatar, static meshes and linksets as local objects you can place, move or attach. The new Poser poses you, your animesh or nearby avatars who agree to it, bone by bone, for photos, with a pose library and BVH export.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/blob/main/docs/BLENDER_LIVE.md)
+
+## 2026-10-25 — Conversations your way
+Pop a conversation out into its own window, or just drag it out of the list. Links to Gyazo, Flickr, Imgur, Lightshot and Reddit pages show their picture, the YouTube player keeps each video's shape, and a GIF picker sits next to the emoji button once you add your own free key. Messages from objects can take one small, quiet line.
+
+## 2026-10-25 — Easier on the eyes
+A new Accessibility page gathers the settings that help, with a button on the login screen. Try the high-contrast palette, the OpenDyslexic font, volume sliders that follow your ear, or pick your own accent, background and text colours.
+
+## 2026-10-25 — Fixed thanks to your reports
+Laptops with two graphics cards now use the dedicated one, Overwolf no longer stops the viewer at startup, layered hair is no longer see-through, and gestures reach your HUDs on negative channels. Your avatar stands up when you teleport from a seat, and the Appearance window stays fast with thousands of outfits.
+
 ## 2026-10-22 — RLVa, when you want it
 Since version 0.7.4, Aurora understands RLVa: the restrictions, exceptions and commands that scripted outfits, furniture and experiences rely on. It stays off until you turn it on in Preferences › Protections, and turning it off releases everything at once.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/blob/main/docs/RLVA.md)
