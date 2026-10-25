@@ -11,8 +11,12 @@
 
 use std::path::Path;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::AtomicUsize;
+#[cfg(windows)]
+use std::sync::atomic::Ordering;
+#[cfg(windows)]
+use std::time::Instant;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// How often the window is tested.
 const TICK: Duration = Duration::from_secs(1);
