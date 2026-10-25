@@ -2616,6 +2616,7 @@ both open states and the selection count. Capture at frame 620.
 
 | Variable | Effect |
 |---|---|
+| `AURORA_DEMO_PARCEL_VISIBILITY=<mode>` | Parcel content isolation and same-owner neighbours |
 | `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
@@ -2635,6 +2636,22 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
+
+- **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner`**:
+  four parcels split the plaza at x/y 128 m. The northern parcels share an owner;
+  the southern ones belong to someone else. `always`, `listed` (current parcel
+  listed) and `except` (empty list) hide content outside the north-east parcel;
+  `off` and `except-listed` show everything. `same-owner` also shows the north-west
+  neighbour. Terrain and our avatar/HUDs remain visible. Combine with
+  `AURORA_DEMO_POS=124,132` to stand on the north-west parcel and look towards
+  the plaza on its same-owner north-east neighbour: hidden with `always`,
+  visible with `same-owner`.
+  Combine with
+  `AURORA_DEMO_OPTIONS=graphics` for the native controls. Check live mode changes,
+  adding/removing the current parcel and restoring content without relogging.
+  On the grid, also check parcel changes, listed parcels in different regions,
+  group-owned neighbours, connected region borders and moving linked objects.
+  Parcel isolation is local rendering; it does not stop simulator object updates.
 
 - **`AURORA_DEMO_DOF=<f-number>:<distance>[:debug]`**: the depth of field on
   whatever Preferences say, at that aperture, focused at that distance (m,

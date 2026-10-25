@@ -440,6 +440,9 @@ impl SyncCtx<'_> {
     /// moment (what a check of its detail level would want); None when it
     /// cannot be placed.
     pub(super) fn wanted_now(&self, idx: usize, o: &Object) -> Option<Option<GeomKey>> {
+        if !self.world.parcel_object_visible(idx) {
+            return Some(None);
+        }
         let (pos, _, hud) = self.transform(idx)?;
         let (radius, distance) = self.lod_metrics(idx, o, pos);
         let lod = super::mesh_inspection::display_lod(
@@ -458,6 +461,9 @@ impl SyncCtx<'_> {
     pub(super) fn plan(&self, idx: usize) -> Plan {
         let world = self.world;
         let none = Plan::Full { xf: None, interim: None };
+        if !world.parcel_object_visible(idx) {
+            return none;
+        }
         let Some(o) = world.objects.get(idx) else {
             return none;
         };
@@ -625,6 +631,40 @@ mod tests {
         LL_PCODE_PATH_CIRCLE, LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, LL_PCODE_PROFILE_CIRCLE_HALF, LL_SCULPT_TYPE_MESH,
         LL_SCULPT_TYPE_SPHERE, SculptParams, VolumeParams,
     };
+
+    #[test]
+    fn parcel_visibility_crossings_revisit_gpu_placed_attachments_in_both_directions() {
+        let (mut world, mut scene, _, _) = crate::scene::picking::tests::scene_with_two_objects();
+        let mut settings = crate::settings::Settings::default();
+        crate::demo::parcel_visibility::install(&mut world, &mut settings, "always");
+        let avatar = world.objects.index_of_uuid(&crate::demo::DEMO_LOUP).unwrap();
+        let local_id = world.objects.get(avatar).unwrap().key.local_id;
+        for event in crate::demo::own_rigged_events(local_id) {
+            world.apply(event);
+        }
+        let child = world
+            .objects
+            .children_of(&world.objects.get(avatar).unwrap().key)
+            .iter()
+            .copied()
+            .find(|&idx| world.objects.get(idx).unwrap().key.local_id == crate::demo::OWN_RIGGED)
+            .unwrap();
+        scene.gpu.resize_with(world.objects.slots.len(), Default::default);
+        scene.sets.own_moving.insert(avatar);
+        world.update_parcel_visibility(&settings.parcel_visibility, Instant::now());
+        for (x, previously_hidden) in [(120.0, false), (140.0, true)] {
+            scene.sets.dirty.take();
+            world.objects.get_mut_untracked(avatar).unwrap().position = Vec3::new(x, 140.0, 25.0);
+            world.objects.get_mut_untracked(child).unwrap().render.needs_records = false;
+            scene.gpu[avatar].parcel_hidden = previously_hidden;
+            scene.sync_parcel_crossings(&mut world);
+            assert!(
+                scene.sets.dirty.contains(child),
+                "the attachment changes visibility with its wearer"
+            );
+            assert!(world.objects.get(child).unwrap().render.needs_records);
+        }
+    }
 
     fn volume(path: u8, profile: u8, sculpt: Option<u8>) -> VolumeParams {
         let mut v = VolumeParams::default();

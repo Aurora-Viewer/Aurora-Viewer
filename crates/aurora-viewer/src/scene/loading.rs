@@ -404,6 +404,9 @@ impl Scene {
         let mut seen = Vec::new();
         let mut hurry = Vec::new();
         for (idx, o) in world.objects.avatars() {
+            if !world.parcel_object_visible(idx) {
+                continue;
+            }
             // silhouettes are not clouded (LL: no cloud for too complex avatars)
             if self.too_complex.contains(&idx) {
                 seen.push(o.full_id);

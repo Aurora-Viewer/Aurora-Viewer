@@ -302,6 +302,7 @@ const UNDO_SECONDS: f64 = 8.0;
 
 #[derive(Default)]
 pub struct OptionsUi {
+    pub current_parcel: Option<crate::world::parcel_visibility::Entry>,
     pub rlva_tools: super::rlva::Tools,
     pub rlva_restrictions: Vec<(uuid::Uuid, String)>,
     pub rlva_camera_preset_locked: bool,

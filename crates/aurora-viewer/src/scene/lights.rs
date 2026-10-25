@@ -127,6 +127,9 @@ impl Scene {
         } = std::mem::take(&mut self.light_scratch);
         objects.extend(self.light_objects.iter().copied());
         for idx in objects.drain(..) {
+            if !world.parcel_object_visible(idx) {
+                continue;
+            }
             let Some(o) = world.objects.get(idx) else {
                 continue;
             };

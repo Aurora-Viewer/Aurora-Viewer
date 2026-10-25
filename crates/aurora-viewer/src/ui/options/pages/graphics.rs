@@ -177,6 +177,56 @@ fn quality(cx: &mut Cx) {
             32.0..=512.0,
             " m",
         );
+        cx.combo(
+            tr!("parcel-visibility-mode"),
+            tr!("parcel-visibility-help"),
+            &field!(parcel_visibility.mode),
+            &[
+                (crate::world::parcel_visibility::Mode::Off, tr!("common-disabled")),
+                (crate::world::parcel_visibility::Mode::Always, tr!("parcel-visibility-always")),
+                (crate::world::parcel_visibility::Mode::Listed, tr!("parcel-visibility-listed")),
+                (crate::world::parcel_visibility::Mode::ExceptListed, tr!("parcel-visibility-except")),
+            ],
+        );
+        cx.toggle(
+            tr!("parcel-visibility-same-owner"),
+            tr!("parcel-visibility-same-owner-help"),
+            &field!(parcel_visibility.same_owner),
+        );
+        cx.wide().row_with(
+            tr!("parcel-visibility-parcels"),
+            tr!("parcel-visibility-parcels-help"),
+            &field!(parcel_visibility.parcels),
+            |ui, s, st, _| {
+                let mut changed = false;
+                ui.vertical(|ui| {
+                    let current = st.current_parcel.as_ref();
+                    let listed = current.is_some_and(|p| s.parcel_visibility.parcels.iter().any(|entry| entry.same_parcel(p)));
+                    if ui
+                        .add_enabled(current.is_some() && !listed, egui::Button::new(tr!("parcel-visibility-add")))
+                        .clicked()
+                        && let Some(entry) = current
+                    {
+                        s.parcel_visibility.parcels.push(entry.clone());
+                        changed = true;
+                    }
+                    let mut remove = None;
+                    for (i, entry) in s.parcel_visibility.parcels.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            if ui.button(tr!("common-remove")).clicked() {
+                                remove = Some(i);
+                            }
+                            ui.add(egui::Label::new(format!("{} — {}", entry.name, entry.region_name)).truncate());
+                        });
+                    }
+                    if let Some(i) = remove {
+                        s.parcel_visibility.parcels.remove(i);
+                        changed = true;
+                    }
+                });
+                changed
+            },
+        );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
             tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),

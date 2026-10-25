@@ -53,6 +53,7 @@ pub mod object_im_filter;
 pub mod objects;
 pub mod open_ims;
 pub mod outfit;
+pub mod parcel_visibility;
 pub mod parked;
 pub mod place_details;
 pub mod place_snapshots;
@@ -413,6 +414,7 @@ pub struct World {
     pub parcel_name: String,
     /// Full description of that parcel (navigation bar icons, media, voice).
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
+    pub parcel_visibility: parcel_visibility::Visibility,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -657,6 +659,7 @@ impl World {
             cloud_scroll: glam::Vec2::ZERO,
             sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
+            parcel_visibility: Default::default(),
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),
@@ -3070,6 +3073,7 @@ impl World {
                 None
             }
             NetEvent::ParcelOverlay { handle, sequence, data } => {
+                self.parcel_visibility.invalidate();
                 let size = self
                     .regions
                     .get(&handle)

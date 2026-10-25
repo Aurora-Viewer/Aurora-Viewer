@@ -9,6 +9,9 @@ use winit::keyboard::KeyCode;
 const BEFORE: &[&str] = &[
     // Graphics
     "draw_distance",
+    "parcel_visibility.mode",
+    "parcel_visibility.same_owner",
+    "parcel_visibility.parcels",
     "lod_factor",
     "max_avatars",
     "max_complexity",

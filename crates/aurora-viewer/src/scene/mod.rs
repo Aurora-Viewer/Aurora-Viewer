@@ -396,6 +396,7 @@ pub struct ObjGpu {
     /// get no record, so `faces` can be shorter).
     pub built_faces: usize,
     pub is_avatar: bool,
+    pub parcel_hidden: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
@@ -759,6 +760,7 @@ pub struct Scene {
     pub avatar_complexity: HashMap<Uuid, u32>,
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
     pub too_complex: std::collections::HashSet<usize>,
+    parcel_visibility_version: u64,
     rlva_silhouettes: std::collections::HashSet<usize>,
     /// Objects the sync visits: moving, changed, pending (sync_sets.rs).
     sets: SyncSets,
@@ -1365,6 +1367,7 @@ impl Scene {
             ground_feet_own_moving: false,
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
+            parcel_visibility_version: 0,
             rlva_silhouettes: Default::default(),
             sets: SyncSets::default(),
             xf_cache: XfCache::default(),
@@ -2293,6 +2296,40 @@ impl Scene {
         ))
     }
 
+    fn sync_parcel_crossings(&mut self, world: &mut World) {
+        if world.parcel_visibility.active() {
+            // Anchored attachments normally follow their wearer entirely on the
+            // GPU. A parcel crossing must also visit those subtrees this frame.
+            let crossings: Vec<_> = self
+                .sets
+                .own_moving
+                .as_slice()
+                .iter()
+                .copied()
+                .filter(|&idx| {
+                    world.objects.get(idx).is_some_and(|o| o.is_avatar() || o.parent_id == 0)
+                        && self
+                            .gpu
+                            .get(idx)
+                            .is_some_and(|g| g.parcel_hidden == world.parcel_object_visible(idx))
+                })
+                .collect();
+            let mut visited = std::collections::HashSet::new();
+            let mut stack: Vec<_> = crossings.into_iter().map(|idx| (idx, 0)).collect();
+            while let Some((idx, depth)) = stack.pop() {
+                if depth >= sync_sets::MAX_DEPTH || !visited.insert(idx) {
+                    continue;
+                }
+                if let Some(o) = world.objects.get_mut_untracked(idx) {
+                    o.render.needs_records = true;
+                    let key = o.key;
+                    self.sets.dirty.insert(idx);
+                    stack.extend(world.objects.children_of(&key).iter().map(|&child| (child, depth + 1)));
+                }
+            }
+        }
+    }
+
     /// Bring GPU records up to date, visiting only the objects that need it
     /// (sync_sets.rs): what moves (avatars, their attachments, moving
     /// linksets), what changed, what waits for its geometry, and this
@@ -2303,6 +2340,15 @@ impl Scene {
     /// full `sync_object`. What an avatar wears is placed by the GPU from
     /// the anchors written here (anchors.rs) and is not visited.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
+        if self.parcel_visibility_version != world.parcel_visibility.version {
+            self.parcel_visibility_version = world.parcel_visibility.version;
+            for (idx, object) in world.objects.slots.iter_mut().enumerate() {
+                if let Some(object) = object {
+                    object.render.needs_records = true;
+                    self.sets.dirty.insert(idx);
+                }
+            }
+        }
         let rlva_state = (
             world.rlva.camera_texture(),
             world.rlva.has("showself"),
@@ -2414,6 +2460,7 @@ impl Scene {
         }
         touched.clear();
         self.touched_tmp = touched;
+        self.sync_parcel_crossings(world);
         step(&mut slow, "touched");
         // a new material generation: the faces using materials are rebuilt
         let mat_gen = self.materials.generation;
@@ -2994,6 +3041,28 @@ impl Scene {
     }
 
     fn sync_object(&mut self, renderer: &mut Renderer, world: &mut World, idx: usize, now: Instant, view: &CullView, xf: Option<Xf>) {
+        let parcel_visibility = world.parcel_object_visibility(idx);
+        if parcel_visibility != Some(true) {
+            if let Some(mut g) = self.gpu.get_mut(idx).map(std::mem::take) {
+                self.release_obj(renderer, idx, &mut g);
+            }
+            if let Some(g) = self.gpu.get_mut(idx) {
+                g.parcel_hidden = true;
+            }
+            self.anchors.forget(idx);
+            self.pick.remove(idx);
+            self.list_index.remove(idx);
+            self.sets.lod.forget(idx);
+            if let Some(object) = world.objects.get_mut_untracked(idx) {
+                object.render.needs_records = parcel_visibility.is_none();
+                object.shape_dirty = false;
+                object.material_dirty = false;
+            }
+            return;
+        }
+        if let Some(g) = self.gpu.get_mut(idx) {
+            g.parcel_hidden = false;
+        }
         self.note_light(world, idx);
         let Some((pos, rot, hud)) = xf.or_else(|| Self::object_transform_in(world, idx, now, 0, Some(&self.xf_cache))) else {
             return;

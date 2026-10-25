@@ -2783,7 +2783,11 @@ impl App {
                     self.build.physics_materials_known.insert(local_id);
                 }
             }
-            NetEvent::SelectedParcel { handle, sequence, parcel } => self.build.on_selected_parcel(handle, sequence, parcel),
+            NetEvent::SelectedParcel { handle, sequence, parcel } => {
+                if !self.world.parcel_visibility_reply(handle, sequence, parcel.clone()) {
+                    self.build.on_selected_parcel(handle, sequence, parcel);
+                }
+            }
             NetEvent::HoverParcel { handle, parcel } => self.on_hover_parcel(handle, parcel),
             NetEvent::LoginProgress { message, fraction } => {
                 self.loading_stage = message.clone();
@@ -6648,6 +6652,21 @@ impl App {
         }
         // About Land requests (selection and its refresh, lists, covenant...)
         self.world.land.tick(Instant::now());
+        if self.demo && std::env::var_os("AURORA_DEMO_PARCEL_VISIBILITY").is_some() {
+            let position = self.world.agent.position;
+            let local_id = 1 + i32::from(position.x < 128.0) + 2 * i32::from(position.y < 128.0);
+            if self.world.parcel.as_ref().is_none_or(|p| p.local_id != local_id) {
+                let parcel = crate::demo::parcel_visibility::parcel_at(position.x, position.y);
+                self.world.parcel_name.clone_from(&parcel.name);
+                self.world.parcel = Some(parcel);
+            }
+        }
+        for command in self
+            .world
+            .update_parcel_visibility(&self.settings.parcel_visibility, Instant::now())
+        {
+            self.send(command);
+        }
         for c in self.world.land.take_commands() {
             self.send(c);
         }
@@ -11436,6 +11455,7 @@ impl App {
                 .collect();
         }
         self.options_ui.rlva_restrictions = self.world.rlva.restrictions();
+        self.options_ui.current_parcel = self.world.current_parcel_entry();
         self.options_ui.rlva_camera_preset_locked = self.world.rlva.camera_preset_locked(uuid::Uuid::nil());
         self.options_ui.rlva_camera_fov_locked = self.world.rlva.camera_owner().is_some();
         self.options_ui.joystick = self.joystick.snapshot.clone();
@@ -14860,6 +14880,9 @@ impl ApplicationHandler for App {
                 if let Some(e) = self.world.apply(ev) {
                     self.on_app_event(e);
                 }
+            }
+            if let Ok(mode) = std::env::var("AURORA_DEMO_PARCEL_VISIBILITY") {
+                crate::demo::parcel_visibility::install(&mut self.world, &mut self.settings, &mode);
             }
             // AURORA_DEMO_APPLINKS: a link of each `secondlife:///app/...`
             // command, in a conversation and in the bubbles

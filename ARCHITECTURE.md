@@ -23,6 +23,16 @@ follows the complete animated eye midpoint in every posture, including rendered
 hover; it moves only the camera position, preserving mouse-controlled world-space
 aim.
 
+`world/parcel_visibility.rs` owns saved parcel-isolation modes, region UUID/local
+parcel identities and exact bitmap membership. Optional same-owner discovery
+walks adjoining parcel cells, including connected region borders, with bounded
+independent `BuildCmd::ParcelRequest` sequences from 1,000,000; its replies never
+enter About Land, Build selections or the agent parcel. Mask changes invalidate
+scene records once; ordinary object movement uses the existing sync scheduler.
+Hidden linksets release their draw records and visual asset references before
+geometry preparation. Lights, particles, world labels and beacons share the
+visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.
+
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer
 helper preserves rejection of malformed and null UUIDs in both HTTP requests
