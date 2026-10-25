@@ -3360,7 +3360,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
 | `AURORA_NEWS_URL=<url>` | Login news read from somewhere other than `main` |
-| `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window |
+| `AURORA_DEMO_CRASH=<mode>` | Offline crash and recovery window, or a frozen viewer ended from outside |
 | `AURORA_DEMO_CRASH_DIR=<folder>` | Isolates the crash reports of offline tests |
 | `AURORA_DEMO_CRASH_SEND=<options>` | Crash report sending with a simulated GitHub |
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
@@ -4508,12 +4508,17 @@ failure. Grid validation and any paid upload are performed by the human.
   proportions (the 2D font's images are wider than tall), and the same
   colour emojis, same size, in the input field and in the sent line.
   `AURORA_EMOJI_FONT=<file>` compares two fonts.
-- **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery`**, only
+- **`AURORA_DEMO_CRASH=panic|native|missing|normal|recovery|freeze`**, only
   with `AURORA_DEMO`: triggers a Rust panic, a native Windows
   exception, an abnormal exit without a trace, a normal close or an
-  exit without a watcher. The last mode makes it possible to check the
+  exit without a watcher. The `recovery` mode makes it possible to check the
   recovery at the next launch (relaunch with `normal`). No
-  connection and no GPU initialisation. The window must keep the language
+  connection and no GPU initialisation, except for `freeze`: the viewer
+  starts, its main thread stops answering once the window shows, and 13 s
+  later the process ends itself with exit code 1, as Task Manager's End task
+  would. The window then says "Frozen, then ended" and `public-report.md`
+  holds `| Crash | Freeze |`, `| Window | not answering for the last … s |`,
+  the main and render threads' stacks and the "Last state" table. The window must keep the language
   and the theme of the stopped session, allow the trace to be selected and
   copied and open its folder; no window after a normal
   close. The screenshots are taken after three frames of the independent

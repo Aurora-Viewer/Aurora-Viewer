@@ -114,6 +114,13 @@ try {
     Assert-Triage ($panic.Location -eq 'crates/aurora-viewer/src/app.rs:12:5') 'The panic location must be read.'
     Assert-Triage ((Get-TriageTitle $panic $panicSig) -eq 'Crash: Rust panic in wgpu_core::submit') 'Unexpected panic title.'
     Assert-Triage ((Get-TriageTitle $r $sig) -eq 'Crash: native exception 0xC0000005 in aurora_render::cull') 'Unexpected native title.'
+    # A frozen window: the main thread's stack, its own kind of signature.
+    $freeze = Read-CrashReport (New-Report 'Freeze' @('00 kernelbase+0x2dda7', '01 aurora_viewer+0x1015', '02 aurora_viewer+0x2011'))
+    Assert-Triage ($freeze.Kind -eq 'Freeze') 'A freeze report must be read.'
+    $freezeSig = Get-CrashSignature $freeze (Get-SymbolizedFrames $freeze $symFile)
+    Assert-Triage ((@($freezeSig.Frames) -join '|') -eq 'aurora_render::cull|aurora_render::draw|aurora_viewer::run::closure') "Unexpected freeze signature frames: $(@($freezeSig.Frames) -join '|')"
+    Assert-Triage ($freezeSig.Id -ne $sig.Id) 'A freeze is not the crash at the same place.'
+    Assert-Triage ((Get-TriageTitle $freeze $freezeSig) -eq 'Crash: freeze in aurora_render::cull') 'Unexpected freeze title.'
 
     # Without symbols: offsets of this exact build.
     $bare = Get-SymbolizedFrames $r $null

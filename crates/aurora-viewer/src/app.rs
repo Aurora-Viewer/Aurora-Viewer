@@ -43,6 +43,7 @@ mod click_pick;
 mod color_picker;
 mod context_menu;
 mod controls;
+mod crash_state;
 mod cursor_hold;
 mod derender;
 mod describe;
@@ -565,6 +566,8 @@ pub struct App {
     stream_title_said: Option<String>,
     /// Every sound is cut because the window is minimised (MuteWhenMinimized).
     minimized_mute: bool,
+    /// When the crash report's state was last noted (app/crash_state.rs).
+    crash_state_at: Option<Instant>,
     /// The Down key's latch (FSCrouchToggle).
     crouch_toggle: crate::movement::crouch_toggle::CrouchToggle,
     music_parcel_url: String,
@@ -1174,6 +1177,7 @@ impl App {
             stream_url: String::new(),
             stream_title_said: None,
             minimized_mute: false,
+            crash_state_at: None,
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
             music_override: None,
@@ -8737,6 +8741,8 @@ impl App {
             // shown once, with the focus (window_show.rs)
             crate::window_show::show(&gfx.window, gfx.maximize_on_show);
             log::info!("startup window shown after the first presented frame");
+            crate::crash::watch_window(&gfx.window);
+            crate::crash::demo_freeze();
         }
         if stats.presented && !self.update_acknowledged {
             self.update_acknowledged = true;
@@ -9169,6 +9175,7 @@ impl App {
         self.end_profile_frame(w, h);
         self.end_deep_profile(&gfx.renderer);
         self.monitor_frame(&gfx.renderer);
+        self.crash_state(&gfx.renderer, &gfx.window);
         self.gfx = Some(gfx);
         self.release_postponed_cursor();
         // the clicks whose depth came back with this frame's hand-over

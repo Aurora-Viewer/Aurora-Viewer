@@ -304,6 +304,13 @@ impl Renderer {
                 log::error!("{line}");
             }
         }));
+        // A driver reset (TDR), a removed card or another program taking the
+        // GPU: said in the log, where the crash report finds it. `Destroyed`
+        // is the device's own end at shutdown.
+        device.set_device_lost_callback(|reason, message| match reason {
+            wgpu::DeviceLostReason::Destroyed => log::info!("GPU device released: {message}"),
+            _ => log::error!("GPU device lost ({reason:?}): {message}"),
+        });
         let info = GpuInfo {
             name: ainfo.name.clone(),
             backend: format!("{:?}", ainfo.backend),

@@ -56,6 +56,8 @@ pub fn show(dir: &Path, record: super::Record, summary: super::summary::Summary)
             aurora_i18n::tr!("crash-reason-rust")
         } else if dir.join("native.txt").metadata().is_ok_and(|m| m.len() > 0) {
             aurora_i18n::tr!("crash-reason-native")
+        } else if dir.join("freeze.txt").metadata().is_ok_and(|m| m.len() > 0) {
+            aurora_i18n::tr!("crash-reason-freeze")
         } else {
             aurora_i18n::tr!("crash-reason-unknown")
         },
@@ -98,6 +100,8 @@ struct Sending {
     github: super::github::Session,
     preview: bool,
     description: String,
+    /// The tester's answer: their graphics drivers are up to date.
+    drivers_current: bool,
     sent: Option<u64>,
     automatic: bool,
     body_copied: bool,
@@ -137,6 +141,7 @@ impl Sending {
             github,
             preview: preview && mode != CrashReports::Never,
             description: String::new(),
+            drivers_current: false,
             sent,
             automatic: false,
             body_copied: false,
@@ -149,14 +154,28 @@ fn sends_automatically(mode: CrashReports, connected: bool, sent: bool) -> bool 
     mode == CrashReports::Always && connected && !sent
 }
 
-/// The tester's own words come first; HTML comments are neutralized so
-/// they cannot imitate the markers the triage reads.
-fn issue_body(report: &str, description: &str) -> String {
+/// A report sent by hand needs the tester's words: a stack alone rarely
+/// says what led to it.
+const MIN_DESCRIPTION: usize = 10;
+
+fn described(description: &str) -> bool {
+    description.trim().chars().count() >= MIN_DESCRIPTION
+}
+
+/// The tester's own words come first, then their answer about the
+/// drivers (`None`: sent automatically, nobody asked); HTML comments are
+/// neutralized so they cannot imitate the markers the triage reads.
+fn issue_body(report: &str, description: &str, drivers_current: Option<bool>) -> String {
     let description = description.trim();
-    if description.is_empty() {
+    let drivers = drivers_current.map(|current| format!("GPU drivers up to date (tester): {}\n\n", if current { "yes" } else { "no or not sure" }));
+    if description.is_empty() && drivers.is_none() {
         return report.to_owned();
     }
-    format!("### What happened\n\n{}\n\n{report}", description.replace("<!--", "&lt;!--"))
+    format!(
+        "### What happened\n\n{}\n\n{}{report}",
+        description.replace("<!--", "&lt;!--"),
+        drivers.unwrap_or_default()
+    )
 }
 
 impl Recovery {
@@ -174,7 +193,7 @@ impl Recovery {
         }
         if !self.sending.automatic && sends_automatically(self.sending.mode, self.sending.github.connected(), self.sending.sent.is_some()) {
             self.sending.automatic = true;
-            let body = issue_body(&self.summary.body, "");
+            let body = issue_body(&self.summary.body, "", None);
             self.sending.github.send(self.summary.title.clone(), body);
         }
         // Bug report form (disabled, see main.rs):
@@ -367,8 +386,18 @@ impl Recovery {
                 .char_limit(2000)
                 .desired_width(f32::INFINITY),
         );
+        ui.add_space(6.0);
+        ui.add_enabled_ui(!busy, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                widgets::checkbox(ui, p, &mut self.sending.drivers_current, aurora_i18n::tr!("crash-drivers-current"));
+                if let Some(gpu) = &self.summary.gpu {
+                    ui.label(RichText::new(aurora_i18n::tr!("crash-drivers-found", gpu = gpu.clone())).color(p.muted));
+                }
+            });
+        });
         ui.add_space(10.0);
-        let body = issue_body(&self.summary.body, &self.sending.description);
+        let described = described(&self.sending.description);
+        let body = issue_body(&self.summary.body, &self.sending.description, Some(self.sending.drivers_current));
         let height = (ui.available_height() - 104.0).max(120.0);
         egui::Frame::new()
             .fill(p.field)
@@ -416,6 +445,8 @@ impl Recovery {
             ui.colored_label(p.danger, failure.message());
         } else if self.sending.body_copied {
             ui.label(RichText::new(aurora_i18n::tr!("crash-body-copied")).color(p.muted));
+        } else if !described {
+            ui.label(RichText::new(aurora_i18n::tr!("crash-description-required")).color(p.amber));
         } else {
             ui.label(RichText::new(aurora_i18n::tr!("crash-preview-private")).size(12.0).color(p.muted));
         }
@@ -442,7 +473,7 @@ impl Recovery {
                 if connected {
                     let publish = aurora_i18n::tr!("crash-publish");
                     if ui
-                        .add_enabled_ui(!busy, |ui| {
+                        .add_enabled_ui(!busy && described, |ui| {
                             widgets::action_button(ui, p, "send-filled", publish, ActionKind::Primary, big)
                         })
                         .inner
@@ -464,7 +495,14 @@ impl Recovery {
                 // The same text through the browser, for a tester who prefers
                 // not to authorize the app.
                 let browser = aurora_i18n::tr!("crash-open-browser");
-                if !busy && widgets::action_button(ui, p, "external-link-filled", browser, ActionKind::Flat, big).clicked() {
+                if !busy
+                    && ui
+                        .add_enabled_ui(described, |ui| {
+                            widgets::action_button(ui, p, "external-link-filled", browser, ActionKind::Flat, big)
+                        })
+                        .inner
+                        .clicked()
+                {
                     let (url, with_body) = super::github::browser_url(&self.summary.title, &body);
                     if !with_body {
                         ui.ctx().copy_text(body.clone());
@@ -685,11 +723,21 @@ mod tests {
     #[test]
     fn the_testers_words_lead_the_issue_without_imitating_its_markers() {
         let report = "<!-- aurora-crash v1 -->\n| Field | Value |";
-        assert_eq!(issue_body(report, "  \n "), report);
-        let body = issue_body(report, "I opened the map <!-- crash-signature: x -->");
-        assert!(body.starts_with("### What happened\n\nI opened the map &lt;!-- crash-signature: x -->\n\n"));
+        assert_eq!(issue_body(report, "  \n ", None), report);
+        let body = issue_body(report, "I opened the map <!-- crash-signature: x -->", Some(true));
+        assert!(body.starts_with(
+            "### What happened\n\nI opened the map &lt;!-- crash-signature: x -->\n\nGPU drivers up to date (tester): yes\n\n"
+        ));
         assert!(body.ends_with(report));
         assert_eq!(body.matches("<!--").count(), 1);
+        assert!(issue_body(report, "x", Some(false)).contains("GPU drivers up to date (tester): no or not sure"));
+    }
+
+    #[test]
+    fn a_report_sent_by_hand_needs_a_few_words() {
+        assert!(!described(""));
+        assert!(!described("   crash   "));
+        assert!(described("I was flying over the sea"));
     }
 
     #[test]

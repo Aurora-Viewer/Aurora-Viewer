@@ -1457,6 +1457,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `sys_probe.rs` | What the system knows of the process (Windows): its memory, and the CPU time of its threads by group, written as `cpu summary` every 10 s by a thread of its own (AURORA_PROFILE); while the resource monitor is open, a sampler thread (`aurora-monitor`) reads every half second the threads' groups with their priority, the load of each logical core (the system's `\Processor(*)` counters) and the media plugins' processes with those they started |
 | `disk_io.rs` | Bytes the viewer reads from and writes to its own files, by origin (texture, mesh and object caches, inventory, logs, the rest), counted where the files are touched: the resource monitor's disk rates |
 | `ui/monitor/`, `app/monitor.rs` | The resource monitor, the Performance window's full view (`ui/perf.rs` keeps the compact one and the switch between them): `mod.rs` the rail of eight sections, the status bar, the CSV report; `model.rs` what each part of the viewer costs in processor, frame time, GPU, memory, video memory, network and disk, attributed from the thread loads, the frame's steps, the GPU timers, the probes and the disk counters (nothing measured stays unknown); `snapshot.rs` the half-second snapshot and a minute of history; `draw.rs` its cards, graphs, segmented bars and tables; one file per section (`overview.rs`, `subsystems.rs`, `threads.rs`, `memory.rs`, `network.rs`, `disk.rs`, `scene.rs`, `region.rs`); `app/monitor.rs` turns the measures on while the view shows (frame profile and probes without a log line, the sampler), gathers the snapshot, lists the scene's costliest avatars and objects and answers the monitor's actions |
+| `app/crash_state.rs` | What a crash report says the viewer was doing: every 2 seconds the screen, frame rate, window size, graphics preset, video memory, texture pressure and counts handed to `crash/watchdog.rs` (numbers and fixed names only). |
 | `scene/lights.rs` | Local lights of the frame: the prim lights closest to the camera (range × 1.5, falloff, colour) and, for those that have a texture, their projector — cone computed from the position, the rotation and the size of the prim (`aurora-render` `Projector`), texture reserved as long as the light stays in the list; choice of the two projectors that cast shadows (the most present on screen) and fade of their shadow maps (`SpotShadowSlots`) |
 | `scene/animesh.rs` | Standalone skeletons of the animated objects, animations of the linkset, bounds of the poses for culling and shadows, demo scenario |
 | `scene/body_physics.rs` | Avatar body physics (LLPhysicsMotion): six springs per avatar wearing a physics layer, driven by the world motion of its chest and pelvis at a fixed step, move the LEFT_PEC / RIGHT_PEC / BELLY / BUTT collision volumes of the posed palette (what mesh bodies are rigged to), in the parallel pose loop; detail and on/off from Preferences › Graphics |
@@ -2269,11 +2270,29 @@ installation folder after the viewer has stopped. It never relaunches the
 viewer. The native stacks (exception and Rust panic) are written as
 `module+0xoffset` with each module's PDB identity, read from the PE headers
 in memory: the only form that can be symbolized after the process is gone.
+The watcher also keeps a hidden window that hears Windows end the session
+(`system-ending`): a viewer stopped by a shutdown is not reported.
+
+`watchdog.rs` is the session's sign of life, on its own thread: every
+5 seconds `alive.txt` (the time, the last time the window answered, the
+process memory and the state `app/crash_state.rs` notes every 2 seconds:
+screen, frame rate, window size, graphics preset, video memory, texture
+pressure, objects, avatars, regions; numbers and fixed names only). When
+Windows considers the window hung (`IsHungAppWindow`, the test behind "Not
+responding"), it suspends the main and render threads one after the other,
+unwinds their stacks from their registers into a fixed array
+(`native::write_thread_stack`) and writes them to `freeze.txt`, again every
+15 seconds; the file goes away when the window answers again. A session
+that ends with it is reported as a freeze with those stacks; a session
+whose watcher died with it (process tree ended, Windows gone) gets its
+duration from `alive.txt`.
 
 `summary.rs` builds the public text of a crash report (`public-report.md` in
 the session folder, written before the window opens): only values of a known
 shape, re-validated from the session files, and the closed log vocabulary of
-`privacy.rs`. The raw traces, panic messages, paths and the log stay local.
+`privacy.rs` (time before the end, level, Rust module and failure kind of
+each warning, repeats folded). The raw traces, panic messages, paths and the
+log stay local.
 `github.rs` publishes that text as a GitHub issue in the tester's name: the
 GitHub App's Device Flow on a worker thread, the authorization in the system
 credential store (`keyring`), refreshed without client secret; the window
