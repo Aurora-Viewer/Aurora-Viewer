@@ -14,9 +14,10 @@
 //! login screen rather than a modal.
 
 /// NVIDIA driver older than this (major.minor) is out of date: 572.16 is
-/// the Game Ready driver of January 2025 (Vulkan 1.4, the first branch of
-/// the GeForce RTX 50 series). Maxwell and Pascal cards get it too (their
-/// last branch is 580, then security updates). Review at each release.
+/// the Game Ready driver of 30 January 2025, the first with the GeForce
+/// RTX 5090 / 5080 (https://www.nvidia.com/en-us/drivers/details/240794/).
+/// Maxwell and Pascal cards get it too (their last full branch is 580,
+/// then security updates). Review at each release.
 pub const NVIDIA_MINIMUM: (u32, u32) = (572, 16);
 /// Kepler cards (GeForce 600 / 700 series) stopped at the 470 branch; its
 /// last security update is 474.89 (2024).
