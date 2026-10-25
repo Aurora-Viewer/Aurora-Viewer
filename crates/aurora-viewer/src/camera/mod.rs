@@ -161,7 +161,7 @@ pub struct FrameInput {
     /// Focus object belongs to the edit selection: follow it only on request.
     pub edit_tracking: Option<bool>,
     /// Animated point between the eyes relative to the rendered avatar root.
-    /// Seated mouselook consumes the current pose, after skeleton evaluation.
+    /// Sitting and optional eye following consume it after skeleton evaluation.
     pub eye_offset: Option<Vec3>,
     pub draw_distance: f32,
     pub aspect: f32,
@@ -179,6 +179,10 @@ struct AvatarFrame {
     follow_root: Vec3,
     /// Seated avatar render rotation, including its local rotation.
     rotation: Option<Quat>,
+    /// Complete rendered root, including hover even when camera hover is off.
+    render_root: Vec3,
+    /// Rendered body rotation, also available without a seat parent.
+    render_rotation: Quat,
     /// Rotation of the object we sit on.
     seat: Option<Quat>,
 }
@@ -332,6 +336,8 @@ impl Default for Camera {
                 position: start,
                 follow_root: start,
                 rotation: None,
+                render_root: start,
+                render_rotation: Quat::IDENTITY,
                 seat: None,
             },
             head: start + Vec3::Z * 0.7,
@@ -352,6 +358,16 @@ impl Default for Camera {
 impl Camera {
     pub fn mouselook(&self) -> bool {
         self.mode == CameraMode::Mouselook
+    }
+
+    /// LLAgentCamera::cameraMouselook: visibility changes only once the
+    /// incoming transition reaches the head buffer, not on the mode request.
+    pub fn first_person_view(&self) -> bool {
+        self.mouselook() && self.last_mode == CameraMode::Mouselook
+    }
+
+    pub fn needs_animated_eyes(&self, agent: &AgentState, s: &CameraSettings) -> bool {
+        self.mouselook() && (agent.is_sitting() || s.mouselook_follow_eyes)
     }
 
     pub fn forward(&self) -> Vec3 {
@@ -1399,6 +1415,7 @@ impl Camera {
         if !self.initialized {
             self.initialized = true;
             self.anim = None;
+            self.last_mode = self.mode;
             self.lag = Vec3::ZERO;
             self.current_distance = self.target_distance;
             self.current_fov_zoom = self.fov_zoom;
@@ -1431,10 +1448,14 @@ impl Camera {
                     )
                 } else {
                     self.anim = None;
+                    self.last_mode = self.mode;
                     (camera_target, focus_target)
                 }
             }
-            None => (camera_target, focus_target),
+            None => {
+                self.last_mode = self.mode;
+                (camera_target, focus_target)
+            }
         };
 
         // smoothing: relative to the avatar when following it (the avatar
@@ -1545,13 +1566,26 @@ impl Camera {
         Some(p + r * if eye { sit.eye } else { sit.at })
     }
 
-    fn mouselook_eye(&self, agent: &AgentState, eye_offset: Option<Vec3>) -> Vec3 {
+    fn mouselook_eye(&self, agent: &AgentState, s: &CameraSettings, eye_offset: Option<Vec3>) -> Vec3 {
+        let posed = eye_offset.filter(|p| p.is_finite());
+        // Requested opt-in: follow the eye midpoint's translation, never the
+        // head's rotation. calc_focus_target keeps the mouse's world-space aim.
+        if s.mouselook_follow_eyes
+            && let Some(eyes) = posed
+        {
+            return self.avatar.render_root + self.avatar.render_rotation * eyes;
+        }
         if let Some(rotation) = self.avatar.rotation {
             // LLVOAvatar::updateHeadOffset / LLAgentCamera::calcCameraPositionTargetGlobal:
             // seated eyes follow the full animated pose through the avatar and
             // seat rotations, including the legacy 0.1 m local eye adjustment.
-            let eyes = eye_offset.filter(|p| p.is_finite()).unwrap_or(Vec3::new(0.12, 0.0, HEAD_HEIGHT));
+            let eyes = posed.unwrap_or(Vec3::new(0.12, 0.0, HEAD_HEIGHT));
             self.avatar.root + rotation * (eyes + Vec3::Z * 0.1)
+        } else if agent.ground_sit {
+            // Legacy Viewer's parentless sitting branch uses the posed eye
+            // height and the same 0.1 m adjustment, without head X/Y motion.
+            let height = posed.map_or(HEAD_HEIGHT, |eyes| eyes.z) + 0.1;
+            self.avatar.root + self.avatar.render_rotation * Vec3::Z * height
         } else {
             self.avatar.position + Vec3::Z * HEAD_HEIGHT + agent.forward() * 0.12
         }
@@ -1561,7 +1595,7 @@ impl Camera {
     fn calc_camera_target(&mut self, world: &World, s: &CameraSettings, f: &FrameInput) -> Vec3 {
         let agent = &world.agent;
         let mut camera = match self.mode {
-            CameraMode::Mouselook => self.mouselook_eye(agent, f.eye_offset),
+            CameraMode::Mouselook => self.mouselook_eye(agent, s, f.eye_offset),
             CameraMode::Follow if self.focus_on_avatar => self.follow.eye,
             CameraMode::ThirdPerson if self.focus_on_avatar => match self.sit_camera_point(world, f.now, true) {
                 Some(p) => p,
@@ -1765,6 +1799,8 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
         position: agent.position,
         follow_root: agent.position,
         rotation: None,
+        render_root: agent.position,
+        render_rotation: Quat::from_rotation_z(agent.yaw),
         seat: None,
     };
     let id = world.agent_id;
@@ -1794,6 +1830,8 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
         position,
         follow_root: root,
         rotation: seat.map(|_| rotation),
+        render_root: position + axis * (shape + world.appearance_hover(&id)),
+        render_rotation: rotation,
         seat,
     }
 }
@@ -2677,6 +2715,110 @@ mod tests {
         }
         assert!(cam.anim.is_none());
         assert!(cam.position.distance(Vec3::new(128.12, 128.0, 25.7)) < 0.01, "{:?}", cam.position);
+    }
+
+    #[test]
+    fn mouselook_visibility_waits_for_the_entry_transition() {
+        let s = CameraSettings {
+            zoom_time: 1.0,
+            ..Default::default()
+        };
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &s);
+        camera.change_to_mouselook(&mut world.agent, &s, true);
+        assert!(!camera.first_person_view(), "a mode request must not hide the head");
+        let mut visible_frames = 0;
+        for _ in 0..120 {
+            camera.update(&mut world, &s, &frame(1.0 / 120.0));
+            if camera.anim.is_some() {
+                visible_frames += 1;
+                assert!(!camera.first_person_view());
+            } else {
+                assert!(camera.first_person_view());
+                assert!(
+                    camera
+                        .position
+                        .abs_diff_eq(world.agent.position + Vec3::new(0.12, 0.0, HEAD_HEIGHT), 1e-5)
+                );
+                break;
+            }
+        }
+        assert!(visible_frames > 60, "the head stays visible through the approach");
+        camera.start_animation(&s);
+        assert!(camera.first_person_view(), "a same-mode animation must not restore the head");
+        camera.change_to_default(&mut world.agent, &s);
+        assert!(!camera.first_person_view());
+        camera.change_to_mouselook(&mut world.agent, &s, false);
+        camera.update(&mut world, &s, &frame(1.0 / 60.0));
+        assert!(camera.first_person_view(), "instant entry has no approach to wait for");
+    }
+
+    #[test]
+    fn ground_mouselook_uses_the_posed_height_and_restores_standing() {
+        let mut world = hover_world(false);
+        let mut settings = CameraSettings::default();
+        let mut camera = Camera::default();
+        settle(&mut camera, &mut world, &settings);
+        world.agent.ground_sit = true;
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        for follow_hover in [false, true] {
+            settings.hover_affects_camera = follow_hover;
+            world.hover_height.preview(0.3);
+            for height in [-0.25, 0.1, 0.4] {
+                let mut input = frame(1.0 / 60.0);
+                input.eye_offset = Some(Vec3::new(0.5, -0.3, height));
+                assert!(camera.needs_animated_eyes(&world.agent, &settings));
+                camera.update(&mut world, &settings, &input);
+                let expected = camera.avatar.root + camera.avatar.render_rotation * Vec3::Z * (height + 0.1);
+                assert!(camera.position.abs_diff_eq(expected, 1e-5), "{:?} vs {expected:?}", camera.position);
+            }
+        }
+        world.agent.ground_sit = false;
+        camera.update(&mut world, &settings, &frame(1.0 / 60.0));
+        assert!(!camera.needs_animated_eyes(&world.agent, &settings));
+        let expected = camera.avatar.position + Vec3::Z * HEAD_HEIGHT + world.agent.forward() * 0.12;
+        assert!(camera.position.abs_diff_eq(expected, 1e-5));
+    }
+
+    #[test]
+    fn mouselook_eye_following_moves_the_position_without_rotating_mouse_aim() {
+        let mut settings = CameraSettings {
+            mouselook_follow_eyes: true,
+            hover_affects_camera: true,
+            ..Default::default()
+        };
+        for (seated, ground) in [(false, false), (false, true), (true, false)] {
+            let mut world = hover_world(seated);
+            world.agent.ground_sit = ground;
+            world.hover_height.preview(0.2);
+            let mut camera = Camera::default();
+            camera.change_to_mouselook(&mut world.agent, &settings, false);
+            let mut previous = None;
+            for (follow_hover, eyes) in [
+                (false, Vec3::new(0.1, 0.0, 0.65)),
+                (true, Vec3::new(-0.15, 0.25, 0.2)),
+                (false, Vec3::new(0.3, -0.2, -0.1)),
+            ] {
+                settings.hover_affects_camera = follow_hover;
+                let mut input = frame(1.0 / 60.0);
+                input.eye_offset = Some(eyes);
+                assert!(camera.needs_animated_eyes(&world.agent, &settings));
+                camera.update(&mut world, &settings, &input);
+                let index = world.objects.index_of_uuid(&world.agent_id).unwrap();
+                let (root, rotation, _) = Scene::object_transform(&world, index, input.now, 0).unwrap();
+                let expected = root + rotation * eyes;
+                assert!(camera.position.abs_diff_eq(expected, 2e-5));
+                let (yaw, pitch) = (world.agent.yaw, world.agent.pitch);
+                let aim = Vec3::new(yaw.cos() * pitch.cos(), yaw.sin() * pitch.cos(), pitch.sin());
+                assert!(camera.forward().abs_diff_eq(aim, 2e-5));
+                if let Some(previous) = previous {
+                    assert!(camera.position.distance(previous) > 0.1);
+                }
+                previous = Some(camera.position);
+                camera.look(30.0, -20.0, 1.0, &mut world.agent);
+            }
+        }
     }
 
     #[test]

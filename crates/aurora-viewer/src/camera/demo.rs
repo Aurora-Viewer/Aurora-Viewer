@@ -19,6 +19,9 @@
 //! - `tag`: left press on our own name tag at frame 600, drag (steer the
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
+//! - `ground-ml-body-on|off`: ground sit at 520, enter at 600, stand at 760.
+//! - `ml-eyes-on-body-on|ml-eyes-off-body-on`: animate the head with optional
+//!   eye following; prefix `ground-` to exercise ground sitting.
 //! - `wheel`: 3 wheel clicks out at 600, 12 in at 650 (into mouselook)
 //! - `ml-zoom`: into mouselook at 600, right button held at 640 (no zoom
 //!   yet: the normal angle stays until the wheel sets one), 3 wheel clicks in at
@@ -62,6 +65,7 @@ pub enum Step {
     /// Enable toggle crouch and hold / release its Down input.
     Crouch(bool),
     ToggleMouselook,
+    GroundSit,
     /// Wheel clicks, SL sign (positive zooms out).
     Wheel(f32),
     Fly,
@@ -237,10 +241,23 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             661 => out.extend([Step::Release, Step::Log]),
             _ => {}
         },
-        "ml-body-on" | "ml-body-off" => match frame {
+        mode @ ("ml-body-on"
+        | "ml-body-off"
+        | "ground-ml-body-on"
+        | "ground-ml-body-off"
+        | "ml-eyes-on-body-on"
+        | "ml-eyes-off-body-on"
+        | "ground-ml-eyes-on-body-on"
+        | "ground-ml-eyes-off-body-on") => match frame {
+            520 | 760 if mode.starts_with("ground-") => out.push(Step::GroundSit),
             600 | 700 => out.extend([Step::ToggleMouselook, Step::Log]),
-            620..=640 => out.push(Step::Drag(0.0, 8.0)),
-            650 | 740 => out.push(Step::Log),
+            620..=640 => {
+                out.push(Step::Drag(0.0, 8.0));
+                if matches!(frame, 620 | 625) {
+                    out.push(Step::Log);
+                }
+            }
+            605 | 610 | 615 | 650 | 680 | 740 | 800 => out.push(Step::Log),
             _ => {}
         },
         "ml" => match frame {

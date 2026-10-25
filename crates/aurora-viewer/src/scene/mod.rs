@@ -5708,7 +5708,7 @@ mod tests {
         let mut scene = Scene::new(Default::default(), lib.clone());
         scene.palette_base(owner);
         let mut camera = Camera::default();
-        let settings = CameraSettings {
+        let mut settings = CameraSettings {
             hover_affects_camera: true,
             ..Default::default()
         };
@@ -5755,6 +5755,12 @@ mod tests {
             let index = world.objects.index_of_uuid(&owner).unwrap();
             let rotation = Scene::object_transform(&world, index, now, 0).unwrap().1;
             assert!(camera.position.abs_diff_eq(eyes + rotation * Vec3::Z * 0.1, 2e-5));
+            let aim = camera.forward();
+            settings.mouselook_follow_eyes = true;
+            camera.update(&mut world, &settings, &input);
+            assert!(camera.position.abs_diff_eq(eyes, 2e-5), "follow the actual posed midpoint");
+            assert!(camera.forward().abs_diff_eq(aim, 2e-5), "head motion must not rotate the camera");
+            settings.mouselook_follow_eyes = false;
             if let Some(previous) = previous {
                 assert!(eyes.distance(previous) > 0.1, "the animation must move the eyes");
             }

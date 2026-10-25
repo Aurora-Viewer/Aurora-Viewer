@@ -223,6 +223,11 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 &field!(camera.show_avatar_in_mouselook),
             );
             cx.toggle(
+                tr!("ui-options-camera-follow-eyes"),
+                tr!("ui-options-camera-follow-eyes-tip"),
+                &field!(camera.mouselook_follow_eyes),
+            );
+            cx.toggle(
                 tr!("ui-options-camera-alt-right-click-menu"),
                 tr!("ui-options-camera-alt-right-click-menu-tip"),
                 &field!(camera.mouselook_alt_right_menu),

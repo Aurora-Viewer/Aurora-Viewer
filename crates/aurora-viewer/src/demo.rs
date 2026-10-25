@@ -578,6 +578,26 @@ pub fn first_person_visibility_events() -> Vec<NetEvent> {
     vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
 }
 
+/// Head turn and nod for testing eye-position following without camera rotation.
+pub fn first_person_eye_animation() -> aurora_assets::Animation {
+    use aurora_assets::anim::{JointMotion, RotKey};
+    let mut animation = idle_animation();
+    animation.base_priority = 6;
+    animation.joints.push(JointMotion {
+        joint_name: "mHead".into(),
+        priority: -1,
+        rot_keys: [(0.0, 0.0), (1.0, 0.9), (2.0, 0.0), (3.0, -0.9), (4.0, 0.0)]
+            .into_iter()
+            .map(|(time, angle)| RotKey {
+                time,
+                rotation: Quat::from_rotation_z(angle) * Quat::from_rotation_y(angle * 0.6),
+            })
+            .collect(),
+        pos_keys: Vec::new(),
+    });
+    animation
+}
+
 /// The Photo Album (FT_SNAPSHOT_CATEGORY), empty until a photo is saved.
 const PHOTO_ALBUM_FOLDER: u128 = 31;
 

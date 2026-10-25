@@ -7,6 +7,8 @@ are classified once, independently of their material or skinning. Mouselook and
 the own-avatar slot travel in the existing culling frame; GPU and CPU main lists
 hide those faces without rebuilding records or disturbing the enabled body's
 shadow/reflection geometry. HUDs and other avatars keep their ordinary visibility.
+Camera visibility uses the completed mouselook transition, keeping the head
+visible throughout the incoming approach (Legacy Viewer `cameraMouselook`).
 
 Seated first-person camera updates run after `Scene::update_poses`, sharing the
 current animated eye positions used by look-at (`Scene::eyes_offset`). The camera
@@ -14,7 +16,12 @@ transforms that offset through the avatar and seat, applying shape and optional
 hover once. Position constraints move the eye and focus together so mouse pitch
 remains independent of terrain clamping. Seated first-person AgentUpdate controls
 use that same displayed camera frame while retaining movement, script and RLVa
-flags. The ordinary standing view is retained.
+flags. Ground sitting uses the same deferred pose update and the Legacy Viewer
+parentless eye-height rule. The ordinary standing view is retained by default.
+The optional `CameraSettings::mouselook_follow_eyes` preference (off) instead
+follows the complete animated eye midpoint in every posture, including rendered
+hover; it moves only the camera position, preserving mouse-controlled world-space
+aim.
 
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer

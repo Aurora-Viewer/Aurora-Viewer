@@ -539,6 +539,16 @@ when unfocused") is ignored during a screenshot.
   seated (the same frame numbers as the seated camera scenarios). Returning to
   third person restores every own part. Preferences › Camera › Mouselook has
   the persisted switch, initially off; `AURORA_DEMO_OPTIONS=camera/2` opens it.
+  Capture 605/610/615/620/625 during entry: the head and head attachments stay
+  visible through the approach and disappear only when the camera reaches
+  first person. `ground-ml-body-on|ground-ml-body-off` sit on the ground at
+  520, use the same first-person sequence, and stand at 760; capture 650/800
+  to check posed eye height and standing restoration. The separate persisted
+  **Attach the camera between the eyes** preference defaults off. With it on,
+  every mouselook pose follows the current eye midpoint's position while the
+  viewing direction remains controlled by the mouse. `ml-eyes-on-body-on` /
+  `ml-eyes-off-body-on` animate the head for comparison (650/680); prefix
+  `ground-` to exercise the same setting on the ground.
   Right-button scenarios also take physical cursor coordinates `(x,y)`:
   `right-click,x,y` moves slightly on both axes; `right-jitter,x,y` repeats
   small back-and-forth movements for 60 frames. Both must keep the camera

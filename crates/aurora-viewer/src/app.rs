@@ -3194,11 +3194,31 @@ impl App {
         use crate::camera::demo::Step;
         if spec.ends_with("-body-on") || spec.ends_with("-body-off") {
             self.settings.camera.show_avatar_in_mouselook = spec.ends_with("-body-on");
+            self.settings.camera.mouselook_follow_eyes = spec.contains("-eyes-on");
             if self.frame_count == 500 {
                 for event in crate::demo::first_person_visibility_events() {
                     self.world.apply(event);
                 }
             }
+        }
+        if spec.contains("-eyes-") && self.frame_count == 540 {
+            let id = uuid::Uuid::from_u128(0x1015_eeee);
+            self.scene.anims.insert(
+                id,
+                Arc::new(crate::scene::anim::BoundAnim::bind(
+                    crate::demo::first_person_eye_animation(),
+                    &self.world.avatar_lib.rig,
+                )),
+            );
+            let mut anims = vec![(id, 1)];
+            if self.world.agent.ground_sit {
+                anims.push((crate::world::body::ANIM_SIT_GROUND_CONSTRAINED, 1));
+            }
+            self.world.apply(NetEvent::AvatarAnimations {
+                avatar: self.world.agent_id,
+                anims,
+                sources: Vec::new(),
+            });
         }
         for step in crate::camera::demo::steps(spec, self.frame_count) {
             match step {
@@ -3235,6 +3255,7 @@ impl App {
                     }
                 }
                 Step::ToggleMouselook => self.toggle_mouselook(),
+                Step::GroundSit => self.toggle_ground_sit(),
                 Step::Wheel(clicks) => self.camera_wheel(clicks),
                 Step::Fly => self.world.agent.flying = true,
                 Step::FollowEvents => {
@@ -7125,9 +7146,9 @@ impl App {
                 eye_offset: None,
                 draw_distance: self.settings.draw_distance,
             };
-            if frame.edit_tracking.is_some() || (self.camera.mouselook() && self.world.agent.seated) {
+            if frame.edit_tracking.is_some() || self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                 // Evaluate the focused edit selection after the local drag,
-                // and seated first-person eyes after this frame's animation.
+                // and first-person eyes after this frame's animation.
                 late_camera_frame = Some(frame);
             } else {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
@@ -7187,7 +7208,7 @@ impl App {
             if !self.world.agent.flying && self.world.rlva.has("jump") {
                 c.control_flags &= !control::UP_POS;
             }
-            if late_camera_frame.is_some() && self.camera.mouselook() && self.world.agent.seated {
+            if late_camera_frame.is_some() && self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                 late_controls = Some(c);
             } else {
                 self.net.set_controls(c);
@@ -7620,7 +7641,7 @@ impl App {
             let camera_changed = late_camera_frame.is_some() || panned;
             if let Some(mut frame) = late_camera_frame {
                 frame.eye_offset = self.scene.eyes_offset(&self.world, &self.world.agent_id);
-                if self.camera.mouselook() && self.world.agent.seated {
+                if self.camera.needs_animated_eyes(&self.world.agent, &self.settings.camera) {
                     frame.now = now;
                 }
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
@@ -7777,8 +7798,11 @@ impl App {
             let overlays = self.settings.world_overlays;
             self.scene
                 .update_land_overlays(&mut gfx.renderer, &self.world, overlays, &self.palette);
-            self.scene
-                .set_first_person(self.camera.mouselook().then_some(self.settings.camera.show_avatar_in_mouselook));
+            self.scene.set_first_person(
+                self.camera
+                    .first_person_view()
+                    .then_some(self.settings.camera.show_avatar_in_mouselook),
+            );
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
             let preview = if (self.focused || self.demo && self.capture.is_some())
                 && !covered
