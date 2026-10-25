@@ -1,10 +1,9 @@
 //! The cards under the links of a conversation (`link_preview.rs` decides,
 //! downloads and decodes): a picture, an animated GIF, a YouTube video that
 //! plays in its card or in a window of its own, or a card that asks before
-//! anything reaches the site. Drawn by the Aurora, Compact and Bubbles
-//! styles of the Conversations window; the Legacy lines, the History window
-//! and the chat lines at the bottom of the screen show links as text, as the
-//! Legacy Viewer does.
+//! anything reaches the site. Drawn by all four styles of the Conversations
+//! window and its detached conversations. The History window, transcript
+//! history and chat lines at the bottom of the screen show links as text.
 //!
 //! A picture's card: hovered, buttons to open it in the browser, copy it or
 //! hide the preview; a click enlarges it over the conversation (`lightbox`);

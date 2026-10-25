@@ -964,6 +964,64 @@ fn the_style_of_the_preferences_switches_the_window_live() {
     }
 }
 
+/// Switching to Lines must retain live media and the same consent cards,
+/// in the Conversations window and in an independent conversation (#976).
+#[test]
+fn link_previews_survive_style_switches_and_detached_conversations() {
+    for popped in [false, true] {
+        let mut h = Harness::new(ChatStyle::Aurora);
+        h.st.selected = Some(JANE);
+        h.st.previews.demo = true;
+        h.st.previews.settings.size = crate::link_preview::Size::Small;
+        h.world
+            .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "https://i.imgur.com/demo.gif"));
+        if popped {
+            h.st.popped.pop_out(Some(JANE), false, false, false);
+            h.open = false;
+        }
+        for style in [
+            ChatStyle::Aurora,
+            ChatStyle::Compact,
+            ChatStyle::Bubbles,
+            ChatStyle::Legacy,
+            ChatStyle::Aurora,
+        ] {
+            h.st.set_style(style);
+            let texts = h.settle();
+            assert!(
+                texts.iter().any(|t| t.source == "GIF"),
+                "{style:?}, popped={popped}: the animated picture is drawn"
+            );
+        }
+        h.st.set_style(ChatStyle::Legacy);
+        h.world
+            .conversation_line(JANE, line("Jane", JANE, ChatKind::Im, "https://example.com/picture.png"));
+        let texts = h.settle();
+        assert!(
+            texts.iter().any(|t| t.source == aurora_i18n::tr!("ui-chat-preview-not-loaded")),
+            "popped={popped}: an unknown image site still waits for consent"
+        );
+    }
+}
+
+/// Enabling cards in Lines must preserve the opt-out and never fetch links
+/// restored from transcripts.
+#[test]
+fn legacy_link_previews_respect_privacy_and_transcript_history() {
+    for (origin, enabled) in [(Origin::Live, false), (Origin::Log, true), (Origin::ServerLog, true)] {
+        let mut h = Harness::new(ChatStyle::Legacy);
+        h.st.selected = Some(JANE);
+        h.st.previews.demo = true;
+        h.st.previews.settings.ims = enabled;
+        let mut message = line("Jane", JANE, ChatKind::Im, "https://example.com/picture.png");
+        message.origin = origin;
+        h.world.conversation_line(JANE, message);
+        let texts = h.settle();
+        assert!(texts.iter().any(|t| t.source == "https://example.com/picture.png"));
+        assert!(!texts.iter().any(|t| t.source == aurora_i18n::tr!("ui-chat-preview-not-loaded")));
+    }
+}
+
 /// A conference lists who is not in it: those it started with who never
 /// joined and those who left; a role group's chat lists only who is in it.
 #[test]
