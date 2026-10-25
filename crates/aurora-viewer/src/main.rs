@@ -57,6 +57,7 @@ mod login_accounts;
 mod login_places;
 mod login_wait;
 mod lsl_keywords;
+mod machine_id;
 mod media;
 mod movement;
 mod net_profile;
@@ -149,6 +150,8 @@ fn run_viewer() -> anyhow::Result<()> {
     if crash::demo() {
         return Ok(());
     }
+    // the login's device ids, ready long before the first login
+    machine_id::start();
 
     // The global pool: the workers that help the main thread in the frame's
     // parallel loops (frame_par.rs), and the UI's parallel searches. Leave a
