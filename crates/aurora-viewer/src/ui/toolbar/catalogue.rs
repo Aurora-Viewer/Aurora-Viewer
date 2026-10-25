@@ -80,7 +80,7 @@ pub const COMMANDS: &[Command] = commands![
     "quickprefs", "adjustments-filled", "toolbar-command-quickprefs", false;
     "webbrowser", "world-filled", "toolbar-command-web-browser", false;
     "defaultchatbar", "message-filled", "toolbar-command-chat-bar", false;
-    "areasearch", "zoom-scan-filled", "toolbar-command-area-search", false;
+    "areasearch", "zoom-scan-filled", "toolbar-command-area-search", true;
     "settings_debug", "terminal-2", "toolbar-command-debug-settings", false;
     "statistics", "statistics", "toolbar-command-statistics", false;
     "soundexplorer", "music", "toolbar-command-sound-explorer", false;

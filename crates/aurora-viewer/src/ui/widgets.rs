@@ -32,7 +32,10 @@ mod unread;
 mod volume;
 mod workspace;
 pub use color::color_button;
-pub use pills::{dot_pill, dot_pill_width, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide, search_box};
+pub use pills::{
+    clearable_search_box, dot_pill, dot_pill_width, filter_field, filter_pill, filter_pill_at, filter_pill_width, pill_tab, pill_tab_wide,
+    search_box,
+};
 pub use unread::{CountSize, UnreadCount, unread_count};
 pub use volume::{VolumeScale, perceptual_override, set_perceptual_volume, volume_slider, volume_slider_with};
 pub use workspace::{
@@ -1254,7 +1257,13 @@ pub(crate) fn close_button(ui: &mut egui::Ui, p: &Palette) -> egui::Response {
 }
 
 fn title_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, size: Vec2) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let (_, resp) = ui.allocate_exact_size(size, Sense::click());
+    paint_title_button(ui, p, icon, &resp);
+    resp
+}
+
+fn paint_title_button(ui: &egui::Ui, p: &Palette, icon: &str, resp: &egui::Response) {
+    let rect = resp.rect;
     let col = if resp.hovered() { p.ink } else { p.muted };
     let c = rect.center();
     let stroke = Stroke::new(1.4, col);
@@ -1262,7 +1271,7 @@ fn title_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, size: Vec2) ->
     if let Some(t) = super::icons::global(icon) {
         let r = egui::Rect::from_center_size(c, Vec2::splat(14.0));
         painter.image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), col);
-        return resp;
+        return;
     }
     match icon {
         "x" => {
@@ -1285,7 +1294,6 @@ fn title_button_sized(ui: &mut egui::Ui, p: &Palette, icon: &str, size: Vec2) ->
             );
         }
     }
-    resp
 }
 
 /// The scroll bars of every scroll area, set once by `Theme::apply`: thin and

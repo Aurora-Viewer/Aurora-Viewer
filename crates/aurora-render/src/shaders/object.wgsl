@@ -537,6 +537,18 @@ fn fs_depth_contact(in: VsOut) {
     }
 }
 
+// Depth of the rigged blended faces nearly opaque, before any of their
+// colour (RiggedBlendDepth::Runs): what such a texel hides behind it
+// shows through it by 5 % at most, while a fainter one, a soft strand edge,
+// must not hide the strands drawn after it (#935).
+@fragment
+fn fs_depth_opaque(in: VsOut) {
+    let rec = records[in.record];
+    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.95) {
+        discard;
+    }
+}
+
 struct Material {
     color: vec4<f32>,
     n: vec3<f32>,

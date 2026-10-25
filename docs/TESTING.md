@@ -2797,6 +2797,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
+| `AURORA_DEMO_HAIR_CARDS=<n>` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order (#935) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
@@ -2870,6 +2871,17 @@ both open states and the selection count. Capture at frame 620.
   made for the Legacy Viewer (`AURORA_RIGGED_BLEND`); the strands are 90 %
   opaque at the roots and 36 % at the tips: with `AURORA_RIGGED_BLEND=depth05`
   the outer layers look see-through (#935).
+- **`AURORA_DEMO_HAIR_CARDS=<n>`** (1 to 400; with or without
+  `AURORA_DEMO_HAIR`): our avatar also wears one rigged mesh whose single
+  face holds `n` strand cards hanging around the back of the head, at
+  several distances from it, in a shuffled order, both sides of each card;
+  their strands are 95 % opaque in the middle and fade over many texels.
+  The triangles of one face, not drawn back to front, as the Legacy Viewer
+  leaves them after its vertex cache optimisation. With
+  `AURORA_RIGGED_BLEND=copy` the cards leave shards where the head and the
+  scene show through (#935, after #948); by default the hair is dense.
+  `AURORA_DEMO_CAMERA=close,846,560,40` with `AURORA_DEMO_POS=133,129`
+  frames them; capture at frame 780.
   - To read in `perf summary`: `g_transparent` + `g_post` (see
     [Profiling](#profiling)), `blend`, `blend_tris_k`. `32` with
     `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS="129,134"` gives ~970
@@ -3162,7 +3174,20 @@ both open states and the selection count. Capture at frame 620.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
+| `AURORA_DEMO_AREA_SEARCH=1\|filters\|parcel\|sale\|search` | Open Area Search with named objects and sale entries. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
+
+`AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
+the agent's parcel, `sale` shows sale entries, `filters` expands the filters, and
+`search` searches the localized fountain name. Capture after frame 740, in English and French. Check the column
+sorting, combined text and flag filters, the in-field crosses that clear only
+their filled text filter and return keyboard focus to it, Reset, Refresh preserving filters,
+selection, Inspect, Zoom/double click, Copy UUID, and the toolbar button reopening
+a minimized window. On the grid, compare the received roots with the Legacy
+Viewer, check parcel boundaries and neighboring regions, linked prim names,
+group-owned objects, late name replies, derez/movement and region changes.
+Keep a Build/Inspect selection while requests are arriving: it must stay selected.
+Objects outside the viewer's received scene cannot be enumerated by this window.
 
 `AURORA_DEMO_TOOLBAR`: `1` opens the "Toolbar buttons" window at frame 300;
 `drag` holds Friends over the toolbar with an insertion marker (the empty
@@ -6343,7 +6368,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
-| `AURORA_RIGGED_BLEND=depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: from 1/255 on a copy and where half covered in the scene (default), where half covered before their colour, from 1/255, none (sorted with the others), or `depth05` by turns |
+| `AURORA_RIGGED_BLEND=copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where nearly opaque before their colour, then point by point where half covered (default); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `depth05` by turns |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 
 ### Details
@@ -6654,31 +6679,38 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
-- **`AURORA_RIGGED_BLEND=depth05|write|sorted|alt`**: by default the
+- **`AURORA_RIGGED_BLEND=copy|depth05|write|sorted|alt`**: by default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
   are drawn before the other blended faces, skeleton by skeleton back to
   front, each skeleton's in the Legacy Viewer's order: the last attachment
   point first, on one point the last attached first (by the local id of
   the linkset's root), the prims of a linkset and the faces of a prim in
-  turn. Their colour writes its
-  depth from 1/255 of alpha as it is drawn, as the Legacy Viewer's alpha
-  pass (`LLDrawPoolAlpha::render`), but into a copy of the scene depth:
-  each strand hides the layers drawn after it behind it, so the layers of
-  one hair compose as their creator drew them (#935). The scene depth then
-  takes them only where they are at least half covered, so that their
-  nearly transparent fringe does not hide the glass, water and particles
-  drawn after them (#556). `depth05`: as before #935, their depth where at
-  least half covered written before their colour, which is depth tested
-  without writing it: a layer drawn first is hidden behind every strand of
-  the layers over it from 50 % on, which then shows what lies behind the
-  hair through it (the strands of the outer layer look see-through, with
-  stair steps where they cross 50 %). `write`: their depth written from
-  1/255 into the scene depth, as the Legacy Viewer (#499): a ring around
-  fur or hair where the glass behind is missing. `sorted`: everything
-  sorted by the distance of its object and nothing writing depth
-  (eyelashes showed through mesh hair). `alt`: `depth05` during one
-  `perf summary` line out of three (`xmode=old`). See `AURORA_DEMO_HAIR`,
-  `AURORA_DEMO_LASHES` and `AURORA_DEMO_HALO`.
+  turn. Their depth is written where they are nearly opaque (95 %) before
+  any of their colour; then, attachment point by attachment point, their
+  colour is drawn depth tested and their depth written where they are at
+  least half covered, which the next points and the rest of the scene see.
+  The layers and the triangles of the meshes worn on one point never hide
+  each other by a faint edge, a body on another point is still hidden
+  behind the hair over it, and their nearly transparent fringe does not
+  hide the glass, water and particles drawn after them (#556). `copy`: as
+  #948, their colour writing its depth from 1/255 as it is drawn, as the
+  Legacy Viewer's alpha pass (`LLDrawPoolAlpha::forwardRender(true)`), on a
+  copy of the scene depth, then where half covered into the scene depth: a
+  soft strand edge hides the strands drawn after it behind it, and the
+  cards of one face, in no back to front order, leave shards where the
+  scene shows through the hair (`AURORA_DEMO_HAIR_CARDS`). `depth05`: as
+  before #948, their depth where at least half covered written before
+  their colour, which is depth tested without writing it: a layer drawn
+  first is hidden behind every strand of the layers over it from 50 % on,
+  which then shows what lies behind the hair through it (the strands of the
+  outer layer look see-through, with stair steps where they cross 50 %).
+  `write`: their depth written from 1/255 into the scene depth, as the
+  Legacy Viewer (#499): a ring around fur or hair where the glass behind is
+  missing. `sorted`: everything sorted by the distance of its object and
+  nothing writing depth (eyelashes showed through mesh hair). `alt`:
+  `depth05` during one `perf summary` line out of three (`xmode=old`). See
+  `AURORA_DEMO_HAIR`, `AURORA_DEMO_HAIR_CARDS`, `AURORA_DEMO_LASHES` and
+  `AURORA_DEMO_HALO`.
 - **`AURORA_BLEND_AO=new|none|old|alt`**: the occlusion (both methods)
   reads a copy of the depth prepass with the blended faces at least half
   covered drawn over it (`fs_depth_contact`, the rule of the contact
