@@ -796,6 +796,8 @@ mod tests {
             max_textures: 4096,
             vram_mb: Some(8192),
             integrated: false,
+            vendor_id: 0,
+            max_texture_size: 0,
             adapters: vec!["Test GPU".into()],
             notice: None,
         };

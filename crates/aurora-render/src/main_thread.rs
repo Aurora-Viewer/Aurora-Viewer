@@ -60,6 +60,10 @@ pub struct GpuInfo {
     pub vram_mb: Option<u64>,
     /// Integrated GPU (shares the system memory).
     pub integrated: bool,
+    /// The PCI vendor id and the largest 2D texture side the adapter takes
+    /// (Linden Lab's viewer statistics).
+    pub vendor_id: u32,
+    pub max_texture_size: u32,
     /// The names of the adapters that can present to the window, in the
     /// log's order: the choice of Preferences › Graphics.
     pub adapters: Vec<String>,
@@ -309,6 +313,8 @@ impl Renderer {
             max_textures,
             vram_mb,
             integrated: ainfo.device_type == wgpu::DeviceType::IntegratedGpu,
+            vendor_id: ainfo.vendor,
+            max_texture_size: alim.max_texture_dimension_2d,
             adapters,
             notice,
         };

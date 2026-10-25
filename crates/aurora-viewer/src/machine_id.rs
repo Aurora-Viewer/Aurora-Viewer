@@ -15,8 +15,10 @@
 //!   Linux the md5 hex of the longest name in /dev/disk/by-uuid
 //!   (llappviewerlinux.cpp:556).
 //!
-//! Only the hashes leave this module, and the identifiers are never logged
-//! (the Legacy Viewer logs the raw serial; Aurora logs the source only).
+//! Only the hashes leave this module, plus the raw adapter address the
+//! viewer statistics carry (`adapter_mac`, send_viewer_stats'
+//! `mac_address`), and the identifiers are never logged (the Legacy Viewer
+//! logs the raw serial; Aurora logs the source only).
 
 use std::sync::{Once, OnceLock};
 use std::time::{Duration, Instant};
@@ -29,6 +31,9 @@ pub struct LoginIds {
 }
 
 static IDS: OnceLock<LoginIds> = OnceLock::new();
+/// The raw adapter address of LLUUID::getNodeID, for the viewer statistics'
+/// `mac_address` (send_viewer_stats reads it there, not the login hash).
+static ADAPTER: OnceLock<Option<[u8; 6]>> = OnceLock::new();
 static START: Once = Once::new();
 
 /// How long a login waits for the identifiers (WMI can be slow on a cold
@@ -43,6 +48,7 @@ pub fn start() {
             let (ids, mac_source, id0_source) = compute();
             log::info!("login device ids computed: mac from {mac_source}, id0 from {id0_source}");
             let _ = IDS.set(ids);
+            let _ = ADAPTER.set(os_adapter_address());
         });
         if let Err(e) = spawned {
             log::warn!("login device ids: thread not started: {e}");
@@ -65,6 +71,31 @@ pub fn login_ids() -> LoginIds {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// The network adapter address LLUUID::getNodeID picks (the raw bytes, for
+/// the viewer statistics only: never logged, never hashed into anything
+/// else); None until [`start`]'s thread has read it, or when there is none.
+pub(crate) fn adapter_mac() -> Option<[u8; 6]> {
+    start();
+    ADAPTER.get().copied().flatten()
+}
+
+/// The login identifiers if [`start`]'s thread has computed them, without
+/// waiting (the viewer statistics read them every second).
+pub(crate) fn ready_login_ids() -> Option<LoginIds> {
+    start();
+    IDS.get().cloned()
+}
+
+#[cfg(windows)]
+fn os_adapter_address() -> Option<[u8; 6]> {
+    windows_ids::adapter_address()
+}
+
+#[cfg(not(windows))]
+fn os_adapter_address() -> Option<[u8; 6]> {
+    unix_ids::adapter_address()
 }
 
 /// What the Legacy Viewer sends when nothing can be read.

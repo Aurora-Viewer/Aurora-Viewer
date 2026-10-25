@@ -298,6 +298,8 @@ mod tests {
             object_cache_dir: Arc::new(Mutex::new(None)),
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
             bandwidth_kbps: Default::default(),
+            viewer_stats: Default::default(),
+            viewer_stats_posts: Default::default(),
         };
         let login = Arc::new(LoginResponse {
             agent_id: Uuid::from_u128(1),
@@ -345,6 +347,8 @@ mod tests {
             logout_started: None,
             finished: false,
             agent_moved: false,
+            viewer_stats: Default::default(),
+            regions_visited: Default::default(),
             cam_requested_at: None,
             agent_parcel: None,
             pending_named_tp: None,
