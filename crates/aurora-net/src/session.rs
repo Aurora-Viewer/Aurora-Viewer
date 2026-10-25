@@ -2902,7 +2902,10 @@ impl Session<'_> {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
         let mut body = crate::viewer_stats::body(&side, &counters, sim_fps, unix_now, self.regions_visited.len());
-        log::debug!("sending viewer statistics: {}", aurora_llsd::to_xml_string(&body));
+        log::debug!(
+            "sending viewer statistics: {}",
+            aurora_llsd::to_xml_string(&crate::viewer_stats::loggable(&body))
+        );
         // (added after the log line: the session id never goes to the log)
         if let Llsd::Map(m) = &mut body {
             m.insert("session_id".into(), Llsd::Uuid(self.login.session_id));

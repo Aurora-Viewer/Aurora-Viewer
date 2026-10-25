@@ -107,6 +107,13 @@ fn sse_versions() -> Vec<String> {
     }
 }
 
+/// The network adapter LLUUID::getNodeID picks, as the login's hashed `mac`
+/// reads it: the shared machine identifier module provides it (pending its
+/// merge, none: the report says all zeros).
+fn adapter_address() -> Option<[u8; 6]> {
+    None
+}
+
 /// The Legacy Viewer's shader level, from Aurora's lighting: it always
 /// renders deferred (3), with ambient occlusion (4) or shadows (5).
 fn shader_level(shadows: bool, ssao: u8) -> i32 {
@@ -164,7 +171,7 @@ impl App {
     fn viewer_side(&self, now: Instant, g: &aurora_render::GpuInfo) -> ViewerSide {
         let t = &self.viewer_stats;
         let machine = t.machine.get();
-        let (mac, id0) = self.settings.hashed_ids();
+        let (_, id0) = self.settings.hashed_ids();
         let avatars = &self.scene.stats.avatars;
         let inventory = &self.world.inventory;
         ViewerSide {
@@ -185,7 +192,7 @@ impl App {
                 cpu: machine.map(|m| m.cpu.clone()).unwrap_or_default(),
                 cpu_sse: machine.map(|m| m.cpu_sse.clone()).unwrap_or_default(),
                 hardware_concurrency: machine.map_or(0, |m| m.hardware_concurrency),
-                mac_address: mac,
+                mac_address: aurora_net::viewer_stats::mac_address_string(adapter_address()),
                 serial_number: id0,
                 gpu: GpuInfo {
                     name: g.name.clone(),
@@ -222,7 +229,10 @@ impl App {
             .map_or(0, |d| d.as_secs() as i64);
         let fps = side.frames as f64 / side.render_time;
         let body = aurora_net::viewer_stats::body(side, &counters, fps, unix_now, 1);
-        log::info!("demo viewer statistics (not sent): {}", aurora_llsd::to_xml_string(&body));
+        log::info!(
+            "demo viewer statistics (not sent): {}",
+            aurora_llsd::to_xml_string(&aurora_net::viewer_stats::loggable(&body))
+        );
     }
 }
 

@@ -78,8 +78,10 @@ pub struct SystemInfo {
     /// LLCPUInfo::getSSEVersions: "1", "2", "3", "3S", "4.1", "4.2", "4a".
     pub cpu_sse: Vec<String>,
     pub hardware_concurrency: i32,
-    /// The identifiers the login sends (`mac`, `id0`): Aurora reads no
-    /// hardware address, so the report carries the same values.
+    /// The network adapter's address, `xx-xx-xx-xx-xx-xx`
+    /// ([`mac_address_string`]), and the hashed serial the login sends as
+    /// `id0` (LLAppViewer::getSerialNumber). Neither is ever logged
+    /// ([`loggable`]).
     pub mac_address: String,
     pub serial_number: String,
     pub gpu: GpuInfo,
@@ -112,6 +114,32 @@ impl GpuInfo {
             _ => "MISC",
         }
     }
+}
+
+/// send_viewer_stats' `mac_address`: the six bytes LLUUID::getNodeID gives,
+/// as "%02x-%02x-%02x-%02x-%02x-%02x" (indra/newview/llviewerstats.cpp). With
+/// no adapter the Legacy Viewer formats a buffer it never filled; the report
+/// says all zeros instead.
+pub fn mac_address_string(node: Option<[u8; 6]>) -> String {
+    let b = node.unwrap_or([0; 6]);
+    format!("{:02x}-{:02x}-{:02x}-{:02x}-{:02x}-{:02x}", b[0], b[1], b[2], b[3], b[4], b[5])
+}
+
+/// The report as it may be written to a log: the adapter address and the
+/// serial replaced ("The session ID token must never appear in logs", and
+/// neither do the machine's identifiers).
+pub fn loggable(body: &Llsd) -> Llsd {
+    let mut copy = body.clone();
+    if let Llsd::Map(top) = &mut copy
+        && let Some(Llsd::Map(system)) = top.get_mut("system")
+    {
+        for key in ["mac_address", "serial_number"] {
+            if system.contains_key(key) {
+                system.insert(key.into(), Llsd::from("(not logged)"));
+            }
+        }
+    }
+    copy
 }
 
 /// The frame time statistics of LLViewerStats::updateFrameStats.

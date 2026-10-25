@@ -23,7 +23,8 @@ fn viewer() -> ViewerSide {
             cpu: "AMD Ryzen 9 7950X (4500 MHz)".into(),
             cpu_sse: vec!["1".into(), "2".into(), "3".into()],
             hardware_concurrency: 32,
-            mac_address: "a".repeat(32),
+            // made-up values, never a real machine's
+            mac_address: "02-00-5e-10-20-30".into(),
             serial_number: "b".repeat(32),
             gpu: GpuInfo {
                 name: "NVIDIA GeForce RTX 4090".into(),
@@ -307,4 +308,24 @@ async fn a_post_that_fails_is_only_logged() {
     let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
     // nothing listens on the discard port of localhost
     assert!(!post(&http, "http://127.0.0.1:9/cap", &report).await);
+}
+
+#[test]
+fn the_adapter_address_is_formatted_like_send_viewer_stats() {
+    // a made-up, locally administered address
+    assert_eq!(mac_address_string(Some([0x02, 0x00, 0x5e, 0x10, 0x20, 0x3f])), "02-00-5e-10-20-3f");
+    assert_eq!(mac_address_string(None), "00-00-00-00-00-00");
+}
+
+#[test]
+fn the_logged_report_hides_the_machine_identifiers() {
+    let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
+    // the report itself carries them
+    assert_eq!(at(&report, "system.mac_address").as_str(), "02-00-5e-10-20-30");
+    assert_eq!(at(&report, "system.serial_number").as_str(), "b".repeat(32));
+    // its logged copy does not, and keeps the rest
+    let logged = aurora_llsd::to_xml_string(&loggable(&report));
+    assert!(!logged.contains("02-00-5e-10-20-30"), "{logged}");
+    assert!(!logged.contains(&"b".repeat(32)), "{logged}");
+    assert!(logged.contains("NVIDIA GeForce RTX 4090"), "{logged}");
 }
