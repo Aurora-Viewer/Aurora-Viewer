@@ -16,6 +16,8 @@ use uuid::Uuid;
 pub mod anti_spam;
 #[path = "demo_beacons.rs"]
 pub mod beacons;
+#[path = "demo_parcel_visibility.rs"]
+pub mod parcel_visibility;
 #[path = "demo_pointing.rs"]
 pub mod pointing;
 #[path = "demo_poser.rs"]

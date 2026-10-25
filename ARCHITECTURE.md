@@ -23,6 +23,29 @@ follows the complete animated eye midpoint in every posture, including rendered
 hover; it moves only the camera position, preserving mouse-controlled world-space
 aim.
 
+`world/parcel_visibility.rs` owns saved parcel-isolation modes, region UUID/local
+parcel identities and exact bitmap membership. Independent same-owner and
+same-group options walk adjoining cells, including connected region borders.
+Group matching resolves the assigned group on resident-owned land and the owner
+UUID on deeded land, on both the current parcel and candidates. Explicit always-visible
+parcels override isolation without broadening automatic discovery. They resolve
+connected regions by UUID and read current bounds with `BuildCmd::ParcelRequestById`
+(`ParcelPropertiesRequestByID`, as in `LLViewerParcelMgr::selectCollisionParcel`).
+Both request types share bounded independent sequences from 1,000,000; replies never
+enter About Land, Build selections or the agent parcel. Mask changes invalidate
+scene records once; ordinary object movement uses the existing sync scheduler.
+Discovery builds a separate decision and publishes it only after all its bounded
+requests settle and included regions have confirmed identities, retaining the
+last completed display while arrival data lags.
+Always-visible masks stay in a session-local cache keyed by region UUID/local ID;
+ordinary crossings reuse them immediately. Parcel overlays mark only that region's
+cached exceptions for background revalidation. Cached bounds remain visible until
+fresh bounds replace the complete decision; disconnected/replaced regions, changed
+dimensions, removed exceptions and logout retire the corresponding cache data.
+Hidden linksets release their draw records and visual asset references before
+geometry preparation. Lights, particles, world labels and beacons share the
+visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.
+
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer
 helper preserves rejection of malformed and null UUIDs in both HTTP requests

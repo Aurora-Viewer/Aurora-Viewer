@@ -2616,6 +2616,7 @@ both open states and the selection count. Capture at frame 620.
 
 | Variable | Effect |
 |---|---|
+| `AURORA_DEMO_PARCEL_VISIBILITY=<mode>` | Parcel content isolation and same-owner neighbours |
 | `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
@@ -2635,6 +2636,43 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_DOF=<f>:<m>[:debug]` | Depth of field at this aperture and focus distance |
 
 ### Details
+
+- **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible|lists|crossings`**:
+  four parcels split the plaza at x/y 128 m. The northern parcels share an owner;
+  the southern ones belong to someone else. `always`, `listed` (current parcel
+  listed) and `except` (empty list) hide content outside the north-east parcel;
+  `off` and `except-listed` show everything. `same-owner` also shows the north-west
+  neighbour. Terrain and our avatar/HUDs remain visible. Combine with
+  `AURORA_DEMO_POS=124,132` to stand on the north-west parcel and look towards
+  the plaza on its same-owner north-east neighbour: hidden with `always`,
+  visible with `same-owner`.
+  `always-visible` lists the north-east parcel as an explicit rendering exception,
+  with both automatic neighbour options off. `same-group` assigns a group to the
+  north-west parcel and deeds the north-east neighbour to that group, with the
+  same-owner option off; `group-owned-current` reverses assigned/deeded status.
+  The northern plaza stays visible in both group scenarios from `124,132`.
+  `lists` fills both saved lists with three long synthetic parcel names. Combine
+  with `AURORA_DEMO_OPTIONS=graphics:search=parc` to inspect the full-width lists,
+  wrapped names, separate region lines and aligned remove buttons, including in
+  a narrow window or at an enlarged UI scale. Larger lists scroll independently.
+  `crossings` starts on the north-west parcel with filtering enabled only there
+  and the north-east plaza always visible. From frame 700 it alternates between
+  home and the south-west parcel every 120 frames, delaying arrival parcel data
+  by 12 frames. Every frame from 650 checks that the plaza remains visible and
+  that the filter changes only with the completed arrival decision. Phase logs
+  record visibility, filtering and the scene version. Capture at frames 680, 760
+  and 1160 to compare home, outside and repeated return; no crossing errors should
+  be logged. Owner/group discovery also publishes its complete result at once.
+  Combine with
+  `AURORA_DEMO_OPTIONS=graphics` for the native controls. Check live mode changes,
+  adding/removing scope entries and always-visible parcels, and restoring content
+  without relogging. To add a neighbouring exception without walking there, select
+  it in About Land, then use "Add selected parcel" in the always-visible list.
+  On the grid, also check parcel changes, listed parcels in different regions,
+  assigned/deeded groups on either side, foreign-owner exceptions, connected region
+  borders and moving linked objects. Owner and group options combine by union;
+  missing groups do not match, and exceptions do not extend automatic discovery.
+  Parcel isolation is local rendering; it does not stop simulator object updates.
 
 - **`AURORA_DEMO_DOF=<f-number>:<distance>[:debug]`**: the depth of field on
   whatever Preferences say, at that aperture, focused at that distance (m,

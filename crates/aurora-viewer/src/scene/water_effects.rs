@@ -253,7 +253,11 @@ impl Effects {
                 let Some(o) = world.objects.get(idx).filter(|o| o.is_avatar()) else {
                     return samples;
                 };
-                if scene.too_complex.contains(&idx) || world.derender.contains(&o.full_id) || world.particles_blocked(&o.full_id) {
+                if scene.too_complex.contains(&idx)
+                    || world.derender.contains(&o.full_id)
+                    || world.particles_blocked(&o.full_id)
+                    || !world.parcel_object_visible(idx)
+                {
                     return samples;
                 }
                 let Some((p, r, _)) = Scene::object_transform(world, idx, now, 0) else {
@@ -319,7 +323,11 @@ impl Effects {
                 continue;
             };
             let owner = if o.is_avatar() { o.full_id } else { o.owner_id };
-            if scene.too_complex.contains(&idx) || world.derender.contains(&o.full_id) || world.particles_blocked(&owner) {
+            if scene.too_complex.contains(&idx)
+                || world.derender.contains(&o.full_id)
+                || world.particles_blocked(&owner)
+                || !world.parcel_object_visible(idx)
+            {
                 continue;
             }
             let Some((p, r, _)) = Scene::object_transform(world, idx, now, 0) else {

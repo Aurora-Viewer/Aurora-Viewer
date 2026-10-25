@@ -177,6 +177,41 @@ fn quality(cx: &mut Cx) {
             32.0..=512.0,
             " m",
         );
+        cx.combo(
+            tr!("parcel-visibility-mode"),
+            tr!("parcel-visibility-help"),
+            &field!(parcel_visibility.mode),
+            &[
+                (crate::world::parcel_visibility::Mode::Off, tr!("common-disabled")),
+                (crate::world::parcel_visibility::Mode::Always, tr!("parcel-visibility-always")),
+                (crate::world::parcel_visibility::Mode::Listed, tr!("parcel-visibility-listed")),
+                (crate::world::parcel_visibility::Mode::ExceptListed, tr!("parcel-visibility-except")),
+            ],
+        );
+        cx.toggle(
+            tr!("parcel-visibility-same-owner"),
+            tr!("parcel-visibility-same-owner-help"),
+            &field!(parcel_visibility.same_owner),
+        );
+        cx.toggle(
+            tr!("parcel-visibility-same-group"),
+            tr!("parcel-visibility-same-group-help"),
+            &field!(parcel_visibility.same_group),
+        );
+        parcel_list(
+            cx,
+            tr!("parcel-visibility-parcels"),
+            tr!("parcel-visibility-parcels-help"),
+            &field!(parcel_visibility.parcels),
+            false,
+        );
+        parcel_list(
+            cx,
+            tr!("parcel-visibility-always-visible"),
+            tr!("parcel-visibility-always-visible-help"),
+            &field!(parcel_visibility.always_visible),
+            true,
+        );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
             tr!("ui-options-lod-factor-for-sl-objects-and-meshes-2-by"),
@@ -752,5 +787,76 @@ fn depth_of_field(cx: &mut Cx) {
                 |ui, s| plain_slider(ui, &mut s.dof.quality, 0.25..=1.0, "", 2),
             );
         });
+    });
+}
+
+/// Scope and rendering exceptions use the same saved identities and list controls.
+fn parcel_list(
+    cx: &mut Cx,
+    label: &str,
+    hint: &str,
+    field: &super::super::cx::F<Vec<crate::world::parcel_visibility::Entry>>,
+    selected: bool,
+) {
+    use crate::ui::widgets;
+    use aurora_i18n::tr;
+    let p = cx.p;
+    let get = field.get_mut;
+    cx.below().row_with(label, hint, field, |ui, s, st, _| {
+        let entries = get(s);
+        let mut changed = false;
+        ui.vertical(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                for (entry, label) in std::iter::once((st.current_parcel.as_ref(), tr!("parcel-visibility-add")))
+                    .chain(selected.then_some((st.selected_parcel.as_ref(), tr!("parcel-visibility-add-selected"))))
+                {
+                    let listed = entry.is_some_and(|p| entries.iter().any(|saved| saved.same_parcel(p)));
+                    let response = ui.add_enabled(entry.is_some() && !listed, egui::Button::new(label));
+                    if let Some(parcel) = entry {
+                        let response = response.on_hover_text(format!("{} — {}", parcel.name, parcel.region_name));
+                        if response.clicked() {
+                            entries.push(parcel.clone());
+                            changed = true;
+                        }
+                    }
+                }
+            });
+            if entries.is_empty() {
+                ui.label(RichText::new(tr!("parcel-visibility-empty")).color(p.muted));
+                return;
+            }
+
+            let mut remove = None;
+            egui::ScrollArea::vertical()
+                .id_salt(field.path)
+                .max_height(180.0)
+                // Cx measures controls from a short first-frame placeholder.
+                // Let the list establish its height, then shrink to its content.
+                .min_scrolled_height(180.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (i, entry) in entries.iter().enumerate() {
+                        ui.push_id((entry.region, entry.local_id), |ui| {
+                            ui.horizontal_top(|ui| {
+                                let width = (ui.available_width() - 20.0 - ui.spacing().item_spacing.x).max(1.0);
+                                ui.allocate_ui_with_layout(egui::vec2(width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                    ui.set_min_width(width);
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    ui.add(egui::Label::new(RichText::new(&entry.name).strong()).wrap());
+                                    ui.add(egui::Label::new(RichText::new(&entry.region_name).size(12.0).color(p.muted)).wrap());
+                                });
+                                if widgets::icon_button(ui, &p, "trash-filled", tr!("common-remove"), true) {
+                                    remove = Some(i);
+                                }
+                            });
+                        });
+                    }
+                });
+            if let Some(i) = remove {
+                entries.remove(i);
+                changed = true;
+            }
+        });
+        changed
     });
 }

@@ -290,7 +290,8 @@ impl ParticleManager {
             // (LLViewerPartSourceScript, flagParticles), keep simulating but do not emit
             let blocked = idx
                 .and_then(|i| world.objects.get(i))
-                .is_some_and(|o| world.particles_blocked(&o.owner_id));
+                .is_some_and(|o| world.particles_blocked(&o.owner_id))
+                || idx.is_some_and(|idx| !world.parcel_object_visible(idx));
             if blocked {
                 // what they already sent goes at once: the Legacy Viewer
                 // lets it live out its age, which a block from the menu

@@ -533,6 +533,31 @@ impl DemoSim {
                     .into_iter()
                     .collect()
             }
+            BuildCmd::ParcelRequest {
+                handle,
+                sequence,
+                west,
+                south,
+                ..
+            } if *sequence >= 1_000_000 && std::env::var_os("AURORA_DEMO_PARCEL_VISIBILITY").is_some() => {
+                vec![NetEvent::SelectedParcel {
+                    handle: *handle,
+                    sequence: *sequence,
+                    parcel: crate::demo::parcel_visibility::parcel_at(*west, *south),
+                }]
+            }
+            BuildCmd::ParcelRequestById {
+                handle,
+                sequence,
+                local_id,
+            } if std::env::var_os("AURORA_DEMO_PARCEL_VISIBILITY").is_some() => crate::demo::parcel_visibility::parcel_by_id(*local_id)
+                .map(|parcel| NetEvent::SelectedParcel {
+                    handle: *handle,
+                    sequence: *sequence,
+                    parcel,
+                })
+                .into_iter()
+                .collect(),
             BuildCmd::ParcelRequest { handle, sequence, .. } => match world.parcel.clone() {
                 Some(p) => vec![NetEvent::SelectedParcel {
                     handle: *handle,
