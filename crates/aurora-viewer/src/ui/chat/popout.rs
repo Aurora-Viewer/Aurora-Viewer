@@ -278,25 +278,18 @@ pub(super) fn opens_in_own_window(popped: &Popped, conversation: Option<Uuid>, o
 
 /// What the Conversations window shows, given `selected` and the order of
 /// its entries: never a conversation in its own window. The next entry
-/// that has none; with none left, the nearby chat comes back into it.
-pub(super) fn main_selection(popped: &mut Popped, selected: Option<Uuid>, order: &[Option<Uuid>]) -> Option<Uuid> {
+/// that has none; None when every conversation is detached.
+pub(super) fn main_selection(popped: &Popped, selected: Option<Uuid>, order: &[Option<Uuid>]) -> Option<Option<Uuid>> {
     if !popped.contains(selected) {
-        return selected;
+        return Some(selected);
     }
     let at = order.iter().position(|c| *c == selected).unwrap_or(0);
-    let next = order
+    order
         .iter()
         .skip(at + 1)
         .chain(order.iter().take(at))
         .copied()
-        .find(|c| !popped.contains(*c));
-    match next {
-        Some(c) => c,
-        None => {
-            popped.remove(None);
-            None
-        }
-    }
+        .find(|c| !popped.contains(*c))
 }
 
 /// The popped-out conversations, read by the column's menus while the
@@ -355,7 +348,7 @@ pub(super) struct Env<'a> {
 /// Draw the windows of their own. A conversation that ended loses its
 /// window; a window closed by its cross closes its conversation (the nearby
 /// chat docks back), its title button docks it back.
-pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut ChatUi, actions: &mut Vec<ConvAction>) {
+pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut ChatUi, actions: &mut Vec<ConvAction>, main_open: &mut bool) {
     let Env {
         p,
         icons,
@@ -445,7 +438,7 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
     windows.append(&mut st.popped.windows);
     st.popped.windows = windows;
     for c in docked {
-        st.popped.remove(c);
+        st.dock_back(ctx, c, main_open);
     }
     for c in closed {
         st.popped.remove(c);
@@ -487,6 +480,7 @@ mod tests {
         actions: Vec<ConvAction>,
         /// The Conversations window is open.
         main_open: bool,
+        show_contacts_tab: bool,
     }
 
     impl Kit {
@@ -520,6 +514,7 @@ mod tests {
                 gestures: Default::default(),
                 actions: Vec::new(),
                 main_open: false,
+                show_contacts_tab: false,
             }
         }
 
@@ -540,10 +535,99 @@ mod tests {
                 &mut self.st,
                 &mut self.contacts,
                 &mut self.contacts_settings,
-                false,
+                self.show_contacts_tab,
                 None,
                 &mut open,
             ));
+            self.main_open = open;
+        }
+    }
+
+    /// #995: the title button works before opening an IM, and when all
+    /// other conversations already have their own windows.
+    #[test]
+    fn the_last_docked_nearby_chat_detaches_and_attaches_from_its_title() {
+        let p = crate::theme::Theme::default().palette();
+        for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+            for (other_detached, contacts_docked) in [(false, false), (true, false), (false, true)] {
+                let mut kit = Kit::new(style);
+                if !other_detached {
+                    kit.world.social.ims.clear();
+                    kit.st.popped = Popped::default();
+                }
+                kit.main_open = true;
+                kit.show_contacts_tab = contacts_docked;
+                let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+                for _ in 0..4 {
+                    frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+                }
+                let click = |frames: &mut crate::ui::widgets::elide_tests::Frames, kit: &mut Kit, floater: &str, icon: &str| {
+                    let rect = frames
+                        .ctx
+                        .data(|d| d.get_temp::<egui::Rect>(egui::Id::unique(("floater_action", floater, icon))))
+                        .unwrap_or_else(|| panic!("{style:?}, other detached {other_detached}: {icon} is shown in {floater}"));
+                    let pos = rect.center();
+                    frames.run(vec![egui::Event::PointerMoved(pos)], |ui| kit.show(ui.ctx(), &p));
+                    for pressed in [true, false] {
+                        frames.run(
+                            vec![egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            }],
+                            |ui| kit.show(ui.ctx(), &p),
+                        );
+                    }
+                    for _ in 0..4 {
+                        frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+                    }
+                };
+                click(&mut frames, &mut kit, "conversations", "external-link");
+                assert!(kit.st.nearby_apart(), "{style:?}: the nearby chat stays detached");
+                assert_eq!(
+                    kit.main_open, contacts_docked,
+                    "{style:?}: only Contacts can remain in Conversations"
+                );
+                assert_eq!(kit.st.contacts, contacts_docked);
+                assert!(kit.st.nearby_window_shown(&frames.ctx), "{style:?}: its own window is visible");
+                assert_eq!(kit.st.popped.contains(Some(JANE)), other_detached);
+                click(&mut frames, &mut kit, &floater_id(None), "login-2");
+                assert!(!kit.st.nearby_apart(), "{style:?}: the nearby chat attaches back");
+                assert!(
+                    kit.main_open && kit.st.selected.is_none(),
+                    "{style:?}: Conversations reopens on nearby chat"
+                );
+                assert!(!kit.st.contacts);
+                assert_eq!(kit.st.popped.contains(Some(JANE)), other_detached);
+                if !other_detached {
+                    click(&mut frames, &mut kit, "conversations", "external-link");
+                    kit.world.conversation_line(
+                        JANE,
+                        crate::world::ChatLine {
+                            time: std::time::SystemTime::now(),
+                            from: "Jane".into(),
+                            text: "A new private conversation".into(),
+                            kind: crate::world::ChatKind::Im,
+                            source: JANE,
+                            origin: crate::world::Origin::Live,
+                        },
+                    );
+                    kit.world.social.focus_im = Some(JANE);
+                    kit.main_open = true;
+                    for _ in 0..4 {
+                        frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+                    }
+                    assert!(kit.st.nearby_apart(), "{style:?}: opening an IM leaves nearby chat detached");
+                    assert_eq!(kit.st.selected, Some(JANE));
+                    click(&mut frames, &mut kit, "conversations", "external-link");
+                    assert!(
+                        kit.st.nearby_apart() && kit.st.popped.contains(Some(JANE)),
+                        "{style:?}: the last IM detaches too"
+                    );
+                    assert_eq!(kit.main_open, contacts_docked);
+                }
+            }
         }
     }
 
@@ -775,18 +859,18 @@ mod tests {
     fn the_conversations_window_shows_the_next_conversation_without_a_window() {
         let order = [None, id(1), id(2), id(3)];
         let mut popped = Popped::default();
-        assert_eq!(main_selection(&mut popped, id(2), &order), id(2));
+        assert_eq!(main_selection(&popped, id(2), &order), Some(id(2)));
         popped.pop_out(id(2), false, false, false);
-        assert_eq!(main_selection(&mut popped, id(2), &order), id(3));
+        assert_eq!(main_selection(&popped, id(2), &order), Some(id(3)));
         popped.pop_out(id(3), false, false, false);
         // past the end, from the start
-        assert_eq!(main_selection(&mut popped, id(3), &order), None);
+        assert_eq!(main_selection(&popped, id(3), &order), Some(None));
         popped.pop_out(None, false, false, false);
-        assert_eq!(main_selection(&mut popped, None, &order), id(1));
-        // every entry in its own window: the nearby chat comes back
+        assert_eq!(main_selection(&popped, None, &order), Some(id(1)));
+        // Every entry keeps its own window, including nearby chat.
         popped.pop_out(id(1), false, false, false);
-        assert_eq!(main_selection(&mut popped, id(1), &order), None);
-        assert!(!popped.contains(None));
+        assert_eq!(main_selection(&popped, id(1), &order), None);
+        assert!(popped.contains(None));
         assert!(popped.contains(id(1)));
     }
 }

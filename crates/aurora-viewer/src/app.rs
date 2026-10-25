@@ -12308,6 +12308,15 @@ impl App {
                             self.world.social.focus_im = group;
                             ui::chat::demo_place_window(&ctx, group, egui::pos2(40.0, 60.0), size);
                         }
+                        crate::demo::Popout::Nearby | crate::demo::Popout::NearbyOut => {
+                            self.world.social.ims.clear();
+                            self.world.social.focus_im = None;
+                            self.chat_ui.selected = None;
+                            self.chat_ui.contacts = false;
+                            if mode == crate::demo::Popout::NearbyOut {
+                                self.chat_ui.demo_pop_out(&ctx, None, egui::pos2(40.0, 60.0), size);
+                            }
+                        }
                     }
                 }
                 // the cards under links, their videos played by the media

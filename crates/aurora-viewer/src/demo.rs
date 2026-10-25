@@ -919,7 +919,7 @@ pub fn bubbles_scenario() -> Option<Bubbles> {
     })
 }
 
-/// `AURORA_DEMO_CONV_POPOUT=1|option` (with `AURORA_DEMO_CONV=aurora…` or
+/// `AURORA_DEMO_CONV_POPOUT=1|option|nearby|nearby-out` (with `AURORA_DEMO_CONV=aurora…` or
 /// `bubbles…`): conversations in their own windows (#717).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Popout {
@@ -927,11 +927,17 @@ pub enum Popout {
     Hand,
     /// The option on, and the group opened as from a notification.
     Option,
+    /// Nearby chat alone, before any private or group conversation opens.
+    Nearby,
+    /// The same nearby chat detached into its own window.
+    NearbyOut,
 }
 
 pub fn popout_scenario() -> Option<Popout> {
     match std::env::var("AURORA_DEMO_CONV_POPOUT").ok()?.trim() {
         "option" => Some(Popout::Option),
+        "nearby" => Some(Popout::Nearby),
+        "nearby-out" => Some(Popout::NearbyOut),
         "" | "0" => None,
         _ => Some(Popout::Hand),
     }

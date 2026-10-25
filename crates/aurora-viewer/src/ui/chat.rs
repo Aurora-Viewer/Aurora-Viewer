@@ -2529,9 +2529,19 @@ pub fn show(
     let entries: Vec<Option<uuid::Uuid>> = std::iter::once(None)
         .chain(st.reorder.sessions(world).into_iter().map(|(id, _)| Some(id)))
         .collect();
-    if !st.contacts {
-        st.selected = popout::main_selection(&mut st.popped, st.selected, &entries);
-    }
+    let select_main = |st: &mut ChatUi, open: &mut bool| {
+        if st.contacts {
+            return;
+        }
+        match popout::main_selection(&st.popped, st.selected, &entries) {
+            Some(conversation) => st.selected = conversation,
+            None if show_contacts_tab && docked => st.contacts = true,
+            // LLMultiFloater::tabClose (indra/llui/llmultifloater.cpp):
+            // close an empty container without reattaching its last tab.
+            None => *open = false,
+        }
+    };
+    select_main(st, open);
     // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`),
     // over the entries without a window of their own
     if *open && !enlarged {
@@ -2560,8 +2570,9 @@ pub fn show(
     if st.contacts {
         // the tear-off button of the multi-floater, for the Contacts tab
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut tear_off);
-    } else if entries.iter().any(|c| *c != st.selected && !st.popped.contains(*c)) {
-        // and for the conversation shown, while another stays in the window
+    } else {
+        // Nearby chat can detach even before any IM opens (#995), as
+        // can_tear_off in floater_fs_nearby_chat.xml does.
         floater = floater.action("external-link", aurora_i18n::tr!("common-detach"), &mut detach);
     }
     popout::share(ctx, &st.popped);
@@ -2770,9 +2781,7 @@ pub fn show(
         }
         _ => true,
     });
-    if !st.contacts {
-        st.selected = popout::main_selection(&mut st.popped, st.selected, &entries);
-    }
+    select_main(st, open);
     let env = popout::Env {
         p,
         icons,
@@ -2782,7 +2791,7 @@ pub fn show(
         gestures,
         style,
     };
-    popout::show(ctx, env, world, st, &mut actions);
+    popout::show(ctx, env, world, st, &mut actions, open);
     st.main_open = *open;
     // the column's "+" and search: one resident for an IM, several for a
     // conference (LLAvatarActions::startIM / startConference)
