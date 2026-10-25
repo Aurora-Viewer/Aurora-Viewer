@@ -20,6 +20,7 @@ mod layout;
 pub(crate) mod manager;
 mod manager_drag;
 pub(crate) mod motion;
+pub mod safe_graphics_notice;
 
 const REMEMBERED_PASSWORD_MASK: &str = "••••••••••••••••";
 
@@ -77,6 +78,9 @@ pub struct LoginForm {
     /// The graphics driver is out of date (`gpu_driver::check`), and the
     /// user has not dismissed the warning for this driver.
     pub driver_notice: Option<crate::gpu_driver::Notice>,
+    /// The safe graphics offered after the GPU stopped answering, or the
+    /// way back from them (`app/safe_graphics.rs`).
+    pub safe_graphics: Option<safe_graphics_notice::SafeGraphics>,
 }
 
 #[derive(Default)]
@@ -84,6 +88,8 @@ pub enum LoginAction {
     ReportBug,
     /// "Ignore for this driver" on the out of date driver warning.
     DismissDriverNotice,
+    /// A button of the safe graphics card.
+    SafeGraphics(safe_graphics_notice::Choice),
     #[default]
     None,
     Login,

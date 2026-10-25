@@ -90,7 +90,6 @@ impl App {
                 Answer::Wait => stall.waited_at = Some(now),
                 Answer::Close => {
                     log::warn!("closing at the user's request while the graphics card does not answer");
-                    crate::crash::gpu_closed();
                     stall.close = true;
                 }
             }

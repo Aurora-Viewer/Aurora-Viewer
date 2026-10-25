@@ -55,10 +55,14 @@ triage.
 What each part tells the one who fixes it:
 
 - **Crash**: `Rust panic`, `Native exception 0x…`, `Startup or event loop
-  failure`, `Freeze` (the window was not answering when the session ended:
-  the stacks are those of the main thread, then of the render thread, read
-  while it was frozen) or `Unexpected shutdown` (the process vanished with
-  no word: killed, or a fast fail no handler can see).
+  failure`, `GPU not responding` (the graphics card still held a frame when
+  the session ended, the window answering: closed from the stall notice or
+  by other means; the stack is the render thread's, waiting in the driver,
+  and the row "GPU not responding" says for how long), `Freeze` (the window
+  was not answering when the session ended: the stacks are those of the main
+  thread, then of the render thread, read while it was frozen) or
+  `Unexpected shutdown` (the process vanished with no word: killed, or a
+  fast fail no handler can see).
 - **Exit code**, when the watcher saw the end, with its usual meaning:
   `0x00000001` is what Task Manager's End task gives (often after a
   freeze), `0xC0000409` a fast fail (abort, out of memory), `0xC00000FD`
@@ -104,8 +108,8 @@ inlined functions included, to functions and source lines. It then:
 - appends a "Symbolized stack" section between
   `<!-- crash-triage:start -->` and `<!-- crash-triage:end -->` (a new run
   replaces it), ending with the crash's signature;
-- computes the signature from the crash kind (panic, freeze, or the
-  exception code) and the first three meaningful frames by name (for a
+- computes the signature from the crash kind (panic, freeze, GPU stall, or
+  the exception code) and the first three meaningful frames by name (for a
   freeze, those of the main thread), without generic arguments
   or closure numbers. The panic and exception machinery, the crash handler,
   the process start and the system modules are skipped, so the same crash

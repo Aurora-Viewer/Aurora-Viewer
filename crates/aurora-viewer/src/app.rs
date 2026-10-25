@@ -89,6 +89,7 @@ mod relogin;
 mod report_abuse;
 mod reset_skeleton;
 mod rlva;
+mod safe_graphics;
 mod script_clicks;
 mod scripts;
 mod settings_backup;
@@ -4655,6 +4656,13 @@ impl App {
     }
 
     fn request_exit(&mut self) {
+        if self.gfx.as_ref().is_some_and(|g| g.renderer.stalled_for().is_some()) {
+            // nothing can be drawn while the graphics card holds a frame,
+            // the exit prompt neither: the window's close button closes
+            log::warn!("exit asked while the graphics card does not answer: closing without the prompt");
+            self.gpu_stall.close = true;
+            return;
+        }
         self.exit_prompt.request();
         self.down.clear();
         self.right_drag = false;
@@ -4691,6 +4699,14 @@ impl App {
 
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+        // closed while the graphics card still holds a frame, from its
+        // notice or not: reported, and the next start offers the safe
+        // graphics (app/gpu_stall.rs)
+        if let Some(stalled) = self.gfx.as_ref().and_then(|g| g.renderer.stalled_for()) {
+            // the whole stall and where the render thread is now
+            crate::crash::gpu_stalled(stalled.as_secs());
+            crate::crash::gpu_closed();
+        }
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
         self.record_inventory_logout();
@@ -10219,6 +10235,7 @@ impl App {
             LoginAction::Login if !self.updater.blocks_login() && aurora_updater::test_environment().is_none() => self.start_login(),
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             LoginAction::ReportBug => self.open_issue_chooser(),
+            LoginAction::SafeGraphics(choice) => self.safe_graphics_choice(choice),
             LoginAction::DismissDriverNotice => {
                 if let Some(notice) = self.login_form.driver_notice.take() {
                     log::info!("graphics driver warning dismissed for {}", notice.key);
@@ -13828,6 +13845,7 @@ impl ApplicationHandler for App {
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
+        self.safe_graphics_at_start();
         self.screen_rate.poll(&window, Instant::now());
         let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
         let egui_state = egui_winit::State::new(
