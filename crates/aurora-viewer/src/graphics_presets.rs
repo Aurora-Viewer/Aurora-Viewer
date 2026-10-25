@@ -406,7 +406,7 @@ pub(crate) fn upgrade_physics_detail(s: &mut Settings) {
 
 /// Aurora's effects beyond the Legacy Viewer's levels, which High and
 /// Deluxe turn on.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Effects {
     pub bloom: bool,
     pub bloom_strength: f32,
@@ -438,8 +438,9 @@ impl Effects {
     };
 }
 
-/// The settings a level writes.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// The settings a level writes. Saved as they are by the safe graphics
+/// (`app/safe_graphics.rs`), to be put back.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Values {
     pub draw_distance: f32,
     pub lod_factor: f32,

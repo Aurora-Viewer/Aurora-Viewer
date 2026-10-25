@@ -164,6 +164,65 @@ pub fn face_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
     .collect()
 }
 
+pub const MAT_OPACITY_BLEND: Uuid = Uuid::from_u128(8310);
+
+/// Legacy Blend, PBR Blend and Mask rows at zero, half and full opacity. All faces share the
+/// material, so a hidden side cannot fill the Mask control's texture hole.
+pub fn opacity_events() -> Vec<NetEvent> {
+    let mut objects = Vec::new();
+    for row in 0..3 {
+        for col in 0..3 {
+            let id = 8270 + row * 3 + col;
+            let mut o = object(31, false);
+            o.local_id = id;
+            o.full_id = u(id as u128);
+            o.name_values = format!("AttachItemID STRING RW SV {}", o.full_id);
+            o.position = Vec3::new(0.0, 0.33 - col as f32 * 0.33, 0.3 - row as f32 * 0.3);
+            o.scale = Vec3::new(0.012, 0.24, 0.13);
+            let mode = if row < 2 {
+                aurora_i18n::tr!("import-alpha-blend")
+            } else {
+                aurora_i18n::tr!("import-alpha-mask")
+            };
+            o.text = format!("{mode} · {}%", col * 50);
+            if row == 0 {
+                for face in &mut Arc::make_mut(o.texture_entry.as_mut().expect("fixture texture")).faces {
+                    face.texture = TEX_HOLES;
+                    face.material_id = MAT_OPACITY_BLEND;
+                    face.color[3] = col as f32 * 0.5;
+                    face.offset_s = 0.25;
+                    face.offset_t = 0.25;
+                }
+            } else {
+                o.extra.render_materials = (0..6).map(|face| (face, u(8300 + ((row - 1) * 3 + col) as u128))).collect();
+            }
+            objects.push(o);
+        }
+    }
+    vec![NetEvent::ObjectUpdates { handle: HANDLE, objects }]
+}
+
+pub fn opacity_materials() -> Vec<(Uuid, aurora_assets::PbrMaterial)> {
+    use aurora_assets::{AlphaMode, PbrMaterial, material::TextureTransform};
+    (0..6)
+        .map(|panel| {
+            (
+                u(8300 + panel),
+                PbrMaterial {
+                    base_color_texture: Some(TEX_HOLES),
+                    base_color_factor: [0.35, 0.9, 0.65, (panel % 3) as f32 * 0.5],
+                    alpha_mode: if panel < 3 { AlphaMode::Blend } else { AlphaMode::Mask },
+                    transforms: [TextureTransform {
+                        offset: [0.25; 2],
+                        ..Default::default()
+                    }; 4],
+                    ..Default::default()
+                },
+            )
+        })
+        .collect()
+}
+
 pub fn reply(cmd: &aurora_net::NetCommand) -> Option<Vec<NetEvent>> {
     let aurora_net::NetCommand::ObjectRelease { local_id, .. } = cmd else {
         return None;

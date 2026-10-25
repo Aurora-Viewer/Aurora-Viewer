@@ -59,6 +59,7 @@ mod env_editor;
 mod external_links;
 mod follow;
 mod gestures;
+mod gpu_stall;
 mod graphics_start;
 mod hover_height;
 mod hover_tips;
@@ -88,6 +89,7 @@ mod relogin;
 mod report_abuse;
 mod reset_skeleton;
 mod rlva;
+mod safe_graphics;
 mod script_clicks;
 mod scripts;
 mod settings_backup;
@@ -569,6 +571,8 @@ pub struct App {
     minimized_mute: bool,
     /// When the crash report's state was last noted (app/crash_state.rs).
     crash_state_at: Option<Instant>,
+    /// The graphics card stopped finishing frames (app/gpu_stall.rs).
+    gpu_stall: gpu_stall::GpuStall,
     /// The Down key's latch (FSCrouchToggle).
     crouch_toggle: crate::movement::crouch_toggle::CrouchToggle,
     music_parcel_url: String,
@@ -1179,6 +1183,7 @@ impl App {
             stream_title_said: None,
             minimized_mute: false,
             crash_state_at: None,
+            gpu_stall: Default::default(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
             music_override: None,
@@ -4651,6 +4656,13 @@ impl App {
     }
 
     fn request_exit(&mut self) {
+        if self.gfx.as_ref().is_some_and(|g| g.renderer.stalled_for().is_some()) {
+            // nothing can be drawn while the graphics card holds a frame,
+            // the exit prompt neither: the window's close button closes
+            log::warn!("exit asked while the graphics card does not answer: closing without the prompt");
+            self.gpu_stall.close = true;
+            return;
+        }
         self.exit_prompt.request();
         self.down.clear();
         self.right_drag = false;
@@ -4687,6 +4699,14 @@ impl App {
 
     /// Log out, save the window, layout, inventory cache and settings, exit.
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+        // closed while the graphics card still holds a frame, from its
+        // notice or not: reported, and the next start offers the safe
+        // graphics (app/gpu_stall.rs)
+        if let Some(stalled) = self.gfx.as_ref().and_then(|g| g.renderer.stalled_for()) {
+            // the whole stall and where the render thread is now
+            crate::crash::gpu_stalled(stalled.as_secs());
+            crate::crash::gpu_closed();
+        }
         self.sync_local_picker_bindings();
         self.imports.flush_local_registry();
         self.record_inventory_logout();
@@ -9188,7 +9208,12 @@ impl App {
         self.end_deep_profile(&gfx.renderer);
         self.monitor_frame(&gfx.renderer);
         self.crash_state(&gfx.renderer, &gfx.window);
+        self.gpu_stall_frame(&gfx.renderer);
         self.gfx = Some(gfx);
+        if std::mem::take(&mut self.gpu_stall.close) {
+            self.close_while_gpu_stalled(event_loop);
+            return;
+        }
         self.release_postponed_cursor();
         // the clicks whose depth came back with this frame's hand-over
         self.resolve_clicks();
@@ -10221,6 +10246,7 @@ impl App {
             LoginAction::Login if !self.updater.blocks_login() && aurora_updater::test_environment().is_none() => self.start_login(),
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             LoginAction::ReportBug => self.open_issue_chooser(),
+            LoginAction::SafeGraphics(choice) => self.safe_graphics_choice(choice),
             LoginAction::DismissDriverNotice => {
                 if let Some(notice) = self.login_form.driver_notice.take() {
                     log::info!("graphics driver warning dismissed for {}", notice.key);
@@ -13830,6 +13856,7 @@ impl ApplicationHandler for App {
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;
         self.login_form.driver_notice = self.driver_notice(&renderer.info);
+        self.safe_graphics_at_start();
         self.screen_rate.poll(&window, Instant::now());
         let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
         let egui_state = egui_winit::State::new(
@@ -15726,6 +15753,14 @@ impl ApplicationHandler for App {
             // linked-object touch / inventory paths as real attachments.
             if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
                 let faces = matches!(mode.as_str(), "faces" | "faces-turned" | "faces-alpha");
+                if mode == "blend-opacity" {
+                    self.scene
+                        .legacy_mats
+                        .insert(crate::demo::hud::MAT_OPACITY_BLEND, Default::default());
+                    for (id, material) in crate::demo::hud::opacity_materials() {
+                        self.scene.materials.insert(id, material);
+                    }
+                }
                 if faces {
                     for (id, mut material) in crate::demo::hud::face_materials() {
                         if mode == "faces-alpha" {
@@ -15734,7 +15769,9 @@ impl ApplicationHandler for App {
                         self.scene.materials.insert(id, material);
                     }
                 }
-                let events = if faces {
+                let events = if mode == "blend-opacity" {
+                    crate::demo::hud::opacity_events()
+                } else if faces {
                     crate::demo::hud::face_events(mode == "faces-turned")
                 } else {
                     crate::demo::hud::events()
@@ -15767,6 +15804,10 @@ impl ApplicationHandler for App {
                 self.world.hud_scales = crate::world::hud_scale::HudScales::load(
                     crate::settings::account_dir(&self.world.agent_id).join(crate::world::hud_scale::FILE),
                 );
+                if mode == "blend-opacity" {
+                    self.world.hud_scales = crate::world::hud_scale::HudScales::default();
+                    self.world.hud_zoom = 1.0;
+                }
                 if matches!(
                     mode.as_str(),
                     "scale-reattach" | "scale-rename" | "scale-copy" | "scale-temp" | "scale-temp-item" | "scale-temp-instance"

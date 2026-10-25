@@ -80,6 +80,28 @@ fn skin_binds_range(dirty: std::ops::Range<usize>, len: usize) -> std::ops::Rang
 /// Packet buffers kept for the next frames (one in flight, one being built).
 const SPARE_PACKETS: usize = 2;
 
+/// A frame the GPU has kept this long is a stall, not a slow frame (the
+/// slowest real frames, a first frame with every pipeline to make, take
+/// well under a second on the render thread).
+pub const STALL_AFTER: Duration = Duration::from_secs(2);
+/// While stalled, how long each frame waits for the GPU before the main
+/// thread goes on: the window stays alive, the loop does not spin.
+const STALL_POLL: Duration = Duration::from_millis(50);
+/// How long a frame carrying a capture is waited for.
+const CAPTURE_WAIT: Duration = Duration::from_secs(10);
+
+/// Interface texture changes kept while the GPU is stalled. Cleared when
+/// dropped with the renderer: egui's debug builds refuse to drop a delta
+/// not applied, and nobody draws any more then.
+#[derive(Default)]
+struct HeldTextures(egui::TexturesDelta);
+
+impl Drop for HeldTextures {
+    fn drop(&mut self) {
+        self.0.clear();
+    }
+}
+
 /// Handles of the scene's buffers (reference counted: no GPU work).
 fn scene_gpu(
     records: &RecordStore,
@@ -172,6 +194,13 @@ pub struct Renderer {
     fresh: bool,
     spare: Vec<Spent>,
     failed: bool,
+    /// The render thread has held a frame past [`STALL_AFTER`]: frames are
+    /// not built until it is free again (see `render`).
+    stalled: bool,
+    /// The interface's texture changes of the frames not built meanwhile:
+    /// they leave with the next one (a lost font atlas update would leave
+    /// glyphs missing for the rest of the session).
+    held_textures: HeldTextures,
     /// Set to request a copy of the next presented frame.
     pub capture_request: bool,
     /// Capture the 3D view without the interface (next frame) into `captured`.
@@ -415,6 +444,8 @@ impl Renderer {
             fresh: false,
             spare: Vec::new(),
             failed: false,
+            stalled: false,
+            held_textures: HeldTextures::default(),
             capture_request: false,
             capture_scene: false,
             captured: None,
@@ -636,6 +667,50 @@ impl Renderer {
         self.failed
     }
 
+    /// How long the GPU has kept the frame in the render thread's hands,
+    /// once that is past [`STALL_AFTER`]: no frame is drawn meanwhile, the
+    /// window keeps answering. None while frames come.
+    pub fn stalled_for(&self) -> Option<Duration> {
+        let Host::Thread { owner, .. } = &self.host else {
+            return None;
+        };
+        self.stalled.then(|| owner.held_for()).flatten()
+    }
+
+    /// Before a frame is built: wait for the render thread to be free, at
+    /// most [`STALL_AFTER`] (then [`STALL_POLL`] while it stays stuck).
+    /// False when it is still held: the stores keep their writes for the
+    /// frame that will leave once it is free, nothing is lost or replayed
+    /// twice. Never waits on the GPU without a bound: a tester's window
+    /// stayed white and frozen after login, its main thread parked here.
+    fn render_thread_free(&mut self) -> bool {
+        let Host::Thread { owner, .. } = &self.host else {
+            return true;
+        };
+        let wait = if self.stalled { STALL_POLL } else { STALL_AFTER };
+        match owner.wait_until_free(Instant::now() + wait) {
+            Ok(true) => {
+                if std::mem::take(&mut self.stalled) {
+                    log::warn!("the graphics card finished its frame again: drawing resumes");
+                }
+                true
+            }
+            Ok(false) => {
+                if !std::mem::replace(&mut self.stalled, true) {
+                    log::warn!(
+                        "the graphics card has not finished a frame for {:?}: frames wait, the window keeps answering",
+                        owner.held_for().unwrap_or(STALL_AFTER)
+                    );
+                }
+                false
+            }
+            Err(_) => {
+                self.fail();
+                false
+            }
+        }
+    }
+
     /// Apply quality settings: pipelines and targets are rebuilt by the
     /// backend with the next frame, only when needed.
     pub fn apply_settings(&mut self, s: RenderSettings) {
@@ -813,6 +888,26 @@ impl Renderer {
     /// for: `captured` holds it when this returns.
     pub fn render(&mut self, params: FrameParams, lists: &DrawLists, ui: Option<crate::EguiFrame>) -> RenderStats {
         let t0 = Instant::now();
+        let mut ui = ui;
+        if !self.failed && !self.render_thread_free() {
+            // the GPU still has the frame before: this one is not built,
+            // the caller goes on (input, network, the stall notice)
+            if let Some(ui) = ui.as_mut() {
+                self.held_textures.0.append(std::mem::take(&mut ui.textures_delta));
+            }
+            return RenderStats {
+                render_thread: true,
+                wait_render_ms: t0.elapsed().as_secs_f32() * 1000.0,
+                ..Default::default()
+            };
+        }
+        if let Some(ui) = ui.as_mut()
+            && !self.held_textures.0.is_empty()
+        {
+            let mut held = std::mem::take(&mut self.held_textures.0);
+            held.append(std::mem::take(&mut ui.textures_delta));
+            ui.textures_delta = held;
+        }
         // ---- the scene's mirrors join the journal of this frame
         self.records.flush(&self.device, &mut self.writes);
         self.cull.objects.flush(&self.device, &mut self.writes);
@@ -893,9 +988,10 @@ impl Renderer {
                     Err(_) => gone = true,
                 }
                 if capture.is_some() && !gone {
-                    // the capture is read right after this call
+                    // the capture is read right after this call; a GPU that
+                    // stops answering in it leaves it for a later frame
                     let t = Instant::now();
-                    match owner.finish() {
+                    match owner.finish_until(t + CAPTURE_WAIT) {
                         Ok(Some(Done::Frame(r))) => {
                             if r.index != index {
                                 log::warn!("capture: frame {} answered for frame {index}", r.index);
