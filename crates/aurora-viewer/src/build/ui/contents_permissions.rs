@@ -60,8 +60,15 @@ impl BulkPerms {
         }
     }
 
+    pub(crate) fn includes_type(&self, asset_type: i32) -> bool {
+        TYPES
+            .iter()
+            .position(|t| i32::from(*t) == asset_type)
+            .is_some_and(|i| self.types[i])
+    }
+
     fn includes(&self, item: &TaskItem) -> bool {
-        !item.is_folder && TYPES.iter().position(|t| *t == item.asset_type).is_some_and(|i| self.types[i])
+        !item.is_folder && self.includes_type(i32::from(item.asset_type))
     }
 }
 
@@ -118,99 +125,7 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
     )
     .fixed()
     .show(ctx, p, &mut open, |ui| {
-        ui.horizontal_top(|ui| {
-            egui::Grid::new("content_permission_types")
-                .spacing(Vec2::new(12.0, 3.0))
-                .show(ui, |ui| {
-                    for row in 0..3 {
-                        for col in 0..4 {
-                            let i = col * 3 + row;
-                            if let Some(t) = TYPES.get(i) {
-                                ui.push_id(t, |ui| {
-                                    ui.horizontal(|ui| {
-                                        widgets::checkbox(ui, p, &mut b.types[i], "").on_hover_text(type_name(*t));
-                                        if let Some(icon) =
-                                            crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(*t), i32::from(*t), 0))
-                                        {
-                                            let color = crate::ui::inventory::item_icon_color(i32::from(*t), i32::from(*t), p);
-                                            ui.add(egui::Image::new(&icon).fit_to_exact_size(Vec2::splat(18.0)).tint(color))
-                                                .on_hover_text(type_name(*t));
-                                        } else {
-                                            ui.allocate_space(Vec2::splat(18.0));
-                                        }
-                                    });
-                                });
-                            } else {
-                                ui.label("");
-                            }
-                        }
-                        ui.end_row();
-                    }
-                });
-            ui.vertical(|ui| {
-                if ui
-                    .add_sized([98.0, 25.0], egui::Button::new(aurora_i18n::tr!("common-all")))
-                    .clicked()
-                {
-                    b.types.fill(true);
-                }
-                if ui
-                    .add_sized([98.0, 25.0], egui::Button::new(aurora_i18n::tr!("common-clear")))
-                    .clicked()
-                {
-                    b.types.fill(false);
-                }
-            });
-        });
-        section(ui, p, aurora_i18n::tr!("content-perms-adjust"));
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(Vec2::new(82.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.set_width(82.0);
-                label(ui, p, aurora_i18n::tr!("common-group-2"));
-                if let Some(v) = check(ui, p, b.share, false, aurora_i18n::tr!("common-share"), true) {
-                    b.share = v;
-                }
-            });
-            ui.allocate_ui_with_layout(Vec2::new(90.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.set_width(90.0);
-                label(ui, p, aurora_i18n::tr!("content-perms-anyone"));
-                if let Some(v) = check(ui, p, b.everyone_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
-                    b.everyone_copy = v;
-                }
-            });
-            ui.vertical(|ui| {
-                label(ui, p, aurora_i18n::tr!("content-perms-next-owner"));
-                if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-edit"), true) {
-                    b.next_modify = v;
-                }
-                if let Some(v) = check(ui, p, b.next_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
-                    b.next_copy = v;
-                }
-                if !b.next_copy {
-                    b.next_transfer = true;
-                }
-                if let Some(v) = check(ui, p, b.next_transfer, false, aurora_i18n::tr!("common-transfer"), b.next_copy) {
-                    b.next_transfer = v;
-                }
-            });
-        });
-        ui.add_space(8.0);
-        if !state.status.is_empty() {
-            small(ui, p, &state.status);
-        }
-        // the buttons at the bottom, from the height they measure (a
-        // guessed 28 points grew the window at every frame with a larger
-        // text)
-        widgets::above_footer(ui).1.show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let enabled = !running && b.types.iter().any(|on| *on);
-                accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
-                apply = ui
-                    .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
-                    .clicked();
-                cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
-            });
-        });
+        (apply, accept, cancel) = controls(ui, p, b, &state.status, running, aurora_i18n::tr!("content-perms-adjust"));
     });
     if apply || accept {
         tool.start_bulk_permissions(world);
@@ -226,6 +141,112 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world
         open = false;
     }
     tool.ui.bulk_perms_open = open;
+}
+
+/// Shared bulk-permission controls for object contents and agent inventory.
+pub(crate) fn controls(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    b: &mut BulkPerms,
+    status: &str,
+    running: bool,
+    heading: &str,
+) -> (bool, bool, bool) {
+    let (mut apply, mut accept, mut cancel) = (false, false, false);
+    ui.horizontal_top(|ui| {
+        egui::Grid::new("content_permission_types")
+            .spacing(Vec2::new(12.0, 3.0))
+            .show(ui, |ui| {
+                for row in 0..3 {
+                    for col in 0..4 {
+                        let i = col * 3 + row;
+                        if let Some(t) = TYPES.get(i) {
+                            ui.push_id(t, |ui| {
+                                ui.horizontal(|ui| {
+                                    widgets::checkbox(ui, p, &mut b.types[i], "").on_hover_text(type_name(*t));
+                                    if let Some(icon) =
+                                        crate::ui::icons::global(crate::ui::inventory::item_icon(i32::from(*t), i32::from(*t), 0))
+                                    {
+                                        let color = crate::ui::inventory::item_icon_color(i32::from(*t), i32::from(*t), p);
+                                        ui.add(egui::Image::new(&icon).fit_to_exact_size(Vec2::splat(18.0)).tint(color))
+                                            .on_hover_text(type_name(*t));
+                                    } else {
+                                        ui.allocate_space(Vec2::splat(18.0));
+                                    }
+                                });
+                            });
+                        } else {
+                            ui.label("");
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+        ui.vertical(|ui| {
+            if ui
+                .add_sized([98.0, 25.0], egui::Button::new(aurora_i18n::tr!("common-all")))
+                .clicked()
+            {
+                b.types.fill(true);
+            }
+            if ui
+                .add_sized([98.0, 25.0], egui::Button::new(aurora_i18n::tr!("common-clear")))
+                .clicked()
+            {
+                b.types.fill(false);
+            }
+        });
+    });
+    section(ui, p, heading);
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(Vec2::new(82.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(82.0);
+            label(ui, p, aurora_i18n::tr!("common-group-2"));
+            if let Some(v) = check(ui, p, b.share, false, aurora_i18n::tr!("common-share"), true) {
+                b.share = v;
+            }
+        });
+        ui.allocate_ui_with_layout(Vec2::new(90.0, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(90.0);
+            label(ui, p, aurora_i18n::tr!("content-perms-anyone"));
+            if let Some(v) = check(ui, p, b.everyone_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
+                b.everyone_copy = v;
+            }
+        });
+        ui.vertical(|ui| {
+            label(ui, p, aurora_i18n::tr!("content-perms-next-owner"));
+            if let Some(v) = check(ui, p, b.next_modify, false, aurora_i18n::tr!("common-edit"), true) {
+                b.next_modify = v;
+            }
+            if let Some(v) = check(ui, p, b.next_copy, false, aurora_i18n::tr!("common-copy-2"), true) {
+                b.next_copy = v;
+            }
+            if !b.next_copy {
+                b.next_transfer = true;
+            }
+            if let Some(v) = check(ui, p, b.next_transfer, false, aurora_i18n::tr!("common-transfer"), b.next_copy) {
+                b.next_transfer = v;
+            }
+        });
+    });
+    ui.add_space(8.0);
+    if !status.is_empty() {
+        small(ui, p, status);
+    }
+    // the buttons at the bottom, from the height they measure (a
+    // guessed 28 points grew the window at every frame with a larger
+    // text)
+    widgets::above_footer(ui).1.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            let enabled = !running && b.types.iter().any(|on| *on);
+            accept = ui.add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-ok"))).clicked();
+            apply = ui
+                .add_enabled(enabled, egui::Button::new(aurora_i18n::tr!("common-apply")))
+                .clicked();
+            cancel = ui.button(aurora_i18n::tr!("common-cancel")).clicked();
+        });
+    });
+    (apply, accept, cancel)
 }
 
 impl BuildTool {

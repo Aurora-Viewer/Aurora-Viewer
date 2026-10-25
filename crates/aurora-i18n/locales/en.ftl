@@ -11277,3 +11277,9 @@ blender-live-linkset-counts =
     }
 blender-object-linkset = { $name } — root #1 · { $prims } prims
 blender-object-linked-prim = #{ $number } · { $name }
+
+inventory-bulk-permissions = Bulk permissions
+inventory-bulk-adjust = Adjust item permissions
+inventory-bulk-reading = Reading selected folders and subfolders…
+inventory-bulk-load-failed = Could not read all selected folders. No permissions were changed. Try again.
+inventory-bulk-unchanged = No eligible item needs a permission update.

@@ -11,7 +11,7 @@ mod color;
 mod common;
 mod compact;
 mod contents;
-mod contents_permissions;
+pub(crate) mod contents_permissions;
 mod contents_selection;
 mod features;
 mod floaters;

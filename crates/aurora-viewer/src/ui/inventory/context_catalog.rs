@@ -13,6 +13,7 @@ pub(super) enum Command {
     Share(Vec<Uuid>),
     Open(Uuid),
     Properties(Uuid),
+    BulkPermissions(Vec<Uuid>),
     Rename(Uuid),
     Image(Uuid),
     Protect(Uuid),
@@ -674,6 +675,16 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 Command::Properties(id),
             );
         }
+        if all || !single || folder.is_some() {
+            c.add(
+                "bulk-permissions",
+                TEXT,
+                "lock-filled",
+                aurora_i18n::tr!("inventory-bulk-permissions"),
+                ready && ids.iter().any(|id| bulk_permissions::eligible(inv, *id, prefs, facts.agent)),
+                Command::BulkPermissions(ids.clone()),
+            );
+        }
         c.add(
             "rename",
             TEXT,
@@ -1108,6 +1119,7 @@ pub(super) fn execute(
             st.property_edit = None;
             st.dialog = Some(EditDialog::Properties(id));
         }
+        Command::BulkPermissions(ids) => st.open_bulk_permissions(ids),
         Command::Rename(id) => st.begin_rename(inv, id),
         Command::Image(id) => st.thumbnail.open(id),
         Command::Protect(id) => {

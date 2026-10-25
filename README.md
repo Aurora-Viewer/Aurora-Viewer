@@ -18,7 +18,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 [![Rust](https://img.shields.io/badge/rust-stable-5EEAD4?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-070B1F)](#build)
 
-[Why Aurora](#why-aurora) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
+[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
 
 </div>
 
@@ -135,6 +135,11 @@ are planned or in progress: they are not in the viewer yet.
 - **It holds on**: a network blip no longer logs you out (Aurora reconnects
   you right where you were), and a full video memory no longer freezes the
   viewer.
+- **The right graphics card on a laptop**: on a PC with an integrated and a
+  dedicated GPU, Aurora picks the dedicated one, and you can choose the card
+  in Preferences, from the login screen on.
+- **Fast with a huge wardrobe**: the Appearance window stays smooth with
+  thousands of outfits.
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **AMD FSR upscaling** and its native anti-aliasing, on every brand of
   graphics card.
 
@@ -172,7 +177,10 @@ are planned or in progress: they are not in the viewer yet.
 - **Shape editing**, with 82 body and face controls, textured mesh previews
   and saved copies; manual or automatic hover height keeps your feet grounded.
 - **Gestures**, with a manager, an editor, chat triggers, shortcuts,
-  animations and sounds.
+  animations and sounds; they keep their rhythm, and talk to your HUDs on
+  negative channels too.
+- **Go to and Follow** a resident from their menu: Follow keeps up when they
+  run, take off or land.
 - **Your own sky and water**, with EEP sky, water and day-cycle editors,
   personal previews and parcel or region environment settings.
 - **Smoother avatars**: movement of the people around you extrapolated and
@@ -217,6 +225,30 @@ are planned or in progress: they are not in the viewer yet.
 - **Up to 8K**: 4K by default, in PNG, JPEG or BMP, to disk, inventory or the
   profile feed ([how to use it](#photos)).
 
+### Creator tools
+
+- **LiveMesh**: see your Blender mesh in the viewer while you edit it, with
+  nothing uploaded. Rigged meshes follow your own avatar, with their weights,
+  shape keys and materials; static meshes and linksets become local objects
+  you can place on the ground, move, rotate, resize, attach to your body or
+  HUD and detach. The Blender plug-in ships with the viewer and installs
+  itself, with an SL / Bento starter rig, rigging tools and an import with
+  its LODs prepared ([details](docs/BLENDER_LIVE.md)).
+- **A poser for photos**: pose yourself, your own animesh, or nearby avatars
+  who agree to it, joint by joint: body, face, hands, other bones and
+  physics, with a Left / Right / Mirror side choice, a finger grid and
+  whole-pose actions. Save poses to a library, export them as BVH or import
+  them as an animation. The pose is seen by you only
+  ([details](docs/POSER.md)).
+- **An IK workbench**: reusable pose projects that keep chosen bones on their
+  targets, with contacts that compatible viewers apply to nearby avatars
+  ([details](docs/IK_EDIT.md)).
+- **Build tools that stay out of the way**: a compact editor you can arrange
+  yourself, larger material previews for Blinn-Phong and PBR, a live preview
+  of the prim you are about to create, outlines that stay visible while you
+  move transparent objects, and parcel boundary shortcuts in the terrain
+  menus.
+
 ### An interface made for today
 
 - **Flat, calm and readable**: glass island bars, a notification center with
@@ -226,6 +258,19 @@ are planned or in progress: they are not in the viewer yet.
   picture. Unread conversations flash softly, "is typing…" shows, an item
   someone gives you appears as a card in their conversation, and dropping
   inventory on a conversation gives it.
+- **Conversations in their own windows**: pop a conversation out, or drag it
+  out of the list; nearby chat can live in its own window too. The
+  Conversations button flashes when something new arrives, and a right click
+  keeps it quiet for nearby chat.
+- **Links that show what they point to**: pictures from Gyazo, Flickr,
+  Imgur, Lightshot and Reddit pages, a YouTube player that keeps each video's
+  shape and your volume, and `secondlife:///` links shown as names and places
+  in chat, dialogs and notifications.
+- **GIFs in the conversation**: a GIF picker next to the emoji button, with
+  GIPHY and KLIPY. It appears once you add your own free key in
+  Preferences › Chat › GIF.
+- **Quiet objects, if you like**: messages that do not come from a person can
+  take one small line with an icon, and no longer ping you.
 - **Emoji at your fingertips**: a keyboard-friendly picker with shortcodes
   like `:heart:`, and Windows Alt codes in every text field. Ctrl+Up brings
   back what you sent, per conversation.
@@ -272,6 +317,13 @@ are planned or in progress: they are not in the viewer yet.
   first launch (WASD or ZQSD), and letter shortcuts use the key that carries
   their letter (M is M on AZERTY too). Search Preferences › Shortcuts by
   action, category or key.
+- **Made for every eye**: an Accessibility page gathers the settings that
+  help (interface scale, text size, reduce motion, sounds…), with a button on
+  the login screen. A high-contrast palette, the OpenDyslexic font, and
+  volume sliders that follow your ear are a click away.
+- **Your colours**: pick the accent, window background and text colours in
+  Preferences; Aurora keeps them readable.
+- **A clock in the bars**, with your local time and its zone.
 - **English and French**, following the system language or your choice,
   applied at once.
 - **A clean way out**: on closing, a dialog over a blurred background offers
@@ -354,7 +406,11 @@ The texture memory budget is set automatically from the detected VRAM.
 - **[LiveMesh](docs/BLENDER_LIVE.md)** — an optional Blender 2.93+
   plug-in previews geometry, weight and shape-key edits through a local
   connection, without uploading assets. Rigged meshes follow your avatar;
-  static objects can be placed in the world, edited, or attached to the body/HUD.
+  static objects and linksets can be placed in the world, edited, or attached
+  to the body/HUD.
+- **Posing** — a [poser](docs/POSER.md) for yourself, your animesh and
+  consenting nearby avatars, with a pose library, BVH export and animation
+  import; an [IK workbench](docs/IK_EDIT.md) with shared contact profiles.
 - **World** — prims, sculpts, mesh with LOD, terrain, EEP environment,
   sky, water and day-cycle editors, world sounds, parcel music and media
   on prims, with Aurora's downloadable media plugins pack.
@@ -368,7 +424,9 @@ The texture memory budget is set automatically from the detected VRAM.
   group conversations with a Contacts tab, resident profiles, the People
   window, contact sets, blocking, notifications
   with history and friend/IM alerts, inventory offers in the conversation,
-  a filter for object messages from elsewhere; searchable conversation
+  a filter for object messages from elsewhere, conversations popped out into
+  their own windows, link previews, a GIF picker (your own GIPHY / KLIPY key)
+  and optional compact lines for automated messages; searchable conversation
   history kept on disk per account and grid in the Legacy Viewer's text
   format, and offline messages.
 - **Voice** — nearby WebRTC voice, one-to-one, group and conference calls,
@@ -388,7 +446,8 @@ The texture memory budget is set automatically from the detected VRAM.
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
   overlays; double-click walk / run / teleport and content-rating controls
-  for places and teleport offers.
+  for places and teleport offers; an Accessibility page, a high-contrast
+  palette, custom interface colours and the OpenDyslexic font.
 - **Windows updates** — release checks, cancellable verified downloads,
   installation and restart with rollback. The prompt explains whether cache
   and settings will be preserved, migrated or reset.

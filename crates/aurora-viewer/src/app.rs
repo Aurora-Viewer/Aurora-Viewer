@@ -8174,6 +8174,7 @@ impl App {
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
                         || v.starts_with("aurora-menu-")
+                        || v.starts_with("bulk-")
                 }))
         {
             raw.focused = true;
@@ -8285,6 +8286,7 @@ impl App {
             raw.events
                 .extend(ui::inventory::delete_demo_events(&ctx, self.frame_count, &self.inventory_ui));
             ui::inventory::aurora_demo(&ctx, self.frame_count);
+            ui::inventory::bulk_permissions_demo(self.frame_count, &mut self.inventory_ui);
             if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "show-original" | "aurora-show-original")) {
                 match self.frame_count {
                     650 => ui::widgets::minimize_floater(&ctx, "inventory"),
@@ -15064,6 +15066,9 @@ impl ApplicationHandler for App {
                 let configured_view = matches!(
                     view.as_str(),
                     "permissions"
+                        | "bulk-permissions"
+                        | "bulk-multi"
+                        | "bulk-folder"
                         | "sort"
                         | "filters"
                         | "preferences"
@@ -15113,6 +15118,18 @@ impl ApplicationHandler for App {
                     self.inventory_ui.show_original(&self.world.inventory, self.world.inventory.root);
                     self.inventory_ui.filters_open = view == "filters";
                     self.inventory_ui.preferences_open = view == "preferences";
+                    if view.starts_with("bulk-") {
+                        let ids = if view == "bulk-folder" {
+                            vec![uuid::Uuid::from_u128(8000)]
+                        } else {
+                            [8100, 8102, 8103].into_iter().map(uuid::Uuid::from_u128).collect()
+                        };
+                        self.inventory_ui.show_original(&self.world.inventory, ids[0]);
+                        self.inventory_ui.selection.extend(ids.iter().copied());
+                        if view == "bulk-permissions" {
+                            self.inventory_ui.open_bulk_permissions(ids);
+                        }
+                    }
                     if view == "permissions" {
                         self.inventory_ui.show_next_owner = true;
                         self.inventory_ui.expand_all = Some(true);
