@@ -494,7 +494,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -521,6 +521,13 @@ when unfocused") is ignored during a screenshot.
   and `zoom` scenarios. The crouch control must remain active throughout
   (`down=true` in the log); add `AURORA_DEMO_LINK=0,firestorm` to exercise
   the crouch-walk through the offline simulator too.
+  `sit-ml` and `sit-ml-reclined` use that seat upright or tilted by 1.1 radians,
+  delayed 400 frames past the loading fade. First person runs from 760 to 1060;
+  mouse motion looks up at 880–900, down at 950–970 and sideways at 1020–1040.
+  Capture at 860, 920, 990 and 1050:
+  the camera must follow the animated eyes without orbiting around the head;
+  returning to third person at 1060 restores the seat camera, then standing at
+  1100 restores the normal rear view.
   Right-button scenarios also take physical cursor coordinates `(x,y)`:
   `right-click,x,y` moves slightly on both axes; `right-jitter,x,y` repeats
   small back-and-forth movements for 60 frames. Both must keep the camera

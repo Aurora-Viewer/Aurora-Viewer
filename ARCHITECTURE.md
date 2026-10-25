@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+Seated first-person camera updates run after `Scene::update_poses`, sharing the
+current animated eye positions used by look-at (`Scene::eyes_offset`). The camera
+transforms that offset through the avatar and seat, applying shape and optional
+hover once. Position constraints move the eye and focus together so mouse pitch
+remains independent of terrain clamping. Seated first-person AgentUpdate controls
+use that same displayed camera frame while retaining movement, script and RLVa
+flags. The ordinary standing view is retained.
+
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer
 helper preserves rejection of malformed and null UUIDs in both HTTP requests

@@ -30,6 +30,8 @@
 //! - `fly`: flying forward from frame 300 (camera lag)
 //! - `sit`: sit on a turning seat with a sit camera at frame 300, stand up
 //!   at 700 (demo::sit_events)
+//! - `sit-ml` / `sit-ml-reclined`: the same seat, upright or tilted, delayed
+//!   400 frames past the loading fade; first person with mouse look on both axes.
 //! - `right-click,x,y` / `right-jitter,x,y`: right click with small motion / repeated
 //!   back-and-forth motion: the camera stays still and the menu opens on release
 //! - `right-drag,x,y` / `right-slow,x,y`: held right button with fast / slow motion:
@@ -70,6 +72,11 @@ pub enum Step {
 }
 
 pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
+    let frame = if spec.starts_with("sit-ml") {
+        frame.saturating_sub(400)
+    } else {
+        frame
+    };
     let parts: Vec<&str> = spec.split(',').map(str::trim).collect();
     let num = |i: usize| parts.get(i).and_then(|v| v.parse::<f32>().ok());
     let mut out = Vec::new();
@@ -272,12 +279,22 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             610 | 630 | 660 => out.push(Step::Log),
             _ => {}
         },
-        mode @ ("sit" | "scripted-sit") => {
+        mode @ ("sit" | "scripted-sit" | "sit-ml" | "sit-ml-reclined") => {
             if (250..=700).contains(&frame) {
                 out.push(Step::SitEvents);
             }
             if mode == "scripted-sit" && matches!(frame, 320 | 500) {
                 out.push(Step::FollowEvents);
+            }
+            if mode.starts_with("sit-ml") {
+                match frame {
+                    360 | 660 => out.push(Step::ToggleMouselook),
+                    480..=500 => out.push(Step::Drag(0.0, -5.0)),
+                    550..=570 => out.push(Step::Drag(0.0, 10.0)),
+                    620..=640 => out.push(Step::Drag(5.0, 0.0)),
+                    460 | 520 | 590 | 650 | 680 => out.push(Step::Log),
+                    _ => {}
+                }
             }
             if matches!(frame, 290 | 302 | 320 | 360 | 400 | 500 | 600 | 700 | 702 | 720 | 760) {
                 out.push(Step::Log);
@@ -298,6 +315,27 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
         _ => {}
     }
     out
+}
+
+pub fn sit_events(spec: &str, frame: u64) -> Vec<aurora_net::NetEvent> {
+    let frame = if spec.starts_with("sit-ml") {
+        frame.saturating_sub(400)
+    } else {
+        frame
+    };
+    let mut events = crate::demo::sit_events(frame);
+    if spec == "sit-ml-reclined" {
+        for event in &mut events {
+            if let aurora_net::NetEvent::ObjectUpdates { objects, .. } = event {
+                for object in objects {
+                    if object.local_id == 950 {
+                        object.rotation *= glam::Quat::from_rotation_y(1.1);
+                    }
+                }
+            }
+        }
+    }
+    events
 }
 
 pub fn sit_follow_events(frame: u64, handle: aurora_net::RegionHandle, subject: glam::Vec3) -> Vec<aurora_net::NetEvent> {

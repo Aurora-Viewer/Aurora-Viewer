@@ -4989,6 +4989,12 @@ impl Scene {
         }
     }
 
+    /// Animated eyes relative to the avatar root, before its world transform.
+    /// Camera placement can then apply the hover-camera preference directly.
+    pub fn eyes_offset(&self, world: &World, id: &Uuid) -> Option<Vec3> {
+        Some(self.motions.get(id)?.eyes_pos()? - world.avatar_lib.pelvis)
+    }
+
     /// Stable name tag above the avatar root, also used for click depth.
     /// Its height includes shape, mesh offsets and translation deformers;
     /// neither body/head rotations nor animation bobbing move the anchor.
@@ -5556,6 +5562,79 @@ mod tests {
             world.avatar_poses[&world.agent_id][foot].abs_diff_eq(own_before[foot], 1e-6),
             "restore without resetting or stopping motions"
         );
+    }
+
+    #[test]
+    fn seated_mouselook_uses_the_current_pose_on_a_reclined_seat() {
+        use crate::camera::{Camera, CameraSettings, FrameInput};
+
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for frame in [650, 700] {
+            for event in crate::camera::demo::sit_events("sit-ml-reclined", frame) {
+                if let NetEvent::ObjectUpdates { handle, .. } = &event {
+                    world.main_region = Some(*handle);
+                }
+                world.apply(event);
+            }
+        }
+        let owner = world.agent_id;
+        let mut scene = Scene::new(Default::default(), lib.clone());
+        scene.palette_base(owner);
+        let mut camera = Camera::default();
+        let settings = CameraSettings {
+            hover_affects_camera: true,
+            ..Default::default()
+        };
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        let now = Instant::now();
+        let mut previous = None;
+        // Two actual poses bend the torso and move the eyes. Evaluate the
+        // skeleton before the camera, as App's deferred seated update does.
+        for (i, bend) in [0.0, 0.8].into_iter().enumerate() {
+            let mut animation = crate::demo::seat_animation();
+            animation.ease_in = 0.0;
+            animation.joints.push(aurora_assets::anim::JointMotion {
+                joint_name: "mTorso".into(),
+                priority: 5,
+                rot_keys: vec![aurora_assets::anim::RotKey {
+                    time: 0.0,
+                    rotation: Quat::from_rotation_y(bend),
+                }],
+                pos_keys: Vec::new(),
+            });
+            let animation_id = Uuid::from_u128(0x101500 + i as u128);
+            scene
+                .anims
+                .insert(animation_id, Arc::new(anim::BoundAnim::bind(animation, &lib.rig)));
+            world.apply(NetEvent::AvatarAnimations {
+                avatar: owner,
+                anims: vec![(animation_id, 1)],
+                sources: Vec::new(),
+            });
+            let now = now + std::time::Duration::from_secs(i as u64);
+            scene.update_poses(&mut world, Vec3::ZERO, now);
+            let eyes = scene.eyes_world(&world, &owner, now).expect("posed eyes");
+            let input = FrameInput {
+                dt: 1.0,
+                now,
+                steering: false,
+                build_mode: false,
+                edit_tracking: None,
+                eye_offset: scene.eyes_offset(&world, &owner),
+                draw_distance: 128.0,
+                aspect: 1.0,
+            };
+            camera.update(&mut world, &settings, &input);
+            let index = world.objects.index_of_uuid(&owner).unwrap();
+            let rotation = Scene::object_transform(&world, index, now, 0).unwrap().1;
+            assert!(camera.position.abs_diff_eq(eyes + rotation * Vec3::Z * 0.1, 2e-5));
+            if let Some(previous) = previous {
+                assert!(eyes.distance(previous) > 0.1, "the animation must move the eyes");
+            }
+            previous = Some(eyes);
+        }
     }
 
     #[test]

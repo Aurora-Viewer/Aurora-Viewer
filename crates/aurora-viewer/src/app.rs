@@ -3242,7 +3242,7 @@ impl App {
                     }
                 }
                 Step::SitEvents => {
-                    for ev in crate::demo::sit_events(self.frame_count) {
+                    for ev in crate::camera::demo::sit_events(spec, self.frame_count) {
                         if let Some(e) = self.world.apply(ev) {
                             self.on_app_event(e);
                         }
@@ -7048,7 +7048,8 @@ impl App {
         self.update_movement();
         self.update_audio();
         self.update_wind_sound(dt);
-        let mut edit_camera_frame = None;
+        let mut late_camera_frame = None;
+        let mut late_controls = None;
         if self.in_world() {
             self.update_sounds();
             self.update_attention();
@@ -7113,12 +7114,13 @@ impl App {
                     .focus_object_id()
                     .filter(|id| self.build.edits_object(&self.world, id))
                     .map(|_| self.settings.build.follow_edit_object),
+                eye_offset: None,
                 draw_distance: self.settings.draw_distance,
             };
-            if frame.edit_tracking.is_some() {
+            if frame.edit_tracking.is_some() || (self.camera.mouselook() && self.world.agent.seated) {
                 // Evaluate the focused edit selection after the local drag,
-                // so a stale simulator echo cannot move the camera for a frame.
-                edit_camera_frame = Some(frame);
+                // and seated first-person eyes after this frame's animation.
+                late_camera_frame = Some(frame);
             } else {
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
             }
@@ -7177,7 +7179,11 @@ impl App {
             if !self.world.agent.flying && self.world.rlva.has("jump") {
                 c.control_flags &= !control::UP_POS;
             }
-            self.net.set_controls(c);
+            if late_camera_frame.is_some() && self.camera.mouselook() && self.world.agent.seated {
+                late_controls = Some(c);
+            } else {
+                self.net.set_controls(c);
+            }
         }
         self.update_voice();
         self.update_radar();
@@ -7603,9 +7609,25 @@ impl App {
                 self.scene.reveal_selected_faces();
             }
             self.flush_build();
-            let camera_changed = edit_camera_frame.is_some() || panned;
-            if let Some(frame) = edit_camera_frame {
+            let camera_changed = late_camera_frame.is_some() || panned;
+            if let Some(mut frame) = late_camera_frame {
+                frame.eye_offset = self.scene.eyes_offset(&self.world, &self.world.agent_id);
+                if self.camera.mouselook() && self.world.agent.seated {
+                    frame.now = now;
+                }
                 self.camera.update(&mut self.world, &self.settings.camera, &frame);
+                if let Some(controls) = late_controls {
+                    // AgentUpdate must describe the displayed eye and aim,
+                    // keeping the movement, script and RLVa flags prepared above.
+                    let current = self.world.agent.controls(&self.input, &self.camera, self.settings.draw_distance);
+                    self.net.set_controls(aurora_net::AgentControls {
+                        control_flags: (controls.control_flags & !control::MOUSELOOK) | (current.control_flags & control::MOUSELOOK),
+                        state: controls.state,
+                        flags: controls.flags,
+                        alt_or_ctrl: controls.alt_or_ctrl,
+                        ..current
+                    });
+                }
             }
             // every change of the viewing angle goes to the simulator, as
             // LLViewerCamera::setView (the end of a zoom's easing excepted)
