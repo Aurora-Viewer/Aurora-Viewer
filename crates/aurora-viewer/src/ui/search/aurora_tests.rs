@@ -27,6 +27,7 @@ fn apply(world: &mut World, actions: Vec<SearchAction>) {
             SearchAction::Page(tab, forward) => world.search.turn_page(tab, forward),
             SearchAction::WantParcel(id) => sent.push(aurora_net::NetCommand::ParcelInfoRequest(id)),
             SearchAction::WantClassified(id) => sent.push(aurora_net::NetCommand::ClassifiedInfoRequest(id)),
+            SearchAction::RefreshGroup(id) => sent.push(aurora_net::NetCommand::GroupProfileRequest(id)),
             _ => {}
         }
     }
@@ -50,6 +51,11 @@ struct Window {
     st: SearchUi,
     settings: SearchSettings,
     ctx: egui::Context,
+    screen_size: Vec2,
+    classic: bool,
+    images: HashMap<uuid::Uuid, egui::TextureHandle>,
+    wanted_images: HashSet<uuid::Uuid>,
+    shapes: Vec<egui::epaint::ClippedShape>,
 }
 
 impl Window {
@@ -63,13 +69,18 @@ impl Window {
             st,
             settings: SearchSettings::default(),
             ctx,
+            screen_size: Vec2::new(1400.0, 900.0),
+            classic: false,
+            images: HashMap::new(),
+            wanted_images: HashSet::new(),
+            shapes: Vec::new(),
         }
     }
 
     /// One frame with these pointer events; the texts drawn and the actions.
     fn frame(&mut self, world: &World, events: Vec<egui::Event>) -> (Texts, Vec<SearchAction>) {
         let p = crate::theme::Theme::default().palette();
-        let (images, pics) = (HashMap::new(), HashMap::new());
+        let pics = HashMap::new();
         let mut emoji = crate::ui::emoji::Emoji::load();
         let (mut names, mut wanted, mut groups) = (HashSet::new(), HashSet::new(), HashSet::new());
         let browser = aurora_media::BrowserSettings::default();
@@ -84,7 +95,7 @@ impl Window {
         let mut actions = Vec::new();
         let mut output = self.ctx.run_ui(
             egui::RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1400.0, 900.0))),
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.screen_size)),
                 events,
                 ..Default::default()
             },
@@ -92,14 +103,17 @@ impl Window {
                 let mut c = Ctx {
                     p: &p,
                     world,
-                    images: &images,
+                    images: &self.images,
                     emoji: &mut emoji,
                     want_names: &mut names,
                     wanted_images: &mut wanted,
                     want_groups: &mut groups,
                 };
                 let mut open = true;
-                actions = self.st.show(ui.ctx(), &mut c, &pics, &mut self.settings, &web, false, &mut open);
+                actions.extend(
+                    self.st
+                        .show(ui.ctx(), &mut c, &pics, &mut self.settings, &web, self.classic, &mut open),
+                );
             },
         );
         output.textures_delta.clear();
@@ -113,6 +127,8 @@ impl Window {
         }
         let mut texts = Vec::new();
         output.shapes.iter().for_each(|s| collect(&s.shape, &mut texts));
+        self.wanted_images = wanted;
+        self.shapes = output.shapes;
         (texts, actions)
     }
 
@@ -152,6 +168,215 @@ impl Window {
 
 fn has(texts: &Texts, text: &str) -> bool {
     texts.iter().any(|(_, t)| t == text)
+}
+
+fn groups_window(world: &mut World, classic: bool) -> Window {
+    let mut w = Window::new("aurora");
+    w.classic = classic;
+    w.st.open_tab(Tab::Groups);
+    apply(
+        world,
+        w.st.aurora_requests(&w.settings).into_iter().map(SearchAction::Find).collect(),
+    );
+    w
+}
+
+#[test]
+fn search_groups_join_uses_the_selected_group_in_both_styles() {
+    for classic in [false, true] {
+        let mut world = world();
+        let mut w = groups_window(&mut world, classic);
+        let group = crate::demo::search::boreal();
+        apply(&mut world, vec![SearchAction::Select(Tab::Groups, Key::Id(group))]);
+        w.settle(&mut world);
+        let label = aurora_i18n::tr!("search-group-join");
+        let actions = w.click(&mut world, label);
+        assert!(actions.iter().any(|a| matches!(a, SearchAction::JoinGroup(id) if *id == group)));
+        world.search.groups.get_mut(&group).expect("profile").open_enrollment = false;
+        let actions = w.click(&mut world, label);
+        assert!(
+            !actions.iter().any(|a| matches!(a, SearchAction::JoinGroup(_))),
+            "invite-only group"
+        );
+    }
+}
+
+#[test]
+fn search_groups_visible_rows_request_and_draw_insignias_once() {
+    let mut world = world();
+    let mut w = groups_window(&mut world, false);
+    let mut requests = 0;
+    for _ in 0..4 {
+        let (_, actions) = w.frame(&world, Vec::new());
+        let count = actions.iter().filter(|a| matches!(a, SearchAction::RefreshGroup(_))).count();
+        assert!(count <= 6, "visible detail requests remain bounded");
+        requests += count;
+        apply(&mut world, actions);
+    }
+    assert!(requests > 0, "visible rows request their group profiles after the initial layout");
+    w.settle(&mut world);
+    let image = crate::demo::TEX_SNAPSHOT;
+    assert!(w.wanted_images.contains(&image));
+    let texture = w.ctx.load_texture(
+        "group-insignia",
+        egui::ColorImage::filled([8, 8], egui::Color32::WHITE),
+        Default::default(),
+    );
+    let texture_id = texture.id();
+    w.images.insert(image, texture);
+    let texts = w.settle(&mut world);
+    fn images(shape: &Shape, id: egui::TextureId) -> usize {
+        match shape {
+            Shape::Mesh(mesh) => usize::from(mesh.texture_id == id),
+            Shape::Rect(rect) => usize::from(rect.brush.as_ref().is_some_and(|brush| brush.fill_texture_id == id)),
+            Shape::Vec(shapes) => shapes.iter().map(|s| images(s, id)).sum(),
+            _ => 0,
+        }
+    }
+    let drawn: usize = w.shapes.iter().map(|s| images(&s.shape, texture_id)).sum();
+    assert!(drawn >= 5, "the five groups with insignias draw their received image: {drawn}");
+    assert!(has(&texts, "AB"), "the group without an insignia retains its initials");
+    let (_, actions) = w.frame(&world, Vec::new());
+    assert!(
+        !actions.iter().any(|a| matches!(a, SearchAction::RefreshGroup(_))),
+        "no repeated requests"
+    );
+}
+
+#[test]
+fn search_groups_counts_follow_profile_then_complete_members_in_both_styles() {
+    use aurora_net::groups::{GroupMember, LastSeen, MembersPage};
+    for classic in [false, true] {
+        let mut world = world();
+        let mut w = groups_window(&mut world, classic);
+        let group = crate::demo::search::boreal();
+        apply(&mut world, vec![SearchAction::Select(Tab::Groups, Key::Id(group))]);
+        w.settle(&mut world);
+        let mut profile = world.search.groups[&group].clone();
+        profile.members = 3;
+        world.apply(aurora_net::NetEvent::GroupProfile(Box::new(profile)));
+        let texts = w.settle(&mut world);
+        assert!(has(&texts, &aurora_i18n::tr!("search-group-members", count = 3_i64)));
+        if !classic {
+            assert_eq!(
+                texts
+                    .iter()
+                    .filter(|(_, t)| t == &aurora_i18n::tr!("search-group-members", count = 3_i64))
+                    .count(),
+                2
+            );
+        } else {
+            assert!(has(&texts, "3"), "the list column also uses the profile");
+        }
+        for total in [2, 0] {
+            world.group_data.refresh(group, false);
+            let request = world
+                .group_data
+                .take_commands()
+                .into_iter()
+                .find_map(|cmd| match cmd {
+                    aurora_net::NetCommand::GroupMembersRequest { request, .. } => Some(request),
+                    _ => None,
+                })
+                .expect("members request");
+            if total > 0 {
+                world.apply(aurora_net::NetEvent::GroupMembers(Box::new(MembersPage {
+                    group,
+                    request,
+                    total,
+                    members: Vec::new(),
+                    whole: true,
+                })));
+                assert_eq!(world.group_member_count(group), Some(3), "a partial list is not the count");
+            }
+            let members = (0..total)
+                .map(|i| GroupMember {
+                    id: uuid::Uuid::from_u128(i as u128 + 1),
+                    contribution: 0,
+                    powers: 0,
+                    title: String::new(),
+                    last_seen: LastSeen::Online,
+                    is_owner: false,
+                })
+                .collect();
+            world.apply(aurora_net::NetEvent::GroupMembers(Box::new(MembersPage {
+                group,
+                request,
+                total,
+                members,
+                whole: true,
+            })));
+            let texts = w.settle(&mut world);
+            assert!(has(&texts, &aurora_i18n::tr!("search-group-members", count = i64::from(total))));
+            let list = world.search.list_mut(Tab::Groups).expect("groups");
+            list.sort = Some((1, false));
+            assert_eq!(list.sorted()[0].key, Key::Id(group), "the current count is used for sorting too");
+            if !classic {
+                assert_eq!(
+                    texts
+                        .iter()
+                        .filter(|(_, t)| t == &aurora_i18n::tr!("search-group-members", count = i64::from(total)))
+                        .count(),
+                    2
+                );
+            } else {
+                assert!(has(&texts, &total.to_string()));
+            }
+        }
+        apply(
+            &mut world,
+            w.st.aurora_requests(&w.settings).into_iter().map(SearchAction::Find).collect(),
+        );
+        let list = world.search.list(Tab::Groups).expect("groups");
+        let row = list.rows.iter().find(|r| r.key == Key::Id(group)).expect("group row");
+        assert!(
+            matches!(row.values.first(), Some(crate::world::search::Value::Int(0))),
+            "a new directory reply preserves the current count"
+        );
+    }
+}
+
+#[test]
+fn search_groups_navigation_wraps_without_overlap_at_the_minimum_width() {
+    let mut world = world();
+    let mut w = Window::new("page");
+    w.screen_size = Vec2::new(750.0, 700.0);
+    apply(
+        &mut world,
+        w.st.aurora_requests(&w.settings).into_iter().map(SearchAction::Find).collect(),
+    );
+    let texts = w.settle(&mut world);
+    let labels = [
+        "search-aurora-all",
+        "common-people",
+        "common-places",
+        "search-tab-events",
+        "common-groups",
+        "search-tab-classifieds",
+        "search-tab-land",
+        "search-tab-web",
+    ];
+    let mut rects = Vec::new();
+    for key in labels {
+        let label = aurora_i18n::text(key);
+        assert!(has(&texts, label));
+        let shape = w
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                Shape::Text(t) if t.galley.text() == label => Some((s.clip_rect, t.galley.rect.translate(t.pos.to_vec2()))),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("chip {label}"));
+        assert!(shape.0.contains_rect(shape.1), "chip {label} is fully visible: {shape:?}");
+        assert!(
+            rects.iter().all(|r: &Rect| !r.intersects(shape.1)),
+            "chip {label} overlaps another chip"
+        );
+        rects.push(shape.1);
+    }
+    w.click(&mut world, aurora_i18n::tr!("search-tab-web"));
+    assert_eq!(w.st.aurora_kind(), Kind::Web, "the last chip remains clickable");
 }
 
 #[test]

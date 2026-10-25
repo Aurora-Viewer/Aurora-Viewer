@@ -5494,7 +5494,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   being its "All" chip that searches the five text directories at once),
   the search for the text already run (`aurora` by default): the list is
   filled by the directory of the demo, the first row is selected and its
-  details shown on the right. In Aurora's look the rows of places, land
+  details shown on the right. In Aurora's look, visible group rows request
+  their profiles and insignias and keep initials when no image exists.
+  Both layouts replace directory member counts with the current profile
+  or completed member list, including the sort order. Join
+  uses the profile's fee, balance and group-limit confirmation in both
+  styles; invite-only groups and existing memberships cannot be joined.
+  Navigation chips wrap within narrow windows, including their counts.
+  In Aurora's look the rows of places, land
   sales and classifieds show the demo snapshot and their region once
   their details answered. For `land` in the Legacy look, the text is the
   price limit (`land:25000`); without it the field keeps its default "0"

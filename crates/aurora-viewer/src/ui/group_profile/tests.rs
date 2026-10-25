@@ -228,6 +228,76 @@ fn joining_checks_the_group_limit_and_the_balance() {
 }
 
 #[test]
+fn search_groups_join_confirms_without_opening_a_profile() {
+    let mut world = world(false, 0);
+    world.balance = Some(1000);
+    let mut st = GroupProfileUi::default();
+    st.join(&world, DEMO_GROUP1);
+    assert!(matches!(
+        st.confirm,
+        Some(Confirm::Join {
+            group: DEMO_GROUP1,
+            fee: 250,
+            ..
+        })
+    ));
+    assert!(st.shown().is_none());
+    let (drawn, actions) = texts(&mut st, &world, false);
+    assert!(
+        has(&drawn, "ui-group-profile-join-title"),
+        "the confirmation remains visible without a profile"
+    );
+    assert!(
+        !actions.iter().any(|a| matches!(a, GroupAction::Join(_))),
+        "no request before confirmation"
+    );
+    world.balance = Some(100);
+    st.join(&world, DEMO_GROUP1);
+    assert!(matches!(st.confirm, Some(Confirm::CannotAfford { fee: 250, .. })));
+    st.confirm = None;
+    world.search.groups.get_mut(&DEMO_GROUP1).expect("profile").open_enrollment = false;
+    st.join(&world, DEMO_GROUP1);
+    st.join(&world, Uuid::nil());
+    assert!(st.confirm.is_none(), "no join without a known open enrollment");
+
+    world.search.groups.get_mut(&DEMO_GROUP1).expect("profile").open_enrollment = true;
+    world.search.groups.get_mut(&DEMO_GROUP1).expect("profile").membership_fee = 0;
+    world.balance = None;
+    st.join(&world, DEMO_GROUP1);
+    assert!(
+        matches!(st.confirm, Some(Confirm::Join { fee: 0, .. })),
+        "free enrollment needs no balance"
+    );
+
+    let mut login = crate::demo::events()
+        .into_iter()
+        .find_map(|ev| match ev {
+            NetEvent::LoggedIn(login) => Some(login),
+            _ => None,
+        })
+        .expect("demo login");
+    std::sync::Arc::make_mut(&mut login)
+        .raw
+        .insert("max-agent-groups", aurora_llsd::Llsd::from(1));
+    world.login = Some(login);
+    world.groups.groups.push(aurora_net::GroupMembership {
+        id: crate::demo::DEMO_GROUP2,
+        name: "Another group".into(),
+        insignia: Uuid::nil(),
+        powers: 0,
+        accept_notices: true,
+        list_in_profile: true,
+        contribution: 0,
+    });
+    st.join(&world, DEMO_GROUP1);
+    assert!(matches!(st.confirm, Some(Confirm::TooManyGroups)));
+    st.confirm = None;
+    world.groups.groups[0].id = DEMO_GROUP1;
+    st.join(&world, DEMO_GROUP1);
+    assert!(st.confirm.is_none(), "members cannot join again");
+}
+
+#[test]
 fn members_are_filtered_and_sorted_online_first() {
     let world = world(true, MEMBER);
     let v = view::View::of(&world, DEMO_GROUP1);

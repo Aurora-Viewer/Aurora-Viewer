@@ -293,6 +293,15 @@ impl GroupProfileUi {
         self.group.filter(|_| self.open)
     }
 
+    /// Join from search or the profile through the same confirmation,
+    /// without needing to open the profile (LLGroupActions::join).
+    pub fn join(&mut self, world: &World, group: Uuid) {
+        let v = view::View::of(world, group);
+        if v.member.is_none() && v.profile.is_some_and(|g| g.open_enrollment) {
+            self.ask_join(world, &v, group);
+        }
+    }
+
     /// A row on screen has no picture yet: asked at a few new residents a
     /// second, as the People window does.
     pub(super) fn want_pic(&mut self, id: Uuid, now: f64) {
@@ -320,8 +329,6 @@ impl GroupProfileUi {
         }
         if let Some(id) = self.shown() {
             self.profile_window(ctx, c, env, id, &mut actions);
-        } else {
-            self.confirm = None;
         }
         // the invitation is a window of its own (LLFloaterGroupInvite), with
         // or without the group's profile
@@ -329,6 +336,7 @@ impl GroupProfileUi {
             let v = view::View::of(c.world, group);
             self.invite.show(ctx, c, env.avatar_pics, &v, &mut actions);
         }
+        self.confirm_dialog(ctx, c.p, &mut actions);
         actions
     }
 
@@ -363,7 +371,6 @@ impl GroupProfileUi {
             floater.show(ctx, c.p, &mut open, |ui| self.aurora(ui, c, env, &v, actions));
         }
         self.open = open;
-        self.confirm_dialog(ctx, c.p, actions);
     }
 
     /// The resident picker of the invitation window (it searches the
@@ -389,7 +396,7 @@ impl GroupProfileUi {
     /// The Aurora look: the header, the tabs, the tab.
     fn aurora(&mut self, ui: &mut egui::Ui, c: &mut Ctx, env: &Env, v: &view::View, actions: &mut Vec<GroupAction>) {
         match view::header(ui, c, v, env, &mut self.tab, actions) {
-            Some(view::Header::Join) => self.ask_join(c.world, v, v.id),
+            Some(view::Header::Join) => self.join(c.world, v.id),
             Some(view::Header::Invite) => self.open_invite(v.id),
             None => {}
         }

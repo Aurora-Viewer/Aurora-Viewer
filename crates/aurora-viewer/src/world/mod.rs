@@ -2843,6 +2843,9 @@ impl World {
             }
             NetEvent::DirReply(r) => {
                 self.search.apply_reply(&r);
+                if matches!(r.rows, aurora_net::search::DirRows::Groups(_)) {
+                    self.search.refresh_group_counts(&self.group_data);
+                }
                 None
             }
             NetEvent::EventInfo(e) => {
@@ -2862,6 +2865,9 @@ impl World {
             | NetEvent::GroupNotices { .. }
             | NetEvent::GroupBanList { .. }) => {
                 self.group_data.on_event(&ev);
+                if matches!(ev, NetEvent::GroupMembers(_)) {
+                    self.search.refresh_group_counts(&self.group_data);
+                }
                 None
             }
             NetEvent::GroupLand(reply) => {
@@ -2924,6 +2930,7 @@ impl World {
             }
             NetEvent::GroupProfile(g) => {
                 self.search.groups.insert(g.id, *g);
+                self.search.refresh_group_counts(&self.group_data);
                 self.refresh_task_inventory_offers();
                 None
             }
