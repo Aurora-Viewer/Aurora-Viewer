@@ -41,6 +41,9 @@ impl Harness {
     }
     fn click(&mut self, label: &str) -> (egui::FullOutput, Option<Action>) {
         let pos = self.find(label).center();
+        self.click_at(pos)
+    }
+    fn click_at(&mut self, pos: egui::Pos2) -> (egui::FullOutput, Option<Action>) {
         let mut result = None;
         for pressed in [true, false] {
             result = Some(self.frame(vec![
@@ -107,6 +110,61 @@ fn area_search_native_rows_select_and_dispatch_inspect_zoom_and_copy() {
     h.click(aurora_i18n::tr!("area-search-refresh"));
     assert!(h.ui.refresh);
     assert_eq!(h.ui.table.filters.query, "does not match");
+    h.click("does not match");
+    let query_id = h.ctx.memory(|m| m.focused()).expect("search field focus");
+    let clear = h.ctx.read_response(query_id.with("clear")).expect("search clear button");
+    h.click_at(clear.rect.center());
+    assert!(h.ui.table.filters.query.is_empty());
+    assert_eq!(h.ui.table.visible.len(), 2000);
+    assert_eq!(h.ctx.memory(|m| m.focused()), Some(query_id));
+    h.frame(Vec::new());
+    h.frame(Vec::new());
+    assert!(h.ctx.read_response(query_id.with("clear")).is_none());
+}
+
+#[test]
+fn area_search_native_filter_crosses_clear_only_their_field_and_restore_results() {
+    for scale in [1.0, 1.5] {
+        let mut h = Harness::new(scale, Vec2::new(1280.0, 900.0), 40);
+        h.click(aurora_i18n::tr!("area-search-filters"));
+        h.ui.table.filters.query = "Object 1".into();
+        h.ui.table.filters.name = "no match".into();
+        h.ui.table.filters.description = "no match".into();
+        h.ui.table.filters.owner = "no match".into();
+        h.ui.table.filters.creator = "no match".into();
+        for _ in 0..10 {
+            h.frame(Vec::new());
+        }
+        let fields = |h: &Harness| {
+            [
+                h.ui.table.filters.name.clone(),
+                h.ui.table.filters.description.clone(),
+                h.ui.table.filters.owner.clone(),
+                h.ui.table.filters.creator.clone(),
+            ]
+        };
+        for i in 0usize..4 {
+            let id = egui::Id::unique(("area_search_field", i));
+            let field = h.ctx.read_response(id).expect("filter input");
+            let clear = h.ctx.read_response(id.with("clear")).expect("filled filter's clear button");
+            assert!(field.rect.contains_rect(clear.rect), "clear button stays inside the input");
+            assert_eq!(clear.rect.right(), field.rect.right());
+            let mut expected = fields(&h);
+            expected[i].clear();
+            h.click_at(clear.rect.center());
+            assert_eq!(fields(&h), expected);
+            assert_eq!(h.ui.table.filters.query, "Object 1");
+            assert_eq!(h.ctx.memory(|m| m.focused()), Some(id));
+            h.frame(Vec::new());
+            h.frame(Vec::new());
+            assert!(h.ctx.read_response(id.with("clear")).is_none(), "empty inputs have no clear button");
+        }
+        assert_eq!(
+            h.ui.table.visible.len(),
+            11,
+            "clearing individual filters immediately reapplies the remaining query"
+        );
+    }
 }
 
 #[test]

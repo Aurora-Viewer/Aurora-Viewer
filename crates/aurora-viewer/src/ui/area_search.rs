@@ -44,7 +44,7 @@ impl AreaSearchUi {
                 let width = (ui.available_width() - refresh_width - ui.spacing().item_spacing.x)
                     .max(120.0)
                     .floor();
-                widgets::search_box(ui, p, &mut self.table.filters.query, aurora_i18n::tr!("area-search-hint"), width);
+                widgets::clearable_search_box(ui, p, &mut self.table.filters.query, aurora_i18n::tr!("area-search-hint"), width);
                 if widgets::action_button(
                     ui,
                     p,
@@ -85,10 +85,7 @@ impl AreaSearchUi {
                             .enumerate()
                             {
                                 ui.label(label);
-                                ui.add_sized(
-                                    [180.0, ui.spacing().interact_size.y],
-                                    egui::TextEdit::singleline(text).id(egui::Id::unique(("area_search_field", i))),
-                                );
+                                widgets::filter_field(ui, p, text, egui::Id::unique(("area_search_field", i)), 180.0);
                                 if !wide || i % 2 == 1 {
                                     ui.end_row();
                                 }

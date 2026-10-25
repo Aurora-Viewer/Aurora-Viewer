@@ -253,10 +253,28 @@ pub fn filter_pill_width(ui: &egui::Ui, icon: &str, label: &str) -> f32 {
     (if icon.is_empty() { 0.0 } else { 13.0 + 5.0 }) + w + 18.0
 }
 
-/// The search field of a list: a magnifier then the text, on the field's
-/// face.
+/// The search field of a list: a magnifier then the text, on the field's face.
 pub fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
     icon_field(ui, p, "search-filled", text, hint, width)
+}
+
+/// `search_box` with an in-field clear button while filled.
+pub fn clearable_search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    icon_field_inner(ui, p, "search-filled", text, hint, width, true)
+}
+
+/// A plain filter input with the same clear button as `clearable_search_box`.
+pub fn filter_field(ui: &mut egui::Ui, p: &Palette, text: &mut String, id: egui::Id, width: f32) -> egui::Response {
+    let mut margin = egui::Margin::symmetric(4, 2) + super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
+    if !text.is_empty() {
+        margin.right += CLEAR_WIDTH;
+    }
+    let mut response = ui.add_sized(
+        [width, ui.spacing().interact_size.y],
+        egui::TextEdit::singleline(text).id(id).margin(margin),
+    );
+    clear_filter(ui, p, text, &mut response);
+    response
 }
 
 /// The face of a field of the redrawn windows and menus: the search box's,
@@ -270,6 +288,10 @@ pub fn field_frame(ui: &egui::Ui, p: &Palette) -> egui::Frame {
 
 /// A text field on that face, a Tabler `icon` before the text.
 pub fn icon_field(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String, hint: &str, width: f32) -> egui::Response {
+    icon_field_inner(ui, p, icon, text, hint, width, false)
+}
+
+fn icon_field_inner(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String, hint: &str, width: f32, clear: bool) -> egui::Response {
     field_frame(ui, p)
         .show(ui, |ui| {
             ui.set_width(width - 18.0);
@@ -277,15 +299,43 @@ pub fn icon_field(ui: &mut egui::Ui, p: &Palette, icon: &str, text: &mut String,
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 7.0;
                 super::glyph(ui, icon, p.muted, 13.0);
-                let centre = super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
-                ui.add(
+                let mut centre = super::field_text_margin(ui.ctx(), &egui::TextStyle::Body.resolve(ui.style()));
+                if clear && !text.is_empty() {
+                    centre.right += CLEAR_WIDTH;
+                }
+                let mut response = ui.add(
                     egui::TextEdit::singleline(text)
                         .frame(egui::Frame::NONE.inner_margin(centre))
                         .hint_text(hint)
                         .desired_width(f32::INFINITY),
-                )
+                );
+                if clear {
+                    clear_filter(ui, p, text, &mut response);
+                }
+                response
             })
             .inner
         })
         .inner
+}
+
+const CLEAR_WIDTH: i8 = 20;
+
+fn clear_filter(ui: &mut egui::Ui, p: &Palette, text: &mut String, response: &mut egui::Response) {
+    if text.is_empty() {
+        return;
+    }
+    let rect = Rect::from_min_max(
+        egui::pos2(response.rect.right() - f32::from(CLEAR_WIDTH), response.rect.top()),
+        response.rect.right_bottom(),
+    );
+    let clear = ui.interact(rect, response.id.with("clear"), Sense::click());
+    super::paint_title_button(ui, p, "x", &clear);
+    let label = aurora_i18n::tr!("common-clear");
+    clear.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
+    if clear.on_hover_text(label).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        text.clear();
+        response.mark_changed();
+        response.request_focus();
+    }
 }

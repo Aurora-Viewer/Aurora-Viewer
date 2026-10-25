@@ -3168,7 +3168,8 @@ both open states and the selection count. Capture at frame 620.
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
 the agent's parcel, `sale` shows sale entries, `filters` expands the filters, and
 `search` searches the localized fountain name. Capture after frame 740, in English and French. Check the column
-sorting, combined text and flag filters, Reset, Refresh preserving filters,
+sorting, combined text and flag filters, the in-field crosses that clear only
+their filled text filter and return keyboard focus to it, Reset, Refresh preserving filters,
 selection, Inspect, Zoom/double click, Copy UUID, and the toolbar button reopening
 a minimized window. On the grid, compare the received roots with the Legacy
 Viewer, check parcel boundaries and neighboring regions, linked prim names,
