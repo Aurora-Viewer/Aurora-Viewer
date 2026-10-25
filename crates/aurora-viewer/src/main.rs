@@ -61,6 +61,7 @@ mod machine_id;
 mod media;
 mod movement;
 mod net_profile;
+mod overlay_hooks;
 mod own_motion;
 mod physics_editor;
 mod report_abuse;
@@ -137,6 +138,9 @@ fn main() -> anyhow::Result<()> {
             names.join(", ")
         );
     }
+    // the hooks injected later (Discord's overlay…) cannot be kept out:
+    // they are named in the log when they arrive
+    overlay_hooks::start();
 
     let result = run_viewer();
     if let Err(error) = &result {
