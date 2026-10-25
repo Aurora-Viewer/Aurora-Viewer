@@ -377,6 +377,8 @@ pub struct World {
     /// The inventory cache being read by its thread since the login reply
     /// (`poll_inventory_cache`), and when the read started.
     inventory_cache: Option<(crossbeam_channel::Receiver<Option<inventory::CachedInventory>>, Instant)>,
+    /// The whole inventory, fetched in the background from login on.
+    inventory_background: inventory::background::BackgroundFetch,
     /// Inventory changes outside the inventory window (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
     pub received_items: received_items::ReceivedItems,
@@ -642,6 +644,7 @@ impl World {
             inventory: inventory::Inventory::default(),
             active_gestures: Default::default(),
             inventory_cache: None,
+            inventory_background: Default::default(),
             inventory_edits: Vec::new(),
             received_items: Default::default(),
             animations: HashMap::new(),
@@ -1086,6 +1089,17 @@ impl World {
         );
         self.inventory_cache = None;
         self.inventory.release_requests();
+    }
+
+    /// The background inventory fetch's reads for this frame. It starts once
+    /// the cache is applied (the folders it restored need no fetch) and the
+    /// agent's region has its capabilities.
+    pub fn pump_inventory_background(&mut self) -> Vec<aurora_net::NetCommand> {
+        if self.inventory_cache.is_some() || self.inventory.root.is_nil() || self.main().is_none_or(|r| r.caps.is_empty()) {
+            return Vec::new();
+        }
+        self.inventory_background.start(&self.inventory);
+        self.inventory_background.pump(&mut self.inventory, self.agent_id)
     }
 
     /// Persist the fetched inventory (next login skips unchanged folders).
@@ -1796,6 +1810,7 @@ impl World {
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
+                self.inventory_background = Default::default();
                 // read off the main thread; until `poll_inventory_cache`
                 // applies it, folder requests wait (the root's included)
                 self.inventory_cache = self.inventory_cache_path().map(|path| {
@@ -1831,6 +1846,7 @@ impl World {
                 // teleport) are asked again on the agent's new region
                 if Some(handle) == self.main_region {
                     self.inventory.retry_failed();
+                    self.inventory_background.resume(&self.inventory);
                 }
                 None
             }
@@ -3027,6 +3043,13 @@ impl World {
             }
             NetEvent::InventoryContents(c) => {
                 self.inventory.apply(c);
+                None
+            }
+            NetEvent::InventoryTreeFetched { request, result } => {
+                if let Ok(contents) = result {
+                    self.inventory.apply(contents);
+                }
+                self.inventory_background.on_reply(&mut self.inventory, request);
                 None
             }
             NetEvent::InventoryFetchFailed { folders } => {

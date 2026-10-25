@@ -2035,7 +2035,7 @@ impl App {
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
                 }
-                if let NetEvent::InventoryContents(contents) = &mut ev {
+                if let NetEvent::InventoryContents(contents) | NetEvent::InventoryTreeFetched { result: Ok(contents), .. } = &mut ev {
                     for c in contents {
                         // the synthetic listing of its folder keeps the offered item
                         if let Some(offer) = self.world.inventory.items.get(&crate::demo::DEMO_OFFER)
@@ -7123,6 +7123,9 @@ impl App {
                     "app-could-not-load-settings-from-the-database",
                     name = name.to_string()
                 ));
+            }
+            for cmd in self.world.pump_inventory_background() {
+                self.send(cmd);
             }
             let queue: Vec<(uuid::Uuid, bool)> = std::mem::take(&mut self.world.inventory.queue);
             let (mine, lib): (Vec<_>, Vec<_>) = queue.into_iter().partition(|(_, l)| !l);
