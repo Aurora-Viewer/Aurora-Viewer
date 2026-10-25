@@ -3493,7 +3493,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline` | Remote friend's received map rights in contact, conversation and profile actions |
+| `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude` | Remote friend's received map rights in contact, conversation and profile actions |
 | `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out` | Detached conversations, or nearby chat alone before any IM (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
@@ -4437,7 +4437,7 @@ failure. Grid validation and any paid upload are performed by the human.
   it once the end is less than half the height in sight away (with nothing
   new).
 
-- **`AURORA_DEMO_FRIEND_LOCATION=allowed|denied|offline`** (#999): removes
+- **`AURORA_DEMO_FRIEND_LOCATION=allowed|denied|offline|altitude`** (#999): removes
   Nova's nearby object and coarse location at frame 60. The online friend
   grants us map rights in `allowed`, withholds them in `denied` (we still
   grant ours), and is offline in `offline`. Combine with
@@ -4450,9 +4450,15 @@ failure. Grid validation and any paid upload are performed by the human.
   sheet opened from the Contacts tab. On the grid, the human checks an
   online friend in a distant region, grant/revocation in both directions,
   map opening from the menu/profile/sheet, and one actual teleport.
-  FindAgent supplies only global X/Y: as with the existing map, the height
-  starts at ours (or the tracked map height); it cannot locate a remote
-  friend's sky platform height. Use the map's height control when needed.
+  FindAgent supplies only global X/Y: the target's matching local height
+  is used when available; otherwise Z defaults to 0 m (ground), never our
+  current height. Both map layouts explain unavailable friend altitude;
+  coarse updates refine a local target's height in 4 m steps. Set Z for a
+  remote sky platform; the full-frame map retains an explicit height while
+  following the same friend. `altitude` is the allowed remote scenario with
+  our avatar at 3,000 m: opening the friend's map must show Z=0 and the
+  unavailable-altitude note. On the grid, the human checks a departure from
+  a high skybox to a friend near ground level and a manually chosen Z.
 
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click

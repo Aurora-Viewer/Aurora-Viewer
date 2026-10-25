@@ -3636,7 +3636,7 @@ pub fn friend_location(world: &mut crate::world::World) {
     let Ok(mode) = std::env::var("AURORA_DEMO_FRIEND_LOCATION") else {
         return;
     };
-    if !matches!(mode.as_str(), "allowed" | "denied" | "offline") {
+    if !matches!(mode.as_str(), "allowed" | "denied" | "offline" | "altitude") {
         return;
     }
     if let Some(idx) = world.objects.index_of_uuid(&DEMO_FRIEND) {
@@ -3649,6 +3649,12 @@ pub fn friend_location(world: &mut crate::world::World) {
         f.online = mode != "offline";
         f.rights_given = 3;
         f.rights_has = if mode == "denied" { 1 } else { 3 };
+    }
+    if mode == "altitude" {
+        world
+            .agent
+            .get_off(glam::Vec3::new(world.agent.position.x, world.agent.position.y, 3000.0));
+        world.agent.flying = true;
     }
 }
 

@@ -639,6 +639,12 @@ dispatch, `take_map_commands` cancels tracking and queued teleports if the
 friend went offline, revoked map rights or ended the friendship. Camera zoom
 and nearby navigation still require local geometry/positions. This extends
 the Legacy Viewer's nearby-only radar Teleport To to authorized remote friends.
+FindAgent has no altitude: use the target's matching local position when
+available, otherwise ground level (0 m), never the observer's altitude.
+Coarse updates refine the followed friend's position at their 4 m height
+resolution. Both map layouts identify unavailable altitude and allow an
+explicit teleport height; a height-only edit in the full-frame map survives
+tracking replies but is cleared for another friend or a direct Teleport To.
 
 `world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
 roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,

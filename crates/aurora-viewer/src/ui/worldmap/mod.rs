@@ -745,6 +745,16 @@ impl WorldMapUi {
         Some(responses)
     }
 
+    fn friend_altitude_hint(ui: &mut egui::Ui, p: &Palette, world: &World) {
+        if !world.rlva.has("showloc") && world.map.avatar.as_ref().is_some_and(|a| a.found && !a.altitude_known) {
+            ui.label(
+                RichText::new(aurora_i18n::tr!("ui-worldmap-friend-altitude-unknown"))
+                    .size(12.0)
+                    .color(p.muted),
+            );
+        }
+    }
+
     fn side_panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -986,6 +996,7 @@ impl WorldMapUi {
                     .color(p.muted),
             );
         }
+        Self::friend_altitude_hint(ui, p, world);
         let tp_target = if let Some((_, asset, _)) = &self.landmark {
             Some(NetCommand::TeleportLandmark(*asset))
         } else {

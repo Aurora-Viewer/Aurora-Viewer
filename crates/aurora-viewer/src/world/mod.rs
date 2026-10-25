@@ -2269,6 +2269,23 @@ impl World {
                 None
             }
             NetEvent::CoarseLocations { handle, positions } => {
+                // LLViewerRegion::processCoarseUpdate updates the followed
+                // friend's position, including the coarse (4 m) altitude.
+                if let Some(a) = &self.map.avatar
+                    && let Some((_, pos)) = positions.iter().find(|(id, _)| *id == a.id)
+                {
+                    // Full object updates retain exact height above the
+                    // coarse protocol's 1,020 m ceiling.
+                    let pos = self
+                        .objects
+                        .index_of_uuid(&a.id)
+                        .and_then(|i| self.objects.get(i))
+                        .filter(|o| o.key.region == handle)
+                        .map_or(*pos, |o| o.position);
+                    let (ox, oy) = aurora_net::handle_to_origin(handle);
+                    self.map
+                        .agent_found(a.id, ox as f64 + pos.x as f64, oy as f64 + pos.y as f64, Some(pos.z));
+                }
                 self.coarse.insert(handle, positions);
                 None
             }
@@ -3057,7 +3074,15 @@ impl World {
                 None
             }
             NetEvent::AgentFound { prey, x, y } => {
-                self.map.agent_found(prey, x, y, self.agent.position.z);
+                // FindAgent only gives global X/Y. A loaded target in the
+                // same spot can supply Z; a distant reply must not reuse our
+                // own altitude (for example, a skybox at 3,000 m).
+                let altitude = self.avatar_map_position(prey).and_then(|pos| {
+                    let (ox, oy) = self.main_origin()?;
+                    let nearby = (ox as f64 + pos.x as f64 - x).hypot(oy as f64 + pos.y as f64 - y) < 8.0;
+                    nearby.then_some(pos.z)
+                });
+                self.map.agent_found(prey, x, y, altitude);
                 None
             }
             NetEvent::ParcelCollision {
