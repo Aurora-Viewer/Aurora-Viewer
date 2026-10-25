@@ -2637,7 +2637,7 @@ both open states and the selection count. Capture at frame 620.
 
 ### Details
 
-- **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible|lists`**:
+- **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible|lists|crossings`**:
   four parcels split the plaza at x/y 128 m. The northern parcels share an owner;
   the southern ones belong to someone else. `always`, `listed` (current parcel
   listed) and `except` (empty list) hide content outside the north-east parcel;
@@ -2655,6 +2655,14 @@ both open states and the selection count. Capture at frame 620.
   with `AURORA_DEMO_OPTIONS=graphics:search=parc` to inspect the full-width lists,
   wrapped names, separate region lines and aligned remove buttons, including in
   a narrow window or at an enlarged UI scale. Larger lists scroll independently.
+  `crossings` starts on the north-west parcel with filtering enabled only there
+  and the north-east plaza always visible. From frame 700 it alternates between
+  home and the south-west parcel every 120 frames, delaying arrival parcel data
+  by 12 frames. Every frame from 650 checks that the plaza remains visible and
+  that the filter changes only with the completed arrival decision. Phase logs
+  record visibility, filtering and the scene version. Capture at frames 680, 760
+  and 1160 to compare home, outside and repeated return; no crossing errors should
+  be logged. Owner/group discovery also publishes its complete result at once.
   Combine with
   `AURORA_DEMO_OPTIONS=graphics` for the native controls. Check live mode changes,
   adding/removing scope entries and always-visible parcels, and restoring content

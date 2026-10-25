@@ -6652,20 +6652,19 @@ impl App {
         }
         // About Land requests (selection and its refresh, lists, covenant...)
         self.world.land.tick(Instant::now());
-        if self.demo && std::env::var_os("AURORA_DEMO_PARCEL_VISIBILITY").is_some() {
-            let position = self.world.agent.position;
-            let local_id = 1 + i32::from(position.x < 128.0) + 2 * i32::from(position.y < 128.0);
-            if self.world.parcel.as_ref().is_none_or(|p| p.local_id != local_id) {
-                let parcel = crate::demo::parcel_visibility::parcel_at(position.x, position.y);
-                self.world.parcel_name.clone_from(&parcel.name);
-                self.world.parcel = Some(parcel);
-            }
+        if self.demo
+            && let Ok(mode) = std::env::var("AURORA_DEMO_PARCEL_VISIBILITY")
+        {
+            crate::demo::parcel_visibility::update_agent_parcel(&mut self.world, &mode, self.frame_count);
         }
         for command in self
             .world
             .update_parcel_visibility(&self.settings.parcel_visibility, Instant::now())
         {
             self.send(command);
+        }
+        if self.demo && std::env::var("AURORA_DEMO_PARCEL_VISIBILITY").is_ok_and(|mode| mode == "crossings") {
+            crate::demo::parcel_visibility::check_crossings(&self.world, self.frame_count);
         }
         for c in self.world.land.take_commands() {
             self.send(c);

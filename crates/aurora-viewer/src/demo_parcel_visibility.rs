@@ -68,6 +68,7 @@ pub fn install(world: &mut World, settings: &mut crate::settings::Settings, mode
             (x.is_finite() && y.is_finite()).then_some((x, y))
         })
         .unwrap_or((132.0, 132.0));
+    let (x, y) = if mode == "crossings" { (124.0, 132.0) } else { (x, y) };
     let mut parcel = parcel_at(x, y);
     Arc::make_mut(&mut parcel).name = aurora_i18n::tr!("demo-parcel-visibility-current").into();
     world.parcel_name.clone_from(&parcel.name);
@@ -75,14 +76,14 @@ pub fn install(world: &mut World, settings: &mut crate::settings::Settings, mode
     world.agent.get_off(glam::Vec3::new(x, y, world.agent.position.z));
     settings.parcel_visibility.mode = match mode {
         "off" => Mode::Off,
-        "listed" => Mode::Listed,
+        "listed" | "crossings" => Mode::Listed,
         "except" | "except-listed" => Mode::ExceptListed,
         _ => Mode::Always,
     };
     settings.parcel_visibility.same_owner = mode == "same-owner";
     settings.parcel_visibility.same_group = matches!(mode, "same-group" | "group-owned-current");
     settings.parcel_visibility.always_visible.clear();
-    if mode == "always-visible"
+    if matches!(mode, "always-visible" | "crossings")
         && let Some(handle) = world.main_region
         && let Some(mut entry) = world.parcel_entry(handle, &parcel_at(130.0, 130.0))
     {
@@ -90,7 +91,7 @@ pub fn install(world: &mut World, settings: &mut crate::settings::Settings, mode
         settings.parcel_visibility.always_visible.push(entry);
     }
     settings.parcel_visibility.parcels.clear();
-    if matches!(mode, "listed" | "except-listed")
+    if matches!(mode, "listed" | "except-listed" | "crossings")
         && let Some(entry) = world.current_parcel_entry()
     {
         settings.parcel_visibility.parcels.push(entry);
@@ -107,5 +108,61 @@ pub fn install(world: &mut World, settings: &mut crate::settings::Settings, mode
                 settings.parcel_visibility.always_visible.push(entry);
             }
         }
+    }
+}
+
+/// Simulate arrival data lagging behind movement, without a grid connection.
+pub fn update_agent_parcel(world: &mut World, mode: &str, frame: u64) {
+    if mode == "crossings" && frame >= 700 {
+        let phase = (frame - 700) % 120;
+        let outside = ((frame - 700) / 120).is_multiple_of(2);
+        if phase == 0 {
+            world
+                .agent
+                .get_off(glam::Vec3::new(124.0, if outside { 124.0 } else { 132.0 }, world.agent.position.z));
+        }
+        if phase < 12 {
+            return;
+        }
+    }
+    let position = world.agent.position;
+    let local_id = 1 + i32::from(position.x < 128.0) + 2 * i32::from(position.y < 128.0);
+    if world.parcel.as_ref().is_none_or(|p| p.local_id != local_id) {
+        let mut parcel = parcel_at(position.x, position.y);
+        if mode == "crossings" && local_id == 2 {
+            Arc::make_mut(&mut parcel).name = aurora_i18n::tr!("demo-parcel-visibility-current").into();
+        }
+        world.parcel_name.clone_from(&parcel.name);
+        world.parcel = Some(parcel);
+    }
+}
+
+pub fn check_crossings(world: &World, frame: u64) {
+    if frame < 650 {
+        return;
+    }
+    let Some((ox, oy)) = world.main_origin() else {
+        return;
+    };
+    let visible = world
+        .parcel_visibility
+        .contains(glam::DVec3::new(f64::from(ox) + 140.0, f64::from(oy) + 140.0, 30.0));
+    let active = world.parcel_visibility.active();
+    let expected = if frame < 700 {
+        true
+    } else {
+        let outside = ((frame - 700) / 120).is_multiple_of(2);
+        if (frame - 700) % 120 < 12 { outside } else { !outside }
+    };
+    if !visible || active != expected {
+        log::error!(
+            "parcel visibility crossing changed before a complete decision: frame={frame} visible={visible} active={active} expected={expected}"
+        );
+    }
+    if frame == 650 || frame >= 700 && matches!((frame - 700) % 120, 0 | 12) {
+        log::info!(
+            "parcel visibility crossing: frame={frame} visible={visible} active={active} version={}",
+            world.parcel_visibility.version
+        );
     }
 }

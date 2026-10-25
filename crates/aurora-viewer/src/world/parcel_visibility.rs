@@ -71,8 +71,8 @@ impl Settings {
         owner || self.same_group && group(current).zip(group(other)).is_some_and(|(a, b)| a == b)
     }
 
-    fn applies(&self, entry: &Entry) -> bool {
-        let listed = self.parcels.iter().any(|p| p.same_parcel(entry));
+    fn applies(&self, region: Uuid, local_id: i32) -> bool {
+        let listed = self.parcels.iter().any(|p| p.region == region && p.local_id == local_id);
         match self.mode {
             Mode::Off => false,
             Mode::Always => true,
@@ -85,11 +85,27 @@ impl Settings {
 #[derive(Debug, Clone)]
 struct Mask {
     handle: RegionHandle,
+    region: Uuid,
     size: (u32, u32),
     parcel: Arc<ParcelInfo>,
 }
 
 impl Mask {
+    fn connected(&self, world: &World) -> bool {
+        world.regions.get(&self.handle).is_some_and(|region| {
+            region.info.as_ref().is_some_and(|info| info.region_id == self.region)
+                && self.size == (region.heightmap.size_x, region.heightmap.size_y)
+        })
+    }
+
+    fn same_bounds(&self, other: &Self) -> bool {
+        self.handle == other.handle
+            && self.region == other.region
+            && self.size == other.size
+            && self.parcel.local_id == other.parcel.local_id
+            && (Arc::ptr_eq(&self.parcel, &other.parcel) || self.parcel.bitmap == other.parcel.bitmap)
+    }
+
     fn contains(&self, p: DVec3) -> bool {
         let (ox, oy) = aurora_net::handle_to_origin(self.handle);
         let (x, y) = (p.x - f64::from(ox), p.y - f64::from(oy));
@@ -125,6 +141,12 @@ struct Request {
 
 #[derive(Debug, Default)]
 pub struct Visibility {
+    /// Rendering reads only the completed decision; discovery builds `allowed` separately.
+    displayed: Vec<Mask>,
+    complete: bool,
+    /// Session-local explicit exceptions survive changes of the agent parcel.
+    cache: HashMap<(Uuid, i32), Mask>,
+    stale: HashSet<(Uuid, i32)>,
     settings: Settings,
     current: Option<Mask>,
     allowed: Vec<Mask>,
@@ -143,17 +165,19 @@ pub struct Visibility {
 }
 
 impl Visibility {
-    pub fn invalidate(&mut self) {
-        if self.active() {
-            self.reset();
-        }
+    pub fn invalidate(&mut self, handle: RegionHandle) {
+        // ParcelOverlay describes one region (LLViewerParcelMgr::processParcelOverlay).
+        // Recheck its exceptions without hiding the last complete result meanwhile.
+        self.stale
+            .extend(self.cache.iter().filter(|(_, m)| m.handle == handle).map(|(&key, _)| key));
+        self.reset();
     }
     pub fn active(&self) -> bool {
-        !self.allowed.is_empty()
+        !self.displayed.is_empty()
     }
 
     pub fn contains(&self, position: DVec3) -> bool {
-        !self.active() || self.allowed.iter().any(|m| m.contains(position))
+        !self.active() || self.displayed.iter().any(|m| m.contains(position))
     }
 
     fn reset(&mut self) {
@@ -167,28 +191,62 @@ impl Visibility {
         self.visible_requested.clear();
         self.visible_attempts.clear();
         self.next_request = None;
-        self.version = self.version.wrapping_add(1);
+        self.complete = false;
+    }
+
+    fn publish(&mut self, world: &World) {
+        if self.allowed.iter().any(|mask| !mask.connected(world)) {
+            return;
+        }
+        self.allowed.sort_unstable_by_key(|mask| (mask.handle, mask.parcel.local_id));
+        if self.displayed.len() != self.allowed.len() || !self.displayed.iter().zip(&self.allowed).all(|(a, b)| a.same_bounds(b)) {
+            self.displayed.clone_from(&self.allowed);
+            self.version = self.version.wrapping_add(1);
+        }
+        self.complete = true;
     }
 
     fn refresh(&mut self, world: &World, settings: &Settings, now: Instant) -> Vec<NetCommand> {
+        self.cache.retain(|&(region, local_id), mask| {
+            mask.connected(world)
+                && settings
+                    .always_visible
+                    .iter()
+                    .any(|entry| entry.region == region && entry.local_id == local_id)
+        });
+        self.stale.retain(|key| self.cache.contains_key(key));
+        let previous = self.displayed.len();
+        self.displayed.retain(|mask| mask.connected(world));
+        if self.displayed.len() != previous {
+            self.version = self.version.wrapping_add(1);
+        }
         let candidate = (settings.mode != Mode::Off)
             .then(|| world.current_parcel_entry())
             .flatten()
-            .filter(|p| settings.applies(p))
             .and_then(|_| {
                 let handle = world.main_region?;
                 let region = world.regions.get(&handle)?;
                 let mask = Mask {
                     handle,
+                    region: region.info.as_ref()?.region_id,
                     size: (region.heightmap.size_x, region.heightmap.size_y),
                     parcel: world.parcel.clone()?,
                 };
                 // AgentParcel can still describe the previous parcel during a crossing.
                 let validated = self.current.as_ref().is_some_and(|current| {
-                    current.handle == mask.handle && current.size == mask.size && Arc::ptr_eq(&current.parcel, &mask.parcel)
+                    current.handle == mask.handle
+                        && current.region == mask.region
+                        && current.size == mask.size
+                        && Arc::ptr_eq(&current.parcel, &mask.parcel)
                 });
                 ((validated || mask.valid()) && mask.contains(world.agent_global()?)).then_some(mask)
             });
+        if settings.mode != Mode::Off && candidate.is_none() {
+            // The simulator may still describe the parcel we just left. Keep the
+            // previous display until the arrival's rules can actually be evaluated.
+            return Vec::new();
+        }
+        let candidate = candidate.filter(|mask| settings.applies(mask.region, mask.parcel.local_id));
         let connected_regions = if candidate.is_some() && (settings.automatic_neighbours() || !settings.always_visible.is_empty()) {
             let mut hash = std::hash::DefaultHasher::new();
             for (&handle, region) in &world.regions {
@@ -208,7 +266,7 @@ impl Visibility {
             && self.connected_regions == connected_regions
             && match (&self.current, &candidate) {
                 (None, None) => true,
-                (Some(a), Some(b)) => a.handle == b.handle && a.size == b.size && Arc::ptr_eq(&a.parcel, &b.parcel),
+                (Some(a), Some(b)) => a.handle == b.handle && a.region == b.region && a.size == b.size && Arc::ptr_eq(&a.parcel, &b.parcel),
                 _ => false,
             };
         if !unchanged {
@@ -218,9 +276,22 @@ impl Visibility {
             self.current = candidate.clone();
             if let Some(mask) = candidate {
                 self.add_mask(world, mask, true);
+                for mask in self.cache.values().cloned().collect::<Vec<_>>() {
+                    if !self
+                        .allowed
+                        .iter()
+                        .any(|current| current.handle == mask.handle && current.parcel.local_id == mask.parcel.local_id)
+                    {
+                        self.add_mask(world, mask, false);
+                    }
+                }
             }
         }
-        if !self.active() {
+        if self.complete {
+            return Vec::new();
+        }
+        if self.current.is_none() {
+            self.publish(world);
             return Vec::new();
         }
         // Bounded background discovery; never select land or change the agent parcel.
@@ -262,6 +333,7 @@ impl Visibility {
                 .allowed
                 .iter()
                 .any(|m| m.handle == handle && m.parcel.local_id == entry.local_id)
+                && !self.stale.contains(&key)
             {
                 continue;
             }
@@ -285,6 +357,9 @@ impl Visibility {
             })];
         }
         if !settings.automatic_neighbours() || self.known.len() >= MAX_PARCELS {
+            if self.pending.is_empty() {
+                self.publish(world);
+            }
             return Vec::new();
         }
         while let Some(cell @ (handle, x, y)) = self.frontier.pop_front() {
@@ -317,6 +392,9 @@ impl Visibility {
                 east: (x + 4) as f32,
                 north: (y + 4) as f32,
             })];
+        }
+        if self.pending.is_empty() {
+            self.publish(world);
         }
         Vec::new()
     }
@@ -354,13 +432,14 @@ impl Visibility {
             }
             self.known.push(mask.clone());
         }
-        if !self
+        if let Some(previous) = self
             .allowed
-            .iter()
-            .any(|m| m.handle == mask.handle && m.parcel.local_id == mask.parcel.local_id)
+            .iter_mut()
+            .find(|m| m.handle == mask.handle && m.parcel.local_id == mask.parcel.local_id)
         {
+            *previous = mask;
+        } else {
             self.allowed.push(mask);
-            self.version = self.version.wrapping_add(1);
         }
     }
 
@@ -379,6 +458,7 @@ impl Visibility {
         };
         let mask = Mask {
             handle,
+            region: region.info.as_ref().map_or(Uuid::nil(), |info| info.region_id),
             size: (region.heightmap.size_x, region.heightmap.size_y),
             parcel,
         };
@@ -392,6 +472,8 @@ impl Visibility {
                     .iter()
                     .any(|entry| entry.region == region_id && entry.local_id == local_id)
             {
+                self.cache.insert((region_id, local_id), mask.clone());
+                self.stale.remove(&(region_id, local_id));
                 self.add_mask(world, mask, false);
             }
             return true;
@@ -550,8 +632,8 @@ mod tests {
             (Mode::ExceptListed, false, true),
         ] {
             settings.mode = mode;
-            assert_eq!(settings.applies(&renamed), listed);
-            assert_eq!(settings.applies(&other), unlisted);
+            assert_eq!(settings.applies(renamed.region, renamed.local_id), listed);
+            assert_eq!(settings.applies(other.region, other.local_id), unlisted);
         }
         settings.same_owner = true;
         settings.same_group = true;
@@ -703,8 +785,8 @@ mod tests {
                 NetCommand::Build(BuildCmd::ParcelRequestById { local_id: 1, .. })
             ));
             let (handle, sequence, parcel) = response(command);
-            assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_140.0, 25.0)));
             world.parcel_visibility_reply(handle, sequence, parcel);
+            world.update_parcel_visibility(&config, now + Duration::from_millis(150));
             assert!(world.parcel_visibility.contains(DVec3::new(256_140.0, 256_140.0, 25.0)));
             assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)));
             config.always_visible.clear();
@@ -734,16 +816,310 @@ mod tests {
         let frontier = world.parcel_visibility.frontier.len();
         let (handle, sequence, parcel) = response(command);
         world.parcel_visibility_reply(handle, sequence, parcel);
-        assert!(
-            world.parcel_visibility.contains(DVec3::new(256_120.0, 256_120.0, 25.0)),
-            "foreign owner and diagonal parcel are allowed explicitly"
-        );
-        assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)));
         assert_eq!(
             world.parcel_visibility.frontier.len(),
             frontier,
             "an exception does not start an unrelated estate crawl"
         );
+        for step in 1..200 {
+            for command in world.update_parcel_visibility(&config, Instant::now() + Duration::from_millis(step * 150)) {
+                let (handle, sequence, parcel) = response(command);
+                world.parcel_visibility_reply(handle, sequence, parcel);
+            }
+        }
+        assert!(world.parcel_visibility.contains(DVec3::new(256_120.0, 256_120.0, 25.0)));
+        assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)));
+    }
+
+    #[test]
+    fn parcel_visibility_publishes_multiple_exceptions_together_after_all_replies() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let base = Settings {
+            mode: Mode::Always,
+            ..Default::default()
+        };
+        let start = Instant::now();
+        world.update_parcel_visibility(&base, start);
+        let version = world.parcel_visibility.version;
+        let config = Settings {
+            always_visible: [2, 3]
+                .into_iter()
+                .map(|id| {
+                    world
+                        .parcel_entry(handle, &crate::demo::parcel_visibility::parcel_by_id(id).unwrap())
+                        .unwrap()
+                })
+                .collect(),
+            ..base
+        };
+        let b = DVec3::new(256_120.0, 256_140.0, 25.0);
+        let c = DVec3::new(256_140.0, 256_120.0, 25.0);
+        for (step, id) in [(0, 2), (1, 3)] {
+            let command = world
+                .update_parcel_visibility(&config, start + Duration::from_millis(step * 150))
+                .pop()
+                .unwrap();
+            let (handle, sequence, parcel) = response(command);
+            assert_eq!(parcel.local_id, id);
+            world.parcel_visibility_reply(handle, sequence, parcel);
+            assert_eq!(
+                world.parcel_visibility.version, version,
+                "a partial reply must not rebuild the scene"
+            );
+            assert!(!world.parcel_visibility.contains(b) && !world.parcel_visibility.contains(c));
+        }
+        world.update_parcel_visibility(&config, start + Duration::from_millis(300));
+        assert_eq!(world.parcel_visibility.version, version + 1);
+        assert!(world.parcel_visibility.contains(b) && world.parcel_visibility.contains(c));
+        assert!(!world.parcel_visibility.contains(DVec3::new(256_120.0, 256_120.0, 25.0)));
+    }
+
+    #[test]
+    fn parcel_visibility_a_late_reply_cannot_publish_the_previous_parcels_decision() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let base = Settings {
+            mode: Mode::Always,
+            ..Default::default()
+        };
+        let start = Instant::now();
+        world.update_parcel_visibility(&base, start);
+        let version = world.parcel_visibility.version;
+        let neighbour = crate::demo::parcel_visibility::parcel_by_id(2).unwrap();
+        let config = Settings {
+            always_visible: vec![world.parcel_entry(handle, &neighbour).unwrap()],
+            ..base
+        };
+        let (old_handle, old_sequence, old_parcel) = response(world.update_parcel_visibility(&config, start).pop().unwrap());
+        world.agent.get_off(Vec3::new(140.0, 120.0, 25.0));
+        world.parcel = Some(crate::demo::parcel_visibility::parcel_by_id(3).unwrap());
+        let (handle, sequence, parcel) = response(
+            world
+                .update_parcel_visibility(&config, start + Duration::from_secs(1))
+                .pop()
+                .unwrap(),
+        );
+        world.parcel_visibility_reply(old_handle, old_sequence, old_parcel);
+        assert_eq!(world.parcel_visibility.version, version);
+        assert!(world.parcel_visibility.cache.is_empty());
+        assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)));
+        world.parcel_visibility_reply(handle, sequence, parcel);
+        world.update_parcel_visibility(&config, start + Duration::from_secs(2));
+        assert_eq!(world.parcel_visibility.version, version + 1);
+        assert!(world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)));
+        assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_140.0, 25.0)));
+    }
+
+    #[test]
+    fn parcel_visibility_round_trips_keep_whitelisted_content_visible_without_new_requests() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let home = world.parcel.clone().unwrap();
+        let neighbour = crate::demo::parcel_visibility::parcel_by_id(2).unwrap();
+        let config = Settings {
+            mode: Mode::Listed,
+            parcels: vec![world.current_parcel_entry().unwrap()],
+            always_visible: vec![world.parcel_entry(handle, &neighbour).unwrap()],
+            ..Default::default()
+        };
+        let start = Instant::now();
+        let (handle, sequence, parcel) = response(world.update_parcel_visibility(&config, start).pop().unwrap());
+        world.parcel_visibility_reply(handle, sequence, parcel);
+        world.update_parcel_visibility(&config, start + Duration::from_millis(150));
+        let target = DVec3::new(256_120.0, 256_140.0, 25.0);
+        let cache = world.parcel_visibility.cache.clone();
+        for step in 1..=8 {
+            let now = start + Duration::from_secs(step);
+            for (position, parcel, active) in [
+                (
+                    Vec3::new(140.0, 120.0, 25.0),
+                    crate::demo::parcel_visibility::parcel_by_id(3).unwrap(),
+                    false,
+                ),
+                (Vec3::new(140.0, 140.0, 25.0), home.clone(), true),
+            ] {
+                let version = world.parcel_visibility.version;
+                world.agent.get_off(position);
+                assert!(world.update_parcel_visibility(&config, now).is_empty());
+                assert!(
+                    world.parcel_visibility.contains(target),
+                    "delayed AgentParcel must not hide the exception"
+                );
+                assert_eq!(world.parcel_visibility.version, version);
+                world.parcel = Some(parcel);
+                assert!(
+                    world.update_parcel_visibility(&config, now).is_empty(),
+                    "known exceptions need no round trip"
+                );
+                assert_eq!(world.parcel_visibility.active(), active);
+                assert!(
+                    world.parcel_visibility.contains(target),
+                    "the exception remains visible in the committed result"
+                );
+                assert_eq!(world.parcel_visibility.version, version + 1);
+            }
+        }
+        assert!(Arc::ptr_eq(
+            &world.parcel_visibility.cache.values().next().unwrap().parcel,
+            &cache.values().next().unwrap().parcel
+        ));
+    }
+
+    #[test]
+    fn parcel_visibility_owner_and_group_discovery_publish_one_complete_decision() {
+        for group in [false, true] {
+            let mut world = world();
+            if group {
+                Arc::make_mut(world.parcel.as_mut().unwrap()).group_id = Uuid::from_u128(946);
+            }
+            let base = Settings {
+                mode: Mode::Always,
+                ..Default::default()
+            };
+            let start = Instant::now();
+            world.update_parcel_visibility(&base, start);
+            let version = world.parcel_visibility.version;
+            let config = Settings {
+                same_owner: !group,
+                same_group: group,
+                ..base
+            };
+            let target = DVec3::new(256_120.0, 256_140.0, 25.0);
+            let mut partial = false;
+            for step in 0..200 {
+                let commands = world.update_parcel_visibility(&config, start + Duration::from_millis(step * 150));
+                if world.parcel_visibility.complete {
+                    break;
+                }
+                assert_eq!(world.parcel_visibility.version, version);
+                assert!(!world.parcel_visibility.contains(target));
+                for command in commands {
+                    let (handle, sequence, mut parcel) = response(command);
+                    if group && parcel.local_id == 2 {
+                        let parcel = Arc::make_mut(&mut parcel);
+                        parcel.owner_id = Uuid::from_u128(946);
+                        parcel.is_group_owned = true;
+                        parcel.group_id = Uuid::nil();
+                    }
+                    world.parcel_visibility_reply(handle, sequence, parcel);
+                    partial |= world.parcel_visibility.allowed.len() > 1;
+                    assert_eq!(world.parcel_visibility.version, version);
+                    assert!(
+                        !world.parcel_visibility.contains(target),
+                        "discovery cannot publish a partial scope"
+                    );
+                }
+            }
+            assert!(partial && world.parcel_visibility.complete);
+            assert_eq!(world.parcel_visibility.version, version + 1);
+            assert!(world.parcel_visibility.contains(target));
+            assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)));
+        }
+    }
+
+    #[test]
+    fn parcel_visibility_overlay_revalidates_cached_bounds_without_hiding_them_while_waiting() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let neighbour = crate::demo::parcel_visibility::parcel_by_id(2).unwrap();
+        let config = Settings {
+            mode: Mode::Always,
+            always_visible: vec![world.parcel_entry(handle, &neighbour).unwrap()],
+            ..Default::default()
+        };
+        let start = Instant::now();
+        let (handle, sequence, parcel) = response(world.update_parcel_visibility(&config, start).pop().unwrap());
+        world.parcel_visibility_reply(handle, sequence, parcel);
+        world.update_parcel_visibility(&config, start + Duration::from_millis(150));
+        let version = world.parcel_visibility.version;
+        let old = DVec3::new(256_120.0, 256_140.0, 25.0);
+        let new = DVec3::new(256_120.0, 256_120.0, 25.0);
+        world.parcel_visibility.invalidate(handle);
+        assert!(world.parcel_visibility.contains(old));
+        let (handle, sequence, _) = response(
+            world
+                .update_parcel_visibility(&config, start + Duration::from_secs(1))
+                .pop()
+                .unwrap(),
+        );
+        assert!(world.parcel_visibility.contains(old) && !world.parcel_visibility.contains(new));
+        let mut updated = crate::demo::parcel_visibility::parcel_by_id(4).unwrap();
+        Arc::make_mut(&mut updated).local_id = 2;
+        world.parcel_visibility_reply(handle, sequence, updated);
+        assert_eq!(world.parcel_visibility.version, version);
+        assert!(world.parcel_visibility.contains(old));
+        world.update_parcel_visibility(&config, start + Duration::from_secs(2));
+        assert_eq!(world.parcel_visibility.version, version + 1);
+        assert!(!world.parcel_visibility.contains(old) && world.parcel_visibility.contains(new));
+    }
+
+    #[test]
+    fn parcel_visibility_cached_bounds_cannot_replace_newer_agent_parcel_data() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let neighbour = crate::demo::parcel_visibility::parcel_by_id(2).unwrap();
+        let config = Settings {
+            mode: Mode::Always,
+            always_visible: vec![world.parcel_entry(handle, &neighbour).unwrap()],
+            ..Default::default()
+        };
+        let start = Instant::now();
+        let (handle, sequence, parcel) = response(world.update_parcel_visibility(&config, start).pop().unwrap());
+        world.parcel_visibility_reply(handle, sequence, parcel);
+        world.update_parcel_visibility(&config, start + Duration::from_millis(150));
+        let mut arrival = neighbour;
+        let north_east = crate::demo::parcel_visibility::parcel_by_id(1).unwrap();
+        for (byte, other) in Arc::make_mut(&mut arrival).bitmap.iter_mut().zip(&north_east.bitmap) {
+            *byte |= other;
+        }
+        world.parcel = Some(arrival);
+        world.agent.get_off(Vec3::new(120.0, 140.0, 25.0));
+        assert!(world.update_parcel_visibility(&config, start + Duration::from_secs(1)).is_empty());
+        assert!(world.parcel_visibility.contains(DVec3::new(256_140.0, 256_140.0, 25.0)));
+        assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)));
+    }
+
+    #[test]
+    fn parcel_visibility_cached_exceptions_survive_revalidation_timeouts_but_not_removal_or_logout() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let neighbour = crate::demo::parcel_visibility::parcel_by_id(2).unwrap();
+        let mut config = Settings {
+            mode: Mode::Always,
+            always_visible: vec![world.parcel_entry(handle, &neighbour).unwrap()],
+            ..Default::default()
+        };
+        let start = Instant::now();
+        let (handle, sequence, parcel) = response(world.update_parcel_visibility(&config, start).pop().unwrap());
+        world.parcel_visibility_reply(handle, sequence, parcel);
+        world.update_parcel_visibility(&config, start + Duration::from_millis(150));
+        let version = world.parcel_visibility.version;
+        let target = DVec3::new(256_120.0, 256_140.0, 25.0);
+        world.parcel_visibility.invalidate(handle);
+        assert_eq!(world.update_parcel_visibility(&config, start + Duration::from_secs(1)).len(), 1);
+        assert_eq!(world.update_parcel_visibility(&config, start + Duration::from_secs(11)).len(), 1);
+        assert!(world.update_parcel_visibility(&config, start + Duration::from_secs(21)).is_empty());
+        assert!(world.parcel_visibility.contains(target));
+        assert_eq!(
+            world.parcel_visibility.version, version,
+            "a lost refresh cannot blink a previously resolved exception"
+        );
+        let saved = config.always_visible.pop().unwrap();
+        world.update_parcel_visibility(&config, start + Duration::from_secs(22));
+        assert!(world.parcel_visibility.cache.is_empty());
+        assert!(!world.parcel_visibility.contains(target));
+        config.always_visible.push(saved);
+        let (handle, sequence, parcel) = response(
+            world
+                .update_parcel_visibility(&config, start + Duration::from_secs(23))
+                .pop()
+                .unwrap(),
+        );
+        world.parcel_visibility_reply(handle, sequence, parcel);
+        assert_eq!(world.parcel_visibility.cache.len(), 1);
+        world.reset();
+        assert!(world.parcel_visibility.cache.is_empty() && !world.parcel_visibility.active());
     }
 
     #[test]
@@ -865,6 +1241,7 @@ mod tests {
                 ..Default::default()
             }),
         );
+        world.update_parcel_visibility(&config, now + Duration::from_millis(150));
         let position = DVec3::new(f64::from(ox + 260), f64::from(oy + 140), 25.0);
         assert!(world.parcel_visibility.contains(position));
         let region = world.regions.get_mut(&neighbour).unwrap();
@@ -901,6 +1278,7 @@ mod tests {
         let handle = aurora_net::origin_to_handle(256_000, 256_000);
         let mask = Mask {
             handle,
+            region: Uuid::from_u128(946),
             size: (256, 256),
             parcel: crate::demo::parcel_visibility::parcel_at(130.0, 130.0),
         };
@@ -970,7 +1348,14 @@ mod tests {
         assert_eq!(world.parcel_visibility.version, version, "stationary frames do not rebuild objects");
         world.agent.position.x = 120.0;
         world.update_parcel_visibility(&settings, now);
-        assert!(!world.parcel_visibility.active(), "old parcel data cannot hide the arrival parcel");
+        assert!(
+            world.parcel_visibility.active(),
+            "keep the previous decision until arrival data is known"
+        );
+        assert_eq!(
+            world.parcel_visibility.version, version,
+            "a delayed AgentParcel cannot change the display"
+        );
         world.parcel = Some(crate::demo::parcel_visibility::parcel_at(120.0, 130.0));
         world.update_parcel_visibility(&settings, now);
         assert!(world.parcel_visibility.active());
@@ -1065,6 +1450,12 @@ mod tests {
         };
         let start = Instant::now();
         for step in 0..200 {
+            if step == 20 {
+                let mut info = world.main().unwrap().info.as_ref().unwrap().as_ref().clone();
+                info.handle = neighbour;
+                info.region_id = Uuid::from_u128(947);
+                world.regions.get_mut(&neighbour).unwrap().info = Some(Arc::new(info));
+            }
             for command in world.update_parcel_visibility(&settings, start + Duration::from_millis(step * 150)) {
                 let NetCommand::Build(BuildCmd::ParcelRequest {
                     handle,
@@ -1088,6 +1479,12 @@ mod tests {
                     crate::demo::parcel_visibility::parcel_at(west, south)
                 };
                 world.parcel_visibility_reply(handle, sequence, parcel);
+            }
+            if step < 20 {
+                assert_eq!(
+                    world.parcel_visibility.version, 0,
+                    "an unidentified included region cannot be published"
+                );
             }
         }
         assert!(

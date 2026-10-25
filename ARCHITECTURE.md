@@ -34,6 +34,14 @@ connected regions by UUID and read current bounds with `BuildCmd::ParcelRequestB
 Both request types share bounded independent sequences from 1,000,000; replies never
 enter About Land, Build selections or the agent parcel. Mask changes invalidate
 scene records once; ordinary object movement uses the existing sync scheduler.
+Discovery builds a separate decision and publishes it only after all its bounded
+requests settle and included regions have confirmed identities, retaining the
+last completed display while arrival data lags.
+Always-visible masks stay in a session-local cache keyed by region UUID/local ID;
+ordinary crossings reuse them immediately. Parcel overlays mark only that region's
+cached exceptions for background revalidation. Cached bounds remain visible until
+fresh bounds replace the complete decision; disconnected/replaced regions, changed
+dimensions, removed exceptions and logout retire the corresponding cache data.
 Hidden linksets release their draw records and visual asset references before
 geometry preparation. Lights, particles, world labels and beacons share the
 visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.

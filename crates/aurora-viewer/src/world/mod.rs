@@ -3073,7 +3073,7 @@ impl World {
                 None
             }
             NetEvent::ParcelOverlay { handle, sequence, data } => {
-                self.parcel_visibility.invalidate();
+                self.parcel_visibility.invalidate(handle);
                 let size = self
                     .regions
                     .get(&handle)
