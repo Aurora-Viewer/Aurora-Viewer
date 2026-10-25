@@ -14,6 +14,7 @@ mod carousel;
 mod chrome;
 mod credentials_form;
 mod derez;
+mod driver_notice;
 mod fade;
 mod layout;
 pub(crate) mod manager;
@@ -73,11 +74,16 @@ pub struct LoginForm {
     /// where the next login starts, whatever the account's choice, shown in
     /// the start menus (FSPanelLogin::onUpdateStartSLURL). Not saved.
     pub start_slurl: Option<crate::slurl::Location>,
+    /// The graphics driver is out of date (`gpu_driver::check`), and the
+    /// user has not dismissed the warning for this driver.
+    pub driver_notice: Option<crate::gpu_driver::Notice>,
 }
 
 #[derive(Default)]
 pub enum LoginAction {
     ReportBug,
+    /// "Ignore for this driver" on the out of date driver warning.
+    DismissDriverNotice,
     #[default]
     None,
     Login,
@@ -289,10 +295,28 @@ fn card_hover<R>(
     hover: f32,
     body: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::InnerResponse<R> {
+    glass_card(ui, p, margin, accent, hover, None, body)
+}
+
+/// A card edged in the caution colour: a warning about the machine itself
+/// (`driver_notice.rs`).
+fn card_caution<R>(ui: &mut egui::Ui, p: &Palette, margin: i8, body: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
+    glass_card(ui, p, margin, false, 0.0, Some(p.amber), body)
+}
+
+fn glass_card<R>(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    margin: i8,
+    accent: bool,
+    hover: f32,
+    edge: Option<Color32>,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
     let behind = (ui.painter().clone(), ui.painter().add(egui::Shape::Noop));
     let mut pane = None;
     let mut frame = widgets::overlay_frame(ui.ctx(), p);
-    frame.stroke.color = frame.stroke.color.lerp_to_gamma(p.violet_pale, hover * 0.7);
+    frame.stroke.color = edge.unwrap_or_else(|| frame.stroke.color.lerp_to_gamma(p.violet_pale, hover * 0.7));
     let response = frame.inner_margin(Margin::same(margin)).show(ui, |ui| {
         pane = Some((ui.painter().clone(), ui.painter().add(egui::Shape::Noop)));
         body(ui)
