@@ -1509,7 +1509,7 @@ impl App {
                     if Some(*handle) == self.world.main_region {
                         self.demo_unseat_on_teleport();
                         self.world.apply(NetEvent::TeleportLocal {
-                            flying: self.world.agent.flying,
+                            flying: self.world.agent.flying || crate::demo::friend_join_flight_scenario(),
                         });
                         if let Some(ev) = self.world.apply(NetEvent::AgentMovementComplete {
                             handle: *handle,
@@ -2996,6 +2996,18 @@ impl App {
                 }
                 self.scene.textures.mark_arrival();
                 self.loading_stage = aurora_i18n::tr!("app-loading-scene").into();
+                if self.world.take_friend_join_flight() {
+                    if !self.world.agent.flying {
+                        self.toggle_fly();
+                    }
+                    let mut controls = *self.net.controls.lock();
+                    controls.control_flags |= control::FLY;
+                    self.net.set_controls(controls);
+                    log::info!(
+                        "friend join: flight enabled after local arrival at {:.1?}",
+                        self.world.agent.position
+                    );
+                }
             }
             NetEvent::SitResponse {
                 object,
@@ -5701,24 +5713,19 @@ impl App {
 
     /// Preflight before UI/simulation side effects, including offline demos.
     fn request_user_teleport(&mut self, command: NetCommand, dest: String, show_progress: bool) -> bool {
-        self.request_user_teleport_with_flight(command, dest, show_progress, false)
+        self.request_user_teleport_with_arrival_flight(command, dest, show_progress, false)
     }
 
-    fn request_user_teleport_with_flight(&mut self, command: NetCommand, dest: String, show_progress: bool, fly: bool) -> bool {
+    fn request_user_teleport_with_arrival_flight(
+        &mut self,
+        command: NetCommand,
+        dest: String,
+        show_progress: bool,
+        fly_on_arrival: bool,
+    ) -> bool {
         if self.user_teleport_allowed(&command) {
-            let fly = fly && crate::autopilot::can_fly_for_join(&self.world);
-            if fly && !self.world.agent.flying {
-                self.toggle_fly();
-            }
-            if fly {
-                // Preserve the frame's other controls. set_controls queues
-                // the FLY AgentUpdate before the following teleport request.
-                let mut controls = *self.net.controls.lock();
-                controls.control_flags |= control::FLY;
-                self.net.set_controls(controls);
-            }
             self.begin_teleport(dest, show_progress);
-            self.world.keep_friend_join_flight_on_arrival(fly);
+            self.world.defer_friend_join_flight(fly_on_arrival);
             self.send(command);
             true
         } else {
@@ -5840,6 +5847,7 @@ impl App {
         if !self.world.agent.flying && self.world.rlva.has("fly") {
             return;
         }
+        self.world.cancel_friend_join_flight();
         self.stop_autopilot(true);
         self.release_native_movelock();
         self.movement_runtime.cancel_water_exit();
@@ -6749,7 +6757,7 @@ impl App {
             || i.joystick_pitch.abs() > 0.001
             || self.mouse_mode == MouseMode::Steer;
         if let Some(join) = self.world.finish_friend_join(Instant::now(), moved) {
-            self.request_user_teleport_with_flight(join.command, String::new(), false, join.fly);
+            self.request_user_teleport_with_arrival_flight(join.command, String::new(), false, join.fly_on_arrival);
         }
         self.minimap_ui.prune(&self.world);
         // parcel overlays of regions we left (their lines would be stale on return)

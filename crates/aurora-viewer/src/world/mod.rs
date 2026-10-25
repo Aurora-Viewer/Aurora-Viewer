@@ -921,7 +921,7 @@ impl World {
     /// track local teleports without showing progress. Intentional difference
     /// requested for Aurora: local teleports are also silent.
     pub fn begin_teleport(&mut self, show_progress: bool) {
-        self.map.friend_join_flight_arrival = false;
+        self.cancel_friend_join_flight();
         self.cancel_friend_join();
         self.map.cancel_avatar_teleport();
         self.teleporting = true;
@@ -1945,8 +1945,8 @@ impl World {
                 self.arrived_once = true;
                 self.teleporting = false;
                 self.park_far_regions();
-                self.map.friend_join_flight_arrival = false;
                 self.land_if_fly_blocked(handle);
+                self.friend_join_flight_arrived(handle);
                 self.friend_join_arrived(handle);
                 Some(NetEvent::AgentMovementComplete { handle, position, look_at })
             }
@@ -2350,7 +2350,7 @@ impl World {
             }
             NetEvent::TeleportLocal { flying } => {
                 if !self.teleporting {
-                    self.map.friend_join_flight_arrival = false;
+                    self.cancel_friend_join_flight();
                     self.cancel_friend_join();
                     self.map.cancel_avatar_teleport();
                 }
@@ -2359,13 +2359,15 @@ impl World {
                 // AgentMovementComplete must record the arrival in history.
                 self.teleporting = true;
                 self.tp_show_progress = false;
-                let keep_flying = std::mem::take(&mut self.map.friend_join_flight_arrival) && self.agent.flying && !self.rlva.has("fly");
-                self.agent.flying = flying || self.fly_after_teleport || keep_flying;
+                // A friend hop preserves existing flight here, but defers
+                // taking off (even if flagged by the server) until its
+                // arrival position has been applied.
+                self.agent.flying = self.friend_join_local_flight().unwrap_or(flying || self.fly_after_teleport);
                 None
             }
             NetEvent::TeleportStarted => {
                 if !self.teleporting {
-                    self.map.friend_join_flight_arrival = false;
+                    self.cancel_friend_join_flight();
                     self.cancel_friend_join();
                     self.map.cancel_avatar_teleport();
                     self.tp_show_progress = false;
@@ -2382,7 +2384,7 @@ impl World {
                 None
             }
             NetEvent::TeleportFailed { reason } => {
-                self.map.friend_join_flight_arrival = false;
+                self.cancel_friend_join_flight();
                 self.cancel_friend_join();
                 self.tp_history.failed();
                 self.teleporting = false;

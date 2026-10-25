@@ -657,10 +657,14 @@ teleports never arm this continuation; both legs pass normal RLVa preflight.
 When we are not flying and flight is not known to be forbidden, the join also waits for new target animation signals.
 Native hover/flight motions request takeoff; height alone does not. Known
 region/parcel/RLVa restrictions prevent takeoff but never cancel the local
-jump. Missing policy packets do not delay it either. The application enables flight only after
-teleport preflight, queues the FLY controls before the teleport, and retains
-that state through one local reply. This does not change Fly After Teleport
-or the flags of later teleports/invitations.
+jump. Missing policy packets do not delay it either. After teleport preflight,
+the application arms flight for this local hop without taking off. Only its
+local reply and applied arrival in the expected region allow the application
+to enable flight and send FLY controls. The local reply's flying flag also
+waits for the position while this intent is active. Policy is rechecked at arrival;
+failure, another teleport, manual flight changes or timeout discard the intent.
+Existing flight survives the local reply. This does not change Fly After
+Teleport or the flags of later teleports/invitations.
 
 `world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
 roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,

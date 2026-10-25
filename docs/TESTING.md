@@ -4474,8 +4474,11 @@ failure. Grid validation and any paid upload are performed by the human.
   movement/cancellation and permission revocation. Accepting a teleport
   offer or choosing Z explicitly must keep the supplied landing point.
   `join-fly` starts grounded with Fly After Teleport ignored for this demo,
-  then supplies a hovering friend at 2,400 m: the local jump must turn flight
-  on and hold that height. `join-fly-blocked` supplies a no-fly region:
+  then supplies a hovering friend at 2,400 m and a flying local-reply flag:
+  the local jump must complete
+  before flight turns on and holds that height. The scoped log must show
+  arrival at 2,400 m before `friend join: flight enabled after local arrival`.
+  `join-fly-blocked` supplies a no-fly region:
   takeoff is not enabled, but the second jump must still happen.
   Check that an already flying user remains flying, a standing skybox friend
   does not enable flight, and accepting a later invitation keeps its own flags.
