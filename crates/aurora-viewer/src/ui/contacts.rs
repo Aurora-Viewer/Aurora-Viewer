@@ -53,9 +53,11 @@ pub struct ContactsSettings {
     /// ContactsTornOff: in its own window instead of the first tab of
     /// Conversations.
     pub torn_off: bool,
-    /// FSContactListShowSearch.
+    /// Former FSContactListShowSearch; retained for saved settings. Search
+    /// is always available in both looks (#964).
     pub show_search: bool,
-    /// FSFriendListColumnShowUserName / DisplayName / FullName / Permissions.
+    /// Legacy table only: FSFriendListColumnShowUserName / DisplayName /
+    /// FullName / Permissions.
     pub column_username: bool,
     pub column_display_name: bool,
     pub column_full_name: bool,
@@ -65,9 +67,10 @@ pub struct ContactsSettings {
     /// FSFriendListFullNameFormat: "Display Name (Username)"
     /// (else the other way round).
     pub full_name_display_first: bool,
-    /// FSContactSetsColorizeFriends: contact set colors in the friend list.
+    /// Legacy table only: FSContactSetsColorizeFriends. Aurora uses each
+    /// contact set's explicit UI-name appearance and priority instead.
     pub colorize_friends: bool,
-    /// FSContactSetsListShowIcons: profile pictures in the contact set list.
+    /// Legacy list only: FSContactSetsListShowIcons. Aurora always shows pictures.
     pub set_list_icons: bool,
     /// Tab shown: 0 friends, 1 groups, 2 contact sets.
     pub tab: u8,
@@ -336,13 +339,7 @@ pub fn apply_set_edit(world: &mut World, edit: SetEdit) {
 /// The confirmations and prompts, shown whether the contact list is open
 /// or not (they are also asked from the other right-click menus and from
 /// People), and the configuration window of a contact set.
-pub fn dialog_windows(
-    ctx: &egui::Context,
-    p: &Palette,
-    world: &mut World,
-    st: &mut ContactsUi,
-    settings: &mut ContactsSettings,
-) -> Vec<ContactsAction> {
+pub fn dialog_windows(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi) -> Vec<ContactsAction> {
     let mut actions = Vec::new();
     // the resident picker shared with About Land (LLFloaterAvatarPicker),
     // also opened by the friends tab of the People window
@@ -355,7 +352,7 @@ pub fn dialog_windows(
         picked(world, st, PickFor::Set(set), ids);
     }
     dialogs(ctx, p, world, st, &mut actions);
-    set_config_window(ctx, p, world, st, settings);
+    set_config_window(ctx, p, world, st);
     actions
 }
 
@@ -644,7 +641,7 @@ pub fn window(
         Some(friends) => {
             // the docked pane's spacing (`chat::workspace`)
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            people = super::people::friends_pane(ui, p, world, friends, st, settings);
+            people = super::people::friends_pane(ui, p, world, friends, st);
             Vec::new()
         }
         None => panel(ui, p, world, st, settings, pics),
@@ -772,11 +769,7 @@ fn friends_tab(
     settings: &mut ContactsSettings,
     actions: &mut Vec<ContactsAction>,
 ) {
-    let filter = if settings.show_search {
-        st.friend_filter.trim().to_lowercase()
-    } else {
-        String::new()
-    };
+    let filter = st.friend_filter.trim().to_lowercase();
     let rows = friend_rows(world, settings, &filter);
     // forget friends that are gone or filtered out
     st.friends_sel.retain(|id| rows.iter().any(|r| r.id == *id));
@@ -789,10 +782,8 @@ fn friends_tab(
         let list_w = (ui.available_width() - BUTTONS_W - 8.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(list_w);
-            if settings.show_search {
-                widgets::search_field(ui, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
-                ui.add_space(3.0);
-            }
+            widgets::search_field(ui, &mut st.friend_filter, aurora_i18n::tr!("ui-contacts-filter-friends"), list_w);
+            ui.add_space(3.0);
             friend_table(ui, p, world, st, settings, &rows, &order, list_w, actions);
         });
         ui.vertical(|ui| {
@@ -1068,7 +1059,7 @@ fn friend_menu(
     }
     menu::separator(ui, p);
     menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("ui-contacts-options"), true, |ui| {
-        options_menu(ui, p, settings, true)
+        options_menu(ui, p, settings)
     });
     if let Some(f) = friend {
         menu::separator(ui, p);
@@ -1091,9 +1082,9 @@ fn friend_menu(
 }
 
 /// "Options..." of the friend list menu: columns, sort, name format,
-/// search filter (onColumnDisplayModeChanged keeps one name column).
-/// People's friends tab has its sort in pills: `sort` false leaves it out.
-pub(crate) fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings, sort: bool) {
+/// and Legacy list presentation (onColumnDisplayModeChanged keeps one name
+/// column). These options never affect Aurora's rich rows.
+fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSettings) {
     let before = (s.column_username, s.column_display_name, s.column_full_name);
     menu::toggle(
         ui,
@@ -1127,29 +1118,27 @@ pub(crate) fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSetti
         &mut s.column_permissions,
     );
     menu::separator(ui, p);
-    if sort {
-        if menu::check(
-            ui,
-            p,
-            "sort-ascending-letters",
-            aurora_i18n::tr!("ui-contacts-sort-by-username"),
-            !s.sort_by_display_name,
-            true,
-        ) {
-            s.sort_by_display_name = false;
-        }
-        if menu::check(
-            ui,
-            p,
-            "sort-ascending-letters",
-            aurora_i18n::tr!("ui-contacts-sort-by-display-name"),
-            s.sort_by_display_name,
-            true,
-        ) {
-            s.sort_by_display_name = true;
-        }
-        menu::separator(ui, p);
+    if menu::check(
+        ui,
+        p,
+        "sort-ascending-letters",
+        aurora_i18n::tr!("ui-contacts-sort-by-username"),
+        !s.sort_by_display_name,
+        true,
+    ) {
+        s.sort_by_display_name = false;
     }
+    if menu::check(
+        ui,
+        p,
+        "sort-ascending-letters",
+        aurora_i18n::tr!("ui-contacts-sort-by-display-name"),
+        s.sort_by_display_name,
+        true,
+    ) {
+        s.sort_by_display_name = true;
+    }
+    menu::separator(ui, p);
     if menu::check(
         ui,
         p,
@@ -1174,9 +1163,16 @@ pub(crate) fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut ContactsSetti
     menu::toggle(
         ui,
         p,
-        "search-filled",
-        aurora_i18n::tr!("ui-contacts-show-search"),
-        &mut s.show_search,
+        "photo-filled",
+        aurora_i18n::tr!("ui-contacts-show-profile-pictures-in-contact-set-lists"),
+        &mut s.set_list_icons,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "palette-filled",
+        aurora_i18n::tr!("ui-contacts-friend-list-color-based-on-contact-set"),
+        &mut s.colorize_friends,
     );
 }
 
@@ -1860,9 +1856,9 @@ fn set_buttons(
     }
 }
 
-/// FSFloaterContactSetConfiguration: name, color, sorting; global options
-/// of the contact sets.
-fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi, settings: &mut ContactsSettings) {
+/// FSFloaterContactSetConfiguration: name, color, sorting and appearance.
+/// Legacy list options live in the contact table's own Options menu.
+fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &mut ContactsUi) {
     let Some(set) = st.config.clone() else {
         return;
     };
@@ -1927,18 +1923,6 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
                     }
                     ui.label(RichText::new(aurora_i18n::tr!("ui-contacts-default-color")).size(12.5).color(p.ink));
                 });
-                widgets::switch_labeled(
-                    ui,
-                    p,
-                    &mut settings.set_list_icons,
-                    aurora_i18n::tr!("ui-contacts-show-profile-pictures-in-contact-set-lists"),
-                );
-                widgets::switch_labeled(
-                    ui,
-                    p,
-                    &mut settings.colorize_friends,
-                    aurora_i18n::tr!("ui-contacts-friend-list-color-based-on-contact-set"),
-                );
             });
     });
     if !open {

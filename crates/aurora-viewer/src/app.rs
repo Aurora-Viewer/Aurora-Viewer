@@ -12588,13 +12588,7 @@ impl App {
                     log::warn!("cannot open the transcripts folder: {e}");
                 }
                 // their confirmations, also asked from the other menus
-                contact_actions.extend(ui::contacts::dialog_windows(
-                    &ctx,
-                    &p,
-                    &mut self.world,
-                    &mut self.contacts_ui,
-                    &mut self.settings.contacts,
-                ));
+                contact_actions.extend(ui::contacts::dialog_windows(&ctx, &p, &mut self.world, &mut self.contacts_ui));
                 // residents added to a conversation: a conversation with one
                 // resident that became a conference closes (FSFloaterIM::
                 // addP2PSessionParticipants)
@@ -12638,7 +12632,6 @@ impl App {
                     &mut self.settings.friends_list,
                     ui::people::ContactsParts {
                         ui: &mut self.contacts_ui,
-                        settings: &mut self.settings.contacts,
                         images: &self.ui_images,
                     },
                     &mut people_map,

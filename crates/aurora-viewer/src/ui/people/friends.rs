@@ -5,8 +5,8 @@
 //! boxes are (applyRightsToFriends: the map goes with the online status,
 //! the right to modify our objects is confirmed first), and after a line
 //! the two we receive. Ctrl / Shift choose several for the menu of several;
-//! a long press opens the sheet. The view options are the list's own
-//! (menu "Options", FSFriendListColumnShow* and the others), the sort is in
+//! a long press opens the sheet. Search, pictures and rights stay available;
+//! Legacy column options apply only to the contact table. The sort is in
 //! pills (FriendsSortOrder), and a contact set can filter the list.
 
 use super::rows::{self, RICH_GAP, RICH_H};
@@ -74,7 +74,6 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
     let world = c.world;
     let names = &world.social.avatar_names;
     let o = names.options;
-    let cs = &*c.contact_settings;
     // where the friends around us are (the radar's sightings)
     let regions: HashMap<Uuid, String> = crate::world::radar::sightings(world)
         .into_iter()
@@ -89,12 +88,7 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
             let (name, full, username) = match names.get(&f.id) {
                 Some(n) => {
                     let username = n.user_name_for_display(&o);
-                    let name = if cs.column_username && !cs.column_display_name && !cs.column_full_name {
-                        username.clone()
-                    } else {
-                        n.display(&o)
-                    };
-                    (name, crate::ui::contacts::full_name(n, &o, cs.full_name_display_first), username)
+                    (n.display(&o), n.complete(&o), username)
                 }
                 None => {
                     let legacy = world.social.name_of(&f.id);
@@ -155,11 +149,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
     ui.add_space(4.0);
     pills(ui, c, st);
     ui.add_space(7.0);
-    let filter = if c.contact_settings.show_search {
-        st.filter.trim().to_lowercase()
-    } else {
-        String::new()
-    };
+    let filter = st.filter.trim().to_lowercase();
     if st.friend_set.as_deref().is_some_and(|s| !c.world.contact_sets.is_valid(s)) {
         st.friend_set = None;
     }
@@ -211,40 +201,17 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         });
 }
 
-/// Search, "Add" (the friendship offer to a resident chosen in the picker)
-/// and the view options.
+/// Search and "Add" (the friendship offer to a resident chosen in the picker).
 fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
     let line = Vec2::new(ui.available_width(), rows::TOOLBAR_H);
     let add_label = aurora_i18n::tr!("common-add");
-    let add_label = if c.contact_settings.show_search
-        && line.x < widgets::action_button_fit(ui, "user-plus", add_label) + rows::TOOLBAR_H + 12.0 + 100.0
-    {
+    let add_label = if line.x < widgets::action_button_fit(ui, "user-plus", add_label) + 6.0 + 100.0 {
         ""
     } else {
         add_label
     };
     ui.allocate_ui_with_layout(line, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        let gear = rows::gear(ui, c.p, aurora_i18n::tr!("people-display-options"));
-        let (p, cs) = (c.p, &mut *c.contact_settings);
-        menu::dropdown(&gear, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
-            crate::ui::contacts::options_menu(ui, p, cs, false);
-            menu::separator(ui, p);
-            menu::toggle(
-                ui,
-                p,
-                "photo-filled",
-                aurora_i18n::tr!("ui-contacts-show-profile-pictures-in-contact-set-lists"),
-                &mut cs.set_list_icons,
-            );
-            menu::toggle(
-                ui,
-                p,
-                "palette-filled",
-                aurora_i18n::tr!("ui-contacts-friend-list-color-based-on-contact-set"),
-                &mut cs.colorize_friends,
-            );
-        });
         let add = widgets::action_button(
             ui,
             c.p,
@@ -257,10 +224,8 @@ fn toolbar(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
         if add.clicked() {
             c.contacts.pick_new_friend();
         }
-        if c.contact_settings.show_search {
-            let w = ui.available_width();
-            widgets::search_box(ui, c.p, &mut st.filter, aurora_i18n::tr!("people-friends-filter"), w);
-        }
+        let w = ui.available_width();
+        widgets::search_box(ui, c.p, &mut st.filter, aurora_i18n::tr!("people-friends-filter"), w);
     });
 }
 
@@ -384,11 +349,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     let f = &line.friend;
     let width = ui.available_width().min(ui.clip_rect().right() - ui.cursor().left()).max(0.0);
     let bounds = Rect::from_min_size(ui.cursor().min, Vec2::new(width, RICH_H));
-    let widths = if c.contact_settings.column_permissions {
-        vec![RECEIVED_W, GRANTED_W]
-    } else {
-        Vec::new()
-    };
+    let widths = [RECEIVED_W, GRANTED_W];
     let end = rows::end_before(
         bounds,
         rows::names_left(bounds) + rows::actions_width_for(5, 18.0) + PARTS_GAP,
@@ -426,12 +387,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     if let Some(cell) = end.items.get(1) {
         clicked_right = granted(ui, c, f, *cell);
     }
-    let color = if c.contact_settings.colorize_friends {
-        line.set.unwrap_or(p.ink)
-    } else {
-        p.ink
-    };
-    let color = crate::ui::colors::resident_name(c.world, &f.id, color);
+    let color = crate::ui::colors::resident_name(c.world, &f.id, p.ink);
     let cut = if end.names_right > left {
         rows::names(
             ui,
@@ -613,7 +569,6 @@ mod tests {
             pics: &pics,
         };
         let mut contacts = crate::ui::contacts::ContactsUi::default();
-        let mut contact_settings = crate::ui::contacts::ContactsSettings::default();
         let mut settings = super::super::FriendsSettings::default();
         let mut actions = Vec::new();
         let mut st = PeopleUi {
@@ -641,7 +596,6 @@ mod tests {
                                     p: &p,
                                     world: &world,
                                     contacts: &mut contacts,
-                                    contact_settings: &mut contact_settings,
                                     friends: &mut settings,
                                     images: &pics,
                                     actions: &mut actions,

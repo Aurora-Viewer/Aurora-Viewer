@@ -166,7 +166,7 @@ pub(super) fn show(ui: &mut egui::Ui, env: Env, world: &mut World, st: &mut Chat
                 let pane = egui::Rect::from_min_size(pane.min, egui::vec2(pane.width(), h));
                 contacts_pane(ui, p, pane, |ui| match friends {
                     Some(friends) => {
-                        for a in crate::ui::people::friends_pane(ui, p, world, friends, contacts, contacts_settings) {
+                        for a in crate::ui::people::friends_pane(ui, p, world, friends, contacts) {
                             actions.push(ConvAction::People(a));
                         }
                     }

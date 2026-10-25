@@ -1809,7 +1809,11 @@ at the right (rights of a friendship, what the radar knows, the avatar menu unde
 widens for it before its frame and gives the width back, "Nickname and contact sets"),
 `ui/people/friends.rs`, `groups.rs` (with a group's sheet), `sets.rs`, `recent.rs` and
 `blocked.rs` the other tabs of Aurora's look (the Contacts tab's rights, actions and dialogs,
-reused from `ui/contacts.rs`), `ui/people/rows.rs` what their rows share (faces, names, a right
+reused from `ui/contacts.rs`). Aurora's rich rows do not receive the Legacy table's presentation
+settings: search, pictures and rights are always available, names follow the global name
+preferences, and name colours use contact-set UI-name appearance and priority. The Legacy
+table keeps its column/name options and optional list pictures/colouring in its own Options
+menu; its search is permanent too. `ui/people/rows.rs` holds what their rows share (faces, names, a right
 end that never covers anything, quick actions, Ctrl / Shift selection and the 0.5-second
 hold that opens contact settings in People and Conversations › Contacts), `world/recent.rs` the
 residents met lately (LLRecentPeople), `demo_people.rs` their offline scenario; `ui/people.rs`

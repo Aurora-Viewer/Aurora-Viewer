@@ -1105,6 +1105,19 @@ fn contacts_navigation(style: ChatStyle, width: f32) -> Harness {
     h
 }
 
+#[test]
+fn contacts_workspace_search_stays_available_with_old_settings() {
+    for style in [ChatStyle::Aurora, ChatStyle::Compact] {
+        let mut h = contacts_navigation(style, 700.0);
+        h.contacts_settings.show_search = false;
+        h.people.filter = "Friend 03".into();
+        let texts = h.settle();
+        assert!(texts.iter().any(|t| t.source == "Friend 03"));
+        assert!(!texts.iter().any(|t| t.source == "Friend 05"));
+        assert!(h.actions.is_empty(), "filtering never starts an action");
+    }
+}
+
 /// Hover actions deliberately cover names; the avatar remains a row click target.
 fn contact_avatar(texts: &[crate::ui::widgets::elide_tests::Text], name: &str) -> egui::Pos2 {
     painted(texts, name).rect.left_center() - egui::vec2(25.0, 0.0)
