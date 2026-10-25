@@ -1755,6 +1755,11 @@ grid.
   access to invisible faces.
   With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
   and material masks blue; their highlighted surfaces become pickable.
+- `blend-opacity`: three rows of panels, Legacy Blend, PBR Blend and Mask, at 0%, 50% and
+  100% opacity from left to right. Each uses the same texture with holes.
+  Ordinary left clicks through the centre hole must reach every Blend panel,
+  including the invisible one, without Ctrl+Alt+T. Mask holes must pass through.
+  Combine with `AURORA_DEMO_CLICKS=<ms>,x,y,left` for repeated native touches.
 
 Right-click a HUD and check **Lock quick movement** to prevent its held-key
 drag without blocking buttons, scripts, local resizing or explicit Edit.

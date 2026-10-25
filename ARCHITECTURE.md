@@ -2254,9 +2254,11 @@ lock action. It guards the direct held-key drag without changing server
 permissions, scripted touches, local size or deliberate build edits. Camera
 gestures continue through a movement-locked HUD. HUD picking uses the decoded
 texture pick masks and the existing transformed/animated UV path for direct
-drag/local scale and masked cutouts. Normal clicks and hover retain Blend
-texels regardless of texture alpha, following LLToolPie::handleMouseDown's
-transparent attachment priority. Build tools disable the direct held-key
+drag/local scale and masked cutouts. Normal clicks and hover retain the whole
+Blend face at every texture/face opacity, including zero-alpha faces omitted
+from the draw records, following LLToolPie::handleMouseDown's transparent
+attachment priority. The material's Blend/Mask mode determines this behavior,
+independently of its visible render pass. Build tools disable the direct held-key
 drag/local scale; the wheel keeps its common HUD editing view zoom. Editing
 and the displayed transparency overlay explicitly include invisible faces.
 The frame packet carries separate HUD red/blue transparency lists, rendered

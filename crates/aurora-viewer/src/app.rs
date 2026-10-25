@@ -15726,6 +15726,14 @@ impl ApplicationHandler for App {
             // linked-object touch / inventory paths as real attachments.
             if let Ok(mode) = std::env::var("AURORA_DEMO_HUDS") {
                 let faces = matches!(mode.as_str(), "faces" | "faces-turned" | "faces-alpha");
+                if mode == "blend-opacity" {
+                    self.scene
+                        .legacy_mats
+                        .insert(crate::demo::hud::MAT_OPACITY_BLEND, Default::default());
+                    for (id, material) in crate::demo::hud::opacity_materials() {
+                        self.scene.materials.insert(id, material);
+                    }
+                }
                 if faces {
                     for (id, mut material) in crate::demo::hud::face_materials() {
                         if mode == "faces-alpha" {
@@ -15734,7 +15742,9 @@ impl ApplicationHandler for App {
                         self.scene.materials.insert(id, material);
                     }
                 }
-                let events = if faces {
+                let events = if mode == "blend-opacity" {
+                    crate::demo::hud::opacity_events()
+                } else if faces {
                     crate::demo::hud::face_events(mode == "faces-turned")
                 } else {
                     crate::demo::hud::events()
@@ -15767,6 +15777,10 @@ impl ApplicationHandler for App {
                 self.world.hud_scales = crate::world::hud_scale::HudScales::load(
                     crate::settings::account_dir(&self.world.agent_id).join(crate::world::hud_scale::FILE),
                 );
+                if mode == "blend-opacity" {
+                    self.world.hud_scales = crate::world::hud_scale::HudScales::default();
+                    self.world.hud_zoom = 1.0;
+                }
                 if matches!(
                     mode.as_str(),
                     "scale-reattach" | "scale-rename" | "scale-copy" | "scale-temp" | "scale-temp-item" | "scale-temp-instance"
