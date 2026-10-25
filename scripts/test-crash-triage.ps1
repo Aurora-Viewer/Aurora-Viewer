@@ -121,6 +121,12 @@ try {
     Assert-Triage ((@($freezeSig.Frames) -join '|') -eq 'aurora_render::cull|aurora_render::draw|aurora_viewer::run::closure') "Unexpected freeze signature frames: $(@($freezeSig.Frames) -join '|')"
     Assert-Triage ($freezeSig.Id -ne $sig.Id) 'A freeze is not the crash at the same place.'
     Assert-Triage ((Get-TriageTitle $freeze $freezeSig) -eq 'Crash: freeze in aurora_render::cull') 'Unexpected freeze title.'
+    # The GPU kept a frame: the render thread's stack, another kind again.
+    $stall = Read-CrashReport (New-Report 'GPU not responding' @('00 kernelbase+0x2dda7', '01 aurora_viewer+0x1015', '02 aurora_viewer+0x2011'))
+    Assert-Triage ($stall.Kind -eq 'GPU not responding') 'A GPU stall report must be read.'
+    $stallSig = Get-CrashSignature $stall (Get-SymbolizedFrames $stall $symFile)
+    Assert-Triage ($stallSig.Id -ne $freezeSig.Id) 'A GPU stall is not a freeze at the same place.'
+    Assert-Triage ((Get-TriageTitle $stall $stallSig) -eq 'Crash: GPU stall in aurora_render::cull') 'Unexpected GPU stall title.'
 
     # Without symbols: offsets of this exact build.
     $bare = Get-SymbolizedFrames $r $null

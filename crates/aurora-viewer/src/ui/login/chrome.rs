@@ -35,10 +35,19 @@ fn version(ui: &mut egui::Ui, p: &Palette) {
 pub fn footer(ctx: &Context, p: &Palette, icons: &Icons, info: &LoginInfo, sidebar_visible: bool, form: &mut LoginForm) -> LoginAction {
     let mut action = LoginAction::None;
     let screen = ctx.content_rect();
-    if let Some(notice) = &form.driver_notice
-        && super::driver_notice::show(ctx, p, icons, notice)
-    {
-        action = LoginAction::DismissDriverNotice;
+    if form.safe_graphics.is_some() || form.driver_notice.is_some() {
+        super::driver_notice::column(ctx, |ui, width| {
+            if let Some(state) = form.safe_graphics
+                && let Some(choice) = super::safe_graphics_notice::card(ui, p, icons, state, width)
+            {
+                action = LoginAction::SafeGraphics(choice);
+            }
+            if let Some(notice) = &form.driver_notice
+                && super::driver_notice::card(ui, p, icons, notice, width)
+            {
+                action = LoginAction::DismissDriverNotice;
+            }
+        });
     }
     egui::Area::new(Id::unique("login_links"))
         .anchor(egui::Align2::LEFT_BOTTOM, Vec2::new(25.0, -20.0))

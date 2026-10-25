@@ -3398,6 +3398,8 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_CRASH_CAPTURE_EXIT=1` | Closes the window after its screenshot in demo |
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
 | `AURORA_DEMO_GPU_DRIVER=old\|aged` | Out of date graphics driver warning on the login screen |
+| `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]` | The render thread holds a frame as a graphics card that stopped answering would |
+| `AURORA_DEMO_SAFE_GRAPHICS=offer\|active` | The safe graphics card on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
@@ -4661,6 +4663,30 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   driver" hides it and saves `gpu_driver_dismissed` in the demo profile
   (clear it there to see the card again). Without the variable the real
   driver is checked: the log line `graphics driver:` says the verdict.
+- **`AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]`**, with `AURORA_DEMO=1`: the
+  render thread holds that frame (30 s by default) as a graphics card that
+  stopped answering would. After 2 s the log says frames wait; the window
+  keeps answering (no "Not responding", sound and chat go on, the image
+  stays as it was). After 6 s the native box "the graphics card is not
+  responding" shows; Yes keeps waiting (shown again a minute later if still
+  stuck), No closes the viewer in at most a few seconds, logged out, and the
+  crash session holds `gpu-stall.txt`: the report says
+  `| Crash | GPU not responding |` with the render thread's stack, and the
+  next start offers the safe graphics. When the frame ends the box goes
+  away by itself and drawing resumes (`the graphics card answered again`).
+  With `AURORA_FPS_LIMIT=60`, frame 600 comes about 10 s after the start.
+  The window's close button during the stall closes at once (the exit
+  prompt cannot be drawn).
+- **`AURORA_DEMO_SAFE_GRAPHICS=offer|active`**, with `AURORA_DEMO=1` and
+  `AURORA_DEMO_LOGIN=cards` or `empty`: the login screen's safe graphics
+  card, above the driver warning. `offer` is what a start after a GPU stall,
+  a device loss or a frozen window shows ("Use the safe graphics" applies the
+  Potato level and keeps the level's values in `graphics-before-safe.json`
+  of the profile folder; "Keep my settings" hides it); `active` is what
+  shows while those values are kept ("Restore my graphics" puts them back,
+  "Keep the safe graphics" drops them). Without the variable the real state
+  is shown: the crash root's `gpu-trouble` mark, consumed at start, or the
+  file kept aside.
 - **Isolated real installation**: `scripts/test-update.ps1` prepares packages
   0.2.100 and 0.2.101 in `.scratch`, serves the second on loopback and
   launches the first.
