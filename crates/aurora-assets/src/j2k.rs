@@ -169,6 +169,43 @@ fn parse_main_header(cs: &[u8]) -> Option<J2kInfo> {
     })
 }
 
+/// OpenJPEG allocates a tile-part's declared length (SOT `Psot`, up to 4 GB)
+/// before reading it, whatever the stream holds: found by fuzzing, a 163-byte
+/// texture made it ask for 1 GB. A tile-part that claims more than the rest
+/// of the codestream and more than `plausible` (a partial download is cut
+/// short on purpose: its tile-parts keep their length) gets `Psot = 0`, the
+/// standard "until the end of the codestream" (ISO 15444-1 A.4.2), and is
+/// the last one read. Returns a patched copy only when one is needed.
+fn bound_tile_parts(cs: &[u8], plausible: usize) -> Option<Vec<u8>> {
+    // The first SOT, after the main header's segments.
+    let mut pos = 2usize;
+    loop {
+        let marker = be16(cs, pos)?;
+        if marker == 0xFF90 {
+            break;
+        }
+        if marker >> 8 != 0xFF || matches!(marker, 0xFF93 | 0xFFD9) {
+            return None;
+        }
+        pos = pos.checked_add(2 + be16(cs, pos + 2)? as usize)?;
+    }
+    // Tile-parts follow each other: SOT (Lsot, Isot, Psot, TPsot, TNsot),
+    // `Psot` bytes from the SOT marker.
+    while be16(cs, pos)? == 0xFF90 {
+        let psot = be32(cs, pos + 6)? as usize;
+        if psot == 0 {
+            return None;
+        }
+        if psot > cs.len() - pos && psot > plausible {
+            let mut copy = cs.to_vec();
+            copy[pos + 6..pos + 10].fill(0);
+            return Some(copy);
+        }
+        pos += psot;
+    }
+    None
+}
+
 /// Read image dimensions, component count and decomposition levels from the
 /// codestream main header without decoding. Returns `None` if the header is
 /// missing, incomplete (SIZ and COD must both be present) or malformed.
@@ -384,6 +421,10 @@ pub fn decode_j2k_timed(data: &[u8], discard: u8) -> Result<(DecodedImage, Decod
         return Err(AssetError::Unsupported(format!("JPEG2000 with {} components", info.components)));
     }
     let reduce = discard.min(info.levels);
+    // (a tile-part can never need more than about twice the raw pixels)
+    let plausible = (info.width as usize * info.height as usize * usize::from(info.components)).saturating_mul(2) + (1 << 16);
+    let bounded = bound_tile_parts(cs, plausible);
+    let cs = bounded.as_deref().unwrap_or(cs);
 
     let mut mem = MemStream { data: cs, offset: 0 };
 
@@ -740,6 +781,40 @@ mod tests {
         assert_eq!(bytes_for_discard(&info, 200), sizes[5]);
     }
 
+    /// Found by fuzzing (libFuzzer): an 8x8 codestream whose tile-part claims
+    /// 0x400000BF bytes made OpenJPEG allocate 1 GB before reading them.
+    #[test]
+    fn a_tile_part_longer_than_the_codestream_is_bounded() {
+        let cs: &[u8] = &[
+            0xFF, 0x4F, 0xFF, 0x51, 0x00, 0x2F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
+            0x07, 0x01, 0x01, 0x07, 0x01, 0x01, 0x07, 0x01, 0x01, 0xFF, 0x52, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x02, 0x01, 0x03, 0x04, 0x04,
+            0x00, 0x00, 0xFF, 0x5C, 0x00, 0x17, 0x42, 0x67, 0x38, 0x67, 0x50, 0x67, 0x50, 0x67, 0x68, 0x50, 0x05, 0x50, 0x05, 0x50, 0x47,
+            0x57, 0xD3, 0x57, 0xD3, 0x57, 0x62, 0xFF, 0x64, 0x00, 0x25, 0x00, 0x01, 0x43, 0x72, 0x65, 0x61, 0x74, 0x65, 0x64, 0x20, 0x62,
+            0x79, 0x20, 0x4F, 0x70, 0x65, 0x6E, 0x4A, 0x50, 0x45, 0x47, 0x20, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6F, 0x6E, 0x20, 0x32, 0x2E,
+            0x35, 0x2E, 0x33, 0xFF, 0x90, 0x00, 0x0A, 0x00, 0x00, 0x40, 0x00, 0x00, 0xBF, 0x00, 0x01, 0xFF, 0x93, 0x80, 0x80, 0x80, 0x80,
+            0x80, 0x80, 0x80, 0x80, 0x80, 0x91, 0xD1, 0x80, 0x0B, 0x95, 0xE2, 0x01, 0xE8, 0xFF, 0xD9,
+        ];
+        let sot = 0x81;
+        assert_eq!(be32(cs, sot + 6), Some(0x4000_00BF));
+        let bounded = bound_tile_parts(cs, 8 * 8 * 3 * 2 + (1 << 16)).expect("patched copy");
+        // a partial download keeps its tile-part lengths
+        assert!(bound_tile_parts(cs, usize::MAX).is_none());
+        assert_eq!(bounded.len(), cs.len());
+        assert_eq!(be32(&bounded, sot + 6), Some(0));
+        assert_eq!(&bounded[..sot + 6], &cs[..sot + 6]);
+        assert_eq!(&bounded[sot + 10..], &cs[sot + 10..]);
+        // a codestream our encoder wrote is left as it is
+        let pixels: Vec<u8> = (0..64u32 * 64 * 3).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+        let good = encode_texture_j2k(64, 64, 3, &pixels, false).expect("encode");
+        let good = locate_codestream(&good).expect("codestream");
+        assert!(bound_tile_parts(good, 0).is_none());
+        assert!(
+            bound_tile_parts(&good[..good.len() / 2], 0).is_some(),
+            "cut short, an implausible length"
+        );
+        let _ = decode_j2k(cs, 0);
+    }
     /// Found by fuzzing: a SIZ header claiming 2^32 - 1 on both sides
     /// overflowed the surface (a panic in the overflow-checked CI profile).
     #[test]

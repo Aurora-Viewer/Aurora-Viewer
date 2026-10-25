@@ -75,9 +75,11 @@ jobs:
           restore-keys: fuzz-corpus-${{ matrix.target }}-
       - name: Seeds
         run: cargo run --release --locked --manifest-path fuzz/Cargo.toml --bin fuzz-local -- --write-seeds
+      # -O: fuzz/Cargo.toml's release profile, overflow checks in our crates
+      # only (without it cargo-fuzz turns them on in every dependency)
       - name: Fuzz
         run: >-
-          cargo +nightly fuzz run ${{ matrix.target }} --features libfuzzer --
+          cargo +nightly fuzz run -O ${{ matrix.target }} --features libfuzzer --
           -max_total_time=${{ env.SECONDS_PER_TARGET }}
           -timeout=10 -rss_limit_mb=4096 -malloc_limit_mb=1024
       - name: Save the corpus
