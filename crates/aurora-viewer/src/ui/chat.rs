@@ -1928,8 +1928,6 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
         Some(_) => crate::link_preview::Place::Im,
     };
     st.previews.update(ui.ctx());
-    // the Legacy lines keep links as text
-    let legacy = matches!(rows, Rows::Classic(None));
     let mut env = LineEnv {
         p,
         icons,
@@ -1947,7 +1945,7 @@ fn conversation_lines(ui: &mut egui::Ui, p: &Palette, l: Lines, st: &mut ChatUi,
             Rows::Classic(style) => style,
             Rows::Thread(_) => None,
         },
-        previews: (!legacy).then_some(&mut st.previews),
+        previews: Some(&mut st.previews),
     };
     let wash = find::wash(p);
     let current = search.find.as_ref().and_then(|f| f.current_line(view));
@@ -2088,8 +2086,8 @@ pub(crate) struct LineEnv<'a> {
     /// each group when `Some(true)` (several people write); `None`: the
     /// classic lines with their header strips.
     pub bubbles: Option<bool>,
-    /// The cards under links (the Aurora, Compact and Bubbles styles of the
-    /// Conversations window; None elsewhere).
+    /// The cards under live links in all conversation styles; None in the
+    /// History window and the on-screen chat.
     pub previews: Option<&'a mut previews::Previews>,
 }
 
@@ -2238,6 +2236,9 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
                 italics,
                 mark,
             );
+            // Aurora also offers its previews in Lines (#976), extending
+            // LLChatHistory::appendMessage (indra/newview/llchathistory.cpp).
+            previews::cards(ui, env, line, &text);
         });
 }
 

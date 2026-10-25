@@ -4415,8 +4415,10 @@ failure. Grid validation and any paid upload are performed by the human.
   and a Reddit post, each with its picture (the demo draws it); the Reddit
   one blurred until clicked. `services:gyazo,flickr` keeps the listed
   services only (`gyazo`, `flickr`, `imgur`, `lightshot`, `reddit`, `none`
-  for the two links without a card). In the Legacy lines (`bubbles:legacy`) no card
-  at all. Capture at frame 900
+  for the two links without a card). The Legacy lines (`bubbles:legacy`)
+  show the same cards, including animated GIFs and consent prompts (#976);
+  combine with `AURORA_DEMO_CONV_POPOUT=1` to check independent windows.
+  Transcript history and the chat lines at the bottom stay text-only. Capture at frame 900
   (1500 with `net`).
 - **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy`**: with `AURORA_DEMO_CONV`
   and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture
