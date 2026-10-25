@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 $repo = (git rev-parse --show-toplevel).Trim()
 $tags = @(git -C $repo tag --list 'v*')
 $here = @(git -C $repo tag --points-at HEAD --list 'v*')
-if ($here.Count) {
+if (Test-AlreadyReleased $here) {
     Write-Host "HEAD is already released as $($here -join ', '): no nightly."
     exit 0
 }

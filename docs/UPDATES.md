@@ -29,8 +29,11 @@ default) or **Beta** (`update_channel`). Beta testers get the changes of
 main a few days before a stable version, to catch crashes before everyone.
 
 - **Builds.** The Nightly workflow (`.github/workflows/nightly.yml`) runs
-  every night at 02:17 UTC, and on demand ("Run workflow" on main). When
-  main has a commit without a version tag, `scripts/nightly-tag.ps1` pushes
+  every 12 hours, at 11:00 and 23:00 UTC: noon and midnight in France in
+  winter (CET), 1 pm and 1 am in summer (CEST), since a GitHub schedule is
+  in UTC only; and on demand ("Run workflow" on main). A run whose commit
+  already has a version tag (nothing new since the last beta or release)
+  does nothing. When main has a commit without a version tag, `scripts/nightly-tag.ps1` pushes
   the next beta tag on it and the Release workflow builds and publishes it
   (it is called by the Nightly workflow: a tag pushed with the workflow
   token starts no workflow by itself), as a GitHub pre-release with the
@@ -38,8 +41,8 @@ main a few days before a stable version, to catch crashes before everyone.
   reports of betas are symbolized like the others), the update policy and
   the Linux archive.
 - **Versions.** The patch after the newest stable version, then
-  `beta.<UTC date>.<n>`: after v0.7.6, `v0.7.7-beta.20261025.1`, `.2` for a
-  second run that day. SemVer ranks every beta above the earlier ones and
+  `beta.<UTC date>.<n>`: after v0.7.6, `v0.7.7-beta.20261025.1` at 11:00
+  UTC, `.2` at 23:00 UTC the same day. SemVer ranks every beta above the earlier ones and
   below the stable version of its number, so a beta tester moves on to
   v0.7.7 (or any later stable) once it is out, then to the next betas.
   The beta's update policy takes over the thresholds of the newest stable
@@ -57,9 +60,10 @@ main a few days before a stable version, to catch crashes before everyone.
   no downgrade, since a beta may already have migrated the settings or the
   cache in a way the older stable does not read. Switching channel checks
   again at once.
-- **Signing.** Betas are not signed: code signing (SignPath) asks for a
-  manual approval of every release, which a nightly cannot wait for. Beta
-  testers are told to expect an unknown-publisher warning.
+- **Signing.** Betas are not signed: code signing (SignPath, not set up
+  yet) asks for a manual approval of every release, which a build every
+  12 hours cannot wait for. Its step must skip the tags with a pre-release
+  part (`-`). Beta testers are told to expect an unknown-publisher warning.
 
 `scripts/test-nightly.ps1` holds the fixture tests of the versions, the
 next tag, the pruning and the policy line; the Nightly workflow runs them on

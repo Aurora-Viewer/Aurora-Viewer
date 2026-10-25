@@ -34,6 +34,13 @@ function Compare-ReleaseVersion($A, $B) {
 
 function Test-BetaVersion($V) { @($V.Pre).Count -gt 0 -and $V.Pre[0] -ceq 'beta' }
 
+# Whether the commit to publish is already a release or a beta (one of its
+# tags is a version): then a run has nothing new and does nothing.
+function Test-AlreadyReleased([string[]]$HeadTags) {
+    foreach ($t in $HeadTags) { if (ConvertTo-ReleaseVersion $t) { return $true } }
+    $false
+}
+
 # The newest stable version among the tags, or $null.
 function Get-LatestStable([string[]]$Tags) {
     $best = $null

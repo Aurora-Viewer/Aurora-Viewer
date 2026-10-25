@@ -1,6 +1,6 @@
 name: Nightly
 
-# Every night, when main has changed since the last release or beta, the
+# Every 12 hours, when main has changed since the last release or beta, the
 # next beta version is tagged (scripts/nightly-tag.ps1: the patch after the
 # newest stable version, then `beta.<UTC date>.<n>`, e.g.
 # v0.7.7-beta.20261025.1) and the Release workflow builds and publishes it
@@ -12,7 +12,9 @@ name: Nightly
 # change these files run the fixture tests.
 on:
   schedule:
-    - cron: '17 2 * * *'   # 02:17 UTC, outside the hours of the busy CI queue
+    # 11:00 and 23:00 UTC: noon and midnight in France in winter (CET), 1 pm
+    # and 1 am in summer (CEST); a schedule is UTC only
+    - cron: '0 11,23 * * *'
   workflow_dispatch:
   pull_request:
     paths:

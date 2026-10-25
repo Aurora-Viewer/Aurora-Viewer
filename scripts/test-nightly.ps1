@@ -28,6 +28,17 @@ Assert-Nightly ((Get-NextBetaTag @('v0.7.6', 'v0.7.7-beta.20261024.3') $day) -eq
 Assert-Nightly ((Get-NextBetaTag @('v0.7.6', 'v0.7.7', 'v0.7.7-beta.20261025.1') $day) -eq 'v0.7.8-beta.20261025.1') 'After a stable, the next patch.'
 Assert-Nightly ((Get-NextBetaTag @('v0.8.0-beta.1') $day) -eq 'v0.0.1-beta.20261025.1') 'Without a stable release.'
 
+# Two runs the same UTC day (11:00 and 23:00): .1 then .2.
+$noon = [datetime]::new(2026, 10, 25, 11, 0, 0, [DateTimeKind]::Utc)
+$first = Get-NextBetaTag @('v0.7.6') $noon
+$second = Get-NextBetaTag @('v0.7.6', $first) $noon.AddHours(12)
+Assert-Nightly ($first -eq 'v0.7.7-beta.20261025.1' -and $second -eq 'v0.7.7-beta.20261025.2') "Same day: $first then $second."
+# Nothing new since the last beta (or release): the run does nothing.
+Assert-Nightly (Test-AlreadyReleased @($first)) 'A commit with a beta tag is already released.'
+Assert-Nightly (Test-AlreadyReleased @('v0.7.6')) 'A commit with a stable tag is already released.'
+Assert-Nightly (-not (Test-AlreadyReleased @())) 'A commit without a tag is new.'
+Assert-Nightly (-not (Test-AlreadyReleased @('vnext-notes'))) 'A tag that is not a version does not count.'
+
 # Pruning: the newest betas stay, stables and other pre-releases are kept.
 $tags = @('v0.7.6', 'v0.7.7-rc.1') + (1..12 | ForEach-Object { "v0.7.7-beta.20261025.$_" })
 $pruned = @(Get-BetasToPrune $tags 10)
