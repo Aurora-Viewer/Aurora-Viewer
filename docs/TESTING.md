@@ -3162,7 +3162,19 @@ both open states and the selection count. Capture at frame 620.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
+| `AURORA_DEMO_AREA_SEARCH=1\|filters\|parcel\|sale\|search` | Open Area Search with named objects and sale entries. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
+
+`AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
+the agent's parcel, `sale` shows sale entries, `filters` expands the filters, and
+`search` searches the localized fountain name. Capture after frame 740, in English and French. Check the column
+sorting, combined text and flag filters, Reset, Refresh preserving filters,
+selection, Inspect, Zoom/double click, Copy UUID, and the toolbar button reopening
+a minimized window. On the grid, compare the received roots with the Legacy
+Viewer, check parcel boundaries and neighboring regions, linked prim names,
+group-owned objects, late name replies, derez/movement and region changes.
+Keep a Build/Inspect selection while requests are arriving: it must stay selected.
+Objects outside the viewer's received scene cannot be enumerated by this window.
 
 `AURORA_DEMO_TOOLBAR`: `1` opens the "Toolbar buttons" window at frame 300;
 `drag` holds Friends over the toolbar with an insertion marker (the empty
