@@ -1643,7 +1643,7 @@ Drop, Block particle owner) is `AURORA_DEMO_WORN=menu`.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_HUDS=<mode>` | Worn HUDs: display, touch, move, edit |
-| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks, pause while edited |
+| `AURORA_DEMO_WORN=<mode>` | Object worn on the body: menus, Edit, Inspect, inventory double-clicks, pause while edited, temporary detach |
 
 ### Details
 
@@ -1725,13 +1725,21 @@ The lock applies to the whole linkset, survives reattachment/relogin for
 ordinary inventory HUDs, and is stored per account in `hud_locks.json`.
 Temporary attachments without a stable inventory item keep an instance lock.
 
-**`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound`** — our avatar wears on its
+**`AURORA_DEMO_WORN=1|menu|edit|move|freeze|inspect|inventory|library|sound|temporary-detach|temporary-drop`** — our avatar wears on its
 back (Spine point) a two-prim object, touchable, modifiable, linked to an
 inventory item ("Demo backpack", in the current outfit). No
 access to a grid.
 
 - `1`: worn object only, to test by hand the right click on the object,
   in the inventory and in Appearance › Current outfit.
+- `temporary-detach` / `temporary-drop`: the backpack becomes a temporary
+  attachment at frame 600, with a nil AttachItemID; its linked prim starts
+  a dance. At frame 900 the simulator kills the root or unparents it,
+  without an animation-stop message. The viewer must request that stop.
+  The log writes `demo temporary detach` with `dancing=true` at frame 750
+  and `dancing=false` at 1050; captures at those frames show the dance and
+  the recovered standing pose. This uses the ordinary network-event and
+  outgoing animation-command paths, entirely offline.
 - `menu`: right click on the object at frame 700 (`menu_attachment_self.xml`).
 - `edit`: then "Edit" at frame 740: build window, object
   outlined, arrows aligned on the attachment point, local position in
