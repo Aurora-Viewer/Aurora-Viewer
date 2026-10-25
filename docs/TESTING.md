@@ -1263,6 +1263,14 @@ No real L$ and no connection to a grid.
   a tracked spot of the plaza region, at 118 m; nothing teleports until the
   map's Teleport button. `tp-door-ready` stops before the click.
 - `buy-confirm`, `pay-confirm`: confirm the simulated transaction.
+- `pay-menu`, `pay-linked-menu` (#997): open Pay through the context-menu
+  action on a Touch object, or its linked child (only the root takes money).
+  The normal click action stays Touch; suggested amounts must still load.
+  Add `-confirm` to pay L$ 10 at frame 320. The log must contain one
+  `demo payment confirmed` with the clicked prim's UUID (972 or 974),
+  `dialog=false` and one `demo action: paiement L$ 10`; the window closes.
+  Without `-confirm`, the window stays open for manual input. Check both
+  Pay window looks in Preferences > Aurora. No real currency is transferred.
 - `linked-touch`, `linked-sit`: hollow root with Touch and child seat with
   Sit, overlapping bounding boxes; checks the prim actually aimed at.
 - `transparent-menu`, `transparent-build`: cube with 60% transparency,

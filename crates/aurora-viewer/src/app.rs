@@ -5252,7 +5252,10 @@ impl App {
             self.cursor_pos = cursor;
         }
         if id != 0 && self.frame_count == click_frame && !mode.ends_with("-ready") {
-            if mode.ends_with("-build") {
+            if mode.starts_with("pay-menu") || mode.starts_with("pay-linked-menu") {
+                self.on_ctx_action(ui::context::CtxAction::Pay(crate::demo::action_id(id)));
+                log::info!("demo menu payment: prim={id}, dialog={}", self.interactions.dialog.is_some());
+            } else if mode.ends_with("-build") {
                 self.build.open_build(crate::build::Tool::Edit);
                 self.click(click_pick::Click::Build);
             } else if mode.ends_with("-menu") {
@@ -5273,8 +5276,16 @@ impl App {
         }
         if mode.ends_with("-confirm")
             && self.frame_count == 320
-            && let Some(cmd) = self.interactions.confirm(&self.world, (id == 972).then_some(10))
+            && let Some(cmd) = self
+                .interactions
+                .confirm(&self.world, (id == 972 || mode.starts_with("pay-linked-menu")).then_some(10))
         {
+            if let NetCommand::PayObject { object, .. } = &cmd {
+                log::info!(
+                    "demo payment confirmed: clicked={id}, object={object}, dialog={}",
+                    self.interactions.dialog.is_some()
+                );
+            }
             self.send(cmd);
         }
     }
