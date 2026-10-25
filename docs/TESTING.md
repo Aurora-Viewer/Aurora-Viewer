@@ -6381,7 +6381,8 @@ What the inventory must show with these scenarios:
   Viewer). In demo mode nothing is posted: about 5 s after the world shows,
   the log gets one line `demo viewer statistics (not sent): <llsd>…` with the
   report built from the demo's real frame, machine and GPU values (the
-  network counters are the demo's, the session id is never in it). On the
+  network counters are the demo's; the session id is never in it, and the
+  adapter address and the serial show as `(not logged)`). On the
   grid the report is logged at debug level only, `sending viewer
   statistics: …` (`RUST_LOG=info,aurora_net=debug`).
 - **`AURORA_VULKAN_LAYERS=keep`**: at start the viewer sets the variables
