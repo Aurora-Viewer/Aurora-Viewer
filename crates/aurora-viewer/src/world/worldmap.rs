@@ -238,6 +238,7 @@ pub struct WorldMap {
     /// The friend `track` follows, if any.
     pub avatar: Option<AvatarTrack>,
     pub(super) friend_join: Option<super::friend_join::FriendJoin>,
+    pub(super) friend_join_flight_arrival: bool,
     /// The parcel asked for the tracked spot.
     pub track_parcel: Option<TrackParcel>,
     /// Centre the open map on `track` once its region is known

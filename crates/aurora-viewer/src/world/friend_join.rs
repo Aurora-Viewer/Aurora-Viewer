@@ -17,7 +17,13 @@ pub(crate) struct FriendJoin {
     started: Instant,
     arrived: Option<Instant>,
     fresh_object: bool,
+    flight: Option<bool>,
     coarse: Option<Vec3>,
+}
+
+pub(crate) struct FriendJoinTeleport {
+    pub command: NetCommand,
+    pub fly: bool,
 }
 
 impl World {
@@ -50,6 +56,7 @@ impl World {
             started: Instant::now(),
             arrived: None,
             fresh_object: false,
+            flight: None,
             coarse: None,
         })
     }
@@ -65,6 +72,22 @@ impl World {
 
     pub(crate) fn cancel_friend_join(&mut self) {
         self.map.friend_join = None;
+    }
+
+    pub(crate) fn keep_friend_join_flight_on_arrival(&mut self, fly: bool) {
+        self.map.friend_join_flight_arrival = fly && self.agent.flying;
+    }
+
+    pub(super) fn note_friend_join_animations(&mut self, avatar: Uuid) {
+        if let Some(join) = &mut self.map.friend_join
+            && join.avatar == avatar
+            && self.received.is_none_or(|at| at >= join.started)
+        {
+            join.flight = Some(
+                crate::autopilot::flight_from_signals(false, self.animations.get(&avatar).into_iter().flatten().map(|a| a.id))
+                    == Some(true),
+            );
+        }
     }
 
     pub(super) fn friend_join_arrived(&mut self, handle: RegionHandle) {
@@ -111,7 +134,7 @@ impl World {
     /// Resolve from new destination-region reports, never a retained radar
     /// entry. Consume before dispatch, so a denial or landing-point redirect
     /// cannot create an automatic teleport loop.
-    pub(crate) fn finish_friend_join(&mut self, now: Instant, cancelled: bool) -> Option<NetCommand> {
+    pub(crate) fn finish_friend_join(&mut self, now: Instant, cancelled: bool) -> Option<FriendJoinTeleport> {
         let join = self.map.friend_join.as_ref()?;
         let expired = match join.arrived {
             Some(at) => now.saturating_duration_since(at) >= POSITION_TIMEOUT,
@@ -148,16 +171,27 @@ impl World {
         if !position.is_finite() {
             return None;
         }
+        // Position can precede AvatarAnimation. Wait for flight signals when
+        // we can use them; a known flight restriction must not block the hop.
+        if !self.agent.flying && join.flight.is_none() && crate::autopilot::can_fly_for_join(self) {
+            return None;
+        }
+        let seated = join.fresh_object
+            && self
+                .objects
+                .index_of_uuid(&join.avatar)
+                .and_then(|i| self.objects.get(i))
+                .is_some_and(|o| o.parent_id != 0);
+        let fly = (self.agent.flying || (!seated && join.flight == Some(true))) && crate::autopilot::can_fly_for_join(self);
         let avatar = join.avatar;
         self.cancel_friend_join();
         let (x, y) = aurora_net::handle_to_origin(main);
         self.map
             .agent_found(avatar, x as f64 + position.x as f64, y as f64 + position.y as f64, Some(position.z));
-        Some(super::worldmap::teleport_command(
-            x as f64 + position.x as f64,
-            y as f64 + position.y as f64,
-            position.z,
-        ))
+        Some(FriendJoinTeleport {
+            command: super::worldmap::teleport_command(x as f64 + position.x as f64, y as f64 + position.y as f64, position.z),
+            fly,
+        })
     }
 }
 
@@ -232,9 +266,23 @@ mod tests {
             handle: destination(),
             positions: vec![(friend(), Vec3::new(60.0, 200.0, z))],
         });
+        signals(w, crate::ao::State::Standing);
     }
 
     fn avatar(w: &mut World, z: f32) {
+        avatar_data(w, z);
+        signals(w, crate::ao::State::Standing);
+    }
+
+    fn signals(w: &mut World, state: crate::ao::State) {
+        w.apply(NetEvent::AvatarAnimations {
+            avatar: friend(),
+            anims: vec![(state.motion(), 1)],
+            sources: vec![],
+        });
+    }
+
+    fn avatar_data(w: &mut World, z: f32) {
         let mut o = crate::demo::action_avatar(false);
         o.full_id = friend();
         o.position = Vec3::new(60.0, 200.0, z);
@@ -251,7 +299,9 @@ mod tests {
             coarse(&mut w, 20.0);
             assert!(w.finish_friend_join(Instant::now(), false).is_none(), "still travelling");
             arrive(&mut w, destination());
-            let command = w.finish_friend_join(Instant::now(), false).expect("one local TP To");
+            let hop = w.finish_friend_join(Instant::now(), false).expect("one local TP To");
+            assert!(!hop.fly, "a standing friend does not turn on flight");
+            let command = hop.command;
             assert!(
                 matches!(command, NetCommand::TeleportTo { handle, position, .. } if handle == destination() && position == Vec3::new(60.0, 200.0, 20.0))
             );
@@ -271,7 +321,7 @@ mod tests {
         avatar(&mut w, 3000.0);
         coarse(&mut w, 1020.0);
         assert!(
-            matches!(w.finish_friend_join(Instant::now(), false), Some(NetCommand::TeleportTo { position, .. }) if position.z == 3000.0)
+            matches!(w.finish_friend_join(Instant::now(), false).map(|hop| hop.command), Some(NetCommand::TeleportTo { position, .. }) if position.z == 3000.0)
         );
     }
 
@@ -303,7 +353,9 @@ mod tests {
         );
         assert!(w.finish_friend_join(Instant::now(), false).is_none());
         avatar(&mut w, 20.0);
-        assert!(matches!(w.finish_friend_join(Instant::now(), false), Some(NetCommand::TeleportTo { position, .. }) if position.z == 20.0));
+        assert!(
+            matches!(w.finish_friend_join(Instant::now(), false).map(|hop| hop.command), Some(NetCommand::TeleportTo { position, .. }) if position.z == 20.0)
+        );
     }
 
     #[test]
@@ -402,5 +454,137 @@ mod tests {
         });
         assert!(w.take_map_commands().iter().all(|c| !matches!(c, NetCommand::TeleportTo { .. })));
         assert!(w.finish_friend_join(Instant::now(), false).is_none());
+    }
+
+    fn allow_flight(w: &mut World) {
+        let mut info = crate::demo::events()
+            .into_iter()
+            .find_map(|e| match e {
+                NetEvent::RegionHandshake(info) => Some((*info).clone()),
+                _ => None,
+            })
+            .unwrap();
+        info.handle = destination();
+        info.is_main = true;
+        info.region_flags &= !aurora_net::region_flags::BLOCK_FLY;
+        w.apply(NetEvent::RegionHandshake(std::sync::Arc::new(info)));
+        w.parcel = Some(std::sync::Arc::new(aurora_net::ParcelInfo {
+            flags: aurora_net::parcel_flags::ALLOW_FLY,
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    fn flying_friend_waits_for_new_flight_state_without_delaying_the_hop_for_policy() {
+        for known_policy in [false, true] {
+            let mut w = first_leg(true);
+            arrive(&mut w, destination());
+            avatar_data(&mut w, 2400.0);
+            assert!(w.finish_friend_join(Instant::now(), false).is_none());
+            w.apply_received(
+                NetEvent::AvatarAnimations {
+                    avatar: friend(),
+                    anims: vec![(crate::ao::State::Hovering.motion(), 1)],
+                    sources: vec![],
+                },
+                Instant::now() - Duration::from_secs(10),
+            );
+            assert!(
+                w.finish_friend_join(Instant::now(), false).is_none(),
+                "old flight state is not enough"
+            );
+            signals(&mut w, crate::ao::State::Hovering);
+            if known_policy {
+                allow_flight(&mut w);
+            }
+            let hop = w.finish_friend_join(Instant::now(), false).unwrap();
+            assert!(hop.fly);
+            assert!(!w.agent.flying, "takeoff is deferred until teleport preflight accepts the hop");
+            assert!(matches!(hop.command, NetCommand::TeleportTo { position, .. } if position.z == 2400.0));
+        }
+    }
+
+    #[test]
+    fn friend_join_still_teleports_when_takeoff_is_blocked() {
+        for block in 0..3 {
+            let mut w = first_leg(true);
+            arrive(&mut w, destination());
+            avatar_data(&mut w, 2400.0);
+            if block != 0 {
+                signals(&mut w, crate::ao::State::Flying);
+            }
+            allow_flight(&mut w);
+            match block {
+                0 => {
+                    let r = w.regions.get_mut(&destination()).unwrap();
+                    std::sync::Arc::make_mut(r.info.as_mut().unwrap()).region_flags |= aurora_net::region_flags::BLOCK_FLY;
+                }
+                1 => std::sync::Arc::make_mut(w.parcel.as_mut().unwrap()).flags = 0,
+                _ => {
+                    w.rlva.configure(true);
+                    w.rlva_console_input("@fly=n");
+                }
+            }
+            let hop = w
+                .finish_friend_join(Instant::now(), false)
+                .expect("a flight restriction does not cancel the hop");
+            assert!(!hop.fly);
+            assert!(matches!(hop.command, NetCommand::TeleportTo { position, .. } if position.z == 2400.0));
+            assert!(!w.agent.flying && w.map.friend_join.is_none());
+        }
+    }
+
+    #[test]
+    fn friend_join_preserves_existing_flight_without_taking_off_for_a_standing_skybox_target() {
+        for flying in [false, true] {
+            let mut w = first_leg(true);
+            arrive(&mut w, destination());
+            w.agent.flying = flying;
+            avatar(&mut w, 2400.0);
+            w.apply_received(
+                NetEvent::AvatarAnimations {
+                    avatar: friend(),
+                    anims: vec![(crate::ao::State::Hovering.motion(), 1)],
+                    sources: vec![],
+                },
+                Instant::now() - Duration::from_secs(10),
+            );
+            let hop = w.finish_friend_join(Instant::now(), false).unwrap();
+            assert_eq!(hop.fly, flying);
+            assert_eq!(w.agent.flying, flying);
+        }
+    }
+
+    #[test]
+    fn friend_flight_survives_the_local_reply_once_and_never_leaks_into_another_teleport() {
+        for server_flying in [false, true] {
+            let mut w = first_leg(true);
+            arrive(&mut w, destination());
+            w.fly_after_teleport = false;
+            w.agent.flying = true;
+            w.begin_teleport(false);
+            w.keep_friend_join_flight_on_arrival(true);
+            w.apply(NetEvent::TeleportLocal { flying: server_flying });
+            assert!(w.agent.flying);
+            assert!(!w.map.friend_join_flight_arrival, "consume even if the server already says flying");
+            arrive(&mut w, destination());
+            // A later teleport, including an accepted invitation, uses its own flags.
+            w.begin_teleport(false);
+            w.apply(NetEvent::TeleportLocal { flying: false });
+            assert!(!w.agent.flying);
+            w.agent.flying = true;
+            w.begin_teleport(false);
+            w.keep_friend_join_flight_on_arrival(true);
+            w.apply(NetEvent::TeleportFailed {
+                reason: "Offline test".into(),
+            });
+            assert!(!w.map.friend_join_flight_arrival);
+            w.begin_teleport(false);
+            w.agent.flying = true;
+            w.keep_friend_join_flight_on_arrival(true);
+            w.agent.flying = false;
+            w.apply(NetEvent::TeleportLocal { flying: false });
+            assert!(!w.agent.flying, "a new landing choice must not be undone");
+        }
     }
 }

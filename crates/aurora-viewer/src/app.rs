@@ -5701,8 +5701,24 @@ impl App {
 
     /// Preflight before UI/simulation side effects, including offline demos.
     fn request_user_teleport(&mut self, command: NetCommand, dest: String, show_progress: bool) -> bool {
+        self.request_user_teleport_with_flight(command, dest, show_progress, false)
+    }
+
+    fn request_user_teleport_with_flight(&mut self, command: NetCommand, dest: String, show_progress: bool, fly: bool) -> bool {
         if self.user_teleport_allowed(&command) {
+            let fly = fly && crate::autopilot::can_fly_for_join(&self.world);
+            if fly && !self.world.agent.flying {
+                self.toggle_fly();
+            }
+            if fly {
+                // Preserve the frame's other controls. set_controls queues
+                // the FLY AgentUpdate before the following teleport request.
+                let mut controls = *self.net.controls.lock();
+                controls.control_flags |= control::FLY;
+                self.net.set_controls(controls);
+            }
             self.begin_teleport(dest, show_progress);
+            self.world.keep_friend_join_flight_on_arrival(fly);
             self.send(command);
             true
         } else {
@@ -6732,8 +6748,8 @@ impl App {
             || i.joystick_yaw.abs() > 0.001
             || i.joystick_pitch.abs() > 0.001
             || self.mouse_mode == MouseMode::Steer;
-        if let Some(command) = self.world.finish_friend_join(Instant::now(), moved) {
-            self.request_user_teleport(command, String::new(), false);
+        if let Some(join) = self.world.finish_friend_join(Instant::now(), moved) {
+            self.request_user_teleport_with_flight(join.command, String::new(), false, join.fly);
         }
         self.minimap_ui.prune(&self.world);
         // parcel overlays of regions we left (their lines would be stale on return)
@@ -6959,7 +6975,7 @@ impl App {
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
             self.world.group_titles = self.settings.group_titles;
-            self.world.fly_after_teleport = self.settings.fly_after_teleport;
+            self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,
                 script_threshold: self.settings.script_count_threshold,
@@ -9525,7 +9541,7 @@ impl App {
         }
         if self.demo && matches!(self.frame_count, 700 | 720) && crate::demo::friend_join_scenario() {
             if self.frame_count == 700 {
-                let contact = std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-contact");
+                let contact = std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() != Ok("join-map");
                 self.world.locate_avatar(crate::demo::DEMO_FRIEND, contact);
                 self.panels.world_map = true;
             } else if std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-map")
@@ -9541,12 +9557,42 @@ impl App {
             && let Some((_, position)) = self.demo_friend_join_target.take()
             && let Some(handle) = self.world.main_region
         {
+            if crate::demo::friend_join_flight_scenario()
+                && let Some(info) = self.world.regions.values().find_map(|r| r.info.as_ref()).cloned()
+            {
+                let mut info = (*info).clone();
+                info.handle = handle;
+                info.is_main = true;
+                let (x, y) = aurora_net::handle_to_origin(handle);
+                if let Some(sim) = self.world.map.sims.get(&(x / 256, y / 256)) {
+                    info.name.clone_from(&sim.name);
+                }
+                info.region_flags &= !aurora_net::region_flags::BLOCK_FLY;
+                if std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-fly-blocked") {
+                    info.region_flags |= aurora_net::region_flags::BLOCK_FLY;
+                }
+                self.world.apply(NetEvent::RegionHandshake(Arc::new(info)));
+                self.world.apply(NetEvent::AgentParcel(Arc::new(aurora_net::ParcelInfo {
+                    flags: aurora_net::parcel_flags::ALLOW_FLY,
+                    ..Default::default()
+                })));
+            }
             let mut target = crate::demo::action_avatar(false);
             target.full_id = crate::demo::DEMO_FRIEND;
             target.position = position;
             self.world.apply(NetEvent::ObjectUpdates {
                 handle,
                 objects: vec![target],
+            });
+            let state = if crate::demo::friend_join_flight_scenario() {
+                crate::ao::State::Hovering
+            } else {
+                crate::ao::State::Standing
+            };
+            self.world.apply(NetEvent::AvatarAnimations {
+                avatar: crate::demo::DEMO_FRIEND,
+                anims: vec![(state.motion(), 1)],
+                sources: vec![],
             });
             log::info!("demo friend join: fresh target position at {:.0} m", position.z);
         }

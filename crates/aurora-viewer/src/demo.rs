@@ -3631,7 +3631,12 @@ fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
 }
 
 pub fn friend_join_scenario() -> bool {
-    std::env::var("AURORA_DEMO_FRIEND_LOCATION").is_ok_and(|m| matches!(m.as_str(), "join-map" | "join-contact"))
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION")
+        .is_ok_and(|m| matches!(m.as_str(), "join-map" | "join-contact" | "join-fly" | "join-fly-blocked"))
+}
+
+pub fn friend_join_flight_scenario() -> bool {
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION").is_ok_and(|m| matches!(m.as_str(), "join-fly" | "join-fly-blocked"))
 }
 
 /// Make the conversation's friend remote without keeping a nearby object
@@ -3642,7 +3647,7 @@ pub fn friend_location(world: &mut crate::world::World) {
     };
     if !matches!(
         mode.as_str(),
-        "allowed" | "denied" | "offline" | "altitude" | "join-map" | "join-contact"
+        "allowed" | "denied" | "offline" | "altitude" | "join-map" | "join-contact" | "join-fly" | "join-fly-blocked"
     ) {
         return;
     }
@@ -3657,7 +3662,9 @@ pub fn friend_location(world: &mut crate::world::World) {
         f.rights_given = 3;
         f.rights_has = if mode == "denied" { 1 } else { 3 };
     }
-    if mode == "altitude" || friend_join_scenario() {
+    if friend_join_flight_scenario() {
+        world.agent.flying = false;
+    } else if mode == "altitude" || friend_join_scenario() {
         world
             .agent
             .get_off(glam::Vec3::new(world.agent.position.x, world.agent.position.y, 3000.0));

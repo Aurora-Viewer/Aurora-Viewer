@@ -654,6 +654,13 @@ The intent expires after 90 seconds before arrival or 30 seconds waiting for
 position, and cancels on movement, Stop/Escape, another teleport, permission
 loss, map selection/height edits or failure. Lures, explicit Z and local
 teleports never arm this continuation; both legs pass normal RLVa preflight.
+When we are not flying and flight is not known to be forbidden, the join also waits for new target animation signals.
+Native hover/flight motions request takeoff; height alone does not. Known
+region/parcel/RLVa restrictions prevent takeoff but never cancel the local
+jump. Missing policy packets do not delay it either. The application enables flight only after
+teleport preflight, queues the FLY controls before the teleport, and retains
+that state through one local reply. This does not change Fly After Teleport
+or the flags of later teleports/invitations.
 
 `world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
 roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,
