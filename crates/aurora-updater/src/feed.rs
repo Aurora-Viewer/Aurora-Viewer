@@ -1,5 +1,6 @@
-//! A bounded GitHub release list, filtered by stable SemVer rather than
-//! GitHub's creation date (the assets-only release is not a viewer).
+//! A bounded GitHub release list, filtered by SemVer rather than GitHub's
+//! creation date (the assets-only release is not a viewer): stable versions,
+//! plus the `-beta.…` pre-releases for the Beta channel.
 
 use anyhow::{Context, Result, ensure};
 use reqwest::{Client, Url};
@@ -12,6 +13,33 @@ pub const RELEASE_PAGE: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer/r
 const DOWNLOADS: &str = "https://github.com/Aurora-Viewer/Aurora-Viewer/releases/download";
 pub const POLICY: &str = "aurora-update-policy.json";
 pub const MAX_ARCHIVE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Which releases a viewer follows. Beta also takes the stable versions: a
+/// stable release ranks above the betas of its own number (SemVer), so a
+/// beta tester moves on to it once it is out.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Channel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+/// The pre-release label of the Beta channel (`v0.7.7-beta.20261025.1`,
+/// built by the Nightly workflow).
+pub const BETA: &str = "beta";
+
+impl Channel {
+    /// Whether a release version belongs to this channel. Build metadata
+    /// never does: it marks a development build, not a release.
+    pub fn accepts(self, v: &Version) -> bool {
+        v.build.is_empty() && (v.pre.is_empty() || (self == Channel::Beta && is_beta(v)))
+    }
+}
+
+/// A Beta channel pre-release: `-beta`, `-beta.<…>`.
+pub fn is_beta(v: &Version) -> bool {
+    v.pre.as_str().split('.').next() == Some(BETA)
+}
 
 #[derive(Clone)]
 pub struct Source {
@@ -110,14 +138,16 @@ impl Source {
         Ok(bytes)
     }
 
-    pub async fn check(&self, current: &str) -> Result<Option<Release>> {
+    pub async fn check(&self, current: &str, channel: Channel) -> Result<Option<Release>> {
         let client = self.client()?;
         let releases: Vec<GithubRelease> = serde_json::from_slice(&self.bytes(&client, &self.url, 4 * 1024 * 1024).await?)?;
         let Some((v, r)) = releases
             .into_iter()
             .filter_map(|r| {
                 let v = version(&r.tag_name)?;
-                (r.tag_name.starts_with('v') && !r.draft && !r.prerelease && v.pre.is_empty() && v.build.is_empty()).then_some((v, r))
+                // GitHub's pre-release flag must agree with the version: a
+                // stable number marked pre-release (or the reverse) is skipped.
+                (r.tag_name.starts_with('v') && !r.draft && r.prerelease == !v.pre.is_empty() && channel.accepts(&v)).then_some((v, r))
             })
             .max_by(|a, b| a.0.cmp_precedence(&b.0))
         else {
@@ -244,6 +274,27 @@ mod tests {
             assert!(!crate::is_newer(tag, "0.1.0"));
         }
     }
+    #[test]
+    fn channels_take_stable_versions_and_beta_only_its_own_prereleases() {
+        let v = |s: &str| version(s).expect("fixture");
+        for (tag, stable, beta) in [
+            ("v0.7.6", true, true),
+            ("v0.7.7-beta.20261025.1", false, true),
+            ("v0.7.7-beta", false, true),
+            ("v0.7.7-rc.1", false, false),
+            ("v0.7.7-betafoo.1", false, false),
+            ("v0.7.6+3.gabcdef", false, false),
+            ("v0.7.7-beta.1+3.gabcdef", false, false),
+        ] {
+            assert_eq!(Channel::Stable.accepts(&v(tag)), stable, "{tag}");
+            assert_eq!(Channel::Beta.accepts(&v(tag)), beta, "{tag}");
+        }
+        // A stable release ranks above the betas of its number.
+        assert!(crate::is_newer("v0.7.7", "0.7.7-beta.20261025.9"));
+        assert!(crate::is_newer("v0.7.7-beta.20261026.1", "0.7.7-beta.20261025.9"));
+        assert!(crate::is_newer("v0.7.7-beta.20261025.10", "0.7.7-beta.20261025.9"));
+    }
+
     #[test]
     fn reject_external_or_credentialled_assets() {
         let production = Source::default();

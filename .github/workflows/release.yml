@@ -7,9 +7,18 @@ name: Release
 # run of both jobs (the version Git describes, the symbols and the Linux
 # archive kept as the run's artifacts, nothing published): no agent can try
 # the Linux build on its PC, and the symbols need the release build.
+# The Nightly workflow calls it with the beta tag it has just pushed (a tag
+# pushed with the workflow token starts no workflow by itself); a tag with
+# a pre-release part is published as a GitHub pre-release.
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_call:
+    inputs:
+      tag:
+        description: Version tag to build and publish (already pushed)
+        required: true
+        type: string
   pull_request:
     paths:
       - .github/workflows/release.yml
@@ -23,7 +32,7 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      TAG: ${{ github.event_name == 'push' && github.ref_name || 'dry-run' }}
+      TAG: ${{ inputs.tag || github.event_name == 'push' && github.ref_name || 'dry-run' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -36,10 +45,10 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          if ($env:GITHUB_EVENT_NAME -eq 'push') { $env:AURORA_VERSION_TAG = $env:TAG }
+          if ($env:TAG -ne 'dry-run') { $env:AURORA_VERSION_TAG = $env:TAG }
           cargo build --release --locked -p aurora-viewer
       - name: Verify compiled version
-        if: github.event_name == 'push'
+        if: env.TAG != 'dry-run'
         shell: pwsh
         run: ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer.exe -Tag $env:TAG
       # Breakpad symbols of the exe for the crash reports (docs/BUG_REPORTING.md):
@@ -62,7 +71,7 @@ jobs:
           "zip $([math]::Round((Get-Item $zip).Length / 1MB)) MB"
           "SYMBOLS=$zip" >> $env:GITHUB_ENV
       - name: Package
-        if: github.event_name == 'push'
+        if: env.TAG != 'dry-run'
         shell: pwsh
         run: |
           $v = $env:TAG
@@ -74,7 +83,7 @@ jobs:
           ./scripts/write-update-policy.ps1 -Tag $v
           "ZIP=$dir.zip" >> $env:GITHUB_ENV
       - name: Publish
-        if: github.event_name == 'push'
+        if: env.TAG != 'dry-run'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -103,7 +112,7 @@ jobs:
     if: ${{ !cancelled() && (needs.windows.result == 'success' || github.event_name == 'pull_request') }}
     runs-on: ubuntu-24.04
     env:
-      TAG: ${{ github.event_name == 'push' && github.ref_name || 'dry-run' }}
+      TAG: ${{ inputs.tag || github.event_name == 'push' && github.ref_name || 'dry-run' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -124,10 +133,10 @@ jobs:
         env:
           CARGO_PROFILE_RELEASE_STRIP: debuginfo
         run: |
-          if [ "$GITHUB_EVENT_NAME" = push ]; then export AURORA_VERSION_TAG="$TAG"; fi
+          if [ "$TAG" != dry-run ]; then export AURORA_VERSION_TAG="$TAG"; fi
           cargo build --release --locked -p aurora-viewer
       - name: Verify compiled version
-        if: github.event_name == 'push'
+        if: env.TAG != 'dry-run'
         shell: pwsh
         run: ./scripts/verify-version.ps1 -Exe target/release/aurora-viewer -Tag $env:TAG
       # tar keeps the executable bit
@@ -143,7 +152,7 @@ jobs:
           "$hash  $dir.tar.gz" | Set-Content -LiteralPath "$dir.tar.gz.sha256" -Encoding utf8NoBOM
           "ARCHIVE=$dir.tar.gz" >> $env:GITHUB_ENV
       - name: Publish
-        if: github.event_name == 'push'
+        if: env.TAG != 'dry-run'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256"

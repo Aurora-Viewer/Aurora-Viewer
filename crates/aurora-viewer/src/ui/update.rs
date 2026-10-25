@@ -27,6 +27,8 @@ pub struct UpdateDemo {
     started: Option<Instant>,
     open: bool,
     maintenance: aurora_updater::Maintenance,
+    /// The installed and offered versions the cards show.
+    versions: (&'static str, &'static str),
 }
 
 impl UpdateDemo {
@@ -37,6 +39,12 @@ impl UpdateDemo {
         settings.username.clear();
         settings.remember_username = false;
         settings.remember_password = false;
+        // `beta`: the offer a viewer on the Beta channel gets for a nightly
+        let versions = if mode == "beta" {
+            ("0.7.6", "0.7.7-beta.20261025.1")
+        } else {
+            ("0.2.0", "0.3.0")
+        };
         let phase = match mode.as_str() {
             "progress" => Phase::Downloading(0.42),
             "ready" => Phase::Ready,
@@ -45,11 +53,12 @@ impl UpdateDemo {
         Some(Self {
             settings,
             form: LoginForm::default(),
-            info: LoginInfo::preview_release("0.3.0"),
+            info: LoginInfo::preview_release(versions.1),
             phase,
             started: None,
             open: mode != "ignored",
             maintenance: demo_maintenance(),
+            versions,
         })
     }
 
@@ -109,10 +118,10 @@ impl UpdateDemo {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     let card_width = (width - 44.0) / 2.0;
-                    version_card(ui, p, card_width, aurora_i18n::tr!("update-current"), "0.2.0", p.danger);
+                    version_card(ui, p, card_width, aurora_i18n::tr!("update-current"), self.versions.0, p.danger);
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::hover());
                     icon(ui, icons, "arrow-right", rect, p.muted);
-                    version_card(ui, p, card_width, aurora_i18n::tr!("update-new"), "0.3.0", p.success);
+                    version_card(ui, p, card_width, aurora_i18n::tr!("update-new"), self.versions.1, p.success);
                 });
                 ui.add_space(8.0);
                 match self.phase {
@@ -213,13 +222,35 @@ fn card(ui: &egui::Ui, p: &Palette) -> Frame {
 }
 
 fn version_card(ui: &mut egui::Ui, p: &Palette, width: f32, label: &str, version: &str, color: egui::Color32) {
+    let (number, build) = version_parts(version);
     card(ui, p).show(ui, |ui| {
         ui.set_width(width - 28.0);
         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.label(RichText::new(label).size(11.0).color(p.muted));
-            ui.label(RichText::new(version).size(28.0).strong().color(color));
+            ui.label(RichText::new(number).size(28.0).strong().color(color));
+            if let Some(build) = build {
+                ui.label(RichText::new(build).size(11.0).color(p.muted));
+            }
         });
     });
+}
+
+/// A nightly beta reads as its number and "beta", its build day under it:
+/// `0.7.7-beta.20261025.1` is "0.7.7 beta", built on 2026-10-25, #1.
+fn version_parts(version: &str) -> (String, Option<String>) {
+    let beta = aurora_updater::feed::version(version).filter(|v| aurora_updater::feed::is_beta(v) && v.build.is_empty());
+    let Some(v) = beta else { return (version.to_owned(), None) };
+    let number = format!("{}.{}.{} {}", v.major, v.minor, v.patch, aurora_i18n::tr!("update-beta-label"));
+    let mut ids = v.pre.as_str().split('.').skip(1);
+    let build = match (ids.next(), ids.next()) {
+        (Some(day), Some(n)) if day.len() == 8 && day.bytes().all(|b| b.is_ascii_digit()) => Some(aurora_i18n::tr!(
+            "update-beta-build",
+            date = format!("{}-{}-{}", &day[..4], &day[4..6], &day[6..]),
+            number = n.to_owned()
+        )),
+        _ => None,
+    };
+    (number, build)
 }
 
 /// The approved preview's layout, now fed by the live update controller.
@@ -538,9 +569,20 @@ mod tests {
     }
 
     #[test]
+    fn a_beta_version_reads_as_its_number_with_its_build_day_under_it() {
+        let (number, build) = version_parts("0.7.7-beta.20261025.12");
+        assert!(number.starts_with("0.7.7 ") && !number.contains("2026"), "{number}");
+        let build = build.expect("build line");
+        assert!(build.contains("2026-10-25") && build.contains("12"), "{build}");
+        for plain in ["0.7.6", "0.7.7-rc.1", "0.7.6+3.gabcdef123", "0.7.7-beta.1+2.gabc"] {
+            assert_eq!(version_parts(plain), (plain.to_owned(), None), "{plain}");
+        }
+    }
+
+    #[test]
     fn required_offer_has_no_skip_or_later_and_escape_cannot_close_it() {
         let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
-        let mut updater = crate::updater::Updater::new(runtime.handle());
+        let mut updater = crate::updater::Updater::new(runtime.handle(), aurora_updater::feed::Channel::Stable);
         updater.release = Some(aurora_updater::feed::Release {
             tag: "v0.3.0".into(),
             version: "0.3.0".into(),
@@ -611,6 +653,7 @@ mod tests {
                 settings: Settings::default(),
                 form: LoginForm::default(),
                 info: LoginInfo::preview_release("0.3.0"),
+                versions: ("0.2.0", "0.3.0"),
                 phase: Phase::Available,
                 started: None,
                 open: true,
