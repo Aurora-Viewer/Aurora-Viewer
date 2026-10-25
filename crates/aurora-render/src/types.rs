@@ -366,8 +366,23 @@ pub enum RiggedBlendDepth {
     /// meshes of one point never hide each other by a faint edge (#935),
     /// a mesh of another point drawn after them (a body under the hair) is
     /// hidden behind their strands from 50 % on, as with `HalfCovered`;
-    /// no halo (#556).
+    /// no halo (#556). But a strand between 50 and 95 % hides nothing drawn
+    /// after it: an inner layer drawn after the outer one, darker, showed
+    /// over it in patches the shape of its triangles (#935).
     Runs,
+    /// In their drawing order (`DrawCmd`s in the Legacy Viewer's order, the
+    /// triangles of a mesh in its order, `aurora_assets::legacy_triangle_order`),
+    /// object by object (`DrawLists::blend_depth_runs`): first its texels at
+    /// least half covered, each writing its depth as it is drawn, as the
+    /// Legacy Viewer from 1/255; then its fainter texels, depth tested,
+    /// writing nothing. A strand hides what is drawn after it behind it only
+    /// where it is at least half covered: hair made inner layer first
+    /// composes as its creator saw it, a layer drawn after another and
+    /// behind it no longer shows over it (#935), a soft edge hides nothing
+    /// (no shards, #935 after #948), and the scene depth holds the hair
+    /// where half covered only (no halo, #556). Within one object the
+    /// fringes come after all of its strands.
+    Split,
 }
 
 /// Visible draws for a frame, built by the world.
@@ -403,7 +418,8 @@ pub struct DrawLists {
     pub blend_depth: usize,
     /// How those rigged faces write their depth.
     pub blend_depth_mode: RiggedBlendDepth,
-    /// `RiggedBlendDepth::Runs`: where each run of faces ends
+    /// `RiggedBlendDepth::Runs` (one attachment point) and `Split` (one
+    /// object): where each run of faces ends
     /// in the first `blend_depth` entries of `blend` (increasing, the last
     /// one `blend_depth`).
     pub blend_depth_runs: Vec<u32>,

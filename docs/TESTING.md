@@ -2816,7 +2816,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_HALO=1` | A wide translucent pane 3 m ahead of the start position, facing the camera (#556) |
 | `AURORA_DEMO_BLEND_AO=1` | A face whose two halves differ in alpha mode, under a hat brim, ahead and left of the start position (#882) |
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
-| `AURORA_DEMO_HAIR_CARDS=<n>` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order (#935) |
+| `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
@@ -2900,7 +2900,16 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_RIGGED_BLEND=copy` the cards leave shards where the head and the
   scene show through (#935, after #948); by default the hair is dense.
   `AURORA_DEMO_CAMERA=close,846,560,40` with `AURORA_DEMO_POS=133,129`
-  frames them; capture at frame 780.
+  frames them; capture at frame 780 (in a 1683 × 900 window,
+  `close,840,610,40`).
+  `<n>,layered`: the cards of a hair as it is made, listed from the head
+  outwards, the inner ones dark blue and the outer ones near white, strands
+  88 % opaque with a soft edge of three texels and nothing between them,
+  drawn in the Legacy Viewer's triangle order like a mesh asset; the hair
+  looks the same with every `AURORA_RIGGED_BLEND`. `<n>,layered,outer`:
+  listed from the outside in: with `AURORA_RIGGED_BLEND=runs` the inner
+  cards show over the outer ones (the hair turns dark blue, #935), by
+  default and with `copy` they stay behind them.
   - To read in `perf summary`: `g_transparent` + `g_post` (see
     [Profiling](#profiling)), `blend`, `blend_tris_k`. `32` with
     `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS="129,134"` gives ~970
@@ -6429,7 +6438,8 @@ What the inventory must show with these scenarios:
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
-| `AURORA_RIGGED_BLEND=copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where nearly opaque before their colour, then point by point where half covered (default); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `depth05` by turns |
+| `AURORA_RIGGED_BLEND=runs`, `copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: what is half covered writing its depth as drawn, then the fainter texels (default); where nearly opaque before their colour, then point by point where half covered (#966); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `runs` by turns |
+| `AURORA_MESH_ORDER=asset` | Mesh faces keep the triangle order of the asset instead of the Legacy Viewer's vertex cache order |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
 | `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
 
@@ -6763,20 +6773,29 @@ What the inventory must show with these scenarios:
   in the line), like `AURORA_LIGHT_TILES=alt` — alternate only one of the
   two variables at a time, they change at the same seconds. The gain
   depends on the content: see `AURORA_DEMO_HAIR`.
-- **`AURORA_RIGGED_BLEND=copy|depth05|write|sorted|alt`**: by default the
+- **`AURORA_RIGGED_BLEND=runs|copy|depth05|write|sorted|alt`**: by default the
   blended faces of rigged meshes (mesh hair, eyelashes, clothes, animesh)
   are drawn before the other blended faces, skeleton by skeleton back to
   front, each skeleton's in the Legacy Viewer's order: the last attachment
   point first, on one point the last attached first (by the local id of
   the linkset's root), the prims of a linkset and the faces of a prim in
-  turn. Their depth is written where they are nearly opaque (95 %) before
-  any of their colour; then, attachment point by attachment point, their
-  colour is drawn depth tested and their depth written where they are at
-  least half covered, which the next points and the rest of the scene see.
-  The layers and the triangles of the meshes worn on one point never hide
-  each other by a faint edge, a body on another point is still hidden
-  behind the hair over it, and their nearly transparent fringe does not
-  hide the glass, water and particles drawn after them (#556). `copy`: as
+  turn, the triangles of a mesh face in the Legacy Viewer's order
+  (`AURORA_MESH_ORDER`). Run by run (a new run for each mesh worn on a
+  point that already has one in the run), their texels at least half
+  covered are drawn first, each writing its depth as it is drawn, as the
+  Legacy Viewer's alpha pass does from 1/255; then their fainter texels,
+  depth tested, writing nothing. A strand hides what is drawn after it
+  behind it only where it is at least half covered: a hair made inner
+  layer first composes as its creator saw it, an inner layer drawn after
+  the outer one no longer shows over it (#935: dark patches the shape of
+  its triangles with `runs`, `AURORA_DEMO_HAIR_CARDS=<n>,layered,outer`), a
+  soft edge hides nothing, and their nearly transparent fringe does not
+  hide the glass, water and particles drawn after them (#556). `runs`: as
+  #966, their depth written where they are nearly opaque (95 %) before any
+  of their colour; then, attachment point by attachment point, their
+  colour drawn depth tested and their depth written where at least half
+  covered: a strand between 50 and 95 % hides nothing drawn after it.
+  `copy`: as
   #948, their colour writing its depth from 1/255 as it is drawn, as the
   Legacy Viewer's alpha pass (`LLDrawPoolAlpha::forwardRender(true)`), on a
   copy of the scene depth, then where half covered into the scene depth: a
@@ -6792,9 +6811,20 @@ What the inventory must show with these scenarios:
   Legacy Viewer (#499): a ring around fur or hair where the glass behind is
   missing. `sorted`: everything sorted by the distance of its object and
   nothing writing depth (eyelashes showed through mesh hair). `alt`:
-  `depth05` during one `perf summary` line out of three (`xmode=old`). See
+  `runs` during one `perf summary` line out of three (`xmode=old`). See
   `AURORA_DEMO_HAIR`, `AURORA_DEMO_HAIR_CARDS`, `AURORA_DEMO_LASHES` and
-  `AURORA_DEMO_HALO`.
+  `AURORA_DEMO_HALO`. Cost, `AURORA_DEMO_CROWD=40` with
+  `AURORA_DEMO_HAIR=8` (eight meshes on one point per avatar, one run
+  each) at 120 fps: `g_transparent` about 0.21 ms with `runs`, 0.50 ms by
+  default; with `AURORA_DEMO_HAIR=1` (one mesh per avatar), 0.076 and
+  0.082 ms.
+- **`AURORA_MESH_ORDER=asset`**: the triangles of every mesh face are drawn
+  in the order the Legacy Viewer draws them, reordered for the vertex cache
+  when the mesh is loaded (`LLVolumeFace::cacheOptimize`,
+  `meshopt_optimizeVertexCache`): without a depth sort, the strand cards of
+  a blended mesh hair blend and hide one another in that order, the one
+  its creator saw. `asset` keeps the order of the asset, as before, to
+  compare.
 - **`AURORA_BLEND_AO=new|none|old|alt`**: the occlusion (both methods)
   reads a copy of the depth prepass with the blended faces at least half
   covered drawn over it (`fs_depth_contact`, the rule of the contact
@@ -6811,8 +6841,9 @@ What the inventory must show with these scenarios:
 - **`AURORA_DEMO_HALO=1`**: a wide translucent pane (35 % opaque) 3 m
   ahead of the start position (`AURORA_DEMO_POS`), facing the camera, so
   that our avatar stands between the camera and the pane. With
-  `AURORA_DEMO_HAIR=8,24,60,16` and `AURORA_RIGGED_BLEND=alt`, the ring of
-  #556 (the pane missing around the hair) appears one second in three.
+  `AURORA_DEMO_HAIR=8,24,60,16` and `AURORA_RIGGED_BLEND=write`, the ring
+  of #556 (the pane missing around the hair) appears; by default it does
+  not.
 - **`AURORA_DEMO_BLEND_AO=1`**: a flat face 4 m ahead of the start
   position (`AURORA_DEMO_POS`) and 1.6 m to its left, above our avatar's
   head, turned towards the camera: two halves alike, the left one blended
