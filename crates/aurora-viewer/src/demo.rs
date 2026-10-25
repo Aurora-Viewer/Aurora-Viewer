@@ -6402,7 +6402,11 @@ pub fn lights_events(n: u32) -> Vec<NetEvent> {
 /// texture of strands `period` texels apart of which `empty` percent of the
 /// texels are fully transparent. AURORA_DEMO_LASHES=1: our avatar also
 /// wears a small red ball inside the head shell, blended, on the side the
-/// camera sees (eyelashes behind a fringe).
+/// camera sees (eyelashes behind a fringe). AURORA_DEMO_HAIR_CARDS=<n>
+/// (with or without AURORA_DEMO_HAIR): our avatar also wears one rigged
+/// mesh whose single face holds `n` strand cards hanging around the back of
+/// the head, overlapping in a shuffled order, their strands fading softly
+/// (#935: the triangles of one face, not drawn back to front).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HairDemo {
     pub layers: u32,
@@ -6410,13 +6414,26 @@ pub struct HairDemo {
     pub empty: u32,
     pub period: u32,
     pub lashes: bool,
+    pub cards: u32,
 }
 
 pub fn hair_demo() -> Option<HairDemo> {
-    let v = std::env::var("AURORA_DEMO_HAIR").ok()?;
+    let cards = std::env::var("AURORA_DEMO_HAIR_CARDS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map_or(0, |n| n.clamp(1, 400));
+    let demo = match std::env::var("AURORA_DEMO_HAIR").ok() {
+        Some(v) => hair_demo_from(&v),
+        None if cards > 0 => HairDemo {
+            layers: 0,
+            ..hair_demo_from("")
+        },
+        None => return None,
+    };
     Some(HairDemo {
         lashes: std::env::var("AURORA_DEMO_LASHES").is_ok_and(|v| v.trim() == "1"),
-        ..hair_demo_from(&v)
+        cards,
+        ..demo
     })
 }
 
@@ -6431,11 +6448,18 @@ fn hair_demo_from(v: &str) -> HairDemo {
         empty: next(60).min(90),
         period: next(16).clamp(4, 256),
         lashes: false,
+        cards: 0,
     }
 }
 
 /// Strand texture of the hair demo.
 pub const TEX_HAIR: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0020);
+
+/// Strand texture of the cards of AURORA_DEMO_HAIR_CARDS.
+pub const TEX_HAIR_CARD: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0021);
+
+/// Mesh asset of AURORA_DEMO_HAIR_CARDS (one face of strand cards).
+pub const HAIR_CARDS_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0200);
 
 /// Mesh asset of the ball of AURORA_DEMO_LASHES.
 pub const LASHES_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0002_0000_0100);
@@ -6484,6 +6508,35 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
             worn.state = 0x10; // chest
             objects.push(worn);
         }
+    }
+    if demo.cards > 0 {
+        let mesh = SculptParams {
+            texture: HAIR_CARDS_MESH,
+            sculpt_type: LL_SCULPT_TYPE_MESH,
+        };
+        let mut t = (*te([0.55, 0.42, 0.3, 1.0], 0, false, 0.0)).clone();
+        for f in &mut t.faces {
+            f.texture = TEX_HAIR_CARD;
+        }
+        let mut cards = prim(
+            200_050,
+            Vec3::ZERO,
+            Quat::IDENTITY,
+            Vec3::splat(0.1),
+            aurora_prim::VolumeParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            Arc::new(t),
+            ExtraParams {
+                sculpt: Some(mesh),
+                ..Default::default()
+            },
+            "",
+        );
+        cards.parent_id = 9000;
+        cards.state = 0x10; // chest
+        objects.push(cards);
     }
     if demo.lashes {
         let mesh = SculptParams {
@@ -6594,10 +6647,34 @@ fn hair_texture(empty: u32, period: u32) -> (Vec<u8>, u32, u32) {
     (px, N, N)
 }
 
+/// Pixels of [`TEX_HAIR_CARD`] (RGBA8, 256×256): eight strands across,
+/// each 0.95 opaque in its middle and fading over many texels on both
+/// sides (most of the texture is nearly transparent, never quite empty
+/// near a strand), thinning from the roots (top) to the tips.
+fn hair_card_texture() -> (Vec<u8>, u32, u32) {
+    const N: u32 = 256;
+    let mut px = Vec::with_capacity((N * N * 4) as usize);
+    for y in 0..N {
+        let fade = 1.0 - 0.75 * y as f32 / (N - 1) as f32;
+        for x in 0..N {
+            let d = (x % 32) as f32 - 15.5;
+            let alpha = 0.95 * (-(d / 6.0) * (d / 6.0)).exp() * fade;
+            let tone = 0.8 + 0.2 * (((x / 32) * 37 % 11) as f32 / 10.0);
+            px.extend_from_slice(&[
+                (200.0 * tone) as u8,
+                (150.0 * tone) as u8,
+                (100.0 * tone) as u8,
+                (255.0 * alpha) as u8,
+            ]);
+        }
+    }
+    (px, N, N)
+}
+
 /// The procedural texture `id` takes a mip chain (the others are the
 /// 64-texel test panels, kept as they are).
 pub fn local_texture_mips(id: &Uuid) -> bool {
-    *id == TEX_HAIR || *id == TEX_PROJECTED || *id == TEX_FOLIAGE || plants::is_texture(id)
+    *id == TEX_HAIR || *id == TEX_HAIR_CARD || *id == TEX_PROJECTED || *id == TEX_FOLIAGE || plants::is_texture(id)
 }
 
 #[cfg(test)]
@@ -7015,6 +7092,9 @@ pub fn local_texture(id: &Uuid) -> Option<(Vec<u8>, u32, u32)> {
     if *id == TEX_HAIR {
         let (empty, period) = hair_demo().map_or((60, 16), |h| (h.empty, h.period));
         return Some(hair_texture(empty, period));
+    }
+    if *id == TEX_HAIR_CARD {
+        return Some(hair_card_texture());
     }
     if *id == TEX_FOLIAGE {
         return Some(foliage_texture());

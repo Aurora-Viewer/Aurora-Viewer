@@ -21,15 +21,22 @@
 //! simulator giving them in turn, then the prims of the linkset by local
 //! id), the faces of a prim in their own order; then the other blended
 //! faces back to front. The renderer draws the first group writing depth
-//! (`DrawLists::blend_depth`), by default into a copy of the scene depth
-//! (`RiggedBlendDepth::Layered`): the scene depth takes them only where
-//! they are at least half covered, as the Legacy Viewer's 1/255 made the
-//! nearly transparent fringe of fur, feathers or hair hide the glass, water
-//! and particles behind it, a halo around the avatar (#556). With the depth
-//! of every layer written before any colour, only where at least half
-//! covered (#556 to #935), a layer drawn first was hidden behind each
+//! (`DrawLists::blend_depth`), not as the Legacy Viewer does
+//! (`RiggedBlendDepth::Runs`, see there): its 1/255 makes
+//! - the nearly transparent fringe of fur, feathers or hair hide the glass,
+//!   water and particles behind it, a halo around the avatar (#556);
+//! - a soft strand edge hide the strands drawn after it behind it. The
+//!   Legacy Viewer does not keep the triangle order of a face either: it
+//!   reorders them for the vertex cache (LLVolumeFace::cacheOptimize,
+//!   meshopt_optimizeVertexCache), so the cards of one face overlap in no
+//!   particular order, and drawn that way (#948) they left shards where the
+//!   scene behind shows through the hair (#935).
+//!
+//! With the depth of every layer written before any colour where at least
+//! half covered (#556 to #948), a layer drawn first was hidden behind each
 //! strand of the layers over it from 50 % on, which then showed what lies
-//! behind the hair through them (#935).
+//! behind the hair through them (#935). Now only what is nearly opaque is
+//! written before the colour, and the rest run by run after it (`rig_runs`).
 
 use std::cmp::Ordering;
 
@@ -120,17 +127,20 @@ pub struct BlendEntry {
     pub rig: Option<RigOrder>,
 }
 
-/// AURORA_RIGGED_BLEND: by default (`layers`) the rigged faces apart,
-/// writing depth from 1/255 as they are drawn into a copy of the scene
-/// depth, and into the scene depth where at least half covered;
-/// `depth05`, as before #935: their depth where at least half covered
-/// before their colour (#556); `write`, from 1/255 into the scene depth as
-/// the Legacy Viewer (#499); `sorted`, sorted with the others and drawn
-/// without depth, as before #499; `alt`, `depth05` one second in three
-/// (`xmode=old` on the profile lines), `layers` the others.
+/// AURORA_RIGGED_BLEND: by default the rigged faces apart, their depth
+/// where nearly opaque before their colour, then run by run (`rig_runs`) their
+/// colour and their depth where half covered (`RiggedBlendDepth::Runs`);
+/// `copy`, as #948: from 1/255 as they are drawn into a copy of the scene
+/// depth, into the scene depth where half covered; `depth05`, as before
+/// #948: their depth where half covered before their colour (#556);
+/// `write`, from 1/255 into the scene depth as the Legacy Viewer (#499);
+/// `sorted`, sorted with the others and drawn without depth, as before
+/// #499; `alt`, `depth05` one second in three (`xmode=old` on the profile
+/// lines), the default the others.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    Layers,
+    Runs,
+    Copy,
     Depth05,
     Write,
     Sorted,
@@ -140,15 +150,16 @@ pub enum Mode {
 pub fn mode() -> Mode {
     static MODE: std::sync::OnceLock<Mode> = std::sync::OnceLock::new();
     *MODE.get_or_init(|| match std::env::var("AURORA_RIGGED_BLEND").as_deref().map(str::trim) {
+        Ok("copy") => Mode::Copy,
         Ok("depth05") => Mode::Depth05,
         Ok("write") => Mode::Write,
         Ok("sorted") => Mode::Sorted,
         Ok("alt") => Mode::Alternate,
-        _ => Mode::Layers,
+        _ => Mode::Runs,
     })
 }
 
-/// With `alt`: the current second draws as before #935.
+/// With `alt`: the current second draws as before #948.
 static OLD_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_old_now(old: bool) {
@@ -167,11 +178,12 @@ pub fn depth_mode() -> RiggedBlendDepth {
 
 fn depth_mode_in(mode: Mode, old_now: bool) -> RiggedBlendDepth {
     match mode {
-        Mode::Layers => RiggedBlendDepth::Layered,
+        Mode::Runs => RiggedBlendDepth::Runs,
+        Mode::Copy => RiggedBlendDepth::Layered,
         Mode::Depth05 => RiggedBlendDepth::HalfCovered,
         Mode::Write | Mode::Sorted => RiggedBlendDepth::Write,
         Mode::Alternate if old_now => RiggedBlendDepth::HalfCovered,
-        Mode::Alternate => RiggedBlendDepth::Layered,
+        Mode::Alternate => RiggedBlendDepth::Runs,
     }
 }
 
@@ -199,6 +211,32 @@ pub fn sort(entries: &mut [BlendEntry], rigged_apart: bool) -> usize {
         entries.iter().take_while(|e| e.rigged).count()
     } else {
         0
+    }
+}
+
+/// The runs of the first `n` sorted entries worn on one attachment point
+/// of one skeleton (an object without `rig`, alone), as their end indices
+/// (`DrawLists::blend_depth_runs`). Drawn run by run, each sees the depth
+/// of those drawn before it, never its own: the layers of a hair worn on
+/// one point compose as the faces of one object, without hiding each other
+/// by a faint edge, while a body and the hair over it, on two points, still
+/// hide each other where half covered. One run per object costs a pair of
+/// pipeline changes per worn mesh: about 0.3 ms more for 40 avatars of
+/// 8 meshes, against 0.05 ms with one run per skeleton.
+pub fn rig_runs(entries: &[BlendEntry], n: usize, out: &mut Vec<u32>) {
+    out.clear();
+    let entries = &entries[..n.min(entries.len())];
+    let key = |e: &BlendEntry| match e.rig {
+        Some(r) => (r.skeleton, r.point, u32::MAX),
+        None => (u32::MAX, 0, e.object),
+    };
+    for (i, pair) in entries.windows(2).enumerate() {
+        if key(&pair[0]) != key(&pair[1]) {
+            out.push(i as u32 + 1);
+        }
+    }
+    if !entries.is_empty() {
+        out.push(entries.len() as u32);
     }
 }
 
@@ -275,11 +313,12 @@ mod tests {
     /// draw as #556 did, `write` and `sorted` write from 1/255.
     #[test]
     fn rigged_depth_mode_follows_the_variable() {
-        assert_eq!(depth_mode_in(Mode::Layers, false), RiggedBlendDepth::Layered);
+        assert_eq!(depth_mode_in(Mode::Runs, false), RiggedBlendDepth::Runs);
+        assert_eq!(depth_mode_in(Mode::Copy, false), RiggedBlendDepth::Layered);
         assert_eq!(depth_mode_in(Mode::Depth05, false), RiggedBlendDepth::HalfCovered);
         assert_eq!(depth_mode_in(Mode::Write, false), RiggedBlendDepth::Write);
         assert_eq!(depth_mode_in(Mode::Sorted, false), RiggedBlendDepth::Write);
-        assert_eq!(depth_mode_in(Mode::Alternate, false), RiggedBlendDepth::Layered);
+        assert_eq!(depth_mode_in(Mode::Alternate, false), RiggedBlendDepth::Runs);
         assert_eq!(depth_mode_in(Mode::Alternate, true), RiggedBlendDepth::HalfCovered);
     }
 
@@ -355,6 +394,48 @@ mod tests {
         e.reverse();
         assert_eq!(sort(&mut e, true), 4);
         assert_eq!(records(&e), [30, 31, 32, 33]);
+    }
+
+    /// Without a skeleton order, one run per object (three faces of one,
+    /// then two objects), the faces after the rigged ones left out.
+    #[test]
+    fn rig_runs_split_objects_without_a_skeleton_one_by_one() {
+        let mut e = [
+            face(12, 0, 1, 0),
+            face(12, 1, 2, 0),
+            face(12, 2, 3, 0),
+            face(13, 0, 4, 0),
+            face(14, 0, 5, 0),
+            entry(9, 1.0, false),
+        ];
+        let n = sort(&mut e, true);
+        let mut runs = Vec::new();
+        rig_runs(&e, n, &mut runs);
+        assert_eq!(runs, [3, 4, 5]);
+        rig_runs(&e, 0, &mut runs);
+        assert!(runs.is_empty());
+    }
+
+    /// One avatar: two hair layers and eyelashes on the skull, a body on
+    /// the pelvis; a farther avatar's hair. One run per point of each
+    /// skeleton: the farther hair, then the skull's three meshes together,
+    /// then the body.
+    #[test]
+    fn rig_runs_group_the_meshes_worn_on_one_point() {
+        const PELVIS: u8 = 1;
+        const SKULL: u8 = 2;
+        let mut e = [
+            worn(10, 3.0, 7, PELVIS, 400, 400), // body
+            worn(11, 3.0, 7, SKULL, 500, 500),  // hair, outer layer
+            worn(12, 3.0, 7, SKULL, 510, 510),  // hair, inner layer
+            worn(13, 3.0, 7, SKULL, 520, 520),  // eyelashes
+            worn(20, 6.0, 9, SKULL, 300, 300),  // the farther avatar's hair
+        ];
+        let n = sort(&mut e, true);
+        assert_eq!(records(&e), [20, 13, 12, 11, 10]);
+        let mut runs = Vec::new();
+        rig_runs(&e, n, &mut runs);
+        assert_eq!(runs, [1, 4, 5]);
     }
 
     #[test]

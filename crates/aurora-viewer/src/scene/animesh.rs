@@ -149,6 +149,53 @@ pub fn posed_bounds(bounds: &[JointBounds], mut matrix: impl FnMut(u8) -> Option
     any.then(|| ((min + max) * 0.5, ((max - min) * 0.5).length().max(0.05)))
 }
 
+/// AURORA_DEMO_HAIR_CARDS: one face of `n` strand cards hanging around the
+/// back of the head (`head`, the rest position of mHead, joint `joint`), at
+/// several distances from it, in a shuffled order rather than back to front,
+/// both sides of each card, as the strand cards of a mesh hair (#935).
+fn demo_hair_cards(head: Vec3, joint: usize, n: u32) -> super::jobs::FaceGeom {
+    let mut face = super::jobs::FaceGeom {
+        vertices: Vec::new(),
+        indices: Vec::new(),
+        skin: Some(Vec::new()),
+    };
+    let mut seed = 0x2545_f491_u32;
+    let mut rand = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed >> 8) as f32 / (1u32 << 24) as f32
+    };
+    for _ in 0..n {
+        // around -x, the back of the head the default camera looks at
+        let angle = std::f32::consts::PI + (rand() - 0.5) * 3.4;
+        let radius = 0.11 + 0.09 * rand();
+        let (out, side) = (Vec3::new(angle.cos(), angle.sin(), 0.0), Vec3::new(-angle.sin(), angle.cos(), 0.0));
+        let center = head + Vec3::new(0.0, 0.0, 0.04) + out * radius;
+        let (half_width, top, bottom) = (0.05 + 0.03 * rand(), 0.12, -0.32 - 0.12 * rand());
+        let u0 = (rand() * 4.0).floor() * 0.25;
+        for facing in [1.0f32, -1.0] {
+            let base = face.vertices.len() as u16;
+            for (dz, v) in [(top, 0.0), (bottom, 1.0)] {
+                for (dx, u) in [(-half_width, u0), (half_width, u0 + 0.25)] {
+                    let p = center + side * dx + Vec3::Z * dz;
+                    face.vertices
+                        .push(aurora_render::Vertex::new(p.to_array(), (out * facing).to_array(), [u, v]));
+                    if let Some(s) = &mut face.skin {
+                        s.push(aurora_render::SkinVertex {
+                            joints: [joint as u8, 0, 0, 0],
+                            weights: [255, 0, 0, 0],
+                        });
+                    }
+                }
+            }
+            let quad = if facing > 0.0 { [0, 2, 3, 0, 3, 1] } else { [0, 3, 2, 0, 1, 3] };
+            face.indices.extend(quad.map(|k| base + k));
+        }
+    }
+    face
+}
+
 impl super::Scene {
     pub fn log_demo_animesh(&self, world: &World) {
         let Some(&head) = self.avatar_lib.rig.names.get("mHead") else {
@@ -452,6 +499,14 @@ impl super::Scene {
                 (crate::demo::hair_mesh(layer), faces)
             })
             .collect();
+        if demo.cards > 0
+            && let Some(&j) = rig.names.get("mHead")
+        {
+            meshes.push((
+                crate::demo::HAIR_CARDS_MESH,
+                vec![Some(demo_hair_cards(rest[j].w_axis.truncate(), j, demo.cards))],
+            ));
+        }
         if demo.lashes {
             // behind the face for the default camera (which looks at the
             // back of the head): nearer the camera than the centre of the
