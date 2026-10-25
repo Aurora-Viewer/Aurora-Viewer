@@ -11,18 +11,29 @@ mod platform {
         OnceLock,
         atomic::{AtomicBool, Ordering},
     };
+    #[cfg(target_arch = "x86_64")]
+    use windows_sys::Win32::System::{
+        Diagnostics::Debug::{CONTEXT, CONTEXT_FULL_AMD64, GetThreadContext, RtlLookupFunctionEntry, RtlVirtualUnwind, UNW_FLAG_NHANDLER},
+        Memory::{MEMORY_BASIC_INFORMATION, VirtualQuery},
+    };
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, FILETIME, HANDLE, WAIT_OBJECT_0},
+        Foundation::{CloseHandle, FILETIME, HANDLE, HWND, LPARAM, LRESULT, WAIT_OBJECT_0, WPARAM},
         System::{
             Diagnostics::Debug::{
                 EXCEPTION_EXECUTE_HANDLER, EXCEPTION_POINTERS, IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW,
                 IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_NT_HEADERS64, IMAGE_NT_OPTIONAL_HDR64_MAGIC, RaiseException, RtlCaptureStackBackTrace,
                 RtlPcToFileHeader, SetUnhandledExceptionFilter,
             },
+            LibraryLoader::GetModuleHandleW,
             Threading::{
-                GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, INFINITE, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-                PROCESS_SYNCHRONIZE, WaitForSingleObject,
+                GetCurrentProcess, GetCurrentThreadId, GetExitCodeProcess, GetProcessTimes, INFINITE, OpenProcess, OpenThread,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, ResumeThread, SuspendThread, THREAD_GET_CONTEXT,
+                THREAD_QUERY_INFORMATION, THREAD_SUSPEND_RESUME, WaitForSingleObject,
             },
+        },
+        UI::WindowsAndMessaging::{
+            CreateWindowExW, DefWindowProcW, DispatchMessageW, IsHungAppWindow, MSG, MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW,
+            QS_ALLINPUT, RegisterClassW, TranslateMessage, WM_ENDSESSION, WM_QUERYENDSESSION, WNDCLASSW, WS_OVERLAPPED,
         },
     };
 
@@ -73,11 +84,7 @@ mod platform {
             return super::super::show_once(dir);
         }
         std::fs::write(dir.join("watching"), [])?;
-        // SAFETY: the helper owns this process handle until after the wait.
-        anyhow::ensure!(
-            unsafe { WaitForSingleObject(process.0, INFINITE) } == WAIT_OBJECT_0,
-            "cannot wait for viewer"
-        );
+        anyhow::ensure!(wait_for_exit(dir, &process), "cannot wait for viewer");
         let mut code = 1;
         // SAFETY: valid process handle and output pointer.
         anyhow::ensure!(unsafe { GetExitCodeProcess(process.0, &mut code) } != 0, "cannot query viewer exit");
@@ -90,6 +97,240 @@ mod platform {
             let _ = std::fs::remove_dir_all(dir);
         }
         Ok(())
+    }
+
+    static ENDING: OnceLock<std::path::PathBuf> = OnceLock::new();
+
+    /// Waits for the viewer while a hidden window hears Windows end the
+    /// session: the viewer is then stopped by the system, not crashed, and
+    /// the `system-ending` marker keeps that from being reported.
+    fn wait_for_exit(dir: &Path, process: &Process) -> bool {
+        let _ = ENDING.set(dir.to_owned());
+        let class: Vec<u16> = "AuroraCrashWatch\0".encode_utf16().collect();
+        // SAFETY: the class name lives until the end of this function, the
+        // window procedure only touches static storage, and every message
+        // structure is a local the calls fill.
+        unsafe {
+            let instance = GetModuleHandleW(std::ptr::null());
+            let wc = WNDCLASSW {
+                lpfnWndProc: Some(session_end),
+                hInstance: instance,
+                lpszClassName: class.as_ptr(),
+                ..std::mem::zeroed()
+            };
+            RegisterClassW(&wc);
+            // A hidden top-level window (not message-only): only those
+            // receive the end-of-session broadcast.
+            let window = CreateWindowExW(
+                0,
+                class.as_ptr(),
+                class.as_ptr(),
+                WS_OVERLAPPED,
+                0,
+                0,
+                0,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                instance,
+                std::ptr::null(),
+            );
+            if window.is_null() {
+                return WaitForSingleObject(process.0, INFINITE) == WAIT_OBJECT_0;
+            }
+            loop {
+                match MsgWaitForMultipleObjects(1, &process.0, 0, INFINITE, QS_ALLINPUT) {
+                    WAIT_OBJECT_0 => return true,
+                    r if r == WAIT_OBJECT_0 + 1 => {
+                        let mut msg: MSG = std::mem::zeroed();
+                        while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                            TranslateMessage(&msg);
+                            DispatchMessageW(&msg);
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+        }
+    }
+
+    unsafe extern "system" fn session_end(window: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        match message {
+            WM_QUERYENDSESSION => 1,
+            // Only a confirmed end: another program may cancel the query.
+            WM_ENDSESSION => {
+                if wparam != 0
+                    && let Some(dir) = ENDING.get()
+                {
+                    let _ = std::fs::write(dir.join("system-ending"), []);
+                }
+                0
+            }
+            // SAFETY: the arguments are the ones Windows gave this procedure.
+            _ => unsafe { DefWindowProcW(window, message, wparam, lparam) },
+        }
+    }
+
+    /// The stack of another thread of this process, as module + offsets,
+    /// for a window that stopped answering. The thread is suspended only
+    /// while its registers are read and its frames unwound into a fixed
+    /// array: no allocation, lock or log meanwhile (it may hold the heap's
+    /// or the logger's). Every frame is checked to stay inside the stack
+    /// the thread had when suspended, so a damaged stack ends the walk
+    /// instead of faulting here.
+    #[cfg(target_arch = "x86_64")]
+    pub fn write_thread_stack(out: &mut impl Write, thread: HANDLE) -> bool {
+        #[repr(C, align(16))]
+        struct Aligned(CONTEXT);
+        let mut addresses = [std::ptr::null_mut::<c_void>(); FRAMES];
+        let mut count = 0;
+        // SAFETY: the thread is a live thread of this process whose handle
+        // has the suspend and context rights; it is resumed on every path
+        // below. While it is suspended, memory is only read inside the
+        // committed stack region found by VirtualQuery, and the unwind
+        // calls read the loaded images' unwind tables.
+        unsafe {
+            if SuspendThread(thread) == u32::MAX {
+                return false;
+            }
+            let mut context = Aligned(std::mem::zeroed());
+            context.0.ContextFlags = CONTEXT_FULL_AMD64;
+            if GetThreadContext(thread, &mut context.0) != 0 {
+                let context = &mut context.0;
+                let mut region: MEMORY_BASIC_INFORMATION = std::mem::zeroed();
+                let top = if VirtualQuery(context.Rsp as *const c_void, &mut region, size_of::<MEMORY_BASIC_INFORMATION>()) != 0 {
+                    region.BaseAddress as u64 + region.RegionSize as u64
+                } else {
+                    0
+                };
+                while count < FRAMES && context.Rip != 0 && context.Rsp >= region.BaseAddress as u64 && context.Rsp + 8 <= top {
+                    addresses[count] = context.Rip as *mut c_void;
+                    count += 1;
+                    let (rsp, mut base) = (context.Rsp, 0u64);
+                    let entry = RtlLookupFunctionEntry(context.Rip, &mut base, std::ptr::null_mut());
+                    if entry.is_null() {
+                        // A leaf function: the return address is on top.
+                        context.Rip = std::ptr::read(context.Rsp as *const u64);
+                        context.Rsp += 8;
+                    } else {
+                        let (mut data, mut frame) = (std::ptr::null_mut(), 0u64);
+                        RtlVirtualUnwind(
+                            UNW_FLAG_NHANDLER,
+                            base,
+                            context.Rip,
+                            entry,
+                            context,
+                            &mut data,
+                            &mut frame,
+                            std::ptr::null_mut(),
+                        );
+                    }
+                    if context.Rsp <= rsp {
+                        break;
+                    }
+                }
+            }
+            ResumeThread(thread);
+        }
+        if count == 0 {
+            return false;
+        }
+        write_modules(out, &addresses[..count], None);
+        true
+    }
+
+    /// This process's threads with their names (`aurora-render`…), for
+    /// the freeze report; a thread without a name is skipped.
+    pub fn named_threads() -> Vec<(u32, String)> {
+        use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, LocalFree};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+        };
+        use windows_sys::Win32::System::Threading::{GetCurrentProcessId, GetThreadDescription, THREAD_QUERY_LIMITED_INFORMATION};
+        let mut out = Vec::new();
+        // SAFETY: every handle opened here is closed before returning, the
+        // entry is sized as the snapshot calls expect, and the description
+        // the system allocates is read to its zero then freed with LocalFree.
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snapshot == INVALID_HANDLE_VALUE || snapshot.is_null() {
+                return out;
+            }
+            let own = GetCurrentProcessId();
+            let mut entry: THREADENTRY32 = std::mem::zeroed();
+            entry.dwSize = size_of::<THREADENTRY32>() as u32;
+            let mut more = Thread32First(snapshot, &mut entry) != 0;
+            while more {
+                if entry.th32OwnerProcessID == own {
+                    let handle = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, 0, entry.th32ThreadID);
+                    if !handle.is_null() {
+                        let mut text = std::ptr::null_mut();
+                        if GetThreadDescription(handle, &mut text) >= 0 && !text.is_null() {
+                            let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+                            let name = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+                            LocalFree(text.cast());
+                            if !name.is_empty() {
+                                out.push((entry.th32ThreadID, name));
+                            }
+                        }
+                        CloseHandle(handle);
+                    }
+                }
+                more = Thread32Next(snapshot, &mut entry) != 0;
+            }
+            CloseHandle(snapshot);
+        }
+        out
+    }
+
+    /// A handle to a thread with the rights the freeze report needs.
+    pub struct Thread(HANDLE);
+    impl Drop for Thread {
+        fn drop(&mut self) {
+            // SAFETY: this wrapper exclusively owns the handle.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+    // SAFETY: a thread handle is a kernel object reference, usable from any thread.
+    unsafe impl Send for Thread {}
+
+    impl Thread {
+        pub fn current() -> Option<Thread> {
+            // SAFETY: no argument, no state changed.
+            Self::open(unsafe { GetCurrentThreadId() })
+        }
+
+        pub fn open(id: u32) -> Option<Thread> {
+            // SAFETY: no borrowed pointers; the rights asked are those of
+            // `write_thread_stack`.
+            let handle = unsafe { OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, 0, id) };
+            (!handle.is_null()).then_some(Thread(handle))
+        }
+
+        pub fn write_stack(&self, out: &mut impl Write) -> bool {
+            #[cfg(target_arch = "x86_64")]
+            return write_thread_stack(out, self.0);
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                let _ = out;
+                false
+            }
+        }
+    }
+
+    /// Whether Windows considers the window hung: no message taken from its
+    /// queue for 5 seconds, the test behind "Not responding".
+    pub fn window_hung(window: usize) -> bool {
+        // SAFETY: a stale handle only makes the call answer false.
+        unsafe { IsHungAppWindow(window as HWND) != 0 }
+    }
+
+    /// When Windows last started (Unix seconds), from its uptime.
+    pub fn boot_unix() -> Option<u64> {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+        // SAFETY: no argument.
+        let up = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount64() } / 1000;
+        now.checked_sub(up)
     }
 
     pub fn install(dir: &Path) -> anyhow::Result<()> {
@@ -357,6 +598,35 @@ mod platform {
             assert_eq!(lines.next(), Some("01: ?"));
             assert_eq!(modules(&text).len(), 1, "{text}");
         }
+
+        #[test]
+        fn a_blocked_thread_s_stack_is_read_from_another_thread() {
+            let (ids, id) = std::sync::mpsc::channel();
+            let (release, wait) = std::sync::mpsc::channel::<()>();
+            let blocked = std::thread::Builder::new()
+                .name("aurora-crash-test-blocked".into())
+                .spawn(move || {
+                    // SAFETY: no argument.
+                    ids.send(unsafe { GetCurrentThreadId() }).unwrap();
+                    let _ = wait.recv();
+                })
+                .unwrap();
+            let id = id.recv().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let thread = Thread::open(id).expect("thread handle");
+            let mut out = Vec::new();
+            assert!(thread.write_stack(&mut out));
+            assert!(named_threads().contains(&(id, "aurora-crash-test-blocked".into())));
+            release.send(()).unwrap();
+            blocked.join().unwrap();
+            let text = String::from_utf8(out).unwrap();
+            let frames: Vec<_> = text.lines().filter(|line| line.contains("+0x")).collect();
+            // From the wait in the system down to the thread's start, through
+            // this test binary's own code.
+            assert!(frames.len() > 4, "{text}");
+            assert!(frames.iter().any(|f| f.contains("aurora_viewer")), "{text}");
+            assert!(modules(&text).iter().any(|line| line.starts_with("ntdll ")), "{text}");
+        }
     }
 }
 
@@ -375,6 +645,9 @@ mod platform {
         Ok(())
     }
     pub fn write_stack(_out: &mut impl std::io::Write) {}
+    pub fn boot_unix() -> Option<u64> {
+        None
+    }
     pub fn watch(_dir: &Path, _record: &super::super::Record) -> anyhow::Result<()> {
         anyhow::bail!("automatic crash monitoring currently requires Windows")
     }

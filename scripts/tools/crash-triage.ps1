@@ -28,6 +28,7 @@ function Read-CrashReport([string]$Body) {
                 'Version' { if ($value -match '^\d+\.\d+\.\d+([-+][0-9A-Za-z.+-]*)?$') { $report.Version = $value } }
                 'Crash' {
                     if ($value -eq 'Rust panic') { $report.Kind = 'Rust panic' }
+                    elseif ($value -eq 'Freeze') { $report.Kind = 'Freeze' }
                     elseif ($value -match '^Native exception (0x[0-9A-F]{8})$') { $report.Kind = "Native exception $($Matches[1])" }
                 }
                 'System' { if ($value -match '^[A-Za-z0-9 ._()\-,+/]{1,120}$') { $report.System = $value } }
@@ -230,6 +231,7 @@ $IgnoredFrame = '^(std|core|alloc|panic_unwind|backtrace|backtrace_rs)::|^__rust
 function Get-CrashSignature($Report, $Frames) {
     $kind = 'panic'
     if ($Report.Kind -like 'Native exception*') { $kind = $Report.Kind.Substring('Native exception '.Length) }
+    elseif ($Report.Kind -eq 'Freeze') { $kind = 'freeze' }
     $resolved = @($Frames | Where-Object { $_.Resolved })
     $keys = @()
     if ($resolved.Count) {
@@ -256,6 +258,7 @@ function Get-CrashSignature($Report, $Frames) {
 function Get-TriageTitle($Report, $Signature) {
     $kind = 'Rust panic'
     if ($Report.Kind -like 'Native exception*') { $kind = 'native exception ' + $Report.Kind.Substring('Native exception '.Length) }
+    elseif ($Report.Kind -eq 'Freeze') { $kind = 'freeze' }
     # Without symbols, the viewer's title (kind and fault) says as much.
     $keys = @($Signature.Frames)
     if (-not $keys.Count -or $keys[0] -like 'unsymbolized*') { return $null }

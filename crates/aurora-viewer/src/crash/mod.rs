@@ -12,7 +12,10 @@ pub mod privacy;
 // mod report;
 mod software;
 mod summary;
+mod watchdog;
 mod window;
+
+pub use watchdog::{State, note as note_state, watch_window};
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -219,6 +222,7 @@ fn start_inner() -> anyhow::Result<()> {
     save(&dir, &record)?;
     let panic_file = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("panic.txt"))?;
     native::install(&dir)?;
+    watchdog::start(&dir);
     let _ = SESSION.set(Session {
         dir: dir.clone(),
         panic_file,
@@ -281,8 +285,10 @@ pub fn failure(message: &str) {
     }
 }
 
+/// A viewer stopped by Windows ending the session (shutdown, restart, sign
+/// out) did not crash: nothing to report.
 fn should_report(dir: &Path, exit_code: u32) -> bool {
-    exit_code != 0 || dir.join("failed").exists() || !dir.join("normal").exists()
+    !dir.join("system-ending").exists() && (exit_code != 0 || dir.join("failed").exists() || !dir.join("normal").exists())
 }
 
 fn preserve(dir: &Path, exit_code: u32) -> anyhow::Result<()> {
@@ -367,7 +373,7 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
 
 fn trace(dir: &Path) -> String {
     let mut result = String::new();
-    for name in ["panic.txt", "native.txt", "failure.txt"] {
+    for name in ["panic.txt", "native.txt", "failure.txt", "freeze.txt"] {
         if let Ok(text) = read_limited(&dir.join(name), MAX_TRACE)
             && !text.trim().is_empty()
         {
@@ -390,6 +396,23 @@ pub fn demo() -> bool {
         Ok("normal") => true,
         _ => false,
     }
+}
+
+/// `AURORA_DEMO_CRASH=freeze`, once the window shows: the main thread stops
+/// answering, the watchdog saves its stacks, then the process is ended
+/// from outside like Task Manager's End task (exit code 1).
+pub fn demo_freeze() {
+    if std::env::var_os("AURORA_DEMO").is_none() || std::env::var("AURORA_DEMO_CRASH").as_deref() != Ok("freeze") {
+        return;
+    }
+    std::thread::sleep(std::time::Duration::from_secs(watchdog::HUNG_AFTER + 8));
+    #[cfg(windows)]
+    // SAFETY: ends this process, as another program would.
+    unsafe {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
+        TerminateProcess(GetCurrentProcess(), 1);
+    }
+    std::process::exit(1);
 }
 
 #[cfg(test)]

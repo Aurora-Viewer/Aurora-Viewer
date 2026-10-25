@@ -12,7 +12,11 @@ sharing them (the full trace may contain personal paths).
 
 After a crash, "Send a crash report" in the standalone window shows the
 issue to publish: exactly `public-report.md` (below), preceded by what the
-tester writes in the optional "What were you doing?" field. "Connect to
+tester writes in "What were you doing when it happened?" (at least a few
+words: publishing waits for them, since a stack alone rarely says what led
+to it) and their answer to "My graphics card drivers are up to date" (the
+driver found is shown beside it). Nothing is published without those
+words, whatever the Preferences say. "Connect to
 GitHub" starts the GitHub App's Device Flow (`crash/github.rs`): the tester
 enters the code shown on github.com, in their browser; the viewer never sees
 a password. "Publish on GitHub" then creates the issue in the tester's
@@ -33,11 +37,12 @@ number so a reopened window never sends twice. No server of our own and no
 file upload: nothing else leaves the PC.
 
 Preferences › Privacy › Crash reports chooses Ask (the default), Always or
-Never. Always publishes the report as soon as the crash window opens, once
-an authorization is kept (until then the window asks to send one report to
-connect). Never removes the send button: the report stays on the PC. The
-Legacy Viewer always sends by default, to its own server; here a report is
-a public issue in the tester's name, hence Ask.
+Never. Always opens the crash window straight on the report to publish; it
+still waits for the tester's words (a report without them could rarely be
+reproduced), so nothing is ever sent by itself. Never removes the send
+button: the report stays on the PC. The Legacy Viewer always sends by
+default, to its own server; here a report is a public issue in the
+tester's name, hence Ask.
 
 Each crash session folder also holds `public-report.md`: what an automatic
 crash report would publish (version, commit, crash kind, system, GPU, the
@@ -46,6 +51,32 @@ location inside the sources, recognised warning categories). It never
 contains raw addresses, panic messages, paths or log lines; the
 `<!-- aurora-crash v1 -->` marker at its top is for the repository's crash
 triage.
+
+What each part tells the one who fixes it:
+
+- **Crash**: `Rust panic`, `Native exception 0x…`, `Startup or event loop
+  failure`, `Freeze` (the window was not answering when the session ended:
+  the stacks are those of the main thread, then of the render thread, read
+  while it was frozen) or `Unexpected shutdown` (the process vanished with
+  no word: killed, or a fast fail no handler can see).
+- **Exit code**, when the watcher saw the end, with its usual meaning:
+  `0x00000001` is what Task Manager's End task gives (often after a
+  freeze), `0xC0000409` a fast fail (abort, out of memory), `0xC00000FD`
+  a stack overflow.
+- **End of session**, when the watcher did not see it (it stopped with the
+  viewer): the duration then comes from the last sign of life (`alive.txt`,
+  every 5 s), and a Windows start right after it says the system went down
+  (system crash, power loss). A shutdown or restart of Windows itself is
+  heard by the watcher and never reported.
+- **Window**: answering until the end, or not answering for the last N s.
+- **GPU device lost**: the renderer's device-lost callback fired (driver
+  reset, GPU removed).
+- **Last state**: screen, frame rate, frame time, window size, graphics
+  preset, memory, video memory used / budget, texture memory pressure,
+  objects, avatars, regions, as noted every 2 seconds.
+- **Recent warnings and errors**: the last 20, as
+  `-<seconds before the end> s | level | Rust module | kind`, repeats folded
+  (`(x3)`); the messages themselves stay in the local log.
 
 ### Crash symbols
 
@@ -73,8 +104,9 @@ inlined functions included, to functions and source lines. It then:
 - appends a "Symbolized stack" section between
   `<!-- crash-triage:start -->` and `<!-- crash-triage:end -->` (a new run
   replaces it), ending with the crash's signature;
-- computes the signature from the crash kind (panic, or the exception code)
-  and the first three meaningful frames by name, without generic arguments
+- computes the signature from the crash kind (panic, freeze, or the
+  exception code) and the first three meaningful frames by name (for a
+  freeze, those of the main thread), without generic arguments
   or closure numbers. The panic and exception machinery, the crash handler,
   the process start and the system modules are skipped, so the same crash
   keeps its signature across versions and offsets. Without symbols

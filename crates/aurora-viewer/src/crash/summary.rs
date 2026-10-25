@@ -17,13 +17,30 @@ const LOG_TAIL: u64 = 256 * 1024;
 pub struct Summary {
     pub title: String,
     pub body: String,
+    /// The graphics card and its driver, as the report gives them.
+    pub gpu: Option<String>,
 }
 
 pub fn build(record: &super::Record, dir: &Path) -> Summary {
+    build_at(record, dir, super::native::boot_unix())
+}
+
+/// A session the watcher did not see end (it stopped with the viewer)
+/// followed this soon by a start of Windows went down with the system.
+const RESTART_WINDOW: u64 = 180;
+
+fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summary {
     let text = |name: &str| super::read_limited(&dir.join(name), super::MAX_TRACE).unwrap_or_default();
-    let (native_text, panic) = (text("native.txt"), text("panic.txt"));
+    let (native_text, panic, freeze_text) = (text("native.txt"), text("panic.txt"), text("freeze.txt"));
     let native = (!native_text.trim().is_empty()).then(|| Stack::parse(&native_text));
+    let freeze = threads(&freeze_text);
     let location = panic.lines().next().and_then(panic_location);
+    let alive = super::watchdog::read_alive(dir);
+    let value = |key: &str| alive.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
+    let number = |key: &str| value(key).and_then(|v| v.parse::<u64>().ok());
+    let stopped = super::read_limited(&dir.join("stopped-unix.txt"), 32)
+        .ok()
+        .and_then(|stopped| stopped.trim().parse::<u64>().ok());
     let (reason, title_reason) = if !panic.trim().is_empty() {
         ("Rust panic".to_owned(), "Rust panic".to_owned())
     } else if let Some(code) = native_text
@@ -39,6 +56,9 @@ pub fn build(record: &super::Record, dir: &Path) -> Summary {
             "Startup or event loop failure".to_owned(),
             "startup or event loop failure".to_owned(),
         )
+    } else if !freeze.is_empty() {
+        // The window was still not answering when the session ended.
+        ("Freeze".to_owned(), "freeze".to_owned())
     } else {
         ("Unexpected shutdown".to_owned(), "unexpected shutdown".to_owned())
     };
@@ -59,25 +79,47 @@ pub fn build(record: &super::Record, dir: &Path) -> Summary {
         .ok()
         .and_then(|code| code.trim().strip_prefix("0x").and_then(hex32))
     {
-        rows.push(("Exit code", format!("0x{code:08X}")));
+        let known = exit_code_name(code).map(|name| format!(" ({name})")).unwrap_or_default();
+        rows.push(("Exit code", format!("0x{code:08X}{known}")));
     }
-    if let Some(duration) = super::read_limited(&dir.join("stopped-unix.txt"), 32)
-        .ok()
-        .and_then(|stopped| stopped.trim().parse::<u64>().ok())
-        .and_then(|stopped| stopped.checked_sub(record.started_unix))
-    {
-        rows.push(("Session duration", format!("{duration} s")));
+    // Without the watcher's word, the last sign of life stands for the end.
+    let tick = number("tick");
+    let end = stopped.or(tick);
+    if let Some(duration) = end.and_then(|end| end.checked_sub(record.started_unix)) {
+        let approximate = if stopped.is_none() { " (last sign of life)" } else { "" };
+        rows.push(("Session duration", format!("{duration} s{approximate}")));
+    }
+    if stopped.is_none() {
+        rows.push(("End of session", unseen_end(tick, boot_unix).to_owned()));
+    }
+    // `freeze.txt` is the watchdog's word that the window was frozen at the
+    // end; it answers for 5 s more than its last `responsive`, itself up to
+    // 5 s older than the end of the session.
+    if let (Some(end), Some(_)) = (end, tick) {
+        let window = match number("responsive") {
+            Some(at) if !freeze.is_empty() => format!(
+                "not answering for the last {} s",
+                end.saturating_sub(at) + super::watchdog::HUNG_AFTER
+            ),
+            Some(_) => "answering until the end".to_owned(),
+            None => "never shown".to_owned(),
+        };
+        rows.push(("Window", window));
     }
     if !record.os.is_empty() {
         rows.push(("System", label(&record.os, 120)));
     }
     let (head, tail) = log(&dir.join("session.log"));
-    if let Some(gpu) = head
+    let gpu = head
         .lines()
         .find_map(|line| line.split_once("] GPU: "))
-        .map(|(_, gpu)| label(gpu, 160))
-    {
-        rows.push(("GPU", gpu));
+        .map(|(_, gpu)| label(gpu, 160));
+    if let Some(gpu) = &gpu {
+        rows.push(("GPU", gpu.clone()));
+    }
+    // aurora-render's device lost callback (main_thread.rs).
+    if tail.lines().any(|line| line.contains("] GPU device lost (")) {
+        rows.push(("GPU device lost", "yes (driver reset or GPU removed)".into()));
     }
     if record.demo {
         rows.push(("Demo session", "yes".into()));
@@ -92,28 +134,126 @@ pub fn build(record: &super::Record, dir: &Path) -> Summary {
     if let Some(location) = &location {
         body.push_str(&format!("\n### Rust panic\n\nLocation: `{location}`\n"));
     }
-    // The panic's own stack when there is one, else the exception's.
+    // The panic's own stack when there is one, else the exception's, else
+    // the frozen threads' (the main thread's first: the one the triage reads).
     let panic = (!panic.trim().is_empty()).then(|| Stack::parse(&panic));
-    if let Some(stack) = panic.or(native).filter(|stack| !stack.frames.is_empty()) {
-        body.push_str("\n### Stack\n\n```text\n");
+    let stacks: Vec<(Option<&str>, Stack)> = match panic.or(native).filter(|stack| !stack.frames.is_empty()) {
+        Some(stack) => vec![(None, stack)],
+        None => freeze
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, stack))| ((i > 0).then_some(name), stack))
+            .collect(),
+    };
+    let mut modules: Vec<&String> = Vec::new();
+    for (name, stack) in &stacks {
+        match name {
+            Some(name) => body.push_str(&format!("\n### Stack ({name} thread)\n\n```text\n")),
+            None => body.push_str("\n### Stack\n\n```text\n"),
+        }
         for (index, frame) in stack.trimmed().iter().enumerate() {
             body.push_str(&format!("{index:02} {frame}\n"));
         }
         body.push_str("```\n");
-        if !stack.modules.is_empty() {
-            body.push_str("\n### Modules\n\n```text\n");
-            for module in &stack.modules {
-                body.push_str(module);
-                body.push('\n');
+        for module in &stack.modules {
+            if !modules.contains(&module) {
+                modules.push(module);
             }
-            body.push_str("```\n");
+        }
+    }
+    if !modules.is_empty() {
+        body.push_str("\n### Modules\n\n```text\n");
+        for module in modules {
+            body.push_str(module);
+            body.push('\n');
+        }
+        body.push_str("```\n");
+    }
+    let state: Vec<_> = STATE_ROWS
+        .iter()
+        .filter_map(|&(key, label)| value(key).and_then(state_value).map(|v| (label, v)))
+        .collect();
+    if !state.is_empty() {
+        body.push_str("\n### Last state\n\nNoted by the viewer every few seconds.\n\n| | |\n|---|---|\n");
+        for (label, value) in state {
+            body.push_str(&format!("| {label} | {value} |\n"));
         }
     }
     let excerpt = super::privacy::excerpt(&tail);
     if !excerpt.is_empty() {
-        body.push_str(&format!("\n### Recent warnings and errors\n\n```text\n{excerpt}\n```\n"));
+        body.push_str(&format!(
+            "\n### Recent warnings and errors\n\nTime before the end of the log, level, Rust module and kind; the messages stay on the tester's PC.\n\n```text\n{excerpt}\n```\n"
+        ));
     }
-    Summary { title, body }
+    Summary { title, body, gpu }
+}
+
+/// The keys of `alive.txt` published, with their labels.
+const STATE_ROWS: &[(&str, &str)] = &[
+    ("screen", "Screen"),
+    ("fps", "Frame rate"),
+    ("frame_ms", "Frame time (ms)"),
+    ("window", "Window size"),
+    ("preset", "Graphics preset"),
+    ("ram_mb", "Memory (MB)"),
+    ("vram_mb", "Video memory used / budget (MB)"),
+    ("texture_pressure", "Texture memory pressure"),
+    ("objects", "Objects"),
+    ("avatars", "Avatars"),
+    ("regions", "Regions"),
+];
+
+/// A state value as the watchdog writes it: a number, `n/m`, `WxH` or one
+/// of the fixed names; anything else is not published.
+fn state_value(value: &str) -> Option<String> {
+    let names = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
+    let numeric = |v: &str| !v.is_empty() && v.len() <= 12 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.');
+    let ok = names.contains(&value) || numeric(value) || value.split_once(['/', 'x']).is_some_and(|(a, b)| numeric(a) && numeric(b));
+    ok.then(|| value.to_owned())
+}
+
+/// What a missing watcher's word means.
+fn unseen_end(tick: Option<u64>, boot_unix: Option<u64>) -> &'static str {
+    match (tick, boot_unix) {
+        (Some(tick), Some(boot)) if boot > tick && boot - tick <= RESTART_WINDOW => {
+            "not seen: Windows started again right after (system crash, power loss or forced restart)"
+        }
+        _ => "not seen: the viewer and its watcher stopped together (process tree ended, or Windows stopped)",
+    }
+}
+
+/// The usual meaning of an exit code, for the reader of the report.
+fn exit_code_name(code: u32) -> Option<&'static str> {
+    Some(match code {
+        0x0000_0001 => "ended from outside, as by Task Manager, or exit(1)",
+        0x4001_0004 => "ended by a debugger or the end of the Windows session",
+        0xC000_0005 => "access violation",
+        0xC000_001D => "illegal instruction",
+        0xC000_00FD => "stack overflow",
+        0xC000_0374 => "heap corruption",
+        0xC000_0409 => "fast fail: abort, out of memory or a security check",
+        0xC000_013A => "ended by Ctrl+C",
+        _ => return None,
+    })
+}
+
+/// The stacks of `freeze.txt`, one per `Thread: <name>` block.
+fn threads(text: &str) -> Vec<(&'static str, Stack)> {
+    let mut out = Vec::new();
+    for block in text.split("Thread: ").skip(1) {
+        let (name, rest) = block.split_once('\n').unwrap_or((block, ""));
+        // Only the names the watchdog asks for are published.
+        let name = match name.trim() {
+            "main" => "main",
+            "aurora-render" => "aurora-render",
+            _ => continue,
+        };
+        let stack = Stack::parse(rest);
+        if !stack.frames.is_empty() {
+            out.push((name, stack));
+        }
+    }
+    out
 }
 
 /// Frames written by `native::write_modules`, re-validated: the session
@@ -321,14 +461,14 @@ mod tests {
         assert!(body.starts_with(MARKER));
         for expected in [
             "| Commit | abcdef0123 |",
-            "| Exit code | 0xC0000005 |",
             "| Session duration | 42 s |",
             "| System | Windows 11 Pro (26200, x86_64) |",
             "| GPU | NVIDIA GeForce RTX 4070 (Vulkan, driver NVIDIA 581.57) |",
             "00 aurora_viewer+0x1b2c3d4\n01 ?\n02 nvoglv64+0x9abc\n",
             "aurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000",
             "nvoglv64 code=65000000200000",
-            "WARN | network | timeout [free-form details removed]",
+            "WARN | aurora_net | timeout",
+            "| Exit code | 0xC0000005 (access violation) |",
         ] {
             assert!(body.contains(expected), "missing {expected:?} in\n{body}");
         }
@@ -407,5 +547,81 @@ mod tests {
         assert!(!summary.body.contains("### Stack"));
         assert!(!summary.body.contains("| System |"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    const FREEZE: &str = "Freeze: no answer for 20 s\nThread: main\nNative stack (modules):\n00: ntdll+0x9d0e4\n01: aurora_viewer+0x5000\nModules:\nntdll id=0123456789ABCDEF0123456789ABCDEF1 code=1234ABCD1f8000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: aurora-render\nNative stack (modules):\n00: nvoglv64+0x9abc\n01: aurora_viewer+0x7000\nModules:\nnvoglv64 code=65000000200000\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nThread: Private Name\nNative stack (modules):\n00: secret+0x1\n";
+
+    #[test]
+    fn a_session_ended_frozen_publishes_both_threads_and_its_last_state() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("freeze.txt"), FREEZE).unwrap();
+        std::fs::write(dir.join("exit-code.txt"), "0x00000001").unwrap();
+        std::fs::write(dir.join("stopped-unix.txt"), "1100").unwrap();
+        std::fs::write(
+            dir.join("alive.txt"),
+            "tick=1098\nresponsive=1075\nram_mb=5120\nscreen=world\nfps=0.4\nwindow=1920x1080\npreset=high\nvram_mb=5800/6000\ntexture_pressure=7/7\nobjects=4200\nregion_name=Private Place\n",
+        )
+        .unwrap();
+        let summary = build_at(&record, &dir, Some(10));
+        assert_eq!(summary.title, "Crash: freeze (0.7.1+3.gabcdef)");
+        let body = &summary.body;
+        for expected in [
+            "| Crash | Freeze |",
+            "| Exit code | 0x00000001 (ended from outside, as by Task Manager, or exit(1)) |",
+            "| Session duration | 100 s |",
+            "| Window | not answering for the last 30 s |",
+            "### Stack\n\n```text\n00 ntdll+0x9d0e4\n01 aurora_viewer+0x5000\n```",
+            "### Stack (aurora-render thread)\n\n```text\n00 nvoglv64+0x9abc\n01 aurora_viewer+0x7000\n```",
+            "| Video memory used / budget (MB) | 5800/6000 |",
+            "| Texture memory pressure | 7/7 |",
+            "| Window size | 1920x1080 |",
+            "| Screen | world |",
+        ] {
+            assert!(body.contains(expected), "missing {expected:?} in\n{body}");
+        }
+        // One module list, each module once.
+        assert_eq!(body.matches("aurora_viewer id=").count(), 1, "{body}");
+        assert!(!body.contains("End of session"), "{body}");
+        for private in ["Private", "secret", "region_name"] {
+            assert!(!body.contains(private), "leaked {private}:\n{body}");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_session_its_watcher_did_not_see_end_uses_the_last_sign_of_life() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("alive.txt"), "tick=1500\nresponsive=1499\n").unwrap();
+        let body = build_at(&record, &dir, Some(1600)).body;
+        assert!(body.contains("| Session duration | 500 s (last sign of life) |"), "{body}");
+        assert!(
+            body.contains("| End of session | not seen: Windows started again right after"),
+            "{body}"
+        );
+        assert!(body.contains("| Window | answering until the end |"), "{body}");
+        // Windows started long after: nothing says it went down with it.
+        let body = build_at(&record, &dir, Some(90_000)).body;
+        assert!(
+            body.contains("| End of session | not seen: the viewer and its watcher stopped together"),
+            "{body}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn only_numbers_and_fixed_names_of_the_state_are_published() {
+        for (value, published) in [
+            ("world", true),
+            ("58.3", true),
+            ("1920x1080", true),
+            ("3120/5800", true),
+            ("custom", true),
+            ("Alice Resident", false),
+            ("12/x", false),
+            ("", false),
+            ("1234567890123", false),
+        ] {
+            assert_eq!(state_value(value).is_some(), published, "{value:?}");
+        }
     }
 }
