@@ -2,6 +2,7 @@
 
 pub mod ao;
 pub mod appearance;
+pub mod area_search;
 pub mod audio;
 pub mod aurora_bg;
 pub mod avatar_picker;
@@ -154,6 +155,7 @@ pub struct Panels {
     pub places: bool,
     /// "Search" (Firestorm's legacy search floater, Ctrl+F).
     pub search: bool,
+    pub area_search: bool,
     /// "Asset blacklist" (World menu): the derendered objects and residents.
     pub asset_blacklist: bool,
     /// "Money tracker" (Me menu): the L$ received and paid.
@@ -203,6 +205,7 @@ impl Panels {
             region_estate: false,
             places: false,
             search: false,
+            area_search: false,
             asset_blacklist: false,
             money_tracker: false,
             bumps: false,

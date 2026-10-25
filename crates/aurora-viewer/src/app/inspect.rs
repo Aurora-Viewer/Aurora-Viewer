@@ -47,7 +47,7 @@ impl App {
 
     /// Prims of the inspected objects, root first: (index, is the root).
     /// An avatar sitting on one is not part of it.
-    fn inspect_prims(&self) -> Vec<(usize, bool)> {
+    pub(super) fn inspect_prims(&self) -> Vec<(usize, bool)> {
         let w = &self.world;
         self.inspect_ui
             .roots

@@ -132,6 +132,32 @@ toolbar-command-quickprefs = Préférences rapides
 toolbar-command-web-browser = Navigateur web
 toolbar-command-chat-bar = Barre de chat
 toolbar-command-area-search = Recherche d’objets
+
+# Area Search (issue #930).
+area-search-hint = Objets, descriptions, propriétaires, créateurs ou UUID…
+area-search-refresh = Actualiser
+area-search-parcel = Parcelle actuelle uniquement
+area-search-children = Inclure les prims liés
+area-search-mine = Mes objets
+area-search-filters = Champs de recherche et filtres
+area-search-sale = À vendre
+area-search-physical = Physique
+area-search-phantom = Fantôme
+area-search-temporary = Temporaire
+area-search-distance = Distance maximale
+area-search-reset = Réinitialiser les filtres
+area-search-count = { $shown } / { $total } objets · { $pending } en attente de détails
+area-search-parcel-pending = En attente des limites de la parcelle actuelle…
+area-search-scope = Seuls les objets reçus par le viewer sont listés. Les pièces jointes sont exclues.
+area-search-range = Distance
+area-search-price = Prix
+area-search-inspect = Inspecter
+area-search-zoom = Zoomer
+area-search-copy = Copier l’UUID
+area-search-neighbors = Inclure les régions voisines
+area-search-demo-description = Objet hors ligne pour tester la recherche et les filtres
+area-search-empty = Aucun objet ne correspond à ces filtres.
+
 toolbar-command-debug-settings = Paramètres de débogage
 toolbar-command-statistics = Statistiques
 toolbar-command-sound-explorer = Explorateur de sons

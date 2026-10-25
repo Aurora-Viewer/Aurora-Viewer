@@ -1,5 +1,21 @@
 # Aurora Viewer architecture
 
+`ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
+window and cache its filtered, sorted, virtualized object rows. `app/area_search.rs`
+prepares live rezzed-object snapshots in parallel, resolves distinct owners,
+creators and groups, and reads full metadata using bounded select/deselect
+packets while preserving Build and Inspect selections. Metadata has a separate
+live-object cache, independent of the build tool's small cache. Recent query
+provenance survives window closure through the network timeout, so delayed and duplicate
+full replies do not fill Build's cache. Build still receives metadata it already
+uses, selected/inspected prims and unrelated replies; other consumers see every reply.
+Closing the window stops requests; region changes reset the list. The parcel bitmap uses the same
+`landmarks::in_parcel` rule as other parcel features. This lists received objects,
+including optional neighboring regions and linked prims, rather than promising
+a server-wide parcel inventory. Reference: `FSAreaSearch::findObjects`,
+`isSearchableObject`, `matchObject`, `processRequestQueue`, `requestObjectProperties`
+(`indra/newview/fsareasearch.cpp`).
+
 `blender_live/` implements LiveMesh: the opt-in loopback Blender transport, bounded v1 rest-mesh
 snapshots and UI. Both matching Blender package layouts are bundled by
 `blender_live/addon.rs` and exported to ZIP on a worker, using the shared atomic

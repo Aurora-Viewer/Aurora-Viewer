@@ -26,6 +26,7 @@ use winit::window::{Window, WindowId};
 
 mod ao;
 mod app_links;
+mod area_search;
 mod attention;
 mod bridge;
 mod movelock;
@@ -496,6 +497,8 @@ pub struct App {
     /// Photos: the window, the frames drawn at their size, the saves.
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
+    area_search_ui: ui::area_search::AreaSearchUi,
+    area_search_feed: area_search::Feed,
     /// "Asset blacklist" (World menu).
     blacklist_ui: ui::blacklist::BlacklistUi,
     /// "Bumps, pushes & hits" (Help menu).
@@ -1118,6 +1121,8 @@ impl App {
             dof_focus: Default::default(),
             snapshots: Default::default(),
             inspect_ui: Default::default(),
+            area_search_ui: Default::default(),
+            area_search_feed: Default::default(),
             blacklist_ui: Default::default(),
             bumps_ui: Default::default(),
             buy_currency_ui: Default::default(),
@@ -2695,10 +2700,21 @@ impl App {
         }
         match ev {
             NetEvent::ObjectProperties(props) => {
+                let area_reads: HashSet<_> = props
+                    .iter()
+                    .filter(|p| p.full && self.area_search_feed.expects(&p.object_id))
+                    .map(|p| p.object_id)
+                    .collect();
+                if self.panels.area_search {
+                    self.area_search_feed.on_properties(&props);
+                } else {
+                    self.area_search_feed.on_closed_properties(&props);
+                }
                 self.world.ik_targets.on_properties(&props);
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.interactions.on_properties(&props);
+                let props = self.area_search_build_properties(props, &area_reads);
                 self.build.on_properties(props);
             }
             NetEvent::PayPrice { object, default, buttons } => self.interactions.on_prices(object, default, buttons),
@@ -13097,6 +13113,7 @@ impl App {
                     }
                 }
                 self.blacklist_window(&ctx, &p);
+                self.area_search_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 ui::beacons::show(&ctx, &p, &mut self.panels.beacons, &mut self.settings);
                 if ui::owned_land::show(&ctx, &p, &mut self.world, &mut self.panels.owned_land) {
@@ -14823,6 +14840,10 @@ impl ApplicationHandler for App {
             }
             if let Some(view) = crate::demo::bubbles_scenario() {
                 crate::demo::bubbles_lines(&mut self.world, view);
+            }
+            // AURORA_DEMO_AREA_SEARCH: a native object list and filter fixtures.
+            if let Ok(mode) = std::env::var("AURORA_DEMO_AREA_SEARCH") {
+                self.demo_area_search(&mode);
             }
             // AURORA_DEMO_OBJECT_CHAT: two notices among the lines, each with
             // its topic's icon when compact

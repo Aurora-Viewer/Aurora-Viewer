@@ -735,6 +735,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item_keys(ui, p, "search-filled", aurora_i18n::tr!("search-title"), "Ctrl+F") {
             super::widgets::toggle_floater(ui.ctx(), super::search::WINDOW, &mut panels.search);
         }
+        flip_window(
+            ui,
+            p,
+            "zoom-scan-filled",
+            aurora_i18n::tr!("toolbar-command-area-search"),
+            super::area_search::WINDOW,
+            &mut panels.area_search,
+        );
         // menu_viewer.xml: SL Marketplace, after Search
         if st.marketplace && menu::item(ui, p, "building-store", aurora_i18n::tr!("marketplace-menu")) {
             *action = BarAction::Marketplace;
@@ -1673,6 +1681,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "worldmap" => toggle("worldmap", &mut panels.world_map),
         "places" => toggle("places", &mut panels.places),
         "search" => toggle(super::search::WINDOW, &mut panels.search),
+        "areasearch" => toggle(super::area_search::WINDOW, &mut panels.area_search),
         "performance" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
         "preferences" => toggle("options", &mut panels.settings),
@@ -1736,6 +1745,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "worldmap" => panels.world_map,
         "places" => panels.places,
         "search" => panels.search,
+        "areasearch" => panels.area_search,
         "performance" => panels.perf,
         "snapshot" => panels.snapshot,
         "preferences" => panels.settings,
@@ -2986,6 +2996,7 @@ mod tests {
             ("gestures", "gestures", |p| p.gestures),
             ("people", "people", |p| p.people),
             ("preferences", "options", |p| p.settings),
+            ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {
