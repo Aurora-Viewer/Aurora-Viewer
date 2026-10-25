@@ -12,6 +12,10 @@ impl App {
         let Ok(mode) = std::env::var("AURORA_DEMO_WORN") else {
             return;
         };
+        if matches!(mode.as_str(), "temporary-detach" | "temporary-drop") {
+            self.demo_temporary_detach_steps(mode == "temporary-detach");
+            return;
+        }
         let freeze = mode == "freeze";
         let (edit, inspect) = (matches!(mode.as_str(), "edit" | "move" | "freeze"), mode == "inspect");
         if !(edit || inspect || mode == "menu") {
@@ -71,6 +75,72 @@ impl App {
                     );
                 }
             }
+            _ => {}
+        }
+    }
+
+    /// A temporary attachment's linked script starts a dance, then removes
+    /// the attachment without sending an animation stop of its own.
+    fn demo_temporary_detach_steps(&mut self, killed: bool) {
+        let agent = self.world.agent_id;
+        let anim = crate::demo::CROWD_DANCE_ANIM;
+        let Some(handle) = self.world.main_region else {
+            return;
+        };
+        match self.frame_count {
+            600 => {
+                let mut root = crate::demo::worn::root();
+                root.name_values = format!("AttachItemID STRING RW SV {}", uuid::Uuid::nil());
+                self.world.apply(NetEvent::ObjectUpdates {
+                    handle,
+                    objects: vec![root],
+                });
+                let child = ObjKey {
+                    region: handle,
+                    local_id: crate::demo::worn::CHILD,
+                };
+                let Some(source) = self
+                    .world
+                    .objects
+                    .index_of(&child)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| o.full_id)
+                else {
+                    return;
+                };
+                let rig = self.scene.avatar_lib.rig.clone();
+                self.scene.anims.insert(
+                    anim,
+                    Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::crowd_dance_animation(), &rig)),
+                );
+                self.world.apply(NetEvent::AvatarAnimations {
+                    avatar: agent,
+                    anims: vec![(anim, 1)],
+                    sources: vec![source],
+                });
+            }
+            900 => {
+                let detach = if killed {
+                    NetEvent::ObjectsKilled {
+                        handle,
+                        local_ids: vec![crate::demo::worn::ROOT],
+                    }
+                } else {
+                    let mut root = crate::demo::worn::root();
+                    root.parent_id = 0;
+                    root.name_values = format!("AttachItemID STRING RW SV {}", uuid::Uuid::nil());
+                    NetEvent::ObjectUpdates {
+                        handle,
+                        objects: vec![root],
+                    }
+                };
+                self.world.apply(detach);
+            }
+            750 | 1050 => log::info!(
+                "demo temporary detach: frame {} killed={killed} dancing={}",
+                self.frame_count,
+                self.world.animations_of(&agent).iter().any(|a| a.id == anim)
+            ),
             _ => {}
         }
     }

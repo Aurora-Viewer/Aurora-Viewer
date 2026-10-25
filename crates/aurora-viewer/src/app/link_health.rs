@@ -55,6 +55,7 @@ impl App {
     /// The session ended: a lost link offers to reconnect where the user was
     /// (a kick does not), a region restart keeps its own message.
     pub(super) fn on_disconnected(&mut self, reason: &str, lost: bool) {
+        self.session_ended();
         let restart = self.restart_disconnect();
         let place = if lost && restart.is_none() {
             link_health::reconnect_place(&self.world.region_name(), self.world.agent.position)

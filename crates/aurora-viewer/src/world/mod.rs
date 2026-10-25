@@ -395,7 +395,7 @@ pub struct World {
     preview_server_motion: Option<PlayingAnimation>,
     /// Our animation sources, kept until the simulator stops the motion.
     animation_sources: HashMap<Uuid, HashSet<Uuid>>,
-    /// Motions to stop on the simulator after leaving a seat (drained by app).
+    /// Motions to stop after leaving a seat or losing a source (drained by app).
     pub animation_stops: Vec<Uuid>,
     /// Skeletons other avatars asked us to reset, with their animations or
     /// not (ViewerEffect ResetSkeleton, drained by app).
@@ -2085,8 +2085,9 @@ impl World {
                         self.get_off_linkset(i);
                         let subtree = self.objects.subtree(i);
                         for &child in &subtree {
-                            if let Some(o) = self.objects.get(child) {
-                                self.scripted_camera.clear(o.full_id);
+                            if let Some(source) = self.objects.get(child).map(|o| o.full_id) {
+                                self.scripted_camera.clear(source);
+                                self.stop_motion_from_source(source);
                             }
                         }
                         // (an avatar leaving, an object deleted or taken, a
@@ -3858,8 +3859,15 @@ impl World {
             .parent_of(object)
             .and_then(|p| self.objects.get(p))
             .is_some_and(|p| p.is_avatar() && p.full_id == self.agent_id);
-        if ours
-            && let Some(item) = object.attachment_item_id()
+        let item = object.attachment_item_id();
+        if !ours {
+            return;
+        }
+        // LLVOAvatarSelf::detachObject (indra/newview/llvoavatarself.cpp,
+        // LGPL 2.1): temporary attachments have no inventory item, but their
+        // root and linked scripts still own motions that must be stopped.
+        self.stop_linkset_motions(idx);
+        if let Some(item) = item
             && let Some(change) = appearance::unlink_attachment(&mut self.inventory, item)
         {
             self.inventory_edits.push(change);
@@ -4407,16 +4415,40 @@ impl World {
         };
         let seat = self.objects.index_of(&seat_key).into_iter();
         let children = self.objects.children_of(&seat_key).iter().copied();
-        for idx in seat.chain(children) {
-            let Some(source) = self.objects.get(idx).map(|o| o.full_id) else {
-                continue;
-            };
-            if let Some(motions) = self.animation_sources.remove(&source) {
-                for id in motions {
-                    if !self.animation_stops.contains(&id) {
-                        log::info!("leaving seat: stop animation {id} from {source}");
-                        self.animation_stops.push(id);
-                    }
+        let sources: Vec<_> = seat
+            .chain(children)
+            .filter_map(|idx| self.objects.get(idx).map(|o| o.full_id))
+            .collect();
+        for source in sources {
+            self.stop_motion_from_source(source);
+        }
+    }
+
+    /// LLVOAvatarSelf::detachObject: only the linkset, never an avatar
+    /// seated on it or that avatar's attachments.
+    fn stop_linkset_motions(&mut self, root: usize) {
+        let Some(object) = self.objects.get(root) else {
+            return;
+        };
+        let children = self.objects.children_of(&object.key).iter().copied();
+        let sources: Vec<_> = std::iter::once(root)
+            .chain(children)
+            .filter_map(|idx| self.objects.get(idx).filter(|o| !o.is_avatar()).map(|o| o.full_id))
+            .collect();
+        for source in sources {
+            self.stop_motion_from_source(source);
+        }
+    }
+
+    /// LLVOAvatarSelf::stopMotionFromSource and LLViewerObject::markDead
+    /// (indra/newview/llvoavatarself.cpp / llviewerobject.cpp, LGPL 2.1).
+    /// Request the simulator's stop; its animation signal remains authoritative.
+    fn stop_motion_from_source(&mut self, source: Uuid) {
+        if let Some(motions) = self.animation_sources.remove(&source) {
+            for id in motions {
+                if !self.animation_stops.contains(&id) {
+                    log::info!("animation source released: stop {id} from {source}");
+                    self.animation_stops.push(id);
                 }
             }
         }
@@ -6322,11 +6354,115 @@ mod motion_tests {
     }
 
     #[test]
+    fn detaching_an_attachment_stops_its_root_and_linked_animations_once() {
+        for point in [2, 35] {
+            for temporary in [false, true] {
+                for killed in [false, true] {
+                    let (mut world, mut worn, handle) = scripted_detach_fixture(point);
+                    if temporary {
+                        worn.name_values = format!("AttachItemID STRING RW SV {}", Uuid::nil());
+                    }
+                    let child = prim(&worn, 950, worn.local_id);
+                    let other = prim(&worn, 951, worn.parent_id);
+                    world.apply(NetEvent::ObjectUpdates {
+                        handle,
+                        objects: vec![worn.clone(), child.clone(), other.clone()],
+                    });
+                    let (root_motion, child_motion, ao) = (Uuid::from_u128(71), Uuid::from_u128(72), Uuid::from_u128(73));
+                    let anims = vec![(root_motion, 1), (child_motion, 1), (ao, 1)];
+                    world.apply(NetEvent::AvatarAnimations {
+                        avatar: world.agent_id,
+                        anims: anims.clone(),
+                        sources: vec![worn.full_id, child.full_id, other.full_id],
+                    });
+                    // A motion may have several sources; later sparse packets
+                    // retain the earlier associations until it stops.
+                    world.apply(NetEvent::AvatarAnimations {
+                        avatar: world.agent_id,
+                        anims,
+                        sources: vec![child.full_id],
+                    });
+                    assert!(world.animation_stops.is_empty());
+                    let cof = appearance::cof(&world.inventory).expect("COF");
+                    let before = appearance::folder_links(&world.inventory, cof);
+                    let detach = if killed {
+                        NetEvent::ObjectsKilled {
+                            handle,
+                            local_ids: vec![worn.local_id, child.local_id],
+                        }
+                    } else {
+                        worn.parent_id = 0;
+                        NetEvent::ObjectUpdates {
+                            handle,
+                            objects: vec![worn.clone()],
+                        }
+                    };
+                    world.apply(detach.clone());
+                    assert_eq!(
+                        world.animation_stops.iter().copied().collect::<HashSet<_>>(),
+                        HashSet::from([root_motion, child_motion])
+                    );
+                    assert_eq!(world.animation_stops.len(), 2, "one stop per motion");
+                    assert!(!world.animation_sources.contains_key(&worn.full_id));
+                    assert!(!world.animation_sources.contains_key(&child.full_id));
+                    assert_eq!(world.animation_sources.get(&other.full_id), Some(&HashSet::from([ao])));
+                    if temporary {
+                        assert_eq!(appearance::folder_links(&world.inventory, cof), before);
+                        assert!(world.take_inventory_edits().is_empty());
+                    }
+                    world.animation_stops.clear();
+                    world.apply(detach);
+                    assert!(world.animation_stops.is_empty(), "a repeated detach has no sources left");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn killing_an_animation_source_stops_only_its_motions() {
+        for attached in [false, true] {
+            let (mut world, worn, handle) = scripted_detach_fixture(35);
+            let mut source = prim(&worn, 950, if attached { worn.local_id } else { 0 });
+            source.name_values.clear();
+            world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![source.clone()],
+            });
+            let (motion, ao) = (Uuid::from_u128(71), Uuid::from_u128(72));
+            world.apply(NetEvent::AvatarAnimations {
+                avatar: world.agent_id,
+                anims: vec![(motion, 1), (ao, 1)],
+                sources: vec![source.full_id, worn.full_id],
+            });
+            // Updating a world root without changing its parent is no detach.
+            world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![source.clone()],
+            });
+            assert!(world.animation_stops.is_empty());
+            world.apply(NetEvent::ObjectsKilled {
+                handle,
+                local_ids: vec![source.local_id],
+            });
+            assert_eq!(world.animation_stops, vec![motion]);
+            assert!(!world.animation_sources.contains_key(&source.full_id));
+            assert_eq!(world.animation_sources.get(&worn.full_id), Some(&HashSet::from([ao])));
+            assert!(world.take_inventory_edits().is_empty());
+        }
+    }
+
+    #[test]
     fn teleport_and_border_crossing_kills_do_not_unlink_our_attachments() {
         for teleport in [true, false] {
             let (mut world, worn, here) = scripted_detach_fixture(35);
             let cof = appearance::cof(&world.inventory).expect("COF");
             let links = appearance::folder_links(&world.inventory, cof);
+            let motion = Uuid::from_u128(71);
+            world.apply(NetEvent::AvatarAnimations {
+                avatar: world.agent_id,
+                anims: vec![(motion, 1)],
+                sources: vec![worn.full_id],
+            });
             if teleport {
                 world.teleporting = true;
             } else {
@@ -6341,6 +6477,11 @@ mod motion_tests {
             assert!(world.worn_attachment_items().contains(&Uuid::from_u128(717)));
             assert_eq!(appearance::folder_links(&world.inventory, cof), links);
             assert!(world.take_inventory_edits().is_empty());
+            assert!(
+                world.animation_stops.is_empty(),
+                "crossing kills do not detach the animation source"
+            );
+            assert_eq!(world.animation_sources.get(&worn.full_id), Some(&HashSet::from([motion])));
         }
     }
 

@@ -382,7 +382,14 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 lods[level] = Some(model);
             }
             if high.submodel > 0 {
-                return Ok((lods, None, process::Physics::default()));
+                // LLMeshUploadThread::generateHulls / packModelIntance
+                // (indra/newview/llmeshrepository.cpp) also supplies a base
+                // hull for split models whose instance collision is None.
+                let hulls = process::Physics {
+                    base: Some(process::base_hull(high)?),
+                    hulls: Vec::new(),
+                };
+                return Ok((lods, None, hulls));
             }
             let mut physics = match options.physics_source {
                 -1 => None,
