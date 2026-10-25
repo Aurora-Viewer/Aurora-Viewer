@@ -243,7 +243,9 @@ mod platform {
     /// the freeze report; a thread without a name is skipped.
     pub fn named_threads() -> Vec<(u32, String)> {
         use windows_sys::Win32::Foundation::{INVALID_HANDLE_VALUE, LocalFree};
-        use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next};
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+        };
         use windows_sys::Win32::System::Threading::{GetCurrentProcessId, GetThreadDescription, THREAD_QUERY_LIMITED_INFORMATION};
         let mut out = Vec::new();
         // SAFETY: every handle opened here is closed before returning, the

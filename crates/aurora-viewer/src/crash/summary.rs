@@ -208,11 +208,7 @@ const STATE_ROWS: &[(&str, &str)] = &[
 fn state_value(value: &str) -> Option<String> {
     let names = ["login", "loading", "world", "potato", "low", "medium", "high", "deluxe", "custom"];
     let numeric = |v: &str| !v.is_empty() && v.len() <= 12 && v.bytes().all(|b| b.is_ascii_digit() || b == b'.');
-    let ok = names.contains(&value)
-        || numeric(value)
-        || value
-            .split_once(['/', 'x'])
-            .is_some_and(|(a, b)| numeric(a) && numeric(b));
+    let ok = names.contains(&value) || numeric(value) || value.split_once(['/', 'x']).is_some_and(|(a, b)| numeric(a) && numeric(b));
     ok.then(|| value.to_owned())
 }
 
@@ -598,11 +594,17 @@ mod tests {
         std::fs::write(dir.join("alive.txt"), "tick=1500\nresponsive=1499\n").unwrap();
         let body = build_at(&record, &dir, Some(1600)).body;
         assert!(body.contains("| Session duration | 500 s (last sign of life) |"), "{body}");
-        assert!(body.contains("| End of session | not seen: Windows started again right after"), "{body}");
+        assert!(
+            body.contains("| End of session | not seen: Windows started again right after"),
+            "{body}"
+        );
         assert!(body.contains("| Window | answering until the end |"), "{body}");
         // Windows started long after: nothing says it went down with it.
         let body = build_at(&record, &dir, Some(90_000)).body;
-        assert!(body.contains("| End of session | not seen: the viewer and its watcher stopped together"), "{body}");
+        assert!(
+            body.contains("| End of session | not seen: the viewer and its watcher stopped together"),
+            "{body}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

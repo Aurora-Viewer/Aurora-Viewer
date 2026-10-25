@@ -167,7 +167,12 @@ fn described(description: &str) -> bool {
 /// neutralized so they cannot imitate the markers the triage reads.
 fn issue_body(report: &str, description: &str, drivers_current: Option<bool>) -> String {
     let description = description.trim();
-    let drivers = drivers_current.map(|current| format!("GPU drivers up to date (tester): {}\n\n", if current { "yes" } else { "no or not sure" }));
+    let drivers = drivers_current.map(|current| {
+        format!(
+            "GPU drivers up to date (tester): {}\n\n",
+            if current { "yes" } else { "no or not sure" }
+        )
+    });
     if description.is_empty() && drivers.is_none() {
         return report.to_owned();
     }
