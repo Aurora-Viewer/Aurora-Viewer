@@ -44,7 +44,7 @@ Contents: [Automated windows](#automated-test-windows-on-windows) ·
 [Load and smoothness](#load-and-smoothness) · [Interface](#interface) ·
 [Media and sound](#media-and-sound) ·
 [Forced settings and diagnostics](#forced-settings-and-diagnostics) ·
-[Profiling](#profiling)
+[Profiling](#profiling) · [Fuzzing](#fuzzing)
 
 ## Automated test windows on Windows
 
@@ -8373,3 +8373,45 @@ With protection enabled, ten prompts/offers of each source and sixty sounds/prel
 Nearby chat has its own event queue. The single-message limit defaults to 70 LF characters (5–1,000 in Preferences), following checkNewlineFlood; the first line and visual wrapping do not count, so exactly 70 LF passes and 71 blocks. This check also covers saved text IMs, independently of their rate exemption. Both chat and IM newline floods create a persistent IM block, as in the Legacy Viewer; later chat checks consult it too. With own objects excluded, chat newline checks aggregate by owner; with them included they use the speaking source. System/self text, group invitations and IMs from known own objects retain the reference exemptions. Script/debug and internal bridge traffic keep their existing routing.
 
 Human validation: enable the protection, exercise ordinary inventory/teleport offers and script dialogs, and confirm they still work. Repeated deliveries from one test source must stop at the threshold while another source still works. Set 2 events / 30 seconds and Include my own objects, then run four llGiveInventory calls from one owned cube: two notifications and sounds pass, the third blocks, and later offers stay suppressed. TASK_INVENTORY_OFFERED carries the owner UUID, not the object UUID: multiple cubes owned by the same resident share this counter. Deliberate improvement over the Legacy Viewer's blanket self exemption: Include my own objects also applies to our scripted gifts, without counting self text. Test per-source unblock, reset, the own-object switch and sound stopping. Test a five-LF nearby message with a limit of 5 (passes), then six LF (suppressed and source blocked); its next short message stays hidden until unblock/reset. IM tests require another resident or their object because known own object IMs are exempt. Repeat with protection off and at the default 70/71 boundary. Grid validation is performed by the human in a controlled setup; no credentials or grid connection are used by automated tests. Incoming inventory/teleport offers use the common IM queue, as in process_improved_im; suppressed offers are dropped without automatic acceptance, decline or inventory mutation. Sound changes carried by full object updates respect existing sound blocks without counting unchanged loop snapshots as new sound events.
+
+## Fuzzing
+
+`fuzz/` feeds arbitrary bytes to the readers of data that any resident or
+simulator controls, the way the viewer calls them: JPEG2000 textures
+(`j2k`), mesh assets and their sections (`mesh`), animations (`anim`), LLSD
+in its three encodings and XML-RPC replies (`llsd`), GLTF materials and
+their per-face overrides (`material`), UDP packets with the object and
+terrain messages (`packet`), compressed object updates and texture
+animations (`object`), texture entries, extra parameters and particle
+systems (`prim`), prim shapes from their quantized parameters (`volume`),
+sculpt maps of any size (`sculpt`), terrain and wind patches (`terrain`),
+sounds (`sound`), notecards, task inventories, gestures, wearables and
+avatar base meshes (`misc`). A reader must return an error for any input:
+a panic, an input that runs for more than 10 s or an allocation of more
+than 1 GB is a bug. The seeds are valid inputs made by our own encoders (or
+shipped assets), never content of the grid cache.
+
+`fuzz/` is its own Cargo workspace: the viewer's builds and `check.ps1` do
+not compile it. On this PC (stable Rust, Windows), `fuzz-local` mutates the
+seeds without coverage feedback:
+
+```powershell
+cargo run --release --manifest-path fuzz/Cargo.toml --bin fuzz-local -- all --seconds 60
+cargo run --release --manifest-path fuzz/Cargo.toml --bin fuzz-local -- mesh --seconds 300 --seed 7
+cargo run --release --manifest-path fuzz/Cargo.toml --bin fuzz-local -- --replay mesh fuzz/artifacts/mesh/crash-…
+cargo test --release --manifest-path fuzz/Cargo.toml --lib   # every target reads its seeds
+```
+
+A finding goes to `fuzz/artifacts/<target>/` with a `.txt` note (panic
+message and location, or the refused allocation); the run ends with code 1.
+Fix the reader, add a unit test with the minimized input as bytes, and
+replay the file. `--timeout` and `--max-alloc-mb` change the limits.
+
+The Fuzz workflow (`.github/workflows/fuzz.yml`) runs the coverage-guided
+version every night on Linux: libFuzzer through `cargo fuzz` on nightly
+Rust, with AddressSanitizer (OpenJPEG is C), 10 minutes per target
+(`workflow_dispatch` takes another duration). The corpus each target grows
+is kept from one run to the next; a failing input is uploaded as the job's
+artifact. Locally on Linux:
+`cargo +nightly fuzz run mesh --features libfuzzer --fuzz-dir fuzz`. Pull
+requests that change `fuzz/` only check that every target reads its seeds.
