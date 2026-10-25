@@ -3218,6 +3218,14 @@ impl App {
                         self.down.remove(&Input::key(KeyCode::ArrowUp));
                     }
                 }
+                Step::Crouch(on) => {
+                    self.settings.crouch_toggle = true;
+                    if on {
+                        self.down.insert(Input::key(KeyCode::PageDown));
+                    } else {
+                        self.down.remove(&Input::key(KeyCode::PageDown));
+                    }
+                }
                 Step::ToggleMouselook => self.toggle_mouselook(),
                 Step::Wheel(clicks) => self.camera_wheel(clicks),
                 Step::Fly => self.world.agent.flying = true,
@@ -6064,16 +6072,7 @@ impl App {
         // moving brings the camera back to the avatar (LLAgent::moveAt & co ->
         // resetView, FSResetCameraOnMovement): after an orbit the agent turns
         // to where the camera looks, the camera stays put
-        let moving = i.forward
-            || i.back
-            || i.turn_left
-            || i.turn_right
-            || i.strafe_left
-            || i.strafe_right
-            || i.up
-            || i.down
-            || i.joystick_yaw != 0.0
-            || i.joystick_pitch != 0.0;
+        let moving = i.resets_camera(self.crouch_toggle.latched());
         if moving && self.mouse_mode != MouseMode::FocusOrbit {
             // A stick held to look up/down keeps its aim while walking,
             // like held mouse steering, instead of fighting the pitch fade.

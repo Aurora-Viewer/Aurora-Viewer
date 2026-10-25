@@ -13,6 +13,10 @@ pub struct CrouchToggle {
 }
 
 impl CrouchToggle {
+    pub fn latched(&self) -> bool {
+        self.latched
+    }
+
     /// The Down input to use this frame, from the keys' `down` and `up`.
     pub fn apply(&mut self, on: bool, flying: bool, sitting: bool, down: bool, up: bool) -> bool {
         let pressed = down && !self.was_down;
@@ -34,6 +38,49 @@ impl CrouchToggle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::MoveInput;
+
+    #[test]
+    fn latched_crouch_keeps_camera_reset_for_other_movement_axes() {
+        let mut crouch = CrouchToggle::default();
+        assert!(crouch.apply(true, false, false, true, false));
+        for axis in 0..9 {
+            let mut input = MoveInput {
+                down: crouch.apply(true, false, false, false, false),
+                ..Default::default()
+            };
+            match axis {
+                0 => input.forward = true,
+                1 => input.back = true,
+                2 => input.turn_left = true,
+                3 => input.turn_right = true,
+                4 => input.strafe_left = true,
+                5 => input.strafe_right = true,
+                6 => input.up = true,
+                7 => input.joystick_yaw = 0.5,
+                _ => input.joystick_pitch = -0.5,
+            }
+            assert!(input.resets_camera(crouch.latched()), "movement axis {axis}");
+        }
+    }
+
+    #[test]
+    fn held_crouch_jump_and_flight_keep_camera_reset() {
+        for (on, flying, sitting, down, up) in [
+            (false, false, false, true, false),
+            (true, true, false, true, false),
+            (true, false, true, true, false),
+            (true, false, false, false, true),
+        ] {
+            let mut crouch = CrouchToggle::default();
+            let input = MoveInput {
+                down: crouch.apply(on, flying, sitting, down, up),
+                up,
+                ..Default::default()
+            };
+            assert!(input.resets_camera(crouch.latched()));
+        }
+    }
 
     #[test]
     fn a_press_crouches_until_the_next_one() {
