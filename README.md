@@ -899,6 +899,14 @@ Behaviour follows the Legacy Viewer: its sources are expected next to the reposi
 
 Questions and ideas are welcome on [Discord](https://discord.gg/TK4nbMGmKt).
 
+## Privacy
+
+The Aurora team runs no server: the viewer talks to Linden Lab, and to other
+services only for the features you use. The
+[privacy policy](https://aurora-viewer.org/privacy/) lists what is sent, to
+whom, and what stays on your computer; it is also linked from Preferences ›
+Privacy. Questions about it: [contact@aurora-viewer.org](mailto:contact@aurora-viewer.org).
+
 ## License
 
 Aurora Viewer is free software under the
