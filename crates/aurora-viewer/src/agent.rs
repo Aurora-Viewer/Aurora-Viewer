@@ -44,6 +44,23 @@ pub struct MoveInput {
     pub joystick_mouselook_yaw: bool,
 }
 
+impl MoveInput {
+    /// LLAgent::moveAt/moveLeft/moveUp/moveYaw (indra/newview/llagent.cpp):
+    /// movement returns the camera to the avatar, except latched crouching.
+    pub fn resets_camera(&self, crouch_latched: bool) -> bool {
+        self.forward
+            || self.back
+            || self.turn_left
+            || self.turn_right
+            || self.strafe_left
+            || self.strafe_right
+            || self.up
+            || (self.down && !crouch_latched)
+            || self.joystick_yaw != 0.0
+            || self.joystick_pitch != 0.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentState {
     /// Render-space position (main-region local).

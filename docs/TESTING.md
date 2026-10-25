@@ -494,7 +494,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -513,6 +513,14 @@ when unfocused") is ignored during a screenshot.
   seat that rotates, with a seat camera and an animation started by a linked
   prim (frame 300), then standing up and a request to stop it (frame 700;
   `camera/demo.rs`).
+  `crouch-alt,x,y`, `crouch-pan,x,y` and `crouch-zoom,x,y` enable toggle
+  crouch, press Down at frame 560 and release it at 570 before the same
+  focus/drag at 600–660. After releasing the mouse at 661, the focus and
+  chosen orbit/pan/zoom must remain until walking at 700 returns the camera
+  to the avatar. Capture at 690 and 780; compare the ordinary `alt`, `pan`
+  and `zoom` scenarios. The crouch control must remain active throughout
+  (`down=true` in the log); add `AURORA_DEMO_LINK=0,firestorm` to exercise
+  the crouch-walk through the offline simulator too.
   Right-button scenarios also take physical cursor coordinates `(x,y)`:
   `right-click,x,y` moves slightly on both axes; `right-jitter,x,y` repeats
   small back-and-forth movements for 60 frames. Both must keep the camera

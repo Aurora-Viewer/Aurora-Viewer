@@ -2477,6 +2477,56 @@ mod tests {
     }
 
     #[test]
+    fn latched_crouch_preserves_camera_focus_and_orbit_until_movement() {
+        use crate::agent::MoveInput;
+        use crate::movement::crouch_toggle::CrouchToggle;
+
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let mut crouch = CrouchToggle::default();
+        // Exercise both a held toggle key and the persistent state after release.
+        for held in [true, true, false, false] {
+            let i = MoveInput {
+                down: crouch.apply(true, false, false, held, false),
+                ..Default::default()
+            };
+            assert!(i.down, "the simulator still receives the crouch control");
+            assert_ne!(w.agent.control_flags(&i, false) & aurora_net::control::UP_NEG, 0);
+            for on_avatar in [true, false] {
+                cam.handle_reset_view(&mut w.agent, &s);
+                if !on_avatar {
+                    cam.set_view(Vec3::new(120.0, 120.0, 28.0), Vec3::new(130.0, 128.0, 26.0), &mut w.agent, &s);
+                    cam.pan(Vec3::new(0.0, 0.5, 0.3));
+                }
+                cam.orbit_drag(-100.0, 20.0, 1.0, &mut w.agent);
+                cam.set_zoom_fraction(0.7);
+                let focus = cam.focus_point();
+                let orbit = cam.orbit_yaw;
+                let pitch = cam.pitch;
+                let zoom = cam.zoom_fraction();
+                if i.resets_camera(crouch.latched()) {
+                    cam.reset_view(&mut w.agent, &s, true, false, true, false);
+                }
+                assert_eq!(cam.focus_point(), focus, "crouching must retain the chosen focus");
+                assert_eq!(cam.orbit_yaw, orbit, "crouching must retain the chosen orbit");
+                assert_eq!(cam.pitch, pitch);
+                assert_eq!(cam.zoom_fraction(), zoom);
+            }
+        }
+        let i = MoveInput {
+            forward: true,
+            down: true,
+            ..Default::default()
+        };
+        assert!(i.resets_camera(crouch.latched()), "walking still returns to the avatar");
+        cam.reset_view(&mut w.agent, &s, true, false, true, false);
+        assert_eq!(cam.focus_point(), None);
+        assert_eq!(cam.orbit_yaw, 0.0);
+    }
+
+    #[test]
     fn moving_folds_the_orbit_back_into_the_avatar_heading() {
         let s = CameraSettings::default();
         let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
