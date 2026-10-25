@@ -150,6 +150,7 @@ impl Default for Profile {
                             "attachments",
                             "separator:metadata",
                             "properties",
+                            "bulk-permissions",
                             "rename",
                             "share",
                             "asset-uuid",
