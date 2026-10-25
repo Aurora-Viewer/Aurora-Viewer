@@ -56,6 +56,8 @@ impl App {
         let target = point + Vec3::Z * self.pelvis_to_foot();
         let was_running = self.autopilot.as_ref().is_some_and(|a| a.run);
         self.world.following_avatar = None;
+        self.follow_recovery = None;
+        self.follow_ui.open = false;
         self.autopilot = Some(AutoPilot::start(agent.position, target, run, Instant::now()));
         self.autopilot_stop_pending = false;
         self.autopilot_flags = 0;
@@ -123,9 +125,15 @@ impl App {
         };
         let mut pilot = AutoPilot::avatar(agent.position, target.position, follow.then_some(id), agent.flying, Instant::now());
         pilot.subject = Some(id);
+        if follow {
+            pilot.set_follow_distance(self.settings.follow.bounded_distance(), agent.position);
+        }
         pilot.observe_avatar(target, agent.position);
         self.stop_autopilot(true);
         self.world.following_avatar = pilot.leader;
+        if follow {
+            ui::widgets::open_floater(&self.egui_ctx, "follow", &mut self.follow_ui.open);
+        }
         self.autopilot = Some(pilot);
         self.autopilot_stop_pending = false;
         self.autopilot_flags = 0;
@@ -154,6 +162,8 @@ impl App {
 
     /// stopAutoPilot: the avatar stops (AGENT_CONTROL_STOP this frame).
     pub(super) fn stop_autopilot(&mut self, user_cancel: bool) {
+        self.follow_ui.open = false;
+        self.follow_recovery = None;
         self.world.following_avatar = None;
         let Some(ap) = self.autopilot.take() else {
             return;
@@ -187,7 +197,7 @@ impl App {
         } else {
             0
         };
-        if self.autopilot.is_none() {
+        if self.autopilot.is_none() && self.follow_recovery.is_none() {
             return;
         }
         let i = &self.input;
@@ -202,19 +212,22 @@ impl App {
             || i.joystick_yaw.abs() > 0.001
             || i.joystick_pitch.abs() > 0.001;
         let agent = &self.world.agent;
-        if keys
+        let cancelled = keys
             || self.mouse_mode == MouseMode::Steer
             || self
                 .autopilot
                 .as_ref()
                 .is_some_and(|ap| ap.flying != agent.flying && (!ap.landing() || agent.flying))
             || self.native_anchor.blocks_walk(agent.seated, agent.ground_sit)
-            || !self.in_world()
-        {
+            || (!self.in_world() && !self.world.teleporting);
+        if self.resume_follow_recovery(cancelled) {
+            return;
+        }
+        if cancelled {
             self.stop_autopilot(true);
             return;
         }
-        let (position, yaw) = (agent.position, agent.yaw);
+        let (position, yaw) = (self.world.agent.position, self.world.agent.yaw);
         let was_running = self.running();
         if let Some(id) = self.autopilot.as_ref().and_then(|ap| ap.subject) {
             let Some(target) = autopilot::avatar_target(&self.world, id, self.pelvis_to_foot() * 2.0) else {
@@ -258,10 +271,19 @@ impl App {
         self.autopilot_flags = step.flags;
         if let Some(finish) = step.finish {
             if finish == Finish::NoProgress {
+                if self.recover_blocked_follow() {
+                    return;
+                }
                 log::info!("autopilot: no nearer for too long, stopped");
             }
             self.stop_autopilot(false);
         } else if self.demo {
+            if std::env::var("AURORA_DEMO_AVATAR_TRAVEL").is_ok_and(|mode| mode.starts_with("stuck-")) {
+                // Offline stand-in for a wall: the pilot asks to walk, but
+                // neither local physics nor AgentUpdate advances our body.
+                self.autopilot_flags = control::STOP;
+                return;
+            }
             // no simulator offline: the local stand-in walks on the keys
             self.input.forward |= step.flags & (control::AT_POS | control::NUDGE_AT_POS) != 0;
             self.input.back |= step.flags & control::AT_NEG != 0;
@@ -448,6 +470,15 @@ impl App {
             });
         }
         if frame == 600 && mode != "menu" {
+            self.settings.follow = autopilot::FollowSettings {
+                distance: if mode == "controls-distance" { 6.0 } else { 2.0 },
+                teleport_if_stuck: matches!(mode.as_str(), "stuck-teleport" | "stuck-denied"),
+            };
+            if mode == "stuck-denied" {
+                self.settings.rlva_enabled = true;
+                self.world.rlva_configure(true);
+                self.rlva_demo_message("@tploc=n,tplocal:0=n".into());
+            }
             self.on_ctx_action(if matches!(mode.as_str(), "go" | "go-flight" | "go-flight-late") {
                 ui::context::CtxAction::GoToAvatar(id)
             } else {

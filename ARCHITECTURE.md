@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+`ui/follow.rs` provides the compact controller opened by avatar Follow;
+`app/follow.rs` applies live distance changes and opt-in blocked-follow recovery
+through the ordinary teleport/RLVa path. Saved `autopilot::FollowSettings` default
+to 2 m and stopping on an obstacle. Recovery waits for arrival and precise target
+geometry, expires after 30 seconds, and cancels on failure, manual movement,
+Escape, Stop or closing the controller. A recovered pilot requires at least
+one metre of actual travel before another automatic recovery can be requested.
+
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
 window and cache its filtered, sorted, virtualized object rows. `app/area_search.rs`
 prepares live rezzed-object snapshots in parallel, resolves distinct owners,

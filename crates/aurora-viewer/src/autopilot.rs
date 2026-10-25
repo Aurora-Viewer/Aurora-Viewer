@@ -132,6 +132,37 @@ pub const AU_FLAGS_HIDETITLE: u8 = 0x01;
 /// walkToClickedLocation lasts 3 s).
 pub const MARK_DURATION: Duration = Duration::from_secs(3);
 
+/// Aurora's follow controls. The Legacy Viewer's startFollowPilot accepts
+/// a stop distance but has no live controls or teleport recovery.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct FollowSettings {
+    pub distance: f32,
+    pub teleport_if_stuck: bool,
+}
+
+impl Default for FollowSettings {
+    fn default() -> Self {
+        Self {
+            distance: 2.0,
+            teleport_if_stuck: false,
+        }
+    }
+}
+
+impl FollowSettings {
+    pub const MIN_DISTANCE: f32 = 0.5;
+    pub const MAX_DISTANCE: f32 = 20.0;
+
+    pub fn bounded_distance(self) -> f32 {
+        if self.distance.is_finite() {
+            self.distance.clamp(Self::MIN_DISTANCE, Self::MAX_DISTANCE)
+        } else {
+            Self::default().distance
+        }
+    }
+}
+
 /// A walk under way.
 #[derive(Debug, Clone)]
 pub struct AutoPilot {
@@ -161,6 +192,9 @@ pub struct AutoPilot {
     flight_destination: Option<Vec3>,
     horizontal_thrust: FlightAxis,
     vertical_thrust: FlightAxis,
+    /// A second blocked arrival must stop, rather than teleport in a loop.
+    /// Genuine travel of at least a metre permits a later recovery.
+    recovery_origin: Option<Vec3>,
 }
 
 /// The finish callback of a walk: run when it ends within its stop
@@ -204,6 +238,21 @@ pub struct AvatarTarget {
     pub running: bool,
 }
 
+/// Land beside the precise leader, at our own standing height on its
+/// support. Coarse radar positions never authorize an automatic teleport.
+pub fn follow_recovery_position(from: Vec3, target: &AvatarTarget, settings: FollowSettings) -> Option<Vec3> {
+    if !from.is_finite() || !target.position.is_finite() || !target.flight.landing_height.is_finite() {
+        return None;
+    }
+    let away = (from - target.position).with_z(0.0).normalize_or(Vec3::NEG_X);
+    let position = target.position + away * (settings.bounded_distance() - 0.1).max(0.4);
+    Some(if target.flight.flying == Some(false) {
+        position.with_z(target.flight.landing_height)
+    } else {
+        position
+    })
+}
+
 /// Native flight retains inertia and NUDGE does not bound its speed. Plan
 /// one continuous burn, then keep that axis released until the target moves.
 /// The burn budget also bounds short trips before velocity reports arrive.
@@ -240,6 +289,29 @@ pub struct FlightResponse {
 }
 
 impl AutoPilot {
+    pub fn set_follow_distance(&mut self, distance: f32, position: Vec3) {
+        let distance = FollowSettings {
+            distance,
+            ..Default::default()
+        }
+        .bounded_distance();
+        if self.leader.is_some() && self.stop_distance != distance {
+            self.stop_distance = distance;
+            if self.landing_offset != Vec3::ZERO {
+                self.landing_offset = self.landing_offset.normalize_or(Vec3::NEG_X) * (distance - 0.2).max(1.0);
+            }
+            self.reset_progress(position);
+        }
+    }
+
+    pub fn recovered(&mut self, position: Vec3) {
+        self.recovery_origin = Some(position);
+    }
+
+    pub fn can_recover(&self) -> bool {
+        self.leader.is_some() && self.recovery_origin.is_none()
+    }
+
     /// startAutoPilotGlobal without a stop distance: the square root of the
     /// distance, 0.5 m at least. Never flying (walkToClickedLocation).
     pub fn start(from: Vec3, target: Vec3, run: bool, now: Instant) -> AutoPilot {
@@ -263,6 +335,7 @@ impl AutoPilot {
             flight_destination: None,
             horizontal_thrust: FlightAxis::default(),
             vertical_thrust: FlightAxis::default(),
+            recovery_origin: None,
         }
     }
 
@@ -298,6 +371,9 @@ impl AutoPilot {
         self.previous_position += delta;
         if let Some(destination) = &mut self.flight_destination {
             *destination += delta;
+        }
+        if let Some(origin) = &mut self.recovery_origin {
+            *origin += delta;
         }
         if let Some(flight) = &mut self.avatar_flight {
             flight.landing_height += delta.z;
@@ -413,6 +489,9 @@ impl AutoPilot {
         };
         if !position.is_finite() || !self.target.is_finite() || !self.goal().is_finite() || !yaw.is_finite() || !dt.is_finite() {
             return stop(Some(Finish::NoProgress));
+        }
+        if self.recovery_origin.is_some_and(|origin| position.distance(origin) >= 1.0) {
+            self.recovery_origin = None;
         }
         let dt = dt.clamp(0.0, 0.1);
         let at = Vec3::new(yaw.cos(), yaw.sin(), 0.0);
@@ -914,6 +993,114 @@ mod tests {
         assert_eq!(s.finish, None);
         assert_eq!(ap.step(Vec3::X * 1.2, 0.0, FRAME).flags, control::STOP);
         assert_ne!(ap.step(Vec3::X * -0.2, 0.0, FRAME).flags & control::AT_POS, 0);
+    }
+
+    #[test]
+    fn follow_distance_changes_apply_to_resting_and_stalled_pilots_without_affecting_go_to() {
+        let now = Instant::now();
+        let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::X * 6.0, Some(uuid::Uuid::from_u128(7)), false, now);
+        ap.set_follow_distance(6.0, Vec3::ZERO);
+        assert_eq!(ap.step(Vec3::ZERO, 0.0, FRAME).flags, control::STOP);
+        ap.set_follow_distance(1.0, Vec3::ZERO);
+        assert_ne!(ap.step(Vec3::ZERO, 0.0, FRAME).flags & control::AT_POS, 0);
+        for _ in 0..60 {
+            assert_eq!(ap.step(Vec3::ZERO, 0.0, FRAME).finish, None);
+        }
+        ap.set_follow_distance(3.0, Vec3::ZERO);
+        for _ in 0..60 {
+            assert_eq!(ap.step(Vec3::ZERO, 0.0, FRAME).finish, None);
+        }
+        ap.set_follow_distance(7.0, Vec3::ZERO);
+        assert_eq!(ap.step(Vec3::ZERO, 0.0, FRAME).flags, control::STOP);
+        ap.target.x = 7.9;
+        assert_eq!(ap.step(Vec3::ZERO, 0.0, FRAME).flags, control::STOP);
+        ap.target.x = 8.1;
+        assert_ne!(ap.step(Vec3::ZERO, 0.0, FRAME).flags & control::AT_POS, 0);
+        let mut go = AutoPilot::avatar(Vec3::ZERO, Vec3::X * 6.0, None, false, now);
+        go.set_follow_distance(10.0, Vec3::ZERO);
+        assert_eq!(go.stop_distance, 2.0);
+    }
+
+    #[test]
+    fn follow_settings_preserve_old_defaults_bound_external_values_and_round_trip() {
+        let old: crate::settings::Settings = serde_json::from_str("{}").expect("old settings");
+        assert_eq!(old.follow, FollowSettings::default());
+        let chosen = FollowSettings {
+            distance: 6.4,
+            teleport_if_stuck: true,
+        };
+        let json = serde_json::to_string(&chosen).expect("follow settings");
+        assert_eq!(serde_json::from_str::<FollowSettings>(&json).expect("saved settings"), chosen);
+        for (value, expected) in [(f32::NAN, 2.0), (f32::INFINITY, 2.0), (-10.0, 0.5), (100.0, 20.0)] {
+            assert_eq!(FollowSettings { distance: value, ..chosen }.bounded_distance(), expected);
+        }
+    }
+
+    #[test]
+    fn follow_distance_change_replans_flight_and_keeps_a_landing_beside_the_leader() {
+        let position = Vec3::Z * 8.0;
+        let mut ap = AutoPilot::avatar(position, Vec3::ZERO, Some(uuid::Uuid::from_u128(7)), true, Instant::now());
+        ap.observe_flight(
+            FlightTarget {
+                flying: Some(false),
+                landing_height: 0.0,
+            },
+            position,
+        );
+        assert_ne!(ap.landing_offset, Vec3::ZERO);
+        ap.flight_destination = Some(Vec3::ZERO);
+        ap.horizontal_thrust.remaining = Some(0.0);
+        ap.set_follow_distance(6.0, position);
+        assert!((ap.landing_offset.length() - 5.8).abs() < 0.001);
+        assert_ne!(ap.goal().x, ap.target.x);
+        assert!(ap.flight_destination.is_none());
+        assert!(ap.horizontal_thrust.remaining.is_none());
+    }
+
+    #[test]
+    fn follow_recovery_lands_beside_the_target_at_the_correct_height_and_rejects_invalid_data() {
+        let mut target = AvatarTarget {
+            position: Vec3::new(260.0, 20.0, 50.0),
+            flight: FlightTarget {
+                flying: Some(false),
+                landing_height: 49.5,
+            },
+            velocity: Vec3::ZERO,
+            running: false,
+        };
+        let settings = FollowSettings {
+            distance: 6.0,
+            teleport_if_stuck: true,
+        };
+        let p = follow_recovery_position(Vec3::new(240.0, 20.0, 1.0), &target, settings).expect("precise target");
+        assert!(p.abs_diff_eq(Vec3::new(254.1, 20.0, 49.5), 0.001));
+        let (slot, local) = teleport_destination((256_000, 256_000), 256.0, p, 0.0);
+        assert_eq!(slot, (256_000, 256_000));
+        assert_eq!(local.z, 49.5, "the centre is not raised twice");
+        target.flight.flying = Some(true);
+        assert_eq!(follow_recovery_position(target.position, &target, settings).expect("hover").z, 50.0);
+        assert!(follow_recovery_position(Vec3::NAN, &target, settings).is_none());
+        target.position.z = f32::INFINITY;
+        assert!(follow_recovery_position(Vec3::ZERO, &target, settings).is_none());
+    }
+
+    #[test]
+    fn follow_recovery_cannot_loop_at_a_blocked_arrival_but_real_travel_rearms_it() {
+        let mut ap = AutoPilot::avatar(Vec3::ZERO, Vec3::X * 10.0, Some(uuid::Uuid::from_u128(7)), false, Instant::now());
+        assert!(ap.can_recover());
+        ap.recovered(Vec3::ZERO);
+        for _ in 0..120 {
+            ap.step(Vec3::ZERO, 0.0, FRAME);
+            assert!(!ap.can_recover());
+        }
+        ap.set_follow_distance(3.0, Vec3::ZERO);
+        assert!(!ap.can_recover(), "changing the slider cannot rearm a blocked arrival");
+        ap.shift(Vec3::X * -256.0);
+        ap.step(Vec3::X * -256.0, 0.0, FRAME);
+        assert!(!ap.can_recover(), "a region-origin shift is not actual travel");
+        ap.step(Vec3::X * -255.0, 0.0, FRAME);
+        assert!(ap.can_recover());
+        assert!(!AutoPilot::avatar(Vec3::ZERO, Vec3::X, None, false, Instant::now()).can_recover());
     }
 
     #[test]

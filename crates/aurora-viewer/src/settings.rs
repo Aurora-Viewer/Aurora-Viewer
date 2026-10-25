@@ -910,6 +910,7 @@ pub struct Settings {
     /// What a double click on the ground does (Preferences › Controls, the
     /// wolf menu › Me): nothing by default, as in Firestorm.
     pub double_click: crate::autopilot::DoubleClick,
+    pub follow: crate::autopilot::FollowSettings,
     /// Look-at: what we send of where we look, the crosshairs of where the
     /// avatars look, how our head follows the cursor (Preferences ›
     /// Privacy and Controls).
@@ -1607,6 +1608,7 @@ impl Default for Settings {
             crouch_toggle: false,
             block_click_sit: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
+            follow: Default::default(),
             lookat: Default::default(),
             former_look_at: None,
             former_look_at_range: None,
