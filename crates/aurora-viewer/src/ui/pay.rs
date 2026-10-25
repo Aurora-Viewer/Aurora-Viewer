@@ -1004,6 +1004,84 @@ mod tests {
     use super::*;
 
     #[test]
+    fn both_object_pay_windows_send_menu_payments_and_close() {
+        let library = std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load());
+        for classic in [false, true] {
+            for linked in [false, true] {
+                let mut world = World::new(library.clone());
+                for event in crate::demo::events().into_iter().chain(crate::demo::action_events()) {
+                    world.apply(event);
+                }
+                let parent = world.objects.index_of_uuid(&crate::demo::action_id(972)).unwrap();
+                world.objects.get_mut(parent).unwrap().click_action = crate::interaction::code::TOUCH;
+                let idx = if linked {
+                    let child = world.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+                    world.objects.get_mut(child).unwrap().parent_id = 972;
+                    child
+                } else {
+                    parent
+                };
+                let target = crate::interaction::menu_target(&world, idx, Action::Pay).unwrap();
+                let mut state = Interactions::default();
+                state.open(target);
+                state.on_properties(&[aurora_net::build::ObjectProps {
+                    object_id: target.root,
+                    name: "Tip jar".into(),
+                    ..Default::default()
+                }]);
+                state.on_prices(target.object, 10, vec![1, 5, 10, 20]);
+                let mut frames = widgets::elide_tests::Frames::new();
+                let theme = crate::theme::Theme::default();
+                theme.apply(&frames.ctx, 1.0);
+                let p = theme.palette();
+                let mut pay = PayUi::default();
+                let mut commands = Vec::new();
+                {
+                    let mut draw = |ui: &mut egui::Ui| {
+                        let answer = if classic {
+                            super::super::object_actions::show(ui.ctx(), &p, &mut state, &world)
+                        } else {
+                            pay.show_object(ui.ctx(), &p, &mut state, &world, false, 200).map(Some)
+                        };
+                        if let Some(amount) = answer
+                            && let Some(command) = state.confirm(&world, amount)
+                        {
+                            commands.push(command);
+                        }
+                    };
+                    let label = if classic {
+                        aurora_i18n::tr!("common-pay").to_owned()
+                    } else {
+                        aurora_i18n::tr!("ui-pay-amount", amount = money(10)).to_owned()
+                    };
+                    for _ in 0..3 {
+                        frames.run(Vec::new(), &mut draw);
+                    }
+                    let texts = frames.run(Vec::new(), &mut draw);
+                    let pos = texts.iter().find(|t| t.source == label).expect("Pay button").rect.center();
+                    for pressed in [true, false] {
+                        frames.run(
+                            vec![
+                                egui::Event::PointerMoved(pos),
+                                egui::Event::PointerButton {
+                                    pos,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                },
+                            ],
+                            &mut draw,
+                        );
+                    }
+                    frames.run(Vec::new(), &mut draw);
+                }
+                assert!(matches!(commands.as_slice(), [NetCommand::PayObject { object, amount: 10, .. }] if *object == target.clicked_id));
+                assert!(state.dialog.is_none(), "classic={classic}, linked={linked}");
+            }
+        }
+    }
+
+    #[test]
     fn a_payment_is_confirmed_above_the_threshold_only() {
         // LLFloaterPay::onGive with FSConfirmPayments and its threshold
         assert!(!needs_confirmation(true, 200, 200, Some(1000), false));

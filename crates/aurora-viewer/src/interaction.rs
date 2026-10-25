@@ -141,15 +141,15 @@ pub fn target(world: &World, idx: usize, props: &HashMap<Uuid, ObjectProps>) -> 
 }
 
 /// Target of a right-click menu entry (Pay, Buy, Open), whatever
-/// the click action: Pay goes to the clicked prim if it takes money, else
-/// its parent (LLFloaterPay::payViaObject); Buy and Open to the root.
+/// the click action: Pay keeps the clicked prim when it or its root takes
+/// money (enable_pay_object, LLFloaterPay::payViaObject); Buy and Open use the root.
 pub fn menu_target(world: &World, idx: usize, action: Action) -> Option<Target> {
     let clicked = world.objects.get(idx)?;
     let (root_idx, _) = root(world, idx)?;
     let root = world.objects.get(root_idx)?;
     let object = match action {
-        Action::Pay if clicked.update_flags & (1 << 9) == 0 => world.objects.parent_of(clicked).and_then(|p| world.objects.get(p))?,
-        Action::Pay => clicked,
+        Action::Pay if (clicked.update_flags | root.update_flags) & (1 << 9) != 0 => clicked,
+        Action::Pay => return None,
         _ => root,
     };
     Some(Target {
@@ -329,7 +329,13 @@ impl Interactions {
         if world.objects.get(idx)?.full_id != d.target.clicked_id {
             return None;
         }
-        let current = target(world, idx, &self.props)?;
+        // LLFloaterPay::give pays the selected prim regardless of its normal
+        // click action. A menu payment must recheck payment eligibility itself.
+        let current = if d.target.action == Action::Pay {
+            menu_target(world, idx, Action::Pay)?
+        } else {
+            target(world, idx, &self.props)?
+        };
         if current.action != d.target.action || current.object != d.target.object || current.root != d.target.root {
             return None;
         }
@@ -578,6 +584,106 @@ mod tests {
         assert!(state.confirm(&w, Some(200)).is_none());
         assert!(matches!(state.confirm(&w, Some(20)), Some(NetCommand::PayObject { object, amount: 20, .. }) if object == t.object));
         assert!(state.confirm(&w, Some(20)).is_none());
+    }
+    #[test]
+    fn menu_payments_do_not_require_a_pay_click_action() {
+        let mut w = world();
+        let idx = w.objects.index_of_uuid(&crate::demo::action_id(972)).unwrap();
+        for action in 0..=9 {
+            w.objects.get_mut(idx).unwrap().click_action = action;
+            let mut state = Interactions::default();
+            let t = menu_target(&w, idx, Action::Pay).expect("the object takes money");
+            state.open(t);
+            state.on_properties(&[ObjectProps {
+                object_id: t.root,
+                name: "Tip jar".into(),
+                ..Default::default()
+            }]);
+            state.on_prices(t.object, 10, vec![1, 5, 10, 20]);
+            assert!(
+                matches!(state.confirm(&w, Some(10)), Some(NetCommand::PayObject { object, amount: 10, .. }) if object == t.clicked_id),
+                "context-menu payment with click action {action}"
+            );
+            assert!(state.dialog.is_none());
+            assert!(state.confirm(&w, Some(10)).is_none(), "a payment cannot be sent twice");
+        }
+    }
+    #[test]
+    fn linked_menu_payments_query_and_pay_the_clicked_prim() {
+        let mut w = world();
+        let root = w.objects.index_of_uuid(&crate::demo::action_id(971)).unwrap();
+        let child = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        for (root_takes_money, child_takes_money) in [(true, false), (false, true), (true, true)] {
+            w.objects.get_mut(root).unwrap().update_flags = u32::from(root_takes_money) << 9;
+            w.objects.get_mut(child).unwrap().update_flags = u32::from(child_takes_money) << 9;
+            let mut state = Interactions::default();
+            let t = menu_target(&w, child, Action::Pay).unwrap();
+            assert_eq!(t.object, crate::demo::action_id(974));
+            let requests = state.open(t);
+            assert!(
+                requests
+                    .iter()
+                    .any(|c| matches!(c, NetCommand::RequestPayPrice { object, .. } if *object == t.clicked_id))
+            );
+            assert!(
+                requests
+                    .iter()
+                    .any(|c| matches!(c, NetCommand::RequestObjectProperties { object, .. } if *object == t.root))
+            );
+            state.on_properties(&[ObjectProps {
+                object_id: t.root,
+                name: "Linked tip jar".into(),
+                ..Default::default()
+            }]);
+            state.on_prices(t.root, 10, vec![10]);
+            assert!(state.confirm(&w, Some(10)).is_none(), "only the clicked prim's prices apply");
+            state.on_prices(t.object, -1, vec![10]);
+            assert!(
+                matches!(state.confirm(&w, Some(10)), Some(NetCommand::PayObject { object, handle, amount: 10, description })
+                if object == t.clicked_id && handle == t.clicked.region && description == "Linked tip jar")
+            );
+        }
+        w.objects.get_mut(root).unwrap().update_flags = 0;
+        w.objects.get_mut(child).unwrap().update_flags = 0;
+        assert!(menu_target(&w, child, Action::Pay).is_none());
+    }
+    #[test]
+    fn menu_payments_recheck_identity_money_flags_and_owner() {
+        let mut w = world();
+        let root = w.objects.index_of_uuid(&crate::demo::action_id(971)).unwrap();
+        let child = w.objects.index_of_uuid(&crate::demo::action_id(974)).unwrap();
+        for change in ["identity", "root", "money", "owner", "balance"] {
+            let original = w.objects.get(child).unwrap();
+            let (original_id, original_parent) = (original.full_id, original.parent_id);
+            let root_flags = w.objects.get(root).unwrap().update_flags;
+            w.objects.get_mut(root).unwrap().update_flags |= 1 << 9;
+            let mut state = Interactions::default();
+            let t = menu_target(&w, child, Action::Pay).unwrap();
+            state.open(t);
+            let mut props = ObjectProps {
+                object_id: t.root,
+                owner_id: Uuid::from_u128(1),
+                ..Default::default()
+            };
+            state.on_properties(&[props.clone()]);
+            state.on_prices(t.object, 10, vec![10]);
+            match change {
+                "identity" => w.objects.get_mut(child).unwrap().full_id = Uuid::nil(),
+                "root" => w.objects.get_mut(child).unwrap().parent_id = 972,
+                "money" => w.objects.get_mut(root).unwrap().update_flags &= !(1 << 9),
+                "owner" => {
+                    props.owner_id = Uuid::from_u128(2);
+                    state.on_properties(&[props]);
+                }
+                "balance" => w.balance = Some(5),
+                _ => unreachable!(),
+            }
+            assert!(state.confirm(&w, Some(10)).is_none(), "payment must reject changed {change}");
+            assert!(state.dialog.is_some());
+            w.objects.get_mut(child).unwrap().full_id = original_id;
+            w.objects.get_mut(child).unwrap().parent_id = original_parent;
+            w.objects.get_mut(root).unwrap().update_flags = root_flags;
+        }
     }
     #[test]
     fn buy_root_quote_cannot_change_after_opening() {
