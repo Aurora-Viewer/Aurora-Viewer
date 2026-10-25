@@ -27,6 +27,8 @@ use uuid::Uuid;
 
 pub(crate) mod drag;
 mod visuals;
+#[cfg(test)]
+mod window_tests;
 
 /// Most friends one action applies to (MAX_FRIEND_SELECT, MAX_SELECTIONS).
 const MAX_SELECT: usize = 20;
@@ -613,7 +615,11 @@ pub fn panel(
 }
 
 /// The torn-off Contacts window (floater_fs_contacts.xml, 396 × 390); its
-/// title bar button docks it back into Conversations.
+/// title bar button docks it back into Conversations. It shows what the
+/// docked tab shows (#961): People's friends tab in Aurora's look
+/// (`friends`, the same pane state as the docked tab, so the filter,
+/// selection and sheet carry over), the contact list otherwise.
+#[allow(clippy::too_many_arguments)]
 pub fn window(
     ctx: &egui::Context,
     p: &Palette,
@@ -621,9 +627,11 @@ pub fn window(
     st: &mut ContactsUi,
     settings: &mut ContactsSettings,
     pics: &Pics,
+    friends: Option<super::people::FriendsPane<'_, '_>>,
     open: &mut bool,
-) -> Vec<ContactsAction> {
+) -> (Vec<ContactsAction>, Vec<super::people::PeopleAction>) {
     let mut dock = false;
+    let mut people = Vec::new();
     let screen = ctx.content_rect();
     let mut actions = widgets::Floater::new(
         "contacts",
@@ -632,12 +640,20 @@ pub fn window(
         Vec2::new(430.0, 390.0),
     )
     .action("login-2", aurora_i18n::tr!("ui-contacts-attach-to-conversations"), &mut dock)
-    .show(ctx, p, open, |ui| panel(ui, p, world, st, settings, pics))
+    .show(ctx, p, open, |ui| match friends {
+        Some(friends) => {
+            // the docked pane's spacing (`chat::workspace`)
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
+            people = super::people::friends_pane(ui, p, world, friends, st, settings);
+            Vec::new()
+        }
+        None => panel(ui, p, world, st, settings, pics),
+    })
     .unwrap_or_default();
     if dock {
         actions.push(ContactsAction::ToggleTornOff);
     }
-    actions
+    (actions, people)
 }
 
 /// The resident picker of the contacts window: what it was opened for.

@@ -5055,7 +5055,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
 - **`AURORA_DEMO_CONTACTS=friends|groups|sets|detached|add|hidden|empty`**: Contacts
   tab of Conversations on Friends, Groups or Contact sets (demo contact
   sets and nicknames), the detached Contacts window, or the resident
-  picker of "Add...". These modes enable the optional Contacts entry for
+  picker of "Add...". The detached window has the look of the tab it
+  left (#961): People's friends tab in Aurora's look of People with the
+  Aurora or Compact conversation style, the contact list otherwise (add
+  `AURORA_DEMO_PEOPLE=legacy` to see it). These modes enable the optional Contacts entry for
   the run; `hidden` disables it with Contacts initially selected, showing
   the fallback to nearby chat. The saved preference defaults to off
   (Preferences > Chat > Show the Contacts tab).

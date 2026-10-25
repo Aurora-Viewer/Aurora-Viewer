@@ -12378,7 +12378,7 @@ impl App {
                 });
                 let mut contacts_people = Vec::new();
                 let mut snoozes = Vec::new();
-                for c in ui::chat::show(
+                let conversation_actions = ui::chat::show(
                     &ctx,
                     &p,
                     icons,
@@ -12393,7 +12393,39 @@ impl App {
                     self.settings.show_contacts_tab,
                     friends,
                     &mut open,
-                ) {
+                );
+                // the torn-off Contacts window, in the look of the tab it
+                // left (#961): the friends pane where Conversations shows it
+                // (Aurora's People in the workspace), the contact list
+                // otherwise
+                if self.settings.contacts.torn_off {
+                    let mut contacts_open = self.panels.contacts;
+                    let pics = ui::contacts::Pics {
+                        avatars: &self.avatar_pics,
+                        images: &self.ui_images,
+                    };
+                    let workspace = self.chat_ui.demo_style.unwrap_or(self.chat_ui.style).workspace();
+                    let friends = (people_aurora && workspace).then_some(ui::people::FriendsPane {
+                        st: &mut self.contacts_people_ui,
+                        data: &contacts_radar,
+                        settings: &mut self.settings.friends_list,
+                        images: &self.ui_images,
+                    });
+                    let (contacts, people) = ui::contacts::window(
+                        &ctx,
+                        &p,
+                        &mut self.world,
+                        &mut self.contacts_ui,
+                        &mut self.settings.contacts,
+                        &pics,
+                        friends,
+                        &mut contacts_open,
+                    );
+                    contact_actions.extend(contacts);
+                    contacts_people.extend(people);
+                    self.panels.contacts = contacts_open;
+                }
+                for c in conversation_actions {
                     match c {
                         ui::chat::ConvAction::Local(out) => a.chat = Some(out),
                         ui::chat::ConvAction::Im { to, text } => a.ims.push((to, text)),
@@ -12526,23 +12558,6 @@ impl App {
                 ) && let Err(e) = crate::logging::open_directory(&dir)
                 {
                     log::warn!("cannot open the transcripts folder: {e}");
-                }
-                if self.settings.contacts.torn_off {
-                    let mut open = self.panels.contacts;
-                    let pics = ui::contacts::Pics {
-                        avatars: &self.avatar_pics,
-                        images: &self.ui_images,
-                    };
-                    contact_actions.extend(ui::contacts::window(
-                        &ctx,
-                        &p,
-                        &mut self.world,
-                        &mut self.contacts_ui,
-                        &mut self.settings.contacts,
-                        &pics,
-                        &mut open,
-                    ));
-                    self.panels.contacts = open;
                 }
                 // their confirmations, also asked from the other menus
                 contact_actions.extend(ui::contacts::dialog_windows(
