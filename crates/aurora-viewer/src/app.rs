@@ -15971,6 +15971,12 @@ impl ApplicationHandler for App {
                         }
                         return;
                     }
+                    // egui received Ctrl+W above; reserve its physical key
+                    // before gestures or movement can keep it held.
+                    if pressed && ui::close_key::take_native_key(&ke.logical_key, code, self.mods(), &mut self.down) {
+                        self.check_temp_run();
+                        return;
+                    }
                     // the photo viewfinder's keys (the shutter, its menu…)
                     if !self.egui_ctx.egui_wants_keyboard_input() && self.viewfinder_key(code, &ke.logical_key, pressed, ke.repeat) {
                         self.down.remove(&Input::key(code));
