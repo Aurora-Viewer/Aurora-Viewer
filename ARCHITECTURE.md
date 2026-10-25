@@ -630,6 +630,16 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`World::can_locate_avatar` and `locate_avatar` share nearby positions and
+received map rights across contact, conversation and profile actions.
+Remote friends use the existing `world/worldmap.rs` TrackAgent/FindAgent
+tracking; an explicit remote teleport consumes one matching reply within a
+lookup interval, then uses the ordinary map teleport/RLVa path. Before
+dispatch, `take_map_commands` cancels tracking and queued teleports if the
+friend went offline, revoked map rights or ended the friendship. Camera zoom
+and nearby navigation still require local geometry/positions. This extends
+the Legacy Viewer's nearby-only radar Teleport To to authorized remote friends.
+
 `world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
 roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,
 `world/bridge/ik.lsl`, with independent Mono memory and no movement, HTTP or

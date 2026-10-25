@@ -1031,8 +1031,17 @@ fn friend_menu(
     if menu::item_if(ui, p, "zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), here) {
         context::request(ui.ctx(), CtxAction::ZoomAvatar(id));
     }
-    if menu::item_if(ui, p, "location-filled", aurora_i18n::tr!("common-teleport-to"), here) {
+    if menu::item_if(
+        ui,
+        p,
+        "location-filled",
+        aurora_i18n::tr!("common-teleport-to"),
+        world.can_locate_avatar(id),
+    ) {
         context::request(ui.ctx(), CtxAction::TeleportToAvatar(id));
+    }
+    if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), world.can_locate_avatar(id)) {
+        context::request(ui.ctx(), CtxAction::ShowOnMap(id));
     }
     if menu::item_if(ui, p, "send-filled", aurora_i18n::tr!("common-offer-teleport"), online) {
         actions.push(ContactsAction::OfferTeleport(id));

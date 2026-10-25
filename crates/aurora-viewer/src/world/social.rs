@@ -169,6 +169,14 @@ impl Social {
         self.friends.iter().any(|f| f.id == *id)
     }
 
+    /// is_agent_mappable / LLAvatarTracker::isBuddyOnline: received rights,
+    /// never the permissions we grant the other resident.
+    pub fn can_map_friend(&self, id: Uuid) -> bool {
+        self.friends
+            .iter()
+            .any(|f| f.id == id && f.online && f.rights_has & rights::MAP_LOCATION != 0)
+    }
+
     /// LLAvatarTracker::formFriendship: a new friend sees the other online
     /// both ways until rights change.
     pub fn form_friendship(&mut self, id: Uuid) {

@@ -6700,7 +6700,7 @@ impl App {
                 self.send(c);
             }
         }
-        for c in self.world.map.take_commands() {
+        for c in self.world.take_map_commands() {
             if let NetCommand::TeleportTo { handle, .. } = &c {
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
                 let show = Some(*handle) != self.world.main_region;
@@ -9488,6 +9488,7 @@ impl App {
         // AURORA_DEMO_PEOPLE's tabs: the mock-up's sets, pins and recent people
         if self.demo && self.frame_count == 60 {
             crate::demo::people::seed(&mut self.world);
+            crate::demo::friend_location(&mut self.world);
         }
         // AURORA_DEMO_NAVEDIT=1: click in the location field at frame 230
         if self.demo && self.frame_count == 230 && std::env::var_os("AURORA_DEMO_NAVEDIT").is_some() {

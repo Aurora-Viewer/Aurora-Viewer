@@ -124,6 +124,68 @@ pub struct AvatarTrack {
     /// Answered at least once: `WorldMap::track` points at them.
     pub found: bool,
     asked: Instant,
+    /// One explicit remote teleport, consumed by the first matching reply.
+    teleport: Option<Instant>,
+}
+
+impl super::World {
+    /// Loaded or coarse avatar position in render space. Remote friends
+    /// require FindAgent instead; map rights alone cannot enable a camera zoom.
+    pub fn avatar_map_position(&self, id: Uuid) -> Option<glam::Vec3> {
+        if let Some(o) = self.objects.index_of_uuid(&id).and_then(|i| self.objects.get(i))
+            && let Some(off) = self.region_offset(o.key.region)
+        {
+            return Some(off + o.position);
+        }
+        self.coarse
+            .iter()
+            .find_map(|(h, list)| Some(self.region_offset(*h)? + *list.iter().find(|(i, _)| *i == id).map(|(_, p)| p)?))
+    }
+
+    pub fn can_locate_avatar(&self, id: Uuid) -> bool {
+        self.avatar_map_position(id).is_some() || self.social.can_map_friend(id)
+    }
+
+    /// LLAvatarActions::showOnMap uses LLFloaterWorldMap::trackAvatar for
+    /// remote friends. Extend the nearby radar's Teleport To through that
+    /// same lookup when the friend explicitly grants us location rights.
+    pub fn locate_avatar(&mut self, id: Uuid, teleport: bool) -> bool {
+        let can_map = self.social.can_map_friend(id);
+        if can_map && !teleport {
+            let name = self.social.name_of(&id);
+            self.map.track_avatar(id, &name);
+            self.map.focus_track = true;
+        } else if let Some(p) = self.avatar_map_position(id) {
+            let (ox, oy) = self.main_origin().unwrap_or((0, 0));
+            self.map
+                .track_location(ox as f64 + p.x as f64, oy as f64 + p.y as f64, p.z, teleport);
+        } else if can_map {
+            let name = self.social.name_of(&id);
+            self.map.teleport_to_avatar(id, &name);
+        } else {
+            return false;
+        }
+        true
+    }
+
+    /// Recheck rights/presence before sending a delayed lookup or teleport:
+    /// a menu may have been opened before the friend revoked permission.
+    pub fn take_map_commands(&mut self) -> Vec<NetCommand> {
+        let allowed = self.map.avatar.as_ref().is_none_or(|a| self.social.can_map_friend(a.id));
+        if !allowed {
+            self.map.clear_track();
+        }
+        let mut out = self.map.take_commands();
+        if !allowed {
+            out.retain(|c| {
+                !matches!(
+                    c,
+                    NetCommand::FindAgent(_) | NetCommand::TrackAgent(_) | NetCommand::TeleportTo { .. }
+                ) || matches!(c, NetCommand::TrackAgent(id) if id.is_nil())
+            });
+        }
+        out
+    }
 }
 
 /// Parcel the agent may not enter, near it (LLViewerParcelMgr collision
@@ -528,7 +590,11 @@ impl WorldMap {
     /// on the map; the track points at them once the grid answers, and the
     /// open map centres on it.
     pub fn track_avatar(&mut self, id: Uuid, name: &str) {
-        if self.avatar.as_ref().is_some_and(|a| a.id == id) {
+        if let Some(a) = self.avatar.as_mut().filter(|a| a.id == id) {
+            a.teleport = None;
+            if let Some(t) = self.track.as_mut() {
+                t.teleport = false;
+            }
             return;
         }
         self.avatar = Some(AvatarTrack {
@@ -536,12 +602,31 @@ impl WorldMap {
             name: name.to_owned(),
             found: false,
             asked: Instant::now(),
+            teleport: None,
         });
         self.track = None;
         self.focus_track = true;
         // LLAvatarTracker::track: TrackAgent, then findAgent
         self.out.push(NetCommand::TrackAgent(id));
         self.out.push(NetCommand::FindAgent(id));
+    }
+
+    /// A remote Teleport To waits for a fresh FindAgent reply, at most one
+    /// normal lookup interval. Subsequent periodic replies never teleport.
+    pub fn teleport_to_avatar(&mut self, id: Uuid, name: &str) {
+        let tracked = self.avatar.as_ref().is_some_and(|a| a.id == id);
+        self.track_avatar(id, name);
+        if let Some(a) = self.avatar.as_mut() {
+            a.teleport = Some(Instant::now());
+            a.found = false;
+        }
+        self.track = None;
+        if tracked {
+            self.out.push(NetCommand::FindAgent(id));
+            if let Some(a) = self.avatar.as_mut() {
+                a.asked = Instant::now();
+            }
+        }
     }
 
     /// LLAvatarTracker::untrack.
@@ -559,8 +644,13 @@ impl WorldMap {
         };
         a.found = true;
         let name = a.name.clone();
+        let teleport = a.teleport.take().is_some_and(|started| started.elapsed() < FIND_AGENT_EVERY);
         let z = self.track.as_ref().map_or(z, |t| t.z);
-        self.place_track(x, y, z, false);
+        // A duplicate reply must not cancel an outstanding region lookup.
+        if self.track.as_ref().is_some_and(|t| t.teleport) {
+            return;
+        }
+        self.place_track(x, y, z, teleport);
         if let Some(t) = self.track.as_mut() {
             t.label = name;
         }
@@ -780,6 +870,161 @@ pub fn teleport_command(x: f64, y: f64, z: f32) -> NetCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn remote_friend() -> (super::super::World, Uuid) {
+        let mut w = super::super::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.agent_id = Uuid::from_u128(1);
+        let id = Uuid::from_u128(7);
+        w.social.friends.push(super::super::social::Friend {
+            id,
+            online: true,
+            rights_given: 0,
+            rights_has: super::super::social::rights::MAP_LOCATION,
+        });
+        w.social.names.insert(id, "Remote friend".into());
+        (w, id)
+    }
+
+    #[test]
+    fn remote_friend_location_uses_received_rights_and_current_presence() {
+        let (mut w, id) = remote_friend();
+        for online in [false, true] {
+            for given in 0..8 {
+                for received in 0..8 {
+                    let f = &mut w.social.friends[0];
+                    (f.online, f.rights_given, f.rights_has) = (online, given, received);
+                    let allowed = online && received & 2 != 0;
+                    assert_eq!(w.can_locate_avatar(id), allowed);
+                    assert_eq!(w.locate_avatar(id, false), allowed);
+                    let out = w.take_map_commands();
+                    assert_eq!(out.iter().any(|c| matches!(c, NetCommand::FindAgent(i) if *i == id)), allowed);
+                    assert!(w.avatar_map_position(id).is_none(), "map rights do not enable nearby actions");
+                    w.map.clear_track();
+                    w.map.take_commands();
+                }
+            }
+        }
+        w.social.friends.clear();
+        assert!(!w.locate_avatar(id, true));
+        assert!(w.take_map_commands().is_empty());
+    }
+
+    #[test]
+    fn remote_friend_map_action_tracks_without_teleporting() {
+        let (mut w, id) = remote_friend();
+        assert!(w.locate_avatar(id, false));
+        assert!(matches!(&w.take_map_commands()[..], [NetCommand::TrackAgent(a), NetCommand::FindAgent(b)] if *a == id && *b == id));
+        w.apply(aurora_net::NetEvent::AgentFound {
+            prey: id,
+            x: 256_010.0,
+            y: 256_266.0,
+        });
+        w.map.apply_blocks(vec![yiff()]);
+        let t = w.map.track.as_ref().expect("remote friend located");
+        assert_eq!((t.x, t.y, t.label.as_str()), (256_010.0, 256_266.0, "Remote friend"));
+        assert!(w.take_map_commands().iter().all(|c| !matches!(c, NetCommand::TeleportTo { .. })));
+        w.map.focus_track = false;
+        assert!(w.locate_avatar(id, false));
+        assert!(w.map.focus_track, "an explicit map action recenters an already tracked friend");
+        assert!(w.take_map_commands().is_empty(), "reuse the active lookup without another request");
+    }
+
+    #[test]
+    fn remote_friend_teleport_waits_for_the_matching_reply_and_region_only_once() {
+        for known in [false, true] {
+            let (mut w, id) = remote_friend();
+            if known {
+                w.map.apply_blocks(vec![yiff()]);
+            }
+            assert!(w.locate_avatar(id, true));
+            assert!(matches!(&w.take_map_commands()[..], [NetCommand::TrackAgent(a), NetCommand::FindAgent(b)] if *a == id && *b == id));
+            w.map.agent_found(Uuid::from_u128(8), 256_010.0, 256_266.0, 25.0);
+            assert!(w.map.track.is_none());
+            w.map.agent_found(id, 256_010.0, 256_266.0, 25.0);
+            let mut out = w.take_map_commands();
+            // Duplicate replies cannot cancel or repeat a pending teleport.
+            w.map.agent_found(id, 256_010.0, 256_266.0, 25.0);
+            w.map.apply_blocks(vec![yiff()]);
+            out.extend(w.take_map_commands());
+            let teleports: Vec<_> = out.iter().filter(|c| matches!(c, NetCommand::TeleportTo { .. })).collect();
+            assert_eq!(teleports.len(), 1, "known region: {known}: {out:?}");
+            assert!(matches!(teleports[0], NetCommand::TeleportTo { position, .. } if *position == glam::Vec3::new(10.0, 10.0, 25.0)));
+            w.map.agent_found(id, 256_020.0, 256_270.0, 25.0);
+            assert!(w.take_map_commands().iter().all(|c| !matches!(c, NetCommand::TeleportTo { .. })));
+        }
+    }
+
+    #[test]
+    fn remote_friend_revocation_cancels_pending_and_queued_teleports() {
+        for phase in 0..3 {
+            for offline in [false, true] {
+                let (mut w, id) = remote_friend();
+                w.map.apply_blocks(vec![yiff()]);
+                w.locate_avatar(id, true);
+                if phase > 0 {
+                    w.take_map_commands();
+                }
+                if phase == 2 {
+                    w.map.agent_found(id, 256_010.0, 256_266.0, 25.0);
+                }
+                if offline {
+                    w.social.set_online(&[id], false);
+                } else {
+                    w.apply(aurora_net::NetEvent::UserRights {
+                        agent: id,
+                        rights: vec![(w.agent_id, 0)],
+                    });
+                }
+                let out = w.take_map_commands();
+                assert!(
+                    out.iter()
+                        .all(|c| !matches!(c, NetCommand::TeleportTo { .. } | NetCommand::FindAgent(_)))
+                );
+                assert!(w.map.avatar.is_none() && w.map.track.is_none());
+                w.map.agent_found(id, 256_010.0, 256_266.0, 25.0);
+                assert!(w.map.track.is_none(), "late reply must not recreate a revoked track");
+            }
+        }
+    }
+
+    #[test]
+    fn remote_friend_teleport_expires_or_is_cancelled_by_map_navigation() {
+        let id = Uuid::from_u128(7);
+        for cancel in 0..4 {
+            let mut m = WorldMap::default();
+            m.apply_blocks(vec![yiff()]);
+            m.teleport_to_avatar(id, "Remote friend");
+            m.take_commands();
+            match cancel {
+                0 => *m.avatar.as_mut().unwrap().teleport.as_mut().unwrap() -= FIND_AGENT_EVERY,
+                1 => m.track_avatar(id, "Remote friend"),
+                2 => m.clear_track(),
+                _ => m.track_location(256_010.0, 256_266.0, 25.0, false),
+            }
+            m.agent_found(id, 256_010.0, 256_266.0, 25.0);
+            assert!(m.take_commands().iter().all(|c| !matches!(c, NetCommand::TeleportTo { .. })));
+        }
+    }
+
+    #[test]
+    fn nearby_avatar_location_still_works_without_friendship() {
+        let (mut w, id) = remote_friend();
+        let handle = aurora_net::origin_to_handle(256_000, 256_256);
+        let p = glam::Vec3::new(20.0, 40.0, 25.0);
+        w.main_region = Some(handle);
+        w.coarse.insert(handle, vec![(id, p)]);
+        w.social.friends.clear();
+        assert_eq!(w.avatar_map_position(id), Some(p));
+        let (ox, oy) = w.main_origin().unwrap();
+        assert!(w.can_locate_avatar(id));
+        for teleport in [false, true] {
+            assert!(w.locate_avatar(id, teleport));
+            let t = w.map.track.as_ref().unwrap();
+            assert_eq!((t.x, t.y, t.z), (ox as f64 + p.x as f64, oy as f64 + p.y as f64, p.z));
+            assert!(w.map.avatar.is_none());
+            assert!(w.take_map_commands().iter().all(|c| !matches!(c, NetCommand::FindAgent(_))));
+        }
+    }
 
     #[test]
     fn clearing_a_pending_place_does_not_recreate_it_when_the_reply_arrives() {

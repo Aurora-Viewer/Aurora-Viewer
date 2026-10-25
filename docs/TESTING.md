@@ -3493,6 +3493,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline` | Remote friend's received map rights in contact, conversation and profile actions |
 | `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out` | Detached conversations, or nearby chat alone before any IM (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
@@ -4435,6 +4436,23 @@ failure. Grid validation and any paid upload are performed by the human.
   the lines following the end again. Scrolling back down by hand also hides
   it once the end is less than half the height in sight away (with nothing
   new).
+
+- **`AURORA_DEMO_FRIEND_LOCATION=allowed|denied|offline`** (#999): removes
+  Nova's nearby object and coarse location at frame 60. The online friend
+  grants us map rights in `allowed`, withholds them in `denied` (we still
+  grant ours), and is offline in `offline`. Combine with
+  `AURORA_DEMO_CONV=aurora`, `AURORA_DEMO_CONV_MENU=im` and a frame-780
+  capture: Teleport To and Show on map are enabled only in `allowed`,
+  while Zoom/Go to/Follow stay disabled. Clicking Show on map resolves
+  the friend in Boreal Lagoon through TrackAgent/FindAgent; Teleport To
+  uses the same lookup once, then the normal teleport path. Also inspect
+  `AURORA_DEMO_PROFILE=friend` (the overflow Map action) and the friend
+  sheet opened from the Contacts tab. On the grid, the human checks an
+  online friend in a distant region, grant/revocation in both directions,
+  map opening from the menu/profile/sheet, and one actual teleport.
+  FindAgent supplies only global X/Y: as with the existing map, the height
+  starts at ours (or the tracked map height); it cannot locate a remote
+  friend's sky platform height. Use the map's height control when needed.
 
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click

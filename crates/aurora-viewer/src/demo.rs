@@ -2935,7 +2935,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // the two online friends who let us map them: one in our region, one
         // in the Boreal Lagoon
         aurora_net::NetCommand::FindAgent(prey) if [u(100), u(102)].contains(prey) => {
-            let (x, y) = if *prey == u(100) {
+            let remote = std::env::var_os("AURORA_DEMO_FRIEND_LOCATION").is_some();
+            let (x, y) = if *prey == u(100) && !remote {
                 (256_020.0, 256_240.0)
             } else {
                 (256_316.0, 256_200.0)
@@ -3626,6 +3627,28 @@ fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
         map_image_id: Uuid::nil(),
         size_x: 256,
         size_y: 256,
+    }
+}
+
+/// Make the conversation's friend remote without keeping a nearby object
+/// or coarse position. Combine with existing contacts/profile/map scenarios.
+pub fn friend_location(world: &mut crate::world::World) {
+    let Ok(mode) = std::env::var("AURORA_DEMO_FRIEND_LOCATION") else {
+        return;
+    };
+    if !matches!(mode.as_str(), "allowed" | "denied" | "offline") {
+        return;
+    }
+    if let Some(idx) = world.objects.index_of_uuid(&DEMO_FRIEND) {
+        world.objects.remove_idx(idx);
+    }
+    for positions in world.coarse.values_mut() {
+        positions.retain(|(id, _)| *id != DEMO_FRIEND);
+    }
+    if let Some(f) = world.social.friends.iter_mut().find(|f| f.id == DEMO_FRIEND) {
+        f.online = mode != "offline";
+        f.rights_given = 3;
+        f.rights_has = if mode == "denied" { 1 } else { 3 };
     }
 }
 
