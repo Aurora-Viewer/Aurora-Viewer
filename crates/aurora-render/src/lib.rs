@@ -961,7 +961,12 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     fn prepass_and_scene_positions_are_invariant() {
         let object = include_str!("shaders/object.wgsl");
         let env = include_str!("shaders/env.wgsl");
-        for (src, name) in [(object, "DepthOut"), (object, "DepthNormalOut"), (object, "VsOut"), (env, "TerrainOut")] {
+        for (src, name) in [
+            (object, "DepthOut"),
+            (object, "DepthNormalOut"),
+            (object, "VsOut"),
+            (env, "TerrainOut"),
+        ] {
             let start = src.find(&format!("struct {name} {{")).unwrap_or_else(|| panic!("{name} not found"));
             let body = &src[start..];
             let body = &body[..body.find('}').unwrap_or(body.len())];
