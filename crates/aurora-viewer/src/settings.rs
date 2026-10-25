@@ -464,6 +464,10 @@ pub struct Settings {
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
     pub gpu_adapter: String,
+    /// The graphics driver whose "out of date" warning the user dismissed
+    /// on the login screen (`gpu_driver::Notice::key`): a newer driver that
+    /// is still too old warns again.
+    pub gpu_driver_dismissed: String,
     pub vsync: bool,
     pub shadows: bool,
     pub force_midday: bool,
@@ -1420,6 +1424,7 @@ impl Default for Settings {
             start_region: String::new(),
             draw_distance: 96.0,
             gpu_adapter: String::new(),
+            gpu_driver_dismissed: String::new(),
             vsync: false,
             shadows: true,
             force_midday: false,

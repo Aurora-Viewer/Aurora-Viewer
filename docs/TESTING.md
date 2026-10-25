@@ -3366,6 +3366,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_CRASH_CAPTURE=<file.png>` | Screenshot of the recovery window in demo |
 | `AURORA_CRASH_CAPTURE_EXIT=1` | Closes the window after its screenshot in demo |
 | `AURORA_DEMO_UPDATE=<mode>` | Interactive update mock-up on the login screen |
+| `AURORA_DEMO_GPU_DRIVER=old\|aged` | Out of date graphics driver warning on the login screen |
 | `AURORA_DEMO_UPDATE_MAINTENANCE=<mode>` | Announces a cache invalidation and/or a reset |
 | `AURORA_UPDATE_TEST_ROOT=<folder>` | Throwaway installation served by a local feed |
 | `AURORA_UPDATE_TEST_VERSION=<tag>` | Dev build with a synthetic version for this test |
@@ -4611,6 +4612,15 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   In a small window, the button stays reachable at the top right.
   `AURORA_DEMO_UPDATE_MAINTENANCE=cache|settings|both` shows the forced effects;
   when absent, the dialog announces the usual preservation and migrations.
+- **`AURORA_DEMO_GPU_DRIVER=old|aged`**, with `AURORA_DEMO=1`: the driver check
+  (`gpu_driver.rs`) reads a made-up card instead of the real one: `old` a
+  GeForce GTX 1060 on NVIDIA 546.33 (under the 572.16 minimum), `aged` an AMD
+  card whose driver was installed three years ago. The login screen shows the
+  caution-edged card in its top left corner (with `AURORA_DEMO_LOGIN=cards` or
+  `empty`); "Get the … driver" opens the vendor's page, "Ignore for this
+  driver" hides it and saves `gpu_driver_dismissed` in the demo profile
+  (clear it there to see the card again). Without the variable the real
+  driver is checked: the log line `graphics driver:` says the verdict.
 - **Isolated real installation**: `scripts/test-update.ps1` prepares packages
   0.2.100 and 0.2.101 in `.scratch`, serves the second on loopback and
   launches the first.

@@ -51,6 +51,7 @@ mod folders;
 use folders::chat_log_root;
 mod dof;
 mod double_click;
+mod driver_check;
 mod env_apply;
 mod env_day_editor;
 mod env_editor;
@@ -10202,6 +10203,13 @@ impl App {
             LoginAction::Login if !self.updater.blocks_login() && aurora_updater::test_environment().is_none() => self.start_login(),
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             LoginAction::ReportBug => self.open_issue_chooser(),
+            LoginAction::DismissDriverNotice => {
+                if let Some(notice) = self.login_form.driver_notice.take() {
+                    log::info!("graphics driver warning dismissed for {}", notice.key);
+                    self.settings.gpu_driver_dismissed = notice.key;
+                    self.settings.save();
+                }
+            }
             LoginAction::Quit => self.request_exit(),
             LoginAction::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
             LoginAction::Accessibility => {
@@ -13794,6 +13802,7 @@ impl ApplicationHandler for App {
         self.options_ui.gpus = renderer.info.adapters.clone();
         self.options_ui.gpu_in_use = renderer.info.name.clone();
         self.options_ui.gpu_notice = renderer.info.notice;
+        self.login_form.driver_notice = self.driver_notice(&renderer.info);
         self.screen_rate.poll(&window, Instant::now());
         let max_tex = renderer.device.limits().max_texture_dimension_2d as usize;
         let egui_state = egui_winit::State::new(
