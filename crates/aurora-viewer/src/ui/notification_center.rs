@@ -274,9 +274,10 @@ pub fn bell(
         let r = Rect::from_center_size(rect.center(), Vec2::splat(16.0));
         egui::Image::new(t).tint(col).rotate(angle, Vec2::new(0.5, 0.1)).paint_at(ui, r);
     }
-    if dnd && let Some(t) = icons.get("moon-filled") {
-        let r = Rect::from_center_size(rect.left_bottom() + Vec2::new(5.0, -5.0), Vec2::splat(9.0));
-        egui::Image::new(t).tint(p.danger).paint_at(ui, r);
+    // A full red dot: the moon read as the away status, and half of it
+    // looked cut off by the bell (#491).
+    if dnd {
+        ui.painter().circle_filled(rect.left_bottom() + Vec2::new(5.0, -5.0), 3.5, p.danger);
     }
     // the bounce: 1 → 1.45 → 1 over 380 ms
     let s = c

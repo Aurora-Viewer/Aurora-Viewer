@@ -29,6 +29,7 @@ function Read-CrashReport([string]$Body) {
                 'Crash' {
                     if ($value -eq 'Rust panic') { $report.Kind = 'Rust panic' }
                     elseif ($value -eq 'Freeze') { $report.Kind = 'Freeze' }
+                    elseif ($value -eq 'GPU not responding') { $report.Kind = 'GPU not responding' }
                     elseif ($value -match '^Native exception (0x[0-9A-F]{8})$') { $report.Kind = "Native exception $($Matches[1])" }
                 }
                 'System' { if ($value -match '^[A-Za-z0-9 ._()\-,+/]{1,120}$') { $report.System = $value } }
@@ -232,6 +233,7 @@ function Get-CrashSignature($Report, $Frames) {
     $kind = 'panic'
     if ($Report.Kind -like 'Native exception*') { $kind = $Report.Kind.Substring('Native exception '.Length) }
     elseif ($Report.Kind -eq 'Freeze') { $kind = 'freeze' }
+    elseif ($Report.Kind -eq 'GPU not responding') { $kind = 'gpu stall' }
     $resolved = @($Frames | Where-Object { $_.Resolved })
     $keys = @()
     if ($resolved.Count) {
@@ -259,6 +261,7 @@ function Get-TriageTitle($Report, $Signature) {
     $kind = 'Rust panic'
     if ($Report.Kind -like 'Native exception*') { $kind = 'native exception ' + $Report.Kind.Substring('Native exception '.Length) }
     elseif ($Report.Kind -eq 'Freeze') { $kind = 'freeze' }
+    elseif ($Report.Kind -eq 'GPU not responding') { $kind = 'GPU stall' }
     # Without symbols, the viewer's title (kind and fault) says as much.
     $keys = @($Signature.Frames)
     if (-not $keys.Count -or $keys[0] -like 'unsymbolized*') { return $null }

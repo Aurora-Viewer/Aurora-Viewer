@@ -172,7 +172,21 @@ fn write_alive(dir: &Path, responsive: Option<u64>) {
 
 #[cfg(windows)]
 fn save_freeze(dir: &Path, main: Option<&super::native::Thread>, seconds: u64) {
-    let mut out = format!("Freeze: no answer for {seconds} s\n").into_bytes();
+    save_stacks(dir, "freeze", &format!("Freeze: no answer for {seconds} s"), main);
+}
+
+/// The render thread kept a frame in the GPU (the window still answers,
+/// `aurora_render::Renderer::stalled_for`): its stack in `gpu-stall.txt`.
+#[cfg(windows)]
+pub fn save_gpu_stall(dir: &Path, seconds: u64) {
+    save_stacks(dir, "gpu-stall", &format!("GPU stall: no frame for {seconds} s"), None);
+}
+
+/// `<name>.txt`: a header line, then the main thread's stack when given and
+/// those of [`THREADS`].
+#[cfg(windows)]
+fn save_stacks(dir: &Path, name: &str, header: &str, main: Option<&super::native::Thread>) {
+    let mut out = format!("{header}\n").into_bytes();
     if let Some(main) = main {
         out.extend_from_slice(b"Thread: main\n");
         main.write_stack(&mut out);
@@ -185,9 +199,9 @@ fn save_freeze(dir: &Path, main: Option<&super::native::Thread>, seconds: u64) {
             thread.write_stack(&mut out);
         }
     }
-    let pending = dir.join("freeze.pending");
+    let pending = dir.join(format!("{name}.pending"));
     if std::fs::write(&pending, out).is_ok() {
-        let _ = std::fs::rename(pending, dir.join("freeze.txt"));
+        let _ = std::fs::rename(pending, dir.join(format!("{name}.txt")));
     }
 }
 
