@@ -605,6 +605,107 @@ fn preference_shapes(
     })
 }
 
+#[test]
+fn parcel_visibility_lists_show_full_names_and_regions_with_separate_remove_controls() {
+    use crate::world::parcel_visibility::Entry;
+    fn frame(
+        frames: &mut Frames,
+        s: &mut Settings,
+        st: &mut OptionsUi,
+        view: (f32, Mode),
+        events: Vec<egui::Event>,
+    ) -> (Vec<egui::Shape>, bool) {
+        let p = crate::theme::Theme::default().palette();
+        let d = Settings::default();
+        let mut r = OptionsResult::default();
+        let mut changed = false;
+        let shapes = frames.shapes(events, |ui| {
+            ui.set_width(view.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let mut cx = Cx::new(ui, p, s, &d, st, &mut r, view.1, "parc");
+            run_page(&mut cx, Page::Graphics, Some(0));
+            changed |= cx.changed;
+        });
+        (shapes, changed)
+    }
+    fn text<'a>(shapes: &'a [egui::Shape], source: &str) -> &'a egui::epaint::TextShape {
+        shapes
+            .iter()
+            .find_map(|shape| match shape {
+                egui::Shape::Text(t) if t.galley.text() == source => Some(t),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing parcel text: {source}"))
+    }
+    for width in [420.0, 700.0, 900.0] {
+        for mode in [Mode::Show, Mode::Search] {
+            let mut frames = Frames::new();
+            let (mut s, mut st) = (Settings::default(), OptionsUi::default());
+            let entries: Vec<_> = (1..=4)
+                .map(|i| Entry {
+                    region: uuid::Uuid::from_u128(i as u128),
+                    local_id: i,
+                    name: format!("Northern Aurora Gardens — Observatory, visitor centre and exhibition pavilion {i}"),
+                    region_name: format!("Aurora Demonstration Region {i}"),
+                })
+                .collect();
+            s.parcel_visibility.parcels = entries[..2].to_vec();
+            s.parcel_visibility.always_visible = entries[2..].to_vec();
+            let view = (width, mode);
+            let mut shapes = Vec::new();
+            for _ in 0..4 {
+                shapes = frame(&mut frames, &mut s, &mut st, view, Vec::new()).0;
+            }
+            let heading = text(&shapes, aurora_i18n::tr!("parcel-visibility-always-visible")).pos;
+            let mut remove = None;
+            let mut right: Option<f32> = None;
+            for entry in &entries {
+                let name = text(&shapes, &entry.name);
+                let region = text(&shapes, &entry.region_name);
+                assert!(
+                    !name.galley.elided && !region.galley.elided,
+                    "{width}, {mode:?}: names and regions must be readable"
+                );
+                assert!((name.pos.x - heading.x).abs() < 1.0, "a list uses the width below its heading");
+                assert!(region.pos.y >= name.pos.y + name.galley.size().y, "the region has its own line");
+                let trash = shapes
+                    .iter()
+                    .filter_map(|shape| match shape {
+                        egui::Shape::Rect(r)
+                            if (r.rect.width() - 20.0).abs() < 0.1
+                                && (r.rect.height() - 20.0).abs() < 0.1
+                                && (r.rect.top() - name.pos.y).abs() < 1.0
+                                && r.rect.left() > name.pos.x + name.galley.size().x =>
+                        {
+                            Some(r.rect)
+                        }
+                        _ => None,
+                    })
+                    .max_by(|a, b| a.right().total_cmp(&b.right()))
+                    .expect("a separate remove control to the right of the name");
+                assert!(
+                    trash.right() - heading.x > width * 0.8,
+                    "{width}, {mode:?}: the list spans the page"
+                );
+                if let Some(right) = right {
+                    assert!((trash.right() - right).abs() < 1.0, "remove controls share a right edge");
+                }
+                right = Some(trash.right());
+                if entry == &entries[2] {
+                    remove = Some(trash.center());
+                }
+            }
+            let mut changed = false;
+            for events in click(remove.expect("remove the first always-visible entry")) {
+                changed |= frame(&mut frames, &mut s, &mut st, view, events).1;
+            }
+            assert!(changed, "removing a parcel must save the preference");
+            assert_eq!(s.parcel_visibility.always_visible, entries[3..]);
+            assert_eq!(s.parcel_visibility.parcels, entries[..2], "removal belongs to its own list");
+        }
+    }
+}
+
 /// The full painted rails, excluding the shorter accent fills and handles.
 fn slider_rails(frames: &Frames, shapes: &[egui::Shape]) -> Vec<egui::Rect> {
     shapes

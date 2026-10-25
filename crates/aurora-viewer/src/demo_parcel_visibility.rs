@@ -95,4 +95,17 @@ pub fn install(world: &mut World, settings: &mut crate::settings::Settings, mode
     {
         settings.parcel_visibility.parcels.push(entry);
     }
+    if mode == "lists"
+        && let Some(handle) = world.main_region
+    {
+        for local_id in 1..=3 {
+            if let Some(parcel) = parcel_by_id(local_id)
+                && let Some(mut entry) = world.parcel_entry(handle, &parcel)
+            {
+                entry.name = format!("{} — {}", entry.name, aurora_i18n::tr!("demo-parcel-visibility-long"));
+                settings.parcel_visibility.parcels.push(entry.clone());
+                settings.parcel_visibility.always_visible.push(entry);
+            }
+        }
+    }
 }

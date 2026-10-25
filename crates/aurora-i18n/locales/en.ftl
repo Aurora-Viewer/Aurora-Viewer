@@ -11380,4 +11380,6 @@ parcel-visibility-same-group-help = Match the current parcel’s assigned group,
 parcel-visibility-always-visible = Always-visible parcels
 parcel-visibility-always-visible-help = These parcels remain visible while filtering, regardless of their owner or group. Add the current parcel or select a neighbour in About Land and add the selected parcel. Remove an entry to restore the normal filtering rules.
 parcel-visibility-add-selected = Add selected parcel
+parcel-visibility-empty = No parcels added
 demo-parcel-visibility-pinned = Always-visible neighbour
+demo-parcel-visibility-long = Aurora Observatory and Northern Gardens — Visitor Centre and Exhibition Pavilion

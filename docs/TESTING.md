@@ -2637,7 +2637,7 @@ both open states and the selection count. Capture at frame 620.
 
 ### Details
 
-- **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible`**:
+- **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible|lists`**:
   four parcels split the plaza at x/y 128 m. The northern parcels share an owner;
   the southern ones belong to someone else. `always`, `listed` (current parcel
   listed) and `except` (empty list) hide content outside the north-east parcel;
@@ -2651,6 +2651,10 @@ both open states and the selection count. Capture at frame 620.
   north-west parcel and deeds the north-east neighbour to that group, with the
   same-owner option off; `group-owned-current` reverses assigned/deeded status.
   The northern plaza stays visible in both group scenarios from `124,132`.
+  `lists` fills both saved lists with three long synthetic parcel names. Combine
+  with `AURORA_DEMO_OPTIONS=graphics:search=parc` to inspect the full-width lists,
+  wrapped names, separate region lines and aligned remove buttons, including in
+  a narrow window or at an enlarged UI scale. Larger lists scroll independently.
   Combine with
   `AURORA_DEMO_OPTIONS=graphics` for the native controls. Check live mode changes,
   adding/removing scope entries and always-visible parcels, and restoring content

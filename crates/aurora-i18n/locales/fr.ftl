@@ -11376,4 +11376,6 @@ parcel-visibility-same-group-help = Comparer le groupe désigné de la parcelle 
 parcel-visibility-always-visible = Parcelles toujours affichées
 parcel-visibility-always-visible-help = Ces parcelles restent affichées malgré le filtre, quels que soient leur propriétaire et leur groupe. Ajoutez la parcelle actuelle ou sélectionnez une voisine dans À propos du terrain puis ajoutez la parcelle sélectionnée. Retirer une entrée rétablit les règles normales de filtrage.
 parcel-visibility-add-selected = Ajouter la parcelle sélectionnée
+parcel-visibility-empty = Aucune parcelle ajoutée
 demo-parcel-visibility-pinned = Parcelle voisine toujours affichée
+demo-parcel-visibility-long = Observatoire Aurora et jardins du Nord — Accueil des visiteurs et pavillon d’exposition
