@@ -1457,6 +1457,17 @@ app-graphics-start-failed =
     Détails : { $e }
 
     Le journal de ce démarrage : { $log }
+app-gpu-stall-title = Aurora Viewer : la carte graphique ne répond plus
+app-gpu-stall =
+    La carte graphique n'a pas terminé d'image depuis { $seconds } secondes. Aurora fonctionne toujours (le monde, le son, le chat continuent) mais rien ne peut être affiché tant que la carte ne répond pas.
+
+    À essayer :
+    • patienter un peu : un pilote graphique qui se réinitialise peut prendre plusieurs secondes ;
+    • mettre à jour le pilote de la carte graphique ;
+    • désactiver les overlays des autres programmes (Discord, Steam, MSI Afterburner…) ;
+    • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
+
+    Continuer d'attendre ? Oui continue d'attendre ; Non ferme Aurora (vous êtes déconnecté proprement).
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora n'a pas encore d'animation overrider (AO).
 cmdline-mod-use-hover-height-in-appearance = Ajustez la hauteur de survol de votre avatar dans Apparence → Hauteur de survol.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni vos informations de paiement.
@@ -5325,6 +5336,14 @@ login-driver-old-age = { $gpu } utilise un pilote installé le { $date }, il y a
 login-driver-old-why = Les vieux pilotes sont la première cause de plantages et d'images cassées. La mise à jour prend quelques minutes.
 login-driver-download = Télécharger le pilote { $vendor }
 login-driver-dismiss = Ignorer pour ce pilote
+login-safe-graphics-offer-title = La carte graphique a cessé de répondre la dernière fois
+login-safe-graphics-offer = Démarrer avec les graphismes de secours (le niveau Patate) : une charge plus légère pour la carte graphique. Vos réglages actuels sont mis de côté, et cette carte vous proposera de les remettre.
+login-safe-graphics-use = Utiliser les graphismes de secours
+login-safe-graphics-keep = Garder mes réglages
+login-safe-graphics-active-title = Graphismes de secours activés
+login-safe-graphics-active = Aurora tourne au niveau Patate depuis que la carte graphique a cessé de répondre. Une fois la cause corrigée (pilote à jour, overlays coupés), remettez vos propres réglages.
+login-safe-graphics-restore = Remettre mes graphismes
+login-safe-graphics-stay = Garder les graphismes de secours
 ui-perf-downloaded = Téléchargé
 common-teleport-2 = Téléportation
 common-teleport-accepted = Téléportation acceptée…
@@ -7128,8 +7147,12 @@ crash-reason-rust = Panique Rust
 crash-reason-native = Plantage natif
 crash-reason-unknown = Arrêt inattendu
 crash-reason-freeze = Figé, puis arrêté
+<<<<<<< HEAD
 crash-reason-thread = Une partie du viewer a cessé de fonctionner
 crash-reason-oom = Mémoire insuffisante
+=======
+crash-reason-gpu = Carte graphique sans réponse
+>>>>>>> origin/main
 crash-send-report = Envoyer un rapport de plantage
 crash-sent = Rapport de plantage envoyé : issue n° { $number }.
 crash-sending = Envoi du rapport de plantage à GitHub…

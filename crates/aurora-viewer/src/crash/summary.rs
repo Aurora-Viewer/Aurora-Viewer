@@ -34,6 +34,7 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     let (native_text, panic, freeze_text) = (text("native.txt"), text("panic.txt"), text("freeze.txt"));
     let native = (!native_text.trim().is_empty()).then(|| Stack::parse(&native_text));
     let freeze = threads(&freeze_text);
+    let stall = threads(&text("gpu-stall.txt"));
     let location = panic.lines().next().and_then(panic_location);
     let alive = super::watchdog::read_alive(dir);
     let value = |key: &str| alive.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
@@ -64,6 +65,10 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
             "Startup or event loop failure".to_owned(),
             "startup or event loop failure".to_owned(),
         )
+    } else if !stall.is_empty() {
+        // The GPU still had a frame when the session ended (the window
+        // answered, the user closed it from the notice or by other means).
+        ("GPU not responding".to_owned(), "GPU not responding".to_owned())
     } else if !freeze.is_empty() {
         // The window was still not answering when the session ended.
         ("Freeze".to_owned(), "freeze".to_owned())
@@ -129,8 +134,19 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         rows.push(("GPU", gpu.clone()));
     }
     // aurora-render's device lost callback (main_thread.rs).
-    if tail.lines().any(|line| line.contains("] GPU device lost (")) {
+    if device_lost_in(&tail) {
         rows.push(("GPU device lost", "yes (driver reset or GPU removed)".into()));
+    }
+    if let Some(seconds) = text("gpu-stall.txt").lines().next().and_then(|line| {
+        line.strip_prefix("GPU stall: no frame for ")?
+            .strip_suffix(" s")?
+            .parse::<u64>()
+            .ok()
+    }) {
+        rows.push((
+            "GPU not responding",
+            format!("no frame for {seconds} s, the window still answering"),
+        ));
     }
     if record.demo {
         rows.push(("Demo session", "yes".into()));
@@ -146,12 +162,13 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         body.push_str(&format!("\n### Rust panic\n\nLocation: `{location}`\n"));
     }
     // The panic's own stack when there is one, else the exception's, else
-    // the frozen threads' (the main thread's first: the one the triage reads).
+    // the render thread's held in the GPU, else the frozen threads' (the
+    // main thread's first: the one the triage reads).
     let panic = (!panic.trim().is_empty()).then(|| Stack::parse(&panic));
     let oom = oom.map(|(_, stack)| stack);
     let stacks: Vec<(Option<&str>, Stack)> = match panic.or(oom).or(native).filter(|stack| !stack.frames.is_empty()) {
         Some(stack) => vec![(None, stack)],
-        None => freeze
+        None => if stall.is_empty() { freeze } else { stall }
             .into_iter()
             .enumerate()
             .map(|(i, (name, stack))| ((i > 0).then_some(name), stack))
@@ -418,6 +435,15 @@ fn label(value: &str, max: usize) -> String {
 
 /// The start of the session log (the GPU line) and its end (the last
 /// warnings); a long session's log is never read whole.
+fn device_lost_in(tail: &str) -> bool {
+    tail.lines().any(|line| line.contains("] GPU device lost ("))
+}
+
+/// The session's log says its GPU device was lost.
+pub(super) fn device_lost(dir: &Path) -> bool {
+    device_lost_in(&log(&dir.join("session.log")).1)
+}
+
 fn log(path: &Path) -> (String, String) {
     let read = |from_end: bool, limit: u64| -> std::io::Result<String> {
         let mut file = std::fs::File::open(path)?;

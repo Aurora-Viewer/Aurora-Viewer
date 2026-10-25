@@ -646,8 +646,8 @@ fn profile_enabled() -> bool {
 }
 
 impl super::Scene {
-    /// The HUD object the hover cursor is over (`hud_pick`, hidden faces
-    /// left out), which comes before any object of the world.
+    /// The HUD object the hover cursor is over, including invisible Blend
+    /// buttons, which comes before any object of the world.
     pub fn hover_hud(&mut self, world: &crate::world::World, cursor: (f32, f32)) -> Option<usize> {
         if !profile_enabled() {
             return self.hud_pick(world, cursor, false).map(|(idx, _, _)| idx);

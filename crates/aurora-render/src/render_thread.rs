@@ -42,6 +42,9 @@ struct State<J, R> {
     /// The owner asked the worker to stop.
     closed: bool,
     worker_gone: bool,
+    /// When the job the worker holds (or has not taken yet) was handed
+    /// over: how long the GPU has kept it.
+    handed: Option<Instant>,
     /// Tests: an owner / the worker is blocked in its wait, so that a test
     /// can time a wait from a moment it knows the wait had begun.
     #[cfg(test)]
@@ -66,6 +69,7 @@ pub fn handoff<J, R>() -> (Owner<J, R>, Worker<J, R>) {
             result: None,
             closed: false,
             worker_gone: false,
+            handed: None,
             #[cfg(test)]
             owner_waiting: 0,
             #[cfg(test)]
@@ -117,6 +121,7 @@ impl<J, R> Owner<J, R> {
         let waited = self.wait_free(&mut s)?;
         let previous = s.result.take();
         s.job = Some(job);
+        s.handed = Some(Instant::now());
         self.0.to_worker.notify_one();
         Ok(Submitted { previous, waited })
     }
@@ -127,6 +132,39 @@ impl<J, R> Owner<J, R> {
         let mut s = self.0.state.lock();
         self.wait_free(&mut s)?;
         Ok(s.result.take())
+    }
+
+    /// Wait until the worker holds nothing, but not past `deadline`: false
+    /// when it still holds its job then (a GPU that stopped answering keeps
+    /// the render thread in a driver call; the main thread must not wait
+    /// with it, or the window stops answering too). Nothing is handed over.
+    pub fn wait_until_free(&self, deadline: Instant) -> Result<bool, WorkerGone> {
+        let mut s = self.0.state.lock();
+        while (s.busy || s.job.is_some()) && !s.worker_gone {
+            if self.0.to_owner.wait_until(&mut s, deadline).timed_out() {
+                break;
+            }
+        }
+        if s.worker_gone {
+            return Err(WorkerGone);
+        }
+        Ok(!(s.busy || s.job.is_some()))
+    }
+
+    /// Like [`Self::finish`], but not past `deadline`: Ok(None) also when
+    /// the job is still in the worker's hands then.
+    pub fn finish_until(&self, deadline: Instant) -> Result<Option<R>, WorkerGone> {
+        if !self.wait_until_free(deadline)? {
+            return Ok(None);
+        }
+        Ok(self.0.state.lock().result.take())
+    }
+
+    /// How long the worker has held the job handed over; None when it holds
+    /// nothing.
+    pub fn held_for(&self) -> Option<Duration> {
+        let s = self.0.state.lock();
+        (s.busy || s.job.is_some()).then(|| s.handed.map(|t| t.elapsed())).flatten()
     }
 
     /// The result of the job handed over when the worker is already done
@@ -190,6 +228,7 @@ impl<J, R> Worker<J, R> {
         let mut s = self.0.state.lock();
         s.result = Some(result);
         s.busy = false;
+        s.handed = None;
         self.0.to_owner.notify_all();
     }
 }
@@ -276,6 +315,11 @@ impl Host {
     }
 }
 
+/// How long closing waits for the render thread to leave. A GPU that
+/// stopped answering keeps it in a driver call for ever: the viewer then
+/// closes without it (the process ends it) instead of hanging at exit.
+const LEAVE_WAIT: Duration = Duration::from_secs(3);
+
 impl Drop for Host {
     /// The render thread finishes the frame in its hands, then leaves and
     /// gives the backend back: the surface and the swapchain are destroyed
@@ -284,6 +328,14 @@ impl Drop for Host {
         if let Host::Thread { owner, thread } = self {
             owner.close();
             if let Some(t) = thread.take() {
+                let deadline = Instant::now() + LEAVE_WAIT;
+                while !t.is_finished() && Instant::now() < deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                if !t.is_finished() {
+                    log::error!("render thread still in the GPU after {LEAVE_WAIT:?}: left behind");
+                    return;
+                }
                 match t.join() {
                     Ok(backend) => drop(backend),
                     Err(_) => log::error!("render thread ended by a panic"),
@@ -293,12 +345,36 @@ impl Drop for Host {
     }
 }
 
+/// `AURORA_DEMO_GPU_STALL=<frame>[:<seconds>]`, with `AURORA_DEMO` only: the
+/// render thread holds that frame as a GPU that stopped answering would
+/// (30 s by default), to show what the window does meanwhile.
+fn demo_stall(demo: bool, var: Option<&str>) -> Option<(u64, Duration)> {
+    if !demo {
+        return None;
+    }
+    let (frame, seconds) = match var?.split_once(':') {
+        Some((frame, seconds)) => (frame, seconds.trim().parse().ok()?),
+        None => (var?, 30),
+    };
+    Some((frame.trim().parse().ok()?, Duration::from_secs(seconds)))
+}
+
 /// The render thread's loop; returns the backend when the owner closes.
 fn run(mut backend: Backend, worker: Worker<Job, Done>) -> Backend {
+    let stall = demo_stall(
+        std::env::var_os("AURORA_DEMO").is_some(),
+        std::env::var("AURORA_DEMO_GPU_STALL").ok().as_deref(),
+    );
     while let Some((job, idle)) = worker.next() {
         crate::frame_priority::apply();
         let done = match job {
             Job::Frame(packet) => {
+                if let Some((frame, hold)) = stall
+                    && packet.index == frame
+                {
+                    log::warn!("AURORA_DEMO_GPU_STALL: frame {frame} held {hold:?}");
+                    std::thread::sleep(hold);
+                }
                 let t = Instant::now();
                 let mut result = backend.render(*packet);
                 result.stats.thread_ms = t.elapsed().as_secs_f32() * 1000.0;
@@ -464,6 +540,43 @@ mod tests {
         owner.submit(1).expect("worker alive");
         let idle = owner.finish().expect("worker alive").expect("result");
         assert!(idle >= TICK, "{idle:?}");
+        drop(owner);
+        t.join().expect("worker");
+    }
+
+    #[test]
+    fn the_demo_stall_names_a_frame_and_a_length_in_demo_only() {
+        assert_eq!(demo_stall(true, Some("900")), Some((900, Duration::from_secs(30))));
+        assert_eq!(demo_stall(true, Some("900:12")), Some((900, Duration::from_secs(12))));
+        assert_eq!(demo_stall(false, Some("900")), None);
+        assert_eq!(demo_stall(true, Some("soon")), None);
+        assert_eq!(demo_stall(true, None), None);
+    }
+
+    #[test]
+    fn a_stuck_worker_only_holds_the_owner_until_its_deadline() {
+        let (owner, worker) = handoff::<u32, u32>();
+        let (release, gate) = mpsc::channel::<()>();
+        let t = std::thread::spawn(move || {
+            while let Some((job, _)) = worker.next() {
+                // a GPU that does not answer: held until released
+                let _ = gate.recv();
+                worker.complete(job);
+            }
+        });
+        assert_eq!(owner.held_for(), None);
+        assert_eq!(owner.wait_until_free(Instant::now()), Ok(true), "nothing handed over");
+        owner.submit(1).expect("worker alive");
+        until(&owner, "worker on the job", |s| s.busy);
+        let start = Instant::now();
+        assert_eq!(owner.wait_until_free(start + TICK), Ok(false));
+        assert!(start.elapsed() >= TICK);
+        assert_eq!(owner.finish_until(Instant::now() + TICK), Ok(None));
+        assert!(owner.held_for().is_some_and(|d| d >= TICK * 2), "{:?}", owner.held_for());
+        release.send(()).expect("worker on its job");
+        assert_eq!(owner.finish_until(Instant::now() + Duration::from_secs(10)), Ok(Some(1)));
+        assert_eq!(owner.held_for(), None);
+        drop(release);
         drop(owner);
         t.join().expect("worker");
     }

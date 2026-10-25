@@ -1454,6 +1454,17 @@ app-graphics-start-failed =
     Details: { $e }
 
     The log of this start: { $log }
+app-gpu-stall-title = Aurora Viewer: the graphics card is not responding
+app-gpu-stall =
+    The graphics card has not finished an image for { $seconds } seconds. Aurora still works (the world, the sound, the chat go on) but nothing can be drawn until the card answers again.
+
+    What to try:
+    • wait a little: a graphics driver that resets itself can take several seconds;
+    • update the graphics card driver;
+    • turn off the overlays of other programs (Discord, Steam, MSI Afterburner…);
+    • at the next start, choose the safe graphics that Aurora will offer.
+
+    Keep waiting? Yes keeps waiting; No closes Aurora (you are logged out properly).
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora does not have an animation overrider (AO) yet.
 cmdline-mod-use-hover-height-in-appearance = Adjust your avatar's hover height through Appearance → Hover Height.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora recommends against opening this link. If it asks you to log in or pay, it is very likely a scam: never give it your password or payment information.
@@ -5320,6 +5331,14 @@ login-driver-old-age = { $gpu } uses a driver installed on { $date }, more than 
 login-driver-old-why = Old drivers are the most common cause of crashes and broken images. Updating takes a few minutes.
 login-driver-download = Get the { $vendor } driver
 login-driver-dismiss = Ignore for this driver
+login-safe-graphics-offer-title = The graphics card stopped answering last time
+login-safe-graphics-offer = Start with the safe graphics (the Potato level): a lighter load for the graphics card. Your current settings are kept aside, and this card will offer them back.
+login-safe-graphics-use = Use the safe graphics
+login-safe-graphics-keep = Keep my settings
+login-safe-graphics-active-title = Safe graphics are on
+login-safe-graphics-active = Aurora runs on the Potato level since the graphics card stopped answering. Once the cause is fixed (driver updated, overlays off), put your own settings back.
+login-safe-graphics-restore = Restore my graphics
+login-safe-graphics-stay = Keep the safe graphics
 ui-perf-downloaded = Downloaded
 common-teleport-2 = Teleport
 common-teleport-accepted = Teleport accepted…
@@ -7135,8 +7154,12 @@ crash-reason-rust = Rust panic
 crash-reason-native = Native crash
 crash-reason-unknown = Unexpected shutdown
 crash-reason-freeze = Frozen, then ended
+<<<<<<< HEAD
 crash-reason-thread = A part of the viewer stopped working
 crash-reason-oom = Out of memory
+=======
+crash-reason-gpu = Graphics card not responding
+>>>>>>> origin/main
 crash-send-report = Send a crash report
 crash-sent = Crash report sent as issue #{ $number }.
 crash-sending = Sending the crash report to GitHub…

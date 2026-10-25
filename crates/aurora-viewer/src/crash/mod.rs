@@ -300,6 +300,56 @@ pub fn failure(message: &str) {
     }
 }
 
+/// The GPU has kept a frame for `seconds` while the window still answers:
+/// the render thread's stack goes to `gpu-stall.txt`, so a session ended
+/// now is reported as such. [`gpu_answered`] takes it back.
+pub fn gpu_stalled(seconds: u64) {
+    #[cfg(windows)]
+    if let Some(session) = SESSION.get() {
+        watchdog::save_gpu_stall(&session.dir, seconds);
+    }
+    #[cfg(not(windows))]
+    let _ = seconds;
+}
+
+/// The user closed the viewer from the notice while the GPU did not answer:
+/// the session is reported even though it ends through the usual way out.
+pub fn gpu_closed() {
+    if let Some(session) = SESSION.get() {
+        let _ = std::fs::write(session.dir.join("failed"), []);
+    }
+}
+
+pub fn gpu_answered() {
+    if let Some(session) = SESSION.get() {
+        let _ = std::fs::remove_file(session.dir.join("gpu-stall.txt"));
+    }
+}
+
+/// Left in the crash root when a session ended with the GPU in trouble
+/// (stalled, lost, or the window frozen): the next launch offers the safe
+/// graphics once ([`take_gpu_trouble`]).
+const GPU_TROUBLE: &str = "gpu-trouble";
+
+fn gpu_trouble(dir: &Path) -> bool {
+    ["gpu-stall.txt", "freeze.txt"].iter().any(|name| dir.join(name).exists()) || summary::device_lost(dir)
+}
+
+fn note_gpu_trouble(dir: &Path) {
+    if gpu_trouble(dir)
+        && let Some(root) = dir.parent()
+    {
+        let _ = std::fs::write(root.join(GPU_TROUBLE), []);
+    }
+}
+
+/// The last session that ended badly had the GPU in trouble: true once,
+/// then the mark is gone. Read after [`start`], which marks a session
+/// whose watcher died with it.
+pub fn take_gpu_trouble() -> bool {
+    std::fs::remove_file(root().join(GPU_TROUBLE)).is_ok()
+}
+
 /// A viewer stopped by Windows ending the session (shutdown, restart, sign
 /// out) did not crash: nothing to report.
 fn should_report(dir: &Path, exit_code: u32) -> bool {
@@ -317,6 +367,7 @@ fn preserve(dir: &Path, exit_code: u32) -> anyhow::Result<()> {
             .as_secs()
             .to_string(),
     )?;
+    note_gpu_trouble(dir);
     Ok(())
 }
 
@@ -351,6 +402,8 @@ fn recover_in(root: &Path, mut show: impl FnMut(&Path)) {
             .open(dir.join("recovery-attempted"))
             .is_ok()
         {
+            // Its watcher died with it: nobody marked it at its end.
+            note_gpu_trouble(&dir);
             show(&dir);
         }
     }
@@ -388,7 +441,7 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
 
 fn trace(dir: &Path) -> String {
     let mut result = String::new();
-    for name in ["panic.txt", "native.txt", "oom.txt", "failure.txt", "freeze.txt"] {
+    for name in ["panic.txt", "native.txt", "oom.txt", "failure.txt", "gpu-stall.txt", "freeze.txt"] {
         if let Ok(text) = read_limited(&dir.join(name), MAX_TRACE)
             && !text.trim().is_empty()
         {
