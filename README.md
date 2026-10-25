@@ -904,7 +904,7 @@ The Aurora team runs no server: the viewer talks to Linden Lab, and to other
 services only for the features you use. The
 [privacy policy](https://aurora-viewer.org/privacy/) lists what is sent, to
 whom, and what stays on your computer; it is also linked from Preferences ›
-Privacy.
+Privacy. Questions about it: [contact@aurora-viewer.org](mailto:contact@aurora-viewer.org).
 
 ## License
 
