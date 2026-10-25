@@ -1040,6 +1040,10 @@ Navigation runs before viewport layout so virtualized rows remain in sight.
 Its shared clipboard focus survives a discarded sizing pass for one frame,
 without reclaiming another field, an outside click, Tab, Escape or a modal.
 
+`ui/inventory/aurora/sidebar.rs` follows the explorer's folder without moving
+already visible rows; offscreen folders scroll only to the nearest edge,
+with the virtual row pitch matching the actual layout.
+
 `ui/inventory/drag.rs` snapshots the full Ctrl/Shift selection at drag start
 and moves it through `world/inventory/actions.rs::move_selection`. A separate
 batch payload prevents single-item world, attachment and editor targets from

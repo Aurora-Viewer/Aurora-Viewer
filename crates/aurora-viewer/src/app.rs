@@ -15134,6 +15134,8 @@ impl ApplicationHandler for App {
                         | "aurora"
                         | "aurora-medium"
                         | "aurora-wide"
+                        | "aurora-sidebar-medium"
+                        | "aurora-sidebar-wide"
                         | "aurora-rights"
                         | "favorites"
                         | "favorites-multi"
@@ -15175,6 +15177,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
                     }
                     if view.starts_with("aurora") {
+                        if view.starts_with("aurora-sidebar-") {
+                            crate::world::inventory::demo::seed_sidebar(&mut self.world.inventory);
+                        }
                         // Aurora's window at each width, on the demo object
                         // of the right-click tests, a favourite beside it.
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));

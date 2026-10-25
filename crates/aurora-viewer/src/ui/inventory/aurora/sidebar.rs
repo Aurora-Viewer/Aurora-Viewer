@@ -33,6 +33,10 @@ pub struct Sidebar {
     /// The explorer's folder last shown: a new one opens its ancestors and
     /// scrolls into sight.
     shown: Uuid,
+    #[cfg(test)]
+    pub(super) drawn: std::collections::HashMap<Uuid, Rect>,
+    #[cfg(test)]
+    pub(super) scroll: Option<(f32, Rect)>,
 }
 
 impl Sidebar {
@@ -167,6 +171,8 @@ fn browse(st: &mut InventoryUi, prefs: &InventoryPreferences, folder: Uuid) {
     set_tab(st, prefs, 0);
     st.search.clear();
     st.browse = folder;
+    // A pointer selection is already in sight, even if its row is partly clipped.
+    st.side.shown = folder;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -272,15 +278,24 @@ pub(super) fn show(
     let foot = if trash.is_some() { ROW + 8.0 } else { 0.0 };
     let height = (ui.available_height() - foot).max(ROW);
     let rows = st.side.rows.clone();
+    // Keep show_rows' virtual pitch identical to the rows laid out below.
+    let spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
     let mut area = egui::ScrollArea::vertical()
         .id_salt("aurora_inventory_side_folders")
         .max_height(height)
         .auto_shrink([false, false]);
     if follow && let Some(index) = rows.iter().position(|row| row.id == st.browse) {
-        area = area.vertical_scroll_offset((index as f32 * ROW - height / 2.0).max(0.0));
+        // LLScrollContainer::scrollToShowRect (indra/llui/llscrollcontainer.cpp):
+        // leave visible folders in place; reveal offscreen ones at the nearest edge.
+        let id = ui.make_persistent_id(egui::IdSalt::new("aurora_inventory_side_folders"));
+        let offset = egui::scroll_area::State::load(ui.ctx(), id).map_or(0.0, |state| state.unclamped_offset().y);
+        let top = index as f32 * ROW;
+        area = area.vertical_scroll_offset(offset.min(top).max(top + ROW - height).max(0.0));
     }
-    area.show_rows(ui, ROW, rows.len(), |ui, range| {
-        ui.spacing_mut().item_spacing.y = 0.0;
+    #[cfg(test)]
+    st.side.drawn.clear();
+    let _out = area.show_rows(ui, ROW, rows.len(), |ui, range| {
         for row in &rows[range] {
             let Some(folder) = inv.folders.get(&row.id) else { continue };
             let left = 4.0 + row.depth as f32 * INDENT + CARET + 4.0;
@@ -292,6 +307,8 @@ pub(super) fn show(
                 _ => "folder-filled",
             };
             let response = entry(ui, p, icon, &name, None, 0, selected, left);
+            #[cfg(test)]
+            st.side.drawn.insert(row.id, response.rect);
             let caret_center = Pos2::new(
                 response.rect.left() + 4.0 + row.depth as f32 * INDENT + CARET / 2.0,
                 response.rect.center().y,
@@ -334,6 +351,11 @@ pub(super) fn show(
             }
         }
     });
+    ui.spacing_mut().item_spacing.y = spacing;
+    #[cfg(test)]
+    {
+        st.side.scroll = Some((_out.state.unclamped_offset().y, _out.inner_rect));
+    }
     // The Trash, at the foot.
     if let Some(trash) = trash {
         let (line, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 8.0), Sense::hover());
