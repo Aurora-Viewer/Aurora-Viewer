@@ -346,3 +346,68 @@ async fn any_2xx_answer_is_a_post_even_with_an_empty_body() {
     let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
     assert!(post(&http, &url, &report).await);
 }
+
+/// A capability that answers after `delay`, served by `rt`.
+fn slow_capability(rt: &tokio::runtime::Runtime, delay: Duration) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = rt.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).expect("listener");
+    let url = format!("http://{}/cap", listener.local_addr().expect("address"));
+    rt.spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0; 65536];
+                let _ = stream.read(&mut buf).await;
+                tokio::time::sleep(delay).await;
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
+            });
+        }
+    });
+    url
+}
+
+/// Post one report the way the session does, counted in `posts`.
+fn post_counted(rt: &tokio::runtime::Runtime, posts: &std::sync::Arc<PostsInFlight>, url: String) {
+    let posts = posts.clone();
+    let report = body(&viewer(), &NetCounters::default(), 0.0, 0, 0);
+    posts.begin();
+    rt.spawn(async move {
+        post(&reqwest::Client::new(), &url, &report).await;
+        posts.end();
+    });
+}
+
+#[test]
+fn the_exit_waits_for_the_last_report_up_to_its_bound_and_no_longer() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let bound = Duration::from_secs(2);
+
+    // nothing being posted: no wait at all
+    let posts = std::sync::Arc::new(PostsInFlight::default());
+    let start = Instant::now();
+    assert!(posts.wait(bound));
+    assert!(start.elapsed() < Duration::from_millis(50), "{:?}", start.elapsed());
+
+    // a capability answering in 300 ms: the exit waits that long, not 2 s
+    let fast = slow_capability(&rt, Duration::from_millis(300));
+    post_counted(&rt, &posts, fast);
+    let start = Instant::now();
+    assert!(posts.wait(bound), "the report finished");
+    let waited = start.elapsed();
+    assert!(
+        waited >= Duration::from_millis(250) && waited < Duration::from_millis(1500),
+        "{waited:?}"
+    );
+
+    // one answering in 10 s: the exit gives up at the bound
+    let slow = slow_capability(&rt, Duration::from_secs(10));
+    post_counted(&rt, &posts, slow);
+    let start = Instant::now();
+    assert!(!posts.wait(bound), "still being posted");
+    let waited = start.elapsed();
+    assert!(waited >= bound && waited < bound + Duration::from_millis(800), "{waited:?}");
+    rt.shutdown_background();
+}

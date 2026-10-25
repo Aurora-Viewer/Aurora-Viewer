@@ -456,6 +456,43 @@ pub fn body(v: &ViewerSide, n: &NetCounters, sim_fps: f64, unix_now: i64, region
     }
 }
 
+/// The reports still being posted. The viewer waits for them, for a bounded
+/// time, before it exits: the Legacy Viewer's last report finishes while it
+/// waits for the LogoutReply, while Aurora's process would end under it
+/// (`NetClient::wait_viewer_stats`).
+#[derive(Debug, Default)]
+pub struct PostsInFlight {
+    count: parking_lot::Mutex<u32>,
+    done: parking_lot::Condvar,
+}
+
+impl PostsInFlight {
+    pub fn begin(&self) {
+        *self.count.lock() += 1;
+    }
+
+    pub fn end(&self) {
+        let mut count = self.count.lock();
+        *count = count.saturating_sub(1);
+        if *count == 0 {
+            self.done.notify_all();
+        }
+    }
+
+    /// Wait until no report is being posted, `timeout` at most: true when
+    /// they all finished. It returns as soon as the last one does.
+    pub fn wait(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut count = self.count.lock();
+        while *count > 0 {
+            if self.done.wait_until(&mut count, deadline).timed_out() {
+                return *count == 0;
+            }
+        }
+        true
+    }
+}
+
 /// Post a report (`messageHttpPost`, fire and forget): any 2xx answer is a
 /// success whatever its body, a failure is only logged, and nothing is sent
 /// again before the next report. The log never holds the capability's URL

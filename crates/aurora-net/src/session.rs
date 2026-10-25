@@ -182,6 +182,8 @@ pub(crate) struct Shared {
     pub bandwidth_kbps: Arc<std::sync::atomic::AtomicU32>,
     /// The viewer's part of the viewer statistics (`NetClient::set_viewer_stats`).
     pub viewer_stats: Arc<Mutex<crate::viewer_stats::ViewerSide>>,
+    /// Reports being posted (`NetClient::wait_viewer_stats`).
+    pub viewer_stats_posts: Arc<crate::viewer_stats::PostsInFlight>,
 }
 
 struct Session<'a> {
@@ -2911,8 +2913,11 @@ impl Session<'_> {
             m.insert("session_id".into(), Llsd::Uuid(self.login.session_id));
         }
         let http = self.sh.caps_http.clone();
+        let posts = self.sh.viewer_stats_posts.clone();
+        posts.begin();
         tokio::spawn(async move {
             crate::viewer_stats::post(&http, &url, &body).await;
+            posts.end();
         });
     }
 
@@ -5239,6 +5244,7 @@ mod event_queue_tests {
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
             bandwidth_kbps: Default::default(),
             viewer_stats: Default::default(),
+            viewer_stats_posts: Default::default(),
         }
     }
 
@@ -5568,6 +5574,7 @@ mod script_dialog_tests {
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
             bandwidth_kbps: Default::default(),
             viewer_stats: Default::default(),
+            viewer_stats_posts: Default::default(),
         }
     }
 

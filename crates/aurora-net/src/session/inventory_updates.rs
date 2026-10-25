@@ -338,6 +338,7 @@ mod tests {
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
             bandwidth_kbps: Default::default(),
             viewer_stats: Default::default(),
+            viewer_stats_posts: Default::default(),
         };
         let login = Arc::new(LoginResponse {
             agent_id: agent,

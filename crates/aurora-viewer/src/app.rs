@@ -4684,6 +4684,13 @@ impl App {
             self.net.send(NetCommand::Logout);
             std::thread::sleep(Duration::from_millis(300));
         }
+        // the last viewer statistics report, posted before the LogoutRequest
+        // (here or by the exit prompt's logout), may still be on its way: the
+        // process must not end under it (the Legacy Viewer's finishes while
+        // it waits for the LogoutReply). No wait when none is.
+        if !self.net.wait_viewer_stats(Duration::from_secs(2)) {
+            log::debug!("the last viewer statistics report was still being posted at exit");
+        }
         if let Some(g) = self.gfx.as_ref().filter(|_| forced_window_size().is_none()) {
             self.settings.window_maximized = g.window.is_maximized();
             // when maximized, keep the restored size / position recorded below
