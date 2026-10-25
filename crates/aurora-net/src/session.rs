@@ -180,6 +180,8 @@ pub(crate) struct Shared {
     pub agent_language: Arc<Mutex<(String, bool)>>,
     /// Bandwidth setting, in kb/s (`NetClient::set_bandwidth`).
     pub bandwidth_kbps: Arc<std::sync::atomic::AtomicU32>,
+    /// The viewer's part of the viewer statistics (`NetClient::set_viewer_stats`).
+    pub viewer_stats: Arc<Mutex<crate::viewer_stats::ViewerSide>>,
 }
 
 struct Session<'a> {
@@ -209,6 +211,10 @@ struct Session<'a> {
     logout_started: Option<Instant>,
     finished: bool,
     agent_moved: bool,
+    /// When Linden Lab's viewer statistics leave (viewer_stats.rs), and the
+    /// regions the agent arrived in (LLAgent::mRegionsVisited).
+    viewer_stats: crate::viewer_stats::Schedule,
+    regions_visited: std::collections::HashSet<u64>,
     cam_requested_at: Option<Instant>,
     /// Agent parcel in the main region: (local id, environment version).
     agent_parcel: Option<(i32, i32)>,
@@ -363,6 +369,8 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         logout_started: None,
         finished: false,
         agent_moved: false,
+        viewer_stats: Default::default(),
+        regions_visited: Default::default(),
         cam_requested_at: None,
         agent_parcel: None,
         pending_named_tp: None,
@@ -1041,6 +1049,9 @@ impl Session<'_> {
     // ----------------------------------------------------------------- tick
 
     fn tick(&mut self) {
+        if self.logout_started.is_none() && self.viewer_stats.due(Instant::now(), self.agent_moved) {
+            self.send_viewer_stats();
+        }
         self.expire_task_inventory();
         self.expire_script_transfers();
         self.expire_inventory_uploads();
@@ -1322,6 +1333,10 @@ impl Session<'_> {
             NetCommand::Login(_) => log::warn!("already logged in"),
             NetCommand::Logout => {
                 if self.logout_started.is_none() {
+                    // LLAppViewer::requestQuit: a last report, then the logout
+                    if self.agent_moved {
+                        self.send_viewer_stats();
+                    }
                     self.send_logout_request();
                     self.logout_started = Some(Instant::now());
                 }
@@ -2871,6 +2886,33 @@ impl Session<'_> {
         });
     }
 
+    /// send_viewer_stats (indra/newview/llviewerstats.cpp): Linden Lab's
+    /// viewer statistics to the agent region's `ViewerStats` capability
+    /// (viewer_stats.rs). The schedule moves on even when the capability is
+    /// missing, like the Legacy Viewer's timer.
+    fn send_viewer_stats(&mut self) {
+        let side = self.sh.viewer_stats.lock().clone();
+        let sim_fps = self.viewer_stats.sent(Instant::now(), side.frames, side.render_time);
+        let Some(url) = self.main_cap("ViewerStats") else {
+            log::debug!("no ViewerStats capability: viewer statistics not sent");
+            return;
+        };
+        let counters = crate::viewer_stats::NetCounters::read(&self.sh.stats);
+        let unix_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        let mut body = crate::viewer_stats::body(&side, &counters, sim_fps, unix_now, self.regions_visited.len());
+        log::debug!("sending viewer statistics: {}", aurora_llsd::to_xml_string(&body));
+        // (added after the log line: the session id never goes to the log)
+        if let Llsd::Map(m) = &mut body {
+            m.insert("session_id".into(), Llsd::Uuid(self.login.session_id));
+        }
+        let http = self.sh.caps_http.clone();
+        tokio::spawn(async move {
+            crate::viewer_stats::post(&http, &url, &body).await;
+        });
+    }
+
     /// The capability of the agent's region (cloned for a request task).
     fn main_cap(&self, name: &str) -> Option<String> {
         self.main.and_then(|a| self.sims.get(&a)).and_then(|s| s.caps.get(name).cloned())
@@ -3409,8 +3451,14 @@ impl Session<'_> {
                 return;
             }
         };
+        if pkt.flags & aurora_msg::PacketFlags::ZEROCODED != 0 {
+            stats.zero_coded_in.fetch_add(1, Ordering::Relaxed);
+            stats.zero_coded_bytes_in.fetch_add(data.len() as u64, Ordering::Relaxed);
+            stats.zero_decoded_bytes_in.fetch_add(pkt.expanded_len as u64, Ordering::Relaxed);
+        }
         let Some(sim) = self.sims.get_mut(&from) else {
             log::debug!("packet from {from}, which is not one of our circuits");
+            stats.off_circuit.fetch_add(1, Ordering::Relaxed);
             return;
         };
         sim.packets_in += 1;
@@ -3966,6 +4014,7 @@ impl Session<'_> {
                 _ => Duration::from_secs(20),
             });
             self.agent_moved = true;
+            self.regions_visited.insert(m.data.region_handle);
             self.cam_requested_at = None;
             // gLastVersionChannel: the server version the Region / Estate
             // window shows
@@ -4880,6 +4929,7 @@ mod follow_cam_tests {
                 id,
                 body: vec![0; 8],
                 acks: vec![],
+                expanded_len: 0,
             };
             assert!(follow_cam_event(&packet, 10).is_err());
         }
@@ -5185,6 +5235,7 @@ mod event_queue_tests {
             object_cache_dir: Arc::new(Mutex::new(None)),
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
             bandwidth_kbps: Default::default(),
+            viewer_stats: Default::default(),
         }
     }
 
@@ -5236,6 +5287,8 @@ mod event_queue_tests {
             logout_started: None,
             finished: false,
             agent_moved: false,
+            viewer_stats: Default::default(),
+            regions_visited: Default::default(),
             cam_requested_at: None,
             agent_parcel: None,
             pending_named_tp: None,
@@ -5511,6 +5564,7 @@ mod script_dialog_tests {
             object_cache_dir: Arc::new(Mutex::new(None)),
             agent_language: Arc::new(Mutex::new(("en".into(), false))),
             bandwidth_kbps: Default::default(),
+            viewer_stats: Default::default(),
         }
     }
 
@@ -5564,6 +5618,8 @@ mod script_dialog_tests {
             logout_started: None,
             finished: false,
             agent_moved: false,
+            viewer_stats: Default::default(),
+            regions_visited: Default::default(),
             cam_requested_at: None,
             agent_parcel: None,
             pending_named_tp: None,
@@ -5666,6 +5722,103 @@ mod script_dialog_tests {
         logout_request_from(&main).await;
         assert!(session.finished);
         assert!(matches!(ended(&received), Some(NetEvent::Disconnected { lost: true, .. })));
+    }
+
+    /// A `ViewerStats` capability: the body of every POST it receives.
+    async fn stats_capability() -> (String, mpsc::UnboundedReceiver<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let url = format!("http://{}/stats", listener.local_addr().expect("address"));
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut request = Vec::new();
+                let mut chunk = [0; 8192];
+                // the headers, then as much body as Content-Length says
+                let body = loop {
+                    let n = stream.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        break None;
+                    }
+                    request.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&request).into_owned();
+                    let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                        continue;
+                    };
+                    let length = head
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().to_owned()))
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if body.len() >= length {
+                        break Some(body.to_owned());
+                    }
+                };
+                let reply = "HTTP/1.1 200 OK\r\nContent-Type: application/llsd+xml\r\nContent-Length: 13\r\n\r\n<llsd></llsd>";
+                let _ = stream.write_all(reply.as_bytes()).await;
+                if let Some(body) = body {
+                    let _ = tx.send(body);
+                }
+            }
+        });
+        (url, rx)
+    }
+
+    #[tokio::test]
+    async fn viewer_statistics_leave_on_arrival_every_five_minutes_and_at_logout() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main = UdpSocket::bind("127.0.0.1:0").await.expect("main simulator");
+        let main_addr = main.local_addr().expect("main address");
+        let (events, _received) = crossbeam_channel::unbounded();
+        let sh = test_shared(events);
+        sh.viewer_stats.lock().version = "Aurora Viewer 0.7.5.0".into();
+        let (url, mut posted) = stats_capability().await;
+        let mut sim = Sim::new(main_addr, 10);
+        sim.caps = Arc::new([("ViewerStats".to_string(), url)].into());
+        let mut session = test_session(&sh, sock.clone(), [(main_addr, sim)].into(), main_addr);
+        async fn next(posted: &mut mpsc::UnboundedReceiver<String>) -> String {
+            tokio::time::timeout(Duration::from_secs(5), posted.recv())
+                .await
+                .expect("a report reaches the capability")
+                .expect("body")
+        }
+        let none = |posted: &mut mpsc::UnboundedReceiver<String>| posted.try_recv().is_err();
+
+        // not before the agent arrived
+        session.tick();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(none(&mut posted));
+
+        // at once on arrival, with the session id and the viewer's values
+        session.agent_moved = true;
+        session.regions_visited.insert(10);
+        session.tick();
+        let first = next(&mut posted).await;
+        assert!(first.contains("Aurora Viewer 0.7.5.0"), "{first}");
+        assert!(first.contains(&Uuid::from_u128(2).to_string()), "the session id: {first}");
+        assert!(first.contains("<key>regions_visited</key><integer>1</integer>"), "{first}");
+
+        // then not again before the period is over
+        session.tick();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(none(&mut posted));
+        session.viewer_stats = {
+            let mut s = crate::viewer_stats::Schedule::default();
+            let ago = Instant::now().checked_sub(crate::viewer_stats::SEND_PERIOD).expect("uptime");
+            s.sent(ago, 0, 0.0);
+            s
+        };
+        session.tick();
+        next(&mut posted).await;
+
+        // and a last one at logout, before the LogoutRequest
+        session.on_command(NetCommand::Logout);
+        next(&mut posted).await;
+        logout_request_from(&main).await;
+        // none while the logout runs
+        session.tick();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(none(&mut posted));
     }
 
     #[tokio::test]

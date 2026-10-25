@@ -6370,9 +6370,20 @@ What the inventory must show with these scenarios:
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
 | `AURORA_RIGGED_BLEND=copy`, `depth05`, `write`, `sorted` or `alt` | Depth of the blended faces of rigged meshes: where nearly opaque before their colour, then point by point where half covered (default); from 1/255 on a copy (#948); where half covered before their colour; from 1/255; none (sorted with the others); or `depth05` by turns |
 | `AURORA_BLEND_AO=new`, `none`, `old` or `alt` | Which blended faces take the screen-space occlusion and indirect light: those at least half covered (default), none, all, or `none` by turns |
+| `AURORA_DEMO_VIEWER_STATS=1` | Writes once to the log the viewer statistics report the grid would receive (demo mode, nothing sent) |
 
 ### Details
 
+- **`AURORA_DEMO_VIEWER_STATS=1`** (`aurora_net::viewer_stats`,
+  `app/viewer_stats.rs`): on the grid the session posts Linden Lab's viewer
+  statistics to the region's `ViewerStats` capability once the agent has
+  arrived, every 5 minutes, and at logout (send_viewer_stats of the Legacy
+  Viewer). In demo mode nothing is posted: about 5 s after the world shows,
+  the log gets one line `demo viewer statistics (not sent): <llsd>…` with the
+  report built from the demo's real frame, machine and GPU values (the
+  network counters are the demo's, the session id is never in it). On the
+  grid the report is logged at debug level only, `sending viewer
+  statistics: …` (`RUST_LOG=info,aurora_net=debug`).
 - **`AURORA_VULKAN_LAYERS=keep`**: at start the viewer sets the variables
   that disable Overwolf's implicit Vulkan layers (`VK_LAYER_OW_OVERLAY`,
   `DISABLE_VULKAN_OW_OVERLAY_LAYER=1`; `VK_LAYER_OW_OBS_HOOK`,

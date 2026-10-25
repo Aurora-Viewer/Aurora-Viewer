@@ -96,6 +96,7 @@ mod teleport_lookup;
 mod teleport_screen;
 mod texture_library;
 mod texture_refresh;
+mod viewer_stats;
 mod viewfinder;
 mod world_click_demo;
 mod worn_demo;
@@ -243,6 +244,8 @@ pub struct App {
     demo_mfa_challenge: Option<std::time::Instant>,
     /// The wait for a previous session still on the grid (#956).
     relogin: relogin::Relogin,
+    /// The viewer's part of Linden Lab's viewer statistics (app/viewer_stats.rs).
+    viewer_stats: viewer_stats::Tracker,
     panels: Panels,
     chat_ui: ChatUi,
     toolbar_ui: ui::toolbar::ToolbarUi,
@@ -973,6 +976,7 @@ impl App {
             login_progress: None,
             demo_mfa_challenge: None,
             relogin: Default::default(),
+            viewer_stats: Default::default(),
             panels,
             chat_ui: ChatUi::default(),
             toolbar_ui: Default::default(),
@@ -8769,6 +8773,7 @@ impl App {
         let paced = self.frame_start.elapsed();
         self.frame_start = Instant::now();
         self.frame_count += 1;
+        self.note_viewer_stats(paced, &gfx.renderer.info);
         if self.demo
             && self.frame_count == 1500
             && std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| matches!(v.as_str(), "image-photo" | "image-photo-save"))

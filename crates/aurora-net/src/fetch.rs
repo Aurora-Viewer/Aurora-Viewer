@@ -513,7 +513,8 @@ async fn dispatcher(
             continue;
         };
         // (AURORA_PROFILE: the kind of the request, its wait and its time)
-        let kind = probe::enabled().then(|| HttpKind::of_asset(&req.url, req.accept));
+        let asset_kind = HttpKind::of_asset(&req.url, req.accept);
+        let kind = probe::enabled().then_some(asset_kind);
         if let (Some(kind), Some(waited)) = (kind, queue.waited(req.key)) {
             probe::http_waited(kind, waited);
         }
@@ -534,6 +535,12 @@ async fn dispatcher(
                 Ok(d) => {
                     stats.http_bytes.fetch_add(d.len() as u64, Ordering::Relaxed);
                     stats.http_completed.fetch_add(1, Ordering::Relaxed);
+                    // (the viewer statistics' texture and mesh downloads)
+                    match asset_kind {
+                        HttpKind::Texture => stats.texture_bytes.fetch_add(d.len() as u64, Ordering::Relaxed),
+                        HttpKind::Mesh => stats.mesh_bytes.fetch_add(d.len() as u64, Ordering::Relaxed),
+                        _ => 0,
+                    };
                 }
                 Err(_) => {
                     stats.http_failed.fetch_add(1, Ordering::Relaxed);

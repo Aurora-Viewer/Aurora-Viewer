@@ -28,6 +28,10 @@ pub struct IncomingPacket {
     /// Body after the message number, zero-decoded.
     pub body: Vec<u8>,
     pub acks: Vec<u32>,
+    /// Size of the whole datagram once zero-decoded (its received size when
+    /// it was not zero-coded), for the viewer statistics' compression
+    /// savings (LLMessageSystem::zeroCodeExpand's mUncompressedBytesIn).
+    pub expanded_len: usize,
 }
 
 impl IncomingPacket {
@@ -137,6 +141,7 @@ pub fn parse_packet(data: &[u8]) -> Result<IncomingPacket, DecodeError> {
         id,
         body: payload[start..].to_vec(),
         acks,
+        expanded_len: data.len() - payload_raw.len() + payload.len(),
     })
 }
 
