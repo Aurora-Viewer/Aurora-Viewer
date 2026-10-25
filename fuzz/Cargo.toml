@@ -1,0 +1,178 @@
+# Fuzzing of the readers of untrusted data: assets and messages that any
+# resident or simulator can send (docs/TESTING.md, "Fuzzing"). Its own
+# workspace, outside the viewer's: normal builds and check.ps1 never compile
+# it. The `fuzz-local` runner works on stable Rust (Windows included); the
+# libFuzzer targets of fuzz_targets/ need nightly and `cargo fuzz`
+# (`--features libfuzzer`), as the Fuzz workflow runs them on Linux.
+[package]
+name = "aurora-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[features]
+libfuzzer = ["dep:libfuzzer-sys"]
+
+[dependencies]
+aurora-assets = { path = "../crates/aurora-assets" }
+aurora-audio = { path = "../crates/aurora-audio" }
+aurora-llsd = { path = "../crates/aurora-llsd" }
+aurora-msg = { path = "../crates/aurora-msg" }
+aurora-net = { path = "../crates/aurora-net" }
+aurora-prim = { path = "../crates/aurora-prim" }
+glam = "0.34.1"
+libfuzzer-sys = { version = "0.4", optional = true }
+uuid = "1.27.0"
+
+# Assertions and overflow checks on in our crates: an overflow is a bug the
+# fuzzer must see. Dependencies keep the shipped build's wrapping arithmetic
+# (symphonia's WAV reader multiplies two header fields for a log line only).
+[profile.release]
+debug = "line-tables-only"
+debug-assertions = true
+overflow-checks = true
+
+[profile.release.package."*"]
+debug-assertions = false
+overflow-checks = false
+
+# (outside this workspace, our crates are "*" too: a name wins over "*")
+[profile.release.package.aurora-assets]
+debug-assertions = true
+overflow-checks = true
+
+[profile.release.package.aurora-audio]
+debug-assertions = true
+overflow-checks = true
+
+[profile.release.package.aurora-llsd]
+debug-assertions = true
+overflow-checks = true
+
+[profile.release.package.aurora-msg]
+debug-assertions = true
+overflow-checks = true
+
+[profile.release.package.aurora-net]
+debug-assertions = true
+overflow-checks = true
+
+[profile.release.package.aurora-prim]
+debug-assertions = true
+overflow-checks = true
+
+[[bin]]
+name = "fuzz-local"
+path = "src/main.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "j2k"
+path = "fuzz_targets/j2k.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mesh"
+path = "fuzz_targets/mesh.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "anim"
+path = "fuzz_targets/anim.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "llsd"
+path = "fuzz_targets/llsd.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "material"
+path = "fuzz_targets/material.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "packet"
+path = "fuzz_targets/packet.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "object"
+path = "fuzz_targets/object.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "prim"
+path = "fuzz_targets/prim.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "volume"
+path = "fuzz_targets/volume.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sculpt"
+path = "fuzz_targets/sculpt.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "terrain"
+path = "fuzz_targets/terrain.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sound"
+path = "fuzz_targets/sound.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "misc"
+path = "fuzz_targets/misc.rs"
+required-features = ["libfuzzer"]
+test = false
+doc = false
+bench = false

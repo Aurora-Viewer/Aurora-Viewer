@@ -1,0 +1,95 @@
+name: Fuzz
+
+# Coverage-guided fuzzing (libFuzzer, through cargo-fuzz on nightly Rust) of
+# the readers of untrusted data: assets and messages any resident or
+# simulator can send (fuzz/, docs/TESTING.md "Fuzzing"). Every night, each
+# target runs for a fixed time from its corpus, kept between runs; an input
+# that panics, hangs, overflows memory or trips AddressSanitizer (OpenJPEG
+# is C) fails the job and is uploaded as an artifact. Never a check of pull
+# requests: those that change fuzz/ only build the targets and read the
+# seeds.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        required: false
+        default: '600'
+  pull_request:
+    paths:
+      - fuzz/**
+      - .github/workflows/fuzz.yml
+
+permissions:
+  contents: read
+
+jobs:
+  seeds:
+    # The targets build and read their seeds (on stable, like fuzz-local).
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          save-if: false
+      - name: Seeds read by every target
+        run: cargo test --release --locked --manifest-path fuzz/Cargo.toml --lib
+
+  fuzz:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [j2k, mesh, anim, llsd, material, packet, object, prim, volume, sculpt, terrain, sound, misc]
+    env:
+      SECONDS_PER_TARGET: ${{ inputs.seconds || '600' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev
+      - name: Rust nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal --no-self-update
+          cargo install cargo-fuzz --locked
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+          key: ${{ matrix.target }}
+      # The corpus libFuzzer grew in earlier runs, plus the current seeds.
+      - name: Restore the corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - name: Seeds
+        run: cargo run --release --locked --manifest-path fuzz/Cargo.toml --bin fuzz-local -- --write-seeds
+      - name: Fuzz
+        run: >-
+          cargo +nightly fuzz run ${{ matrix.target }} --features libfuzzer --
+          -max_total_time=${{ env.SECONDS_PER_TARGET }}
+          -timeout=10 -rss_limit_mb=4096 -malloc_limit_mb=1024
+      - name: Save the corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+      - name: Upload the failing input
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-${{ matrix.target }}-artifacts
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

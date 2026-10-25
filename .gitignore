@@ -22,6 +22,12 @@
 /crates/aurora-viewer/sound/
 /crates/aurora-viewer/tex/
 
+# Fuzzing: the corpus libFuzzer grows, the failing inputs, coverage data
+# (fuzz/; the seeds are made by the targets' code)
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+
 # Logs, captures, local settings
 *.log
 *.png.tmp
