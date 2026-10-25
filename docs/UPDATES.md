@@ -153,6 +153,69 @@ installation. macOS remains out of scope: its application bundle is signed
 and replaced as a whole. The current ZIP is kept: Velopack was studied, but
 its chain of packages and installers is not that of the Aurora releases.
 
+## Code signing
+
+The Windows exe can be signed by [SignPath](https://signpath.io), with the
+certificate of the [SignPath Foundation](https://signpath.org), free for
+open source projects. A signed exe is what antivirus software (Norton,
+Defender) and SmartScreen trust; an unsigned one may be blocked or
+quarantined. The publisher Windows shows is "SignPath Foundation". The
+policy page is <https://aurora-viewer.org/code-signing/> (website
+repository, `code-signing/`).
+
+The Release workflow signs only when the repository has the
+`SIGNPATH_ORGANIZATION_ID` variable; without it, releases ship unsigned as
+before. When it is set, after the build and the symbols:
+
+1. the exe alone is uploaded as the run's artifact `aurora-viewer-unsigned`;
+2. `signpath/github-action-submit-signing-request` sends it to SignPath with
+   the version (the tag without its `v`) and waits up to an hour: **an
+   approver of the project accepts each release by hand in SignPath**;
+3. the signed exe replaces the built one, its signature must be valid and
+   `scripts/verify-version.ps1` runs again on it;
+4. the package, its `.sha256` and the release are made from the signed exe,
+   and the release notes start with the code signing line and the policy
+   link (SignPath's terms ask for it on the download pages).
+
+Signing only adds a certificate to the file: its code and debug id do not
+change, so the symbols zip, made before, still matches the published exe.
+The media plugins pack (separate `media-plugins-<n>` releases) is not
+signed: its binaries are built from, or are, upstream projects' code, which
+SignPath leaves to their own maintainers.
+
+### Setting it up (once)
+
+What only a maintainer can do, never an agent (accounts, tokens):
+
+1. Apply at <https://signpath.org/apply> for the open source subscription
+   (the answers are drafted outside the repository). SignPath's conditions:
+   OSI licence for every component, no proprietary component, builds from
+   the public repository's CI, the code signing policy page online, MFA for
+   every team member on GitHub and SignPath.
+2. Once accepted, in SignPath: the project `aurora-viewer` linked to the
+   trusted build system **GitHub.com**, the artifact configuration of
+   [`.signpath/artifact-configuration.xml`](../.signpath/artifact-configuration.xml)
+   (slug `initial`), the signing policy `release-signing` with the
+   approvers of the policy page, and a CI user with the submitter role.
+   SignPath's pipeline policies can also require GitHub-hosted runners, no
+   re-runs and the branch ruleset of `main`.
+3. In GitHub, Settings › Secrets and variables › Actions:
+   - secret `SIGNPATH_API_TOKEN`: the CI user's API token;
+   - variable `SIGNPATH_ORGANIZATION_ID`: the organization id (this one
+     turns signing on);
+   - optional variables `SIGNPATH_PROJECT_SLUG`,
+     `SIGNPATH_SIGNING_POLICY_SLUG`, `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`
+     when the slugs differ from `aurora-viewer`, `release-signing`,
+     `initial`.
+4. Optionally install the SignPath GitHub App on the repository (origin
+   checks from the audit log).
+
+At the next tag, the run waits at "Sign" until an approver accepts the
+request in SignPath (link in the step's log). A refused or expired request
+fails the run before anything is published: tag again after fixing it.
+Properties › Digital Signatures of the published exe shows "SignPath
+Foundation".
+
 ## Replacement and rollback
 
 Download, hash and extraction run in the background. Extraction refuses

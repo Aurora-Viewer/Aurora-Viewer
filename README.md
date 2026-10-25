@@ -21,7 +21,7 @@ A Vulkan renderer, a clean interface, and the Second Life you already know.
 
 <sub>This software is not provided or supported by Linden Lab, the makers of Second Life.</sub>
 
-[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing)
+[Why Aurora](#why-aurora) · [Creator tools](#creator-tools) · [Performance](#performance) · [Features](#what-works-today) · [Roadmap](#roadmap) · [Using Aurora](#using-aurora) · [Build](#build) · [Contributing](#contributing) · [Code signing policy](https://aurora-viewer.org/code-signing/)
 
 </div>
 
