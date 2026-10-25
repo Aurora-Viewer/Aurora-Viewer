@@ -5769,6 +5769,66 @@ mod tests {
     }
 
     #[test]
+    fn ground_mouselook_tracks_the_lowered_pelvis_pose() {
+        use crate::camera::{Camera, CameraSettings, FrameInput};
+
+        let lib = Arc::new(AvatarLibrary::load());
+        let mut world = World::new(lib.clone());
+        world.agent_id = crate::demo::DEMO_AGENT;
+        for event in crate::demo::sit_events(700) {
+            if let NetEvent::ObjectUpdates { handle, .. } = &event {
+                world.main_region = Some(*handle);
+            }
+            world.apply(event);
+        }
+        let owner = world.agent_id;
+        let id = crate::world::body::ANIM_SIT_GROUND_CONSTRAINED;
+        let mut scene = Scene::new(Default::default(), lib.clone());
+        scene.palette_base(owner);
+        scene.anims.insert(
+            id,
+            Arc::new(anim::BoundAnim::bind(crate::demo::first_person_ground_animation(), &lib.rig)),
+        );
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: owner,
+            anims: vec![(id, 1)],
+            sources: Vec::new(),
+        });
+        assert!(world.agent.ground_sit && !world.agent.seated);
+        let now = Instant::now();
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        let eyes = scene.eyes_world(&world, &owner, now).unwrap();
+        let mut settings = CameraSettings {
+            hover_affects_camera: true,
+            ..Default::default()
+        };
+        let mut camera = Camera::default();
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        let input = FrameInput {
+            dt: 1.0,
+            now,
+            steering: false,
+            build_mode: false,
+            edit_tracking: None,
+            eye_offset: scene.eyes_offset(&world, &owner),
+            draw_distance: 128.0,
+            aspect: 1.0,
+        };
+        camera.update(&mut world, &settings, &input);
+        assert!((camera.position.z - eyes.z - 0.1).abs() < 1e-5);
+        let standing_eye = world.agent.position.z + 0.7;
+        assert!(
+            camera.position.z < standing_eye - 0.3,
+            "the ground pose must actually lower the camera"
+        );
+        let aim = camera.forward();
+        settings.mouselook_follow_eyes = true;
+        camera.update(&mut world, &settings, &input);
+        assert!(camera.position.abs_diff_eq(eyes, 2e-5));
+        assert!(camera.forward().abs_diff_eq(aim, 2e-5));
+    }
+
+    #[test]
     fn seat_root_skips_body_height_and_cache_changes_immediately_on_standing() {
         let mut world = World::new(Arc::new(AvatarLibrary::load()));
         world.agent_id = crate::demo::DEMO_AGENT;

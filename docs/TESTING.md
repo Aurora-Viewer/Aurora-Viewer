@@ -542,7 +542,8 @@ when unfocused") is ignored during a screenshot.
   Capture 605/610/615/620/625 during entry: the head and head attachments stay
   visible through the approach and disappear only when the camera reaches
   first person. `ground-ml-body-on|ground-ml-body-off` sit on the ground at
-  520, use the same first-person sequence, and stand at 760; capture 650/800
+  520 with a folded-leg/lowered-pelvis fixture (instead of the demo asset's idle
+  fallback), use the same first-person sequence, and stand at 760; capture 650/800
   to check posed eye height and standing restoration. The separate persisted
   **Attach the camera between the eyes** preference defaults off. With it on,
   every mouselook pose follows the current eye midpoint's position while the

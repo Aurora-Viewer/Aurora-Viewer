@@ -3255,7 +3255,18 @@ impl App {
                     }
                 }
                 Step::ToggleMouselook => self.toggle_mouselook(),
-                Step::GroundSit => self.toggle_ground_sit(),
+                Step::GroundSit => {
+                    if !self.world.agent.is_sitting() {
+                        self.scene.anims.insert(
+                            crate::world::body::ANIM_SIT_GROUND_CONSTRAINED,
+                            Arc::new(crate::scene::anim::BoundAnim::bind(
+                                crate::demo::first_person_ground_animation(),
+                                &self.world.avatar_lib.rig,
+                            )),
+                        );
+                    }
+                    self.toggle_ground_sit();
+                }
                 Step::Wheel(clicks) => self.camera_wheel(clicks),
                 Step::Fly => self.world.agent.flying = true,
                 Step::FollowEvents => {

@@ -583,6 +583,7 @@ pub fn first_person_eye_animation() -> aurora_assets::Animation {
     use aurora_assets::anim::{JointMotion, RotKey};
     let mut animation = idle_animation();
     animation.base_priority = 6;
+    animation.joints.clear();
     animation.joints.push(JointMotion {
         joint_name: "mHead".into(),
         priority: -1,
@@ -595,6 +596,19 @@ pub fn first_person_eye_animation() -> aurora_assets::Animation {
             .collect(),
         pos_keys: Vec::new(),
     });
+    animation
+}
+
+/// Ground-sit fixture: the demo asset fallback is an idle, so supply a
+/// folded-leg pose with a lowered pelvis without requesting a grid asset.
+pub fn first_person_ground_animation() -> aurora_assets::Animation {
+    let mut animation = seat_animation();
+    animation.ease_in = 0.0;
+    if let Some(pelvis) = animation.joints.iter_mut().find(|joint| joint.joint_name == "mPelvis") {
+        for key in &mut pelvis.pos_keys {
+            key.position.z = -0.65;
+        }
+    }
     animation
 }
 
