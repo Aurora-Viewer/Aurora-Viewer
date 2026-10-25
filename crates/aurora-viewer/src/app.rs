@@ -9977,7 +9977,7 @@ impl App {
                 self.frame_profile.set_mark(if old { " | xmode=old" } else { " | xmode=new" });
             }
             // AURORA_RIGGED_BLEND=alt: the rigged blended faces drawn as
-            // before #935 (their depth where half covered, then their
+            // before #948 (their depth where half covered, then their
             // colour) one second in three
             if crate::scene::blend_order::mode() == crate::scene::blend_order::Mode::Alternate {
                 let old = self.sync_alt.is_multiple_of(3);

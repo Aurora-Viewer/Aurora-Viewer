@@ -348,11 +348,26 @@ pub enum RiggedBlendDepth {
     /// lies behind the hair through it, not the layer under it (#935).
     HalfCovered,
     /// From 1/255 as they are drawn, as the Legacy Viewer, but into a copy
-    /// of the scene depth: the layers of one hair compose as their creator
-    /// drew them for the Legacy Viewer (#935). The scene depth then takes
-    /// them only where at least half covered, so that the glass, water and
-    /// particles drawn after them are not hidden by a soft fringe (#556).
+    /// of the scene depth (#948): the layers of one hair compose in their
+    /// drawing order, and the scene depth then takes them only where at
+    /// least half covered, so that the glass, water and particles drawn
+    /// after them are not hidden by a soft fringe (#556). But a soft strand
+    /// edge drawn first then hides the strands drawn after it behind it: the
+    /// triangles of one face, not drawn back to front (the Legacy Viewer
+    /// reorders them for the vertex cache, LLVolumeFace::cacheOptimize),
+    /// leave shards where the scene behind shows through the hair (#935).
     Layered,
+    /// Their depth where nearly opaque (95 %) before any of their colour;
+    /// then run by run (`DrawLists::blend_depth_runs`: the meshes worn on
+    /// one attachment point of one skeleton) their colour, depth tested,
+    /// and their depth where at least half covered, which the runs drawn
+    /// after them and the rest of the scene see. A layer is hidden only
+    /// behind what nearly covers it, the triangles of one face and the
+    /// meshes of one point never hide each other by a faint edge (#935),
+    /// a mesh of another point drawn after them (a body under the hair) is
+    /// hidden behind their strands from 50 % on, as with `HalfCovered`;
+    /// no halo (#556).
+    Runs,
 }
 
 /// Visible draws for a frame, built by the world.
@@ -388,6 +403,10 @@ pub struct DrawLists {
     pub blend_depth: usize,
     /// How those rigged faces write their depth.
     pub blend_depth_mode: RiggedBlendDepth,
+    /// `RiggedBlendDepth::Runs`: where each run of faces ends
+    /// in the first `blend_depth` entries of `blend` (increasing, the last
+    /// one `blend_depth`).
+    pub blend_depth_runs: Vec<u32>,
     /// Per `blend` entry: the face has glow (drawn into the glow right
     /// after it, as LLDrawPoolAlpha's emissives).
     pub blend_glow: Vec<bool>,
@@ -501,6 +520,7 @@ impl DrawLists {
         self.blend_glow.clone_from(&src.blend_glow);
         self.blend_depth = src.blend_depth;
         self.blend_depth_mode = src.blend_depth_mode;
+        self.blend_depth_runs.clone_from(&src.blend_depth_runs);
         self.shadow_casters.clone_from(&src.shadow_casters);
         self.reflection.clone_from(&src.reflection);
         self.probe.clone_from(&src.probe);
@@ -542,6 +562,7 @@ impl DrawLists {
         self.blend.clear();
         self.blend_depth = 0;
         self.blend_depth_mode = RiggedBlendDepth::default();
+        self.blend_depth_runs.clear();
         self.shadow_casters.clear();
         self.reflection.clear();
         self.probe.clear();
