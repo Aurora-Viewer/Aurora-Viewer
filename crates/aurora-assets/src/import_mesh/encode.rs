@@ -158,7 +158,10 @@ fn convex(physics: &process::Physics) -> Result<Llsd, AssetError> {
         max = max.max(p);
     }
     if min.x == f32::MAX {
-        return Ok(Llsd::new_map());
+        // Decomposition::asLLSD (indra/llprimitive/llmodel.cpp) leaves
+        // secondary placeholders undefined; an empty map is a hull block
+        // with its required data missing.
+        return Ok(Llsd::Undef);
     }
     let positions = |points: &[[f32; 3]]| -> Vec<u8> {
         points
@@ -173,7 +176,7 @@ fn convex(physics: &process::Physics) -> Result<Llsd, AssetError> {
             Llsd::Binary(physics.hulls.iter().map(|h| h.vertices.len() as u8).collect()),
         );
         data.insert(
-            "Position",
+            "Positions",
             Llsd::Binary(physics.hulls.iter().flat_map(|h| positions(&h.vertices)).collect()),
         );
     }
@@ -199,9 +202,11 @@ pub fn asset(
     {
         sections.push(("skin", compressed(&skin(value, options)?)?));
     }
-    let empty = process::Physics::default();
-    let decomposition = if options.secondary.is_some() { &empty } else { decomposition };
-    sections.push(("physics_convex", compressed(&convex(decomposition)?)?));
+    let has_decomposition = decomposition.base.is_some() || !decomposition.hulls.is_empty();
+    let secondary = options.secondary.filter(|_| !has_decomposition);
+    if has_decomposition || secondary.is_some() {
+        sections.push(("physics_convex", compressed(&convex(decomposition)?)?));
+    }
     for (index, key) in ["lowest_lod", "low_lod", "medium_lod", "high_lod"].into_iter().enumerate() {
         if let Some(model) = &lods[index] {
             if model.faces.len() != high.faces.len() {
@@ -223,15 +228,14 @@ pub fn asset(
             sections.push((key, compressed(&lod(model, options.skin && high.skin.is_some())?)?));
         }
     }
-    if options.secondary.is_none()
+    if secondary.is_none()
         && decomposition.hulls.is_empty()
         && let Some(model) = physics
     {
         sections.push(("physics_mesh", compressed(&lod(model, false)?)?));
     }
     let mut header = llsd_map! { "version" => 1 };
-    if let Some(index) = options.secondary {
-        header.insert("secondary", Llsd::Boolean(true));
+    if let Some(index) = secondary {
         header.insert("submodel_id", Llsd::Integer(index as i32));
     }
     let mut offset = 0;
@@ -286,5 +290,63 @@ mod tests {
             assert_eq!(faces[0].indices, [0, 1, 2]);
             assert_eq!(faces[0].positions[2], [0.0, 1.0, 0.0]);
         }
+    }
+
+    fn section(encoded: &[u8], key: &str) -> Llsd {
+        use std::io::Read;
+
+        let (header, start) = aurora_llsd::from_binary(encoded).expect("asset header");
+        let offset = start + header[key]["offset"].as_i32() as usize;
+        let size = header[key]["size"].as_i32() as usize;
+        assert!(size > 0, "{key} must have a compressed payload");
+        let mut bytes = Vec::new();
+        flate2::read::ZlibDecoder::new(&encoded[offset..offset + size])
+            .read_to_end(&mut bytes)
+            .expect("zlib section");
+        let (value, consumed) = aurora_llsd::from_binary(&bytes).expect("binary section");
+        assert_eq!(consumed, bytes.len());
+        value
+    }
+
+    #[test]
+    fn mesh_upload_secondary_collision_uses_the_legacy_undefined_placeholder() {
+        let model = triangle();
+        let lods = [None, None, None, Some(model.clone())];
+        let encoded = asset(
+            &lods,
+            Some(&model),
+            &process::Physics::default(),
+            Options {
+                secondary: Some(1),
+                ..Default::default()
+            },
+        )
+        .expect("secondary asset");
+        let (header, _) = aurora_llsd::from_binary(&encoded).expect("header");
+        assert_eq!(header["submodel_id"].as_i32(), 1);
+        assert!(!header.has("secondary"), "the wire header uses only submodel_id");
+        assert!(!header.has("physics_mesh"), "the secondary instance has no collision mesh");
+        assert_eq!(section(&encoded, "physics_convex"), Llsd::Undef);
+        assert!(!section(&encoded, "high_lod").as_array().is_empty());
+    }
+
+    #[test]
+    fn mesh_upload_convex_hulls_use_the_legacy_positions_field() {
+        let model = triangle();
+        let lods = [None, None, None, Some(model.clone())];
+        let hull = process::base_hull(&model).expect("base hull");
+        let vertices = hull.vertices.len();
+        let decomposition = process::Physics {
+            base: Some(hull.clone()),
+            hulls: vec![hull],
+        };
+        let encoded = asset(&lods, Some(&model), &decomposition, Options::default()).expect("decomposed asset");
+        let (header, _) = aurora_llsd::from_binary(&encoded).expect("header");
+        assert!(!header.has("physics_mesh"), "convex hulls replace triangle collision");
+        let convex = section(&encoded, "physics_convex");
+        assert_eq!(convex["HullList"].as_binary(), &[vertices as u8]);
+        assert_eq!(convex["Positions"].as_binary().len(), vertices * 6);
+        assert_eq!(convex["BoundingVerts"].as_binary().len(), vertices * 6);
+        assert!(!convex.has("Position"));
     }
 }

@@ -497,6 +497,80 @@ fn mesh_multi_object_file_preserves_instances_through_preparation_and_fee_payloa
 }
 
 #[test]
+fn mesh_upload_eleven_materials_keep_valid_collision_blocks_in_both_payloads() {
+    use aurora_llsd::Llsd;
+    use std::io::Read;
+
+    let faces = (0..11)
+        .map(|i| {
+            format!(
+                r##"<triangles count="12" material="surface-{i}"><input semantic="VERTEX" source="#vertices" offset="0"/><p>0 2 1 0 3 2 4 5 6 4 6 7 0 1 5 0 5 4 3 7 6 3 6 2 0 4 7 0 7 3 1 2 6 1 6 5</p></triangles>"##
+            )
+        })
+        .collect::<String>();
+    let start = demo::DAE.find("<triangles").expect("geometry start");
+    let end = demo::DAE.find("</triangles>").expect("geometry end") + "</triangles>".len();
+    let dae = format!("{}{}{}", &demo::DAE[..start], faces, &demo::DAE[end..]);
+    let scene =
+        aurora_assets::import_mesh::collada::parse(dae.as_bytes(), &aurora_assets::Skeleton::default()).expect("eleven material slots");
+    assert_eq!(scene.models.iter().map(|m| m.faces.len()).collect::<Vec<_>>(), [8, 3]);
+    assert_eq!(scene.models.iter().map(|m| m.submodel).collect::<Vec<_>>(), [0, 1]);
+    let draft = mesh::Draft::new(scene, HashMap::new());
+    let prepared = mesh::prepare(&draft).expect("prepare both models");
+    let request = mesh::request(
+        &draft,
+        &prepared,
+        Uuid::from_u128(1),
+        Uuid::from_u128(2),
+        "Eleven surfaces",
+        "",
+        Permissions::default(),
+        Default::default(),
+    )
+    .expect("mesh request");
+    let query = aurora_llsd::from_xml(&request.query).expect("fee request");
+    let resources = aurora_llsd::from_xml(&request.resources).expect("final resources");
+    assert_eq!(query["asset_resources"]["mesh_list"], resources["mesh_list"]);
+    assert_eq!(query["asset_resources"]["instance_list"], resources["instance_list"]);
+    assert_eq!(resources["mesh_list"].as_array().len(), 2);
+    assert_eq!(resources["instance_list"].as_array().len(), 2);
+    assert_eq!(resources["instance_list"][0]["physics_shape_type"].as_i32(), 2);
+    assert_eq!(resources["instance_list"][1]["physics_shape_type"].as_i32(), 1);
+    for (i, encoded) in resources["mesh_list"].as_array().iter().enumerate() {
+        let encoded = encoded.as_binary();
+        let (header, start) = aurora_llsd::from_binary(encoded).expect("mesh header");
+        let range = &header["physics_convex"];
+        assert!(range.is_map(), "model {i} needs its default collision block");
+        let offset = start + range["offset"].as_i32() as usize;
+        let size = range["size"].as_i32() as usize;
+        let mut bytes = Vec::new();
+        flate2::read::ZlibDecoder::new(&encoded[offset..offset + size])
+            .read_to_end(&mut bytes)
+            .expect("collision section");
+        let (convex, _) = aurora_llsd::from_binary(&bytes).expect("convex LLSD");
+        assert!(matches!(convex["BoundingVerts"], Llsd::Binary(_)), "model {i} has a real base hull");
+        assert!(convex["BoundingVerts"].as_binary().len() >= 4 * 6);
+        assert!(
+            !header.has("submodel_id"),
+            "a model with a real base hull needs no placeholder marker"
+        );
+        assert!(!header.has("physics_mesh"));
+        let header = aurora_assets::parse_mesh_header(encoded).expect("production mesh header");
+        for (level, section) in header.lods.into_iter().enumerate() {
+            let section = section.expect("all four LODs are included");
+            let decoded = aurora_assets::decode_mesh_lod(&encoded[section.0..section.0 + section.1]).expect("LOD geometry");
+            assert_eq!(decoded.len(), if i == 0 { 8 } else { 3 });
+            if level == 3 {
+                assert_eq!(
+                    decoded.iter().map(|f| f.indices.len() / 3).sum::<usize>(),
+                    if i == 0 { 96 } else { 36 }
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn mesh_edits_keep_the_last_preview_debounce_new_jobs_and_replace_only_the_current_generation() {
     let mut entry = Entry::new("mesh.dae".into(), Ok(Source::Mesh(Box::new(mesh_fixture()))), Default::default());
     let model = Arc::new(aurora_render::preview::Model {
