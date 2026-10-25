@@ -347,6 +347,12 @@ pub enum BuildCmd {
         east: f32,
         north: f32,
     },
+    /// Read a parcel by its simulator ID without changing the viewer's selection.
+    ParcelRequestById {
+        handle: RegionHandle,
+        sequence: i32,
+        local_id: i32,
+    },
     /// ParcelDivide / ParcelJoin of a region-local rectangle.
     ParcelDivide {
         handle: RegionHandle,

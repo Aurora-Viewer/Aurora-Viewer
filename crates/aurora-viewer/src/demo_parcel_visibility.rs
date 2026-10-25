@@ -16,7 +16,7 @@ pub fn parcel_at(x: f32, y: f32) -> Arc<ParcelInfo> {
             }
         }
     }
-    Arc::new(ParcelInfo {
+    let mut parcel = ParcelInfo {
         local_id: 1 + i32::from(!east) + 2 * i32::from(!north),
         name: if east && north {
             aurora_i18n::tr!("demo-parcel-visibility-current")
@@ -29,7 +29,29 @@ pub fn parcel_at(x: f32, y: f32) -> Arc<ParcelInfo> {
         owner_id: if north { crate::demo::DEMO_LOUP } else { crate::demo::DEMO_NOVA },
         bitmap,
         ..Default::default()
-    })
+    };
+    if let Ok(mode) = std::env::var("AURORA_DEMO_PARCEL_VISIBILITY")
+        && matches!(mode.as_str(), "same-group" | "group-owned-current")
+        && north
+    {
+        let owned = east == (mode == "same-group");
+        parcel.group_id = if owned { Uuid::nil() } else { crate::demo::DEMO_GROUP1 };
+        parcel.is_group_owned = owned;
+        if owned {
+            parcel.owner_id = crate::demo::DEMO_GROUP1;
+        }
+    }
+    Arc::new(parcel)
+}
+
+pub fn parcel_by_id(local_id: i32) -> Option<Arc<ParcelInfo>> {
+    match local_id {
+        1 => Some(parcel_at(130.0, 130.0)),
+        2 => Some(parcel_at(120.0, 130.0)),
+        3 => Some(parcel_at(130.0, 120.0)),
+        4 => Some(parcel_at(120.0, 120.0)),
+        _ => None,
+    }
 }
 
 pub fn install(world: &mut World, settings: &mut crate::settings::Settings, mode: &str) {
@@ -58,6 +80,15 @@ pub fn install(world: &mut World, settings: &mut crate::settings::Settings, mode
         _ => Mode::Always,
     };
     settings.parcel_visibility.same_owner = mode == "same-owner";
+    settings.parcel_visibility.same_group = matches!(mode, "same-group" | "group-owned-current");
+    settings.parcel_visibility.always_visible.clear();
+    if mode == "always-visible"
+        && let Some(handle) = world.main_region
+        && let Some(mut entry) = world.parcel_entry(handle, &parcel_at(130.0, 130.0))
+    {
+        entry.name = aurora_i18n::tr!("demo-parcel-visibility-pinned").into();
+        settings.parcel_visibility.always_visible.push(entry);
+    }
     settings.parcel_visibility.parcels.clear();
     if matches!(mode, "listed" | "except-listed")
         && let Some(entry) = world.current_parcel_entry()

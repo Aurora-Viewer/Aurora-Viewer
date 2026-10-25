@@ -7,6 +7,7 @@ use aurora_net::{NetCommand, ParcelInfo, RegionHandle, build::BuildCmd};
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -43,10 +44,33 @@ impl Entry {
 pub struct Settings {
     pub mode: Mode,
     pub same_owner: bool,
+    pub same_group: bool,
     pub parcels: Vec<Entry>,
+    /// Rendering exceptions, independent of the parcels where isolation applies.
+    pub always_visible: Vec<Entry>,
 }
 
 impl Settings {
+    fn automatic_neighbours(&self) -> bool {
+        self.same_owner || self.same_group
+    }
+
+    fn includes_related(&self, current: &ParcelInfo, other: &ParcelInfo) -> bool {
+        let owner = self.same_owner
+            && !current.owner_id.is_nil()
+            && current.owner_id == other.owner_id
+            && current.is_group_owned == other.is_group_owned;
+        let group = |parcel: &ParcelInfo| {
+            let id = if parcel.is_group_owned && !parcel.owner_id.is_nil() {
+                parcel.owner_id
+            } else {
+                parcel.group_id
+            };
+            (!id.is_nil()).then_some(id)
+        };
+        owner || self.same_group && group(current).zip(group(other)).is_some_and(|(a, b)| a == b)
+    }
+
     fn applies(&self, entry: &Entry) -> bool {
         let listed = self.parcels.iter().any(|p| p.same_parcel(entry));
         match self.mode {
@@ -95,6 +119,8 @@ type Cell = (RegionHandle, u32, u32);
 struct Request {
     cell: Cell,
     sent: Instant,
+    /// None discovers a neighbouring cell; Some reads an explicit rendering exception.
+    parcel: Option<(Uuid, i32)>,
 }
 
 #[derive(Debug, Default)]
@@ -107,9 +133,11 @@ pub struct Visibility {
     seen: HashSet<Cell>,
     pending: HashMap<i32, Request>,
     attempts: HashMap<Cell, u8>,
+    visible_requested: HashSet<(Uuid, i32)>,
+    visible_attempts: HashMap<(Uuid, i32), u8>,
     next_sequence: i32,
     next_request: Option<Instant>,
-    region_count: usize,
+    connected_regions: u64,
     /// Changes only when the visible parcel mask changes.
     pub version: u64,
 }
@@ -136,6 +164,8 @@ impl Visibility {
         self.seen.clear();
         self.pending.clear();
         self.attempts.clear();
+        self.visible_requested.clear();
+        self.visible_attempts.clear();
         self.next_request = None;
         self.version = self.version.wrapping_add(1);
     }
@@ -159,8 +189,23 @@ impl Visibility {
                 });
                 ((validated || mask.valid()) && mask.contains(world.agent_global()?)).then_some(mask)
             });
+        let connected_regions = if candidate.is_some() && (settings.automatic_neighbours() || !settings.always_visible.is_empty()) {
+            let mut hash = std::hash::DefaultHasher::new();
+            for (&handle, region) in &world.regions {
+                (
+                    handle,
+                    region.info.as_ref().map(|info| info.region_id),
+                    region.heightmap.size_x,
+                    region.heightmap.size_y,
+                )
+                    .hash(&mut hash);
+            }
+            hash.finish()
+        } else {
+            0
+        };
         let unchanged = self.settings == *settings
-            && (!settings.same_owner || candidate.is_none() || self.region_count == world.regions.len())
+            && self.connected_regions == connected_regions
             && match (&self.current, &candidate) {
                 (None, None) => true,
                 (Some(a), Some(b)) => a.handle == b.handle && a.size == b.size && Arc::ptr_eq(&a.parcel, &b.parcel),
@@ -169,13 +214,13 @@ impl Visibility {
         if !unchanged {
             self.reset();
             self.settings.clone_from(settings);
-            self.region_count = world.regions.len();
+            self.connected_regions = connected_regions;
             self.current = candidate.clone();
             if let Some(mask) = candidate {
-                self.add_mask(world, mask);
+                self.add_mask(world, mask, true);
             }
         }
-        if !self.active() || !settings.same_owner {
+        if !self.active() {
             return Vec::new();
         }
         // Bounded background discovery; never select land or change the agent parcel.
@@ -183,16 +228,63 @@ impl Visibility {
             .pending
             .iter()
             .filter(|(_, r)| now.saturating_duration_since(r.sent) >= Duration::from_secs(10))
-            .map(|(&sequence, r)| (sequence, r.cell))
+            .map(|(&sequence, r)| (sequence, r.cell, r.parcel))
             .collect();
-        for (sequence, cell) in expired {
+        for (sequence, cell, parcel) in expired {
             self.pending.remove(&sequence);
-            if self.attempts.get(&cell).copied().unwrap_or(0) < 2 {
+            if let Some(key) = parcel {
+                if self.visible_attempts.get(&key).copied().unwrap_or(0) < 2 {
+                    self.visible_requested.remove(&key);
+                }
+            } else if self.attempts.get(&cell).copied().unwrap_or(0) < 2 {
                 self.seen.remove(&cell);
                 self.frontier.push_front(cell);
             }
         }
-        if self.pending.len() >= MAX_REQUESTS || self.next_request.is_some_and(|t| now < t) || self.known.len() >= MAX_PARCELS {
+        if self.pending.len() >= MAX_REQUESTS || self.next_request.is_some_and(|t| now < t) {
+            return Vec::new();
+        }
+        // Explicit visibility has priority over automatic owner/group discovery.
+        // Resolve by region UUID and parcel ID, never by a saved name or old bounds.
+        for entry in &settings.always_visible {
+            let key = (entry.region, entry.local_id);
+            if entry.region.is_nil() || entry.local_id <= 0 || self.visible_requested.contains(&key) {
+                continue;
+            }
+            let Some((&handle, _)) = world
+                .regions
+                .iter()
+                .find(|(_, region)| region.info.as_ref().is_some_and(|info| info.region_id == entry.region))
+            else {
+                continue;
+            };
+            if self
+                .allowed
+                .iter()
+                .any(|m| m.handle == handle && m.parcel.local_id == entry.local_id)
+            {
+                continue;
+            }
+            self.next_sequence = FIRST_SEQUENCE + (self.next_sequence + 1 - FIRST_SEQUENCE).rem_euclid(1_000_000);
+            let sequence = self.next_sequence;
+            self.visible_requested.insert(key);
+            *self.visible_attempts.entry(key).or_default() += 1;
+            self.pending.insert(
+                sequence,
+                Request {
+                    cell: (handle, 0, 0),
+                    sent: now,
+                    parcel: Some(key),
+                },
+            );
+            self.next_request = Some(now + Duration::from_millis(150));
+            return vec![NetCommand::Build(BuildCmd::ParcelRequestById {
+                handle,
+                sequence,
+                local_id: entry.local_id,
+            })];
+        }
+        if !settings.automatic_neighbours() || self.known.len() >= MAX_PARCELS {
             return Vec::new();
         }
         while let Some(cell @ (handle, x, y)) = self.frontier.pop_front() {
@@ -207,7 +299,14 @@ impl Visibility {
             *self.attempts.entry(cell).or_default() += 1;
             self.next_sequence = FIRST_SEQUENCE + (self.next_sequence + 1 - FIRST_SEQUENCE).rem_euclid(1_000_000);
             let sequence = self.next_sequence;
-            self.pending.insert(sequence, Request { cell, sent: now });
+            self.pending.insert(
+                sequence,
+                Request {
+                    cell,
+                    sent: now,
+                    parcel: None,
+                },
+            );
             self.next_request = Some(now + Duration::from_millis(150));
             return vec![NetCommand::Build(BuildCmd::ParcelRequest {
                 handle,
@@ -222,39 +321,47 @@ impl Visibility {
         Vec::new()
     }
 
-    fn add_mask(&mut self, world: &World, mask: Mask) {
-        let cells_x = mask.size.0 / 4;
-        let (ox, oy) = aurora_net::handle_to_origin(mask.handle);
-        for (byte, bits) in mask.parcel.bitmap.iter().enumerate() {
-            for bit in 0..8 {
-                if bits & (1 << bit) == 0 {
-                    continue;
-                }
-                let i = byte as u32 * 8 + bit;
-                let (x, y) = (i % cells_x * 4, i / cells_x * 4);
-                if self.settings.same_owner {
-                    for (dx, dy) in [(-4, 0), (4, 0), (0, -4), (0, 4)] {
-                        let p = DVec3::new(
-                            f64::from(ox) + f64::from(x) + f64::from(dx) + 2.0,
-                            f64::from(oy) + f64::from(y) + f64::from(dy) + 2.0,
-                            0.0,
-                        );
-                        if mask.contains(p) {
-                            continue;
-                        }
-                        if let Some(cell) = cell_at(world, p)
-                            && !self.seen.contains(&cell)
-                            && self.frontier.len() < 8192
-                        {
-                            self.frontier.push_back(cell);
+    fn add_mask(&mut self, world: &World, mask: Mask, discover: bool) {
+        if discover {
+            let cells_x = mask.size.0 / 4;
+            let (ox, oy) = aurora_net::handle_to_origin(mask.handle);
+            for (byte, bits) in mask.parcel.bitmap.iter().enumerate() {
+                for bit in 0..8 {
+                    if bits & (1 << bit) == 0 {
+                        continue;
+                    }
+                    let i = byte as u32 * 8 + bit;
+                    let (x, y) = (i % cells_x * 4, i / cells_x * 4);
+                    if self.settings.automatic_neighbours() {
+                        for (dx, dy) in [(-4, 0), (4, 0), (0, -4), (0, 4)] {
+                            let p = DVec3::new(
+                                f64::from(ox) + f64::from(x) + f64::from(dx) + 2.0,
+                                f64::from(oy) + f64::from(y) + f64::from(dy) + 2.0,
+                                0.0,
+                            );
+                            if mask.contains(p) {
+                                continue;
+                            }
+                            if let Some(cell) = cell_at(world, p)
+                                && !self.seen.contains(&cell)
+                                && self.frontier.len() < 8192
+                            {
+                                self.frontier.push_back(cell);
+                            }
                         }
                     }
                 }
             }
+            self.known.push(mask.clone());
         }
-        self.known.push(mask.clone());
-        self.allowed.push(mask);
-        self.version = self.version.wrapping_add(1);
+        if !self
+            .allowed
+            .iter()
+            .any(|m| m.handle == mask.handle && m.parcel.local_id == mask.parcel.local_id)
+        {
+            self.allowed.push(mask);
+            self.version = self.version.wrapping_add(1);
+        }
     }
 
     fn reply(&mut self, world: &World, handle: RegionHandle, sequence: i32, parcel: Arc<ParcelInfo>) -> bool {
@@ -275,6 +382,20 @@ impl Visibility {
             size: (region.heightmap.size_x, region.heightmap.size_y),
             parcel,
         };
+        if let Some((region_id, local_id)) = request.parcel {
+            if region.info.as_ref().is_some_and(|info| info.region_id == region_id)
+                && mask.parcel.local_id == local_id
+                && mask.valid()
+                && self
+                    .settings
+                    .always_visible
+                    .iter()
+                    .any(|entry| entry.region == region_id && entry.local_id == local_id)
+            {
+                self.add_mask(world, mask, false);
+            }
+            return true;
+        }
         let (ox, oy) = aurora_net::handle_to_origin(handle);
         let point = DVec3::new(
             f64::from(ox) + f64::from(request.cell.1) + 2.0,
@@ -285,19 +406,18 @@ impl Visibility {
             return true;
         }
         // Retain a bitmap instead of a hash entry for every cell of a large region.
-        let same_owner = self.current.as_ref().is_some_and(|current| {
-            !current.parcel.owner_id.is_nil()
-                && current.parcel.owner_id == mask.parcel.owner_id
-                && current.parcel.is_group_owned == mask.parcel.is_group_owned
-        });
-        if same_owner
-            && self.allowed.len() < MAX_PARCELS
+        let related = self
+            .current
+            .as_ref()
+            .is_some_and(|current| self.settings.includes_related(&current.parcel, &mask.parcel));
+        if related
+            && self.known.len() < MAX_PARCELS
             && !self
-                .allowed
+                .known
                 .iter()
                 .any(|m| m.handle == handle && m.parcel.local_id == mask.parcel.local_id)
         {
-            self.add_mask(world, mask);
+            self.add_mask(world, mask, true);
         } else if self.known.len() < MAX_PARCELS {
             self.known.push(mask);
         }
@@ -316,8 +436,19 @@ fn cell_at(world: &World, p: DVec3) -> Option<Cell> {
 
 impl World {
     pub fn current_parcel_entry(&self) -> Option<Entry> {
-        let parcel = self.parcel.as_ref()?;
-        let region = self.main()?;
+        self.parcel_entry(self.main_region?, self.parcel.as_deref()?)
+    }
+
+    pub fn selected_parcel_entry(&self) -> Option<Entry> {
+        let selection = self.land.sel.as_ref()?;
+        if selection.result != aurora_net::land::PARCEL_RESULT_SUCCESS {
+            return None;
+        }
+        self.parcel_entry(selection.handle, selection.parcel.as_deref()?)
+    }
+
+    pub(crate) fn parcel_entry(&self, handle: RegionHandle, parcel: &ParcelInfo) -> Option<Entry> {
+        let region = self.regions.get(&handle)?;
         let id = region.info.as_ref()?.region_id;
         if id.is_nil() || parcel.local_id <= 0 {
             return None;
@@ -423,9 +554,346 @@ mod tests {
             assert_eq!(settings.applies(&other), unlisted);
         }
         settings.same_owner = true;
+        settings.same_group = true;
+        settings.always_visible.push(other);
         let encoded = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&encoded).unwrap(), settings);
         assert_eq!(serde_json::from_str::<Settings>("{}").unwrap(), Settings::default());
+        let old: Settings = serde_json::from_str(r#"{"mode":"Always","same_owner":true,"parcels":[]}"#).unwrap();
+        assert!(
+            !old.same_group && old.always_visible.is_empty(),
+            "existing preferences keep the new options off"
+        );
+    }
+
+    fn response(command: NetCommand) -> (RegionHandle, i32, Arc<ParcelInfo>) {
+        match command {
+            NetCommand::Build(BuildCmd::ParcelRequest {
+                handle,
+                sequence,
+                west,
+                south,
+                ..
+            }) => (handle, sequence, crate::demo::parcel_visibility::parcel_at(west, south)),
+            NetCommand::Build(BuildCmd::ParcelRequestById {
+                handle,
+                sequence,
+                local_id,
+            }) => (
+                handle,
+                sequence,
+                crate::demo::parcel_visibility::parcel_by_id(local_id).expect("demo parcel"),
+            ),
+            _ => panic!("parcel visibility request"),
+        }
+    }
+
+    #[test]
+    fn parcel_visibility_same_group_matches_assigned_and_deeded_groups_on_both_sides() {
+        let group = Uuid::from_u128(946);
+        let config = Settings {
+            same_group: true,
+            ..Default::default()
+        };
+        for current_owned in [false, true] {
+            for neighbour_owned in [false, true] {
+                let parcel = |owned, resident| ParcelInfo {
+                    owner_id: if owned { group } else { Uuid::from_u128(resident) },
+                    group_id: if owned { Uuid::nil() } else { group },
+                    is_group_owned: owned,
+                    ..Default::default()
+                };
+                let current = parcel(current_owned, 1);
+                let neighbour = parcel(neighbour_owned, 2);
+                assert!(
+                    config.includes_related(&current, &neighbour),
+                    "current owned={current_owned}, neighbour owned={neighbour_owned}"
+                );
+                let mut different = neighbour.clone();
+                different.owner_id = Uuid::from_u128(3);
+                different.group_id = Uuid::from_u128(4);
+                assert!(!config.includes_related(&current, &different));
+                assert!(!Settings::default().includes_related(&current, &neighbour));
+            }
+        }
+        assert!(
+            !config.includes_related(&ParcelInfo::default(), &ParcelInfo::default()),
+            "no group is not a common group"
+        );
+    }
+
+    #[test]
+    fn parcel_visibility_owner_and_group_options_are_independent_and_combined_by_union() {
+        let current = ParcelInfo {
+            owner_id: Uuid::from_u128(1),
+            group_id: Uuid::from_u128(10),
+            ..Default::default()
+        };
+        let same_owner = ParcelInfo {
+            group_id: Uuid::from_u128(20),
+            ..current.clone()
+        };
+        let same_group = ParcelInfo {
+            owner_id: Uuid::from_u128(2),
+            ..current.clone()
+        };
+        for (owner, group) in [(false, false), (true, false), (false, true), (true, true)] {
+            let config = Settings {
+                same_owner: owner,
+                same_group: group,
+                ..Default::default()
+            };
+            assert_eq!(config.includes_related(&current, &same_owner), owner);
+            assert_eq!(config.includes_related(&current, &same_group), group);
+        }
+    }
+
+    #[test]
+    fn parcel_visibility_same_group_discovers_a_deeded_neighbour_of_an_assigned_current_parcel() {
+        let mut world = world();
+        let group = Uuid::from_u128(946);
+        Arc::make_mut(world.parcel.as_mut().unwrap()).group_id = group;
+        let config = Settings {
+            mode: Mode::Always,
+            same_group: true,
+            ..Default::default()
+        };
+        let start = Instant::now();
+        for step in 0..200 {
+            for command in world.update_parcel_visibility(&config, start + Duration::from_millis(step * 150)) {
+                let (handle, sequence, mut parcel) = response(command);
+                if parcel.local_id == 2 {
+                    let parcel = Arc::make_mut(&mut parcel);
+                    parcel.owner_id = group;
+                    parcel.is_group_owned = true;
+                    parcel.group_id = Uuid::nil();
+                } else if parcel.local_id == 3 {
+                    Arc::make_mut(&mut parcel).owner_id = crate::demo::DEMO_LOUP;
+                }
+                world.parcel_visibility_reply(handle, sequence, parcel);
+            }
+        }
+        assert_eq!(world.parcel_visibility.allowed.len(), 2);
+        assert!(world.parcel_visibility.contains(DVec3::new(256_120.0, 256_140.0, 25.0)));
+        assert!(
+            !world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)),
+            "a matching owner alone does not enable group inclusion"
+        );
+    }
+
+    #[test]
+    fn parcel_visibility_saved_parcels_stay_visible_after_we_leave_under_each_active_mode() {
+        for mode in [Mode::Always, Mode::Listed, Mode::ExceptListed] {
+            let mut world = world();
+            let saved = world.current_parcel_entry().unwrap();
+            world.parcel = Some(crate::demo::parcel_visibility::parcel_at(120.0, 130.0));
+            world.agent.get_off(Vec3::new(120.0, 130.0, 25.0));
+            let mut config = Settings {
+                mode,
+                always_visible: vec![saved],
+                ..Default::default()
+            };
+            if mode == Mode::Listed {
+                config.parcels.push(world.current_parcel_entry().unwrap());
+            }
+            let now = Instant::now();
+            let command = world.update_parcel_visibility(&config, now).pop().unwrap();
+            assert!(matches!(
+                command,
+                NetCommand::Build(BuildCmd::ParcelRequestById { local_id: 1, .. })
+            ));
+            let (handle, sequence, parcel) = response(command);
+            assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_140.0, 25.0)));
+            world.parcel_visibility_reply(handle, sequence, parcel);
+            assert!(world.parcel_visibility.contains(DVec3::new(256_140.0, 256_140.0, 25.0)));
+            assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)));
+            config.always_visible.clear();
+            world.update_parcel_visibility(&config, now);
+            assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_140.0, 25.0)));
+        }
+    }
+
+    #[test]
+    fn parcel_visibility_explicit_foreign_parcels_do_not_expand_the_automatic_neighbour_scope() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let entry = world
+            .parcel_entry(handle, &crate::demo::parcel_visibility::parcel_at(120.0, 120.0))
+            .unwrap();
+        let config = Settings {
+            mode: Mode::Always,
+            same_owner: true,
+            always_visible: vec![entry],
+            ..Default::default()
+        };
+        let command = world.update_parcel_visibility(&config, Instant::now()).pop().unwrap();
+        assert!(
+            matches!(command, NetCommand::Build(BuildCmd::ParcelRequestById { local_id: 4, .. })),
+            "explicit parcels are requested first"
+        );
+        let frontier = world.parcel_visibility.frontier.len();
+        let (handle, sequence, parcel) = response(command);
+        world.parcel_visibility_reply(handle, sequence, parcel);
+        assert!(
+            world.parcel_visibility.contains(DVec3::new(256_120.0, 256_120.0, 25.0)),
+            "foreign owner and diagonal parcel are allowed explicitly"
+        );
+        assert!(!world.parcel_visibility.contains(DVec3::new(256_140.0, 256_120.0, 25.0)));
+        assert_eq!(
+            world.parcel_visibility.frontier.len(),
+            frontier,
+            "an exception does not start an unrelated estate crawl"
+        );
+    }
+
+    #[test]
+    fn parcel_visibility_automatic_discovery_continues_through_an_explicit_same_owner_parcel() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let entry = world
+            .parcel_entry(handle, &crate::demo::parcel_visibility::parcel_at(120.0, 130.0))
+            .unwrap();
+        let config = Settings {
+            mode: Mode::Always,
+            same_owner: true,
+            always_visible: vec![entry],
+            ..Default::default()
+        };
+        let start = Instant::now();
+        for step in 0..200 {
+            for command in world.update_parcel_visibility(&config, start + Duration::from_millis(step * 150)) {
+                let (handle, sequence, mut parcel) = response(command);
+                if parcel.local_id == 4 {
+                    Arc::make_mut(&mut parcel).owner_id = crate::demo::DEMO_LOUP;
+                }
+                world.parcel_visibility_reply(handle, sequence, parcel);
+            }
+        }
+        assert_eq!(world.parcel_visibility.allowed.len(), 3);
+        assert!(world.parcel_visibility.contains(DVec3::new(256_120.0, 256_120.0, 25.0)));
+    }
+
+    #[test]
+    fn parcel_visibility_explicit_requests_reject_wrong_ids_and_stale_replies() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let entry = world
+            .parcel_entry(handle, &crate::demo::parcel_visibility::parcel_at(120.0, 120.0))
+            .unwrap();
+        let config = Settings {
+            mode: Mode::Always,
+            always_visible: vec![entry],
+            ..Default::default()
+        };
+        let now = Instant::now();
+        let (handle, sequence, _) = response(world.update_parcel_visibility(&config, now).pop().unwrap());
+        world.parcel_visibility_reply(handle, sequence, crate::demo::parcel_visibility::parcel_at(120.0, 130.0));
+        assert_eq!(world.parcel_visibility.allowed.len(), 1);
+        world.update_parcel_visibility(&Settings::default(), now);
+        let (handle, sequence, parcel) = response(world.update_parcel_visibility(&config, now).pop().unwrap());
+        world.update_parcel_visibility(
+            &Settings {
+                mode: Mode::Always,
+                ..Default::default()
+            },
+            now,
+        );
+        world.parcel_visibility_reply(handle, sequence, parcel);
+        assert_eq!(
+            world.parcel_visibility.allowed.len(),
+            1,
+            "a removed exception cannot reappear through a late reply"
+        );
+    }
+
+    #[test]
+    fn parcel_visibility_explicit_requests_retry_once_without_polling_forever() {
+        let mut world = world();
+        let handle = world.main_region.unwrap();
+        let entry = world
+            .parcel_entry(handle, &crate::demo::parcel_visibility::parcel_at(120.0, 120.0))
+            .unwrap();
+        let config = Settings {
+            mode: Mode::Always,
+            always_visible: vec![entry],
+            ..Default::default()
+        };
+        let start = Instant::now();
+        assert_eq!(world.update_parcel_visibility(&config, start).len(), 1);
+        assert!(world.update_parcel_visibility(&config, start + Duration::from_secs(1)).is_empty());
+        assert_eq!(world.update_parcel_visibility(&config, start + Duration::from_secs(10)).len(), 1);
+        assert!(world.update_parcel_visibility(&config, start + Duration::from_secs(20)).is_empty());
+        assert!(world.parcel_visibility.pending.is_empty());
+    }
+
+    #[test]
+    fn parcel_visibility_saved_regions_resolve_by_uuid_on_arrival_and_retire_on_replacement() {
+        let mut world = world();
+        let main = world.main_region.unwrap();
+        let (ox, oy) = aurora_net::handle_to_origin(main);
+        let neighbour = aurora_net::origin_to_handle(ox + 256, oy);
+        let region_id = Uuid::from_u128(12345);
+        let entry = Entry {
+            region: region_id,
+            local_id: 4,
+            name: "Visible".into(),
+            region_name: "Neighbour".into(),
+        };
+        let config = Settings {
+            mode: Mode::Always,
+            always_visible: vec![entry],
+            ..Default::default()
+        };
+        let now = Instant::now();
+        assert!(
+            world.update_parcel_visibility(&config, now).is_empty(),
+            "disconnected regions are not requested"
+        );
+        let mut info = world.main().unwrap().info.as_ref().unwrap().as_ref().clone();
+        info.handle = neighbour;
+        info.region_id = region_id;
+        world.ensure_region(neighbour, (256, 256)).info = Some(Arc::new(info));
+        let command = world.update_parcel_visibility(&config, now).pop().unwrap();
+        assert!(matches!(command, NetCommand::Build(BuildCmd::ParcelRequestById { handle, local_id: 4, .. }) if handle == neighbour));
+        let (handle, sequence, _) = response(command);
+        world.parcel_visibility_reply(
+            handle,
+            sequence,
+            Arc::new(ParcelInfo {
+                local_id: 4,
+                bitmap: vec![255; 512],
+                ..Default::default()
+            }),
+        );
+        let position = DVec3::new(f64::from(ox + 260), f64::from(oy + 140), 25.0);
+        assert!(world.parcel_visibility.contains(position));
+        let region = world.regions.get_mut(&neighbour).unwrap();
+        Arc::make_mut(region.info.as_mut().unwrap()).region_id = Uuid::from_u128(54321);
+        world.update_parcel_visibility(&config, now);
+        assert!(
+            !world.parcel_visibility.contains(position),
+            "a different region at the old position is not the saved parcel"
+        );
+    }
+
+    #[test]
+    fn parcel_visibility_selected_parcels_can_be_saved_without_replacing_the_current_parcel() {
+        let mut world = world();
+        let current = world.parcel.clone().unwrap();
+        let handle = world.main_region.unwrap();
+        world.land.select_at(handle, Vec3::new(120.0, 120.0, 25.0), (256.0, 256.0));
+        world.apply(aurora_net::NetEvent::Land(aurora_net::land::LandEvent::Selected {
+            handle,
+            info: crate::demo::parcel_visibility::parcel_at(120.0, 120.0),
+            result: aurora_net::land::PARCEL_RESULT_SUCCESS,
+        }));
+        assert_eq!(world.selected_parcel_entry().unwrap().local_id, 4);
+        assert!(Arc::ptr_eq(world.parcel.as_ref().unwrap(), &current));
+        world.land.sel.as_mut().unwrap().result = aurora_net::land::PARCEL_RESULT_MULTIPLE;
+        assert!(
+            world.selected_parcel_entry().is_none(),
+            "a multi-parcel selection cannot become one exception"
+        );
     }
 
     #[test]

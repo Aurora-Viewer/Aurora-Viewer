@@ -2637,7 +2637,7 @@ both open states and the selection count. Capture at frame 620.
 
 ### Details
 
-- **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner`**:
+- **`AURORA_DEMO_PARCEL_VISIBILITY=off|always|listed|except|except-listed|same-owner|same-group|group-owned-current|always-visible`**:
   four parcels split the plaza at x/y 128 m. The northern parcels share an owner;
   the southern ones belong to someone else. `always`, `listed` (current parcel
   listed) and `except` (empty list) hide content outside the north-east parcel;
@@ -2646,11 +2646,20 @@ both open states and the selection count. Capture at frame 620.
   `AURORA_DEMO_POS=124,132` to stand on the north-west parcel and look towards
   the plaza on its same-owner north-east neighbour: hidden with `always`,
   visible with `same-owner`.
+  `always-visible` lists the north-east parcel as an explicit rendering exception,
+  with both automatic neighbour options off. `same-group` assigns a group to the
+  north-west parcel and deeds the north-east neighbour to that group, with the
+  same-owner option off; `group-owned-current` reverses assigned/deeded status.
+  The northern plaza stays visible in both group scenarios from `124,132`.
   Combine with
   `AURORA_DEMO_OPTIONS=graphics` for the native controls. Check live mode changes,
-  adding/removing the current parcel and restoring content without relogging.
+  adding/removing scope entries and always-visible parcels, and restoring content
+  without relogging. To add a neighbouring exception without walking there, select
+  it in About Land, then use "Add selected parcel" in the always-visible list.
   On the grid, also check parcel changes, listed parcels in different regions,
-  group-owned neighbours, connected region borders and moving linked objects.
+  assigned/deeded groups on either side, foreign-owner exceptions, connected region
+  borders and moving linked objects. Owner and group options combine by union;
+  missing groups do not match, and exceptions do not extend automatic discovery.
   Parcel isolation is local rendering; it does not stop simulator object updates.
 
 - **`AURORA_DEMO_DOF=<f-number>:<distance>[:debug]`**: the depth of field on

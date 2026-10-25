@@ -24,9 +24,14 @@ hover; it moves only the camera position, preserving mouse-controlled world-spac
 aim.
 
 `world/parcel_visibility.rs` owns saved parcel-isolation modes, region UUID/local
-parcel identities and exact bitmap membership. Optional same-owner discovery
-walks adjoining parcel cells, including connected region borders, with bounded
-independent `BuildCmd::ParcelRequest` sequences from 1,000,000; its replies never
+parcel identities and exact bitmap membership. Independent same-owner and
+same-group options walk adjoining cells, including connected region borders.
+Group matching resolves the assigned group on resident-owned land and the owner
+UUID on deeded land, on both the current parcel and candidates. Explicit always-visible
+parcels override isolation without broadening automatic discovery. They resolve
+connected regions by UUID and read current bounds with `BuildCmd::ParcelRequestById`
+(`ParcelPropertiesRequestByID`, as in `LLViewerParcelMgr::selectCollisionParcel`).
+Both request types share bounded independent sequences from 1,000,000; replies never
 enter About Land, Build selections or the agent parcel. Mask changes invalidate
 scene records once; ordinary object movement uses the existing sync scheduler.
 Hidden linksets release their draw records and visual asset references before

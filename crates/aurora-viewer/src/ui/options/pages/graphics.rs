@@ -193,39 +193,24 @@ fn quality(cx: &mut Cx) {
             tr!("parcel-visibility-same-owner-help"),
             &field!(parcel_visibility.same_owner),
         );
-        cx.wide().row_with(
+        cx.toggle(
+            tr!("parcel-visibility-same-group"),
+            tr!("parcel-visibility-same-group-help"),
+            &field!(parcel_visibility.same_group),
+        );
+        parcel_list(
+            cx,
             tr!("parcel-visibility-parcels"),
             tr!("parcel-visibility-parcels-help"),
             &field!(parcel_visibility.parcels),
-            |ui, s, st, _| {
-                let mut changed = false;
-                ui.vertical(|ui| {
-                    let current = st.current_parcel.as_ref();
-                    let listed = current.is_some_and(|p| s.parcel_visibility.parcels.iter().any(|entry| entry.same_parcel(p)));
-                    if ui
-                        .add_enabled(current.is_some() && !listed, egui::Button::new(tr!("parcel-visibility-add")))
-                        .clicked()
-                        && let Some(entry) = current
-                    {
-                        s.parcel_visibility.parcels.push(entry.clone());
-                        changed = true;
-                    }
-                    let mut remove = None;
-                    for (i, entry) in s.parcel_visibility.parcels.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            if ui.button(tr!("common-remove")).clicked() {
-                                remove = Some(i);
-                            }
-                            ui.add(egui::Label::new(format!("{} — {}", entry.name, entry.region_name)).truncate());
-                        });
-                    }
-                    if let Some(i) = remove {
-                        s.parcel_visibility.parcels.remove(i);
-                        changed = true;
-                    }
-                });
-                changed
-            },
+            false,
+        );
+        parcel_list(
+            cx,
+            tr!("parcel-visibility-always-visible"),
+            tr!("parcel-visibility-always-visible-help"),
+            &field!(parcel_visibility.always_visible),
+            true,
         );
         cx.row(
             tr!("ui-options-level-of-detail-lod"),
@@ -802,5 +787,50 @@ fn depth_of_field(cx: &mut Cx) {
                 |ui, s| plain_slider(ui, &mut s.dof.quality, 0.25..=1.0, "", 2),
             );
         });
+    });
+}
+
+/// Scope and rendering exceptions use the same saved identities and list controls.
+fn parcel_list(
+    cx: &mut Cx,
+    label: &str,
+    hint: &str,
+    field: &super::super::cx::F<Vec<crate::world::parcel_visibility::Entry>>,
+    selected: bool,
+) {
+    use aurora_i18n::tr;
+    let get = field.get_mut;
+    cx.wide().row_with(label, hint, field, |ui, s, st, _| {
+        let entries = get(s);
+        let mut changed = false;
+        ui.vertical(|ui| {
+            for (entry, label) in std::iter::once((st.current_parcel.as_ref(), tr!("parcel-visibility-add")))
+                .chain(selected.then_some((st.selected_parcel.as_ref(), tr!("parcel-visibility-add-selected"))))
+            {
+                let listed = entry.is_some_and(|p| entries.iter().any(|saved| saved.same_parcel(p)));
+                let response = ui.add_enabled(entry.is_some() && !listed, egui::Button::new(label));
+                if let Some(parcel) = entry {
+                    let response = response.on_hover_text(format!("{} — {}", parcel.name, parcel.region_name));
+                    if response.clicked() {
+                        entries.push(parcel.clone());
+                        changed = true;
+                    }
+                }
+            }
+            let mut remove = None;
+            for (i, entry) in entries.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    if ui.button(tr!("common-remove")).clicked() {
+                        remove = Some(i);
+                    }
+                    ui.add(egui::Label::new(format!("{} — {}", entry.name, entry.region_name)).truncate());
+                });
+            }
+            if let Some(i) = remove {
+                entries.remove(i);
+                changed = true;
+            }
+        });
+        changed
     });
 }

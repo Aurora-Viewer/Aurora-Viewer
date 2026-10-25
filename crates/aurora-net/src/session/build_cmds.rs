@@ -609,6 +609,16 @@ impl Session<'_> {
                 d.snap_selection = snap;
                 self.send(addr, &m, true);
             }
+            BuildCmd::ParcelRequestById { sequence, local_id, .. } => {
+                // LLViewerParcelMgr::selectCollisionParcel uses this read-only
+                // message; our independent sequence leaves selections untouched.
+                let mut m = ParcelPropertiesRequestByID::default();
+                m.agent_data.agent_id = agent_id;
+                m.agent_data.session_id = session_id;
+                m.parcel_data.sequence_id = sequence;
+                m.parcel_data.local_id = local_id;
+                self.send(addr, &m, true);
+            }
             BuildCmd::ParcelDivide {
                 west, south, east, north, ..
             } => {
@@ -871,6 +881,7 @@ fn build_handle(c: &BuildCmd) -> Option<crate::types::RegionHandle> {
         | BuildCmd::SpinStop { handle, .. }
         | BuildCmd::DuplicateOnRay { handle, .. }
         | BuildCmd::ParcelRequest { handle, .. }
+        | BuildCmd::ParcelRequestById { handle, .. }
         | BuildCmd::ParcelDivide { handle, .. }
         | BuildCmd::ParcelJoin { handle, .. }
         | BuildCmd::ParcelRelease { handle, .. }
