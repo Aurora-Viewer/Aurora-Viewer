@@ -29,6 +29,7 @@ function Read-CrashReport([string]$Body) {
                 'Crash' {
                     if ($value -eq 'Rust panic') { $report.Kind = 'Rust panic' }
                     elseif ($value -eq 'Freeze') { $report.Kind = 'Freeze' }
+                    elseif ($value -match '^Out of memory \(\d{1,20} bytes\)$') { $report.Kind = 'Out of memory' }
                     elseif ($value -match '^Native exception (0x[0-9A-F]{8})$') { $report.Kind = "Native exception $($Matches[1])" }
                 }
                 'System' { if ($value -match '^[A-Za-z0-9 ._()\-,+/]{1,120}$') { $report.System = $value } }
@@ -221,7 +222,7 @@ function Get-StableName([string]$Name) {
 
 # Frames of the panic and exception machinery, of the crash handler itself
 # and of the process start: the same in every crash.
-$IgnoredFrame = '^(std|core|alloc|panic_unwind|backtrace|backtrace_rs)::|^__rust|^rust_(begin_unwind|panic)|^aurora_viewer::(crash|logging)::|^_*scrt_|^invoke_main$|^main$|^(kernelbase|ntdll|kernel32|ucrtbase|vcruntime140)(\+0x[0-9a-f]+)?$|^\?$'
+$IgnoredFrame = '^(std|core|alloc|panic_unwind|backtrace|backtrace_rs)::|^__rust|^rust_(begin_unwind|panic)|^aurora_viewer::(crash|logging|allocator)::|^(mimalloc|libmimalloc_sys)::|^_?mi_|^_*scrt_|^invoke_main$|^main$|^(kernelbase|ntdll|kernel32|ucrtbase|vcruntime140)(\+0x[0-9a-f]+)?$|^\?$'
 
 <#
     The crash's signature: its kind and its first three meaningful frames,
@@ -232,6 +233,7 @@ function Get-CrashSignature($Report, $Frames) {
     $kind = 'panic'
     if ($Report.Kind -like 'Native exception*') { $kind = $Report.Kind.Substring('Native exception '.Length) }
     elseif ($Report.Kind -eq 'Freeze') { $kind = 'freeze' }
+    elseif ($Report.Kind -eq 'Out of memory') { $kind = 'oom' }
     $resolved = @($Frames | Where-Object { $_.Resolved })
     $keys = @()
     if ($resolved.Count) {
@@ -259,6 +261,7 @@ function Get-TriageTitle($Report, $Signature) {
     $kind = 'Rust panic'
     if ($Report.Kind -like 'Native exception*') { $kind = 'native exception ' + $Report.Kind.Substring('Native exception '.Length) }
     elseif ($Report.Kind -eq 'Freeze') { $kind = 'freeze' }
+    elseif ($Report.Kind -eq 'Out of memory') { $kind = 'out of memory' }
     # Without symbols, the viewer's title (kind and fault) says as much.
     $keys = @($Signature.Frames)
     if (-not $keys.Count -or $keys[0] -like 'unsymbolized*') { return $null }

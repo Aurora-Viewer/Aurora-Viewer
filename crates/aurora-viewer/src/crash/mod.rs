@@ -12,6 +12,7 @@ pub mod privacy;
 // mod report;
 mod software;
 mod summary;
+mod threads;
 mod watchdog;
 mod window;
 
@@ -268,7 +269,21 @@ pub fn panic(info: &std::panic::PanicHookInfo<'_>, trace: &std::backtrace::Backt
         // A release build has no debug info for the trace above to resolve.
         native::write_stack(&mut file);
         let _ = file.sync_all();
+        threads::on_panic(&session.dir);
     }
+}
+
+/// An allocation the allocator could not give (allocator.rs): recorded
+/// with its stack before the standard library aborts. Allocates nothing.
+#[cold]
+pub fn out_of_memory(size: usize) {
+    native::out_of_memory(size);
+}
+
+/// The long-lived thread whose panic means the session cannot go on
+/// (`threads.rs`): the app ends the session when it sees one.
+pub fn thread_died() -> Option<&'static str> {
+    threads::died()
 }
 
 pub fn finished(success: bool) {
@@ -373,7 +388,7 @@ fn show_once(dir: &Path) -> anyhow::Result<()> {
 
 fn trace(dir: &Path) -> String {
     let mut result = String::new();
-    for name in ["panic.txt", "native.txt", "failure.txt", "freeze.txt"] {
+    for name in ["panic.txt", "native.txt", "oom.txt", "failure.txt", "freeze.txt"] {
         if let Ok(text) = read_limited(&dir.join(name), MAX_TRACE)
             && !text.trim().is_empty()
         {
@@ -392,10 +407,40 @@ pub fn demo() -> bool {
     match std::env::var("AURORA_DEMO_CRASH").as_deref() {
         Ok("panic") => panic!("Offline crash recovery demonstration"),
         Ok("native") => native::demo_exception(),
+        // An allocation no machine can give: the allocator's failure path,
+        // then the standard library's abort (fast fail).
+        Ok("oom") => {
+            let block = vec![0u8; 1 << 46];
+            std::hint::black_box(&block);
+            false
+        }
+        Ok("overflow") => {
+            demo_overflow(0);
+            false
+        }
         Ok("missing" | "recovery") => std::process::exit(9),
         Ok("normal") => true,
         _ => false,
     }
+}
+
+/// Endless recursion with a frame the optimiser cannot remove.
+#[allow(unconditional_recursion)]
+fn demo_overflow(depth: u64) -> u64 {
+    let frame = std::hint::black_box([depth; 64]);
+    demo_overflow(depth + 1) + frame[0]
+}
+
+/// `AURORA_DEMO_CRASH=thread`, once the window shows: a background thread
+/// under a critical name panics, as the network runtime's session loop
+/// could; the app ends the session at its next frame.
+pub fn demo_thread_death() {
+    if std::env::var_os("AURORA_DEMO").is_none() || std::env::var("AURORA_DEMO_CRASH").as_deref() != Ok("thread") {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("aurora-net".into())
+        .spawn(|| panic!("Offline thread death demonstration"));
 }
 
 /// `AURORA_DEMO_CRASH=freeze`, once the window shows: the main thread stops

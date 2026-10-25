@@ -2274,6 +2274,15 @@ viewer. The native stacks (exception and Rust panic) are written as
 in memory: the only form that can be symbolized after the process is gone.
 The watcher also keeps a hidden window that hears Windows end the session
 (`system-ending`): a viewer stopped by a shutdown is not reported.
+A vectored handler writes a stack overflow's stack as soon as it is raised
+(the unhandled filter would run on what is left of the overflowed stack),
+and `allocator.rs` hands a failed allocation to `native::out_of_memory`,
+which writes its size and stack to the pre-opened `oom.txt` without
+allocating, before the standard library aborts. `threads.rs` names the
+long-lived background threads the session cannot do without (network
+runtime, texture pages, frees, disk caches, chat history): their panic,
+which used to leave the viewer running without them, ends the session at
+the next frame and the report names the thread.
 
 `watchdog.rs` is the session's sign of life, on its own thread: every
 5 seconds `alive.txt` (the time, the last time the window answered, the

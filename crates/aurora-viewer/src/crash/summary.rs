@@ -41,8 +41,16 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     let stopped = super::read_limited(&dir.join("stopped-unix.txt"), 32)
         .ok()
         .and_then(|stopped| stopped.trim().parse::<u64>().ok());
+    let exit_code = super::read_limited(&dir.join("exit-code.txt"), 32)
+        .ok()
+        .and_then(|code| code.trim().strip_prefix("0x").and_then(hex32));
+    // A failed allocation counts only when the process then failed fast (or
+    // nobody saw how it ended): one that was handled leaves a note too.
+    let oom = out_of_memory(&text("oom.txt")).filter(|_| matches!(exit_code, None | Some(FAST_FAIL)));
     let (reason, title_reason) = if !panic.trim().is_empty() {
         ("Rust panic".to_owned(), "Rust panic".to_owned())
+    } else if let Some((size, _)) = &oom {
+        (format!("Out of memory ({size} bytes)"), "out of memory".to_owned())
     } else if let Some(code) = native_text
         .lines()
         .next()
@@ -75,10 +83,13 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
         rows.insert(1, ("Commit", token(&record.commit, 40)));
     }
     rows.push(("Crash", reason));
-    if let Some(code) = super::read_limited(&dir.join("exit-code.txt"), 32)
+    if let Some(thread) = super::read_limited(&dir.join("thread.txt"), 64)
         .ok()
-        .and_then(|code| code.trim().strip_prefix("0x").and_then(hex32))
+        .and_then(|name| super::threads::published_name(&name))
     {
+        rows.push(("Thread", format!("{thread} (the session was ended)")));
+    }
+    if let Some(code) = exit_code {
         let known = exit_code_name(code).map(|name| format!(" ({name})")).unwrap_or_default();
         rows.push(("Exit code", format!("0x{code:08X}{known}")));
     }
@@ -137,7 +148,8 @@ fn build_at(record: &super::Record, dir: &Path, boot_unix: Option<u64>) -> Summa
     // The panic's own stack when there is one, else the exception's, else
     // the frozen threads' (the main thread's first: the one the triage reads).
     let panic = (!panic.trim().is_empty()).then(|| Stack::parse(&panic));
-    let stacks: Vec<(Option<&str>, Stack)> = match panic.or(native).filter(|stack| !stack.frames.is_empty()) {
+    let oom = oom.map(|(_, stack)| stack);
+    let stacks: Vec<(Option<&str>, Stack)> = match panic.or(oom).or(native).filter(|stack| !stack.frames.is_empty()) {
         Some(stack) => vec![(None, stack)],
         None => freeze
             .into_iter()
@@ -220,6 +232,19 @@ fn unseen_end(tick: Option<u64>, boot_unix: Option<u64>) -> &'static str {
         }
         _ => "not seen: the viewer and its watcher stopped together (process tree ended, or Windows stopped)",
     }
+}
+
+/// The exit code of an abort: the standard library's, after a failed
+/// allocation among others.
+const FAST_FAIL: u32 = 0xC000_0409;
+
+/// The last failed allocation of `oom.txt` (crash/native.rs): its size and
+/// its stack, re-validated like the others.
+fn out_of_memory(text: &str) -> Option<(u64, Stack)> {
+    let last = text.rsplit("Out of memory: ").next().filter(|_| text.contains("Out of memory: "))?;
+    let (first, rest) = last.split_once('\n')?;
+    let size = first.strip_suffix(" bytes")?.parse().ok()?;
+    Some((size, Stack::parse(rest)))
 }
 
 /// The usual meaning of an exit code, for the reader of the report.
@@ -605,6 +630,49 @@ mod tests {
             body.contains("| End of session | not seen: the viewer and its watcher stopped together"),
             "{body}"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    const OOM: &str = "Out of memory: 64 bytes\nNative stack (modules):\n00: aurora_viewer+0x10\nModules:\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\nOut of memory: 70368744177664 bytes\nNative stack (modules):\n00: aurora_viewer+0x1234\n01: aurora_viewer+0x5678\nModules:\naurora_viewer id=FEDCBA9876543210FEDCBA98765432101 code=6700000Ac5e0000\n";
+
+    #[test]
+    fn a_failed_allocation_names_the_crash_only_when_the_process_failed_fast() {
+        let (dir, record) = session();
+        std::fs::write(dir.join("oom.txt"), OOM).unwrap();
+        std::fs::write(dir.join("exit-code.txt"), "0xC0000409").unwrap();
+        let summary = build_at(&record, &dir, None);
+        assert_eq!(summary.title, "Crash: out of memory (0.7.1+3.gabcdef)");
+        // the last allocation that failed, with its own stack
+        assert!(
+            summary.body.contains("| Crash | Out of memory (70368744177664 bytes) |"),
+            "{}",
+            summary.body
+        );
+        assert!(
+            summary.body.contains("00 aurora_viewer+0x1234\n01 aurora_viewer+0x5678\n"),
+            "{}",
+            summary.body
+        );
+        // handled (the process went on and ended another way): not the cause
+        std::fs::write(dir.join("exit-code.txt"), "0xC0000005").unwrap();
+        assert!(!build_at(&record, &dir, None).body.contains("Out of memory ("));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_critical_thread_death_names_the_thread_with_the_panic() {
+        let (dir, record) = session();
+        std::fs::write(
+            dir.join("panic.txt"),
+            "Rust panic: panicked at crates/aurora-net/src/session.rs:10:5:\nboom\nNative stack (modules):\n00: aurora_viewer+0x1000\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("thread.txt"), "aurora-net").unwrap();
+        let body = build_at(&record, &dir, None).body;
+        assert!(body.contains("| Crash | Rust panic |"), "{body}");
+        assert!(body.contains("| Thread | aurora-net (the session was ended) |"), "{body}");
+        std::fs::write(dir.join("thread.txt"), "Private Name").unwrap();
+        assert!(!build_at(&record, &dir, None).body.contains("| Thread |"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

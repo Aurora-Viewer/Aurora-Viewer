@@ -57,8 +57,18 @@ What each part tells the one who fixes it:
 - **Crash**: `Rust panic`, `Native exception 0x…`, `Startup or event loop
   failure`, `Freeze` (the window was not answering when the session ended:
   the stacks are those of the main thread, then of the render thread, read
-  while it was frozen) or `Unexpected shutdown` (the process vanished with
-  no word: killed, or a fast fail no handler can see).
+  while it was frozen), `Out of memory (N bytes)` (an allocation failed and
+  the process failed fast: the size asked for and the stack of the
+  allocation, written by the allocator itself before the abort) or
+  `Unexpected shutdown` (the process vanished with no word: killed, or a
+  fast fail other than out of memory). A stack overflow is a
+  `Native exception 0xC00000FD` with its stack, written by a vectored
+  handler on the stack Windows keeps for it.
+- **Thread**, when a long-lived background thread the session cannot do
+  without panicked (network runtime, texture pages, frees, disk caches,
+  chat history): the viewer ends the session at its next frame instead of
+  going on without it, and the report adds the thread's name to the
+  panic's stack.
 - **Exit code**, when the watcher saw the end, with its usual meaning:
   `0x00000001` is what Task Manager's End task gives (often after a
   freeze), `0xC0000409` a fast fail (abort, out of memory), `0xC00000FD`

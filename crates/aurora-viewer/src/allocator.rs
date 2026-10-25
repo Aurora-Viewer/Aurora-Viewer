@@ -101,25 +101,27 @@ unsafe impl GlobalAlloc for Allocator {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         // SAFETY: the caller's contract, passed on unchanged
-        unsafe {
+        let block = unsafe {
             if use_system() {
                 System.alloc(layout)
             } else {
                 MiMalloc.alloc(layout)
             }
-        }
+        };
+        failed(block, layout.size())
     }
 
     #[inline]
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         // SAFETY: the caller's contract, passed on unchanged
-        unsafe {
+        let block = unsafe {
             if use_system() {
                 System.alloc_zeroed(layout)
             } else {
                 MiMalloc.alloc_zeroed(layout)
             }
-        }
+        };
+        failed(block, layout.size())
     }
 
     #[inline]
@@ -139,14 +141,26 @@ unsafe impl GlobalAlloc for Allocator {
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // SAFETY: the caller's contract, passed on unchanged; `ptr` comes
         // from the same allocator (see the impl)
-        unsafe {
+        let block = unsafe {
             if use_system() {
                 System.realloc(ptr, layout, new_size)
             } else {
                 MiMalloc.realloc(ptr, layout, new_size)
             }
-        }
+        };
+        failed(block, new_size)
     }
+}
+
+/// A failed allocation is noted for the crash report (crash/native.rs,
+/// without allocating) before the caller aborts: out of memory used to end
+/// the viewer with no stack at all.
+#[inline]
+fn failed(block: *mut u8, size: usize) -> *mut u8 {
+    if block.is_null() {
+        crate::crash::out_of_memory(size);
+    }
+    block
 }
 
 #[cfg(test)]
