@@ -464,6 +464,10 @@ pub struct Settings {
     /// automatic choice (discrete first), or the adapter's name; read at
     /// startup (`aurora_render::adapter_choice`), `AURORA_GPU` overrides it.
     pub gpu_adapter: String,
+    /// Let other programs' overlay layers (Steam overlay, RivaTuner, Epic…)
+    /// into the viewer (Preferences › Graphics); off: kept out at startup
+    /// (`aurora_render::vulkan_layers`), read by `allow_overlays_at_start`.
+    pub allow_overlays: bool,
     pub vsync: bool,
     pub shadows: bool,
     pub force_midday: bool,
@@ -1420,6 +1424,7 @@ impl Default for Settings {
             start_region: String::new(),
             draw_distance: 96.0,
             gpu_adapter: String::new(),
+            allow_overlays: false,
             vsync: false,
             shadows: true,
             force_midday: false,
@@ -1693,6 +1698,13 @@ pub fn auto_texture_budget(vram_mb: Option<u64>, integrated: bool) -> u64 {
 
 /// The offline demo keeps its own settings and cache (a `demo` folder inside
 /// each), so test runs never change the user's real ones.
+/// `allow_overlays` of a settings file's bytes; false for anything else.
+fn allow_overlays_in(file: Option<&[u8]>) -> bool {
+    file.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+        .and_then(|value| value.get("allow_overlays").and_then(serde_json::Value::as_bool))
+        .unwrap_or(false)
+}
+
 fn for_mode(dir: PathBuf) -> PathBuf {
     if std::env::var_os("AURORA_DEMO").is_some() {
         dir.join("demo")
@@ -1831,6 +1843,14 @@ impl Settings {
 
     pub fn load() -> Settings {
         Self::load_from(&Self::path())
+    }
+
+    /// Whether the overlays are allowed, before anything else of the viewer
+    /// starts (the Vulkan layers are chosen on `main`'s first lines, before
+    /// any thread): this one field of the file, no log, no thread; false
+    /// when the file or the field is missing or unreadable.
+    pub fn allow_overlays_at_start() -> bool {
+        allow_overlays_in(std::fs::read(Self::path()).ok().as_deref())
     }
 
     fn load_from(path: &Path) -> Settings {
@@ -2483,6 +2503,29 @@ impl WaterEffectsSettings {
 
 #[cfg(test)]
 mod tests {
+    /// The early read of `allow_overlays` agrees with the full settings and
+    /// keeps the overlays out on any doubt.
+    #[test]
+    fn overlays_are_allowed_only_when_the_file_says_so() {
+        assert!(super::allow_overlays_in(Some(br#"{"draw_distance":96,"allow_overlays":true}"#)));
+        for file in [
+            Some(&br#"{"allow_overlays":false}"#[..]),
+            Some(br#"{"allow_overlays":"yes"}"#),
+            Some(br#"{"draw_distance":96}"#),
+            Some(b"not json"),
+            None,
+        ] {
+            assert!(!super::allow_overlays_in(file), "{file:?}");
+        }
+        assert!(!super::Settings::default().allow_overlays);
+        let saved = serde_json::to_vec(&super::Settings {
+            allow_overlays: true,
+            ..Default::default()
+        })
+        .expect("settings json");
+        assert!(super::allow_overlays_in(Some(&saved)));
+    }
+
     /// UTC, a clock time of the first version (#453), and an unknown name
     /// come back as SLT, the rest of the island kept.
     #[test]
