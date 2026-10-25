@@ -596,7 +596,12 @@ impl World {
                     );
                 }
             }
-            NetEvent::ChatSessionReply { method, session, result } => match method {
+            NetEvent::ChatSessionReply {
+                method,
+                session,
+                result,
+                not_found,
+            } => match method {
                 SessionMethod::AcceptInvitation => match result {
                     Some(r) => {
                         let agents = aurora_net::social::parse_session_agents(&r);
@@ -605,10 +610,19 @@ impl World {
                             apply_agents(s, &agents);
                         }
                     }
-                    None => self.session_system(
-                        session,
-                        aurora_i18n::tr!("world-groups-could-not-join-the-session-the-server-declined-the"),
-                    ),
+                    // chatterBoxInvitationCoro: only a 404 is shown
+                    // (session_does_not_exist_error), any other failure is
+                    // logged and the chat goes on
+                    None if not_found => {
+                        self.session_system(
+                            session,
+                            aurora_i18n::tr!("world-groups-could-not-join-the-session-it-no-longer-exists"),
+                        );
+                        if let Some(s) = self.groups.sessions.get_mut(&session) {
+                            s.closed = true;
+                        }
+                    }
+                    None => {}
                 },
                 SessionMethod::FetchHistory => {
                     if let Some(r) = result {
@@ -1046,6 +1060,47 @@ mod tests {
             .map(|m| w.message_flashes_conversations(m))
             .collect();
         assert_eq!(flashes, vec![true], "the message after the snooze flashes");
+    }
+
+    /// A failed "accept invitation" says nothing and keeps the chat, unless
+    /// the server answered 404 (chatterBoxInvitationCoro).
+    #[test]
+    fn a_refused_invitation_is_silent_unless_the_session_is_gone() {
+        let (group, tess) = (Uuid::from_u128(10), Uuid::from_u128(7));
+        let mut w = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        w.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Builders".into(),
+            insignia: Uuid::nil(),
+            powers: 0,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+        w.mutes.on_server(aurora_net::MuteListSource::File(String::new()), None);
+        w.on_session_invite(aurora_net::SessionInvite {
+            session: group,
+            from: tess,
+            from_name: "Tess Touch".into(),
+            message: "hi".into(),
+            session_name: "Builders".into(),
+            offline: false,
+            timestamp: 0,
+        });
+        let reply = |not_found| NetEvent::ChatSessionReply {
+            method: SessionMethod::AcceptInvitation,
+            session: group,
+            result: None,
+            not_found,
+        };
+        let lines = |w: &World| w.social.ims.iter().find(|s| s.other == group).map(|s| s.lines.len());
+        assert_eq!(lines(&w), Some(1));
+        assert!(w.on_group_event(reply(false)).is_none());
+        assert_eq!(lines(&w), Some(1), "no error line");
+        assert!(!w.groups.sessions[&group].closed);
+        assert!(w.on_group_event(reply(true)).is_none());
+        assert_eq!(lines(&w), Some(2), "the session no longer exists");
+        assert!(w.groups.sessions[&group].closed);
     }
 
     #[test]

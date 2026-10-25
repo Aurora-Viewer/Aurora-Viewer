@@ -420,11 +420,13 @@ pub enum NetEvent {
     /// An offline group invitation was accepted by capability: the group
     /// list is to ask again.
     OfflineGroupInviteAccepted(Uuid),
-    /// Answer of the ChatSessionRequest capability (None = failed).
+    /// Answer of the ChatSessionRequest capability (None = failed;
+    /// `not_found`: the server answered 404, the session is gone).
     ChatSessionReply {
         method: crate::social::SessionMethod,
         session: Uuid,
         result: Option<aurora_llsd::Llsd>,
+        not_found: bool,
     },
     /// Someone calls us (ChatterBoxInvitation with "voice").
     VoiceInvite(crate::social::VoiceInvite),

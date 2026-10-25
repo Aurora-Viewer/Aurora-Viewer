@@ -2704,6 +2704,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         method: *method,
                         session: *session,
                         result: Some(aurora_llsd::Llsd::Undef),
+                        not_found: false,
                     }];
                     ev.push(NetEvent::SessionAgents {
                         session: *session,
@@ -2769,6 +2770,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         method: *method,
                         session: *session,
                         result: Some(history),
+                        not_found: false,
                     }]
                 }
                 aurora_net::SessionMethod::DeclineInvitation => Vec::new(),
