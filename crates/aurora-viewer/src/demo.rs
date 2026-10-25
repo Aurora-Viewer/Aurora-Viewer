@@ -2327,7 +2327,14 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                 reason: aurora_i18n::tr!("demo-no-teleport-offline").into(),
             },
         ],
-        aurora_net::NetCommand::AgentAnimation { anim, start: false } if *anim == SEAT_ANIM => {
+        aurora_net::NetCommand::AgentAnimation { anim, start: false }
+            if *anim == SEAT_ANIM
+                || (*anim == CROWD_DANCE_ANIM
+                    && matches!(
+                        std::env::var("AURORA_DEMO_WORN").as_deref(),
+                        Ok("temporary-detach" | "temporary-drop")
+                    )) =>
+        {
             vec![NetEvent::AvatarAnimations {
                 avatar: DEMO_AGENT,
                 anims: vec![(IDLE_ANIM, 1)],
