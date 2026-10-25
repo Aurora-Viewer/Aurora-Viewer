@@ -1445,6 +1445,24 @@ wrapped status message and a 64-item object inventory at two heights.
 **`AURORA_DEMO_LSL_BRIDGE=1`** — messages of the Firestorm LSL bridge
 (hidden) between two "owner say" lines.
 
+**Bundled Aurora bridge scripts:** Rust embeds the `.lsl` sources as text;
+`check.ps1` and the offline factory do not compile them. Type-check all three
+scripts in Mono mode with `lslint` when changing them:
+
+```powershell
+foreach ($script in 'bridge', 'query', 'ik') {
+    lslint -m "crates/aurora-viewer/src/world/bridge/$script.lsl"
+}
+```
+
+Bridge 1.35 repairs four invalid unary `!` operations on keys in the query
+script's posing-consent paths. The human grid check is to let an existing
+attachment upgrade, confirm all three scripts are running, then request Script
+information and Object information on a rezzed object and an attachment.
+Confirm the reports appear in nearby chat and exercise posing consent between
+two clients. The LSL check supplements actual simulator compilation and runtime
+validation.
+
 **Bridge IK relay:** `AURORA_DEMO_MOVELOCK=1` exercises the three-script
 attachment factory and movement controller; capture at frame 1600 after its
 save/detach/restore stage. `AURORA_DEMO_BRIDGE_QUERY=radar` checks the independent
@@ -1737,6 +1755,11 @@ grid.
   access to invisible faces.
   With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
   and material masks blue; their highlighted surfaces become pickable.
+- `blend-opacity`: three rows of panels, Legacy Blend, PBR Blend and Mask, at 0%, 50% and
+  100% opacity from left to right. Each uses the same texture with holes.
+  Ordinary left clicks through the centre hole must reach every Blend panel,
+  including the invisible one, without Ctrl+Alt+T. Mask holes must pass through.
+  Combine with `AURORA_DEMO_CLICKS=<ms>,x,y,left` for repeated native touches.
 
 Right-click a HUD and check **Lock quick movement** to prevent its held-key
 drag without blocking buttons, scripts, local resizing or explicit Edit.

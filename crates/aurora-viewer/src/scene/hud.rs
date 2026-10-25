@@ -172,7 +172,7 @@ impl Scene {
             };
             if !g.hud
                 || g.owner_avatar != Some(own)
-                || (!include_hidden && g.faces.iter().all(|f| f.pass == Pass::Hidden))
+                || (!include_hidden && mode != picking::FacePick::Surface && g.faces.iter().all(|f| f.pass == Pass::Hidden))
                 || (!include_ignored && o.click_action == crate::interaction::code::IGNORE)
                 || !picking::ray_may_hit(g, ray)
             {

@@ -681,7 +681,11 @@ impl Scene {
             if only_hidden && !hidden {
                 return None;
             }
-            if !include_hidden && super::plants::plant_face(o).is_none() && hidden {
+            if !include_hidden
+                && super::plants::plant_face(o).is_none()
+                && hidden
+                && !(g.hud && mode == FacePick::Surface && self.blend_face(world, o, g, face))
+            {
                 return None;
             }
             let f = f.as_ref()?;
@@ -704,6 +708,14 @@ impl Scene {
                         pick::ray_faces(std::iter::once(face), model, ray.0, ray.1)?
                     };
                     let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
+                    // LLToolPie::handleMouseDown prioritizes transparent
+                    // attachments. HUD buttons own the whole Blend triangle,
+                    // including fully invisible faces without a draw record.
+                    // Resolve the material before visibility or texture masks;
+                    // Mask faces keep their cutouts and move gestures keep holes.
+                    if g.hud && mode == FacePick::Surface && self.blend_face(world, o, g, hit.face) {
+                        return Some(hit);
+                    }
                     let draw = geom
                         .faces
                         .get(hit.face)
@@ -719,10 +731,7 @@ impl Scene {
                         )
                         || (draw.legacy_alpha == Some(legacy_mat::alpha_mode::MASK)
                             && self.legacy_mats.peek(&tf.material_id).is_some_and(|m| m.alpha_cutoff == 0));
-                    // LLToolPie::handleMouseDown prioritizes transparent
-                    // attachments. Blend texels remain normal HUD buttons;
-                    // only the local move/scale gesture passes through them.
-                    if ignore_alpha || (g.hud && mode == FacePick::Surface && self.blend_face(world, o, g, hit.face)) {
+                    if ignore_alpha {
                         return Some(hit);
                     }
                     let Some(mask) = self.textures.pick_masks.get(&draw.tex_id) else {
@@ -2104,15 +2113,26 @@ pub(super) mod tests {
             .pick_masks
             .insert(texture, super::super::textures::PickMask::from_rgba(2, 2, &[0; 16]).unwrap());
         for (pbr, legacy) in [(None, None), (Some(1), None), (None, Some(legacy_mat::alpha_mode::BLEND))] {
-            scene.gpu[front].faces[0].pbr_alpha = pbr;
-            scene.gpu[front].faces[0].legacy_alpha = legacy;
-            let (idx, _, ray) = scene.hud_pick(&world, cursor, false).unwrap();
-            assert_eq!(idx, front);
-            assert!(scene.touch_surface(&world, idx, ray).is_some());
-            assert_eq!(scene.hover_hud(&world, cursor), Some(front));
-            assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
-            assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
+            for alpha in [1.0, 0.5, 0.001, 0.0] {
+                let draw = &mut scene.gpu[front].faces[0];
+                draw.pbr_alpha = pbr;
+                draw.legacy_alpha = legacy;
+                draw.te_alpha = alpha;
+                draw.pass = if alpha < 0.004 { Pass::Hidden } else { Pass::Blend };
+                Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = alpha;
+                let (idx, _, ray) = scene.hud_pick(&world, cursor, false).unwrap();
+                assert_eq!(idx, front, "Blend {pbr:?}/{legacy:?}, alpha {alpha}");
+                let touch = scene.touch_surface(&world, idx, ray).unwrap();
+                assert_eq!(touch.face, 0);
+                assert!(touch.st.abs_diff_eq(Vec3::new(0.5, 0.5, 0.0), 1e-5));
+                assert_eq!(scene.hover_hud(&world, cursor), Some(front));
+                assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+                assert_eq!(scene.hud_edit_pick(&world, cursor).unwrap().0, front);
+            }
         }
+        scene.gpu[front].faces[0].te_alpha = 1.0;
+        scene.gpu[front].faces[0].pass = Pass::Blend;
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 1.0;
         scene.gpu[front].faces[0].legacy_alpha = None;
         // Follow repeats/offsets in HUD space, rather than the raw mesh UV.
         let mut pixels = vec![255; 4 * 4 * 4];
@@ -2164,6 +2184,70 @@ pub(super) mod tests {
         scene.gpu[front].faces[0].te_alpha = 0.0;
         scene.textures.pick_masks.remove(&texture);
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+
+        // A Blend material can be drawn in the opaque pool when its texture
+        // is opaque. The material mode still determines button interaction.
+        scene.gpu[front].faces[0].te_alpha = 1.0;
+        scene.gpu[front].faces[0].legacy_alpha = Some(legacy_mat::alpha_mode::BLEND);
+        scene.gpu[front].faces[0].pbr_alpha = None;
+        scene.gpu[front].faces[0].pass = Pass::Opaque;
+        scene.textures.alpha_by_slot[0] = AlphaKind::Opaque;
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+
+        // Zero TE alpha omits all the draw records. Keep the CPU triangles
+        // for ordinary clicks and hover, without admitting a Mask override.
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
+        scene.gpu[front].faces.clear();
+        scene.build_huds(&world, [1280, 720], true);
+        let (_, _, ray) = scene.hud_pick(&world, cursor, false).unwrap();
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        assert_eq!(scene.hover_hud(&world, cursor), Some(front));
+        assert_eq!(scene.touch_surface(&world, front, ray).unwrap().face, 0);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+        let legacy_material = Uuid::from_u128(8889);
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].material_id = legacy_material;
+        for mode in [legacy_mat::alpha_mode::BLEND, legacy_mat::alpha_mode::MASK] {
+            scene.legacy_mats.insert(
+                legacy_material,
+                legacy_mat::LegacyMaterial {
+                    diffuse_alpha_mode: mode,
+                    alpha_cutoff: 128,
+                    ..Default::default()
+                },
+            );
+            let expected = if mode == legacy_mat::alpha_mode::BLEND { front } else { back };
+            assert_eq!(
+                scene.hud_pick(&world, cursor, false).unwrap().0,
+                expected,
+                "omitted legacy face: {mode}"
+            );
+        }
+        Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].material_id = Uuid::nil();
+        let material = Uuid::from_u128(8890);
+        let object = world.objects.get_mut(front).unwrap();
+        object.extra.render_materials.push((0, material));
+        let key = object.key;
+        scene.materials.insert(material, aurora_assets::PbrMaterial::default());
+        for mode in [
+            aurora_assets::AlphaMode::Blend,
+            aurora_assets::AlphaMode::Mask,
+            aurora_assets::AlphaMode::Opaque,
+        ] {
+            world.gltf_overrides.insert(
+                key,
+                vec![(
+                    0,
+                    aurora_assets::material::PbrOverride {
+                        alpha_mode: Some(mode),
+                        ..Default::default()
+                    },
+                )]
+                .into(),
+            );
+            let expected = if mode == aurora_assets::AlphaMode::Blend { front } else { back };
+            assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, expected, "omitted face: {mode:?}");
+            assert_eq!(scene.hover_hud(&world, cursor), Some(expected));
+        }
     }
 
     #[test]
