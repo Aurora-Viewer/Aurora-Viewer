@@ -6381,7 +6381,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
-| `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's) |
+| `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's, and the other overlays' unless allowed in Preferences) |
 | `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
 | `AURORA_GPU_START_FAIL=1` | Start as if no graphics card could draw the window: the message the user gets then |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
@@ -6434,10 +6434,21 @@ What the inventory must show with these scenarios:
   `DISABLE_VULKAN_OW_OVERLAY_LAYER=1`; `VK_LAYER_OW_OBS_HOOK`,
   `DISABLE_VULKAN_OW_OBS_CAPTURE=1`) in its own process, unless the user
   already set them: their overlay chained into a capture hook crashed in
-  `vkCreateInstance` one second after start (#901). The log says so
-  (`Vulkan layers kept out of the viewer`). `keep` leaves the environment
-  as it is. OBS Studio's game capture (`VK_LAYER_OBS_HOOK`) is never
-  disabled; `DISABLE_VULKAN_OBS_CAPTURE=1`, set by the user, does it. To
+  `vkCreateInstance` one second after start (#901). Unless Preferences ›
+  Graphics › Overlays › "Allow other programs' overlays" is on (read from
+  `settings.json` at start, applied at the next start), it also disables
+  the other overlays' layers: the Steam overlay
+  (`DISABLE_VK_LAYER_VALVE_steam_overlay_1`), RivaTuner (`DISABLE_RTSS_LAYER`),
+  the Epic Games overlay (`EOS_OVERLAY_DISABLE_VULKAN_WIN64`), Twitch Studio,
+  FPS Monitor and PlayClaw. The log says so
+  (`Vulkan layers kept out of the viewer`, each layer with its program,
+  and whether overlays are allowed). `keep` leaves the environment
+  as it is. OBS Studio's game capture (`VK_LAYER_OBS_HOOK`, and Wallpaper
+  Engine's copy, which declares the same variable), ReShade and the GPU
+  drivers' own layers are never disabled; `DISABLE_VULKAN_OBS_CAPTURE=1`,
+  set by the user, disables OBS's. Overlays that inject a DLL into the
+  running viewer instead (Discord) cannot be kept out: the log names them
+  when they arrive (`overlay hook loaded in the viewer`). To
   see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
 - **`AURORA_GPU=<number>|<name>|auto`**: the adapter the renderer opens,
   over Preferences › Graphics › Fluidity › Graphics card (#894): its number

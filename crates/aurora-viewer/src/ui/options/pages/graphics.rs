@@ -64,6 +64,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
         _ => {
             frames_per_second(cx);
             graphics_card(cx);
+            overlays(cx);
         }
     }
 }
@@ -99,6 +100,21 @@ fn graphics_card(cx: &mut Cx) {
                 )
                 .0
             },
+        );
+    });
+}
+
+/// Other programs' overlays (Steam, RivaTuner, Epic…): their Vulkan layers
+/// are kept out at startup unless allowed (`aurora_render::vulkan_layers`),
+/// so the choice applies at the next start. `AURORA_VULKAN_LAYERS=keep`
+/// loads them all.
+fn overlays(cx: &mut Cx) {
+    use aurora_i18n::tr;
+    cx.group(tr!("ui-options-overlays"), |cx| {
+        cx.toggle(
+            tr!("ui-options-allow-overlays"),
+            tr!("ui-options-allow-overlays-help"),
+            &field!(allow_overlays),
         );
     });
 }
