@@ -7,6 +7,9 @@
 //!   the avatar, FSResetCameraOnMovement)
 //! - `pan,x,y` / `zoom,x,y`: the same with a Ctrl+Alt+Shift (pan) or an Alt
 //!   (zoom closer) drag
+//! - `crouch-alt,x,y` / `crouch-pan,x,y` / `crouch-zoom,x,y`: the same after
+//!   toggling crouch at 560 and releasing its key at 570. The chosen view
+//!   must remain after the mouse is released, until walking at 700.
 //! - `close,x,y[,n]`: Alt+click at (x, y) at frame 600, Alt drag closer for n
 //!   frames (60 by default), then the camera stays there: a close-up on a
 //!   still camera, for comparing consecutive captures
@@ -54,6 +57,8 @@ pub enum Step {
     Drag(f32, f32),
     /// Hold / release the up arrow.
     Walk(bool),
+    /// Enable toggle crouch and hold / release its Down input.
+    Crouch(bool),
     ToggleMouselook,
     /// Wheel clicks, SL sign (positive zooms out).
     Wheel(f32),
@@ -96,16 +101,18 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                 _ => {}
             }
         }
-        mode @ ("alt" | "pan" | "zoom") => {
+        mode @ ("alt" | "pan" | "zoom" | "crouch-alt" | "crouch-pan" | "crouch-zoom") => {
             let (Some(x), Some(y)) = (num(1), num(2)) else {
                 return out;
             };
             let (ctrl, shift, drag) = match mode {
-                "pan" => (true, true, Step::Drag(4.0, 2.0)),
-                "zoom" => (false, false, Step::Drag(0.0, -3.0)),
+                "pan" | "crouch-pan" => (true, true, Step::Drag(4.0, 2.0)),
+                "zoom" | "crouch-zoom" => (false, false, Step::Drag(0.0, -3.0)),
                 _ => (true, false, Step::Drag(6.0, 1.0)),
             };
             match frame {
+                560 if mode.starts_with("crouch-") => out.push(Step::Crouch(true)),
+                570 if mode.starts_with("crouch-") => out.push(Step::Crouch(false)),
                 600 => out.extend([
                     Step::Cursor(x, y),
                     Step::Mods {
@@ -132,7 +139,7 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                     Step::Log,
                 ]),
                 700 => out.extend([Step::Walk(true), Step::Log]),
-                705 | 715 | 730 => out.push(Step::Log),
+                690 | 705 | 715 | 730 => out.push(Step::Log),
                 760 => out.extend([Step::Walk(false), Step::Log]),
                 _ => {}
             }
