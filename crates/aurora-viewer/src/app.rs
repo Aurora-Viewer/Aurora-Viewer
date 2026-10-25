@@ -8151,6 +8151,7 @@ impl App {
                     ) || v.starts_with("note-")
                         || v.starts_with("clipboard-")
                         || v.starts_with("aurora-menu-")
+                        || v.starts_with("bulk-")
                 }))
         {
             raw.focused = true;
