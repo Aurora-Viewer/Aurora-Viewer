@@ -6571,6 +6571,7 @@ What the inventory must show with these scenarios:
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
 | `AURORA_GTAO_TEMPORAL=0` or `alt` | GTAO without its accumulation over the frames (fixed noise, finer grain), as before |
+| `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
@@ -6793,6 +6794,25 @@ What the inventory must show with these scenarios:
   it); `AURORA_DEMO_CAMERA=close,800,600,1` with
   `AURORA_DEMO_DOUBLECLICK=walk,1100,640` (the avatar walks before a
   camera that stays): no ring of occlusion lags behind its feet.
+- **`AURORA_GTAO_NORMALS=depth|alt`**: GTAO starts from the surface normal
+  of each pixel. The depth prepass draws the mesh's smooth normal beside
+  the depth (`vs_depth_normal`, the shading's normal without its normal
+  map) whenever GTAO is shown, and GTAO and its indirect light read it
+  (`surface_normal` in gtao.wgsl), as XeGTAO takes a G-buffer's normals.
+  Rebuilt from the depth around the pixel, as before, the normal was the
+  flat triangle's: the occlusion changed from one triangle to the next and
+  low-poly meshes showed their facets, more or less visible with the sky's
+  ambient light (#993). Under the smooth normal, a triangle rises above the
+  smooth tangent plane on one side, and its own samples occluded it there
+  (a ring along the silhouette of the torus, a band at the avatar's neck):
+  on each slice the horizons on that side go down by the angle between the
+  two planes (`facet_lift`, at most 45°), so only what stands above the
+  triangle occludes. `depth` goes back to the depth's normal (the prepass
+  then draws the depth alone, the image as before), `alt` every other
+  second. The Legacy method does not change. To compare,
+  `AURORA_DEMO_DEBUG=ao` with `AURORA_AO=gtao:2` and
+  `AURORA_DEMO_CAMERA=close,800,620,40`: the back and the skirt of our
+  avatar, faceted before, and the torus behind the plaza.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility

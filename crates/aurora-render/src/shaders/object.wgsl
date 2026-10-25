@@ -526,6 +526,50 @@ fn fs_depth_mask(in: VsOut) {
     }
 }
 
+// The depth prepass with GTAO's mesh normals (gtao.rs, AURORA_GTAO_NORMALS):
+// the position of vs_depth and the vertices' smooth normal, the shading's
+// without its normal map. A normal taken from the depth is the flat
+// triangle's, and showed the facets of low-poly meshes in the occlusion
+// (#993).
+struct DepthNormalOut {
+    @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) normal: vec3<f32>,
+};
+
+@vertex
+fn vs_depth_normal(in: VsIn) -> DepthNormalOut {
+    let rec = records[in.instance];
+    let model = eye_model(rec, in);
+    let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
+    var out: DepthNormalOut;
+    out.clip = frame.eye_view_proj * ep;
+    out.normal = cofactor(model) * vertex_normal(rec, in);
+    return out;
+}
+
+// The world normal facing the side drawn (eval_material), octahedral as in
+// the G-buffer.
+fn depth_normal(n: vec3<f32>, front: bool) -> vec4<f32> {
+    let m = normalize(select(-n, n, front));
+    return vec4<f32>(oct_encode(m), 0.0, 0.0);
+}
+
+@fragment
+fn fs_depth_normal(in: DepthNormalOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return depth_normal(in.normal, front);
+}
+
+// fs_depth_mask with the normal.
+@fragment
+fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
+    if (a < max(rec.params.w, 0.01)) {
+        discard;
+    }
+    return depth_normal(in.normal, front);
+}
+
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
@@ -535,6 +579,16 @@ fn fs_depth_contact(in: VsOut) {
     if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.5) {
         discard;
     }
+}
+
+// fs_depth_contact with the normal, into the occlusion's depth.
+@fragment
+fn fs_depth_contact_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let rec = records[in.record];
+    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.5) {
+        discard;
+    }
+    return depth_normal(in.normal, front);
 }
 
 // Depth of the rigged blended faces nearly opaque, before any of their
