@@ -43,6 +43,37 @@ pub struct LoginRequest {
     /// Stable hashed machine identifiers.
     pub mac: String,
     pub id0: String,
+    /// How the previous session of this account ended.
+    pub last_exec: LastExec,
+}
+
+/// What the login server is told of the previous run (lllogininstance.cpp
+/// `last_exec_event` / `last_exec_duration` / `last_exec_session_id`,
+/// eLastExecEvent in llappviewer.h): the session id only when that run did
+/// not end cleanly, as the Legacy Viewer reads it from its exec marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LastExec {
+    pub event: i32,
+    /// Seconds, or -1 when unknown.
+    pub duration: i32,
+    pub session_id: Uuid,
+}
+
+impl LastExec {
+    /// LAST_EXEC_NORMAL
+    pub const NORMAL: i32 = 0;
+    /// LAST_EXEC_UNKNOWN: the run ended without a clean exit, cause unknown.
+    pub const UNKNOWN: i32 = 9;
+}
+
+impl Default for LastExec {
+    fn default() -> Self {
+        Self {
+            event: Self::NORMAL,
+            duration: -1,
+            session_id: Uuid::nil(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +112,12 @@ pub enum LoginError {
     #[error("{0}")]
     XmlRpc(#[from] xmlrpc::XmlRpcError),
     #[error("login refused ({reason}): {message}")]
-    Refused { reason: String, message: String },
+    Refused {
+        reason: String,
+        message: String,
+        /// `message_id` of the extended errors (`LoginFailedPendingLogout`…).
+        message_id: String,
+    },
     #[error("two-factor authentication required: {0}")]
     MfaRequired(String),
     #[error("terms of service must be accepted: {0}")]
@@ -90,6 +126,50 @@ pub enum LoginError {
     CriticalMessage(String),
     #[error("malformed login response: {0}")]
     Malformed(&'static str),
+}
+
+impl LoginError {
+    /// The grid still holds a session of this account: the login server
+    /// asks to wait while it logs it out (reason "presence", and the
+    /// LoginFailedPendingLogout / LoginFailedLoggingOutSession /
+    /// LogoutFailed* message ids of the Legacy Viewer's strings.xml, which it
+    /// shows as they come, LLLoginInstance::handleLoginFailure).
+    pub fn previous_session(&self) -> bool {
+        match self {
+            LoginError::Refused { reason, message_id, .. } => {
+                reason == "presence"
+                    || matches!(
+                        message_id.as_str(),
+                        "LoginFailedPendingLogout"
+                            | "LoginFailedLoggingOutSession"
+                            | "LoginFailedAlreadyLoggedIn"
+                            | "LogoutFailedLoggingOut"
+                            | "LogoutFailedStillLoggingOut"
+                            | "LogoutFailedLogoutBegun"
+                            | "LogoutFailedPendingLogin"
+                            | "LogoutSucceeded"
+                    )
+            }
+            _ => false,
+        }
+    }
+}
+
+/// The error of a `login` answer that is neither true nor indeterminate.
+fn refusal(v: &Llsd) -> LoginError {
+    let reason = v["reason"].as_str().to_owned();
+    let message = v["message"].as_str().to_owned();
+    let message_id = v["message_id"].as_str().to_owned();
+    match reason.as_str() {
+        "mfa_challenge" => LoginError::MfaRequired(message),
+        "tos" => LoginError::TosRequired(message),
+        "critical" => LoginError::CriticalMessage(message),
+        _ => LoginError::Refused {
+            reason,
+            message,
+            message_id,
+        },
+    }
 }
 
 fn split_username(username: &str) -> (String, String) {
@@ -159,8 +239,9 @@ fn build_params(req: &LoginRequest) -> Llsd {
     p.insert("id0".into(), req.id0.clone().into());
     p.insert("agree_to_tos".into(), req.agree_to_tos.into());
     p.insert("read_critical".into(), req.read_critical.into());
-    p.insert("last_exec_event".into(), 0.into());
-    p.insert("last_exec_duration".into(), 0.into());
+    p.insert("last_exec_event".into(), req.last_exec.event.into());
+    p.insert("last_exec_duration".into(), req.last_exec.duration.into());
+    p.insert("last_exec_session_id".into(), req.last_exec.session_id.to_string().into());
     p.insert("extended_errors".into(), true.into());
     p.insert("host_id".into(), "".into());
     p.insert("token".into(), req.mfa_token.clone().into());
@@ -275,16 +356,7 @@ pub async fn login(http: &reqwest::Client, req: &LoginRequest) -> Result<LoginRe
                 }
                 continue;
             }
-            _ => {
-                let reason = v["reason"].as_str().to_owned();
-                let message = v["message"].as_str().to_owned();
-                return Err(match reason.as_str() {
-                    "mfa_challenge" => LoginError::MfaRequired(message),
-                    "tos" => LoginError::TosRequired(message),
-                    "critical" => LoginError::CriticalMessage(message),
-                    _ => LoginError::Refused { reason, message },
-                });
-            }
+            _ => return Err(refusal(&v)),
         }
     }
     Err(LoginError::Malformed(aurora_i18n::tr!("login-too-many-redirects")))
@@ -307,6 +379,60 @@ mod tests {
         assert_eq!(hash_password("test", true), "$1$098f6bcd4621d373cade4e832627b4f6");
         // truncated to 16 chars on SL
         assert_eq!(hash_password("0123456789abcdefXYZ", true), hash_password("0123456789abcdef", true));
+    }
+
+    #[test]
+    fn a_session_still_on_the_grid_is_told_apart_from_other_refusals() {
+        let answer = |reason: &str, id: &str| {
+            let mut m = Map::new();
+            m.insert("login".into(), "false".into());
+            m.insert("reason".into(), reason.into());
+            m.insert("message".into(), "The system is logging you out right now.".into());
+            m.insert("message_id".into(), id.into());
+            refusal(&Llsd::Map(m))
+        };
+        assert!(answer("presence", "").previous_session());
+        assert!(answer("", "LoginFailedLoggingOutSession").previous_session());
+        assert!(answer("other", "LoginFailedPendingLogout").previous_session());
+        assert!(!answer("key", "LoginFailedAuthenticationFailed").previous_session());
+        assert!(!answer("tos", "").previous_session());
+        let LoginError::Refused { message, .. } = answer("presence", "LoginFailedPendingLogout") else {
+            panic!("a presence answer is a refusal");
+        };
+        assert_eq!(message, "The system is logging you out right now.");
+    }
+
+    #[test]
+    fn the_previous_run_goes_to_the_login_server() {
+        let session = Uuid::from_u128(7);
+        let req = LoginRequest {
+            login_uri: SL_MAIN_GRID.into(),
+            username: "synthetic".into(),
+            password: "x".into(),
+            start: StartLocation::Last,
+            agree_to_tos: false,
+            read_critical: false,
+            mfa_token: String::new(),
+            mfa_hash: String::new(),
+            mac: String::new(),
+            id0: String::new(),
+            last_exec: LastExec {
+                event: LastExec::UNKNOWN,
+                duration: 42,
+                session_id: session,
+            },
+        };
+        let p = build_params(&req);
+        assert_eq!(p["last_exec_event"].as_i32(), LastExec::UNKNOWN);
+        assert_eq!(p["last_exec_duration"].as_i32(), 42);
+        assert_eq!(p["last_exec_session_id"].as_str(), session.to_string());
+        let clean = build_params(&LoginRequest {
+            last_exec: LastExec::default(),
+            ..req
+        });
+        assert_eq!(clean["last_exec_event"].as_i32(), 0);
+        assert_eq!(clean["last_exec_duration"].as_i32(), -1);
+        assert_eq!(clean["last_exec_session_id"].as_str(), Uuid::nil().to_string());
     }
 
     #[test]

@@ -446,11 +446,14 @@ pub enum NetEvent {
         fraction: f32,
     },
     /// `bad_credentials`: refused for the user name / password (reason "key").
+    /// `previous_session`: the grid is still logging out a previous session
+    /// of this account (reason "presence", LoginError::previous_session).
     LoginFailed {
         error: String,
         mfa_required: bool,
         tos_required: bool,
         bad_credentials: bool,
+        previous_session: bool,
     },
     LoggedIn(Arc<LoginResponse>),
     /// A simulator circuit was established (main or neighbor).
