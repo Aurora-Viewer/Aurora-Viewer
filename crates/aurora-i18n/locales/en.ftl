@@ -1454,6 +1454,17 @@ app-graphics-start-failed =
     Details: { $e }
 
     The log of this start: { $log }
+app-gpu-stall-title = Aurora Viewer: the graphics card is not responding
+app-gpu-stall =
+    The graphics card has not finished an image for { $seconds } seconds. Aurora still works (the world, the sound, the chat go on) but nothing can be drawn until the card answers again.
+
+    What to try:
+    • wait a little: a graphics driver that resets itself can take several seconds;
+    • update the graphics card driver;
+    • turn off the overlays of other programs (Discord, Steam, MSI Afterburner…);
+    • at the next start, choose the safe graphics that Aurora will offer.
+
+    Keep waiting? Yes keeps waiting; No closes Aurora (you are logged out properly).
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora does not have an animation overrider (AO) yet.
 cmdline-mod-use-hover-height-in-appearance = Adjust your avatar's hover height through Appearance → Hover Height.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora recommends against opening this link. If it asks you to log in or pay, it is very likely a scam: never give it your password or payment information.
@@ -7129,6 +7140,7 @@ crash-reason-rust = Rust panic
 crash-reason-native = Native crash
 crash-reason-unknown = Unexpected shutdown
 crash-reason-freeze = Frozen, then ended
+crash-reason-gpu = Graphics card not responding
 crash-send-report = Send a crash report
 crash-sent = Crash report sent as issue #{ $number }.
 crash-sending = Sending the crash report to GitHub…

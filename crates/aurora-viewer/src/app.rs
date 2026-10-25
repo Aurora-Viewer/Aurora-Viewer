@@ -58,6 +58,7 @@ mod env_editor;
 mod external_links;
 mod follow;
 mod gestures;
+mod gpu_stall;
 mod graphics_start;
 mod hover_height;
 mod hover_tips;
@@ -568,6 +569,8 @@ pub struct App {
     minimized_mute: bool,
     /// When the crash report's state was last noted (app/crash_state.rs).
     crash_state_at: Option<Instant>,
+    /// The graphics card stopped finishing frames (app/gpu_stall.rs).
+    gpu_stall: gpu_stall::GpuStall,
     /// The Down key's latch (FSCrouchToggle).
     crouch_toggle: crate::movement::crouch_toggle::CrouchToggle,
     music_parcel_url: String,
@@ -1178,6 +1181,7 @@ impl App {
             stream_title_said: None,
             minimized_mute: false,
             crash_state_at: None,
+            gpu_stall: Default::default(),
             crouch_toggle: Default::default(),
             music_parcel_url: String::new(),
             music_override: None,
@@ -9176,7 +9180,12 @@ impl App {
         self.end_deep_profile(&gfx.renderer);
         self.monitor_frame(&gfx.renderer);
         self.crash_state(&gfx.renderer, &gfx.window);
+        self.gpu_stall_frame(&gfx.renderer);
         self.gfx = Some(gfx);
+        if std::mem::take(&mut self.gpu_stall.close) {
+            self.close_while_gpu_stalled(event_loop);
+            return;
+        }
         self.release_postponed_cursor();
         // the clicks whose depth came back with this frame's hand-over
         self.resolve_clicks();

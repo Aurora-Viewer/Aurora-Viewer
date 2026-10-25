@@ -1457,6 +1457,17 @@ app-graphics-start-failed =
     Détails : { $e }
 
     Le journal de ce démarrage : { $log }
+app-gpu-stall-title = Aurora Viewer : la carte graphique ne répond plus
+app-gpu-stall =
+    La carte graphique n'a pas terminé d'image depuis { $seconds } secondes. Aurora fonctionne toujours (le monde, le son, le chat continuent) mais rien ne peut être affiché tant que la carte ne répond pas.
+
+    À essayer :
+    • patienter un peu : un pilote graphique qui se réinitialise peut prendre plusieurs secondes ;
+    • mettre à jour le pilote de la carte graphique ;
+    • désactiver les overlays des autres programmes (Discord, Steam, MSI Afterburner…) ;
+    • au prochain démarrage, choisir les graphismes de secours qu'Aurora proposera.
+
+    Continuer d'attendre ? Oui continue d'attendre ; Non ferme Aurora (vous êtes déconnecté proprement).
 cmdline-mod-aurora-does-not-have-an-animation-overrider-ao-yet = Aurora n'a pas encore d'animation overrider (AO).
 cmdline-mod-use-hover-height-in-appearance = Ajustez la hauteur de survol de votre avatar dans Apparence → Hauteur de survol.
 ui-context-aurora-recommends-against-opening-this-link-if-it-asks = Aurora vous déconseille d'ouvrir ce lien. S'il vous demande de vous connecter ou de payer, c'est très probablement une arnaque : ne donnez jamais votre mot de passe ni vos informations de paiement.
@@ -7122,6 +7133,7 @@ crash-reason-rust = Panique Rust
 crash-reason-native = Plantage natif
 crash-reason-unknown = Arrêt inattendu
 crash-reason-freeze = Figé, puis arrêté
+crash-reason-gpu = Carte graphique sans réponse
 crash-send-report = Envoyer un rapport de plantage
 crash-sent = Rapport de plantage envoyé : issue n° { $number }.
 crash-sending = Envoi du rapport de plantage à GitHub…
