@@ -5718,9 +5718,20 @@ impl App {
     }
 
     fn request_friend_join_teleport(&mut self, command: NetCommand, avatar: uuid::Uuid, fly_on_arrival: bool, fresh_physics: bool) -> bool {
+        let NetCommand::TeleportTo { handle, .. } = &command else {
+            return false;
+        };
+        let handle = *handle;
+        let remote = Some(handle) != self.world.main_region;
+        let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
         if self.user_teleport_allowed(&command) {
-            self.begin_teleport(String::new(), false);
-            self.world.defer_friend_join_flight(avatar, fly_on_arrival, fresh_physics);
+            self.begin_teleport(dest, remote);
+            if remote {
+                self.world
+                    .defer_friend_join_flight_at(avatar, fly_on_arrival, fresh_physics, handle);
+            } else {
+                self.world.defer_friend_join_flight(avatar, fly_on_arrival, fresh_physics);
+            }
             self.send(command);
             true
         } else {
@@ -6743,11 +6754,17 @@ impl App {
         for c in self.world.take_map_commands() {
             if let NetCommand::TeleportTo { handle, .. } = &c {
                 let join = self.world.prepare_friend_join(&c);
+                let flight_target = self.world.friend_teleport_avatar(&c);
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
                 let show = Some(*handle) != self.world.main_region;
-                if self.request_user_teleport(c, dest, show)
-                    && let Some(join) = join
+                let accepted = if join.is_none()
+                    && let Some(avatar) = flight_target
                 {
+                    self.request_friend_join_teleport(c, avatar, self.world.agent.flying, false)
+                } else {
+                    self.request_user_teleport(c, dest, show)
+                };
+                if accepted && let Some(join) = join {
                     self.world.arm_friend_join(join);
                 }
             } else {

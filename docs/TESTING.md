@@ -4498,6 +4498,10 @@ failure. Grid validation and any paid upload are performed by the human.
   hover observation following arrival. The log identifies the inferred hover.
   A standing skybox target with a contact plane, a seated avatar, missing
   physical data, a jump or a fall must never trigger this fallback.
+  Also test a friend whose height is already known, through Contacts and
+  the map: the direct teleport must retain the friend for arrival flight,
+  without adding another hop. A matching AgentMovementComplete is enough
+  to confirm arrival; flight must not depend on a separate TeleportLocal.
 
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click

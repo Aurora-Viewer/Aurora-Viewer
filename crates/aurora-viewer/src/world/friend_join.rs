@@ -40,12 +40,17 @@ pub(super) struct FriendJoinFlight {
     arrival_flight: bool,
     fresh_physics: bool,
     hover_since: Option<Instant>,
-    local_reply: bool,
     arrived: Option<Instant>,
     waiting_parcel: bool,
 }
 
 impl World {
+    pub(crate) fn friend_teleport_avatar(&self, command: &NetCommand) -> Option<Uuid> {
+        self.map
+            .friend_teleport_avatar(command)
+            .filter(|id| self.social.can_map_friend(*id))
+    }
+
     fn region_contains_slot(&self, region: RegionHandle, slot: RegionHandle) -> bool {
         let (x, y) = aurora_net::handle_to_origin(region);
         let (sx, sy) = aurora_net::handle_to_origin(slot);
@@ -98,7 +103,13 @@ impl World {
     /// Arm before sending the local hop, including a synchronous demo reply.
     /// Taking off must wait until its position has actually been applied.
     pub(crate) fn defer_friend_join_flight(&mut self, avatar: Uuid, fly: bool, fresh_physics: bool) {
-        self.map.friend_join_flight = self.main_region.map(|region| FriendJoinFlight {
+        if let Some(region) = self.main_region {
+            self.defer_friend_join_flight_at(avatar, fly, fresh_physics, region);
+        }
+    }
+
+    pub(crate) fn defer_friend_join_flight_at(&mut self, avatar: Uuid, fly: bool, fresh_physics: bool, region: RegionHandle) {
+        self.map.friend_join_flight = Some(FriendJoinFlight {
             avatar,
             region,
             started: Instant::now(),
@@ -107,7 +118,6 @@ impl World {
             arrival_flight: false,
             fresh_physics,
             hover_since: None,
-            local_reply: false,
             arrived: None,
             waiting_parcel: false,
         });
@@ -128,20 +138,22 @@ impl World {
             self.cancel_friend_join_flight();
             return None;
         }
-        flight.local_reply = true;
         flight.arrival_flight = flying || self.fly_after_teleport;
         flight.wants_flight |= flight.arrival_flight;
         Some(flight.was_flying && self.agent.flying && !self.rlva.has("fly"))
     }
 
     pub(super) fn friend_join_flight_arrived(&mut self, handle: RegionHandle) {
+        let matching_region = self
+            .map
+            .friend_join_flight
+            .as_ref()
+            .is_some_and(|f| self.region_contains_slot(handle, f.region));
         let Some(flight) = &mut self.map.friend_join_flight else { return };
-        if flight.local_reply
-            && flight.region == handle
-            && self.received.is_none_or(|at| at >= flight.started)
-            && flight.started.elapsed() < ARRIVAL_TIMEOUT
-        {
+        if matching_region && self.received.is_none_or(|at| at >= flight.started) && flight.started.elapsed() < ARRIVAL_TIMEOUT {
+            flight.region = handle;
             flight.arrived.get_or_insert_with(Instant::now);
+            log::info!("friend join: arrival confirmed for flight observation");
         } else {
             self.cancel_friend_join_flight();
         }
@@ -1044,6 +1056,27 @@ mod tests {
     }
 
     #[test]
+    fn friend_flight_accepts_the_remote_arrival_without_a_local_reply() {
+        let mut w = first_leg(true);
+        w.begin_teleport(true);
+        w.defer_friend_join_flight_at(friend(), false, false, destination());
+        signals(&mut w, crate::ao::State::Flying);
+        assert!(
+            !w.take_friend_join_flight() && !w.agent.flying,
+            "flight waits for the destination position"
+        );
+        w.apply(NetEvent::AgentMovementComplete {
+            handle: destination(),
+            position: Vec3::new(60.0, 200.0, 2400.0),
+            look_at: Vec3::X,
+        });
+        allow_flight(&mut w);
+        assert_eq!(w.agent.position.z, 2400.0);
+        assert!(w.take_friend_join_flight(), "the authoritative arrival is sufficient");
+        assert!(!w.take_friend_join_flight(), "flight intent is consumed once");
+    }
+
+    #[test]
     fn friend_join_arrival_flight_expires_and_cannot_transfer_to_other_teleports() {
         for cancel in 0..7 {
             let mut w = first_leg(true);
@@ -1075,10 +1108,17 @@ mod tests {
                     continue;
                 }
                 _ => {
-                    arrive(&mut w, destination());
+                    w.apply_received(
+                        NetEvent::AgentMovementComplete {
+                            handle: destination(),
+                            position: Vec3::new(60.0, 200.0, 2400.0),
+                            look_at: Vec3::X,
+                        },
+                        Instant::now() - Duration::from_secs(10),
+                    );
                     assert!(
                         !w.take_friend_join_flight(),
-                        "an arrival without the matching local reply does not take off"
+                        "an arrival received before the request cannot trigger flight"
                     );
                     continue;
                 }

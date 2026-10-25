@@ -659,10 +659,13 @@ arrive once we are beside the target. Native hover/flight motions request
 takeoff; unknown signals remain unknown and height alone does not. Known
 region/parcel/RLVa restrictions prevent takeoff but never cancel the local
 jump. Missing policy packets do not delay it either. After teleport preflight,
-the application arms flight for this local hop without taking off. Only its
-local reply and applied arrival in the expected region allow the application
-to enable flight and send FLY controls. The local reply's flying flag also
-waits for the position while this intent is active. Policy is rechecked at arrival;
+the application arms flight without taking off. Friend teleports with an
+already known height arm the same observation for their direct arrival;
+Contacts preserves the friend identity when tracking that position. The
+applied arrival in the expected region allows the application to enable flight
+and send FLY controls, without requiring a separate TeleportLocal message.
+A local reply's flying flag also waits for the position while this intent is
+active. Policy is rechecked at arrival.
 An early standing or unknown animation does not consume the observation:
 for up to five seconds after arrival, new target animation and landing-parcel
 packets can still enable flight. A parcel bitmap must cover the landing point

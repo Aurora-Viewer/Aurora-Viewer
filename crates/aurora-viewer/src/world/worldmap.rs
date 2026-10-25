@@ -164,6 +164,9 @@ impl super::World {
             let (ox, oy) = self.main_origin().unwrap_or((0, 0));
             self.map
                 .track_location(ox as f64 + p.x as f64, oy as f64 + p.y as f64, p.z, teleport);
+            if teleport && can_map {
+                self.map.friend_teleport = Some(id);
+            }
         } else if can_map {
             let name = self.social.name_of(&id);
             self.map.teleport_to_avatar(id, &name);
@@ -237,6 +240,8 @@ pub struct WorldMap {
     pub track: Option<Track>,
     /// The friend `track` follows, if any.
     pub avatar: Option<AvatarTrack>,
+    /// Friend targeted by a direct position-based Teleport To.
+    pub(super) friend_teleport: Option<Uuid>,
     pub(super) friend_join: Option<super::friend_join::FriendJoin>,
     pub(super) friend_join_flight: Option<super::friend_join::FriendJoinFlight>,
     /// The parcel asked for the tracked spot.
@@ -597,6 +602,7 @@ impl WorldMap {
     /// on the map; the track points at them once the grid answers, and the
     /// open map centres on it.
     pub fn track_avatar(&mut self, id: Uuid, name: &str) {
+        self.friend_teleport = None;
         self.friend_join = None;
         self.friend_join_flight = None;
         if let Some(a) = self.avatar.as_mut().filter(|a| a.id == id) {
@@ -643,6 +649,7 @@ impl WorldMap {
 
     /// LLAvatarTracker::untrack.
     fn stop_avatar(&mut self) {
+        self.friend_teleport = None;
         self.friend_join = None;
         self.friend_join_flight = None;
         if self.avatar.take().is_some() {
@@ -678,6 +685,7 @@ impl WorldMap {
         if !z.is_finite() {
             return;
         }
+        self.friend_teleport = None;
         self.friend_join = None;
         self.friend_join_flight = None;
         if let Some(t) = self.track.as_mut() {
@@ -689,13 +697,20 @@ impl WorldMap {
     }
 
     pub(super) fn unknown_height_teleport_avatar(&self, command: &NetCommand) -> Option<Uuid> {
+        self.avatar.as_ref().filter(|a| !a.altitude_known)?;
+        self.friend_teleport_avatar(command)
+    }
+
+    pub(super) fn friend_teleport_avatar(&self, command: &NetCommand) -> Option<Uuid> {
         let NetCommand::TeleportTo { handle, position, .. } = command else {
             return None;
         };
-        let a = self
-            .avatar
-            .as_ref()
-            .filter(|a| a.found && !a.altitude_known && a.altitude_override.is_none())?;
+        let avatar = self.friend_teleport.or_else(|| {
+            self.avatar
+                .as_ref()
+                .filter(|a| a.found && a.altitude_override.is_none())
+                .map(|a| a.id)
+        })?;
         let t = self.track.as_ref().filter(|t| !t.pending && !t.invalid)?;
         let NetCommand::TeleportTo {
             handle: expected,
@@ -705,10 +720,11 @@ impl WorldMap {
         else {
             return None;
         };
-        (*handle == expected && *position == at).then_some(a.id)
+        (*handle == expected && *position == at).then_some(avatar)
     }
 
     pub(super) fn cancel_avatar_teleport(&mut self) {
+        self.friend_teleport = None;
         if let Some(a) = &mut self.avatar {
             a.teleport = None;
         }
@@ -1086,6 +1102,58 @@ mod tests {
         m.track_avatar(other, "Other friend");
         m.agent_found(other, 256_010.0, 256_266.0, None);
         assert_eq!(m.track.as_ref().map(|t| t.z), Some(0.0));
+    }
+
+    #[test]
+    fn contact_teleport_with_known_position_retains_the_friend_for_arrival_flight() {
+        let target = aurora_net::origin_to_handle(256_000, 256_256);
+        for main in [target, aurora_net::origin_to_handle(256_000, 256_000)] {
+            let (mut w, id) = remote_friend();
+            w.main_region = Some(main);
+            w.map.apply_blocks(vec![yiff()]);
+            w.coarse.insert(target, vec![(id, glam::Vec3::new(10.0, 10.0, 25.0))]);
+            assert!(w.locate_avatar(id, true));
+            assert!(w.map.avatar.is_none(), "the direct action tracks a position");
+            let out = w.take_map_commands();
+            let command = out.iter().find(|c| matches!(c, NetCommand::TeleportTo { .. })).unwrap();
+            assert_eq!(w.friend_teleport_avatar(command), Some(id));
+            assert!(w.prepare_friend_join(command).is_none(), "a known height needs no second hop");
+            assert!(out.iter().all(|c| !matches!(c, NetCommand::FindAgent(_))));
+            w.social.friends[0].rights_has = 0;
+            assert_eq!(w.friend_teleport_avatar(command), None, "recheck received rights");
+            w.social.friends[0].rights_has = super::super::social::rights::MAP_LOCATION;
+            w.map.set_track_altitude(30.0);
+            assert_eq!(w.friend_teleport_avatar(command), None, "an explicit height ends the friend intent");
+            w.locate_avatar(id, true);
+            w.map.clear_track();
+            assert_eq!(
+                w.friend_teleport_avatar(command),
+                None,
+                "a cleared destination cannot retain the friend"
+            );
+        }
+    }
+
+    #[test]
+    fn mapped_friend_with_known_height_keeps_flight_intent_until_an_explicit_destination() {
+        let (mut w, id) = remote_friend();
+        w.main_region = Some(aurora_net::origin_to_handle(256_000, 256_000));
+        w.map.apply_blocks(vec![yiff()]);
+        w.map.track_avatar(id, "Remote friend");
+        w.map.agent_found(id, 256_010.0, 256_266.0, Some(25.0));
+        let command = teleport_command(256_010.0, 256_266.0, 25.0);
+        assert_eq!(w.friend_teleport_avatar(&command), Some(id));
+        assert!(w.prepare_friend_join(&command).is_none());
+        assert_eq!(w.friend_teleport_avatar(&teleport_command(256_020.0, 256_266.0, 25.0)), None);
+        assert_eq!(
+            w.friend_teleport_avatar(&NetCommand::AcceptLure {
+                lure_id: id,
+                godlike: false
+            }),
+            None
+        );
+        w.map.set_track_altitude(25.0);
+        assert_eq!(w.friend_teleport_avatar(&command), None);
     }
 
     #[test]
