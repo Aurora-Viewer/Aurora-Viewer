@@ -130,6 +130,26 @@ pub fn seed(inv: &mut Inventory, agent: Uuid) {
     inv.sort_all();
 }
 
+/// Enough top-level folders to scroll Aurora's expanded inventory sidebar.
+pub fn seed_sidebar(inv: &mut Inventory) {
+    inv.created_folders(
+        (0..80)
+            .map(|n| InvFolder {
+                id: Uuid::from_u128(30_000 + n),
+                parent: inv.root,
+                name: format!("Folder {n:03}"),
+                type_default: -1,
+                ..Default::default()
+            })
+            .collect(),
+    );
+    for n in 0..80 {
+        if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(30_000 + n)) {
+            folder.state = FetchState::Fetched;
+        }
+    }
+}
+
 /// A Marketplace inbox separate from the normal inventory, for tab validation.
 pub fn seed_received(inv: &mut Inventory, agent: Uuid) {
     let inbox = Uuid::from_u128(8_300_000);

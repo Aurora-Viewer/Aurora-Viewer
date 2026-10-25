@@ -355,6 +355,17 @@ when unfocused") is ignored during a screenshot.
   keeps the initial destination and ends within 2 m; `follow` keeps the
   leader, rests near it, then resumes after the wolf moves 6 m at frame 1500
   (the wolf also moves in `go`, but the pilot stays finished).
+  Follow opens its compact controller: change the distance while following,
+  enable/disable teleport recovery, then Stop or close it (both end the follow).
+  The defaults are 2 m and stop on an obstacle; Go to opens no controller.
+  `controls-distance` starts at 6 m. `stuck-stop`, `stuck-teleport` and
+  `stuck-denied` hold our body still to simulate an obstacle: capture at 1200
+  or later. The first ends the follow, the second teleports beside the precise
+  target and resumes, and the third enables RLVa teleport restrictions and
+  must stop without teleporting. A failed teleport cancels recovery; a successful
+  arrival that is still blocked cannot request another teleport until the
+  follower has actually travelled at least 1 m. Recovery waits at most 30 s
+  for arrival/target loading, and movement, Escape, Stop or closing cancels it.
   `follow-menu` shows the active follow's menu at 1400. `manual`, `escape`,
   `stop` and `lost` start a follow, then cancel it at 1500 through the movement
   controls, Escape's reset action, Stop following or target removal respectively.
@@ -5758,6 +5769,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   `aurora-favorites-multi` show their selected rows and Add to Favorites
   menu; click it to check that every object receives its own star. Capture
   at frame 700; the `aurora` variants exercise the Aurora layout.
+- `aurora-sidebar-medium`, `aurora-sidebar-wide`: the expanded inventory
+  with 80 extra folders for #970. Click folders near the top and bottom
+  of the left column, then scroll it and repeat, including partly visible
+  rows: the clicked folder must
+  stay under the pointer while the explorer lists its contents. Capture
+  at frame 700. Also use Find original from an inventory link to check
+  that navigating to an offscreen folder still brings it into sight.
 - `aurora`, `aurora-medium`, `aurora-wide`, `aurora-rights`: Aurora's
   window, placed at frame 2 at its narrow (440 px), medium (800 px) and wide
   (1180 px) width, on the demo object of the right-click tests, the demo

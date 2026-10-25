@@ -55,6 +55,7 @@ mod env_apply;
 mod env_day_editor;
 mod env_editor;
 mod external_links;
+mod follow;
 mod gestures;
 mod graphics_start;
 mod hover_height;
@@ -338,6 +339,8 @@ pub struct App {
     double_click: crate::autopilot::DoubleClickDetector,
     double_press: bool,
     autopilot: Option<crate::autopilot::AutoPilot>,
+    follow_ui: ui::follow::FollowUi,
+    follow_recovery: Option<follow::Recovery>,
     /// The control flags the walk asks for this frame.
     autopilot_flags: u32,
     autopilot_stop_pending: bool,
@@ -1121,6 +1124,8 @@ impl App {
             create_landmark_ui: Default::default(),
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
+            follow_ui: Default::default(),
+            follow_recovery: None,
             report_abuse: Default::default(),
             dof_focus: Default::default(),
             snapshots: Default::default(),
@@ -2237,6 +2242,8 @@ impl App {
             self.settings.release_hover_account();
         }
         self.hover_height_ui = Default::default();
+        self.follow_ui = Default::default();
+        self.follow_recovery = None;
         self.inventory_ui = Default::default();
         self.texture_library.reset();
         self.library_drag = Default::default();
@@ -2316,6 +2323,11 @@ impl App {
     }
 
     fn on_app_event(&mut self, ev: NetEvent) {
+        if matches!(&ev, NetEvent::AgentMovementComplete { .. })
+            && let Some(recovery) = &mut self.follow_recovery
+        {
+            recovery.arrived = true;
+        }
         if self.world.rlva_offer_event(&ev) || self.world.rlva_rename_event(&ev, Instant::now()) {
             if let NetEvent::InventoryEdited { request, .. } = ev {
                 self.world_edits.remove(&request);
@@ -13092,6 +13104,7 @@ impl App {
                 self.photo_ui(&ctx, &p, projector, renderer);
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
+                self.follow_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 let automatic_base = self.scene.automatic_hover_base(&self.world);
@@ -15146,6 +15159,8 @@ impl ApplicationHandler for App {
                         | "aurora"
                         | "aurora-medium"
                         | "aurora-wide"
+                        | "aurora-sidebar-medium"
+                        | "aurora-sidebar-wide"
                         | "aurora-rights"
                         | "favorites"
                         | "favorites-multi"
@@ -15187,6 +15202,9 @@ impl ApplicationHandler for App {
                         self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
                     }
                     if view.starts_with("aurora") {
+                        if view.starts_with("aurora-sidebar-") {
+                            crate::world::inventory::demo::seed_sidebar(&mut self.world.inventory);
+                        }
                         // Aurora's window at each width, on the demo object
                         // of the right-click tests, a favourite beside it.
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));

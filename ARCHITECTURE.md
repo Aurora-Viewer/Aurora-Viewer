@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+`ui/follow.rs` provides the compact controller opened by avatar Follow;
+`app/follow.rs` applies live distance changes and opt-in blocked-follow recovery
+through the ordinary teleport/RLVa path. Saved `autopilot::FollowSettings` default
+to 2 m and stopping on an obstacle. Recovery waits for arrival and precise target
+geometry, expires after 30 seconds, and cancels on failure, manual movement,
+Escape, Stop or closing the controller. A recovered pilot requires at least
+one metre of actual travel before another automatic recovery can be requested.
+
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
 window and cache its filtered, sorted, virtualized object rows. `app/area_search.rs`
 prepares live rezzed-object snapshots in parallel, resolves distinct owners,
@@ -1039,6 +1047,10 @@ grows or shrinks sibling selections, skipping open folders' descendants.
 Navigation runs before viewport layout so virtualized rows remain in sight.
 Its shared clipboard focus survives a discarded sizing pass for one frame,
 without reclaiming another field, an outside click, Tab, Escape or a modal.
+
+`ui/inventory/aurora/sidebar.rs` follows the explorer's folder without moving
+already visible rows; offscreen folders scroll only to the nearest edge,
+with the virtual row pitch matching the actual layout.
 
 `ui/inventory/drag.rs` snapshots the full Ctrl/Shift selection at drag start
 and moves it through `world/inventory/actions.rs::move_selection`. A separate
