@@ -1,10 +1,10 @@
-// Aurora LSL Bridge v1.34. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.35. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 // Mono's 64 KB holds this compiled controller too, with little to spare: the
 // read-only queries run in query.lsl, so a busy region cannot halt Movelock
 // with a Stack-Heap Collision. Keep new services out of this script.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.34";
+string VERSION = "1.35";
 string gURL;
 key gToken;
 key gURLRequest;
