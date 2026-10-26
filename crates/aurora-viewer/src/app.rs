@@ -16239,6 +16239,15 @@ impl ApplicationHandler for App {
                 if !view.starts_with("offer") {
                     self.world.notifications = Default::default();
                 }
+                if view == "aurora-menu-textures-export"
+                    && let Some(mut snapshot) = self.world.inventory.items.get(&uuid::Uuid::from_u128(8104)).cloned()
+                {
+                    snapshot.id = uuid::Uuid::from_u128(8180);
+                    snapshot.asset_type = 15;
+                    snapshot.inv_type = 15;
+                    snapshot.name = format!("{} 2", snapshot.name);
+                    self.world.inventory.add_items(vec![snapshot]);
+                }
                 if let Some(id) = crate::world::inventory::demo::target(&view, &self.world.inventory) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
                     if let Some(item) = self.world.inventory.items.get_mut(&id) {
@@ -16250,6 +16259,9 @@ impl ApplicationHandler for App {
                     }
                     if view == "uuid-multi" {
                         self.inventory_ui.selection.insert(uuid::Uuid::from_u128(8105));
+                    }
+                    if view == "aurora-menu-textures-export" {
+                        self.inventory_ui.selection.insert(uuid::Uuid::from_u128(8180));
                     }
                     if view.starts_with("aurora-menu-") {
                         self.inventory_ui

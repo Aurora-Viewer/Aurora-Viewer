@@ -6201,6 +6201,11 @@ saving still requests the server's normal bake. Capture `skin:preview`,
 restores the pinned server textures. `AURORA_DEMO_INVENTORY=aurora-menu-folder-uuid`
 shows the UUID command in the unlocked menu's hidden shelf;
 `aurora-menu-folder-uuid-restored` shows it after the user exposes it.
+`AURORA_DEMO_INVENTORY=aurora-menu-textures-export` selects a texture and a
+snapshot and opens the context menu's export format group. Check both PNG and
+TGA choices; each keeps the whole selection and uses one destination folder.
+Exports retain full resolution, RGBA pixels and the existing full-permission
+requirement, and refuse to overwrite existing files.
 
 **`AURORA_DEMO_PHYSICS_EDIT=1|new|drag`** (with `AURORA_DEMO_PHYSICS=1` for
 the balls and the hops): `1` wears a physics layer with the lively values of

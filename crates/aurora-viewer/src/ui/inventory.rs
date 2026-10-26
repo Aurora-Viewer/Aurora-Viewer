@@ -157,7 +157,10 @@ pub enum InvAction {
     },
     Environment(Uuid, u32),
     EnvironmentParcel(Uuid),
-    ExportTextures(Vec<Uuid>),
+    ExportTextures {
+        items: Vec<Uuid>,
+        png: bool,
+    },
     WearLibrary {
         item: Uuid,
         replace: bool,

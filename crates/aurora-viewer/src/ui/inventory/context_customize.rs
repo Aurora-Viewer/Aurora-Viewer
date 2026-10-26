@@ -76,6 +76,9 @@ impl super::InventoryUi {
         if mode == "aurora-menu-organize" {
             profile.open.insert("organize".into(), true);
         }
+        if mode == "aurora-menu-textures-export" {
+            profile.open.insert("save-textures".into(), true);
+        }
         if matches!(mode, "aurora-menu-custom" | "aurora-menu-locked" | "aurora-menu-hidden") {
             let group = "custom:demo";
             profile.layout.groups.insert(

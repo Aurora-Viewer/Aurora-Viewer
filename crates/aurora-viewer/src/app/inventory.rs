@@ -461,7 +461,7 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, item);
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
-            InvAction::ExportTextures(items) => self.texture_library.begin_exports(&self.egui_ctx, &self.world, items),
+            InvAction::ExportTextures { items, png } => self.texture_library.begin_exports(&self.egui_ctx, &self.world, items, png),
             InvAction::WearLibrary { item, replace, point } => self.wear_copy_at(item, replace, point),
             InvAction::WearSelection { items, replace, point } => self.wear_selection(items, replace, point),
             InvAction::RefreshAttachment(item) => {

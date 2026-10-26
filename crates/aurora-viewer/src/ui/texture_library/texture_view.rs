@@ -97,10 +97,10 @@ pub(crate) struct ImageView {
     export_reply: Option<crossbeam_channel::Receiver<String>>,
 }
 impl ImageView {
-    pub(super) fn batch_export(path: std::path::PathBuf) -> Self {
+    pub(super) fn batch_export(path: std::path::PathBuf, png: bool) -> Self {
         Self {
             export_path: Some(path),
-            export: Some(false),
+            export: Some(png),
             ..Default::default()
         }
     }
@@ -449,17 +449,19 @@ mod tests {
 
     #[test]
     fn batch_export_preserves_dimensions_and_never_overwrites_existing_files() {
-        let path = std::env::temp_dir().join(format!("aurora-texture-export-{}.tga", Uuid::new_v4()));
         let pixels = aurora_render::preview::Image {
             size: [19, 7],
-            rgba: vec![103; 19 * 7 * 4].into(),
+            rgba: (0..19 * 7).flat_map(|index| [index as u8, 103, 219, (index * 7) as u8]).collect(),
         };
-        write_batch(&path, &pixels, image::ImageFormat::Tga).expect("new export");
-        let decoded = image::open(&path).expect("exported texture").into_rgba8();
-        assert_eq!(decoded.dimensions(), (19, 7));
-        assert_eq!(decoded.into_raw(), pixels.rgba.as_ref());
-        assert!(write_batch(&path, &pixels, image::ImageFormat::Tga).is_err());
-        std::fs::remove_file(path).expect("temporary export cleanup");
+        for (extension, format) in [("png", image::ImageFormat::Png), ("tga", image::ImageFormat::Tga)] {
+            let path = std::env::temp_dir().join(format!("aurora-texture-export-{}.{extension}", Uuid::new_v4()));
+            write_batch(&path, &pixels, format).expect("new export");
+            let decoded = image::open(&path).expect("exported texture").into_rgba8();
+            assert_eq!(decoded.dimensions(), (19, 7));
+            assert_eq!(decoded.into_raw(), pixels.rgba.as_ref());
+            assert!(write_batch(&path, &pixels, format).is_err());
+            std::fs::remove_file(path).expect("temporary export cleanup");
+        }
     }
     #[test]
     fn cache_only_coarse_pixels_are_previewed_but_never_accepted_for_full_resolution_export() {

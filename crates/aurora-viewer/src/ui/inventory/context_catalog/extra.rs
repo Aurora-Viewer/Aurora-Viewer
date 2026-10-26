@@ -212,7 +212,7 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
                 !item.asset_id.is_nil()
                     && item.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) == rules::COPY | rules::MODIFY | rules::TRANSFER
             });
-        c.invoke(
+        let formats = c.group(
             "save-textures",
             TEXT,
             "device-floppy",
@@ -222,8 +222,25 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
                 aurora_i18n::tr!("inventory-save-selected-textures")
             },
             permitted && !trash,
-            InvAction::ExportTextures(selected.iter().map(|item| item.id).collect()),
+            Direction::Vertical,
+            false,
         );
+        for (key, label, png) in [
+            ("save-textures-png", aurora_i18n::tr!("inventory-export-png"), true),
+            ("save-textures-tga", aurora_i18n::tr!("inventory-export-tga"), false),
+        ] {
+            c.invoke(
+                key,
+                &formats,
+                "device-floppy",
+                label,
+                permitted && !trash,
+                InvAction::ExportTextures {
+                    items: selected.iter().map(|item| item.id).collect(),
+                    png,
+                },
+            );
+        }
     }
     if selected
         .first()
@@ -675,6 +692,36 @@ mod tests {
         let mut inv = Inventory::default();
         crate::world::inventory::demo::seed(&mut inv, Uuid::from_u128(2));
         inv
+    }
+
+    #[test]
+    fn texture_export_formats_keep_the_whole_selection_and_recheck_permissions() {
+        let mut inv = seed();
+        let texture = Uuid::from_u128(8104);
+        let snapshot = Uuid::from_u128(8100);
+        inv.items.get_mut(&snapshot).expect("snapshot").asset_type = 15;
+        let link = Uuid::from_u128(8113);
+        inv.items.get_mut(&link).expect("texture link").asset_id = texture;
+        let mut state = InventoryUi::default();
+        state.selection.extend([link, snapshot]);
+        for permitted in [true, false] {
+            if !permitted {
+                inv.items.get_mut(&snapshot).expect("snapshot").owner_mask &= !rules::TRANSFER;
+            }
+            let menu = super::super::build(&inv, link, &state, &InventoryPreferences::default(), &Facts::default());
+            for (key, expected_png) in [("save-textures-png", true), ("save-textures-tga", false)] {
+                let entry = menu.entries.iter().find(|entry| entry.id == key).expect("export format");
+                assert_eq!(entry.enabled, permitted);
+                assert_eq!(entry.zone, children("save-textures"));
+                let Kind::Action(index) = entry.kind else { panic!("export action") };
+                let Some(super::super::Command::Invoke(InvAction::ExportTextures { items, png })) = &menu.commands[index] else {
+                    panic!("texture export command")
+                };
+                assert_eq!(*png, expected_png);
+                assert_eq!(items.len(), 2);
+                assert!(items.contains(&texture) && items.contains(&snapshot));
+            }
+        }
     }
 
     #[test]

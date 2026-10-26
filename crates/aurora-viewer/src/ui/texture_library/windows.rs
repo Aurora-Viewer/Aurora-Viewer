@@ -26,7 +26,7 @@ pub(crate) fn window_id(item: Uuid) -> String {
 impl LibraryUi {
     /// LLTextureBridge::save_as / LLInventoryAction::saveMultipleTextures.
     /// Every image still passes the ordinary full-resolution export path.
-    pub(crate) fn begin_exports(&mut self, ctx: &egui::Context, world: &World, items: Vec<Uuid>) {
+    pub(crate) fn begin_exports(&mut self, ctx: &egui::Context, world: &World, items: Vec<Uuid>, png: bool) {
         let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
         let mut seen = HashSet::new();
         let items: Vec<_> = items
@@ -42,12 +42,12 @@ impl LibraryUi {
             .collect();
         if items.len() == 1 {
             self.open_preview(ctx, world, items[0]);
-            self.export_texture(items[0], true);
+            self.export_texture(items[0], png);
         } else if !items.is_empty() && self.export_folder.is_none() {
             if self.export_jobs.is_empty() && self.export_queue.is_empty() {
                 self.export_error = None;
             }
-            self.export_items = items;
+            self.export_items = items.into_iter().map(|id| (id, png)).collect();
             let (sender, receiver) = crossbeam_channel::bounded(1);
             self.export_folder = Some(receiver);
             let wake = ctx.clone();
@@ -66,7 +66,8 @@ impl LibraryUi {
             self.export_folder = None;
             let items = std::mem::take(&mut self.export_items);
             if let Some(folder) = folder {
-                self.export_queue.extend(items.into_iter().map(|id| (id, folder.clone())));
+                self.export_queue
+                    .extend(items.into_iter().map(|(id, png)| (id, folder.clone(), png)));
             }
         }
         let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
@@ -97,7 +98,9 @@ impl LibraryUi {
             }
         });
         while self.export_jobs.len() < 3 {
-            let Some((id, folder)) = self.export_queue.pop_front() else { break };
+            let Some((id, folder, png)) = self.export_queue.pop_front() else {
+                break;
+            };
             let Some(item) = world.inventory.items.get(&id).filter(|item| item.owner_mask & full == full) else {
                 continue;
             };
@@ -113,11 +116,12 @@ impl LibraryUi {
                 })
                 .take(100)
                 .collect();
-            let filename = format!("{}-{id}.tga", name.trim().trim_end_matches('.'));
+            let extension = if png { "png" } else { "tga" };
+            let filename = format!("{}-{id}.{extension}", name.trim().trim_end_matches('.'));
             self.export_jobs.push(BatchExport {
                 item: id,
                 asset: item.asset_id,
-                view: texture_view::ImageView::batch_export(folder.join(filename)),
+                view: texture_view::ImageView::batch_export(folder.join(filename), png),
             });
         }
         if completed && self.export_jobs.is_empty() && self.export_queue.is_empty() && self.export_folder.is_none() {
