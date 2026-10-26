@@ -2372,6 +2372,62 @@ pub fn offered_item(parent: Uuid, owner: Uuid) -> aurora_net::inventory::InvItem
     }
 }
 
+/// The demo's listing of one inventory folder: five demo objects, the
+/// skeleton's folders under the root, or a scenario's own contents.
+fn demo_folder(f: Uuid, owner: Uuid) -> aurora_net::inventory::FolderContents {
+    use aurora_net::inventory::{FolderContents, InvItem};
+    if let Some(c) = env::folder_contents(f, owner).or_else(|| place::folder_contents(f, owner)) {
+        return c;
+    }
+    let items: Vec<InvItem> = (0..5u128)
+        .map(|i| InvItem {
+            id: Uuid::from_u128(f.as_u128() ^ (0xABC0 + i)),
+            parent: f,
+            name: aurora_i18n::tr!("demo-demo-object", value0 = format!("{}", i + 1)),
+            desc: String::new(),
+            asset_type: [6, 3, 7, 0, 10][i as usize],
+            inv_type: [6, 3, 7, 0, 10][i as usize],
+            asset_id: Uuid::nil(),
+            flags: 0,
+            favorite: false,
+            favorite_known: false,
+            creator: Uuid::nil(),
+            created_at: 0,
+            owner,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            thumbnail: Uuid::nil(),
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            last_owner: uuid::Uuid::nil(),
+            group_id: uuid::Uuid::nil(),
+            group_owned: false,
+            sale_type: 0,
+            sale_price: 0,
+        })
+        .collect();
+    let subfolders = if f == u(1) {
+        aurora_net::inventory::parse_skeleton(&demo_raw()["inventory-skeleton"])
+            .into_iter()
+            .filter(|x| x.parent == u(1))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    FolderContents {
+        folder_id: f,
+        owner_id: owner,
+        version: 2,
+        folders: subfolders,
+        items: if f == u(1) || f == u(PHOTO_ALBUM_FOLDER) {
+            Vec::new()
+        } else {
+            items
+        },
+    }
+}
+
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     // what scripts would hear of a click (AURORA_DEMO_WORLD_CLICKS)
     use aurora_net::control::{LBUTTON_DOWN, LBUTTON_UP, ML_LBUTTON_DOWN, ML_LBUTTON_UP};
@@ -2394,7 +2450,6 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = social_menu::reply(cmd) {
         return events;
     }
-    use aurora_net::inventory::{FolderContents, InvItem};
     match cmd {
         // a lure accepted offline: the teleport starts, then has nowhere to go
         aurora_net::NetCommand::AcceptLure { .. } => vec![
@@ -2538,61 +2593,35 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             ]
         }
         aurora_net::NetCommand::FetchInventory { folders, owner, .. } => {
-            let mut out = Vec::new();
-            for f in folders {
-                if let Some(c) = env::folder_contents(*f, *owner).or_else(|| place::folder_contents(*f, *owner)) {
-                    out.push(c);
-                    continue;
-                }
-                let items: Vec<InvItem> = (0..5u128)
-                    .map(|i| InvItem {
-                        id: Uuid::from_u128(f.as_u128() ^ (0xABC0 + i)),
-                        parent: *f,
-                        name: aurora_i18n::tr!("demo-demo-object", value0 = format!("{}", i + 1)),
-                        desc: String::new(),
-                        asset_type: [6, 3, 7, 0, 10][i as usize],
-                        inv_type: [6, 3, 7, 0, 10][i as usize],
-                        asset_id: Uuid::nil(),
-                        flags: 0,
-                        favorite: false,
-                        favorite_known: false,
-                        creator: Uuid::nil(),
-                        created_at: 0,
-                        owner: *owner,
-                        group_mask: 0,
-                        everyone_mask: 0,
-                        next_owner_mask: 0,
-                        thumbnail: Uuid::nil(),
-                        base_mask: 0x7fffffff,
-                        owner_mask: 0x7fffffff,
-                        last_owner: uuid::Uuid::nil(),
-                        group_id: uuid::Uuid::nil(),
-                        group_owned: false,
-                        sale_type: 0,
-                        sale_price: 0,
-                    })
-                    .collect();
-                let subfolders = if *f == u(1) {
-                    aurora_net::inventory::parse_skeleton(&demo_raw()["inventory-skeleton"])
-                        .into_iter()
-                        .filter(|x| x.parent == u(1))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                out.push(FolderContents {
-                    folder_id: *f,
-                    owner_id: *owner,
-                    version: 2,
-                    folders: subfolders,
-                    items: if *f == u(1) || *f == u(PHOTO_ALBUM_FOLDER) {
-                        Vec::new()
-                    } else {
-                        items
-                    },
-                });
-            }
+            let out = folders.iter().map(|f| demo_folder(*f, *owner)).collect();
             vec![NetEvent::InventoryContents(out)]
+        }
+        // no depth limit to reach here: whole subtrees, parents first
+        aurora_net::NetCommand::FetchInventoryTree {
+            request,
+            parent,
+            children,
+            depth,
+            owner,
+            ..
+        } => {
+            let mut todo: Vec<(Uuid, i32)> = if children.is_empty() {
+                vec![(*parent, *depth)]
+            } else {
+                children.iter().rev().map(|c| (*c, depth - 1)).collect()
+            };
+            let mut out = Vec::new();
+            while let Some((f, depth)) = todo.pop() {
+                let c = demo_folder(f, *owner);
+                if depth > 0 {
+                    todo.extend(c.folders.iter().rev().filter(|x| x.parent == f).map(|x| (x.id, depth - 1)));
+                }
+                out.push(c);
+            }
+            vec![NetEvent::InventoryTreeFetched {
+                request: *request,
+                result: Ok(out),
+            }]
         }
         // block list: Violet Wolf, an object, a name and the chat of group 2
         aurora_net::NetCommand::RequestMuteList { .. } => {

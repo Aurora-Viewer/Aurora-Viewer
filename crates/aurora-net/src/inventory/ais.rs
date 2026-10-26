@@ -111,6 +111,83 @@ fn parse_folder(doc: &Llsd, id: Uuid, owner: Uuid) -> Result<FolderContents, &'s
     Ok(contents)
 }
 
+/// MAX_FOLDER_DEPTH_REQUEST (llaisapi.cpp): the depth of a recursive read.
+/// The server caps deeper requests and refuses a reply that would be too big.
+pub const MAX_FOLDER_DEPTH: i32 = 50;
+
+/// A folder's snapshot, then those nested in it, parents first so that each
+/// folder is known before its own snapshot is applied. Like
+/// AISUpdate::parseCategory, a folder counts as fetched only while `depth`
+/// is not negative and its listing is complete; below that it stays listed
+/// by its parent, to be fetched later.
+fn parse_tree(doc: &Llsd, id: Uuid, owner: Uuid, depth: i32, out: &mut Vec<FolderContents>) -> Result<(), &'static str> {
+    if depth < 0 {
+        return Ok(());
+    }
+    out.push(parse_folder(doc, id, owner)?);
+    for (child, record) in embedded_categories(doc) {
+        if record.has("_embedded") {
+            let mut nested = Vec::new();
+            // a nested folder the reply cut short is fetched again later,
+            // without losing the rest of the reply
+            if parse_tree(record, child, owner, depth - 1, &mut nested).is_ok() {
+                out.append(&mut nested);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn embedded_categories(doc: &Llsd) -> impl Iterator<Item = (Uuid, &Llsd)> {
+    doc["_embedded"]["categories"]
+        .as_map()
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, record)| Some((key.parse::<Uuid>().ok()?, record)))
+}
+
+/// AISAPI::FetchCategoryChildren (no `children`) or FetchCategorySubset
+/// (`children` of `parent`, a batch of its folders): whole subtrees in one
+/// read. A requested child missing from a subset reply is left unfetched;
+/// the caller sees it still is.
+pub async fn fetch_tree(
+    http: &reqwest::Client,
+    cap: &str,
+    owner: Uuid,
+    parent: Uuid,
+    children: &[Uuid],
+    depth: i32,
+) -> Result<Vec<FolderContents>, &'static str> {
+    let mut url = format!("{}/category/{parent}/children?depth={depth}", cap.trim_end_matches('/'));
+    if !children.is_empty() {
+        let ids: Vec<String> = children.iter().map(Uuid::to_string).collect();
+        url.push_str("&children=");
+        url.push_str(&ids.join(","));
+    }
+    let doc = get(http, url).await?;
+    parse_tree_reply(&doc, owner, parent, children, depth)
+}
+
+fn parse_tree_reply(doc: &Llsd, owner: Uuid, parent: Uuid, children: &[Uuid], depth: i32) -> Result<Vec<FolderContents>, &'static str> {
+    let mut out = Vec::new();
+    if children.is_empty() {
+        parse_tree(doc, parent, owner, depth, &mut out)?;
+        return Ok(out);
+    }
+    if doc["category_id"].as_uuid() != parent {
+        return Err("invalid AIS subset reply");
+    }
+    for (child, record) in embedded_categories(doc) {
+        if children.contains(&child) {
+            let mut nested = Vec::new();
+            if parse_tree(record, child, owner, depth - 1, &mut nested).is_ok() {
+                out.append(&mut nested);
+            }
+        }
+    }
+    Ok(out)
+}
+
 async fn get(http: &reqwest::Client, url: String) -> Result<Llsd, &'static str> {
     crate::caps::get_llsd_as(http, &url, crate::probe::HttpKind::Inventory)
         .await
@@ -399,5 +476,61 @@ mod tests {
         assert_eq!(contents.items.len(), 1);
         assert_eq!(contents.items[0].asset_id, id(99));
         assert!(contents.folders.iter().any(|f| f.id == id(1) && f.favorite && f.favorite_known));
+    }
+
+    /// A folder `n` under `parent`, listing `folders` and one item `n + 1`;
+    /// without `_embedded` when `complete` is false (cut by the depth limit).
+    fn tree_folder(n: u128, parent: u128, folders: Vec<Llsd>, complete: bool) -> Llsd {
+        let mut doc = llsd_map! { "category_id" => id(n), "parent_id" => id(parent), "agent_id" => id(2),
+        "name" => format!("Folder {n}"), "type_default" => -1, "version" => 7 };
+        if complete {
+            let mut item = record(n + 1, false, 1, false);
+            item.insert("parent_id", id(n));
+            let mut items = Llsd::new_map();
+            items.insert(id(n + 1).to_string(), item);
+            let mut categories = Llsd::new_map();
+            for folder in folders {
+                categories.insert(folder["category_id"].as_uuid().to_string(), folder);
+            }
+            doc.insert(
+                "_embedded",
+                llsd_map! { "categories" => categories, "items" => items, "links" => Llsd::new_map() },
+            );
+        }
+        doc
+    }
+
+    fn tree() -> Llsd {
+        let nested = tree_folder(30, 10, Vec::new(), true);
+        let first = tree_folder(10, 1, vec![nested], true);
+        let cut = tree_folder(20, 1, Vec::new(), false);
+        tree_folder(1, 100, vec![first, cut], true)
+    }
+
+    fn fetched(contents: &[FolderContents]) -> Vec<Uuid> {
+        contents.iter().map(|c| c.folder_id).collect()
+    }
+
+    #[test]
+    fn recursive_ais_reads_snapshot_every_complete_folder_parents_first() {
+        let contents = parse_tree_reply(&tree(), id(2), id(1), &[], MAX_FOLDER_DEPTH).expect("recursive reply");
+        // the folder cut short stays listed by its parent, unfetched
+        assert_eq!(fetched(&contents), [id(1), id(10), id(30)]);
+        assert!(contents[0].folders.iter().any(|f| f.id == id(20)));
+        assert_eq!(contents[2].items[0].id, id(31));
+        // AISUpdate::parseCategory: no snapshot below the requested depth
+        let shallow = parse_tree_reply(&tree(), id(2), id(1), &[], 1).expect("depth 1");
+        assert_eq!(fetched(&shallow), [id(1), id(10)]);
+        let mut broken = tree();
+        broken.insert("agent_id", id(99));
+        assert!(parse_tree_reply(&broken, id(2), id(1), &[], MAX_FOLDER_DEPTH).is_err());
+    }
+
+    #[test]
+    fn subset_ais_reads_keep_the_requested_subtrees_only() {
+        let contents = parse_tree_reply(&tree(), id(2), id(1), &[id(10), id(20)], MAX_FOLDER_DEPTH).expect("subset");
+        // the parent is no snapshot of its own; 20 came back incomplete
+        assert_eq!(fetched(&contents), [id(10), id(30)]);
+        assert!(parse_tree_reply(&tree(), id(2), id(99), &[id(10)], MAX_FOLDER_DEPTH).is_err());
     }
 }

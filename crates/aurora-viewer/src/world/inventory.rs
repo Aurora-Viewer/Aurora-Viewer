@@ -9,6 +9,7 @@ use uuid::Uuid;
 #[path = "inventory/tests.rs"]
 mod action_tests;
 pub mod actions;
+pub mod background;
 pub mod demo;
 pub mod preview;
 pub mod wearable;
@@ -152,19 +153,19 @@ impl Inventory {
         let mut kids = f.children.clone();
         let mut seen = HashSet::new();
         kids.retain(|child| self.folders.get(child).is_some_and(|f| f.info.parent == id) && seen.insert(*child));
-        kids.sort_by(|a, b| {
-            let fa = self.folders.get(a);
-            let fb = self.folders.get(b);
-            let sys = |f: Option<&Folder>| f.map(|f| f.info.type_default >= 0 && f.info.type_default != 8).unwrap_or(false);
-            let name = |f: Option<&Folder>| f.map(|f| f.info.name.to_lowercase()).unwrap_or_default();
-            sys(fb).cmp(&sys(fa)).then_with(|| name(fa).cmp(&name(fb)))
+        // system folders first, then by name; one lowercase name per entry
+        // (a background reply can list thousands of folders at once)
+        kids.sort_by_cached_key(|id| {
+            let f = self.folders.get(id);
+            let sys = f.is_some_and(|f| f.info.type_default >= 0 && f.info.type_default != 8);
+            (!sys, f.map(|f| f.info.name.to_lowercase()).unwrap_or_default())
         });
         let mut items = f.items.clone();
         seen.clear();
         // FetchInventoryDescendents2 may include linked originals from other
         // folders. LLInventoryModel::updateItem indexes each by its parent.
         items.retain(|item| self.items.get(item).is_some_and(|it| it.parent == id) && seen.insert(*item));
-        items.sort_by_key(|i| self.items.get(i).map(|it| it.name.to_lowercase()).unwrap_or_default());
+        items.sort_by_cached_key(|i| self.items.get(i).map(|it| it.name.to_lowercase()).unwrap_or_default());
         if let Some(f) = self.folders.get_mut(&id) {
             f.children = kids;
             f.items = items;

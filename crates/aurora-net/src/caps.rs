@@ -66,6 +66,8 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "InventoryThumbnailUpload",
     // the scripts of a parcel (LLFloaterScriptLimits)
     "LandResources",
+    // the library's background fetch (AISAPI::LIBRARY_CAP_NAME)
+    "LibraryAPIv3",
     // the server's LSL keywords, fetched when SimulatorFeatures' LSLSyntaxId
     // changes (LLSyntaxIdLSL)
     "LSLSyntax",
