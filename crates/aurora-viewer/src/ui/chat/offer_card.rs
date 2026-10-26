@@ -47,6 +47,12 @@ fn buttons(ui: &mut egui::Ui, p: &Palette, offer: u64, size: Vec2) {
     }
 }
 
+fn inventory_link(ui: &mut egui::Ui, env: &mut LineEnv, offer: &Offer) {
+    if let Some(link) = offer.inventory_link(aurora_i18n::tr!("ui-notifications-show-in-inventory")) {
+        chat_text_marked(ui, env.p, env.emoji, env.world, env.want_names, &link, 12.0, env.p.ink, false, None);
+    }
+}
+
 /// The card, on the giver's side after `indent`.
 pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, offer: u64, indent: f32) {
     let p = env.p;
@@ -69,7 +75,10 @@ pub(super) fn draw_card(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, o
                 ui.add_space(5.0);
                 ui.horizontal(|ui| buttons(ui, p, offer, BUTTON));
             }
-            Some(label) => answered(ui, p, label),
+            Some(label) => {
+                answered(ui, p, label);
+                inventory_link(ui, env, &v);
+            }
         }
     });
 }
@@ -93,6 +102,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, o
             None => buttons(ui, p, offer, Vec2::new(80.0, 20.0)),
             Some(label) => {
                 ui.label(RichText::new(format!("· {label}")).size(12.0).color(p.muted_dim));
+                inventory_link(ui, env, &v);
             }
         }
     });
@@ -101,7 +111,7 @@ pub(super) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &ChatLine, o
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::widgets::elide_tests::{Frames, Text, painted};
+    use crate::ui::widgets::elide_tests::{Frames, Text};
     use crate::world::notifications::im;
     use crate::world::{ChatKind, World};
     use std::collections::{HashMap, HashSet};
@@ -185,7 +195,13 @@ mod tests {
         /// A click on `label`, then the actions the card asked for.
         fn click(&mut self, world: &World, line: &ChatLine, bubbles: bool, label: &str) -> Vec<CtxAction> {
             let texts = self.frame(world, line, bubbles, Vec::new());
-            let at = painted(&texts, label).rect.center();
+            // Native links reserve an invisible marker glyph before their label.
+            let at = texts
+                .iter()
+                .find(|t| t.source.ends_with(label))
+                .unwrap_or_else(|| panic!("{label}: {:?}", texts.iter().map(|t| &t.source).collect::<Vec<_>>()))
+                .rect
+                .center();
             let button = |pressed| egui::Event::PointerButton {
                 pos: at,
                 button: egui::PointerButton::Primary,
@@ -227,6 +243,34 @@ mod tests {
             };
             assert!(texts.iter().any(|t| t.source.contains(answer)), "{bubbles}");
             assert!(!texts.iter().any(|t| t.source == label), "{bubbles}");
+        }
+    }
+
+    #[test]
+    fn kept_offer_links_select_the_gift_in_both_chat_presentations() {
+        let label = aurora_i18n::tr!("ui-notifications-show-in-inventory");
+        for bubbles in [true, false] {
+            for keep in [true, false] {
+                let (mut world, line) = offered();
+                let mut card = Card::new();
+                let texts = card.frame(&world, &line, bubbles, Vec::new());
+                assert!(!texts.iter().any(|t| t.source.contains(label)), "pending offer");
+                let offer = world.inventory_offers.list[0].id;
+                world.answer_inventory_offer(offer, keep);
+                if keep {
+                    let texts = card.frame(&world, &line, bubbles, Vec::new());
+                    assert!(texts.iter().any(|t| t.source.contains(label)), "kept offer");
+                    let asked = card.click(&world, &line, bubbles, label);
+                    assert!(
+                        matches!(&asked[..], [CtxAction::AppLink(crate::slapp::AppLink::Inventory { id, .. })]
+                            if *id == Uuid::from_u128(0x20)),
+                        "{bubbles}: {asked:?}"
+                    );
+                } else {
+                    let texts = card.frame(&world, &line, bubbles, Vec::new());
+                    assert!(!texts.iter().any(|t| t.source.contains(label)), "rejected offer");
+                }
+            }
         }
     }
 }
