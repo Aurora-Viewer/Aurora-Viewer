@@ -252,6 +252,44 @@ impl Temporal {
     }
 }
 
+/// `AURORA_GTAO_NORMALS`: the surface normal the occlusion starts from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Normals {
+    /// The mesh's smooth normal, which the depth prepass draws beside the
+    /// depth (the default).
+    Mesh,
+    /// XeGTAO's from the depth, as before: the flat triangle's, which shows
+    /// the facets of low-poly meshes (#993).
+    Depth,
+    /// The mesh's one second, the depth's the next.
+    Alternate,
+}
+
+impl Normals {
+    pub(crate) fn parse(v: Option<&str>) -> Self {
+        match v.map(str::trim) {
+            Some("depth") | Some("0") => Normals::Depth,
+            Some("alt") => Normals::Alternate,
+            _ => Normals::Mesh,
+        }
+    }
+
+    pub(crate) fn from_env() -> Self {
+        static MODE: std::sync::OnceLock<Normals> = std::sync::OnceLock::new();
+        *MODE.get_or_init(|| Normals::parse(std::env::var("AURORA_GTAO_NORMALS").ok().as_deref()))
+    }
+
+    /// Whether the frame drawn `secs` whole seconds into the session reads
+    /// the mesh normals.
+    pub(crate) fn mesh(self, secs: u64) -> bool {
+        match self {
+            Normals::Mesh => true,
+            Normals::Depth => false,
+            Normals::Alternate => secs.is_multiple_of(2),
+        }
+    }
+}
+
 /// What a frame's occlusion knows of its frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Frame {
@@ -357,13 +395,24 @@ struct GtaoU {
     reproj: [[f32; 4]; 4],
     il: [f32; 4],
     temporal: [f32; 4],
+    /// A mat3x3 (columns padded to four).
+    normal_view: [[f32; 4]; 3],
 }
 
 /// The constants of a frame drawn with `proj` into targets of `size`;
 /// `reproj` takes its view space (z in front) to the clip space of the
 /// previous frame; `intensity` scales the indirect light; `temporal` is the
-/// accumulation's frame, if it accumulates, and whether a history is there.
-fn uniforms(proj: Mat4, reproj: Mat4, intensity: f32, size: (u32, u32), q: Quality, temporal: Option<(u64, bool)>) -> GtaoU {
+/// accumulation's frame, if it accumulates, and whether a history is there;
+/// `normals` the frame's view when it reads the mesh normals.
+fn uniforms(
+    proj: Mat4,
+    reproj: Mat4,
+    intensity: f32,
+    size: (u32, u32),
+    q: Quality,
+    temporal: Option<(u64, bool)>,
+    normals: Option<Mat4>,
+) -> GtaoU {
     let (noise, history) = match temporal {
         Some((index, history)) => ((index % NOISE_FRAMES) as f32, history),
         None => (0.0, false),
@@ -382,12 +431,22 @@ fn uniforms(proj: Mat4, reproj: Mat4, intensity: f32, size: (u32, u32), q: Quali
             DENOISE_BLUR_BETA,
             if q.half_res { 2.0 } else { 1.0 },
             (q.slices * slices) as f32,
-            0.0,
+            if normals.is_some() { 1.0 } else { 0.0 },
         ],
         reproj: reproj.to_cols_array_2d(),
         il: [INDIRECT_THICKNESS, INDIRECT_RADIUS, intensity, 0.0],
         temporal: [noise, if history { 0.0 } else { 1.0 }, TEMPORAL_MIN_WEIGHT, TEMPORAL_CLIP],
+        normal_view: normals.map_or([[0.0; 4]; 3], |view| {
+            let m = normal_view(view);
+            [m.x_axis.extend(0.0), m.y_axis.extend(0.0), m.z_axis.extend(0.0)].map(|c| c.to_array())
+        }),
     }
+}
+
+/// The rotation from world directions to the view space of the GTAO pass
+/// for a frame seen through `view` (its z flipped, as in [`reprojection`]).
+pub(crate) fn normal_view(view: Mat4) -> glam::Mat3 {
+    glam::Mat3::from_diagonal(glam::Vec3::new(1.0, 1.0, -1.0)) * glam::Mat3::from_mat4(view)
 }
 
 /// The matrix from the view space of the GTAO pass (x right, y up, z the
@@ -467,6 +526,9 @@ pub(crate) struct Targets {
     /// The visibility in `.r` and the view-space bent normal in `.gba`
     /// (0..1), sampled by the shading.
     pub result: wgpu::TextureView,
+    /// The mesh normals (`NORMAL_FORMAT`, the window's size), the depth
+    /// prepass's colour target when the frame reads them.
+    pub normals: wgpu::TextureView,
     /// With the screen-space indirect light.
     pub indirect: Option<IndirectTargets>,
 }
@@ -520,6 +582,10 @@ const RESULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const META_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// The indirect light while it is blurred, and its result.
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The mesh normals of the depth prepass (octahedral, two halves: the
+/// G-buffer's eight bits per channel would show steps in a smooth
+/// occlusion).
+pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
 impl Gtao {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
@@ -567,6 +633,7 @@ impl Gtao {
                     texture_entry(4, UNFILTERED),
                     storage_entry(5, AO_FORMAT),
                     storage_entry(6, EDGES_FORMAT),
+                    texture_entry(11, UNFILTERED),
                 ],
             ),
             temporal: make(
@@ -613,6 +680,7 @@ impl Gtao {
                 &[
                     uniform_entry(),
                     texture_entry(4, UNFILTERED),
+                    texture_entry(11, UNFILTERED),
                     texture_entry(13, UNFILTERED),
                     storage_entry(14, LIGHT_FORMAT),
                 ],
@@ -702,6 +770,21 @@ impl Gtao {
         ];
         let edges = view(texture("gtao edges", EDGES_FORMAT, 1));
         let result = view(texture("gtao", RESULT_FORMAT, 1));
+        // drawn by the depth prepass, at the window's size
+        let normals = view(device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gtao normals"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: NORMAL_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        }));
         let group = |layout: &wgpu::BindGroupLayout, entries: &[(u32, &wgpu::TextureView)]| {
             let mut all = vec![wgpu::BindGroupEntry {
                 binding: 0,
@@ -721,7 +804,7 @@ impl Gtao {
         let prefilter = (1..mip_count)
             .map(|l| group(&self.prefilter.1, &[(2, &mip_view(l - 1)), (3, &mip_view(l))]))
             .collect();
-        let main = group(&self.main.1, &[(4, &all_mips), (5, &ao), (6, &edges)]);
+        let main = group(&self.main.1, &[(4, &all_mips), (5, &ao), (6, &edges), (11, &normals)]);
         let temporal = [0, 1].map(|i| {
             group(
                 &self.temporal.1,
@@ -767,7 +850,10 @@ impl Gtao {
                 view(texture("gtao light b", LIGHT_FORMAT, 1)),
             ];
             let result = view(texture("gtao light", LIGHT_FORMAT, 1));
-            let main = group(&self.main_bitmask.1, &[(4, &all_mips), (13, scene), (14, &light[0])]);
+            let main = group(
+                &self.main_bitmask.1,
+                &[(4, &all_mips), (11, &normals), (13, scene), (14, &light[0])],
+            );
             // four turns more than the occlusion's blur: one bounce from a few
             // samples is grainy, and the light has no sharp detail to keep
             let il_passes = passes + INDIRECT_EXTRA_BLUR;
@@ -797,21 +883,33 @@ impl Gtao {
             history: History::default(),
             accumulate: None,
             result,
+            normals,
             indirect,
         }
     }
 
     /// The constants of this frame (before the encoder runs): `proj` its
     /// projection, `reproj` from [`reprojection`], `intensity` the indirect
-    /// light's strength, `frame` what it knows of the frames before.
-    pub(crate) fn write(&self, queue: &wgpu::Queue, t: &mut Targets, proj: Mat4, reproj: Mat4, intensity: f32, frame: Frame) {
+    /// light's strength, `frame` what it knows of the frames before,
+    /// `normals` the view when the depth prepass draws the mesh normals.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write(
+        &self,
+        queue: &wgpu::Queue,
+        t: &mut Targets,
+        proj: Mat4,
+        reproj: Mat4,
+        intensity: f32,
+        frame: Frame,
+        normals: Option<Mat4>,
+    ) {
         let next = t.history.next(frame);
         t.accumulate = next.map(|(target, _)| target);
         let temporal = next.map(|(_, history)| (frame.index, history));
         queue.write_buffer(
             &self.buffer,
             0,
-            bytemuck::bytes_of(&uniforms(proj, reproj, intensity, t.size, t.quality, temporal)),
+            bytemuck::bytes_of(&uniforms(proj, reproj, intensity, t.size, t.quality, temporal, normals)),
         );
     }
 
@@ -941,6 +1039,40 @@ mod tests {
         assert!((0..4).all(|s| Temporal::On.applied(s) && !Temporal::Off.applied(s)));
     }
 
+    #[test]
+    fn normals_switch_is_the_mesh_by_default_and_alternates_every_second() {
+        assert_eq!(Normals::parse(None), Normals::Mesh);
+        assert_eq!(Normals::parse(Some("mesh")), Normals::Mesh);
+        assert_eq!(Normals::parse(Some(" depth ")), Normals::Depth);
+        assert_eq!(Normals::parse(Some("0")), Normals::Depth);
+        assert_eq!(Normals::parse(Some("alt")), Normals::Alternate);
+        let alt: Vec<bool> = (0..4).map(|s| Normals::Alternate.mesh(s)).collect();
+        assert_eq!(alt, [true, false, true, false]);
+        assert!((0..4).all(|s| Normals::Mesh.mesh(s) && !Normals::Depth.mesh(s)));
+    }
+
+    /// The mesh normals reach the pass's view space (x right, y up, z in
+    /// front): a face turned to the camera points back along z, the ground
+    /// up, and the flag tells the shader to read them.
+    #[test]
+    fn mesh_normals_turn_into_the_pass_view_space() {
+        let eye = glam::Vec3::new(10.0, 5.0, 2.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::new(14.0, 5.0, 2.0), glam::Vec3::Z);
+        let m = normal_view(view);
+        // a wall facing the camera (it looks along +x)
+        assert!((m * -glam::Vec3::X - glam::Vec3::new(0.0, 0.0, -1.0)).length() < 1e-5);
+        assert!((m * glam::Vec3::Z - glam::Vec3::Y).length() < 1e-5);
+        // the camera's right (+x on screen) is -y in the world here
+        assert!((m * -glam::Vec3::Y - glam::Vec3::X).length() < 1e-5);
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
+        let on = uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), None, Some(view));
+        assert_eq!(on.misc[3], 1.0);
+        let col = |i: usize| glam::Vec3::from_slice(&on.normal_view[i][..3]);
+        assert!(glam::Mat3::from_cols(col(0), col(1), col(2)).abs_diff_eq(m, 1e-6));
+        let off = uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), None, None);
+        assert_eq!(off.misc[3], 0.0);
+    }
+
     /// The history targets take turns while frames follow each other; a
     /// frame skipped, one without the accumulation or without the previous
     /// camera, and new targets start again from the current frame.
@@ -969,13 +1101,13 @@ mod tests {
     #[test]
     fn noise_moves_only_while_accumulating_and_history_is_read_only_when_there() {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
-        let u = |t| uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), t).temporal;
+        let u = |t| uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), t, None).temporal;
         assert_eq!(u(None)[..2], [0.0, 1.0]);
         assert_eq!(u(Some((3, true)))[..2], [3.0, 0.0]);
         assert_eq!(u(Some((NOISE_FRAMES + 5, false)))[..2], [5.0, 1.0]);
         // without a history the frame samples more slices; without the
         // accumulation, as before
-        let slices = |t| uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), t).misc[2];
+        let slices = |t| uniforms(proj, Mat4::IDENTITY, 1.0, (64, 64), quality(2), t, None).misc[2];
         assert_eq!(slices(None), 3.0);
         assert_eq!(slices(Some((3, true))), 3.0);
         assert_eq!(slices(Some((3, false))), 3.0 * NO_HISTORY_SLICES as f32);
@@ -1141,7 +1273,7 @@ mod tests {
     #[test]
     fn uniforms_rebuild_view_positions() {
         let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, 0.1);
-        let u = uniforms(proj, Mat4::IDENTITY, 1.0, (1600, 1000), quality(2), None);
+        let u = uniforms(proj, Mat4::IDENTITY, 1.0, (1600, 1000), quality(2), None, None);
         // a point 7 m in front, 1 m right and 0.5 m up (right-handed view: -z)
         let p = glam::Vec4::new(1.0, 0.5, -7.0, 1.0);
         let clip = proj * p;
