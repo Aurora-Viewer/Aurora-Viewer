@@ -18,9 +18,9 @@
 //!   interface, sculpt maps and the terrain are left alone.
 //!
 //! What differs, on purpose:
-//! - the budget is read from the driver as it is now and the use is the
-//!   bytes of the live textures and buffers (aurora_render::vram), where
-//!   Firestorm doubles the texture and vertex bytes it tracks as an
+//! - the budget is read from the driver as it is now and the use is what
+//!   the driver counts for the viewer (aurora_render::vram), where the
+//!   Legacy Viewer doubles the texture and vertex bytes it tracks as an
 //!   estimate against the memory size read at startup;
 //! - steps of half a level instead of a bias that drifts with the frame
 //!   time, and a step is only taken back once the memory the textures would
@@ -84,17 +84,26 @@ pub fn forced_target() -> Option<u64> {
 
 /// Bytes the texture pages may hold now: the setting (manual, or the share
 /// of the video memory found at startup), less when the rest of what the
-/// process holds on the card (render targets, geometry) leaves less under
-/// the target of the whole process. The rest is counted from the live
-/// resources, not from what the driver counts for the process: see
-/// aurora_render::vram.
+/// process holds on the card leaves less under the target of the whole
+/// process. The rest is what the driver counts for the process besides the
+/// pages: render targets and geometry, and the free room of wgpu's memory
+/// blocks, which the driver counts too (see aurora_render::vram).
+///
+/// Counted from the live resources only, as it was, the viewer could stay
+/// past the driver's budget with its pages under their target, the driver
+/// counting more than a gigabyte of free room in blocks. That room was
+/// mostly left by freed pages, and counting it then would have fed on
+/// itself (pages lowered, more room left, a lower target); the pages now
+/// hold memory of their own, given back to the driver as they shrink
+/// (aurora_render's dedicated.rs), and the room left belongs to the other
+/// resources.
 pub fn texture_target(setting: u64, pages: u64, video: Option<VideoMemory>) -> u64 {
     let Some(v) = video else {
         return setting;
     };
     // target = max(min(budget - 512, budget * 0.8), MIN_VRAM_BUDGET)
     let process = v.budget.saturating_sub(512 * MB).min(v.budget / 5 * 4).max(768 * MB);
-    let others = v.allocated.saturating_sub(pages);
+    let others = v.usage.max(v.allocated).saturating_sub(pages);
     setting.min(process.saturating_sub(others)).max(MIN_TEXTURE_BYTES)
 }
 
@@ -164,12 +173,12 @@ mod tests {
 
     const GB: u64 = 1 << 30;
 
-    /// The driver's budget and the live resources of the process; what the
-    /// driver counts for it is larger (holes in the allocator's blocks).
+    /// The driver's budget and the live resources of the process, which the
+    /// driver counts as they are.
     fn video(budget: u64, allocated: u64) -> Option<VideoMemory> {
         Some(VideoMemory {
             budget,
-            usage: allocated + 3 * GB,
+            usage: allocated,
             allocated,
         })
     }
@@ -199,20 +208,20 @@ mod tests {
     }
 
     #[test]
-    fn freed_pages_still_held_by_the_allocator_do_not_count() {
-        // 8 GB card: 5 GB of pages, 1.5 GB of render targets and geometry
-        let before = texture_target(6 * GB, 5 * GB, video(7 * GB + GB / 2, 6 * GB + GB / 2));
-        assert_eq!(before, 4 * GB + GB / 2);
-        // the textures give 2 GB back: the driver still counts the blocks
-        // they were in, the target stays where it was (counted from what
-        // the driver reports, it would fall by those 2 GB, and again each
-        // time the textures gave memory back)
-        let after = Some(VideoMemory {
-            budget: 7 * GB + GB / 2,
-            usage: 9 * GB + GB / 2,
-            allocated: 4 * GB + GB / 2,
-        });
-        assert_eq!(texture_target(6 * GB, 3 * GB, after), before);
+    fn room_the_driver_counts_beyond_the_resources_leaves_less() {
+        // 8 GB card: 3 GB of pages, 1.5 GB of render targets and geometry,
+        // and 1 GB of free room in wgpu's blocks the driver counts too
+        let v = |usage| {
+            Some(VideoMemory {
+                budget: 7 * GB + GB / 2,
+                usage,
+                allocated: 4 * GB + GB / 2,
+            })
+        };
+        assert_eq!(texture_target(6 * GB, 3 * GB, v(5 * GB + GB / 2)), 6 * GB - GB / 2 - GB - GB);
+        // the driver behind the counters (a buffer just created): the live
+        // resources at least
+        assert_eq!(texture_target(6 * GB, 3 * GB, v(4 * GB)), 6 * GB - GB / 2 - GB);
     }
 
     #[test]
