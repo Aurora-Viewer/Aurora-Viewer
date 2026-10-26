@@ -1262,14 +1262,14 @@ mod tests {
     #[test]
     fn combined_outfits_wear_once_deduplicate_and_preserve_required_parts() {
         let inv = fixture();
-        let folders = vec![Uuid::from_u128(703), Uuid::from_u128(704), Uuid::from_u128(703)];
+        let folders = vec![Uuid::from_u128(705), Uuid::from_u128(704), Uuid::from_u128(705)];
         let (change, sync) = plan(&inv, Action::WearOutfits { folders, append: false }, &HashMap::new()).expect("combined wear");
         assert!(sync);
         assert_eq!(change.folder, cof(&inv).expect("COF"));
         assert!(change.cof.is_none());
         let targets: HashSet<_> = change.links.iter().map(|link| link.target).collect();
         assert_eq!(targets.len(), change.links.len());
-        for id in (710..719).chain(std::iter::once(723)) {
+        for id in (710..721).chain(std::iter::once(723)) {
             assert!(targets.contains(&Uuid::from_u128(id)), "missing combined item {id}");
         }
         assert!(!targets.contains(&Uuid::from_u128(721)), "replace removes unrelated HUD");

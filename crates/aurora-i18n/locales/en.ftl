@@ -7645,7 +7645,11 @@ workspace-land-identity = Identity and ownership
 workspace-land-sale = Sale and information
 workspace-land-actions = Parcel actions
 workspace-outfit-selection = Select an outfit
-workspace-outfit-items = { $count } items in this outfit
+workspace-outfit-items =
+    { $count ->
+        [one] { $count } item
+       *[other] { $count } items
+    }
 
 ui-inventory-received-purchases = Received items
 ui-inventory-no-received-purchases = No received items yet.
