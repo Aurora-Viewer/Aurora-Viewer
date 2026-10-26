@@ -7114,6 +7114,8 @@ impl App {
         let hold = self.photo_hold(now);
         let still = hold.is_some_and(|h| h.later);
         let world_now = move || hold.map_or_else(Instant::now, |h| h.at);
+        // (the frame's own instant, for what reads it outside a photo)
+        let world_frame = hold.map_or(now, |h| h.at);
         let start = self.start;
         let world_clock = move || hold.map_or_else(|| start.elapsed().as_secs_f32(), |h| h.clock);
         let dt = if still {
@@ -7846,7 +7848,7 @@ impl App {
                 log::info!("demo animation edit: {} frozen skeletons", self.scene.paused_skeletons.len());
             }
             // poses first: attachments follow their bone in the same frame
-            let completed = self.scene.update_poses(&mut self.world, self.camera.position, world_now());
+            let completed = self.scene.update_poses(&mut self.world, self.camera.position, world_frame);
             self.scene.set_auto_hover_second_life(matches!(
                 self.settings.grid,
                 crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta
@@ -7856,7 +7858,7 @@ impl App {
                 self.settings.auto_hover_height,
                 self.settings.auto_hover_offset,
                 !self.hover_height_ui.previewing_offset(),
-                world_now(),
+                world_frame,
             );
             for anim in completed {
                 self.ao_runtime.finished(anim);
