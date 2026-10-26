@@ -923,6 +923,9 @@ pub struct Settings {
     /// The order of Aurora's "Places" lists.
     pub places_sort: PlacesSort,
     pub invert_mouse: bool,
+    /// Aurora extension: allow the left/right mouse chord on land and objects
+    /// without a click action, in addition to our avatar. Off by default.
+    pub world_mouse_walk: bool,
     pub arrows_strafe: bool,
     /// The arrow keys (and Page Up / Down, Home) move the avatar while the
     /// chat bar has the keyboard, even with text in it; an empty bar always
@@ -1656,6 +1659,7 @@ impl Default for Settings {
             places_sort: PlacesSort::Visit,
             invert_mouse: false,
             arrows_strafe: false,
+            world_mouse_walk: false,
             arrow_keys_always_move: false,
             letter_keys_move: true,
             walk_backwards_without_turning: false,

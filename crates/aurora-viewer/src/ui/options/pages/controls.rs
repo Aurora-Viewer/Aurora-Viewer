@@ -9,6 +9,11 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("ui-options-mouse"), |cx| {
         cx.slider(tr!("ui-options-sensitivity"), "", &field!(mouse_sensitivity), 0.1..=5.0, "×");
         cx.toggle(tr!("ui-options-invert-vertical-axis"), "", &field!(invert_mouse));
+        cx.toggle(
+            tr!("ui-options-world-mouse-walk"),
+            tr!("ui-options-world-mouse-walk-help"),
+            &field!(world_mouse_walk),
+        );
         // "Double-click on land" (double_click_action_combo)
         let choices: Vec<(crate::autopilot::DoubleClick, &str)> =
             crate::autopilot::DoubleClick::ALL.iter().map(|a| (*a, a.label())).collect();

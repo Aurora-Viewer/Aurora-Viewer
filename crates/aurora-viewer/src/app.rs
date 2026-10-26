@@ -165,7 +165,7 @@ impl TpOverlay {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MouseMode {
     None,
-    /// Left button held on the own avatar: turn it with the mouse.
+    /// Left button held on our avatar, or the optional world chord: steer it.
     Steer,
     /// Alt+left held: alt-camera drag (zoom; Ctrl orbit; Ctrl+Shift pan).
     FocusOrbit,
@@ -178,9 +178,15 @@ enum MouseMode {
 struct RightGesture {
     offset: (f32, f32),
     orbit: bool,
+    /// The button has walked, even if the left button has since been released.
+    walked: bool,
 }
 
 impl RightGesture {
+    fn opens_menu(&self) -> bool {
+        !self.orbit && !self.walked
+    }
+
     fn motion(&mut self, dx: f32, dy: f32, pixels_per_point: f32) -> bool {
         if !self.orbit {
             self.offset.0 += dx / pixels_per_point;
@@ -312,6 +318,8 @@ pub struct App {
     text_menu: ui::text_menu::TextMenu,
     alt: bool,
     left_down: bool,
+    /// An unhandled world press may start steering when the right button joins.
+    world_mouse_walk_pending: bool,
     /// Clicks that wait for the depth under them, and what follows them.
     clicks: click_pick::ClickWait,
     script_clicks: script_clicks::ScriptClicks,
@@ -1040,6 +1048,7 @@ impl App {
             text_menu: Default::default(),
             alt: false,
             left_down: false,
+            world_mouse_walk_pending: false,
             clicks: Default::default(),
             script_clicks: Default::default(),
             right_gesture: RightGesture::default(),
@@ -3428,10 +3437,43 @@ impl App {
         })
     }
 
-    /// The right button walks forward: held while steering with the left
-    /// button on our avatar.
+    /// The right button walks forward while the left button steers our avatar.
     fn mouse_walks(&self) -> bool {
         self.right_drag && self.mouse_mode == MouseMode::Steer
+    }
+
+    /// LLToolCamera's avatar steering, also used by the optional world chord.
+    fn begin_mouse_steer(&mut self) {
+        self.camera.begin_drag(true);
+        self.mouse_mode = MouseMode::Steer;
+        if self.right_drag {
+            self.right_gesture.walked = true;
+        }
+        self.set_mouselook_grab(true);
+    }
+
+    /// Called only after HUD, media and object click actions have had priority.
+    /// Unlike LLToolPie::startCameraSteering (indra/newview/lltoolpie.cpp), this
+    /// Aurora option requires both buttons; a lone world press keeps its use.
+    fn arm_world_mouse_walk(&mut self) {
+        self.world_mouse_walk_pending = self.settings.world_mouse_walk
+            && !self.alt
+            && !self.object_view
+            && !self.ctrl
+            && !self.shift
+            && !self.build.open
+            && !self.camera.mouselook();
+        self.start_world_mouse_walk();
+    }
+
+    fn start_world_mouse_walk(&mut self) {
+        if self.world_mouse_walk_pending && self.left_down && self.right_drag && self.mouse_mode == MouseMode::None {
+            let s = &self.settings.camera;
+            if !s.click_avatar_keeps_camera {
+                self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
+            }
+            self.begin_mouse_steer();
+        }
     }
 
     /// A walk input of `group` pressed or released: pressed twice quickly, it
@@ -3667,6 +3709,7 @@ impl App {
     /// the depth under the cursor has come back (app/click_pick.rs).
     fn world_press(&mut self) {
         self.left_down = true;
+        self.world_mouse_walk_pending = false;
         if self.hud_drag_requested()
             && self.huds_shown()
             && let Some(idx) = self.scene.hud_move_pick(&self.world, self.cursor_pos)
@@ -3801,6 +3844,9 @@ impl App {
             && let Some(target) = crate::interaction::target(&self.world, d.idx, &self.interactions.props)
         {
             let surface = self.scene.drawn_surface(&self.world, &d);
+            if target.action == crate::interaction::Action::Disabled {
+                self.arm_world_mouse_walk();
+            }
             self.activate_object_action_at(target, d.idx, d.hit.point, ray, surface);
             return;
         }
@@ -3818,6 +3864,9 @@ impl App {
             && (!on_avatar || self.own_attachment(idx))
             && let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
         {
+            if target.action == crate::interaction::Action::Disabled {
+                self.arm_world_mouse_walk();
+            }
             self.activate_object_action(target, idx, point, ray);
             return;
         }
@@ -3848,9 +3897,7 @@ impl App {
             if !s.click_avatar_keeps_camera {
                 self.camera.set_focus_on_avatar(true, true, true, &mut self.world.agent, s);
             }
-            self.camera.begin_drag(true);
-            self.mouse_mode = MouseMode::Steer;
-            self.set_mouselook_grab(true);
+            self.begin_mouse_steer();
         } else if crate::autopilot::takes_ground_double_click(crate::autopilot::Press {
             double,
             alt: self.alt,
@@ -3863,7 +3910,13 @@ impl App {
             // a double click on the ground, or on an object without a click
             // action (which took the press above): walk_to / teleport_to
             self.double_click_ground(point);
+            if picked.tag.is_none() {
+                self.arm_world_mouse_walk();
+            }
         } else if !self.build.open {
+            if hit.is_some() && picked.tag.is_none() {
+                self.arm_world_mouse_walk();
+            }
             // a press nothing took (scanMouse): scripts that took the button hear it
             self.script_click_down((control::LBUTTON_DOWN, control::LBUTTON_UP));
         }
@@ -5644,14 +5697,17 @@ impl App {
         }
         let was_drag = self.right_drag;
         self.right_drag = pressed && (!over_ui || self.mouse_mode == MouseMode::Steer) && self.in_world();
+        if pressed {
+            self.right_gesture = RightGesture::default();
+            self.start_world_mouse_walk();
+        }
         if self.mouse_walks() {
+            self.right_gesture.walked = true;
             self.walk_tap(0, true);
         } else if !pressed {
             self.check_temp_run();
         }
-        if pressed {
-            self.right_gesture = RightGesture::default();
-        } else if was_drag && !self.right_gesture.orbit && self.mouse_mode == MouseMode::None {
+        if !pressed && was_drag && self.right_gesture.opens_menu() && self.mouse_mode == MouseMode::None {
             // a click (no drag): context menu
             self.open_context_menu();
         }
@@ -5739,6 +5795,7 @@ impl App {
         self.release_object_hold();
         self.script_click_up();
         self.left_down = false;
+        self.world_mouse_walk_pending = false;
         self.build.mouse_up(&mut self.world, &self.settings.build);
         self.flush_build();
         self.media.on_release(aurora_media::Modifiers {
@@ -6158,7 +6215,7 @@ impl App {
             return;
         }
         if self.mouse_mode == MouseMode::Steer {
-            // left button held on the avatar (Firestorm): the avatar faces the
+            // Mouse steering (LLToolCamera): the avatar faces the
             // camera; the arrows are camera-relative and turn the avatar toward
             // where it walks (→ = turn right and walk), the camera stays put
             let x = i.forward as i32 - i.back as i32;
@@ -10396,7 +10453,7 @@ impl App {
         {
             self.demo_camera_steps(&v);
         }
-        // AURORA_DEMO_MMO="x,y": left press on the avatar once the world shows
+        // AURORA_DEMO_MMO="x,y[,flags]": left press once the world shows
         // (frame 225 at the earliest), right button held 10 to 105 frames
         // later (MMO walking test), positions logged
         if self.demo
@@ -10407,25 +10464,41 @@ impl App {
                 self.demo_mmo_start = Some(self.frame_count);
             }
             let c: Vec<f32> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            let flag = |name| v.split(',').any(|s| s.trim() == name);
             let f = self.demo_mmo_start.map_or(u64::MAX, |s| self.frame_count - s);
             match (f, c.len()) {
                 (0, n) if n >= 2 => {
+                    if flag("world") || flag("world-off") {
+                        self.settings.world_mouse_walk = flag("world");
+                    }
                     self.cursor_pos = (c[0], c[1]);
-                    self.on_left_press();
+                    if flag("right-before-left") {
+                        self.mouse_input(MouseButton::Right, true, false);
+                    }
+                    self.mouse_input(MouseButton::Left, true, false);
+                    if flag("quick") {
+                        // Queue the chord and both releases behind the deferred pick.
+                        self.mouse_input(MouseButton::Right, true, false);
+                        self.mouse_input(MouseButton::Left, false, false);
+                        self.mouse_input(MouseButton::Right, false, false);
+                    }
                     self.demo_note(click_pick::DemoNote::Mmo);
                 }
+                (10, _) if flag("quick") || flag("right-before-left") => {}
                 // third value 1: hold the right arrow instead of the right button
                 (10, _) if c.get(2) == Some(&1.0) => {
                     self.down.insert(Input::key(KeyCode::ArrowRight));
                 }
                 // third value 2: double right click, held the second time (run)
-                (11, _) if c.get(2) == Some(&2.0) => self.on_right_button(false, false),
-                (12, _) if c.get(2) == Some(&2.0) => self.on_right_button(true, false),
-                (10, _) => self.on_right_button(true, false),
+                (11, _) if c.get(2) == Some(&2.0) => self.mouse_input(MouseButton::Right, false, false),
+                (12, _) if c.get(2) == Some(&2.0) => self.mouse_input(MouseButton::Right, true, false),
+                (10, _) => self.mouse_input(MouseButton::Right, true, false),
+                (20, _) => self.demo_note(click_pick::DemoNote::Mmo),
+                (100, _) if flag("left-first") => self.mouse_input(MouseButton::Left, false, false),
                 (105, _) => {
                     let running = self.temp_run.is_some();
                     if self.right_drag {
-                        self.on_right_button(false, false);
+                        self.mouse_input(MouseButton::Right, false, false);
                     }
                     self.down.remove(&Input::key(KeyCode::ArrowRight));
                     log::info!(
@@ -10437,6 +10510,11 @@ impl App {
                         self.temp_run.is_some()
                     );
                 }
+                (110, _) => self.mouse_input(MouseButton::Left, false, false),
+                (115, _) => self.demo_note(click_pick::DemoNote::Mmo),
+                (120, _) if flag("menu-after") => self.mouse_input(MouseButton::Right, true, false),
+                (121, _) if flag("menu-after") => self.mouse_input(MouseButton::Right, false, false),
+                (130, _) if flag("menu-after") => self.demo_note(click_pick::DemoNote::Mmo),
                 _ => {}
             }
         }
@@ -16935,6 +17013,32 @@ mod tests {
             assert!(!gesture.motion(dx, dy, 1.0));
             assert!(!gesture.orbit);
         }
+    }
+
+    #[test]
+    fn mouse_walk_consumes_the_right_click_until_the_next_press() {
+        let mut gesture = RightGesture::default();
+        assert!(gesture.opens_menu(), "an ordinary right click keeps its menu");
+        gesture.walked = true;
+        assert!(!gesture.motion(0.0, 0.0, 1.0), "walking need not move the pointer");
+        assert!(!gesture.opens_menu(), "the right release stays consumed after the left release");
+        gesture = RightGesture::default();
+        assert!(gesture.opens_menu(), "the next independent right click still works");
+        assert!(gesture.motion(20.0, 0.0, 1.0));
+        assert!(!gesture.opens_menu(), "a camera orbit still consumes its release");
+    }
+
+    #[test]
+    fn world_mouse_walk_is_opt_in_and_survives_a_settings_round_trip() {
+        let old: Settings = serde_json::from_str("{}").expect("old synthetic preferences");
+        assert!(!old.world_mouse_walk);
+        let enabled = Settings {
+            world_mouse_walk: true,
+            ..old
+        };
+        let saved = serde_json::to_string(&enabled).expect("serialize synthetic preferences");
+        let restored: Settings = serde_json::from_str(&saved).expect("restore synthetic preferences");
+        assert!(restored.world_mouse_walk);
     }
 
     #[test]

@@ -231,6 +231,7 @@ const BEFORE: &[&str] = &[
     // Controls
     "mouse_sensitivity",
     "invert_mouse",
+    "world_mouse_walk",
     "arrows_strafe",
     "arrow_keys_always_move",
     "letter_keys_move",
