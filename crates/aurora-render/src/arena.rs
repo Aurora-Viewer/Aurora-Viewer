@@ -659,6 +659,16 @@ impl RecordStore {
         }
     }
 
+    /// GPU-clock effects keep a static material until placement/theme changes.
+    pub fn set_if_changed(&mut self, id: u32, rec: DrawRecord) {
+        if let Some(slot) = self.mirror.get_mut(id as usize)
+            && bytemuck::bytes_of(slot) != bytemuck::bytes_of(&rec)
+        {
+            *slot = rec;
+            self.mark(id as usize);
+        }
+    }
+
     /// Place a record: its model matrix, in the world or placed from anchor
     /// matrix `anchor` (`flags::ANCHORED`: what an avatar wears keeps the
     /// same record while its wearer moves). Only what differs is written
@@ -695,6 +705,20 @@ impl RecordStore {
         {
             slot.rez = rez;
             self.mark(id as usize);
+        }
+    }
+
+    /// Bodies and world attachments share one finite portal opening.
+    pub fn set_portal_clip(&mut self, id: u32, clip: Option<crate::PortalClip>) {
+        if let Some(slot) = self.mirror.get_mut(id as usize) {
+            let flags =
+                (slot.flags[0] & !crate::types::flags::PORTAL_CLIP) | if clip.is_some() { crate::types::flags::PORTAL_CLIP } else { 0 };
+            let data = clip.map_or([0.0; 4], |clip| clip.data);
+            if slot.portal_clip != data || slot.flags[0] != flags {
+                slot.portal_clip = data;
+                slot.flags[0] = flags;
+                self.mark(id as usize);
+            }
         }
     }
 

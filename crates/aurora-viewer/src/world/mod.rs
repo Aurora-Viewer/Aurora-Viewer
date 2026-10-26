@@ -59,6 +59,7 @@ pub mod parked;
 pub mod place_details;
 pub mod place_snapshots;
 pub mod pointat;
+pub mod portals;
 pub mod poser_consent;
 pub mod profiles;
 pub mod radar;
@@ -361,6 +362,7 @@ pub struct World {
     /// Block list (LLMuteList).
     pub mutes: mutes::MuteList,
     pub poser_consent: poser_consent::State,
+    pub portals: portals::State,
     /// Firestorm LSL bridge messages kept out of nearby chat.
     pub lsl_bridge: lslbridge::LslBridge,
     pub rlva: rlva::Rlva,
@@ -421,6 +423,9 @@ pub struct World {
     /// Full description of that parcel (navigation bar icons, media, voice).
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     pub parcel_visibility: parcel_visibility::Visibility,
+    /// The photo's isolation (`snapshot::isolate`): read with the parcel
+    /// filter by `parcel_object_visibility`.
+    pub photo_isolation: crate::snapshot::isolate::Isolation,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -634,6 +639,7 @@ impl World {
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
             poser_consent: poser_consent::State::default(),
+            portals: portals::State::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
             hand_contacts: hand_ik::Contacts::default(),
             ik_targets: rig_targets::Targets::default(),
@@ -668,6 +674,7 @@ impl World {
             sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel_visibility: Default::default(),
+            photo_isolation: Default::default(),
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),
@@ -2364,7 +2371,7 @@ impl World {
                 self.tp_status = text.into();
                 None
             }
-            NetEvent::TeleportFinished { handle } => {
+            NetEvent::TeleportFinished { handle, flying } => {
                 self.teleporting = true;
                 let remote = Some(handle) != self.main_region;
                 // TeleportStart has no destination. Unlike Firestorm's
@@ -2377,12 +2384,11 @@ impl World {
                 self.tp_show_progress = remote;
                 self.tp_progress = self.tp_progress.max(0.5);
                 self.tp_status = aurora_i18n::tr!("common-connecting-to-region").into();
-                // FSFlyAfterTeleport (process_teleport_finish); a region that
-                // blocks flying lands us on arrival (land_if_fly_blocked)
-                if self.fly_after_teleport {
-                    self.agent.flying = true;
-                }
-                Some(NetEvent::TeleportFinished { handle })
+                // Legacy Viewer process_teleport_finish: apply both states,
+                // including landing. Destination restrictions still take effect
+                // on arrival (land_if_fly_blocked).
+                self.agent.flying = flying || self.fly_after_teleport;
+                Some(NetEvent::TeleportFinished { handle, flying })
             }
             NetEvent::TeleportLocal { flying } => {
                 if !self.teleporting {
@@ -5427,9 +5433,15 @@ mod motion_tests {
         assert!(!world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
         let destination = handle + (256_u64 << 32);
-        world.apply(NetEvent::TeleportFinished { handle: destination });
+        world.apply(NetEvent::TeleportFinished {
+            handle: destination,
+            flying: false,
+        });
         assert!(world.teleporting && world.tp_show_progress);
-        world.apply(NetEvent::TeleportFinished { handle: destination });
+        world.apply(NetEvent::TeleportFinished {
+            handle: destination,
+            flying: false,
+        });
         assert_eq!(world.ui_sounds.iter().filter(|s| **s == UiSound::TeleportOut).count(), 1);
         world.apply(NetEvent::AgentMovementComplete {
             handle: destination,
@@ -5449,6 +5461,7 @@ mod motion_tests {
         assert!(world.teleporting && world.tp_show_progress);
         world.apply(NetEvent::TeleportFinished {
             handle: handle + (256_u64 << 32),
+            flying: false,
         });
         assert_eq!(world.ui_sounds.iter().filter(|s| **s == UiSound::TeleportOut).count(), 1);
         world.apply(NetEvent::TeleportFailed {
@@ -5467,9 +5480,32 @@ mod motion_tests {
     fn finish_in_the_current_region_does_not_show_progress() {
         let (mut world, handle) = teleport_fixture();
         world.begin_teleport(false);
-        world.apply(NetEvent::TeleportFinished { handle });
+        world.apply(NetEvent::TeleportFinished { handle, flying: false });
         assert!(world.teleporting && !world.tp_show_progress);
         assert!(!world.ui_sounds.contains(&UiSound::TeleportOut));
+    }
+
+    #[test]
+    fn remote_teleport_applies_both_flight_states_and_the_explicit_arrival_preference() {
+        for previous in [false, true] {
+            for flying in [false, true] {
+                for preference in [false, true] {
+                    let (mut world, handle) = teleport_fixture();
+                    world.agent.flying = previous;
+                    world.fly_after_teleport = preference;
+                    world.begin_teleport(true);
+                    world.apply(NetEvent::TeleportFinished { handle, flying });
+                    world.apply(NetEvent::AgentMovementComplete {
+                        handle,
+                        position: Vec3::new(60.0, 70.0, 30.0),
+                        look_at: Vec3::X,
+                    });
+                    assert_eq!(world.agent.flying, flying || preference);
+                    let flags = world.agent.control_flags(&crate::agent::MoveInput::default(), false);
+                    assert_eq!(flags & aurora_net::control::FLY != 0, flying || preference);
+                }
+            }
+        }
     }
 
     #[test]
@@ -6177,7 +6213,7 @@ mod motion_tests {
 
     /// A teleport to `handle`, from TeleportFinish to the arrival.
     fn teleport_to(world: &mut World, handle: RegionHandle) {
-        world.apply(NetEvent::TeleportFinished { handle });
+        world.apply(NetEvent::TeleportFinished { handle, flying: false });
         world.apply(NetEvent::MainRegionChanged { handle });
         world.apply(NetEvent::AgentMovementComplete {
             handle,
@@ -6388,7 +6424,10 @@ mod motion_tests {
         let live = world.objects.index_of_uuid(&other.full_id).expect("avatar in the far region");
         // back: the newer one stays where it is, its parked self and what
         // hung from it are dropped
-        world.apply(NetEvent::TeleportFinished { handle: here });
+        world.apply(NetEvent::TeleportFinished {
+            handle: here,
+            flying: false,
+        });
         world.apply(NetEvent::MainRegionChanged { handle: here });
         assert_eq!(world.objects.index_of_uuid(&other.full_id), Some(live));
         assert_eq!(world.objects.get(live).expect("avatar").key.region, far);

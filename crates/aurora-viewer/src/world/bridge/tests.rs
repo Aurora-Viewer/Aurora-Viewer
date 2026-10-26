@@ -604,6 +604,46 @@ fn queries_use_their_own_script_endpoint_installed_beside_the_controller() {
 }
 
 #[test]
+fn portal_relay_accepts_only_the_exact_ready_worn_bridge_and_never_enters_chat() {
+    use aurora_net::bridge::portal::{Access, LIFETIME, Message, Portal};
+    let mut sim = Simulator::new();
+    sim.ready();
+    let NetEvent::Chat(mut chat) = sim.demo.query_handshake(&sim.bridge, &sim.world).expect("query hello") else {
+        panic!("chat");
+    };
+    let owner = Uuid::from_u128(0xA770);
+    let portal = Portal {
+        id: Uuid::from_u128(0xA771),
+        region: sim.world.main_region.unwrap(),
+        center: [10.0, 10.0, 25.0],
+        yaw: 0.0,
+        destination: "Demo destination".into(),
+        position: [128.0, 128.0, 25.0],
+        access: Access::Everyone,
+        expires: super::super::portals::unix_time() + LIFETIME,
+    };
+    chat.message = format!(
+        "<auroraPortal>{owner}|{}</auroraPortal>",
+        Message::Open(portal.announcement()).encode().unwrap()
+    );
+    for (source, claimed_owner) in [(Uuid::new_v4(), sim.world.agent_id), (sim.bridge.object, Uuid::new_v4())] {
+        let mut invalid = chat.clone();
+        invalid.source_id = source;
+        invalid.owner_id = claimed_owner;
+        assert!(sim.bridge.event(&mut sim.world, &NetEvent::Chat(invalid), sim.now));
+        assert!(sim.world.portals.entries.is_empty());
+    }
+    let before = sim.world.chat.len();
+    assert!(sim.bridge.event(&mut sim.world, &NetEvent::Chat(chat.clone()), sim.now));
+    assert_eq!(sim.world.portals.entries.len(), 1);
+    assert_eq!(sim.world.chat.len(), before);
+    sim.world.portals.entries.clear();
+    sim.world.main_region = Some(123);
+    assert!(sim.bridge.event(&mut sim.world, &NetEvent::Chat(chat), sim.now));
+    assert!(sim.world.portals.entries.is_empty());
+}
+
+#[test]
 fn an_older_bridge_gets_only_the_missing_query_script() {
     let mut sim = Simulator::new();
     sim.ready();
@@ -1738,6 +1778,7 @@ fn a_moved_bridge_seen_before_its_new_hello_is_probed_instead_of_reinstalled() {
 fn a_region_change_right_after_the_handshake_never_reuses_the_old_region_url() {
     let mut sim = Simulator::new();
     sim.ready();
+    assert!(sim.bridge.query_endpoint().is_some());
     let (_, at) = sim.bridge.accepted.clone().expect("accepted hello");
     assert!(
         sim.now.duration_since(at) < Duration::from_secs(3),
@@ -1750,8 +1791,32 @@ fn a_region_change_right_after_the_handshake_never_reuses_the_old_region_url() {
         !sim.bridge.ready() && sim.bridge.endpoint.is_none(),
         "the hello that made the bridge ready came from the old region"
     );
+    assert!(sim.bridge.query.is_none(), "the old region's query URL is invalid too");
+    sim.bridge.query_candidate = None;
     lock_again(&mut sim);
     assert_eq!((sim.copies, sim.uploads), (1, 1));
+}
+
+#[test]
+fn a_dead_query_url_is_hidden_until_an_authenticated_new_hello_without_touching_the_motor() {
+    let mut sim = Simulator::new();
+    sim.ready();
+    assert!(sim.bridge.query_endpoint().is_some());
+    sim.now += DISCOVERY_INTERVAL;
+    let controller = sim.bridge.endpoint.as_ref().map(|endpoint| (endpoint.url.clone(), endpoint.token));
+    sim.bridge
+        .query_reply(&sim.world, Some(aurora_i18n::tr!("bridge-request-gone")), sim.now);
+    assert!(sim.bridge.query_endpoint().is_none());
+    assert_eq!(
+        sim.bridge.endpoint.as_ref().map(|endpoint| (endpoint.url.clone(), endpoint.token)),
+        controller
+    );
+    assert!(sim.bridge.ready());
+    for _ in 0..4 {
+        sim.step();
+    }
+    assert!(sim.bridge.query_endpoint().is_some());
+    assert_eq!((sim.copies, sim.uploads, sim.query_uploads), (1, 1, 1));
 }
 
 #[test]

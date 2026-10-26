@@ -257,6 +257,7 @@ impl Effects {
                     || world.derender.contains(&o.full_id)
                     || world.particles_blocked(&o.full_id)
                     || !world.parcel_object_visible(idx)
+                    || !crate::snapshot::isolate::object_visible(world, idx)
                 {
                     return samples;
                 }
@@ -327,6 +328,7 @@ impl Effects {
                 || world.derender.contains(&o.full_id)
                 || world.particles_blocked(&owner)
                 || !world.parcel_object_visible(idx)
+                || !crate::snapshot::isolate::object_visible(world, idx)
             {
                 continue;
             }

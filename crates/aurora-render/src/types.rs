@@ -142,6 +142,59 @@ pub mod flags {
     /// System avatar live morphs (lip sync, body physics, facial
     /// expressions, hand poses), evaluated before skinning.
     pub const LIP_SYNC: u32 = 8192;
+    pub const PORTAL_CLIP: u32 = 16384;
+    /// Procedural Aurora portal surface; uses the ordinary sorted blend/glow.
+    pub const PORTAL_EFFECT: u32 = 32768;
+}
+
+pub const PORTAL_HALF_WIDTH: f32 = 1.0;
+pub const PORTAL_HALF_HEIGHT: f32 = 1.5;
+pub const PORTAL_SURFACE_SCALE: f32 = 1.16;
+
+/// One vector keeps the cut local without growing every world-face record:
+/// center.xyz, and the horizontal entry normal on a signed diamond perimeter.
+/// Decoding needs only normalization, no per-fragment trigonometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PortalClip {
+    pub data: [f32; 4],
+}
+
+impl PortalClip {
+    pub fn new(center: Vec3, normal: Vec3) -> Option<Self> {
+        if !center.is_finite() || !normal.is_finite() || normal.z.abs() > 1e-5 {
+            return None;
+        }
+        let normal = normal.try_normalize()?;
+        let mut direction = normal.y / (normal.x.abs() + normal.y.abs());
+        if normal.x < 0.0 {
+            direction = if normal.y < 0.0 { -1.0 } else { 1.0 } * (2.0 - direction.abs());
+        }
+        Some(Self {
+            data: center.extend(direction).to_array(),
+        })
+    }
+
+    pub fn normal(self) -> Vec3 {
+        let code = self.data[3];
+        let y = if code.abs() > 1.0 {
+            code.signum() * (2.0 - code.abs())
+        } else {
+            code
+        };
+        Vec3::new(1.0 - code.abs(), y, 0.0).normalize()
+    }
+
+    /// CPU picking uses the same finite aperture as every GPU surface pass.
+    pub fn keeps_point(self, point: Vec3) -> bool {
+        let local = point - Vec3::from_slice(&self.data[..3]);
+        let normal = self.normal();
+        if local.dot(normal) >= -0.0001 {
+            return true;
+        }
+        let across = local.dot(Vec3::new(-normal.y, normal.x, 0.0)) / PORTAL_HALF_WIDTH;
+        let height = local.z / PORTAL_HALF_HEIGHT;
+        across * across + height * height > 1.0
+    }
 }
 
 /// Layout of a skeleton's palette in the palettes buffer: its joints, then
@@ -189,6 +242,9 @@ pub struct DrawRecord {
     /// its own in the 4 bits above (0: the frame's), z and w the world
     /// height of the object's bottom and its height (f32 bits).
     pub rez: [u32; 4],
+    /// Finite portal cut: center.xyz and encoded horizontal entry direction.
+    /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
+    pub portal_clip: [f32; 4],
 }
 
 /// Modes of `DrawRecord::rez` (`rez_apply` in object.wgsl).
@@ -230,6 +286,7 @@ impl Default for DrawRecord {
             anim: [0; 4],
             anim_xf: [0.0; 4],
             rez: [0; 4],
+            portal_clip: [0.0; 4],
         }
     }
 }
@@ -388,6 +445,8 @@ pub enum RiggedBlendDepth {
 /// Visible draws for a frame, built by the world.
 #[derive(Default)]
 pub struct DrawLists {
+    /// Select clipped depth/shadow variants only while an avatar is entering.
+    pub portal_clipping: bool,
     /// Invisible water exclusion surfaces, in the CPU culling fallback.
     pub water_exclusion: Vec<DrawCmd>,
     /// Own HUD attachments, drawn after post-processing with their own depth.
@@ -525,6 +584,7 @@ impl DrawLists {
         self.hud_debug_red.clone_from(&src.hud_debug_red);
         self.hud_debug_blue.clone_from(&src.hud_debug_blue);
         self.terrain.clone_from(&src.terrain);
+        self.portal_clipping = src.portal_clipping;
         self.opaque.clone_from(&src.opaque);
         self.creation_preview.clone_from(&src.creation_preview);
         self.opaque_two_sided.clone_from(&src.opaque_two_sided);
@@ -568,6 +628,7 @@ impl DrawLists {
         self.hud_debug_red.clear();
         self.hud_debug_blue.clear();
         self.terrain.clear();
+        self.portal_clipping = false;
         self.opaque.clear();
         self.creation_preview.clear();
         self.opaque_two_sided.clear();
@@ -1103,6 +1164,10 @@ pub struct FrameParams {
     pub debug: DebugRender,
     /// Depth of field (RenderDepthOfField); None: off, at no cost.
     pub dof: Option<DepthOfField>,
+    /// A cut-out photo (cutout.rs): no sky, terrain or water, no glow, and
+    /// what is drawn keeps its coverage, in the snapshot's alpha or over a
+    /// checkerboard on the live view.
+    pub cutout: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1594,10 +1659,11 @@ mod tests {
     /// matrix, then one 16-byte vector per field).
     #[test]
     fn draw_record_layout_matches_wgsl() {
-        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 13 * 16);
+        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 14 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim), 64 + 10 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim_xf), 64 + 11 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, rez), 64 + 12 * 16);
+        assert_eq!(std::mem::offset_of!(DrawRecord, portal_clip), 64 + 13 * 16);
         let wgsl = include_str!("shaders/common.wgsl");
         let start = wgsl.find("struct DrawRecord {").expect("DrawRecord in common.wgsl");
         let body = &wgsl[start..start + wgsl[start..].find("};").expect("end of DrawRecord")];
@@ -1623,9 +1689,61 @@ mod tests {
                 "spec_color",
                 "anim",
                 "anim_xf",
-                "rez"
+                "rez",
+                "portal_clip"
             ]
         );
+    }
+
+    #[test]
+    fn portal_clipping_keeps_the_default_record_disabled_and_survives_frame_handoff() {
+        let record = DrawRecord::default();
+        assert_eq!(record.portal_clip, [0.0; 4]);
+        assert_eq!(record.flags[0] & flags::PORTAL_CLIP, 0);
+        assert!(include_str!("shaders/common.wgsl").contains(&format!("const FLAG_PORTAL_CLIP: u32 = {}u;", flags::PORTAL_CLIP)));
+        let source = DrawLists {
+            portal_clipping: true,
+            ..Default::default()
+        };
+        let mut destination = DrawLists::default();
+        destination.copy_from(&source);
+        assert!(destination.portal_clipping);
+        destination.clear();
+        assert!(!destination.portal_clipping);
+    }
+
+    #[test]
+    fn portal_aperture_keeps_geometry_outside_the_oval_for_both_sides_and_rotated_centers() {
+        let wgsl = include_str!("shaders/common.wgsl");
+        assert!(wgsl.contains(&format!("const PORTAL_HALF_WIDTH: f32 = {PORTAL_HALF_WIDTH:.1};")));
+        assert!(wgsl.contains(&format!("const PORTAL_HALF_HEIGHT: f32 = {PORTAL_HALF_HEIGHT:.1};")));
+        assert!(wgsl.contains(&format!("const PORTAL_SURFACE_SCALE: f32 = {PORTAL_SURFACE_SCALE:.2};")));
+        assert!(wgsl.contains(&format!("const FLAG_PORTAL_EFFECT: u32 = {}u;", flags::PORTAL_EFFECT)));
+        for center in [Vec3::ZERO, Vec3::new(214.0, 185.0, 60.0)] {
+            for step in 0..32 {
+                let angle = step as f32 * std::f32::consts::TAU / 32.0;
+                let normal = Vec3::new(angle.cos(), angle.sin(), 0.0);
+                let across = Vec3::new(-normal.y, normal.x, 0.0);
+                for side in [-1.0, 1.0] {
+                    let clip = PortalClip::new(center, normal * side).unwrap();
+                    assert!(clip.normal().dot(normal * side) > 0.999999);
+                    let front = center + normal * side * 0.2;
+                    let back = center - normal * side * 0.2;
+                    assert!(clip.keeps_point(front));
+                    assert!(!clip.keeps_point(back));
+                    assert!(!clip.keeps_point(back + across * (PORTAL_HALF_WIDTH * 0.99)));
+                    assert!(clip.keeps_point(back + across * (PORTAL_HALF_WIDTH * 1.01)));
+                    assert!(clip.keeps_point(back + Vec3::Z * (PORTAL_HALF_HEIGHT * 1.01)));
+                    assert!(!clip.keeps_point(back + across * 0.5 + Vec3::Z * 0.5));
+                    // Inside the bounding rectangle, outside the ellipse.
+                    assert!(clip.keeps_point(back + across * 0.8 + Vec3::Z * (PORTAL_HALF_HEIGHT * 0.8)));
+                }
+            }
+        }
+        assert_eq!(PortalClip::new(Vec3::NAN, Vec3::X), None);
+        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::ZERO), None);
+        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::Z), None);
+        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::X).unwrap().data, [0.0; 4]);
     }
 
     #[test]

@@ -27,6 +27,8 @@ pub const SPECIAL: u8 = 2;
 pub const AVATAR: u8 = 4;
 /// A HUD attachment, with or without faces.
 pub const HUD: u8 = 8;
+/// System bodies and everything worn in world space, for portal cuts.
+pub const AVATAR_PART: u8 = 16;
 
 /// AURORA_LIST_INDEX.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -71,6 +73,9 @@ impl ListIndex {
         }
         if g.hud {
             b |= HUD;
+        }
+        if !g.hud && (g.is_avatar || g.owner_avatar.is_some()) {
+            b |= AVATAR_PART;
         }
         b
     }
@@ -148,12 +153,14 @@ mod tests {
         assert_eq!(ListIndex::of(&g), 0);
         // an avatar is listed before it has faces (its state rules what it wears)
         g.is_avatar = true;
-        assert_eq!(ListIndex::of(&g), AVATAR);
+        assert_eq!(ListIndex::of(&g), AVATAR | AVATAR_PART);
         g.faces.push(test_face(Pass::Opaque, false));
-        assert_eq!(ListIndex::of(&g), AVATAR | DRAWN);
+        assert_eq!(ListIndex::of(&g), AVATAR | AVATAR_PART | DRAWN);
         g.is_avatar = false;
         g.special = true;
         assert_eq!(ListIndex::of(&g), DRAWN | SPECIAL);
+        g.owner_avatar = Some(4);
+        assert_eq!(ListIndex::of(&g), DRAWN | SPECIAL | AVATAR_PART);
         // a HUD attachment is not drawn by the lists of the world
         g.hud = true;
         assert_eq!(ListIndex::of(&g), SPECIAL | HUD);
@@ -189,6 +196,7 @@ mod tests {
         assert_eq!(found(&index, DRAWN), [2, 7]);
         assert_eq!(found(&index, SPECIAL), [7]);
         assert_eq!(found(&index, AVATAR), [40]);
+        assert_eq!(found(&index, AVATAR_PART), [40]);
         assert_eq!(index.with(DRAWN).map(|(_, b)| b).collect::<Vec<_>>(), [DRAWN, DRAWN | SPECIAL]);
         // the object changes, then its slot is released
         index.set(7, &drawn);

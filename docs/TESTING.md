@@ -81,6 +81,8 @@ viewer's process closes. For a test with human intervention, keep the title
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_POS="x,y"` | Start position |
+| `AURORA_DEMO_PORTALS=1\|near\|friends` | Open the portal creator and a shared-portal preview |
+| `AURORA_PORTAL_CLIP=0` | Disable avatar portal clipping for before/after comparison |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
@@ -102,6 +104,55 @@ The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
 `AURORA_DEMO_INVENTORY=offer|offer-reject|offer-card…` adds only the received item.
+
+`AURORA_DEMO_PORTALS=1` opens World > Portals with a fixed aperture four metres
+ahead and its destination, owner and access label. `near` spawns it around our
+avatar: standing inside and moving across it before leaving the 3.5 m clearance
+must never teleport. `friends` previews a denied friends-only portal from a
+non-friend. Apertures use world depth, so walls hide them and their labels.
+Ordinary creation accepts a same-grid place link or region coordinates; one
+portal per creator expires after two minutes. Another Aurora client needs the
+ready 1.37 bridge and scripts enabled to receive regional invitations.
+Human two-client grid checks: public crossing, friends/non-friends, selected
+group members/non-members, appearing on a stationary or moving avatar,
+leaving and returning, crossing from either side, closing/replacing/expiry,
+late arrival discovery, failed/restricted destinations and teleport cancellation.
+
+`AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid|drop-focus`
+drags an inventory landmark over the world. Hover scenarios retain the cargo;
+the others release it at frame 560. Shift changes at frame 500 in public modes:
+capture around 530 for the access preview and 700 for the created portal or
+the unavailable-landmark notice. Use `AURORA_DEMO_POS=100,100` to avoid plaza
+props. The landmark stays in inventory. Ctrl insertion and other inventory drops
+retain their normal behavior.
+`drop-focus` keeps the inventory open with keyboard focus during the drag;
+after release it stays open and logs that keyboard focus returned to the scene.
+
+`AURORA_DEMO_PORTALS=private-friends-allowed|private-friends-denied|private-group-allowed|private-group-denied`
+exchanges real v2 codec messages between two offline peer states. Everyone sees
+the aperture; denied observers see only the creator and private/access labels.
+Only granted observers receive a destination. Group grants wait for a complete
+server-shaped members response. On the grid, also verify late arrivals, lost
+requests, revocation before a queued reply, close/expiry and bridge 1.37 upgrade.
+Both creation announcements and discovery replies must omit private destinations;
+inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted.
+
+`AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse`
+adds an observed avatar with continuous locomotion animation, a skinned mesh
+and a long rigid hand attachment. The camera observes the portal obliquely
+(from the other side with `slice-reverse`). `slice-still` and `slice-large`
+keep the avatar root fixed: animated limbs and worn geometry must still be
+cut at the portal plane. Capture several animation phases; compare the same
+scenario with `AURORA_PORTAL_CLIP=0`. Traversal never pauses or restarts an
+animation. Portal clipping is visual and does not arm a teleport gate.
+Use `AURORA_DEMO_POS=100,100` for a clear patch away from the plaza exhibits.
+`slice-wide` and `slice-wide-reverse` keep the root still with a
+4.2 m rigid attachment: only the part inside the oval may disappear, never
+the parts above or beside it. The rim/corona is decorative and must not
+enlarge that mask. Check body, skinned and rigid worn geometry from both
+camera sides. Ordinary portals now show theme-based Aurora currents, a dark
+indigo/navy core and a violet/teal rim with glow; reduced motion freezes their
+animation, and denied/private observers retain muted colors and hidden details.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal
@@ -197,6 +248,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
+| `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
@@ -303,6 +355,22 @@ of day 3`); the saved `time_of_day` and `exposure` stay the user's.
 `classic` shows Firestorm's floater instead of the panel for this run
 (Preferences › Aurora › Photo window, not saved): a floating window in the
 middle, Refresh and the controls on the left, the preview on the right.
+
+`AURORA_DEMO_ISOLATE` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
+mode): at frame 640 `own` shows our avatar alone (My avatar), the sky,
+terrain and water left out: the window shows a checkerboard around it, and
+a photo saved then (`save:<W>x<H>:png:<folder>`) is an RGBA PNG, empty
+around the avatar, its edges and the blended faces partly transparent
+(`AURORA_DEMO_CLASSIC=1` with `AURORA_DEMO_HAIR_CARDS=24,layered` gives
+strands to look at). `-opaque` keeps the sky and the ground. `pick`
+chooses in the scene instead (My choice): the pointer at the middle of the
+window, 70 % down (our avatar in the viewfinder), from frame 640, its name
+beside it, a click there at 650 (outlined from then on), and the choosing
+stopped at 680, unless `-keep`: the log gives `photo isolation: <id>
+chosen` and `isolation demo: choosing stopped, 1 chosen`. `-panel` opens
+the viewfinder's isolation panel. Use `AURORA_FPS_LIMIT=60`
+and capture from frame 700 (`AURORA_AA=3` and `6` for the two edge paths,
+MSAA and SMAA).
 
 `AURORA_DEMO_CONTROLS` opens the Controls window at frame 600: `camera` on
 its Camera tab (joysticks, zoom, the four views, object view, mouselook,
@@ -5784,9 +5852,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `favorite` / `landmark` make a landmark of the plaza in Favorites /
   Landmarks, as the star's menu does: the star at the right end of the
   location field turns amber (its tooltip names the folder and the
-  landmark), a click on it edits that landmark, and World › Landmark this
-  place is greyed out. Without the variable the star is an outline and
-  opens its menu. The demo parcel is the 128 m square around the plaza
+  landmark), and a click on it edits that landmark. World › Landmark this
+  place and the Places creation entries stay available: save several
+  landmarks without moving, including from a Places folder, and check that
+  each creates a separate inventory item. Without the variable the star is
+  an outline and opens its menu. The demo parcel is the 128 m square around the plaza
   (x and y 64..192): a landmark made there lights the star, wherever in it
   the avatar stands. With `AURORA_DEMO_PLACES` the folder list shows the
   demo's subfolder.
@@ -5944,11 +6014,26 @@ unit tests, the real requests by a grid test. The menu itself:
 `AURORA_DEMO_DOUBLECLICK=menu,<y>` with the height of the Avatar health row
 opens its submenu.
 
-**`AURORA_DEMO_APPEARANCE=gallery|outfits|worn|save|edit|menu|duplicates`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|worn|save|edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
   choice, save to the chosen outfit and move to the Trash);
+- `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
+  cards. Fit shows the whole image; Fill uses a centred crop without stretching.
+  The discs stay round, the images stay inside their frames and the names and
+  Worn tags stay below. Toggle **Fill outfit previews** in the gallery's bottom
+  options menu; this setting is saved and off by default. Reopen Appearance
+  and restart with `gallery` to check persistence without a forced mode;
+- `multi-gallery` / `multi-outfits`: two selected outfits in the gallery or
+  list. Ctrl/Cmd-click toggles one outfit; Shift-click selects a range in
+  the current filtered/sorted order. Right-clicking a selected outfit keeps
+  the selection. Wear replaces the current clothing with the combined
+  selection; Add keeps the current outfit. Both use one COF mutation,
+  deduplicate shared items and preserve required body parts. A combined
+  replacement has no single saved base; use Save as to save the combination.
+  Conflicting body parts use the last selected outfit in display order,
+  following `LLAppearanceMgr::filterWearableItems`.
 - `outfits`: the list of outfits; `worn`: the worn items. A right click on
   an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,387,r"`
   (Neurolab) or `"90,419,r"` (the worn outfit) in the default window, capture
@@ -6052,6 +6137,10 @@ offline; the files and snapshots uploaded in demo stay offline.
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
   whatever Preferences › Aurora › Inventory says.
+- `landmark`, `aurora-landmark`: a landmark's context menu in each inventory
+  layout. Capture at frame 700. Copy SLurl must copy the destination's actual
+  region and coordinates; Show on map must open and center the map without
+  teleporting. Both actions resolve an initially unloaded landmark offline.
 - `uuid`, `uuid-restricted`, `uuid-missing`, `uuid-multi`: the texture's
   context menu with Copy asset UUID enabled, disabled by a missing transfer
   permission, disabled by an unavailable UUID, or disabled by multiple

@@ -262,9 +262,6 @@ fn now_secs() -> f64 {
 #[derive(Default)]
 pub struct PlacesUi {
     pub tab: usize,
-    /// A landmark already points at the agent's position: the "add
-    /// landmark" entries are greyed out (landmarkAlreadyExists).
-    pub landmark_here: bool,
     filter: String,
     selected: Option<Sel>,
     /// Folders opened in the landmarks tabs.
@@ -477,13 +474,7 @@ impl PlacesUi {
                 widgets::icon_menu(ui, p, "plus", aurora_i18n::tr!("ui-places-add-a-new-landmark-or-folder"), |ui| {
                     super::menu::todo(ui, p, "folder-filled", aurora_i18n::tr!("ui-places-add-folder"));
                     // "add_landmark_root": the Landmarks folder
-                    if super::menu::item_if(
-                        ui,
-                        p,
-                        "map-pin-filled",
-                        aurora_i18n::tr!("ui-places-add-landmark"),
-                        !self.landmark_here,
-                    ) {
+                    if super::menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-places-add-landmark")) {
                         actions.push(PlacesAction::CreateLandmark(None));
                     }
                 });
@@ -762,13 +753,7 @@ impl PlacesUi {
         }
         super::menu::separator(ui, p);
         // "add_landmark" on a landmark: no destination folder
-        if super::menu::item_if(
-            ui,
-            p,
-            "map-pin-filled",
-            aurora_i18n::tr!("ui-places-create-landmark"),
-            !self.landmark_here,
-        ) {
+        if super::menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("ui-places-create-landmark")) {
             actions.push(PlacesAction::CreateLandmark(None));
         }
         super::menu::todo(ui, p, "folder-filled", aurora_i18n::tr!("ui-places-create-folder"));
@@ -802,7 +787,7 @@ impl PlacesUi {
             p,
             "map-pin-filled",
             aurora_i18n::tr!("ui-places-add-landmark"),
-            folder.is_some() && !self.landmark_here,
+            folder.is_some(),
         ) {
             actions.push(PlacesAction::CreateLandmark(folder));
         }

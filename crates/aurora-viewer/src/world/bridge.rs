@@ -18,7 +18,7 @@ const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.35";
+const VERSION: &str = "1.37";
 const DISCOVERY_CHANNEL: i32 = -184735219;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
@@ -242,6 +242,9 @@ impl Bridge {
             self.query_watch.heard(error, now);
         }
         if error.is_some() && self.available() {
+            if error.is_some_and(aurora_net::bridge::gone) {
+                self.query = None;
+            }
             self.discover(world, now);
         }
     }
@@ -662,6 +665,7 @@ impl Bridge {
             let installed = matches!(self.phase, Phase::Ready | Phase::Handshake);
             self.probe = None;
             self.endpoint = None;
+            self.query = None;
             self.pending = None;
             self.sent = None;
             self.ack = Ack::default();
@@ -1143,6 +1147,7 @@ impl Bridge {
                         "<auroraBridge>",
                         "<auroraBridgeQuery>",
                         "<auroraPose>",
+                        "<auroraPortal>",
                         "<auroraMoveLock>",
                         "<auroraBridgeError>",
                         "<auroraBridgeStatus>",
@@ -1168,6 +1173,18 @@ impl Bridge {
                             Err(_) => {}
                         }
                     } else if chat.source_id == self.object {
+                        if chat.message.starts_with("<auroraPortal>")
+                            && self.available()
+                            && world
+                                .objects
+                                .index_of_uuid(&self.object)
+                                .and_then(|i| world.objects.get(i))
+                                .is_some_and(|o| Some(o.key.region) == world.main_region)
+                        {
+                            let mut portals = std::mem::take(&mut world.portals);
+                            portals.receive(world, &chat.message, now, super::portals::unix_time());
+                            world.portals = portals;
+                        }
                         if chat.message.starts_with("<auroraPose>")
                             && self.available()
                             && world

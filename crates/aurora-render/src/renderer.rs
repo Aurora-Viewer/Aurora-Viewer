@@ -165,7 +165,9 @@ struct PostU {
     tonemap_mix: f32,
     /// Written on the GPU by `Exposure::encode`; 1 until then.
     auto_exposure: f32,
-    _pad: [f32; 2],
+    /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view.
+    cutout: f32,
+    _pad: f32,
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -788,19 +790,24 @@ struct Pipelines {
     ssr: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
+    pre_portal: wgpu::RenderPipeline,
+    pre_portal_2s: wgpu::RenderPipeline,
     pre_mask: wgpu::RenderPipeline,
     pre_mask_2s: wgpu::RenderPipeline,
     /// The same four writing GTAO's mesh normals as well
     /// (`gtao::NORMAL_FORMAT`), in the order of the main bins.
     pre_normal: [wgpu::RenderPipeline; MAIN_BINS],
+    /// Opaque normal passes with the finite portal cut; ordinary normals
+    /// retain their lean vertex path while no avatar intersects a portal.
+    pre_normal_portal: [wgpu::RenderPipeline; 2],
     /// Blended faces opaque enough to cast contact shadows, into their
     /// depth (contact_shadows.rs).
     pre_contact: wgpu::RenderPipeline,
     /// `pre_contact` with GTAO's mesh normals, into the occlusion's depth.
     pre_contact_normal: wgpu::RenderPipeline,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
-    /// only): one-sided and two-sided opaque faces.
-    pre_msaa: Option<[wgpu::RenderPipeline; 2]>,
+    /// only): ordinary / portal-clipped, each one-sided and two-sided.
+    pre_msaa: Option<[[wgpu::RenderPipeline; 2]; 2]>,
     refl_sky: wgpu::RenderPipeline,
     refl_terrain: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
@@ -1362,6 +1369,8 @@ pub(crate) struct Backend {
     previews: crate::preview::Cache,
     selection: Option<crate::selection::Overlay>,
     hud_selection: Option<crate::selection::Overlay>,
+    /// The coverage pass of cut-out photos (cutout.rs), made on first use.
+    cutout: Option<crate::cutout::Cutout>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -2710,6 +2719,7 @@ impl Backend {
             ui_glass: None,
             previews: Default::default(),
             selection: None,
+            cutout: None,
             hud_selection: None,
             frame_layout,
             records_layout,
@@ -3296,6 +3306,8 @@ impl Backend {
         };
         let pre_opaque = pre("prepass", "vs_depth", None, Some(wgpu::Face::Back));
         let pre_opaque_2s = pre("prepass 2s", "vs_depth", None, None);
+        let pre_portal = pre("prepass portal", "vs_depth", Some("fs_depth_portal"), Some(wgpu::Face::Back));
+        let pre_portal_2s = pre("prepass portal 2s", "vs_depth", Some("fs_depth_portal"), None);
         let pre_mask = pre("prepass mask", "vs_main", Some("fs_depth_mask"), Some(wgpu::Face::Back));
         let pre_mask_2s = pre("prepass mask 2s", "vs_main", Some("fs_depth_mask"), None);
         // both sides: a double-sided blended face casts either way, the
@@ -3318,18 +3330,36 @@ impl Backend {
             pre_n("prepass mask normals", "vs_main", "fs_depth_mask_normal", Some(wgpu::Face::Back)),
             pre_n("prepass mask normals 2s", "vs_main", "fs_depth_mask_normal", None),
         ];
+        let pre_normal_portal = [
+            pre_n(
+                "prepass portal normals",
+                "vs_main",
+                "fs_depth_portal_normal",
+                Some(wgpu::Face::Back),
+            ),
+            pre_n("prepass portal normals 2s", "vs_main", "fs_depth_portal_normal", None),
+        ];
         let pre_contact_normal = pre_n("prepass contact normals", "vs_main", "fs_depth_contact_normal", None);
         let pre_msaa = (samples > 1).then(|| {
-            let msaa = |label: &'static str, cull: Option<wgpu::Face>| {
+            let msaa = |label: &'static str, cull: Option<wgpu::Face>, clipped: bool| {
                 pipe(PipeDesc {
-                    fs: None,
+                    fs: clipped.then_some("fs_depth_portal"),
                     cull,
                     format: None,
                     depth_compare: wgpu::CompareFunction::Greater,
                     ..base(label, "vs_depth", "fs_opaque")
                 })
             };
-            [msaa("prepass msaa", Some(wgpu::Face::Back)), msaa("prepass msaa 2s", None)]
+            [
+                [
+                    msaa("prepass msaa", Some(wgpu::Face::Back), false),
+                    msaa("prepass msaa 2s", None, false),
+                ],
+                [
+                    msaa("prepass msaa portal", Some(wgpu::Face::Back), true),
+                    msaa("prepass msaa portal 2s", None, true),
+                ],
+            ]
         });
         // planar reflections (single sample; mirrored winding: no culling
         // here, fs_reflect keeps the side facing the mirrored camera)
@@ -3477,9 +3507,12 @@ impl Backend {
             ssr: ssr_pipe,
             pre_opaque,
             pre_opaque_2s,
+            pre_portal,
+            pre_portal_2s,
             pre_mask,
             pre_mask_2s,
             pre_normal,
+            pre_normal_portal,
             pre_contact,
             pre_contact_normal,
             pre_msaa,
@@ -3582,7 +3615,8 @@ impl Backend {
                 h,
                 DEPTH_FORMAT,
                 samples,
-                att | wgpu::TextureUsages::COPY_SRC,
+                // (read by the coverage of a cut-out photo, cutout.rs)
+                sampled | wgpu::TextureUsages::COPY_SRC,
             )
         }) {
             Some((tex, view)) => (Some(tex), Some(view)),
@@ -5233,7 +5267,8 @@ impl Backend {
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }
         // glow passes only when some visible face glows (RenderGlow)
-        let glow_on = f.glow && (!lists.glow.is_empty() || !lists.glow_alpha.is_empty() || lists.blend_glow.contains(&true));
+        // (a cut-out photo's alpha holds its coverage instead, cutout.rs)
+        let glow_on = f.glow && !f.cutout && (!lists.glow.is_empty() || !lists.glow_alpha.is_empty() || lists.blend_glow.contains(&true));
         // diagnostic: AURORA_GLOW_SKIP bits leave out a family of glowing faces
         // (2 opaque, 4 alpha pool, 8 blended)
         static GLOW_SKIP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -5293,7 +5328,12 @@ impl Backend {
             // (LLSettingsSky::getTonemapMix, LLSettingsVOSky::applySpecial)
             tonemap_mix: if f.sky.classic { 0.0 } else { f.tonemap_mix.clamp(0.0, 1.0) },
             auto_exposure: 1.0,
-            _pad: [0.0; 2],
+            cutout: match (f.cutout, snapshot.is_some()) {
+                (false, _) => 0.0,
+                (true, true) => 1.0,
+                (true, false) => 2.0,
+            },
+            _pad: 0.0,
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -5377,7 +5417,7 @@ impl Backend {
         } else {
             [crate::shadow_cull::CASTER_PLANES_ALL; CASCADES]
         };
-        let shadow_depth_only = shadow_path & crate::shadow_cull::path::DEPTH_ONLY != 0;
+        let shadow_depth_only = shadow_path & crate::shadow_cull::path::DEPTH_ONLY != 0 && !draw_lists.portal_clipping;
         // Opaque casters that the cascade before holds are left out of a
         // cascade, which takes their depth from that finer map
         // (shadow_merge.rs): both pairs of cascades, or none.
@@ -5440,13 +5480,17 @@ impl Backend {
             (start, l.len() as u32)
         };
         let cpu = &mut self.indirect_cpu;
+        // a cut-out photo leaves the ground and the water out of the view
+        // (cutout.rs); the reflections and the probes keep them, for the
+        // light they give
+        let (terrain, water): (&[DrawCmd], &[DrawCmd]) = if f.cutout { (&[], &[]) } else { (&lists.terrain, &lists.water) };
         let mut rg = Ranges {
-            terrain: push(cpu, &lists.terrain),
+            terrain: push(cpu, terrain),
             opaque: push(cpu, &lists.opaque),
             opaque_2s: push(cpu, &lists.opaque_two_sided),
             mask: push(cpu, &lists.mask),
             mask_2s: push(cpu, &lists.mask_two_sided),
-            water: push(cpu, &lists.water),
+            water: push(cpu, water),
             water_exclusion: push(cpu, &lists.water_exclusion),
             blend: push(cpu, &lists.blend),
             glow: push(cpu, &lists.glow),
@@ -5874,6 +5918,11 @@ impl Backend {
 
         prof.mark("shadows");
         mark(&mut encoder, MARK_SHADOWS_END);
+        let (pre_opaque, pre_opaque_2s) = if draw_lists.portal_clipping {
+            (&self.pipelines.pre_portal, &self.pipelines.pre_portal_2s)
+        } else {
+            (&self.pipelines.pre_opaque, &self.pipelines.pre_opaque_2s)
+        };
         // GTAO's mesh normals, drawn beside the depth when it reads them;
         // without them the passes keep no colour target at all
         let normals = self.targets.gtao.as_ref().filter(|_| self.gtao_normals_now).map(|g| &g.normals);
@@ -5891,14 +5940,13 @@ impl Backend {
             })
         };
         let pre_pipes: [&wgpu::RenderPipeline; MAIN_BINS] = if normals.is_some() {
-            self.pipelines.pre_normal.each_ref()
+            let mut pipes = self.pipelines.pre_normal.each_ref();
+            if draw_lists.portal_clipping {
+                pipes[..2].copy_from_slice(&self.pipelines.pre_normal_portal.each_ref());
+            }
+            pipes
         } else {
-            [
-                &self.pipelines.pre_opaque,
-                &self.pipelines.pre_opaque_2s,
-                &self.pipelines.pre_mask,
-                &self.pipelines.pre_mask_2s,
-            ]
+            [pre_opaque, pre_opaque_2s, &self.pipelines.pre_mask, &self.pipelines.pre_mask_2s]
         };
         // ---- depth prepass (single sample); with occlusion, phase 1 draws
         // what was visible last frame
@@ -6371,7 +6419,8 @@ impl Backend {
         // cannot reproduce sample for sample; they are drawn after the
         // opaque faces and were already tested against them.
         let msaa_pre = match (&self.pipelines.pre_msaa, &self.targets.depth_msaa) {
-            (Some(pipes), Some(depth)) if prepass_wanted => {
+            (Some(variants), Some(depth)) if prepass_wanted => {
+                let pipes = &variants[usize::from(draw_lists.portal_clipping)];
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("depth prepass msaa"),
                     color_attachments: &[],
@@ -6409,7 +6458,9 @@ impl Backend {
                 Some(msaa) => (msaa, Some(&self.targets.color)),
                 None => (&self.targets.color, None),
             };
-            let cc = f.clear_color;
+            // (a cut-out photo starts from black: what is drawn over it is
+            // then premultiplied by its coverage)
+            let cc = if f.cutout { glam::Vec4::ZERO } else { f.clear_color };
             let mut atts = vec![Some(wgpu::RenderPassColorAttachment {
                 view,
                 depth_slice: None,
@@ -6472,8 +6523,10 @@ impl Backend {
                 multiview_mask: None,
             });
             bind_mesh(&mut pass, &self.groups.a);
-            pass.set_pipeline(&self.pipelines.sky);
-            pass.draw(0..3, 0..1);
+            if !f.cutout {
+                pass.set_pipeline(&self.pipelines.sky);
+                pass.draw(0..3, 0..1);
+            }
             pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
             pass_mark(&mut pass, MARK_TERRAIN_END);
@@ -6499,13 +6552,26 @@ impl Backend {
 
         prof.mark("scene_a");
         mark(&mut encoder, MARK_SCENE_A_END);
-        if self.water_effects.particles > 0 && above_water_possible {
+        // a cut-out photo: what shows through, from the depth the scene
+        // pass ended with (cutout.rs)
+        if f.cutout {
+            let t = &self.targets;
+            let (color, depth, samples) = match (&t.color_msaa, &t.depth_msaa, &t.depth_msaa_tex) {
+                (Some(c), Some(d), Some(tex)) => (c, d, tex.sample_count()),
+                _ => (&t.color, &t.depth_ss, 1),
+            };
+            self.cutout
+                .get_or_insert_with(|| crate::cutout::Cutout::new(&self.device, HDR_FORMAT))
+                .encode(&self.device, &mut encoder, color, depth, HDR_FORMAT, samples);
+        }
+        let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
+        if water_particles > 0 && above_water_possible {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "submerged water particles", false, false);
             bind_mesh(&mut pass, &self.groups.a);
             pass.set_pipeline(&self.pipelines.water_particles_under);
-            pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..self.water_effects.particles);
+            pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
         }
-        if self.water_effects.particles > 0 && self.targets.color_msaa.is_some() && above_water_possible {
+        if water_particles > 0 && self.targets.color_msaa.is_some() && above_water_possible {
             let _resolve = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("resolve submerged particles"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -6617,9 +6683,9 @@ impl Backend {
                 }
             }
             pass_mark(pass, MARK_BLEND_END);
-            if self.water_effects.particles > 0 {
+            if water_particles > 0 {
                 pass.set_pipeline(&self.pipelines.water_particles);
-                pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..self.water_effects.particles);
+                pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
             }
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
@@ -6880,6 +6946,7 @@ impl Backend {
                         buffer: &self.post_buffer,
                         glow: &self.glow.views[1],
                     },
+                    f.cutout,
                 );
             }
             None => {
@@ -6900,7 +6967,9 @@ impl Backend {
             &crate::exposure::FrameExposure {
                 tone_mapped: !f.sky.no_post,
                 hdr_scale: f.sky.hdr_scale,
-                hold: snapshot.is_some() || f.exposure_lock,
+                // (a cut-out photo's empty background would raise it: the
+                // subject keeps the exposure the whole scene gave it)
+                hold: snapshot.is_some() || f.exposure_lock || f.cutout,
                 glow: self.glow_drawn,
                 inv_view_proj: unjittered_vp.inverse(),
             },
@@ -7276,14 +7345,17 @@ impl Backend {
                     self.config.format,
                     wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
                 );
+                // (a cut-out photo keeps its coverage, cutout.rs)
+                let opaque = if f.cutout { 0 } else { 255 };
                 let mut out = Vec::with_capacity((w * h * 4) as usize);
                 for y in 0..h {
                     let r = &view[(y * row) as usize..(y * row + w * 4) as usize];
                     for px in r.as_chunks::<4>().0 {
+                        let a = px[3] | opaque;
                         if bgra {
-                            out.extend_from_slice(&[px[2], px[1], px[0], 255]);
+                            out.extend_from_slice(&[px[2], px[1], px[0], a]);
                         } else {
-                            out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+                            out.extend_from_slice(&[px[0], px[1], px[2], a]);
                         }
                     }
                 }

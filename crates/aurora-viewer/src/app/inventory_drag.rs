@@ -33,6 +33,9 @@ fn reason_text(reason: &str) -> &'static str {
         "rez-worn" => aurora_i18n::tr!("rez-worn"),
         "rez-contents-denied" => aurora_i18n::tr!("rez-contents-denied"),
         "rez-transfer-denied" => aurora_i18n::tr!("rez-transfer-denied"),
+        "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
+        "portal-invalid" => aurora_i18n::tr!("portal-invalid"),
+        "portal-landmark-unavailable" => aurora_i18n::tr!("portal-landmark-unavailable"),
         _ => aurora_i18n::tr!("rez-no-surface"),
     }
 }
@@ -277,7 +280,14 @@ impl App {
         let ppp = ctx.pixels_per_point();
         let ray = renderer.cursor_ray(pos.x * ppp, pos.y * ppp)?;
         let started = Instant::now();
-        let item = if ctrl {
+        let landmark = !ctrl && super::portals::landmark::cargo(&self.world.inventory, drag.item).is_some();
+        let portal_ready = self.demo || self.bridge_runtime.query_endpoint().is_some();
+        if landmark {
+            super::portals::landmark::preview(ctx, &self.palette, pos, drag.shift, portal_ready);
+        }
+        let item = if landmark {
+            super::portals::landmark::cargo(&self.world.inventory, drag.item).ok_or("portal-landmark-unavailable")
+        } else if ctrl {
             cargo(&self.world, drag.item, true)
         } else {
             original(&self.world, drag.item)
@@ -307,7 +317,23 @@ impl App {
             if let Some(idx) = surface.1 {
                 target_allowed(&self.world, idx, item, ctrl)?;
             }
-            if ctrl && surface.1.is_some() {
+            if landmark {
+                if !portal_ready {
+                    return Err("portal-bridge-required");
+                }
+                if item.asset_id.is_nil() {
+                    return Err("portal-landmark-unavailable");
+                }
+                let center = surface.0 + Vec3::Z * crate::world::portals::HEIGHT;
+                if !(0.0..=4096.0).contains(&center.z)
+                    || self.world.main().is_none_or(|region| {
+                        !crate::world::portals::fits_region(center, [region.heightmap.size_x, region.heightmap.size_y])
+                    })
+                {
+                    return Err("portal-invalid");
+                }
+                Ok(egui::CursorIcon::Copy)
+            } else if ctrl && surface.1.is_some() {
                 if self.world.inventory.items.get(&drag.item).is_some_and(|it| it.asset_type == 24) {
                     return Err("rez-contents-denied");
                 }
@@ -325,6 +351,18 @@ impl App {
             return None;
         }
         egui::DragAndDrop::clear_payload(ctx);
+        if landmark {
+            match result {
+                Ok(_) => {
+                    if let Some((point, _)) = self.inventory_drag.surface {
+                        self.queue_landmark_portal(drag.item, point, drag.shift);
+                        self.inventory_ui.release_world_drag_focus(ctx);
+                    }
+                }
+                Err(reason) => self.portal_drop_notice(reason),
+            }
+            return None;
+        }
         log::debug!(
             "inventory drop target: {:?}, ctrl={ctrl}",
             self.inventory_drag.surface.map(|(point, idx)| (

@@ -13,6 +13,7 @@ const MAX_REPLY: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Query {
+    Portal { target: Uuid, message: super::portal::Message },
     Pose { request: Uuid, kind: PoseKind, target: Uuid },
     Altitudes(Vec<Uuid>),
     ScriptInfo(Uuid),
@@ -96,6 +97,7 @@ pub struct ObjectInfo {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reply {
+    Portal,
     Pose,
     Altitudes(Vec<Altitude>),
     ScriptInfo(ScriptInfo),
@@ -105,6 +107,13 @@ pub enum Reply {
 impl Query {
     pub fn valid(&self) -> bool {
         match self {
+            Self::Portal { target, message } => {
+                message.encode().is_some()
+                    && (!matches!(
+                        message,
+                        super::portal::Message::Request { .. } | super::portal::Message::Details { .. }
+                    ) || !target.is_nil())
+            }
             Self::Pose { request, target, .. } => !request.is_nil() && !target.is_nil(),
             Self::Altitudes(ids) => {
                 !ids.is_empty()
@@ -117,6 +126,7 @@ impl Query {
     }
     fn body(&self, token: Uuid) -> String {
         match self {
+            Self::Portal { target, message } => format!("query|{token}|portal|{target},{}", message.encode().unwrap_or_default()),
             Self::Pose { request, kind, target } => format!("query|{token}|pose|{},{request},{target}", kind.wire()),
             Self::Altitudes(ids) => format!(
                 "query|{token}|altitudes|{}",
@@ -133,6 +143,7 @@ impl Query {
         let value: Value = serde_json::from_slice(bytes).ok()?;
         let values = value.as_array()?;
         match self {
+            Self::Portal { .. } => values.is_empty().then_some(Reply::Portal),
             Self::Pose { .. } => values.is_empty().then_some(Reply::Pose),
             Self::Altitudes(requested) => {
                 if values.len() > requested.len() * 2 || values.len() % 2 != 0 {

@@ -100,6 +100,7 @@ impl Demo {
                 } else {
                     Ok(match query {
                         Query::Pose { .. } => Reply::Pose,
+                        Query::Portal { .. } => Reply::Portal,
                         Query::Altitudes(ids) => Reply::Altitudes(
                             ids.iter()
                                 .filter(|id| **id == SKY_VISITOR)

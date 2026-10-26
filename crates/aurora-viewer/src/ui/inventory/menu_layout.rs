@@ -138,6 +138,8 @@ impl Default for Profile {
                             "original",
                             "open",
                             "about-landmark",
+                            "copy-landmark-slurl",
+                            "show-landmark-on-map",
                             "rez-previous",
                             "play-world",
                             "play-local",
@@ -200,6 +202,23 @@ pub struct Preferences {
 
 impl Preferences {
     pub(super) fn unify(&mut self) {
+        // Older saved arrangements have not seen these destination commands.
+        // Insert them beside About without moving or restoring edited entries.
+        for profile in self.profiles.values_mut() {
+            let mut after = "about-landmark";
+            for id in ["copy-landmark-slurl", "show-landmark-on-map"] {
+                let known = profile.layout.placements.contains_key(id)
+                    || profile.layout.removed.contains(id)
+                    || profile.layout.orders.values().any(|order| order.iter().any(|key| key == id));
+                if !known
+                    && let Some(order) = profile.layout.orders.get_mut(TEXT)
+                    && let Some(index) = order.iter().position(|key| key == after)
+                {
+                    order.insert(index + 1, id.into());
+                }
+                after = id;
+            }
+        }
         if self.profiles.len() == 1 && self.profiles.contains_key(SHARED) {
             return;
         }
@@ -798,6 +817,34 @@ impl Layout {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saved_menus_gain_landmark_destinations_without_moving_customized_entries() {
+        let mut profile = Profile::default();
+        let order = profile.layout.orders.get_mut(TEXT).expect("text order");
+        order.retain(|id| !matches!(id.as_str(), "copy-landmark-slurl" | "show-landmark-on-map"));
+        let previous = order.clone();
+        let mut prefs = Preferences {
+            profiles: [(SHARED.into(), profile)].into(),
+        };
+        prefs.unify();
+        let profile = prefs.profiles.get_mut(SHARED).expect("shared profile");
+        let order = profile.layout.orders.get_mut(TEXT).expect("text order");
+        let about = order.iter().position(|id| id == "about-landmark").expect("About");
+        assert_eq!(&order[about + 1..about + 3], ["copy-landmark-slurl", "show-landmark-on-map"]);
+        assert_eq!(
+            order
+                .iter()
+                .filter(|id| !matches!(id.as_str(), "copy-landmark-slurl" | "show-landmark-on-map"))
+                .cloned()
+                .collect::<Vec<_>>(),
+            previous
+        );
+        order.retain(|id| id != "copy-landmark-slurl");
+        profile.layout.placements.insert("copy-landmark-slurl".into(), HIDDEN.into());
+        let customized = prefs.clone();
+        prefs.unify();
+        assert_eq!(prefs, customized, "a user's hidden or reordered action remains unchanged");
+    }
     use super::*;
     #[test]
     fn locked_presentation_omits_recursively_empty_groups_but_keeps_disabled_actions_and_the_lock() {

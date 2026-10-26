@@ -42,6 +42,7 @@ pub mod particles;
 mod pick_accel;
 pub mod picking;
 mod plants;
+pub mod portals;
 pub mod probes;
 pub mod rez;
 mod sculpt_watch;
@@ -397,6 +398,10 @@ pub struct ObjGpu {
     pub built_faces: usize,
     pub is_avatar: bool,
     pub parcel_hidden: bool,
+    /// Left out by the photo's isolation (`snapshot::isolate`): kept, only
+    /// flagged for the GPU lists (`object_flags::PHOTO_HIDDEN`) and left
+    /// out of the CPU ones, so that it comes back at once.
+    pub photo_hidden: bool,
     pub hud: bool,
     pub sculpt_wait: Option<Uuid>,
     /// Avatar wearing this object (attachments), for the avatar limit.
@@ -489,6 +494,7 @@ impl ObjGpu {
             (avatar.is_some() || self.skeleton_owner.is_some(), object_flags::NO_PROBE),
             (posed.is_some(), object_flags::POSED),
             (self.first_person_hidden, object_flags::FIRST_PERSON_HIDDEN),
+            (self.photo_hidden, object_flags::PHOTO_HIDDEN),
         ] {
             if on {
                 fl |= bit;
@@ -738,6 +744,7 @@ pub struct Scene {
     water_effects: water_effects::Effects,
     /// Ban lines of the parcel we may not enter.
     pub banlines: banlines::BanLines,
+    pub portals: portals::Portals,
     pub particles: particles::ParticleManager,
     /// Bundled swimming fallback for our own rendering only. Its private ID
     /// is never sent in AgentAnimation; remote viewers receive a real asset.
@@ -761,6 +768,10 @@ pub struct Scene {
     /// Avatars over RenderAvatarMaxComplexity: grey silhouettes, no attachments.
     pub too_complex: std::collections::HashSet<usize>,
     parcel_visibility_version: u64,
+    photo_isolation_version: u64,
+    /// The avatars and linksets chosen for the photo, every prim and
+    /// attachment, outlined while choosing (`snapshot::isolate`).
+    pub photo_marks: std::collections::HashSet<usize>,
     rlva_silhouettes: std::collections::HashSet<usize>,
     /// Objects the sync visits: moving, changed, pending (sync_sets.rs).
     sets: SyncSets,
@@ -1354,6 +1365,7 @@ impl Scene {
             water: water::WaterGpu::default(),
             water_effects: Default::default(),
             banlines: banlines::BanLines::default(),
+            portals: portals::Portals::default(),
             particles: particles::ParticleManager::default(),
             movement_preview: None,
             paused_skeletons: HashSet::new(),
@@ -1368,6 +1380,8 @@ impl Scene {
             avatar_complexity: HashMap::new(),
             too_complex: Default::default(),
             parcel_visibility_version: 0,
+            photo_isolation_version: 0,
+            photo_marks: Default::default(),
             rlva_silhouettes: Default::default(),
             sets: SyncSets::default(),
             xf_cache: XfCache::default(),
@@ -1989,6 +2003,7 @@ impl Scene {
         }
         self.water.clear(renderer);
         self.banlines.clear(renderer);
+        self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
@@ -2294,6 +2309,44 @@ impl Scene {
             (pr * r).normalize(),
             phud,
         ))
+    }
+
+    /// The photo's isolation (`snapshot::isolate`): what it leaves out is
+    /// flagged, every object again when it changes, else those synced this
+    /// frame (an object arriving); and while choosing in the scene, what
+    /// is chosen is outlined, every prim and attachment of it.
+    fn sync_photo_isolation(&mut self, renderer: &mut Renderer, world: &World, synced: &[usize]) {
+        use crate::snapshot::isolate;
+        let iso = &world.photo_isolation;
+        if self.photo_isolation_version != iso.version {
+            self.photo_isolation_version = iso.version;
+            for idx in 0..self.gpu.len() {
+                let hidden = !isolate::object_visible(world, idx);
+                let g = &mut self.gpu[idx];
+                if g.photo_hidden != hidden {
+                    g.photo_hidden = hidden;
+                    renderer.cull.objects.set(idx, g.cull_object(idx));
+                }
+            }
+        } else if iso.applied() {
+            for &idx in synced {
+                let hidden = !isolate::object_visible(world, idx);
+                if let Some(g) = self.gpu.get_mut(idx) {
+                    g.photo_hidden = hidden;
+                }
+            }
+        }
+        self.photo_marks.clear();
+        if iso.picking {
+            let mut stack: Vec<usize> = iso.chosen().iter().filter_map(|id| world.objects.index_of_uuid(id)).collect();
+            while let Some(idx) = stack.pop() {
+                if self.photo_marks.insert(idx)
+                    && let Some(o) = world.objects.get(idx)
+                {
+                    stack.extend(world.objects.children_of(&o.key).iter().copied());
+                }
+            }
+        }
     }
 
     fn sync_parcel_crossings(&mut self, world: &mut World) {
@@ -2665,6 +2718,7 @@ impl Scene {
         self.sync_flexibles(renderer, world, &synced, now, view);
         self.sync_grass_ground(renderer, world, now, &mut synced);
         step(&mut slow, "flexibles");
+        self.sync_photo_isolation(renderer, world, &synced);
         // GPU object table: bounds and flags of what was synced (unchanged
         // entries are not uploaded); the same bounds for the hover search,
         // the same flags for the lists
@@ -4021,6 +4075,7 @@ impl Scene {
     pub fn build_lists(&mut self, renderer: &mut Renderer, view: &CullView, shadows: bool) {
         let t0 = Instant::now();
         self.lists.clear();
+        self.lists.portal_clipping = !self.portals.planes.is_empty();
         self.last_cull = Some(*view);
         let gpu_mode = renderer.gpu_culling();
         let debug_alpha = self.debug_alpha;
@@ -4078,16 +4133,19 @@ impl Scene {
                 g.center.distance(view.eye)
             }
         };
+        // (those the photo's isolation leaves out take no place, not even
+        // as an impostor)
         let mut avatars: Vec<(f32, usize)> = if by_index {
             self.list_index
                 .with(list_index::AVATAR)
-                .filter_map(|(i, _)| Some((avatar_distance(i, self.gpu.get(i)?), i)))
+                .filter_map(|(i, _)| Some(i).zip(self.gpu.get(i).filter(|g| !g.photo_hidden)))
+                .map(|(i, g)| (avatar_distance(i, g), i))
                 .collect()
         } else {
             self.gpu
                 .iter()
                 .enumerate()
-                .filter(|(_, g)| g.is_avatar)
+                .filter(|(_, g)| g.is_avatar && !g.photo_hidden)
                 .map(|(i, g)| (avatar_distance(i, g), i))
                 .collect()
         };
@@ -4096,11 +4154,15 @@ impl Scene {
         for (_, i) in avatars.iter().take(self.max_avatars.max(1)) {
             avatar_ok[*i] = true;
         }
+        for &index in self.portals.planes.keys() {
+            avatar_ok[index] = true;
+        }
         // (as when drawn in full, one still loading is a cloud until it is
         // complete, and one over the complexity limit is its silhouette)
         let imp_avatars: Vec<impostors::Far> = avatars
             .iter()
             .skip(self.max_avatars.max(1))
+            .filter(|(_, index)| !self.portals.planes.contains_key(index))
             .filter_map(|&(d, i)| {
                 let g = self.gpu.get(i)?;
                 let loading = self.hide_loading && self.loading.indices.contains(&i);
@@ -4207,6 +4269,7 @@ impl Scene {
                         || debug
                         || selection.contains_key(&i)
                         || self.selection_faces.contains_key(&i)
+                        || self.photo_marks.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || (capturing && self.gpu.get(i).is_some_and(|g| captured(g, i)))
                     {
@@ -4224,6 +4287,7 @@ impl Scene {
                         || debug
                         || selection.contains_key(&i)
                         || self.selection_faces.contains_key(&i)
+                        || self.photo_marks.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || captured(g, i)
                     {
@@ -4250,6 +4314,7 @@ impl Scene {
         let blend_casts = aurora_render::shadow_cull::blend_casts();
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
+        let photo_marks = &self.photo_marks;
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
@@ -4301,7 +4366,7 @@ impl Scene {
             let Some(g) = self.gpu.get(idx) else {
                 return l;
             };
-            if g.faces.is_empty() || g.hud {
+            if g.faces.is_empty() || g.hud || g.photo_hidden {
                 return l;
             }
             let own_first_person = self
@@ -4414,6 +4479,7 @@ impl Scene {
                     if selection_faces
                         .get(&idx)
                         .is_some_and(|mask| mask & 1u64.checked_shl(f.te_index.into()).unwrap_or(0) != 0)
+                        || (photo_marks.contains(&idx) && pass != Pass::Hidden)
                     {
                         l.select_faces.push(cmd);
                     }
@@ -4512,16 +4578,21 @@ impl Scene {
         self.lists.mask = result.mask;
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
-        self.blend_tmp
-            .extend(self.banlines.cmds.iter().map(|(d, c)| blend_order::BlendEntry {
-                distance: *d,
-                cmd: *c,
-                glow: false,
-                rigged: false,
-                object: u32::MAX,
-                face: 0,
-                rig: None,
-            }));
+        self.blend_tmp.extend(
+            [(self.banlines.cmds.as_slice(), false), (self.portals.cmds.as_slice(), true)]
+                .into_iter()
+                .flat_map(|(cmds, glow)| {
+                    cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
+                        distance: *d,
+                        cmd: *c,
+                        glow,
+                        rigged: false,
+                        object: u32::MAX,
+                        face: 0,
+                        rig: None,
+                    })
+                }),
+        );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
         if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Split {
@@ -4910,6 +4981,7 @@ impl Scene {
             // on time
             if !every_frame
                 && motions.poser.is_none()
+                && !self.portals.planes.contains_key(&idx)
                 && owner != world.agent_id
                 && world.avatar_poses.contains_key(&owner)
                 && let Some(a) = self.far_avatars.get(&idx)

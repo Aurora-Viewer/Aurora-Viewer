@@ -3373,6 +3373,7 @@ impl Session<'_> {
                     self.sh,
                     NetEvent::TeleportFinished {
                         handle: info["RegionHandle"].as_u64(),
+                        flying: info["TeleportFlags"].as_u64() & (1 << 13) != 0,
                     },
                 );
                 log::info!(
@@ -4580,6 +4581,11 @@ impl Session<'_> {
             }
         } else if id == AvatarAnimation::ID {
             let m: AvatarAnimation = pkt.decode()?;
+            // Our old simulator can still send reliable animation packets
+            // after a teleport. Only the current agent circuit owns our state.
+            if m.sender.id == self.agent_id() && self.main != Some(from) {
+                return Ok(());
+            }
             emit(
                 self.sh,
                 NetEvent::AvatarAnimations {
@@ -5254,6 +5260,47 @@ mod socket_tests {
 #[cfg(test)]
 mod event_queue_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn remote_teleport_flags_reach_the_viewer_and_old_circuits_cannot_replace_own_animations() {
+        let sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.expect("viewer socket"));
+        let main: SocketAddr = "127.0.0.1:13001".parse().unwrap();
+        let old: SocketAddr = "127.0.0.1:13002".parse().unwrap();
+        let (events, received) = crossbeam_channel::unbounded();
+        let sh = shared(crate::EventSender(events));
+        let mut session = two_regions(&sh, sock, main, old);
+        for flags in [0, 1 << 13, 1 << 2] {
+            session.on_eq_event(EqEvent {
+                sim: main,
+                message: "TeleportFinish".into(),
+                body: aurora_llsd::llsd_map! {
+                    "Info" => Llsd::Array(vec![aurora_llsd::llsd_map! {
+                        "RegionHandle" => 10,
+                        "TeleportFlags" => flags
+                    }])
+                },
+            });
+            assert!(received.try_iter().any(|(_, event)| matches!(event,
+                NetEvent::TeleportFinished { handle: 10, flying } if flying == (flags & (1 << 13) != 0)
+            )));
+        }
+        let own = session.agent_id();
+        for (avatar, source, accepted) in [(own, old, false), (own, main, true), (Uuid::from_u128(33), old, true)] {
+            let mut message = AvatarAnimation::default();
+            message.sender.id = avatar;
+            let mut bytes = Vec::new();
+            aurora_msg::build_packet(&message, 1, true, false, &[], &mut bytes);
+            session
+                .dispatch(source, &parse_packet(&bytes).expect("animation packet"))
+                .expect("dispatch");
+            assert_eq!(
+                received
+                    .try_iter()
+                    .any(|(_, event)| matches!(event, NetEvent::AvatarAnimations { avatar: id, .. } if id == avatar)),
+                accepted
+            );
+        }
+    }
 
     #[tokio::test]
     async fn dropping_a_circuit_cancels_its_pending_simulator_features() {
