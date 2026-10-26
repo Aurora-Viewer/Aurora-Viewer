@@ -67,6 +67,27 @@ impl App {
         }
     }
 
+    /// LLLandSit::handleEvent: approach within 0.7 m, then near_sit_down_point.
+    pub(super) fn sit_at(&mut self, point: Vec3) {
+        if !point.is_finite()
+            || self.world.agent.is_sitting()
+            || self.world.agent.flying
+            || self.native_anchor.blocks_walk(self.world.agent.seated, self.world.agent.ground_sit)
+        {
+            return;
+        }
+        self.walk_to(point, false);
+        if let Some(pilot) = &mut self.autopilot {
+            *pilot = AutoPilot::start_to(
+                self.world.agent.position,
+                pilot.target,
+                0.7,
+                autopilot::Arrival::SitGround,
+                Instant::now(),
+            );
+        }
+    }
+
     /// teleportToClickedLocation: teleportViaLocationLookAt toward where the
     /// camera looks, the point raised by PelvisToFoot.
     fn teleport_to_point(&mut self, point: Vec3) {

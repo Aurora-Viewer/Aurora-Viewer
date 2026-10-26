@@ -201,6 +201,8 @@ pub struct AutoPilot {
 /// distance and was not cancelled (LLAgent::stopAutoPilot's `success`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Arrival {
+    /// Land.Sit / near_sit_down_point: sit only after a successful approach.
+    SitGround,
     /// "Put on" of a rezzed object (LLObjectAttachToAvatar::onNearAttachObject).
     Attach { object: uuid::Uuid, point: u8 },
 }

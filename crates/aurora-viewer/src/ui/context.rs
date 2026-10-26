@@ -18,7 +18,11 @@ use crate::world::objects::ObjKey;
 use glam::Vec3;
 use uuid::Uuid;
 
+mod customize;
 mod entries;
+pub use customize::{Customization, Preferences};
+mod avatar_textures;
+pub use avatar_textures::AvatarTexturesUi;
 mod multi;
 mod pie;
 
@@ -206,6 +210,9 @@ pub struct Facts {
     pub worn: bool,
     pub avatar_travel: bool,
     pub following: bool,
+    /// Removable clothing types and occupied attachment points in our outfit.
+    pub removable_clothing: Vec<u8>,
+    pub removable_points: Vec<u8>,
 }
 
 /// One attachment point of "Put on ▸ Attach" or "Attach HUD".
@@ -220,6 +227,16 @@ pub struct AttachChoice {
 
 #[derive(Debug, Clone)]
 pub enum CtxAction {
+    /// Reopen this menu in the shared arrangement editor.
+    CustomizeMenu(Box<ContextMenu>),
+    SitAt(Vec3),
+    SitStand,
+    LookAtAvatar(Uuid),
+    EditPbr(Uuid),
+    ShowAvatarTextures(Uuid),
+    TakeOffClothing(u8),
+    DetachAt(u8),
+    DetachAll,
     ResetHudScale(ObjKey),
     ForgetHudScale(ObjKey),
     SetHudMoveLock(ObjKey, bool),
@@ -508,24 +525,40 @@ pub fn avatar_position(world: &World, id: &Uuid) -> Option<Vec3> {
 const HOVERED: &str = "world_context_menu_hovered";
 
 /// Draw the world menu; `menu` becomes `None` once it closed.
-pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f: &Facts, use_pie: bool) {
+#[allow(clippy::too_many_arguments)]
+pub fn show(
+    ctx: &egui::Context,
+    p: &Palette,
+    menu: &mut Option<ContextMenu>,
+    f: &Facts,
+    use_pie: bool,
+    prefs: &mut Preferences,
+    customization: &mut Customization,
+) -> bool {
+    if menu.is_none() && !customization.active() {
+        return false;
+    }
+    let saved_before = prefs.clone();
     if menu::dismiss_on_window_change(ctx) {
         *menu = None;
         ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
-        return;
+        customization.close(ctx, prefs);
+        return *prefs != saved_before;
     }
     let Some(m) = menu.clone() else {
-        return;
+        customization.close(ctx, prefs);
+        return *prefs != saved_before;
     };
     let mut open = true;
     let entries = entries::world_menu(&m.target, f, m.point);
-    let hovered = if use_pie {
+    let hovered = if use_pie && !customization.force_list() {
         let voice = match m.target {
             Target::Avatar { id, own: false, .. } => f.voice_volume.map(|v| (id, v)),
             _ => None,
         };
+        let (entries, customized) = customize::radial_entries(&m, f, &entries, prefs);
         let mut radial = m;
-        let hovered = pie::show(ctx, p, &mut radial, &entries, voice, &mut open);
+        let hovered = pie::show(ctx, p, &mut radial, &entries, voice, &mut open, customized);
         *menu = Some(radial);
         hovered
     } else {
@@ -537,7 +570,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
             if let Target::Avatar { id, own: false, .. } = m.target {
                 voice_row(ui, p, id, f.voice_volume);
             }
-            entries::draw_list(ui, p, &entries);
+            customization.show(ui, p, &m, f, &entries, prefs);
         })
     };
     // UISndPieMenuSliceHighlight0..7 when an enabled row gets hovered (the
@@ -551,8 +584,10 @@ pub fn show(ctx: &egui::Context, p: &Palette, menu: &mut Option<ContextMenu>, f:
     }
     if !open {
         *menu = None;
+        customization.close(ctx, prefs);
         ctx.data_mut(|d| d.remove::<Option<usize>>(egui::Id::unique(HOVERED)));
     }
+    *prefs != saved_before
 }
 
 /// Where an avatar menu of a list is opened: each place has its own
@@ -1361,7 +1396,17 @@ mod tests {
                         events,
                         ..Default::default()
                     },
-                    |ui| show(ui.ctx(), &theme.palette(), &mut current, &facts, false),
+                    |ui| {
+                        show(
+                            ui.ctx(),
+                            &theme.palette(),
+                            &mut current,
+                            &facts,
+                            false,
+                            &mut Default::default(),
+                            &mut Default::default(),
+                        );
+                    },
                 );
                 output.textures_delta.clear();
                 output

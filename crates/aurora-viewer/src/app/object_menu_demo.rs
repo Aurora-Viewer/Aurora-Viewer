@@ -53,12 +53,50 @@ impl App {
                     && let Some(cursor) = self.build.cam.project_px(pos + Vec3::Z * lift)
                 {
                     self.cursor_pos = cursor;
-                    self.open_context_menu();
+                    if !mode.starts_with("customize-") {
+                        self.open_context_menu();
+                    }
+                }
+                if mode.starts_with("customize-") {
+                    let target = match mode {
+                        "customize-land" => Some(ui::context::Target::Ground),
+                        "customize-self" => Some(ui::context::Target::Avatar {
+                            id: self.world.agent_id,
+                            own: true,
+                            attachment: None,
+                        }),
+                        "customize-avatar" => Some(ui::context::Target::Avatar {
+                            id: crate::demo::DEMO_NOVA,
+                            own: false,
+                            attachment: None,
+                        }),
+                        "customize-hud" => {
+                            self.world
+                                .objects
+                                .index_of(&key(crate::demo::hud::FIRST))
+                                .map(|_| ui::context::Target::Attachment {
+                                    key: key(crate::demo::hud::FIRST),
+                                })
+                        }
+                        _ => None,
+                    };
+                    if let Some(target) = target {
+                        self.context_menu = Some(ui::context::ContextMenu {
+                            pos: egui::pos2(400.0, 140.0),
+                            point: self.world.agent.position,
+                            target,
+                            pie_path: Vec::new(),
+                            pie_input_frame: None,
+                        });
+                    }
                 }
             }
             740 => {
                 let bell = id_of(self, BELL);
                 let action = match mode {
+                    mode if mode.starts_with("customize") => self.context_menu.clone().map(|m| CtxAction::CustomizeMenu(Box::new(m))),
+                    "pbr" => bell.map(CtxAction::EditPbr),
+                    "textures" => Some(CtxAction::ShowAvatarTextures(self.world.agent_id)),
                     "scripts" | "scripts-run" => bell.map(|id| CtxAction::Scripts {
                         id,
                         action: crate::build::script_queue::QueueKind::Reset,

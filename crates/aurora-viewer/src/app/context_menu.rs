@@ -4,6 +4,7 @@
 use super::*;
 use crate::interaction::{self, Action};
 use crate::ui::context::{CtxAction, Facts, ObjectFacts, Target};
+use uuid::Uuid;
 
 impl App {
     /// Right click on the world: the menu of what is under the cursor.
@@ -183,6 +184,28 @@ impl App {
             }
             _ => {}
         }
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|m| matches!(m.target, Target::Attachment { .. } | Target::Avatar { own: true, .. }))
+        {
+            f.attach_points = self.attach_choices();
+            f.removable_clothing = crate::world::appearance::worn_clothing(&w.inventory)
+                .into_iter()
+                .filter(|(id, _)| w.rlva_can_remove(*id, Uuid::nil()))
+                .map(|(_, kind)| kind)
+                .collect();
+            f.removable_clothing.sort_unstable();
+            f.removable_clothing.dedup();
+            f.removable_points = w
+                .worn_attachment_points()
+                .into_iter()
+                .filter(|(id, _)| w.rlva_can_remove(*id, Uuid::nil()))
+                .map(|(_, point)| point)
+                .collect();
+            f.removable_points.sort_unstable();
+            f.removable_points.dedup();
+        }
         f
     }
 
@@ -255,6 +278,55 @@ impl App {
 
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
+            CtxAction::ShowAvatarTextures(id) => self.avatar_textures.avatar = Some(id),
+            CtxAction::SitAt(point) => self.sit_at(point),
+            CtxAction::SitStand => self.on_ctx_action(if self.world.agent.is_sitting() {
+                CtxAction::StandUp
+            } else {
+                CtxAction::SitGround
+            }),
+            CtxAction::LookAtAvatar(id) => {
+                if let Some(point) = ui::context::avatar_position(&self.world, &id) {
+                    let object = self
+                        .world
+                        .objects
+                        .index_of_uuid(&id)
+                        .and_then(|idx| crate::camera::pick_focus_object(&self.world, idx, Instant::now()));
+                    self.camera
+                        .set_script_focus(self.camera.position, point, object, &mut self.world.agent, &self.settings.camera);
+                }
+            }
+            CtxAction::EditPbr(id) => {
+                self.on_ctx_action(CtxAction::Edit(id));
+                self.build.tab = 3;
+                self.build.ui.tex_tab = 1;
+            }
+            CtxAction::TakeOffClothing(kind) => {
+                let items = crate::world::appearance::worn_clothing(&self.world.inventory)
+                    .into_iter()
+                    .filter(|(id, k)| *k == kind && self.world.rlva_can_remove(*id, Uuid::nil()))
+                    .map(|(id, _)| id)
+                    .collect();
+                self.apply_appearance_action(crate::world::appearance::Action::RemoveItems(items));
+            }
+            CtxAction::DetachAt(_) | CtxAction::DetachAll => {
+                let point = if let CtxAction::DetachAt(point) = act { Some(point) } else { None };
+                let items = self
+                    .world
+                    .worn_attachment_points()
+                    .into_iter()
+                    .filter(|(id, p)| point.is_none_or(|point| point == *p) && self.world.rlva_can_remove(*id, Uuid::nil()))
+                    .map(|(id, _)| id)
+                    .collect();
+                self.apply_appearance_action(crate::world::appearance::Action::RemoveItems(items));
+            }
+            CtxAction::CustomizeMenu(menu) => {
+                self.context_menu = Some(*menu.clone());
+                let facts = self.context_facts();
+                self.context_customization
+                    .edit(&self.egui_ctx, &menu, &facts, &mut self.settings.world_context_menus);
+                self.context_menu = Some(*menu);
+            }
             CtxAction::ResetHudScale(key) => self.reset_hud_scale(key, false),
             CtxAction::ForgetHudScale(key) => self.reset_hud_scale(key, true),
             CtxAction::SetHudMoveLock(key, locked) => {
@@ -682,10 +754,46 @@ pub(super) fn linkset_root(world: &World, idx: usize) -> usize {
     let mut i = idx;
     for _ in 0..64 {
         let Some(o) = world.objects.get(i) else { break };
+        // An avatar's script statistics concern the avatar, including while
+        // seated. Its seat is a transform parent, not its script-info root.
+        if o.is_avatar() {
+            break;
+        }
         match world.objects.parent_of(o) {
             Some(p) if world.objects.get(p).is_some_and(|po| !po.is_avatar()) => i = p,
             _ => break,
         }
     }
     i
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn script_information_of_a_seated_avatar_does_not_inspect_its_seat() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let mut avatar = crate::demo::action_avatar(false);
+        avatar.local_id = 99101;
+        avatar.full_id = crate::demo::action_id(99101);
+        avatar.parent_id = 99100;
+        let mut seat = avatar.clone();
+        seat.local_id = 99100;
+        seat.full_id = crate::demo::action_id(99100);
+        seat.parent_id = 0;
+        seat.pcode = aurora_prim::params::LL_PCODE_VOLUME;
+        let mut attachment = seat.clone();
+        attachment.local_id = 99102;
+        attachment.full_id = crate::demo::action_id(99102);
+        attachment.parent_id = 99101;
+        world.apply(aurora_net::NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![seat, avatar, attachment],
+        });
+        for local in [99100, 99101, 99102] {
+            let index = world.objects.index_of_uuid(&crate::demo::action_id(local)).expect("fixture object");
+            assert_eq!(linkset_root(&world, index), index, "local {local}");
+        }
+    }
 }

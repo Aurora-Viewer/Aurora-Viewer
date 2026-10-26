@@ -508,6 +508,8 @@ pub struct Settings {
     pub ui_scale: f32,
     /// Firestorm UsePieMenu. Keep Aurora's existing list menu by default.
     pub use_pie_menu: bool,
+    /// Independent arrangements for land, objects, avatars, attachments and HUDs.
+    pub world_context_menus: crate::ui::context::Preferences,
     /// Windows snap to each other and to the edges while they are moved or
     /// resized (Firestorm SnapEnabled, on).
     pub snap_windows: bool,
@@ -1508,6 +1510,7 @@ impl Default for Settings {
             texture_budget_mb: 1536,
             ui_scale: 1.0,
             use_pie_menu: false,
+            world_context_menus: Default::default(),
             snap_windows: true,
             windows_stop_left: true,
             windows_stop_right: true,
@@ -2007,6 +2010,9 @@ impl Settings {
     }
 
     fn sanitized(mut self) -> Settings {
+        for profile in self.world_context_menus.profiles.values_mut() {
+            profile.locked = true;
+        }
         self.grids.retain_mut(|grid| grid.validate().is_ok());
         if self.settings_version < 2 {
             // new defaults: 96 m draw distance, LOD factor 2

@@ -155,6 +155,7 @@ fn preview_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, point: Vec3,
     }
 }
 
+#[cfg(test)]
 pub(super) fn draw_list(ui: &mut egui::Ui, p: &crate::theme::Palette, entries: &[Entry]) {
     use super::menu;
     for entry in entries {
@@ -189,7 +190,12 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     let o = &f.object;
     ui.item_if("click-filled", touch_label(o), o.touch, CtxAction::Touch(key.local_id));
     ui.item("pencil-filled", aurora_i18n::tr!("common-edit"), CtxAction::Edit(id));
-    ui.todo("paint-filled", aurora_i18n::tr!("ui-context-edit-pbr-material"));
+    ui.item_if(
+        "paint-filled",
+        aurora_i18n::tr!("ui-context-edit-pbr-material"),
+        f.object.edit,
+        CtxAction::EditPbr(f.object.id),
+    );
     // Object.Build: the Create tool (LLToolCompCreate), like the land menu
     ui.item("box", aurora_i18n::tr!("common-build"), CtxAction::Build);
     ui.item_if("package", aurora_i18n::tr!("common-open"), o.open, CtxAction::Open(id));
@@ -212,11 +218,12 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         ui.separator();
         // two objects or more: a right click on a selected one keeps them;
         // one alone has nothing to link to
-        if o.roots > 1 {
-            ui.item_if("link", aurora_i18n::tr!("ui-context-link"), o.link, CtxAction::Link(id));
-        } else {
-            ui.disabled("link", aurora_i18n::tr!("ui-context-link"));
-        }
+        ui.item_if(
+            "link",
+            aurora_i18n::tr!("ui-context-link"),
+            o.roots > 1 && o.link,
+            CtxAction::Link(id),
+        );
         ui.item_if("unlink", aurora_i18n::tr!("ui-context-unlink"), o.unlink, CtxAction::Unlink(id));
         ui.check(
             "cube-3d-sphere",
@@ -446,7 +453,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         f.object.edit,
         CtxAction::EditAttachment(key),
     );
-    ui.todo("paint-filled", aurora_i18n::tr!("ui-context-edit-pbr-material"));
+    ui.item_if(
+        "paint-filled",
+        aurora_i18n::tr!("ui-context-edit-pbr-material"),
+        f.object.edit,
+        CtxAction::EditPbr(f.object.id),
+    );
     ui.item_if(
         "paperclip",
         aurora_i18n::tr!("common-detach"),
@@ -457,14 +469,10 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     ui.separator();
     sit_stand(ui, f);
     appearance_submenu(ui, f);
-    take_off_submenu(ui);
+    take_off_submenu(ui, f);
     ui.separator();
     // Self.ToggleSitStand
-    ui.item(
-        "armchair",
-        aurora_i18n::tr!("ui-context-sit-stand"),
-        if f.seated { CtxAction::StandUp } else { CtxAction::SitGround },
-    );
+    ui.item("armchair", aurora_i18n::tr!("ui-context-sit-stand"), CtxAction::SitStand);
     // enable_fly_land: flying already, or not sitting (LLAgent::enableFlying)
     ui.item_if(
         "plane-departure-filled",
@@ -504,7 +512,11 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
         aurora_i18n::tr!("ui-context-derender-temporarily"),
         !f.object.id.is_nil(),
     );
-    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.item(
+        "photo-filled",
+        aurora_i18n::tr!("ui-context-show-textures"),
+        CtxAction::ShowAvatarTextures(f.me),
+    );
     ui.item_if(
         "refresh",
         aurora_i18n::tr!("ui-context-refresh-textures"),
@@ -593,7 +605,11 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         CtxAction::OfferTeleport(id),
     );
     ui.separator();
-    ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
+    ui.item(
+        "eye-filled",
+        aurora_i18n::tr!("common-look-toward-avatar"),
+        CtxAction::LookAtAvatar(id),
+    );
     ui.separator();
     reset_skeleton_items(ui, id);
     ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
@@ -648,9 +664,13 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         f.worn,
         CtxAction::InspectAvatar(id),
     );
-    ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
+    ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
     derender_items(ui, id, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
-    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.item(
+        "photo-filled",
+        aurora_i18n::tr!("ui-context-show-textures"),
+        CtxAction::ShowAvatarTextures(id),
+    );
     ui.item(
         "refresh",
         aurora_i18n::tr!("ui-context-refresh-textures"),
@@ -698,7 +718,11 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         aurora_i18n::tr!("ui-context-invite-to-group"),
         CtxAction::InviteToGroup(id),
     );
-    ui.todo("eye-filled", aurora_i18n::tr!("common-look-toward-avatar"));
+    ui.item(
+        "eye-filled",
+        aurora_i18n::tr!("common-look-toward-avatar"),
+        CtxAction::LookAtAvatar(id),
+    );
     ui.separator();
     reset_skeleton_items(ui, id);
     ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
@@ -764,7 +788,11 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
     );
     // the worn object, not its wearer (the selection's root)
     derender_items(ui, attachment, aurora_i18n::tr!("ui-context-derender-temporarily"), true);
-    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.item(
+        "photo-filled",
+        aurora_i18n::tr!("ui-context-show-textures"),
+        CtxAction::ShowAvatarTextures(id),
+    );
     // the attachment's textures (Object.TexRefresh), not the avatar's bakes
     ui.item(
         "refresh",
@@ -799,7 +827,7 @@ fn save_as_submenu(ui: &mut Builder) {
 /// menu_avatar_self.xml
 fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
     sit_stand(ui, f);
-    take_off_submenu(ui);
+    take_off_submenu(ui, f);
     appearance_submenu(ui, f);
     community_submenu(ui, id);
     // not in Firestorm's menu: kept from Aurora's (fly is in menu_attachment_self.xml)
@@ -817,8 +845,12 @@ fn self_menu(ui: &mut Builder, f: &Facts, id: Uuid) {
         CtxAction::ToggleFly,
     );
     ui.item("camera-filled", aurora_i18n::tr!("ui-context-reset-camera"), CtxAction::ResetCamera);
-    ui.todo("code", aurora_i18n::tr!("ui-context-script-information"));
-    ui.todo("photo-filled", aurora_i18n::tr!("ui-context-show-textures"));
+    ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
+    ui.item(
+        "photo-filled",
+        aurora_i18n::tr!("ui-context-show-textures"),
+        CtxAction::ShowAvatarTextures(id),
+    );
     ui.item(
         "refresh",
         aurora_i18n::tr!("ui-context-refresh-textures"),
@@ -832,12 +864,47 @@ fn sit_stand(ui: &mut Builder, f: &Facts) {
     ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), f.seated, CtxAction::StandUp);
 }
 
-fn take_off_submenu(ui: &mut Builder) {
+fn take_off_submenu(ui: &mut Builder, f: &Facts) {
     ui.submenu("shirt-filled", aurora_i18n::tr!("common-remove"), true, |ui| {
-        ui.todo("shirt-filled", aurora_i18n::tr!("common-clothing"));
-        ui.todo("device-desktop-filled", "HUD");
-        ui.todo("paperclip", aurora_i18n::tr!("common-detach"));
-        ui.todo("circle-x-filled", aurora_i18n::tr!("ui-context-detach-all"));
+        ui.submenu(
+            "shirt-filled",
+            aurora_i18n::tr!("common-clothing"),
+            !f.removable_clothing.is_empty(),
+            |ui| {
+                for kind in 4u8..=16 {
+                    if let Some(label) = crate::world::appearance::wearables().get(usize::from(kind)) {
+                        ui.item_if(
+                            "shirt-filled",
+                            label,
+                            f.removable_clothing.contains(&kind),
+                            CtxAction::TakeOffClothing(kind),
+                        );
+                    }
+                }
+            },
+        );
+        for (hud, icon, label) in [
+            (true, "device-desktop-filled", aurora_i18n::tr!("scene-menu-huds")),
+            (false, "paperclip", aurora_i18n::tr!("common-detach")),
+        ] {
+            let points: Vec<_> = f.attach_points.iter().filter(|p| (p.group == 9) == hud).collect();
+            ui.submenu(icon, label, points.iter().any(|p| f.removable_points.contains(&p.id)), |ui| {
+                for point in &points {
+                    ui.item_if(
+                        icon,
+                        &point.label,
+                        f.removable_points.contains(&point.id),
+                        CtxAction::DetachAt(point.id),
+                    );
+                }
+            });
+        }
+        ui.item_if(
+            "circle-x-filled",
+            aurora_i18n::tr!("ui-context-detach-all"),
+            !f.removable_points.is_empty(),
+            CtxAction::DetachAll,
+        );
     });
 }
 
@@ -934,8 +1001,13 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
         aurora_i18n::tr!("common-about-land"),
         CtxAction::AboutLand(point),
     );
-    // Land.Sit walks there first (autopilot): not in Aurora yet
-    ui.todo("armchair", aurora_i18n::tr!("ui-context-sit-here"));
+    // LLLandSit::handleEvent / near_sit_down_point.
+    ui.item_if(
+        "armchair",
+        aurora_i18n::tr!("ui-context-sit-here"),
+        !f.seated && !f.flying,
+        CtxAction::SitAt(point),
+    );
     if f.seated {
         ui.item("man-filled", aurora_i18n::tr!("common-stand-up"), CtxAction::StandUp);
     }
@@ -1298,11 +1370,10 @@ mod tests {
             .filter(|e| matches!(e.kind, Kind::Unavailable))
             .map(|e| e.label)
             .collect();
-        // the PBR material editor, the object profile, the pathfinding
+        // The object profile, the pathfinding
         // windows and the exporters are windows of their own. Script info
         // is available through the Aurora bridge.
         let expected = tr(&[
-            "ui-context-edit-pbr-material",
             "common-profile",
             "ui-context-show-in-region-objects",
             "ui-context-show-in-characters",

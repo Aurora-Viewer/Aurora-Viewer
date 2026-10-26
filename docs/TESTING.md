@@ -1822,7 +1822,20 @@ copied / scripts observed. Name conflicts and non-copyable contents stop the
 operation before any unlinking. Copying a script does not keep its runtime
 memory; replacing the root does not automatically copy the Linkset Data.
 
-**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop`**
+Scene menu customization: `customize` unlocks the object menu at frame 740;
+`customize-land`, `customize-self` and `customize-avatar` open the respective
+editor at the same frame. `customize-hud` additionally needs
+`AURORA_DEMO_HUDS=1`. Capture at frame 820 or later. `pbr` opens the object's
+native Materials section with PBR selected. The lock button enters editing;
+drag rows into groups, icon bars or the hidden shelf, right-click a row for
+organization choices, and use Finish to resume normal commands. Verify that
+closing/reopening relocks, each target kind retains its own layout, a different
+object receives commands, and list/radial menus share visibility and ordering.
+`textures` opens the read-only baked-texture grid directly at frame 740.
+Show Textures on an avatar or attachment opens the same grid;
+changing avatars replaces the inspected bakes without exposing full asset UUIDs.
+
+**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop|customize|customize-land|customize-self|customize-avatar|customize-hud|pbr|textures`**
 — at frame 600, a violet bell of ours (scripted, touch text "Ring the
 bell", sit text "Lie down"), a teal crate of ours and a cloud of large
 amber particles another resident owns stand in a row 5 m ahead, where the

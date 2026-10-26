@@ -11585,6 +11585,7 @@ inventory-menu-attachments = Attachments
 inventory-menu-organize = Organize
 inventory-menu-drop-here = Drop an option here
 inventory-menu-finish = Finish organizing
+scene-menu-customize = Customize this menu
 inventory-menu-drop-hidden = Drop here to hide
 inventory-menu-separator-name = Separator
 inventory-menu-hidden = Hidden options
@@ -11753,3 +11754,7 @@ avatar-render-detail = Full detail
 avatar-render-empty = No matching display exceptions
 avatar-render-always = Always
 avatar-render-never = Never
+
+scene-menu-huds = HUDs
+
+scene-menu-baked-textures = Baked avatar textures

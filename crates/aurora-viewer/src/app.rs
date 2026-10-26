@@ -328,6 +328,8 @@ pub struct App {
     right_gesture: RightGesture,
     /// Open right-click menu.
     context_menu: Option<ui::context::ContextMenu>,
+    context_customization: ui::context::Customization,
+    avatar_textures: ui::context::AvatarTexturesUi,
     /// What a left-button drag does (steer the avatar, orbit a focus point).
     mouse_mode: MouseMode,
     /// Build tools (selection, manipulators, create, terraform).
@@ -1060,6 +1062,8 @@ impl App {
             script_clicks: Default::default(),
             right_gesture: RightGesture::default(),
             context_menu: None,
+            context_customization: Default::default(),
+            avatar_textures: Default::default(),
             mouse_mode: MouseMode::None,
             build: Default::default(),
             ik_editor: Default::default(),
@@ -6612,6 +6616,7 @@ impl App {
             }
         }
         let mut images: Vec<uuid::Uuid> = self.profile_ui.wanted_images.drain().collect();
+        images.extend(self.avatar_textures.wanted_images.drain());
         images.extend(self.place_images.drain());
         images.extend(self.land_ui.wanted_images.drain());
         images.extend(self.region_ui.wanted_images.drain());
@@ -8617,6 +8622,7 @@ impl App {
             && (ui::color_picker::demo::mode().is_some()
                 || self.chat_ui.demo_reorder.is_some()
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
+                || std::env::var("AURORA_DEMO_OBJECT_MENU").is_ok_and(|mode| mode.starts_with("customize"))
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
@@ -13489,13 +13495,24 @@ impl App {
                 } else {
                     self.settings.use_pie_menu
                 };
-                ui::context::show(&ctx, &p, &mut self.context_menu, &facts, use_pie);
+                if ui::context::show(
+                    &ctx,
+                    &p,
+                    &mut self.context_menu,
+                    &facts,
+                    use_pie,
+                    &mut self.settings.world_context_menus,
+                    &mut self.context_customization,
+                ) {
+                    self.settings.save();
+                }
                 if had_menu && self.context_menu.is_none() {
                     // LLViewerMenuHolderGL::hideMenus drops the menu's selection
                     self.build.release_menu_selection(&self.world);
                     self.flush_build();
                 }
                 self.object_menu_ui(&ctx, &p);
+                self.avatar_textures.show(&ctx, &p, &self.world, &self.ui_images);
                 if let Some((id, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {

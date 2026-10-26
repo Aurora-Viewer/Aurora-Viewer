@@ -1,5 +1,22 @@
 # Aurora Viewer architecture
 
+Scene context menus adapt their live catalogue to the inventory arrangement
+resolver/editor (`ui/context/customize.rs`). Seven independent profiles in
+`Settings::world_context_menus` cover land, objects, self, other avatars, own
+attachments, other attachments and HUDs. Explicit command keys omit picked
+identities and coordinates; the current catalogue supplies all commands and
+permissions on each frame. Lists and radial pagination use the same saved
+placements. The radial editor opens the shared list editor, with the same
+groups, filters, icon bars, hidden shelf, undo/redo and protected lock control.
+Scene reset clears only the current profile; inventory notecard import/export
+remains specific to the inventory catalogue. `context/avatar_textures.rs`
+inspects live avatar bakes through the existing asynchronous UI image stream,
+retaining masked identifiers and read-only thumbnails.
+Land sitting uses the ordinary autopilot with a 0.7 m arrival callback;
+interrupted/failed approaches never sit. Outfit category removal resolves the
+confirmed COF and current attachment points and uses the existing appearance
+policy, preserving body parts and RLVa removal restrictions.
+
 Ready chat media replace raw URL text through `ui/chat/previews.rs` in every
 conversation style, while the stored message stays intact for history, search
 and copying. Preview hover actions expose Copy link and Open in browser with

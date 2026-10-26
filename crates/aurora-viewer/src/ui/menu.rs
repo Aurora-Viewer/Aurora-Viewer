@@ -1125,7 +1125,15 @@ mod tests {
                                 });
                             }
                             _ => {
-                                crate::ui::context::show(ui.ctx(), &p, world, &Default::default(), *kind == 4);
+                                crate::ui::context::show(
+                                    ui.ctx(),
+                                    &p,
+                                    world,
+                                    &Default::default(),
+                                    *kind == 4,
+                                    &mut Default::default(),
+                                    &mut Default::default(),
+                                );
                                 *shown = world.is_some();
                             }
                         }

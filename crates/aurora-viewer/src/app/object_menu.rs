@@ -401,6 +401,14 @@ impl App {
     /// The finish callback of a walk (LLAgent::stopAutoPilot).
     pub(super) fn autopilot_arrived(&mut self, arrival: Arrival, success: bool, user_cancel: bool) {
         match arrival {
+            Arrival::SitGround => {
+                if success {
+                    if self.world.agent.flying {
+                        self.toggle_fly();
+                    }
+                    self.send(NetCommand::OneShotControl(control::SIT_ON_GROUND));
+                }
+            }
             Arrival::Attach { object, point } => {
                 if success {
                     self.attach_object(object, point);

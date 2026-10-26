@@ -248,6 +248,7 @@ fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: 
         .rect
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn show(
     ctx: &egui::Context,
     p: &Palette,
@@ -255,8 +256,13 @@ pub(super) fn show(
     entries: &[Entry],
     voice: Option<(uuid::Uuid, crate::ui::menu::VoiceVolume)>,
     open: &mut bool,
+    customized: bool,
 ) -> Option<usize> {
-    let root = layout(&menu.target, entries);
+    let root = if customized {
+        paginate(entries.to_vec())
+    } else {
+        layout(&menu.target, entries)
+    };
     let mut current = root.as_slice();
     let mut valid_depth = 0;
     for &index in &menu.pie_path {
@@ -407,7 +413,11 @@ pub(super) fn show(
             match &current[index].kind {
                 Kind::Action(action) => {
                     super::request(ctx, action.clone());
-                    *open = false;
+                    // Entering arrangement editing keeps the temporary build
+                    // selection and its live permissions until editing ends.
+                    if !matches!(action, CtxAction::CustomizeMenu(_)) {
+                        *open = false;
+                    }
                 }
                 Kind::Submenu(_) => {
                     menu.pie_path.push(index);
@@ -435,7 +445,15 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                super::super::show(ui.ctx(), &crate::theme::Theme::default().palette(), menu, facts, true);
+                super::super::show(
+                    ui.ctx(),
+                    &crate::theme::Theme::default().palette(),
+                    menu,
+                    facts,
+                    true,
+                    &mut Default::default(),
+                    &mut Default::default(),
+                );
                 if ui.ctx().current_pass_index() == 0 {
                     ui.ctx().request_discard("exercise menu input across repeated egui passes");
                 }
@@ -477,7 +495,10 @@ mod tests {
     #[test]
     fn disabled_slice_stays_open_and_left_click_commits_once() {
         let ctx = egui::Context::default();
-        let facts = Facts::default();
+        let facts = Facts {
+            flying: true,
+            ..Default::default()
+        };
         let mut menu = open(Target::Ground);
         frame(&ctx, &mut menu, &facts, Vec::new());
         frame(&ctx, &mut menu, &facts, Vec::new());
@@ -487,6 +508,36 @@ mod tests {
         click(&ctx, &mut menu, &facts, egui::pos2(500.0, 400.0), egui::PointerButton::Primary);
         assert!(menu.is_none());
         assert!(matches!(super::super::take_requests(&ctx).as_slice(), [CtxAction::AboutLand(_)]));
+    }
+
+    #[test]
+    fn land_sit_slice_dispatches_the_clicked_ground_point() {
+        let ctx = egui::Context::default();
+        let facts = Facts::default();
+        let mut menu = open(Target::Ground);
+        let point = Vec3::new(20.0, 30.0, 4.0);
+        menu.as_mut().expect("menu").point = point;
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        click(&ctx, &mut menu, &facts, egui::pos2(330.0, 330.0), egui::PointerButton::Primary);
+        assert!(matches!(super::super::take_requests(&ctx).as_slice(), [CtxAction::SitAt(p)] if *p == point));
+        assert!(menu.is_none());
+    }
+
+    #[test]
+    fn opening_the_radial_editor_keeps_the_menu_selection_alive() {
+        let ctx = egui::Context::default();
+        let facts = Facts::default();
+        let mut menu = open(Target::Ground);
+        menu.as_mut().expect("menu").pie_path = vec![4];
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        frame(&ctx, &mut menu, &facts, Vec::new());
+        click(&ctx, &mut menu, &facts, egui::pos2(470.0, 330.0), egui::PointerButton::Primary);
+        assert!(matches!(
+            super::super::take_requests(&ctx).as_slice(),
+            [CtxAction::CustomizeMenu(_)]
+        ));
+        assert!(menu.is_some(), "the app must retain its temporary object selection");
     }
 
     #[test]
@@ -727,7 +778,12 @@ mod tests {
                 fn list_actions(entries: &[Entry], result: &mut Vec<String>) {
                     for e in entries {
                         match &e.kind {
-                            Kind::Action(a) if !matches!(a, CtxAction::Sit { .. } | CtxAction::SitGround | CtxAction::StandUp) => {
+                            Kind::Action(a)
+                                if !matches!(
+                                    a,
+                                    CtxAction::Sit { .. } | CtxAction::SitAt(_) | CtxAction::SitGround | CtxAction::StandUp
+                                ) =>
+                            {
                                 result.push(format!("{a:?}:{}:{:?}", e.enabled, e.checked))
                             }
                             Kind::Submenu(c) => list_actions(c, result),
@@ -738,7 +794,9 @@ mod tests {
                 list_actions(&entries, &mut classic);
                 let mut pie = Vec::new();
                 actions(&radial, &mut pie);
-                pie.retain(|a| !a.starts_with("Sit ") && !a.starts_with("SitGround:") && !a.starts_with("StandUp:"));
+                pie.retain(|a| {
+                    !a.starts_with("Sit ") && !a.starts_with("SitAt(") && !a.starts_with("SitGround:") && !a.starts_with("StandUp:")
+                });
                 classic.sort();
                 pie.sort();
                 assert_eq!(pie, classic, "{target:?}");
