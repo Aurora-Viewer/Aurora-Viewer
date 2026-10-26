@@ -16,6 +16,9 @@ use egui::{Color32, Pos2, Rect, Vec2};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+pub(crate) mod aurora;
+mod linden;
+pub(crate) mod mark;
 mod mesh;
 mod paint;
 #[cfg(test)]
@@ -287,6 +290,9 @@ pub struct Content {
     pub friend: bool,
     pub too_complex: bool,
     pub blocked: bool,
+    /// A member of the Aurora team or a Linden Lab employee
+    /// (`world::staff`): the plate has its light and its tag (`mark.rs`).
+    pub mark: Option<crate::world::staff::Mark>,
 }
 
 /// A live editor preview shares the live geometry, contrast and badge code.
@@ -310,6 +316,7 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, appearance: std::sync::Arc<crate:
         friend: true,
         too_complex: false,
         blocked: false,
+        mark: None,
     };
     let tag = Tag {
         id: Uuid::nil(),
@@ -332,6 +339,7 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, appearance: std::sync::Arc<crate:
         glass: 0.0,
         hover: 0.0,
         grow: 0.0,
+        still: false,
     };
     paint::plate(&env, &tag, &state, &mut paint::Cache::default());
 }
@@ -478,7 +486,15 @@ pub struct Layout {
 /// Lay a plate out: the picture at the left of a full plate, the lines
 /// stacked and centered in its height, the badges floating over the top
 /// right edge (full) or after the name (compact).
+#[cfg(test)]
 pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layout {
+    layout_with(level, m, text, badges, 0.0)
+}
+
+/// `layout`, with room for a tag `lead` points wide floating over the top
+/// edge from the text's left (the "Aurora Staff" tag): the plate is at
+/// least as wide, and on a full plate its floating badges start past it.
+pub fn layout_with(level: Level, m: &Metrics, text: &TextSize, badges: usize, lead: f32) -> Layout {
     let s = m.scale;
     let text_left = if m.photo > 0.0 { m.pad_left + m.photo + m.gap } else { m.pad_left };
     let text_w = text.subs.iter().flatten().map(|v| v.x).fold(text.name.x, f32::max);
@@ -492,6 +508,14 @@ pub fn layout(level: Level, m: &Metrics, text: &TextSize, badges: usize) -> Layo
     if level == Level::Full {
         // room for the floating badges, which start right of the picture
         width = width.max(text_left + row + 21.0 * s);
+    }
+    if lead > 0.0 {
+        let past = if level == Level::Full && badges > 0 {
+            m.gap + row + 21.0 * s
+        } else {
+            m.pad_right
+        };
+        width = width.max(text_left + lead + past);
     }
     let width = width.ceil();
 
@@ -930,6 +954,7 @@ impl Plates {
                 glass: entry.glass,
                 hover: entry.hover * entry.hover * (3.0 - 2.0 * entry.hover),
                 grow: if self.still { 0.0 } else { bounce_grow(now - entry.bounced) },
+                still: self.still,
             };
             aurora_render::world_label_at(painter.ctx(), Some(tag.at));
             placed(tag.id, paint::plate(&env, tag, &state, &mut entry.cache), tag.at);

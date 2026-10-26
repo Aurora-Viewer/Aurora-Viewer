@@ -323,6 +323,7 @@ fn plate_content(
         friend,
         too_complex: !own && too_complex,
         blocked,
+        mark: crate::world::staff::mark_named(&id, &legacy),
     }
 }
 

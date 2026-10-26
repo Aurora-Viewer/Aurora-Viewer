@@ -841,7 +841,9 @@ fn paint_rich(
     let mut name = semibold(ui, 13.0, name_color);
     name.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), name);
-    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    let mark = crate::world::staff::mark(world, &row.id);
+    let staff = staff_room(ui, p, mark, 13.0, width);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let name_g = ui.painter().layout_job(job);
     let cut = name_g.elided;
     let user = second_line(world, &row.id, data.settings.name_format);
@@ -850,15 +852,26 @@ fn paint_rich(
     let user_g = ui.painter().layout_job(job);
     let total = name_g.size().y + user_g.size().y - 2.0;
     let top = identity.center().y - total / 2.0;
-    let name_h = name_g.size().y;
+    let (name_w, name_h) = (name_g.size().x, name_g.size().y);
     let painter = end.name_painter(ui);
     painter.galley(Pos2::new(left, top), name_g, name_color);
     painter.galley(Pos2::new(left, top + name_h - 2.0), user_g, p.muted);
+    if staff > 0.0 {
+        crate::ui::staff::paint_at(ui, &painter, p, mark, Pos2::new(left + name_w + 6.0, top + name_h / 2.0), 13.0);
+    }
     let tip = paint_badges(ui, p, &list, end, false, pointer);
     if hot && let Some((pill, cells)) = &end.actions {
         hover_actions(ui, p, world, st, row, *pill, cells, &quick_actions(world, row), actions);
     }
     tip.or_else(|| (cut && pointer.is_some_and(|at| at.x >= left && at.x <= left + width)).then(|| row.name.clone()))
+}
+
+/// Points a member of the Aurora team's tag takes after a name `font`
+/// points high in `width` (the gap included), or 0: the name is cut before
+/// the tag is, as in the other lists (`rows::person_names`).
+fn staff_room(ui: &egui::Ui, p: &Palette, mark: Option<crate::world::staff::Mark>, font: f32, width: f32) -> f32 {
+    let tag = crate::ui::staff::width(ui, p, mark, font);
+    if tag > 0.0 && width - tag - 6.0 >= 40.0 { tag + 6.0 } else { 0.0 }
 }
 
 /// A compact identity with the complete action strip replacing the range.
@@ -918,10 +931,17 @@ fn paint_compact(
     let mut format = egui::TextFormat::simple(FontId::proportional(12.0), name_color);
     format.italics = row.muted;
     let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);
-    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    let mark = crate::world::staff::mark(world, &row.id);
+    let staff = staff_room(ui, p, mark, 12.0, width);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width - staff);
     let g = ui.painter().layout_job(job);
     let cut = g.elided;
-    crate::ui::widgets::paint_row_text(&end.name_painter(ui), g, left, identity.center().y, name_color);
+    let name_w = g.size().x;
+    let painter = end.name_painter(ui);
+    crate::ui::widgets::paint_row_text(&painter, g, left, identity.center().y, name_color);
+    if staff > 0.0 {
+        crate::ui::staff::paint_at(ui, &painter, p, mark, Pos2::new(left + name_w + 6.0, identity.center().y), 12.0);
+    }
     let tip = paint_badges(ui, p, &list, end, true, pointer);
     if hot && let Some((pill, cells)) = &end.actions {
         hover_actions(ui, p, world, st, row, *pill, cells, &quick_actions(world, row), actions);

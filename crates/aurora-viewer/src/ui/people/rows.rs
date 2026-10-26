@@ -159,9 +159,32 @@ pub(super) fn names(
     dot: Option<Color32>,
     tag: Option<(&str, Color32, Color32)>,
 ) -> bool {
+    person_names(ui, p, rect, left, right, first, color, second, dot, tag, None)
+}
+
+/// `names` for a resident: a member of the Aurora team or of Linden Lab
+/// (`mark`) gets its tag right after the name, which is cut before the
+/// tag is (the tag is how the staff is recognized).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn person_names(
+    ui: &egui::Ui,
+    p: &Palette,
+    rect: Rect,
+    left: f32,
+    right: f32,
+    first: &str,
+    color: Color32,
+    second: &str,
+    dot: Option<Color32>,
+    tag: Option<(&str, Color32, Color32)>,
+    mark: Option<crate::world::staff::Mark>,
+) -> bool {
     let width = (right - left).max(0.0);
+    let staff = crate::ui::staff::width(ui, p, mark, 13.0);
+    // the tag keeps its place as long as some of the name still shows
+    let staff = if staff > 0.0 && width - staff - 6.0 >= 40.0 { staff } else { 0.0 };
     let mut job = egui::text::LayoutJob::single_section(first.to_owned(), semibold(ui, 13.0, color));
-    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(if staff > 0.0 { width - staff - 6.0 } else { width });
     let name_g = ui.painter().layout_job(job);
     let cut = name_g.elided;
     let mut job = egui::text::LayoutJob::single_section(second.to_owned(), egui::TextFormat::simple(FontId::proportional(11.5), p.muted));
@@ -177,6 +200,11 @@ pub(super) fn names(
     // what follows the name, only where it fits
     let mut x = left + name_w + 6.0;
     let y = top + name_h / 2.0;
+    if staff > 0.0
+        && let Some(r) = crate::ui::staff::paint_at(ui, ui.painter(), p, mark, Pos2::new(x, y), 13.0)
+    {
+        x = r.right() + 6.0;
+    }
     if let Some(c) = dot.filter(|_| !cut && x + 9.0 <= right) {
         ui.painter().circle_filled(Pos2::new(x + 4.5, y), 4.5, c);
         x += 9.0 + 6.0;
