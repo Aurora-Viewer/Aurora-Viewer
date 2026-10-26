@@ -27,21 +27,24 @@ fn now() -> f64 {
 
 /// Which group titles the name tags show (the Legacy Viewer's
 /// GroupTitlesTagMode, LLVOAvatar::sRenderGroupTitles): all by default.
+/// AllExceptMine combines the former RenderHideGroupTitle switch with All (#803).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum GroupTitles {
     None,
     Mine,
+    AllExceptMine,
     #[default]
     All,
 }
 
 impl GroupTitles {
-    pub const ALL: [GroupTitles; 3] = [GroupTitles::None, GroupTitles::Mine, GroupTitles::All];
+    pub const ALL: [GroupTitles; 4] = [GroupTitles::None, GroupTitles::Mine, GroupTitles::AllExceptMine, GroupTitles::All];
 
     pub fn label(self) -> &'static str {
         match self {
             GroupTitles::None => aurora_i18n::tr!("ui-options-group-titles-none"),
             GroupTitles::Mine => aurora_i18n::tr!("ui-options-group-titles-mine"),
+            GroupTitles::AllExceptMine => aurora_i18n::tr!("ui-options-group-titles-except-mine"),
             GroupTitles::All => aurora_i18n::tr!("ui-options-group-titles-all"),
         }
     }
@@ -51,6 +54,7 @@ impl GroupTitles {
         match self {
             GroupTitles::None => false,
             GroupTitles::Mine => own,
+            GroupTitles::AllExceptMine => !own,
             GroupTitles::All => true,
         }
     }
@@ -642,9 +646,16 @@ mod tests {
 
     #[test]
     fn group_titles_show_on_the_tags_the_mode_names() {
-        assert!(GroupTitles::default().shows(false));
-        assert!(GroupTitles::Mine.shows(true) && !GroupTitles::Mine.shows(false));
-        assert!(!GroupTitles::None.shows(true));
+        assert_eq!(GroupTitles::default(), GroupTitles::All);
+        for (mode, own, other) in [
+            (GroupTitles::None, false, false),
+            (GroupTitles::Mine, true, false),
+            (GroupTitles::AllExceptMine, false, true),
+            (GroupTitles::All, true, true),
+        ] {
+            assert_eq!(mode.shows(true), own, "own title in {mode:?}");
+            assert_eq!(mode.shows(false), other, "other title in {mode:?}");
+        }
     }
 
     #[test]

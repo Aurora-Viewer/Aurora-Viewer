@@ -4457,6 +4457,9 @@ failure. Grid validation and any paid upload are performed by the human.
   voice, `8` Shortcuts, `10` Camera, `11` Commands, `12` Privacy, `13`
   Aurora, `14` Accessibility); `9`, the former Debug page, opens the Dev
   Toolbox instead. `<what>`:
+  - `group-titles` on `avatars/1`: reveals the group-title dropdown with
+    All except mine selected. The separate hide-own-title switch is absent;
+    check None / Only mine / All except mine / All and the French labels.
   - `search=<text>`: the window's search filled in. Every row whose name,
     help or choices have a word starting with each word typed shows under
     its page and group, its control live, its "go to" arrow and the group's

@@ -151,7 +151,6 @@ const BEFORE: &[&str] = &[
     "legacy_username_format",
     "trim_resident",
     "group_titles",
-    "hide_own_group_title",
     "display_name_notices",
     "tag_complexity",
     "tag_complexity_too_complex_only",
@@ -592,6 +591,44 @@ fn click(at: egui::Pos2) -> Vec<Vec<egui::Event>> {
         vec![button(false)],
         Vec::new(),
     ]
+}
+
+#[test]
+fn group_titles_are_chosen_in_one_dropdown_and_reset_together() {
+    use crate::world::names::GroupTitles;
+
+    let mut frames = Frames::new();
+    let (mut s, mut st, mut r) = (Settings::default(), OptionsUi::default(), OptionsResult::default());
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Avatars, 1, Vec::new());
+    }
+    let paths = collected();
+    assert_eq!(paths.iter().filter(|(_, path)| path == "group_titles").count(), 1);
+    assert!(!paths.iter().any(|(_, path)| path == "hide_own_group_title"));
+    for mode in [GroupTitles::AllExceptMine, GroupTitles::Mine, GroupTitles::None, GroupTitles::All] {
+        let at = texts
+            .iter()
+            .find(|t| t.source == s.group_titles.label())
+            .expect("selected title mode")
+            .rect
+            .center();
+        for events in click(at) {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Avatars, 1, events);
+        }
+        for choice in GroupTitles::ALL {
+            assert!(texts.iter().any(|t| t.source == choice.label()), "dropdown offers {choice:?}");
+        }
+        let at = texts.iter().find(|t| t.source == mode.label()).expect("title choice").rect.center();
+        for events in click(at) {
+            texts = page_frame(&mut frames, &mut s, &mut st, &mut r, Page::Avatars, 1, events);
+        }
+        assert_eq!(s.group_titles, mode);
+        assert!(r.changed);
+    }
+    s.group_titles = GroupTitles::AllExceptMine;
+    reset_page_settings(Page::Avatars, &mut s);
+    assert_eq!(s.group_titles, GroupTitles::All);
 }
 
 #[test]
