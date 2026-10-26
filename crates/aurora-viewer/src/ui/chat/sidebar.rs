@@ -12,6 +12,7 @@
 use super::{ChatUi, ConvAction, close_tip, presence};
 use crate::theme::Palette;
 use crate::world::World;
+use crate::world::contact_sets::appearance::ICONS;
 use egui::{Color32, RichText};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -40,6 +41,45 @@ pub(super) fn kind(world: &World, id: &Uuid) -> Kind {
         None if world.groups.is_member(id) => Kind::Group,
         None => Kind::Private,
     }
+}
+
+/// A section of the column: a contact set whose members' conversations
+/// are shown apart (an index in `ContactSets::chat_sections`, #1104), then
+/// the kinds. A conversation is moved only within its section.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Section {
+    Set(usize),
+    Kind(Kind),
+}
+
+impl Section {
+    /// The kind of the conversations it holds.
+    fn kind(self) -> Kind {
+        match self {
+            Section::Set(_) => Kind::Private,
+            Section::Kind(k) => k,
+        }
+    }
+}
+
+/// The section of a conversation: a private one with a member of a set
+/// shown apart goes to the highest-priority such set.
+pub(super) fn section(world: &World, id: &Uuid) -> Section {
+    match kind(world, id) {
+        Kind::Private => world
+            .contact_sets
+            .chat_section(id)
+            .map_or(Section::Kind(Kind::Private), Section::Set),
+        k => Section::Kind(k),
+    }
+}
+
+/// The sections from top to bottom: the sets shown apart (highest
+/// priority first), the private messages, the groups, the conferences.
+fn sections(world: &World) -> impl Iterator<Item = Section> {
+    (0..world.contact_sets.chat_sections().len())
+        .map(Section::Set)
+        .chain([Kind::Private, Kind::Group, Kind::Conference].map(Section::Kind))
 }
 
 /// The insignia of a group conversation's group: our membership's, else
@@ -340,15 +380,16 @@ pub(super) fn show(
             let now = ui.input(|i| i.time);
             st.flashes.begin(now);
             let sessions = st.reorder.sessions(world);
-            for section in [Kind::Private, Kind::Group, Kind::Conference] {
+            for section in sections(world) {
+                let kind = section.kind();
                 let ids: Vec<(Uuid, usize)> = sessions
                     .iter()
                     .copied()
-                    .filter(|(id, _)| !st.popped.contains(Some(*id)) && kind(world, id) == section)
+                    .filter(|(id, _)| !st.popped.contains(Some(*id)) && self::section(world, id) == section)
                     .collect();
                 let titled: Vec<(Uuid, usize, String)> = ids
                     .into_iter()
-                    .map(|(id, unread)| (id, unread, entry_name(world, &id, section)))
+                    .map(|(id, unread)| (id, unread, entry_name(world, &id, kind)))
                     .filter(|(_, _, name)| matches(name))
                     .collect();
                 // a section without a conversation is not drawn at all: no
@@ -356,23 +397,23 @@ pub(super) fn show(
                 if titled.is_empty() {
                     continue;
                 }
-                section_head(ui, p, section, rail);
+                section_head(ui, p, world, section, rail);
                 for (id, unread, name) in titled {
-                    if section == Kind::Private {
+                    if kind == Kind::Private {
                         st.wanted_pics.insert(id);
                     }
                     let current = st.selected == Some(id) && !st.contacts;
                     let status = presence::of(world, &id);
-                    let insignia = if section == Kind::Group { group_insignia(world, &id) } else { None };
+                    let insignia = if kind == Kind::Group { group_insignia(world, &id) } else { None };
                     if let Some(i) = insignia {
                         st.wanted_images.insert(i);
                     }
-                    let icon = match section {
+                    let icon = match kind {
                         Kind::Private => Icon::Avatar(pics.get(&id), status),
                         Kind::Group => Icon::Group(insignia.and_then(|i| images.get(&i))),
                         Kind::Conference => Icon::Glyph("users", p.muted),
                     };
-                    let (sub, sub_icon) = sub_line(p, world, id, section, status);
+                    let (sub, sub_icon) = sub_line(p, world, id, kind, status);
                     let sub_icon = sub_icon.filter(|_| {
                         st.conversation_voice_indicator
                             || (world.call_of(&id).is_none() && world.call_launched(&id).is_none() && world.calls.invite_for(&id).is_none())
@@ -384,7 +425,7 @@ pub(super) fn show(
                     }
                     let e = Entry {
                         icon,
-                        name_color: if section == Kind::Private {
+                        name_color: if kind == Kind::Private {
                             world.contact_sets.appearance(&id).ui_name.map(crate::ui::colors::set_color)
                         } else {
                             None
@@ -576,8 +617,8 @@ fn section_title(ui: &egui::Ui, p: &Palette, title: &str) -> RichText {
 /// The name of an entry: a resident's display name, else the session's
 /// title (a group, a conference, a name not known yet).
 /// The conversations of the column from top to bottom, as `show` lists
-/// them (None: the nearby chat): those the search leaves, the private
-/// messages, then the groups and the conferences.
+/// them (None: the nearby chat): those the search leaves, the sets shown
+/// apart, the private messages, then the groups and the conferences.
 pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
     let filter = st.side_filter.trim().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
@@ -586,11 +627,11 @@ pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
     if matches(aurora_i18n::tr!("common-nearby-chat")) {
         order.push(None);
     }
-    for section in [Kind::Private, Kind::Group, Kind::Conference] {
+    for section in sections(world) {
         order.extend(
             sessions
                 .iter()
-                .filter(|(id, _)| kind(world, id) == section && matches(&entry_name(world, id, section)))
+                .filter(|(id, _)| self::section(world, id) == section && matches(&entry_name(world, id, section.kind())))
                 .map(|(id, _)| Some(*id)),
         );
     }
@@ -605,8 +646,9 @@ fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
 }
 
 /// The head of a section (a conversation is started from the button beside
-/// the search field, `new_conversation`).
-fn section_head(ui: &mut egui::Ui, p: &Palette, section: Kind, rail: bool) {
+/// the search field, `new_conversation`); a set's is its name after its
+/// colour's dot, as its pill in People › Contact sets.
+fn section_head(ui: &mut egui::Ui, p: &Palette, world: &World, section: Section, rail: bool) {
     if rail {
         ui.add_space(6.0);
         let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
@@ -619,11 +661,48 @@ fn section_head(ui: &mut egui::Ui, p: &Palette, section: Kind, rail: bool) {
         return;
     }
     let title = match section {
-        Kind::Private => aurora_i18n::tr!("ui-chat-section-private"),
-        Kind::Group => aurora_i18n::tr!("ui-chat-section-groups"),
-        Kind::Conference => aurora_i18n::tr!("ui-chat-section-conferences"),
+        Section::Set(i) => {
+            let name = world.contact_sets.chat_sections().get(i).map_or("", String::as_str);
+            let set = world.contact_sets.set(name);
+            let icon = set.and_then(|s| s.visuals.icon).and_then(|i| ICONS.get(i).copied());
+            let color = set.map_or(p.muted, |s| match icon {
+                Some(_) => crate::ui::colors::set_color(s.color),
+                None => crate::ui::contacts::color32(s.color),
+            });
+            set_head(ui, p, name, icon, color);
+            return;
+        }
+        Section::Kind(Kind::Private) => aurora_i18n::tr!("ui-chat-section-private"),
+        Section::Kind(Kind::Group) => aurora_i18n::tr!("ui-chat-section-groups"),
+        Section::Kind(Kind::Conference) => aurora_i18n::tr!("ui-chat-section-conferences"),
     };
     plain_head(ui, p, title);
+}
+
+/// The head of a contact set's section: `plain_head` after the set's
+/// symbol in its colour, or its colour's dot when it has none.
+fn set_head(ui: &mut egui::Ui, p: &Palette, name: &str, icon: Option<&str>, color: Color32) {
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        ui.add_space(1.0);
+        match icon {
+            Some(icon) => {
+                let (r, _) = ui.allocate_exact_size(egui::Vec2::splat(11.0), egui::Sense::hover());
+                super::thread::paint_icon(ui.painter(), icon, r, color);
+            }
+            None => {
+                let (dot, _) = ui.allocate_exact_size(egui::Vec2::splat(7.0), egui::Sense::hover());
+                ui.painter().circle_filled(dot.center(), 3.5, color);
+            }
+        }
+        ui.add(crate::ui::widgets::elided_label(
+            ui,
+            section_title(ui, p, name),
+            ui.available_width() - 6.0,
+        ));
+    });
+    ui.add_space(2.0);
 }
 
 fn plain_head(ui: &mut egui::Ui, p: &Palette, title: &str) {

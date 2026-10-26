@@ -1464,7 +1464,8 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
 /// (the menu of the nearby chat's volume open, with `local`), `channel`
 /// (its channel selector shown, as the preferences can), `friend-away` or
 /// `friend-offline` (the friend of `im` away in the region, or offline:
-/// their crescent or ring on the selected entry, #744).
+/// their crescent or ring on the selected entry, #744), `sets` (two
+/// contact sets shown apart in the column, #1104).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AuroraScene {
     pub view: Bubbles,
@@ -1482,6 +1483,9 @@ pub struct AuroraScene {
     /// `friend-away` / `friend-offline`: the friend's status, online
     /// otherwise.
     pub friend: Option<crate::ui::presence::Status>,
+    /// `sets`: Family (the friend and Loup) and Clubbing (Loup and Tess)
+    /// shown apart, Family first (Loup goes to it) with its heart symbol.
+    pub sets: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1517,6 +1521,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
         volume_menu: false,
         channel: false,
         friend: None,
+        sets: false,
     };
     let mut away = false;
     for flag in flags {
@@ -1540,6 +1545,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
             "channel" => scene.channel = true,
             "friend-away" => scene.friend = Some(crate::ui::presence::Status::Away),
             "friend-offline" => scene.friend = Some(crate::ui::presence::Status::Offline),
+            "sets" => scene.sets = true,
             "call-away" => {
                 scene.call = Some(AuroraCall::InCall);
                 away = true;
@@ -1672,6 +1678,30 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
     unread(world, DEMO_LOUP, 1);
     if matches!(scene.view, Bubbles::Friend) {
         unread(world, DEMO_FRIEND, 3);
+    }
+    if scene.sets {
+        // in memory only: the demo account's file stays as it was
+        let sets = &mut world.contact_sets;
+        sets.keep_in_memory();
+        let family = aurora_i18n::tr!("demo-family");
+        for (name, color, members) in [
+            (family, [0.957, 0.447, 0.714, 1.0], [DEMO_FRIEND, DEMO_LOUP]),
+            ("Clubbing", [0.369, 0.918, 0.831, 1.0], [DEMO_LOUP, DEMO_TESS]),
+        ] {
+            sets.add_set(name);
+            sets.set_color(name, color);
+            sets.add_to_set(&members, name, |_| true);
+            sets.set_separate_chats(name, true);
+        }
+        sets.move_priority(family, true);
+        // Family's symbol heads its section; Clubbing, without one, its dot
+        sets.set_visuals(
+            family,
+            crate::world::contact_sets::Visuals {
+                icon: Some(0),
+                ..Default::default()
+            },
+        );
     }
 }
 
