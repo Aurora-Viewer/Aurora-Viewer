@@ -115,6 +115,8 @@ pub mod keywords;
 pub mod land;
 #[path = "demo_link.rs"]
 pub mod link;
+#[path = "demo_missing_texture.rs"]
+pub mod missing_texture;
 /// The notification center's mockup scenario, in either style
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
