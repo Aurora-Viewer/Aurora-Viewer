@@ -19,6 +19,32 @@ pub(super) struct InventoryDrag {
     pub cursor: Option<egui::CursorIcon>,
 }
 
+impl InventoryDrag {
+    /// The surface under the pointer (`pointer` in pixels), asked again
+    /// when the ray moves, every 100 ms and on release.
+    fn refresh_surface(
+        &mut self,
+        scene: &crate::scene::Scene,
+        world: &World,
+        far: f32,
+        ray: (Vec3, Vec3),
+        pointer: (f32, f32),
+        released: bool,
+    ) {
+        if released || self.ray != Some(ray) || self.checked.is_none_or(|at| at.elapsed() >= Duration::from_millis(100)) {
+            // HUD attachments are avatar targets in Firestorm, never supports
+            // for rez. Block the drop rather than tracing through the HUD.
+            self.surface = if scene.hud_pick(world, pointer, false).is_some() {
+                None
+            } else {
+                scene.inventory_surface(world, ray, far, &mut self.candidates)
+            };
+            self.ray = Some(ray);
+            self.checked = Some(Instant::now());
+        }
+    }
+}
+
 pub(super) struct InventoryDrop {
     command: BuildCmd,
     consume: Option<Uuid>,
@@ -149,6 +175,23 @@ pub(super) fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bo
     Ok(())
 }
 
+/// The avatar an object is, or is worn by: an attachment counts as its
+/// wearer (LLVOAvatar::findAvatarFromAttachment).
+fn wearer(world: &World, idx: usize) -> Option<usize> {
+    let mut current = idx;
+    for _ in 0..64 {
+        let o = world.objects.get(current)?;
+        if o.is_avatar() {
+            return Some(current);
+        }
+        if o.parent_id == 0 {
+            return None;
+        }
+        current = world.objects.parent_of(o)?;
+    }
+    None
+}
+
 fn prepare(
     world: &World,
     id: Uuid,
@@ -263,8 +306,12 @@ impl App {
     pub(super) fn inventory_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
         self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx).or_else(|| ui::inventory::drag::cursor(ctx));
         ui::inventory::drag::badge(ctx, &self.palette);
-        if !egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) {
+        if ui::inventory::drag::carried_count(ctx).is_none() {
             self.inventory_drag.checked = None;
+        }
+        let give = self.avatar_give_input(ctx, renderer);
+        self.scene.mark_give_target(&self.world, give);
+        if give.is_some() || !egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) {
             return None;
         }
         if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
@@ -292,24 +339,15 @@ impl App {
         } else {
             original(&self.world, drag.item)
         };
-        if item.is_ok()
-            && (released
-                || self.inventory_drag.ray != Some(ray)
-                || self
-                    .inventory_drag
-                    .checked
-                    .is_none_or(|at| at.elapsed() >= Duration::from_millis(100)))
-        {
-            // HUD attachments are avatar targets in Firestorm, never supports
-            // for rez. Block the drop rather than tracing through the HUD.
-            self.inventory_drag.surface = if self.scene.hud_pick(&self.world, (pos.x * ppp, pos.y * ppp), false).is_some() {
-                None
-            } else {
-                self.scene
-                    .inventory_surface(&self.world, ray, self.settings.draw_distance, &mut self.inventory_drag.candidates)
-            };
-            self.inventory_drag.ray = Some(ray);
-            self.inventory_drag.checked = Some(started);
+        if item.is_ok() {
+            self.inventory_drag.refresh_surface(
+                &self.scene,
+                &self.world,
+                self.settings.draw_distance,
+                ray,
+                (pos.x * ppp, pos.y * ppp),
+                released,
+            );
         }
         let result = item.and_then(|item| {
             let surface = self.inventory_drag.surface.ok_or("rez-no-surface")?;
@@ -396,6 +434,62 @@ impl App {
                 None
             }
         }
+    }
+
+    /// LLToolDragAndDrop::pick: inventory over another resident, or over
+    /// what they wear (HUDs excepted), is given to them
+    /// (dad3dGiveInventory, dad3dGiveInventoryObject,
+    /// dad3dGiveInventoryCategory), the nearest surface deciding, so a wall
+    /// in front hides them. The drop opens the Share confirmation of the
+    /// conversations and profiles, for every entry carried; the Legacy
+    /// Viewer gives a single entry, at once (#991). While they are the
+    /// target, their avatar's object index, outlined by the scene. Our own
+    /// avatar is left to the rez rules.
+    fn avatar_give_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<usize> {
+        let ids = ui::inventory::drag::carried_ids(ctx)?;
+        if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open || ctx.is_pointer_over_egui() {
+            return None;
+        }
+        // the texture library's cards are not inventory to give
+        if egui::DragAndDrop::payload::<InvDrag>(ctx)
+            .is_some_and(|drag| crate::ui::texture_library::catalogue::resource(&self.world.inventory, drag.0).is_some())
+        {
+            return None;
+        }
+        let (pos, released) = ctx.input(|i| Some((i.pointer.interact_pos()?, i.pointer.button_released(egui::PointerButton::Primary))))?;
+        let ppp = ctx.pixels_per_point();
+        let ray = renderer.cursor_ray(pos.x * ppp, pos.y * ppp)?;
+        self.inventory_drag.refresh_surface(
+            &self.scene,
+            &self.world,
+            self.settings.draw_distance,
+            ray,
+            (pos.x * ppp, pos.y * ppp),
+            released,
+        );
+        let avatar = wearer(&self.world, self.inventory_drag.surface?.1?)?;
+        let to = self.world.objects.get(avatar)?.full_id;
+        if to == self.world.agent_id {
+            return None;
+        }
+        // RLVa @share, as the give itself (`apply_inventory_action`)
+        let allowed = self.world.rlva.allows("share", &to.to_string());
+        self.inventory_drag.cursor = Some(if allowed {
+            egui::CursorIcon::Copy
+        } else {
+            egui::CursorIcon::NotAllowed
+        });
+        if released {
+            egui::DragAndDrop::clear_payload(ctx);
+            if allowed {
+                self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(ids, to));
+                self.inventory_ui.release_world_drag_focus(ctx);
+            } else {
+                self.world
+                    .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+            }
+        }
+        Some(avatar)
     }
 
     pub(super) fn apply_inventory_drop(&mut self, drop: InventoryDrop) {
@@ -561,6 +655,35 @@ mod tests {
             ..Default::default()
         }]);
         assert_eq!(original(&w, item(8999)).unwrap_err(), "rez-incomplete");
+    }
+
+    /// A drop on what a resident wears is a drop on them; a free object is
+    /// nobody's (#991).
+    #[test]
+    fn an_attachment_stands_for_its_wearer_and_a_free_object_for_nobody() {
+        let mut w = world();
+        let attach = crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+            item_id: item(8100),
+            owner_id: w.agent_id,
+            point: 1,
+            add: true,
+            flags: 0,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: rules::TRANSFER,
+            name: "Synthetic attachment".into(),
+            desc: String::new(),
+        });
+        let attach_id = attach.full_id;
+        w.apply(NetEvent::ObjectUpdates {
+            handle: w.main_region.unwrap(),
+            objects: vec![attach],
+        });
+        let avatar = w.objects.index_of_uuid(&w.agent_id).expect("our avatar");
+        let worn = w.objects.index_of_uuid(&attach_id).expect("the attachment");
+        assert_eq!(wearer(&w, worn), Some(avatar));
+        assert_eq!(wearer(&w, avatar), Some(avatar));
+        assert_eq!(wearer(&w, object(&w)), None);
     }
 
     #[test]

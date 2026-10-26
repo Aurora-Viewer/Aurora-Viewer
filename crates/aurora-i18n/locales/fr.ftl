@@ -2298,7 +2298,6 @@ common-home = Domicile
 ui-profile-give = Donner :
 ui-context-give-my-calling-card = Donner ma carte de visite
 ui-chat-give-object-coming-soon = Donner un objet (à venir)
-ui-profile-give-inventory-object-coming-soon = Donner un objet de l'inventaire (à venir)
 ui-contacts-give-this-resident-a-nickname = Donner un surnom à ce résident
 ui-land-objects-deeded-to-group = Données au groupe :
 ui-options-folder-containing-llplugin-blank-aurora-s-own-plugins = Dossier contenant llplugin\ et SLPlugin, par exemple celui d'un autre viewer installé (vide : les plugins d'Aurora)

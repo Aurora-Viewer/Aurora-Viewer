@@ -68,6 +68,16 @@ pub enum ProfileAction {
     /// (LLFloaterWorldMap::trackLocation, gAgent.teleportViaLocation).
     ShowOnMap(DVec3),
     Teleport(DVec3),
+    /// Inventory dropped on the window: the Share confirmation, then the
+    /// give (`give_drop`).
+    Give {
+        to: Uuid,
+        items: Vec<Uuid>,
+    },
+    /// "Share": the inventory in front, to drag from onto the window
+    /// (LLAvatarActions::share, which also opens a conversation to drop
+    /// on; the profile takes the drop itself).
+    Share(Uuid),
 }
 
 /// What the "Feed" browser needs from the app.
@@ -394,6 +404,15 @@ impl ProfileUi {
         }
     }
 
+    /// Where the first open profile window stands, either style
+    /// (`AURORA_DEMO_GIVE=profile`).
+    pub fn demo_window_rect(&self, ctx: &egui::Context) -> Option<egui::Rect> {
+        let w = self.windows.iter().find(|w| w.open)?;
+        [aurora::window_id(w.id), format!("profile-{}", w.id)]
+            .iter()
+            .find_map(|id| ctx.memory(|m| m.area_rect(egui::Id::unique(id.as_str()))))
+    }
+
     /// The "Feed" page that has the keyboard, if any.
     pub fn focused_web(&mut self) -> Option<&mut aurora_media::MediaPlugin> {
         self.windows
@@ -481,7 +500,8 @@ impl ProfileUi {
             let mut open = true;
             let mut floater = Floater::new(&win_id, name.clone(), pos, size);
             floater.min_size = Vec2::new(500.0, 580.0);
-            floater.show(ctx, p, &mut open, |ui| {
+            let own = w.id == world.agent_id;
+            let shown = floater.show(ctx, p, &mut open, |ui| {
                 if w.confirm_close {
                     unsaved_bar(ui, p, w, &mut actions);
                     ui.add_space(4.0);
@@ -551,6 +571,9 @@ impl ProfileUi {
                     ),
                 }
             });
+            if shown.is_some() && !own {
+                give_drop(ctx, p, &win_id, &name, w.id, &mut actions);
+            }
             if let Some(rights) = w.rights_edit {
                 rights_dialog(ctx, p, w, &name, rights, &mut actions);
             }
@@ -601,6 +624,43 @@ impl ProfileUi {
         }
         self.wanted_images.extend(self.picker.wanted_images.drain());
         actions
+    }
+}
+
+/// Shorter than this (a minimized window), the window fades without the hint.
+const GIVE_HINT_MIN_H: f32 = 120.0;
+
+/// Inventory dropped on another resident's profile is given to them, after
+/// the Share confirmation (LLPanelProfileSecondLife::handleDragAndDrop →
+/// LLToolDragAndDrop::handleGiveDragAndDrop). The Legacy Viewer takes it on
+/// the Second Life tab only, outside the about text and the group list, and
+/// only changes the cursor; here the whole window takes it, on every tab,
+/// and fades behind the conversations' hint from the start of the drag
+/// (#991). Drawn over the window `win_id` once it is shown, both styles.
+fn give_drop(ctx: &egui::Context, p: &Palette, win_id: &str, name: &str, to: Uuid, actions: &mut Vec<ProfileAction>) {
+    let window = egui::Id::unique(win_id);
+    let Some(rect) = ctx.memory(|m| m.area_rect(window)) else {
+        return;
+    };
+    let layer = egui::LayerId::new(egui::Order::Middle, window);
+    let id = window.with("give_drop");
+    let fade = super::give_drop::fade(ctx, id, true);
+    let target = super::inventory::drag::give_target_on(ctx, layer, rect);
+    if fade > 0.0 {
+        let painter = ctx.layer_painter(layer).with_clip_rect(rect);
+        let radius = ctx.global_style().visuals.window_corner_radius;
+        painter.rect_filled(rect, radius, p.panel.gamma_multiply(super::give_drop::DIM * fade));
+        if target.is_some() {
+            painter.rect_stroke(rect.shrink(1.0), radius, egui::Stroke::new(1.5, p.violet), egui::StrokeKind::Inside);
+        }
+        if rect.height() >= GIVE_HINT_MIN_H {
+            super::give_drop::hint(&painter, p, id, rect, target.is_some(), name, fade);
+        }
+    }
+    if let Some((items, true)) = target
+        && !items.is_empty()
+    {
+        actions.push(ProfileAction::Give { to, items });
     }
 }
 
@@ -1234,8 +1294,7 @@ fn second_life_tab(
                         RichText::new(aurora_i18n::tr!("ui-profile-drop-the-object-here"))
                             .size(11.5)
                             .color(p.muted_dim),
-                    )
-                    .on_hover_text(aurora_i18n::tr!("ui-profile-give-inventory-object-coming-soon"));
+                    );
                 });
             });
         });
@@ -1394,14 +1453,15 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
 /// menu_fs_profile_overflow.xml.
 fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
     widgets::icon_menu(ui, p, "menu-2-filled", aurora_i18n::tr!("ui-profile-more"), |ui| {
-        let soon = aurora_i18n::tr!("ui-profile-coming-soon");
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), world.can_locate_avatar(id)) {
             super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
         }
         if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
         }
-        menu::item_tip(ui, p, "share", aurora_i18n::tr!("common-share"), false, soon);
+        if menu::item(ui, p, "share", aurora_i18n::tr!("common-share")) {
+            actions.push(ProfileAction::Share(id));
+        }
         // LLAvatarActions::startCall (canCall: voice enabled)
         if menu::item_if(
             ui,
@@ -2216,6 +2276,85 @@ fn notes_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, profile: Option<&Ava
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Inventory released on another resident's profile gives it to them, in
+    /// both styles, wherever on the window; never on our own, nor beside it
+    /// (#991).
+    #[test]
+    fn inventory_dropped_on_a_residents_profile_window_gives_it() {
+        use crate::ui::inventory::InvDrag;
+        let p = crate::theme::Theme::default().palette();
+        let mut emoji = super::super::emoji::Emoji::load();
+        let browser = crate::media::browser_settings(std::path::Path::new("."), "fr");
+        let web = WebContext {
+            paths: None,
+            browser: &browser,
+            cookie: None,
+            profile_base: None,
+        };
+        let (pics, images) = (HashMap::new(), HashMap::new());
+        let item = Uuid::from_u128(8100);
+        let other = Uuid::from_u128(0xF00D);
+        for classic in [false, true] {
+            for (to, gives) in [(other, true), (Uuid::from_u128(0xA6E7), false)] {
+                let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+                world.agent_id = Uuid::from_u128(0xA6E7);
+                let mut ui = ProfileUi::default();
+                ui.open(&mut world, to);
+                let ctx = egui::Context::default();
+                // a frame's actions, and where the window then stands
+                let mut frame = |events: Vec<egui::Event>| {
+                    let mut want_names = HashSet::new();
+                    let mut actions = Vec::new();
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 1000.0))),
+                            events,
+                            ..Default::default()
+                        },
+                        |ui_| {
+                            actions = ui.show(
+                                ui_.ctx(),
+                                &p,
+                                &mut emoji,
+                                &pics,
+                                &images,
+                                &mut world,
+                                &mut want_names,
+                                &web,
+                                classic,
+                            )
+                        },
+                    );
+                    output.textures_delta.clear();
+                    (actions, ui.demo_window_rect(&ctx))
+                };
+                let mut rect = None;
+                for _ in 0..3 {
+                    rect = frame(Vec::new()).1;
+                }
+                let rect = rect.expect("the profile window");
+                let beside = egui::pos2(rect.left() / 2.0, rect.center().y);
+                for (pos, on_window) in [(beside, false), (rect.center(), true), (rect.left_top() + Vec2::splat(4.0), true)] {
+                    egui::DragAndDrop::set_payload(&ctx, InvDrag(item));
+                    let mut events = vec![egui::Event::PointerMoved(pos)];
+                    assert!(!frame(events.clone()).0.iter().any(|a| matches!(a, ProfileAction::Give { .. })));
+                    events.push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: Default::default(),
+                    });
+                    let given = frame(events)
+                        .0
+                        .into_iter()
+                        .any(|a| matches!(a, ProfileAction::Give { to: t, items } if t == to && items == [item]));
+                    assert_eq!(given, gives && on_window, "classic {classic}, to {to}, at {pos:?}");
+                    egui::DragAndDrop::clear_payload(&ctx);
+                }
+            }
+        }
+    }
 
     #[test]
     fn classic_profile_map_button_honors_remote_friends_received_rights() {

@@ -2245,6 +2245,8 @@ at 0.5, so they cast shadows and are picked through their cut-out.
 
 Rezzing from the inventory goes through `ui/inventory.rs` (payload and release before the end of the egui pass), `app/inventory_drag.rs` (rules, group, preparation of the commands and local consumption of the non-copyable items), `Scene::inventory_surface` (triangles among the candidates of the index, terrain, without a GPU wait) and `aurora-net/src/inventory/rez.rs` (reliable `RezObject` message in the targeted region). Transparent pixels are tested with a mask of one bit per 2×2 block, prepared by the decoding tasks; invisible and rigged surfaces are discarded. The cursor keeps the result for 100 ms at most when the ray does not move; the release always recomputes the surface. Ctrl on an object sends `UpdateTaskInventory`. The demo uses a synthetic cube as the reply to the rez.
 
+Giving goes through the same reading: inventory carried over another resident, or over what they wear, opens the Share confirmation of `ui/inventory/dialogs.rs` for every entry carried (`App::avatar_give_input`, the nearest surface of `Scene::inventory_surface` deciding), and `Scene::mark_give_target` outlines their avatar and attachments with the photo subjects' pass. A private conversation and another resident's profile window take the drop too (`ui::inventory::drag::give_target` / `give_target_on`); `ui/give_drop.rs` fades their content behind "Drop here to give to <name>" from the start of the drag. `app/give_demo.rs` drives `AURORA_DEMO_GIVE`.
+
 For transfers out of object contents, `ui/inventory/task_drop.rs` keeps the
 hovered row's acceptance ahead of its enclosing inventory surface for the
 current egui pass. `app/inventory_drag.rs` reads that feedback after all
