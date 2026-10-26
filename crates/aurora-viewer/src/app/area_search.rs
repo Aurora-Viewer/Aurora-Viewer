@@ -252,7 +252,7 @@ impl App {
             Action::Inspect(ids) => self.inspect_objects(&ids),
             Action::Zoom(id) => {
                 if let Some(pos) = position(self, &id) {
-                    self.on_ctx_action(CtxAction::Zoom(pos));
+                    self.on_ctx_action(CtxAction::Zoom(pos, None));
                 }
             }
             Action::ScriptInfo(ids) => {

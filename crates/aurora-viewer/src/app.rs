@@ -3430,6 +3430,27 @@ impl App {
                         }
                     }
                 }
+                Step::ZoomResident => {
+                    let me = self.world.agent.position;
+                    let nearest = self
+                        .world
+                        .objects
+                        .iter()
+                        .filter(|(_, o)| o.is_avatar() && o.parent_id == 0 && o.full_id != self.world.agent_id)
+                        .min_by(|a, b| a.1.position.distance(me).total_cmp(&b.1.position.distance(me)))
+                        .map(|(_, o)| o.full_id);
+                    match nearest {
+                        Some(id) => self.on_ctx_action(ui::context::CtxAction::ZoomAvatar(id)),
+                        None => log::warn!("demo camera: no standing resident to zoom on"),
+                    }
+                }
+                Step::MoveResident(x, y) => {
+                    if let Some(idx) = self.camera.focus_object_id().and_then(|id| self.world.objects.index_of_uuid(&id))
+                        && let Some(o) = self.world.objects.get_mut(idx)
+                    {
+                        o.position += glam::Vec3::new(x, y, 0.0);
+                    }
+                }
                 Step::Log => self.demo_note(click_pick::DemoNote::Camera(self.frame_count)),
             }
         }

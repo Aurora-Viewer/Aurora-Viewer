@@ -68,6 +68,11 @@ const PAN_RATE: f32 = 5.0;
 const SLOP_RANGE: f32 = 4.0;
 /// CAMERA_POSITION_THRESHOLD_SQUARED (llviewermessage.cpp).
 const SIT_CAMERA_THRESHOLD_SQUARED: f32 = 0.001 * 0.001;
+/// Avatar.ZoomIn framing (CameraZoomDistance, CameraZoomEyeZOffset,
+/// CameraZoomFocusZOffset of settings.xml).
+const AVATAR_ZOOM_DISTANCE: f32 = 2.5;
+const AVATAR_ZOOM_EYE_Z: f32 = 1.0;
+const AVATAR_ZOOM_FOCUS_Z: f32 = 0.6;
 /// Aurora's right-drag orbit rate (radians per pixel at sensitivity 1).
 pub(crate) const DRAG_RATE: f32 = 0.0042;
 
@@ -719,11 +724,24 @@ impl Camera {
         self.set_camera_pos_and_focus(camera, focus, object, s);
     }
 
-    /// Context menu "Zoom" (handle_zoom_to_object).
-    pub fn zoom_to(&mut self, point: Vec3, agent: &mut AgentState, s: &CameraSettings) {
+    /// Context menu "Zoom" (handle_look_at_selection "zoom"): the focus stays
+    /// attached to `object` when there is one, so the camera follows it as
+    /// it moves (TrackFocusObject).
+    pub fn zoom_to(&mut self, point: Vec3, object: Option<(Uuid, FocusObject)>, agent: &mut AgentState, s: &CameraSettings) {
         self.set_focus_on_avatar(false, true, true, agent, s);
         let dir = (self.position - point).normalize_or(-self.forward());
-        self.set_camera_pos_and_focus(point + dir * 3.0, point, None, s);
+        self.set_camera_pos_and_focus(point + dir * 3.0, point, object, s);
+    }
+
+    /// Avatar.ZoomIn from a list (handle_zoom_to_object, llviewermenu.cpp):
+    /// the camera faces the avatar, a little above its centre, and keeps it
+    /// as the focus object so it follows the avatar as it moves.
+    pub fn zoom_avatar(&mut self, avatar: (Uuid, FocusObject), agent: &mut AgentState, s: &CameraSettings) {
+        self.set_focus_on_avatar(false, true, true, agent, s);
+        let g = avatar.1;
+        let eye = g.position + g.rotation * Vec3::new(AVATAR_ZOOM_DISTANCE, 0.0, AVATAR_ZOOM_EYE_Z);
+        let focus = g.position + Vec3::Z * AVATAR_ZOOM_FOCUS_Z;
+        self.set_camera_pos_and_focus(eye, focus, Some(avatar), s);
     }
 
     /// LLToolPie CLICK_ACTION_ZOOM: fit the clicked bounding box, keep its
@@ -2956,6 +2974,37 @@ mod tests {
             assert!(cam.position.abs_diff_eq(before.0 + Vec3::Y * 0.05, 1e-4));
             assert!(cam.target.abs_diff_eq(before.1 + Vec3::Y * 0.05, 1e-4));
         }
+    }
+
+    #[test]
+    fn zoom_on_a_resident_faces_them_and_follows_them() {
+        let s = CameraSettings::default();
+        let mut w = world_at(Vec3::new(128.0, 128.0, 25.0));
+        for ev in crate::demo::events() {
+            w.apply(ev);
+        }
+        let mut cam = Camera::default();
+        settle(&mut cam, &mut w, &s);
+        let idx = w
+            .objects
+            .iter()
+            .find(|(_, o)| o.is_avatar() && o.parent_id == 0 && o.full_id != cam.own)
+            .map(|(i, _)| i)
+            .expect("the demo has standing residents");
+        let avatar = pick_focus_object(&w, idx, Instant::now()).unwrap();
+        cam.zoom_avatar(avatar, &mut w.agent, &s);
+        settle(&mut cam, &mut w, &s);
+        let g = focus_object_geom(&w, &avatar.0, Instant::now()).unwrap();
+        let focus = g.position + Vec3::Z * AVATAR_ZOOM_FOCUS_Z;
+        let eye = g.position + g.rotation * Vec3::new(AVATAR_ZOOM_DISTANCE, 0.0, AVATAR_ZOOM_EYE_Z);
+        assert!(cam.target.distance(focus) < 0.01, "{} vs {focus}", cam.target);
+        assert!(cam.position.distance(eye) < 0.05, "{} vs {eye}", cam.position);
+        // the resident walks away: the camera keeps the same view of them
+        let step = Vec3::new(4.0, -3.0, 0.0);
+        w.objects.get_mut(idx).unwrap().position += step;
+        settle(&mut cam, &mut w, &s);
+        assert!(cam.target.distance(focus + step) < 0.01, "{} vs {}", cam.target, focus + step);
+        assert!(cam.position.distance(eye + step) < 0.05, "{} vs {}", cam.position, eye + step);
     }
 
     #[test]

@@ -106,7 +106,7 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
             let build = take_action(&mut rest, |a| matches!(a, CtxAction::Build));
             // Aurora has no autopilot yet: its existing Zoom action occupies
             // Go Here's direction rather than introducing an unavailable walk.
-            let zoom = take_action(&mut rest, |a| matches!(a, CtxAction::Zoom(_)));
+            let zoom = take_action(&mut rest, |a| matches!(a, CtxAction::Zoom(..)));
             let stand = take_action(&mut rest, |a| matches!(a, CtxAction::StandUp));
             let sit = take_icon(&mut rest, "armchair");
             let particles = take_icon(&mut rest, "sparkles-filled");
@@ -152,7 +152,7 @@ fn layout(target: &Target, entries: &[Entry]) -> Vec<Entry> {
                 Kind::Submenu(e) => take_icon(e, "flag-filled"),
                 _ => blank(),
             };
-            let zoom = take_action(&mut rest, |a| matches!(a, CtxAction::Zoom(_)));
+            let zoom = take_action(&mut rest, |a| matches!(a, CtxAction::Zoom(..)));
             let friend = take_action(&mut rest, |a| matches!(a, CtxAction::AddFriend(_)));
             let invite = take_icon(&mut rest, "users-plus");
             let contacts = take_icon(&mut rest, "users-group");

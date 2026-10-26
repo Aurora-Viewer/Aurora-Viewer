@@ -610,7 +610,7 @@ when unfocused") is ignored during a screenshot.
 
 - **`AURORA_DEMO_CAM`**: heading offset and pitch of the camera around the
   avatar (radians, a positive pitch looks down) and distance (metres).
-- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
+- **`AURORA_DEMO_CAMERA=alt,x,y|pan,x,y|zoom,x,y|crouch-alt,x,y|crouch-pan,x,y|crouch-zoom,x,y|close,x,y[,n]|drift,x,y[,n]|zoom-resident|tag|ml|ml-zoom|ml-zoom-alt|wheel|fly|sit|sit-ml|sit-ml-reclined|scripted|scripted-sit`**:
   scenario logged under `demo camera` — Alt+click at (x, y) then drag and
   return while walking; `close`: Alt+click at (x, y) at frame 600, zoom for
   n frames (60 by default), then the camera no longer moves (close-up with a
@@ -637,6 +637,11 @@ when unfocused") is ignored during a screenshot.
   and `zoom` scenarios. The crouch control must remain active throughout
   (`down=true` in the log); add `AURORA_DEMO_LINK=0,firestorm` to exercise
   the crouch-walk through the offline simulator too.
+  `zoom-resident` runs People › Near you's Zoom (the double click) on the
+  nearest standing resident at frame 600: the camera faces them, 2.5 m away.
+  The resident then slides 1.5 m south (660–760) and 1.2 m west (761–860).
+  Capture at 655, 760 and 900: the same view of the resident each time, the
+  scene moving behind them; `target` in the log moves with them.
   `sit-ml` and `sit-ml-reclined` use that seat upright or tilted by 1.1 radians,
   delayed 400 frames past the loading fade. First person runs from 760 to 1060;
   mouse motion looks up at 880–900, down at 950–970 and sideways at 1020–1040.
