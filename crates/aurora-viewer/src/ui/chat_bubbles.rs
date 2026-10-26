@@ -30,6 +30,8 @@ pub const GAP: f32 = 3.0;
 /// mode), whatever the name tags' distance.
 const FULL_DISTANCE: f32 = 40.0;
 const FADE_DISTANCE: f32 = 5.0;
+/// Between the centres of two typing dots.
+const DOT_STEP: f32 = 7.0;
 
 /// What the bubbles need besides the world, given while the setting is on.
 pub struct Frame<'a> {
@@ -168,9 +170,6 @@ pub fn layout(painter: &egui::Painter, p: &Palette, world: &World, frame: &Frame
         alpha,
     })
 }
-
-/// Between the centres of two typing dots.
-const DOT_STEP: f32 = 7.0;
 
 /// Paint `bubble` with its top centre at `top`, at `fade` (the name tag's).
 /// `plate`: under a name plate, in glass; else under a classic tag.

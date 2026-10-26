@@ -357,7 +357,7 @@ pub fn draw(
     let now_s = ctx.input(|i| i.time);
     visibility.begin(settings, world.agent_id);
     // (distance, anchor, lines, voice: (level, speaking), loading, avatar,
-    // where it stands in the world, opacity, chat bubble)
+    // where it stands in the world, temporary fade, chat bubble)
     #[allow(clippy::type_complexity)]
     let mut tags: Vec<(
         f32,

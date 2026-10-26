@@ -2095,14 +2095,14 @@ impl App {
         matches!(self.screen, Screen::World | Screen::Loading { .. })
     }
 
-    /// The avatar name tags are the classic ones, not the name plates: the
-    /// setting, unless AURORA_NAME_TAGS forces a style.
     /// Nearby chat in bubbles above the heads (#673); AURORA_DEMO_CHAT_BUBBLES
     /// turns them on for the run, without saving it.
     fn chat_bubbles(&self) -> bool {
         self.settings.chat_bubbles || (self.demo && crate::demo::tags::chat_bubbles().is_some())
     }
 
+    /// The avatar name tags are the classic ones, not the name plates: the
+    /// setting, unless AURORA_NAME_TAGS forces a style.
     fn classic_name_tags(&self) -> bool {
         match name_tags_env() {
             Some(NameTagsEnv::Classic) => true,
