@@ -260,7 +260,7 @@ fn plate_content(
     in_voice: bool,
     complexity: Option<&TagComplexity<'_>>,
     too_complex: bool,
-    typing_shown: bool,
+    settings: &crate::settings::Settings,
     own_typing: bool,
 ) -> super::nameplate::Content {
     use super::nameplate::{Content, Detail, Presence, Role};
@@ -319,9 +319,12 @@ fn plate_content(
         // rather than the animation (it may be off), like its microphone:
         // the Legacy Viewer's tag never shows ours (the human's choice,
         // 2026-10-19)
-        typing: typing_shown && if own { own_typing } else { world.is_typing_nearby(&id) },
+        typing: settings.typing_in_name_tags && if own { own_typing } else { world.is_typing_nearby(&id) },
         friend,
         too_complex: !own && too_complex,
+        // LLVOAvatar::getVisualMuteSettings (indra/newview/llvoavatar.cpp)
+        // distinguishes an explicit rendering choice from an automatic limit.
+        render_never: !own && too_complex && settings.render_exception(&id) == 1,
         blocked,
         mark: crate::world::staff::mark_named(&id, &legacy),
     }
@@ -462,7 +465,7 @@ pub fn draw(
                             && audio.world_voice_visualizer(id == world.agent_id, world.calls.active.is_some(), false),
                         complexity.as_ref(),
                         too,
-                        settings.typing_in_name_tags,
+                        settings,
                         own_typing,
                     ),
                     voice: in_voice.filter(|_| audio.world_voice_visualizer(id == world.agent_id, world.calls.active.is_some(), false)),
@@ -741,6 +744,44 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plate_render_badges_distinguish_manual_limits_and_follow_setting_changes() {
+        use super::super::nameplate::{Badge, Level, badges};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::tags::events()) {
+            world.apply(event);
+        }
+        let (idx, avatar) = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id != world.agent_id)
+            .expect("a demo avatar");
+        let mut settings = crate::settings::Settings::default();
+        for mode in [0, 1, 2, 1, 0] {
+            settings.set_render_exception(avatar.full_id, mode);
+            for silhouette in [false, true] {
+                let content = plate_content(&world, idx, avatar, false, None, silhouette, &settings, false);
+                let expected = if mode == 1 { Badge::RenderNever } else { Badge::TooComplex };
+                for level in [Level::Full, Level::Compact] {
+                    let shown: Vec<_> = badges(level, &content)
+                        .iter()
+                        .filter(|b| matches!(b, Badge::RenderNever | Badge::TooComplex))
+                        .collect();
+                    assert_eq!(shown, if silhouette { vec![expected] } else { vec![] });
+                }
+                assert_eq!(badges(Level::Far, &content).len(), 0);
+            }
+        }
+        let (idx, avatar) = world
+            .objects
+            .avatars()
+            .find(|(_, o)| o.full_id == world.agent_id)
+            .expect("our demo avatar");
+        settings.set_render_exception(avatar.full_id, 1);
+        let own = plate_content(&world, idx, avatar, false, None, true, &settings, false);
+        assert!(!own.too_complex && !own.render_never, "our own avatar has no rendering-limit badge");
+    }
 
     #[test]
     fn name_tag_categories_are_independent_and_self_takes_priority() {

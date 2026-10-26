@@ -1,5 +1,5 @@
 //! Name plates in every state and at the three distance levels
-//! (AURORA_DEMO_TAGS=voice|status|cycle|wall|height, docs/TESTING.md): five
+//! (AURORA_DEMO_TAGS=voice|status|cycle|wall|height|render, docs/TESTING.md): five
 //! residents in a row in front of the start position, two farther (compact
 //! pills) and two beyond (the name alone). A white wall stands behind the
 //! two on the left, to see the glass over a bright background too.
@@ -27,6 +27,7 @@ pub enum Mode {
     Cycle,
     Wall,
     Height,
+    Render,
 }
 
 /// Seconds a set of states lasts with `cycle`.
@@ -54,6 +55,7 @@ pub fn mode() -> Option<Mode> {
         "cycle" => Some(Mode::Cycle),
         "wall" => Some(Mode::Wall),
         "height" => Some(Mode::Height),
+        "render" => Some(Mode::Render),
         _ => Some(Mode::Voice),
     })
 }
@@ -62,7 +64,7 @@ pub fn mode() -> Option<Mode> {
 /// status set.
 fn status_set(mode: Mode, time: f64) -> bool {
     match mode {
-        Mode::Voice | Mode::Wall | Mode::Height => false,
+        Mode::Voice | Mode::Wall | Mode::Height | Mode::Render => false,
         Mode::Status => true,
         Mode::Cycle => (time / CYCLE) as u64 % 2 == 1,
     }
@@ -244,6 +246,15 @@ pub fn mute_line() -> Option<String> {
 /// The resident whose plate is shown as too complex.
 pub fn too_complex() -> Option<Uuid> {
     mode().map(|_| ORION)
+}
+
+/// Exercise the production rendering exceptions on full and compact plates.
+pub fn apply_render_preferences(settings: &mut crate::settings::Settings) {
+    if mode() == Some(Mode::Render) {
+        for id in [TESS, IRIS] {
+            settings.set_render_exception(id, 1);
+        }
+    }
 }
 
 /// Where the scenario stands: the demo's start position (AURORA_DEMO_POS).

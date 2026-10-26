@@ -14,6 +14,7 @@ fn content() -> Content {
         typing: false,
         friend: false,
         too_complex: false,
+        render_never: false,
         blocked: false,
         mark: None,
     }
