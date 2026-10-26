@@ -423,10 +423,11 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             } else {
                 "favorite-remove"
             };
+            // The star shows the state the row leaves: empty to add, full to remove.
             c.add(
                 key,
                 &favorite_zone,
-                "star-filled",
+                if favorite { "star" } else { "star-filled" },
                 if favorite {
                     aurora_i18n::tr!("common-add-to-favorites")
                 } else {

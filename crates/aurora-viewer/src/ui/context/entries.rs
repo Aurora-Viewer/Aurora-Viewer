@@ -433,12 +433,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     );
     // Object.SetFavorite Add / Remove, the one that applies
     if let (Some(item), Some(favorite)) = (f.object.attachment_item, f.object.favorite) {
-        let label = if favorite {
-            aurora_i18n::tr!("common-remove-from-favorites")
+        let (icon, label) = if favorite {
+            ("star-filled", aurora_i18n::tr!("common-remove-from-favorites"))
         } else {
-            aurora_i18n::tr!("common-add-to-favorites")
+            ("star", aurora_i18n::tr!("common-add-to-favorites"))
         };
-        ui.item("star-filled", label, CtxAction::AttachmentFavorite(item));
+        ui.item(icon, label, CtxAction::AttachmentFavorite(item));
     }
     ui.item_if(
         "pencil-filled",
