@@ -7077,6 +7077,7 @@ What the inventory must show with these scenarios:
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's, and the other overlays' unless allowed in Preferences) |
+| `AURORA_VULKAN_DRIVERS=keep` | Loads Dozen (Vulkan on Direct3D 12) when installed, which the viewer keeps out |
 | `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
 | `AURORA_GPU_START_FAIL=1` | Start as if no graphics card could draw the window: the message the user gets then |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
@@ -7149,6 +7150,21 @@ What the inventory must show with these scenarios:
   running viewer instead (Discord) cannot be kept out: the log names them
   when they arrive (`overlay hook loaded in the viewer`). To
   see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
+- **`AURORA_VULKAN_DRIVERS=keep`**: at start the viewer sets
+  `VK_LOADER_DRIVERS_DISABLE=*dzn*` in its own process, so that the Vulkan
+  loader skips Dozen (`vulkan_dzn.dll`, Vulkan on Direct3D 12, from
+  Microsoft's "OpenCL, OpenGL, and Vulkan Compatibility Pack"): while it
+  lists its devices, Dozen opens every Direct3D 12 adapter, and an old AMD
+  Direct3D 12 driver crashed there at start (`vulkan_dzn` → `d3d12core` →
+  `amdxc64` in the crash report). The log says so (`Vulkan driver kept out
+  of the viewer`). Nothing is set when the user already set
+  `VK_LOADER_DRIVERS_DISABLE`, `VK_LOADER_DRIVERS_SELECT`, `VK_DRIVER_FILES`,
+  `VK_ICD_FILENAMES` or `VK_ADD_DRIVER_FILES`; a loader older than 1.3.234
+  ignores the variable. When no Vulkan adapter is left without Dozen (a GPU
+  with no Vulkan driver of its own), the renderer lets it back in and tries
+  again (`GPU: no Vulkan adapter without Dozen` in the log). `keep` leaves
+  the environment as it is. To see which drivers the loader loads:
+  `VK_LOADER_DEBUG=driver` in a console.
 - **`AURORA_GPU=<number>|<name>|auto`**: the adapter the renderer opens,
   over Preferences › Graphics › Fluidity › Graphics card (#894): its number
   in the `GPU adapter <n>:` lines of the log, or a part of its name in any
