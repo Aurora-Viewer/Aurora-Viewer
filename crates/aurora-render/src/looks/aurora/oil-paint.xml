@@ -1,0 +1,12 @@
+<llsd>
+    <array>
+        <array>
+            <string>paint</string>
+            <real>0.0055</real>
+        </array>
+        <array>
+            <string>saturate</string>
+            <real>1.2</real>
+        </array>
+    </array>
+</llsd>

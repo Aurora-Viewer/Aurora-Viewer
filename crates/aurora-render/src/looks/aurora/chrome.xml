@@ -1,0 +1,25 @@
+<llsd>
+    <array>
+        <array>
+            <string>saturate</string>
+            <real>1.3</real>
+        </array>
+        <array>
+            <string>contrast</string>
+            <real>1.12</real>
+            <real>1.0</real>
+            <real>1.0</real>
+            <real>1.0</real>
+        </array>
+        <array>
+            <string>split</string>
+            <real>0.15</real>
+            <real>0.4</real>
+            <real>0.45</real>
+            <real>0.6</real>
+            <real>0.6</real>
+            <real>0.5</real>
+            <real>0.4</real>
+        </array>
+    </array>
+</llsd>

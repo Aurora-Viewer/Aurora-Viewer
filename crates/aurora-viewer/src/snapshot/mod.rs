@@ -13,6 +13,7 @@ pub mod inventory;
 pub mod isolate;
 pub mod light;
 pub mod looks;
+pub mod luts;
 pub mod profile;
 pub mod quality;
 pub mod save;

@@ -7079,7 +7079,11 @@ impl Backend {
                 self.smaa.encode(&mut encoder, st, post_target, smaa_ts);
             }
             if let (Some((looks, _)), Some(look)) = (looks, look) {
-                let passes = looks.encode(&self.queue, &mut encoder, look, scene_target);
+                let depth = crate::looks::LookDepth {
+                    view: &self.targets.depth_ss,
+                    proj: f.proj,
+                };
+                let passes = looks.encode(&self.device, &self.queue, &mut encoder, look, scene_target, Some(depth));
                 calls.set(calls.get() + passes);
             }
         }

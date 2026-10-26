@@ -1,0 +1,21 @@
+<llsd>
+    <array>
+        <array>
+            <string>depthblur</string>
+            <real>0.012</real>
+            <real>0.35</real>
+            <real>0.0</real>
+        </array>
+        <array>
+            <string>saturate</string>
+            <real>1.3</real>
+        </array>
+        <array>
+            <string>contrast</string>
+            <real>1.08</real>
+            <real>1.0</real>
+            <real>1.0</real>
+            <real>1.0</real>
+        </array>
+    </array>
+</llsd>

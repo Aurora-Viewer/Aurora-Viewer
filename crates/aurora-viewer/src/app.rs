@@ -8446,7 +8446,7 @@ impl App {
         } else {
             aurora_render::ProbeFrame::default()
         };
-        let fp = FrameParams {
+        let mut fp = FrameParams {
             rlva_resolution_divisor: self.world.rlva.resolution_divisor.unwrap_or(1),
             rlva_overlays: self
                 .world
@@ -8536,11 +8536,14 @@ impl App {
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
-            // a photo's look, or the live view's in the photo mode
-            look: match &photo {
-                Some(f) => f.look.clone(),
-                None => self.live_look((w, h)),
-            },
+            look: None,
+        };
+        // a photo's look, or the live view's in the photo mode
+        let focus = fp.dof.as_ref().map(|d| d.focus);
+        self.snapshots.look_focus = focus;
+        fp.look = match &photo {
+            Some(f) => f.look.clone(),
+            None => self.live_look((w, h), focus),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 

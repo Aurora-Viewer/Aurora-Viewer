@@ -1,0 +1,13 @@
+<llsd>
+    <array>
+        <array>
+            <string>fog</string>
+            <real>8.0</real>
+            <real>120.0</real>
+            <real>0.6</real>
+            <real>0.98</real>
+            <real>0.82</real>
+            <real>0.6</real>
+        </array>
+    </array>
+</llsd>

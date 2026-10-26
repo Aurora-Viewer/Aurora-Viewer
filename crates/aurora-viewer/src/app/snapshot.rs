@@ -9,7 +9,8 @@
 //! LLWebProfile::uploadImage).
 
 use super::App;
-use crate::snapshot::looks::{self, Placement};
+use crate::snapshot::looks::{self, Placement, Resolved};
+use crate::snapshot::luts::{Imported, LutLibrary};
 use crate::snapshot::{self, TilePass, gallery, inventory, profile, save};
 use crate::ui::snapshot::{Action, Destination, EmailView, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
@@ -100,8 +101,9 @@ struct Job {
     supersample: u32,
     /// Cut out by the isolation (`snapshot::isolate`): its alpha is kept.
     cutout: bool,
-    /// The look it is drawn with, chosen when it started, and its strength.
-    look: Option<(std::sync::Arc<[aurora_render::looks::LookOp]>, u8)>,
+    /// The look it is drawn with, chosen when it started, its strength and
+    /// the focus distance of its depth operations.
+    look: Option<(Resolved, u8, Option<f32>)>,
     /// The photo's size, before its supersampling or the preview's
     /// reduction: the look's pixels.
     photo: (u32, u32),
@@ -151,6 +153,15 @@ pub(super) struct Snapshots {
     held: Option<Held>,
     held_view: Option<crossbeam_channel::Receiver<(u32, u32, Vec<u8>)>>,
     dialog: Option<crossbeam_channel::Receiver<(bool, Option<PathBuf>)>>,
+    /// The user's 3D tables for the photo's look, opened the first time
+    /// they are needed (`luts`).
+    luts: Option<LutLibrary>,
+    /// A table being imported (its file chosen, read and copied on a
+    /// worker; None: the dialog was closed).
+    lut_import: Option<crossbeam_channel::Receiver<Option<Imported>>>,
+    /// The focus distance of the depth of field last frame, for the depth
+    /// looks (None: off, the middle of the photo then).
+    pub look_focus: Option<f32>,
     /// The window was closed when the photo was asked (Ctrl+`).
     quiet: bool,
     /// The price to confirm before the upload.
@@ -292,6 +303,9 @@ impl Default for Snapshots {
             held: None,
             held_view: None,
             dialog: None,
+            luts: None,
+            lut_import: None,
+            look_focus: None,
             quiet: false,
             confirm: None,
             short: None,
@@ -352,13 +366,13 @@ impl App {
         s.capturing = Some(spec);
         // the look in the photo's own pixels, from the corner of the part
         // drawn; the tiles share the histogram of the live view's last frame
-        let look = job.look.as_ref().map(|(ops, strength)| {
+        let look = job.look.as_ref().map(|(look, strength, focus)| {
             let place = Placement {
                 origin: [-(tile.x as f32), -(tile.y as f32)],
                 photo: job.photo,
                 scale: job.size.1 as f32 / job.photo.1.max(1) as f32,
             };
-            looks::frame_look(ops.clone(), *strength, place, None, !single)
+            looks::frame_look(look, *strength, place, None, !single, *focus)
         });
         Some(PhotoFrame {
             aspect: job.size.0 as f32 / job.size.1.max(1) as f32,
@@ -750,24 +764,43 @@ impl App {
             started: Instant::now(),
             supersample,
             cutout: self.world.photo_isolation.empty_background(),
-            look: s.look.as_deref().and_then(looks::ops).map(|ops| (ops, s.look_strength)),
+            look: None,
             photo: full,
         });
+        let strength = self.settings.snapshot.look_strength;
+        let focus = self.snapshots.look_focus;
+        let look = self
+            .settings
+            .snapshot
+            .look
+            .clone()
+            .and_then(|id| looks::resolve(&id, self.photo_luts()));
+        if let Some(job) = &mut self.snapshots.job {
+            job.look = look.map(|look| (look, strength, focus));
+        }
+    }
+
+    /// The library of the user's 3D tables.
+    pub(super) fn photo_luts(&mut self) -> &mut LutLibrary {
+        self.snapshots
+            .luts
+            .get_or_insert_with(|| LutLibrary::new(crate::settings::config_dir().join("photo-luts")))
     }
 
     /// The look of the live view (`snapshot::looks`) while the photo
     /// window is open: the filter pointed at in a list, or the one chosen,
     /// over the photo's frame of the `window` (pixels; `ui::snapshot::fit`),
     /// with the viewfinder's before / after line.
-    pub(super) fn live_look(&self, window: (u32, u32)) -> Option<aurora_render::looks::PhotoLook> {
+    pub(super) fn live_look(&mut self, window: (u32, u32), focus: Option<f32>) -> Option<aurora_render::looks::PhotoLook> {
         if !self.panels.snapshot {
             return None;
         }
-        let s = &self.settings.snapshot;
-        let id = match self.snapshots.ui.look_hover {
-            Some(pointed) => pointed?,
-            None => s.look.as_deref()?,
+        let id = match &self.snapshots.ui.look_hover {
+            Some(pointed) => pointed.clone()?,
+            None => self.settings.snapshot.look.clone()?,
         };
+        let look = looks::resolve(&id, self.photo_luts())?;
+        let s = &self.settings.snapshot;
         let photo = self.photo_size(window);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window.0 as f32, window.1 as f32));
         let frame = crate::ui::snapshot::fit(screen, photo.0 as f32 / photo.1.max(1) as f32);
@@ -777,7 +810,7 @@ impl App {
             scale: frame.height() / photo.1.max(1) as f32,
         };
         let compare = self.snapshots.ui.look_compare.filter(|_| self.viewfinder_on());
-        Some(looks::frame_look(looks::ops(id)?, s.look_strength, place, compare, false))
+        Some(looks::frame_look(&look, s.look_strength, place, compare, false, focus))
     }
 
     /// The largest side drawn in one pass: the card's, or in demo
@@ -1084,6 +1117,7 @@ impl App {
     /// Every frame: the saves, thumbnails, dialogs and preview to follow.
     pub(super) fn photo_update(&mut self, renderer: &Renderer) {
         self.photo_demo(renderer);
+        self.photo_luts_update();
         self.photo_quality(renderer);
         self.photo_light();
         self.photo_free_camera();
@@ -1368,40 +1402,166 @@ impl App {
                 self.settings.save();
             }
             Action::Saved => self.settings.save(),
+            Action::ImportLut => {
+                if self.snapshots.lut_import.is_some() {
+                    return;
+                }
+                let dir = self.photo_luts().dir().to_path_buf();
+                let (tx, rx) = crossbeam_channel::bounded(1);
+                std::thread::spawn(move || {
+                    let picked = rfd::FileDialog::new()
+                        .set_title(aurora_i18n::tr!("photo-lut-dialog"))
+                        .add_filter(aurora_i18n::tr!("photo-lut-files"), &["cube", "CUBE"])
+                        .pick_file();
+                    let _ = tx.send(picked.map(|path| LutLibrary::import(&dir, &path)));
+                });
+                self.snapshots.lut_import = Some(rx);
+            }
+            Action::RemoveLut(name) => {
+                if let Err(e) = self.photo_luts().remove(&name) {
+                    log::warn!("photo LUT {name} not removed: {e}");
+                }
+                if self.settings.snapshot.look.as_deref() == Some(&format!("{}{name}", looks::LUT)) {
+                    self.settings.snapshot.look = None;
+                    self.settings.save();
+                }
+            }
+            Action::OpenLutFolder => {
+                let dir = self.photo_luts().dir().to_path_buf();
+                let _ = std::fs::create_dir_all(&dir);
+                gallery::reveal(&dir, None);
+            }
         }
     }
 
-    /// AURORA_DEMO_PHOTO_LOOK=<filter>[:<percent>][:compare][:panel], with
-    /// AURORA_DEMO_SNAPSHOT: the filter (its file's name, `Sepia`,
-    /// `Toycamera`…) at that strength (100 by default), the before / after
-    /// line in the middle, the viewfinder's filter panel open (the photo
-    /// window's settings scrolled to the filter). Without it,
-    /// the scenarios start with no filter.
+    /// The tables' list for the interface, and an import that came back:
+    /// the table chosen and said.
+    fn photo_luts_update(&mut self) {
+        if !self.panels.snapshot {
+            return;
+        }
+        self.photo_luts().poll();
+        for failure in self.photo_luts().take_failures() {
+            let text = aurora_i18n::tr!("photo-lut-failed", error = failure);
+            self.snapshots.message = Some((text.clone(), true));
+            self.photo_vf_error(&text);
+        }
+        let names = self.photo_luts().names().to_vec();
+        if self.snapshots.ui.lut_names != names {
+            self.snapshots.ui.lut_names = names;
+        }
+        let Some(rx) = &self.snapshots.lut_import else { return };
+        let Ok(result) = rx.try_recv() else { return };
+        self.snapshots.lut_import = None;
+        match result {
+            None => {}
+            Some(Ok((name, lut))) => {
+                let text = aurora_i18n::tr!("photo-lut-imported", name = looks::lut_display(&name));
+                self.photo_luts().imported(name.clone(), lut);
+                self.settings.snapshot.look = Some(format!("{}{name}", looks::LUT));
+                self.settings.save();
+                self.snapshots.message = Some((text.clone(), false));
+                let now = self.egui_ctx.input(|i| i.time);
+                self.snapshots.vf.say(text, false, now);
+            }
+            Some(Err(e)) => {
+                log::warn!("photo LUT not imported: {e}");
+                let text = aurora_i18n::tr!("photo-lut-failed", error = e);
+                self.snapshots.message = Some((text.clone(), true));
+                self.photo_vf_error(&text);
+            }
+        }
+    }
+
+    /// AURORA_DEMO_PHOTO_LOOK=<filter>[:<percent>][:compare][:panel]
+    /// [:tab=legacy|aurora|luts][:search=<text>], with AURORA_DEMO_SNAPSHOT:
+    /// the filter (`Sepia`, `aurora:vhs`, `lut:<file>`, or `lut:demo` for a
+    /// warm table written into the library) at that strength (100 by
+    /// default), the before / after line in the middle, the viewfinder's
+    /// filter panel open on the filter's tab or the one given, a search
+    /// typed (the photo window's settings scrolled to the filter). Without
+    /// it, the scenarios start with no filter.
     fn photo_look_demo(&mut self) {
         let value = std::env::var("AURORA_DEMO_PHOTO_LOOK").unwrap_or_default();
-        let mut parts = value.split(':');
-        let s = &mut self.settings.snapshot;
-        s.look = parts.next().filter(|id| looks::ops(id).is_some()).map(str::to_owned);
-        s.look_strength = 100;
+        let mut parts = value.split(':').peekable();
+        // `aurora:` and `lut:` ids hold a colon
+        let mut id = parts.next().unwrap_or_default().to_owned();
+        if matches!(id.as_str(), "aurora" | "lut")
+            && let Some(rest) = parts.next()
+        {
+            id = format!("{id}:{rest}");
+        }
+        if id == "lut:demo" {
+            id = format!("{}{}", looks::LUT, self.photo_demo_lut());
+        }
+        self.settings.snapshot.look = (looks::name(&id).is_some()).then(|| id.clone());
+        self.settings.snapshot.look_strength = 100;
         self.snapshots.ui.look_compare = None;
+        self.snapshots.vf.looks_state.tab = looks::tab_of(&id);
         for part in parts {
-            match part {
-                "compare" => self.snapshots.ui.look_compare = Some(0.5),
-                "panel" => {
-                    self.snapshots.vf.looks = true;
-                    self.snapshots.vf.hinted = true;
-                    self.snapshots.ui.look_reveal = true;
+            match part.split_once('=') {
+                Some(("tab", tab)) => {
+                    self.snapshots.vf.looks_state.tab = match tab {
+                        "aurora" => looks::Tab::Aurora,
+                        "luts" => looks::Tab::Luts,
+                        _ => looks::Tab::Legacy,
+                    };
                 }
-                strength => {
-                    if let Ok(v) = strength.parse::<u8>() {
-                        s.look_strength = v.min(100);
+                Some(("search", text)) => self.snapshots.vf.looks_state.query = text.to_owned(),
+                _ => match part {
+                    "compare" => self.snapshots.ui.look_compare = Some(0.5),
+                    "panel" => {
+                        self.snapshots.vf.looks = true;
+                        self.snapshots.vf.hinted = true;
+                        self.snapshots.ui.look_reveal = true;
+                    }
+                    strength => {
+                        if let Ok(v) = strength.parse::<u8>() {
+                            self.settings.snapshot.look_strength = v.min(100);
+                        }
+                    }
+                },
+            }
+        }
+        if let Some(id) = &self.settings.snapshot.look {
+            log::info!("photo look demo: {id} at {} %", self.settings.snapshot.look_strength);
+        }
+    }
+
+    /// The demo's table: warm lights and teal shadows, 17 points a side,
+    /// written into the library once.
+    fn photo_demo_lut(&mut self) -> String {
+        const NAME: &str = "Demo warm.cube";
+        let path = self.photo_luts().dir().join(NAME);
+        if !path.exists() {
+            let n = 17;
+            let mut text = format!(
+                "TITLE \"Demo warm\"
+LUT_3D_SIZE {n}
+"
+            );
+            for b in 0..n {
+                for g in 0..n {
+                    for r in 0..n {
+                        let c = [r, g, b].map(|v| v as f32 / (n - 1) as f32);
+                        let l = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+                        let tint = [0.08 * l - 0.04 * (1.0 - l), 0.02 * l, -0.06 * l + 0.05 * (1.0 - l)];
+                        let o = [0, 1, 2].map(|k| (c[k] + tint[k]).clamp(0.0, 1.0));
+                        text.push_str(&format!(
+                            "{:.5} {:.5} {:.5}
+",
+                            o[0], o[1], o[2]
+                        ));
                     }
                 }
             }
+            let _ = std::fs::create_dir_all(self.photo_luts().dir());
+            if let Err(e) = std::fs::write(&path, text) {
+                log::warn!("photo look demo: {NAME} not written: {e}");
+            }
+            self.photo_luts().refresh();
         }
-        if let Some(id) = &s.look {
-            log::info!("photo look demo: {id} at {} %", s.look_strength);
-        }
+        NAME.to_owned()
     }
 
     /// What the photo is doing, for a progress line: details loading, the

@@ -1,0 +1,10 @@
+<llsd>
+    <array>
+        <array>
+            <string>selective</string>
+            <real>120.0</real>
+            <real>30.0</real>
+            <real>15.0</real>
+        </array>
+    </array>
+</llsd>

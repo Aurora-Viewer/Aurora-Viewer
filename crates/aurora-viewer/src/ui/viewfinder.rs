@@ -43,8 +43,9 @@ pub struct Viewfinder {
     pub drawer: bool,
     /// The isolation panel (what the photo shows), on the right.
     pub isolate: bool,
-    /// The filter panel (`looks`).
+    /// The filter panel (`looks`), its tab and search.
     pub looks: bool,
+    pub looks_state: looks::LooksPanel,
     pub dial: Dial,
     /// The shutter half-pressed (Enter or the button held).
     pub pressed: bool,
@@ -552,7 +553,7 @@ impl Viewfinder {
             self.drawer(ctx, p, screen, s, panel, fov, default_fov, view, &mut out);
         }
         if self.looks {
-            self.looks_panel(ctx, p, screen, s, panel);
+            self.looks_panel(ctx, p, screen, s, panel, &mut out);
         }
         if self.isolate {
             self.isolate_picking(ctx, p, frame, f, &mut out);
@@ -1452,6 +1453,12 @@ impl Viewfinder {
                     ) {
                         self.looks = !self.looks;
                         self.drawer &= !self.looks;
+                        // opens on the tab of the filter in use
+                        if self.looks
+                            && let Some(id) = &s.look
+                        {
+                            self.looks_state.tab = crate::snapshot::looks::tab_of(id);
+                        }
                         if self.looks && self.isolate {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));

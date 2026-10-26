@@ -6,6 +6,15 @@
 // its coordinates: `i` from the left, `j` from the bottom (LLImageRaw holds
 // the rows bottom up). An operation that reads its neighbours (a 3 x 3
 // convolution) starts a pass of its own; looks.rs plans the passes.
+//
+// Aurora's own operations (kinds from 6) follow the same rules: worked in
+// levels and in the photo's pixels, blended through the stencil, and those
+// that read around the pixel (chromatic aberration, distortion, the wide
+// gathers) start a pass. Sizes are shares of the photo's height, so that the
+// live view, the photo, its tiles and its supersampling show the same. Three
+// read the scene's depth (fog, blur by distance, subject), from the focus
+// distance of the frame (`focus`, found by cs_focus or given by the app),
+// and one a 3D look-up table (a .cube file).
 
 struct Op {
     a: vec4<f32>,
@@ -27,11 +36,15 @@ struct Pass {
     // the original left of this share of the photo's width (< 0: none)
     compare: f32,
     _pad: vec2<f32>,
+    // the frame's inverse projection (view distance of a depth value)
+    inv_proj: mat4x4<f32>,
 };
 
 const SRC_SRGB: u32 = 1u;
 const FINAL: u32 = 2u;
 const DST_SRGB: u32 = 4u;
+// the scene's depth is bound (not the tests' blank one)
+const DEPTH_OK: u32 = 8u;
 
 const OP_STENCIL: f32 = 0.0;
 const OP_MATRIX: f32 = 1.0;
@@ -39,6 +52,23 @@ const OP_CURVE: f32 = 2.0;
 const OP_HISTO: f32 = 3.0;
 const OP_SCREEN: f32 = 4.0;
 const OP_CONVOLVE: f32 = 5.0;
+const OP_GRAIN: f32 = 6.0;
+const OP_CHROMA: f32 = 7.0;
+const OP_DISTORT: f32 = 8.0;
+const OP_BARS: f32 = 9.0;
+const OP_FRAME: f32 = 10.0;
+const OP_SELECTIVE: f32 = 11.0;
+const OP_GRADIENT_MAP: f32 = 12.0;
+const OP_PIXELATE: f32 = 13.0;
+const OP_GLITCH: f32 = 14.0;
+const OP_PAINT: f32 = 15.0;
+const OP_CLARITY: f32 = 16.0;
+const OP_GLOW: f32 = 17.0;
+const OP_FOG: f32 = 18.0;
+const OP_DEPTH_BLUR: f32 = 19.0;
+const OP_SUBJECT: f32 = 20.0;
+const OP_LUT: f32 = 21.0;
+const OP_SPLIT: f32 = 22.0;
 
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var original: texture_2d<f32>;
@@ -46,6 +76,10 @@ const OP_CONVOLVE: f32 = 5.0;
 @group(0) @binding(3) var<storage, read> ops: array<Op>;
 @group(0) @binding(4) var<storage, read> luts: array<u32>;
 @group(0) @binding(5) var<uniform> pass_u: Pass;
+@group(0) @binding(6) var depth_tex: texture_depth_2d;
+@group(0) @binding(7) var lut_tex: texture_3d<f32>;
+// x: the focus distance along the view axis (m)
+@group(0) @binding(8) var<storage, read> focus: vec4<f32>;
 
 struct Out {
     @builtin(position) clip: vec4<f32>,
@@ -204,6 +238,235 @@ fn neighbour(frag: vec2<f32>, di: f32, dj: f32, srgb: bool) -> vec3<f32> {
     return levels(textureSampleLevel(src, src_sampler, at / size, 0.0).rgb, srgb);
 }
 
+// ---- Aurora's operations
+
+fn luma(p: vec3<f32>) -> f32 {
+    return dot(p, vec3<f32>(0.2126, 0.7152, 0.0722)) / 255.0;
+}
+
+fn hash(v: vec2<f32>) -> f32 {
+    let h = dot(v, vec2<f32>(127.1, 311.7));
+    return fract(sin(h) * 43758.5453);
+}
+
+// The source at a point of the photo (its pixels, from the top left), the
+// photo's edge repeated beyond it.
+fn at_photo(q: vec2<f32>, srgb: bool) -> vec3<f32> {
+    let qc = clamp(q, vec2<f32>(0.0), pass_u.image.zw - vec2<f32>(1.0));
+    let t = pass_u.image.xy + (qc + vec2<f32>(0.5)) * pass_u.scale;
+    return levels(textureSampleLevel(src, src_sampler, t / vec2<f32>(textureDimensions(src)), 0.0).rgb, srgb);
+}
+
+// The k-th of n points of a disc of radius 1 (a Vogel spiral).
+fn disc(k: u32, n: u32) -> vec2<f32> {
+    let r = sqrt((f32(k) + 0.5) / f32(n));
+    let a = f32(k) * 2.39996323;
+    return r * vec2<f32>(cos(a), sin(a));
+}
+
+// Distance along the view axis of the scene at a pixel of the frame.
+fn view_depth(frag: vec2<f32>) -> f32 {
+    if ((pass_u.flags & DEPTH_OK) == 0u) {
+        return 1e9;
+    }
+    let dims = vec2<f32>(textureDimensions(depth_tex));
+    let px = clamp(vec2<i32>(frag), vec2<i32>(0), vec2<i32>(dims) - vec2<i32>(1));
+    let d = textureLoad(depth_tex, px, 0);
+    let uv = frag / dims;
+    let p = pass_u.inv_proj * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+    if (abs(p.w) < 1e-9) {
+        return 1e9;
+    }
+    return max(-p.z / p.w, 1e-3);
+}
+
+// The hue (degrees) and saturation of a colour in levels.
+fn hue(p: vec3<f32>) -> vec2<f32> {
+    let c = p / 255.0;
+    let mx = max(c.r, max(c.g, c.b));
+    let mn = min(c.r, min(c.g, c.b));
+    let d = mx - mn;
+    var h = 0.0;
+    if (d > 1e-5) {
+        if (mx == c.r) {
+            h = (c.g - c.b) / d;
+        } else if (mx == c.g) {
+            h = 2.0 + (c.b - c.r) / d;
+        } else {
+            h = 4.0 + (c.r - c.g) / d;
+        }
+    }
+    h = fract(h / 6.0 + 1.0) * 360.0;
+    return vec2<f32>(h, select(0.0, d / mx, mx > 0.0));
+}
+
+// One of Aurora's operations at photo point `q` of a photo `size`, `frag`
+// the pixel of the frame: its colour before the stencil.
+fn aurora(op: Op, p: vec3<f32>, q: vec2<f32>, size: vec2<f32>, frag: vec2<f32>, srgb: bool) -> vec3<f32> {
+    let kind = op.a.x;
+    let h = size.y;
+    let center = size * 0.5;
+    var c = p;
+    if (kind == OP_GRAIN) {
+        // film grain, strongest in the middle tones
+        let cell = floor(q / max(op.a.z, 1.0));
+        let l = luma(p);
+        let w = 0.35 + 2.6 * l * (1.0 - l);
+        if (op.a.w > 0.0) {
+            let n = hash(cell) + hash(cell + vec2<f32>(17.3, 5.1)) - 1.0;
+            c = p + vec3<f32>(op.a.y * 255.0 * w * n);
+        } else {
+            let n = vec3<f32>(
+                hash(cell) + hash(cell + vec2<f32>(17.3, 5.1)),
+                hash(cell + vec2<f32>(3.7, 41.2)) + hash(cell + vec2<f32>(9.1, 2.8)),
+                hash(cell + vec2<f32>(23.9, 7.7)) + hash(cell + vec2<f32>(1.3, 33.3)),
+            ) - vec3<f32>(1.0);
+            c = p + op.a.y * 255.0 * w * n;
+        }
+    } else if (kind == OP_CHROMA) {
+        // red and blue spread apart towards the edges
+        let v = q - center;
+        let k = op.a.y;
+        c = vec3<f32>(at_photo(center + v * (1.0 + k), srgb).r, p.g, at_photo(center + v * (1.0 - k), srgb).b);
+    } else if (kind == OP_DISTORT) {
+        // barrel (k > 0) or pincushion, the corners kept
+        let v = q - center;
+        let n = v / length(center);
+        let r2 = dot(n, n);
+        c = at_photo(center + v * (1.0 + op.a.y * (r2 - 1.0)), srgb);
+    } else if (kind == OP_BARS) {
+        // cinema bars for a frame `ratio` wide
+        let ratio = op.a.y;
+        let qc = q + vec2<f32>(0.5);
+        var bar = false;
+        if (size.x / h < ratio) {
+            bar = abs(qc.y - center.y) > size.x / ratio * 0.5;
+        } else {
+            bar = abs(qc.x - center.x) > h * ratio * 0.5;
+        }
+        c = select(p, op.b.rgb * 255.0, bar);
+    } else if (kind == OP_FRAME) {
+        // a border, wider at the bottom (an instant photo)
+        let side = op.a.y * min(size.x, h);
+        let bottom = op.a.z * min(size.x, h);
+        let qc = q + vec2<f32>(0.5);
+        let inside = qc.x >= side && qc.x <= size.x - side && qc.y >= side && qc.y <= h - bottom;
+        c = select(op.b.rgb * 255.0, p, inside);
+    } else if (kind == OP_SELECTIVE) {
+        // one hue kept, the rest in grey
+        let hs = hue(p);
+        let d = abs(fract((hs.x - op.a.y) / 360.0 + 0.5) - 0.5) * 360.0;
+        let keep = (1.0 - smoothstep(op.a.z, op.a.z + op.a.w, d)) * smoothstep(0.08, 0.25, hs.y);
+        c = mix(vec3<f32>(luma(p) * 255.0), p, keep);
+    } else if (kind == OP_GRADIENT_MAP) {
+        // the brightness through three colours
+        let l = luma(p);
+        let g = select(mix(op.c.rgb, op.d.rgb, l * 2.0 - 1.0), mix(op.b.rgb, op.c.rgb, l * 2.0), l < 0.5);
+        c = g * 255.0;
+    } else if (kind == OP_SPLIT) {
+        // split toning: a colour in the shadows, another in the lights
+        let l = luma(p);
+        let shift = (1.0 - l) * (op.b.rgb - vec3<f32>(0.5)) + l * (op.c.rgb - vec3<f32>(0.5));
+        c = p + op.a.y * 255.0 * shift;
+    } else if (kind == OP_PIXELATE) {
+        let block = max(op.a.y * h, 1.0);
+        c = at_photo((floor(q / block) + vec2<f32>(0.5)) * block, srgb);
+    } else if (kind == OP_GLITCH) {
+        // bands torn sideways, the channels apart
+        let band = floor(q.y / max(op.a.z * h, 1.0));
+        let r = hash(vec2<f32>(band, op.a.w));
+        let tear = select(0.0, (hash(vec2<f32>(op.a.w, band)) - 0.5) * 2.0 * op.a.y * h, r > 0.65);
+        let split = op.a.y * h * 0.35;
+        c = vec3<f32>(
+            at_photo(q + vec2<f32>(tear + split, 0.0), srgb).r,
+            at_photo(q + vec2<f32>(tear, 0.0), srgb).g,
+            at_photo(q + vec2<f32>(tear - split, 0.0), srgb).b,
+        );
+    } else if (kind == OP_PAINT) {
+        // Kuwahara: the mean of the calmest of four quadrants (oil paint)
+        let radius = i32(clamp(round(op.a.y * h), 1.0, 5.0));
+        var best = p;
+        var lowest = 1e9;
+        for (var quad = 0; quad < 4; quad++) {
+            let sx = select(-1.0, 1.0, (quad & 1) == 1);
+            let sy = select(-1.0, 1.0, (quad & 2) == 2);
+            var sum = vec3<f32>(0.0);
+            var sum2 = 0.0;
+            var count = 0.0;
+            for (var y = 0; y <= radius; y++) {
+                for (var x = 0; x <= radius; x++) {
+                    let s = at_photo(q + vec2<f32>(sx * f32(x), sy * f32(y)), srgb);
+                    let l = luma(s);
+                    sum += s;
+                    sum2 += l * l;
+                    count += 1.0;
+                }
+            }
+            let mean = sum / count;
+            let lm = luma(mean);
+            let variance = sum2 / count - lm * lm;
+            if (variance < lowest) {
+                lowest = variance;
+                best = mean;
+            }
+        }
+        c = best;
+    } else if (kind == OP_CLARITY) {
+        // local contrast: the pixel away from the mean around it
+        let radius = op.a.z * h;
+        var mean = vec3<f32>(0.0);
+        for (var k = 0u; k < 16u; k++) {
+            mean += at_photo(q + disc(k, 16u) * radius, srgb);
+        }
+        mean /= 16.0;
+        let l = luma(p);
+        c = p + op.a.y * (p - mean) * (0.4 + 2.4 * l * (1.0 - l));
+    } else if (kind == OP_GLOW) {
+        // the light above a threshold spread around and tinted (bloom,
+        // halation)
+        let radius = op.a.z * h;
+        var light = vec3<f32>(0.0);
+        for (var k = 0u; k < 24u; k++) {
+            let s = at_photo(q + disc(k, 24u) * radius, srgb);
+            light += max(s - vec3<f32>(op.a.w * 255.0), vec3<f32>(0.0));
+        }
+        c = p + op.a.y * op.b.rgb * luma(light / 24.0) * 255.0 / max(1.0 - op.a.w, 0.05);
+    } else if (kind == OP_FOG) {
+        // haze growing with the distance
+        let z = view_depth(frag);
+        let f = clamp((z - op.a.y) / max(op.a.z - op.a.y, 1e-3), 0.0, 1.0) * op.a.w;
+        c = mix(p, op.b.rgb * 255.0, f);
+    } else if (kind == OP_DEPTH_BLUR) {
+        // blurred away from the focus distance (behind it only when asked)
+        let z = view_depth(frag);
+        let zf = focus.x;
+        var t = clamp(abs(z - zf) / max(zf * op.a.z, 1e-3), 0.0, 1.0);
+        if (op.a.w > 0.0 && z < zf) {
+            t = 0.0;
+        }
+        let radius = t * op.a.y * h;
+        if (radius > 0.5) {
+            var sum = vec3<f32>(0.0);
+            for (var k = 0u; k < 24u; k++) {
+                sum += at_photo(q + disc(k, 24u) * radius, srgb);
+            }
+            c = sum / 24.0;
+        }
+    } else if (kind == OP_SUBJECT) {
+        // what is far from the focus distance greyed and darkened
+        let z = view_depth(frag);
+        let zf = focus.x;
+        let away = smoothstep(op.a.w, op.a.w * 2.0, abs(z - zf) / zf);
+        let dim = mix(p, vec3<f32>(luma(p) * 255.0), op.a.y) * (1.0 - op.a.z);
+        c = mix(p, dim, away);
+    } else if (kind == OP_LUT) {
+        let n = f32(textureDimensions(lut_tex).x);
+        let coord = p / 255.0 * (n - 1.0) / n + vec3<f32>(0.5 / n);
+        c = textureSampleLevel(lut_tex, src_sampler, coord, 0.0).rgb * 255.0;
+    }
+    return floor(clamp(c, vec3<f32>(0.0), vec3<f32>(255.0)));
+}
+
 @fragment
 fn fs_look(in: Out) -> @location(0) vec4<f32> {
     let px = vec2<i32>(in.clip.xy);
@@ -244,6 +507,8 @@ fn fs_look(in: Out) -> @location(0) vec4<f32> {
                 c = histo_curve(u32(op.a.y), op.b.xyz, p);
             } else if (kind == OP_SCREEN) {
                 c = vec3<f32>(screen(op, p.r, i, j, size.y));
+            } else if (kind != OP_CONVOLVE) {
+                c = aurora(op, p, q, size, in.clip.xy, src_srgb);
             } else {
                 // a convolution: always the first operation of its pass, read
                 // from the pass's source; the border of the photo goes black
@@ -298,8 +563,8 @@ fn fs_look(in: Out) -> @location(0) vec4<f32> {
 // ---- the brightness histogram of filterLinearize / filterEqualize (its own
 // bindings: the compute pipelines have a layout of their own)
 
-@group(0) @binding(8) var hist_src: texture_2d<f32>;
-@group(0) @binding(9) var<storage, read_write> bins: array<atomic<u32>, 256>;
+@group(0) @binding(16) var hist_src: texture_2d<f32>;
+@group(0) @binding(17) var<storage, read_write> bins: array<atomic<u32>, 256>;
 
 struct HistU {
     image: vec4<f32>,
@@ -309,13 +574,41 @@ struct HistU {
     _pad: u32,
     // per curve: x its operation, y linearize 0 / posterize 1
     curves: array<vec4<u32>, 8>,
+    // the inverse projection, and the focus distance given (x > 0) or the
+    // point of the frame whose depth gives it (yz)
+    inv_proj: mat4x4<f32>,
+    focus: vec4<f32>,
 };
 
-@group(0) @binding(10) var<uniform> hist_u: HistU;
-@group(0) @binding(11) var<storage, read> hist_ops: array<Op>;
-@group(0) @binding(12) var<storage, read_write> hist_luts: array<u32>;
+@group(0) @binding(18) var<uniform> hist_u: HistU;
+@group(0) @binding(19) var<storage, read> hist_ops: array<Op>;
+@group(0) @binding(20) var<storage, read_write> hist_luts: array<u32>;
+
+@group(0) @binding(21) var focus_depth: texture_depth_2d;
+@group(0) @binding(22) var<storage, read_write> focus_out: vec4<f32>;
 
 var<workgroup> local_bins: array<atomic<u32>, 256>;
+
+// The focus distance of the depth operations: the one given, or the scene's
+// at the middle of the photo.
+@compute @workgroup_size(1)
+fn cs_focus() {
+    if (hist_u.focus.x > 0.0) {
+        focus_out = vec4<f32>(hist_u.focus.x, 0.0, 0.0, 0.0);
+        return;
+    }
+    if ((hist_u.flags & DEPTH_OK) == 0u) {
+        focus_out = vec4<f32>(1e9, 0.0, 0.0, 0.0);
+        return;
+    }
+    let dims = vec2<f32>(textureDimensions(focus_depth));
+    let frag = hist_u.focus.yz;
+    let px = clamp(vec2<i32>(frag), vec2<i32>(0), vec2<i32>(dims) - vec2<i32>(1));
+    let d = textureLoad(focus_depth, px, 0);
+    let uv = frag / dims;
+    let p = hist_u.inv_proj * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, d, 1.0);
+    focus_out = vec4<f32>(select(max(-p.z / p.w, 1e-3), 1e9, abs(p.w) < 1e-9), 0.0, 0.0, 0.0);
+}
 
 // Counts (r + g + b) / 3 of the photo's pixels (computeHistograms).
 @compute @workgroup_size(16, 16)

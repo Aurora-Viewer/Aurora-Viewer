@@ -1,0 +1,10 @@
+<llsd>
+    <array>
+        <array>
+            <string>subject</string>
+            <real>0.85</real>
+            <real>0.35</real>
+            <real>0.2</real>
+        </array>
+    </array>
+</llsd>

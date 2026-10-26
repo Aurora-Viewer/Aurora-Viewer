@@ -44,12 +44,14 @@ pub struct SnapshotUi {
     pub free: crate::camera::free::FreeSettings,
     /// The filter pointed at in a list, tried on the live view until the
     /// next frame of the interface (Some(None): "No filter").
-    pub look_hover: Option<Option<&'static str>>,
+    pub look_hover: Option<Option<String>>,
     /// The before / after comparison of the live view: the share of the
     /// photo's width left as it is.
     pub look_compare: Option<f32>,
     /// The settings scroll to the filter once (AURORA_DEMO_PHOTO_LOOK).
     pub look_reveal: bool,
+    /// The user's 3D tables, by file name (`snapshot::luts`).
+    pub lut_names: Vec<String>,
 }
 
 /// Where a photo goes (Firestorm's snapshot panels; the profile feed
@@ -163,6 +165,12 @@ pub enum Action {
     Confirm(bool),
     /// The "cannot afford" message was closed.
     CloseAfford,
+    /// Choose a .cube file to add to the tables of the photo's look.
+    ImportLut,
+    /// Delete one of the tables (its file name).
+    RemoveLut(String),
+    /// Show the folder of the tables.
+    OpenLutFolder,
 }
 
 impl SnapshotUi {
@@ -677,7 +685,7 @@ impl SnapshotUi {
 
         let filter = ui.cursor();
         section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
-        look_rows(ui, p, s, &mut self.look_hover);
+        look_rows(ui, p, s, self, out);
         if std::mem::take(&mut self.look_reveal) {
             ui.scroll_to_rect(filter.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
         }
@@ -977,31 +985,49 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
 }
 
 /// The photo's filter (the Legacy Viewer's Filter list, LLFloaterSnapshot's
-/// filters_combobox) and its strength; the filter pointed at in the list is
-/// tried on the live view.
-fn look_rows(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, hover: &mut Option<Option<&'static str>>) {
+/// filters_combobox, with Aurora's looks and the user's tables in their own
+/// groups) and its strength; the entry pointed at is tried on the live view.
+fn look_rows(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, panel: &mut SnapshotUi, out: &mut Vec<Action>) {
     use crate::snapshot::looks;
     row(ui, p, aurora_i18n::tr!("photo-look"), None, |ui| {
         egui::ComboBox::from_id_salt("photo_look")
             .selected_text(looks::label(s.look.as_deref()))
-            .width(ui.available_width().min(150.0))
-            .height(360.0)
+            .width(ui.available_width().min(170.0))
+            .height(420.0)
             .show_ui(ui, |ui| {
-                let none = ui.selectable_label(s.look.is_none(), aurora_i18n::tr!("photo-look-none"));
-                if none.hovered() {
-                    *hover = Some(None);
-                }
-                if none.clicked() {
-                    s.look = None;
-                }
-                for (id, name) in looks::list() {
-                    let resp = ui.selectable_label(s.look.as_deref() == Some(id), name);
+                let mut entry = |ui: &mut egui::Ui, id: Option<&str>, name: &str, tip: Option<&str>| {
+                    let mut resp = ui.selectable_label(s.look.as_deref() == id, name);
+                    if let Some(tip) = tip {
+                        resp = resp.on_hover_text(tip);
+                    }
                     if resp.hovered() {
-                        *hover = Some(Some(id));
+                        panel.look_hover = Some(id.map(str::to_owned));
                     }
                     if resp.clicked() {
-                        s.look = Some(id.to_owned());
+                        s.look = id.map(str::to_owned);
                     }
+                };
+                let heading = |ui: &mut egui::Ui, text: &str| {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(text).size(11.0).strong().color(p.muted));
+                };
+                entry(ui, None, aurora_i18n::tr!("photo-look-none"), None);
+                heading(ui, looks::Tab::Legacy.label());
+                for e in looks::legacy_list() {
+                    entry(ui, Some(&e.id), &e.name, None);
+                }
+                for (section, entries) in looks::aurora_list() {
+                    heading(ui, &format!("{} · {}", looks::Tab::Aurora.label(), looks::section_name(section)));
+                    for e in entries {
+                        entry(ui, Some(&e.id), &e.name, e.tip);
+                    }
+                }
+                heading(ui, looks::Tab::Luts.label());
+                for e in looks::lut_list(&panel.lut_names) {
+                    entry(ui, Some(&e.id), &e.name, None);
+                }
+                if ui.selectable_label(false, aurora_i18n::tr!("photo-lut-import")).clicked() {
+                    out.push(Action::ImportLut);
                 }
             });
     });

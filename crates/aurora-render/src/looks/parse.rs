@@ -4,7 +4,8 @@
 //! like LLImageFilter::executeFilter (indra/llimage/llimagefilter.cpp,
 //! originally LGPL 2.1): a missing parameter reads 0, an unknown shape,
 //! blend mode or screen takes the first one, an unknown operation is left
-//! out with a warning.
+//! out with a warning. Aurora's looks (`aurora/`) are files of the same
+//! form, with the names of Aurora's operations besides.
 
 use super::{LookOp, MAX_OPS, ScreenMode, StencilMode, StencilShape};
 use aurora_llsd::Llsd;
@@ -44,6 +45,65 @@ const LEGACY: [(&str, &str); 30] = [
     ("Toycamera", include_str!("legacy/Toycamera.xml")),
     ("Video", include_str!("legacy/Video.xml")),
 ];
+
+/// The sections of Aurora's looks, in the order the interface shows them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuroraSection {
+    Film,
+    Color,
+    Lens,
+    Creative,
+    Depth,
+}
+
+/// One of Aurora's looks.
+#[derive(Debug, Clone)]
+pub struct AuroraLook {
+    pub id: &'static str,
+    pub section: AuroraSection,
+    pub ops: Arc<[LookOp]>,
+}
+
+macro_rules! aurora_files {
+    ($($section:ident: [$($id:literal),* $(,)?]),* $(,)?) => {
+        [$($((AuroraSection::$section, $id, include_str!(concat!("aurora/", $id, ".xml")))),*),*]
+    };
+}
+
+/// Aurora's looks, by section.
+const AURORA: [(AuroraSection, &str, &str); 36] = aurora_files!(
+    Film: ["fine-grain", "silver-grain", "teal-orange", "bleach-bypass", "cross-process", "instant", "chrome", "halation", "cyanotype", "infrared"],
+    Color: ["vivid", "faded", "keep-red", "keep-yellow", "keep-green", "keep-blue", "duotone", "sunset", "night-vision"],
+    Lens: ["chromatic", "fisheye", "old-lens", "scope", "widescreen", "dreamy"],
+    Creative: ["pixel", "vhs", "glitch", "oil-paint", "sketch", "clarity"],
+    Depth: ["haze", "golden-haze", "miniature-3d", "background-blur", "subject"],
+);
+
+/// Aurora's looks, in their sections' order, read once.
+pub fn aurora_looks() -> &'static [AuroraLook] {
+    static LOOKS: OnceLock<Vec<AuroraLook>> = OnceLock::new();
+    LOOKS.get_or_init(|| {
+        AURORA
+            .iter()
+            .filter_map(|&(section, id, xml)| match parse_look(xml.as_bytes()) {
+                Ok(ops) => Some(AuroraLook {
+                    id,
+                    section,
+                    ops: ops.into(),
+                }),
+                Err(e) => {
+                    log::warn!("photo look {id}: {e}");
+                    None
+                }
+            })
+            .collect()
+    })
+}
+
+/// One of Aurora's looks by its id.
+pub fn aurora_look(id: &str) -> Option<&'static AuroraLook> {
+    aurora_looks().iter().find(|look| look.id == id)
+}
 
 /// The Legacy Viewer's looks, by name, read once.
 pub fn legacy_looks() -> &'static [(&'static str, Arc<[LookOp]>)] {
@@ -170,6 +230,66 @@ pub fn parse_look(xml: &[u8]) -> Result<Vec<LookOp>, LookError> {
                     abs: v.at(2).as_f64() > 0.0,
                 }
             }
+            "grain" => LookOp::Grain {
+                amount: v.at(1).as_f32(),
+                size: v.at(2).as_f32(),
+                mono: v.at(3).as_f64() > 0.0,
+            },
+            "chroma" => LookOp::Chroma(v.at(1).as_f32()),
+            "distort" => LookOp::Distort(v.at(1).as_f32()),
+            "bars" => LookOp::Bars {
+                ratio: v.at(1).as_f32(),
+                color: rgb(v, 2),
+            },
+            "frame" => LookOp::Frame {
+                side: v.at(1).as_f32(),
+                bottom: v.at(2).as_f32(),
+                color: rgb(v, 3),
+            },
+            "selective" => LookOp::Selective {
+                hue: v.at(1).as_f32(),
+                width: v.at(2).as_f32(),
+                soft: v.at(3).as_f32(),
+            },
+            "gradientmap" => LookOp::GradientMap([rgb(v, 1), rgb(v, 4), rgb(v, 7)]),
+            "split" => LookOp::Split {
+                amount: v.at(1).as_f32(),
+                shadows: rgb(v, 2),
+                lights: rgb(v, 5),
+            },
+            "pixelate" => LookOp::Pixelate(v.at(1).as_f32()),
+            "glitch" => LookOp::Glitch {
+                amount: v.at(1).as_f32(),
+                band: v.at(2).as_f32(),
+                seed: v.at(3).as_f32(),
+            },
+            "paint" => LookOp::Paint(v.at(1).as_f32()),
+            "clarity" => LookOp::Clarity {
+                amount: v.at(1).as_f32(),
+                radius: v.at(2).as_f32(),
+            },
+            "glow" => LookOp::Glow {
+                amount: v.at(1).as_f32(),
+                radius: v.at(2).as_f32(),
+                threshold: v.at(3).as_f32(),
+                tint: rgb(v, 4),
+            },
+            "fog" => LookOp::Fog {
+                start: v.at(1).as_f32(),
+                end: v.at(2).as_f32(),
+                max: v.at(3).as_f32(),
+                color: rgb(v, 4),
+            },
+            "depthblur" => LookOp::DepthBlur {
+                radius: v.at(1).as_f32(),
+                range: v.at(2).as_f32(),
+                behind: v.at(3).as_f64() > 0.0,
+            },
+            "subject" => LookOp::Subject {
+                desaturate: v.at(1).as_f32(),
+                darken: v.at(2).as_f32(),
+                tolerance: v.at(3).as_f32(),
+            },
             "colortransform" => {
                 let mut m = [[0.0; 3]; 3];
                 for (k, value) in m.as_flattened_mut().iter_mut().enumerate() {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::looks::parse::AuroraSection;
 
 /// LLImageFilter as it is (indra/llimage/llimagefilter.cpp), on an RGBA
 /// image whose rows go up like LLImageRaw's: the reference the shader is
@@ -515,7 +516,7 @@ fn draw(
         mapped_at_creation: false,
     });
     let mut encoder = device.create_command_encoder(&Default::default());
-    looks.encode(queue, &mut encoder, look, &target.create_view(&Default::default()));
+    looks.encode(device, queue, &mut encoder, look, &target.create_view(&Default::default()), None);
     encoder.copy_texture_to_buffer(
         target.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
@@ -545,7 +546,9 @@ fn look_over(ops: Arc<[LookOp]>, size: (u32, u32)) -> PhotoLook {
         compare: None,
         image: [0.0, 0.0, size.0 as f32, size.1 as f32],
         scale: 1.0,
-        hold_histogram: false,
+        hold: false,
+        lut: None,
+        focus: None,
     }
 }
 
@@ -675,4 +678,113 @@ fn looks_shader_is_valid() {
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
         .validate(&module)
         .expect("valid");
+}
+
+#[test]
+fn every_aurora_look_reads_into_its_section() {
+    let looks = aurora_looks();
+    assert_eq!(looks.len(), 36);
+    for look in looks {
+        assert!(!look.ops.is_empty(), "{}", look.id);
+        assert!(plan(&look.ops).passes.len() < MAX_PASSES, "{}", look.id);
+    }
+    let instant = aurora_look("instant").expect("instant");
+    assert_eq!(instant.section, AuroraSection::Film);
+    assert!(matches!(instant.ops.last(), Some(LookOp::Frame { .. })));
+    assert!(plan(&aurora_look("subject").expect("subject").ops).focus);
+}
+
+#[test]
+fn operations_that_read_around_start_a_pass() {
+    let p = plan(&[LookOp::Saturate(1.2), LookOp::Chroma(0.01), LookOp::GrayScale, LookOp::Distort(0.2)]);
+    assert_eq!(p.passes, [(0, 1), (1, 3), (3, 4)]);
+    assert!(!p.focus);
+}
+
+fn draw_ops(ops: Vec<LookOp>, size: (u32, u32), image: &[u8], lut: Option<Arc<Lut>>) -> Option<Vec<u8>> {
+    let _gpu = crate::test_gpu::lock();
+    let (device, queue) = gpu()?;
+    let mut look = look_over(ops.into(), size);
+    look.lut = lut;
+    Some(draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &look, size, image))
+}
+
+#[test]
+fn selective_colour_keeps_one_hue() {
+    // a red pixel, a blue one, a grey one
+    let image = [230u8, 20, 30, 255, 30, 40, 220, 255, 120, 120, 120, 255, 200, 30, 20, 255];
+    let Some(out) = draw_ops(
+        vec![LookOp::Selective {
+            hue: 0.0,
+            width: 22.0,
+            soft: 14.0,
+        }],
+        (2, 2),
+        &image,
+        None,
+    ) else {
+        return;
+    };
+    assert_eq!(out[0..3], image[0..3]);
+    // the blue one in grey
+    assert!(out[4].abs_diff(out[6]) <= 1 && out[5].abs_diff(out[6]) <= 1, "{:?}", &out[4..8]);
+    assert_eq!(out[8..11], image[8..11]);
+}
+
+#[test]
+fn bars_leave_the_frame_of_their_ratio() {
+    let (w, h) = (64u32, 36u32);
+    let image = test_image(w as usize, h as usize);
+    let Some(out) = draw_ops(
+        vec![LookOp::Bars {
+            ratio: 2.39,
+            color: [0.0; 3],
+        }],
+        (w, h),
+        &image,
+        None,
+    ) else {
+        return;
+    };
+    // 64 / 2.39 = 26.8 rows kept: about 4.6 rows of bar at the top and bottom
+    let row = |y: usize| &out[y * w as usize * 4..(y + 1) * w as usize * 4];
+    assert!(row(0).chunks(4).all(|p| p[..3] == [0, 0, 0]));
+    assert!(row(35).chunks(4).all(|p| p[..3] == [0, 0, 0]));
+    assert_eq!(row(18), &image[18 * w as usize * 4..19 * w as usize * 4]);
+}
+
+#[test]
+fn an_identity_table_changes_nothing() {
+    let (w, h) = (32u32, 16u32);
+    let image = test_image(w as usize, h as usize);
+    let Some(out) = draw_ops(vec![LookOp::Lut], (w, h), &image, Some(Arc::new(Lut::identity(33)))) else {
+        return;
+    };
+    let (mean, far) = differences(&image, &out);
+    assert!(mean < 0.6 && far == 0, "mean {mean}, {far} far");
+}
+
+#[test]
+fn every_aurora_look_draws() {
+    let _gpu = crate::test_gpu::lock();
+    let Some((device, queue)) = gpu() else {
+        return;
+    };
+    let (w, h) = (96u32, 64u32);
+    let image = test_image(w as usize, h as usize);
+    for look in aurora_looks() {
+        eprintln!("drawing {}", look.id);
+        let out = draw(
+            &device,
+            &queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            &look_over(look.ops.clone(), (w, h)),
+            (w, h),
+            &image,
+        );
+        // without the scene's depth, the depth looks leave it as it is
+        if !matches!(look.id, "subject" | "background-blur" | "miniature-3d") {
+            assert_ne!(out, image, "{} changes nothing", look.id);
+        }
+    }
 }

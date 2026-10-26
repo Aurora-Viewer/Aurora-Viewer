@@ -1,0 +1,27 @@
+<llsd>
+    <array>
+        <array>
+            <string>colortransform</string>
+            <real>0.0</real>
+            <real>1.0</real>
+            <real>0.0</real>
+            <real>1.0</real>
+            <real>0.0</real>
+            <real>0.0</real>
+            <real>0.0</real>
+            <real>0.0</real>
+            <real>1.0</real>
+        </array>
+        <array>
+            <string>contrast</string>
+            <real>1.1</real>
+            <real>1.0</real>
+            <real>1.0</real>
+            <real>1.0</real>
+        </array>
+        <array>
+            <string>saturate</string>
+            <real>1.2</real>
+        </array>
+    </array>
+</llsd>
