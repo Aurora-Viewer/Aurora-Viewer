@@ -773,6 +773,7 @@ mod tests {
         for draft in ["", "a draft with é", "/5 pending", " "] {
             let mut bench = Bench::shown();
             bench.chat.input = draft.into();
+            crate::ui::chat::cursor_to_end(&bench.ctx, crate::ui::chat::bar_input_id(), draft);
             let im = uuid::Uuid::from_u128(100);
             bench.chat.selected = Some(im);
             *bench.chat.draft_mut(Some(im)) = "an IM draft".into();
@@ -795,12 +796,7 @@ mod tests {
             assert_eq!(bench.chat.selected, Some(im));
             assert_eq!(bench.chat.draft_mut(Some(im)), "an IM draft");
             assert_eq!(bench.chat.draft_mut(None), "the nearby conversation draft");
-            // Typing continues at the end, including after an old caret.
-            crate::ui::chat::cursor_to_end(&bench.ctx, crate::ui::chat::bar_input_id(), "");
-            bench.ctx.memory_mut(|m| m.surrender_focus(crate::ui::chat::bar_input_id()));
-            assert!(bench.chat.gesture_key(&bench.ctx, &slash, code, true, mods));
-            assert!(bench.chat.gesture_key(&bench.ctx, &slash, code, false, mods));
-            bench.frame(vec![]);
+            // With the caret at the end, a channel command remains ready.
             bench.frame(vec![egui::Event::Text("hello".into())]);
             assert_eq!(bench.chat.input, format!("{expected}hello"));
             let (sent, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
@@ -811,6 +807,14 @@ mod tests {
                 assert_eq!(sent.channel, 0);
                 assert_eq!(sent.message, format!("{expected}hello").trim());
             }
+            bench.frame(vec![]);
+            bench.chat.input = "réserve".into();
+            crate::ui::chat::cursor_to_end(&bench.ctx, crate::ui::chat::bar_input_id(), "r");
+            assert!(bench.chat.gesture_key(&bench.ctx, &slash, code, true, mods));
+            assert!(bench.chat.gesture_key(&bench.ctx, &slash, code, false, mods));
+            bench.frame(vec![]);
+            bench.frame(vec![egui::Event::Text("X".into())]);
+            assert_eq!(bench.chat.input, "rXéserve", "an existing draft keeps its caret");
         }
     }
 

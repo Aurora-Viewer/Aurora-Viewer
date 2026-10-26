@@ -58,6 +58,8 @@ use std::collections::{HashMap, HashSet};
 pub struct ChatUi {
     pub input: String,
     pub focus_request: bool,
+    /// `start_gesture` resumes a nonempty draft at its existing caret.
+    gesture_keep_cursor: bool,
     /// The slash press reserved for `start_gesture`, until its release.
     gesture_key_down: Option<winit::keyboard::KeyCode>,
     pub has_focus: bool,
@@ -283,6 +285,7 @@ impl ChatUi {
             return true;
         }
         if released {
+            self.gesture_keep_cursor = !self.input.is_empty();
             if self.input.is_empty() {
                 self.input.push('/');
             }
@@ -3672,7 +3675,11 @@ pub(crate) fn bar_input(
     let focusing = std::mem::take(&mut st.focus_request);
     if focusing {
         resp.request_focus();
-        cursor_to_end(ui.ctx(), resp.id, &st.input);
+        // FSNearbyChat::showDefaultChatBar only moves the caret after
+        // inserting `/` into an empty field; a draft keeps its position.
+        if !std::mem::take(&mut st.gesture_keep_cursor) {
+            cursor_to_end(ui.ctx(), resp.id, &st.input);
+        }
     }
     st.has_focus = resp.has_focus();
     // Modified Enter does not surrender egui's single-line field focus.
