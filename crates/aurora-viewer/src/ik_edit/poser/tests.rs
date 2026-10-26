@@ -689,7 +689,10 @@ fn poser_subject_menu_queues_consent_actions_for_the_app_and_waits_for_the_bridg
                 "{bridge:?}: the menu says why Ask waits ({key})"
             );
         }
-        let repair = texts.iter().find(|t| t.source == aurora_i18n::text("bridge-repair")).map(|t| t.rect.center());
+        let repair = texts
+            .iter()
+            .find(|t| t.source == aurora_i18n::text("bridge-repair"))
+            .map(|t| t.rect.center());
         assert_eq!(
             repair.is_some(),
             matches!(bridge, QueryState::Silent | QueryState::Failed),
