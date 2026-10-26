@@ -8,6 +8,11 @@ identities and coordinates; the current catalogue supplies all commands and
 permissions on each frame. Lists and radial pagination use the same saved
 placements. The radial editor opens the shared list editor, with the same
 groups, filters, icon bars, hidden shelf, undo/redo and protected lock control.
+The scene voice header sits outside that catalogue and the scrollable body,
+so customization cannot move/hide it. Avatar technical actions use separate
+display, information, reset, moderation and disturbance groups (#1135).
+Clicked attachments keep object and wearer targets explicit; derender actions
+belong to disturbance for objects, attachments, HUDs and other avatars.
 Scene reset clears only the current profile. `context/notecards.rs` validates
 bounded versioned snapshots of all seven scene profiles, reuses the inventory's
 COPY-aware picker and native transfers, and applies only correlated successful

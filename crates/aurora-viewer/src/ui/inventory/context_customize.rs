@@ -409,6 +409,8 @@ pub(crate) fn show(
     if !view.profile.locked
         && !right_dismissed
         && ui.input(|i| i.pointer.any_click())
+        // Fixed controls can precede this editor in the same popup.
+        && !menu::clicks_kept_row(ui.ctx(), root)
         && pos.is_some_and(|pos| !view.state.regions.iter().any(|rect| rect.contains(pos)))
     {
         view.state.dismiss(ui.ctx(), view.profile);

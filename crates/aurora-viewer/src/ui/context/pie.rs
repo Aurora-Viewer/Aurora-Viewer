@@ -241,7 +241,7 @@ fn voice_panel(ctx: &egui::Context, p: &Palette, center: Pos2, radius: f32, id: 
             ui.ctx().move_to_top(ui.layer_id());
             crate::ui::widgets::overlay(ui, p, egui::Margin::same(4), |ui| {
                 ui.set_width(WIDTH - 10.0);
-                super::voice_edit(ui, p, id, voice);
+                super::voice_control(ui, p, id, voice);
             });
         })
         .response

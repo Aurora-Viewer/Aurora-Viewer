@@ -1839,8 +1839,15 @@ operation before any unlinking. Copying a script does not keep its runtime
 memory; replacing the root does not automatically copy the Linkset Data.
 
 Scene menu customization: `customize` unlocks the object menu at frame 740;
-`customize-land`, `customize-self` and `customize-avatar` open the respective
-editor at the same frame. `customize-hud` additionally needs
+`customize-land`, `customize-self`, `customize-avatar` and
+`customize-other-attachment` open the respective editor at the same frame.
+`avatar-menu` and `attachment-menu` open the locked menus. These four avatar
+scenarios simulate nearby voice membership without starting an audio session:
+verify the volume stays above all movable rows, including while editing, and
+does not overlap Profile. Technical actions are grouped under Display,
+Information, Reset, Moderation (with rights) and Disturbance. A clicked
+attachment's object actions are separate from its wearer's actions.
+`customize-hud` additionally needs
 `AURORA_DEMO_HUDS=1`. Capture at frame 820 or later. `pbr` opens the object's
 native Materials section with PBR selected. The lock button enters editing;
 drag rows into groups, icon bars or the hidden shelf, right-click a row for
@@ -1851,7 +1858,7 @@ object receives commands, and list/radial menus share visibility and ordering.
 Show Textures on an avatar or attachment opens the same grid;
 changing avatars replaces the inspected bakes without exposing full asset UUIDs.
 
-**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop|customize|customize-land|customize-self|customize-avatar|customize-hud|pbr|textures|profile|profile-no-mod|profile-other|profile-sale|profile-hud|reset-lod|menu-export|menu-load|region-objects|characters`**
+**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop|customize|customize-land|customize-self|customize-avatar|customize-other-attachment|avatar-menu|attachment-menu|customize-hud|pbr|textures|profile|profile-no-mod|profile-other|profile-sale|profile-hud|reset-lod|menu-export|menu-load|region-objects|characters`**
 `profile` opens the bell's actual demo ObjectProperties in the directly editable
 General form: name/description, group and share/deed, everyone/next-owner rights,
 click action, sale type/price and search inclusion, plus actual pathfinding flags.

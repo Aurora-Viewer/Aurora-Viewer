@@ -952,7 +952,7 @@ fn keep_open_id(layer: LayerId) -> Id {
 
 /// A click this frame lands on the voice row the menu `popup` drew last
 /// frame: a menu that closes on any click stays open for it.
-fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
+pub(crate) fn clicks_kept_row(ctx: &egui::Context, popup: Id) -> bool {
     let layer = LayerId::new(egui::Order::Foreground, popup);
     let Some((frame, rect)) = ctx.data(|d| d.get_temp::<(u64, egui::Rect)>(keep_open_id(layer))) else {
         return false;

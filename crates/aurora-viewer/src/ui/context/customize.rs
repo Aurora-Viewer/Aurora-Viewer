@@ -377,6 +377,8 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::Derender { permanent, .. } => format!("{base}:{permanent}"),
         CtxAction::SetRender(_, mode) | CtxAction::OpenPeople(mode) => format!("{base}:{mode}"),
         CtxAction::SetOwnerSoundBlock { flag, .. } => format!("{base}:{flag}"),
+        CtxAction::ModerateVoice(Some(_), _) => format!("{base}:selected"),
+        CtxAction::ModerateVoice(None, muted) => format!("{base}:all:{muted}"),
         CtxAction::ResetSkeleton { animations, .. } => format!("{base}:{animations}"),
         CtxAction::TakeSeparate { copy, .. } => format!("{base}:{copy}"),
         CtxAction::Wear { point, add, .. } => format!("{base}:{point}:{add}"),
@@ -438,6 +440,18 @@ mod tests {
         let a = Uuid::from_u128(1);
         let b = Uuid::from_u128(2);
         assert_eq!(action_key(&CtxAction::Edit(a)), action_key(&CtxAction::Edit(b)));
+        assert_eq!(
+            action_key(&CtxAction::ModerateVoice(Some(a), false)),
+            action_key(&CtxAction::ModerateVoice(Some(b), true))
+        );
+        assert_ne!(
+            action_key(&CtxAction::ModerateVoice(None, false)),
+            action_key(&CtxAction::ModerateVoice(None, true))
+        );
+        assert_ne!(
+            action_key(&CtxAction::ModerateVoice(Some(a), true)),
+            action_key(&CtxAction::ModerateVoice(None, true))
+        );
         assert_eq!(
             action_key(&CtxAction::SetPropertyLines(false)),
             action_key(&CtxAction::SetPropertyLines(true))

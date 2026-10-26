@@ -585,10 +585,18 @@ pub fn show(
             m.pie_input_frame = None;
         }
         menu::popup_at(ctx, egui::Id::unique("world_context_menu"), m.pos, &mut open, p, |ui| {
-            if let Target::Avatar { id, own: false, .. } = m.target {
-                voice_row(ui, p, id, f.voice_volume);
+            // This header is outside the arrangement catalogue: it cannot be
+            // dragged, hidden or moved into an icon bar. Moderation is grouped
+            // with the other scene actions instead of extending this header.
+            if let Target::Avatar { id, own: false, .. } = m.target
+                && let Some(voice) = f.voice_volume
+            {
+                voice_control(ui, p, id, voice);
+                menu::separator(ui, p);
             }
-            customization.show(ui, p, &m, f, &entries, prefs);
+            // The editor resets its UI's height. A child UI starts below the
+            // fixed header, so that reset cannot rewind onto the voice row.
+            ui.scope(|ui| customization.show(ui, p, &m, f, &entries, prefs));
         })
     };
     // UISndPieMenuSliceHighlight0..7 when an enabled row gets hovered (the
@@ -649,11 +657,19 @@ fn voice_row(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: Option<menu::Voice
 
 /// The voice row alone, its changes handed to the app.
 fn voice_edit(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
+    voice_control(ui, p, id, voice);
+    voice_moderation(ui, p, id, voice);
+}
+
+fn voice_control(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
     match menu::voice_volume(ui, p, voice) {
         Some(menu::VoiceEdit::Volume(v)) => request(ui.ctx(), CtxAction::SetVoiceVolume(id, v)),
         Some(menu::VoiceEdit::ToggleMute) => request(ui.ctx(), CtxAction::ToggleVoiceMute(id)),
         None => {}
     }
+}
+
+fn voice_moderation(ui: &mut egui::Ui, p: &Palette, id: Uuid, voice: menu::VoiceVolume) {
     // menu_conversation.xml's moderator entries (ModerateVoiceMuteSelected /
     // UnMuteSelected, ModerateVoiceMute / Unmute)
     if let Some(moderated) = voice.moderated {
@@ -1624,6 +1640,104 @@ mod tests {
         assert!(matches!(&take_requests(&ctx)[..], [CtxAction::Profile(id)] if *id == tess));
         frame(Vec::new());
         assert!(!egui::Popup::is_id_open(&ctx, popup.get()));
+    }
+
+    #[test]
+    fn scene_voice_header_stays_above_customizable_rows() {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let id = Uuid::from_u128(123);
+        let facts = Facts {
+            voice_volume: Some(menu::VoiceVolume {
+                volume: 0.5,
+                muted: false,
+                can_mute: true,
+                moderated: None,
+            }),
+            ..Default::default()
+        };
+        let mut prefs = Preferences::default();
+        let mut customization = Customization::default();
+        for editing in [false, true] {
+            let mut current = Some(ContextMenu {
+                target: Target::Avatar {
+                    id,
+                    own: false,
+                    attachment: Some(Uuid::from_u128(456)),
+                },
+                pos: egui::pos2(80.0, 80.0),
+                point: Vec3::ZERO,
+                pie_path: Vec::new(),
+                pie_input_frame: None,
+            });
+            if editing {
+                customization.edit(&ctx, current.as_ref().expect("menu"), &facts, &mut prefs);
+            }
+            let mut output = egui::FullOutput::default();
+            for _ in 0..4 {
+                output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        show(ui.ctx(), &p, &mut current, &facts, false, &mut prefs, &mut customization);
+                    },
+                );
+            }
+            let volume = text_rect(&output.shapes, "100 %").expect("volume");
+            let profile = text_rect(&output.shapes, aurora_i18n::tr!("common-view-profile")).expect("profile");
+            assert!(
+                volume.bottom() < profile.top(),
+                "editing={editing}: {volume:?} overlaps {profile:?}"
+            );
+            let saved = prefs.clone();
+            let slider = egui::pos2(profile.left() + 12.0, volume.center().y);
+            let mute = egui::pos2(volume.right() + 16.0, volume.center().y);
+            for (at, is_mute) in [(slider, false), (mute, true)] {
+                take_requests(&ctx);
+                for pressed in [true, false] {
+                    let _ = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                            events: vec![
+                                egui::Event::PointerMoved(at),
+                                egui::Event::PointerButton {
+                                    pos: at,
+                                    button: egui::PointerButton::Primary,
+                                    pressed,
+                                    modifiers: Default::default(),
+                                },
+                            ],
+                            ..Default::default()
+                        },
+                        |ui| {
+                            show(ui.ctx(), &p, &mut current, &facts, false, &mut prefs, &mut customization);
+                        },
+                    );
+                }
+                let actions = take_requests(&ctx);
+                if is_mute {
+                    assert!(
+                        matches!(&actions[..], [CtxAction::ToggleVoiceMute(who)] if *who == id),
+                        "{actions:?}"
+                    );
+                } else {
+                    assert!(
+                        !actions.is_empty()
+                            && actions
+                                .iter()
+                                .all(|a| matches!(a, CtxAction::SetVoiceVolume(who, v) if *who == id && *v < 0.5)),
+                        "{actions:?}"
+                    );
+                }
+                assert!(current.is_some(), "voice controls leave the scene menu open");
+                assert_eq!(prefs, saved, "fixed voice controls never customize the menu");
+            }
+            customization.close(&ctx, &mut prefs);
+        }
     }
 
     const MINE: u32 = flags::OBJECT_YOU_OWNER | flags::OBJECT_ANY_OWNER | flags::OBJECT_MODIFY | flags::OBJECT_COPY;
