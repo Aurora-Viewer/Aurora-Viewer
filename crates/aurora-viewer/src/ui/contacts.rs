@@ -627,7 +627,8 @@ pub fn window(
     friends: Option<super::people::FriendsPane<'_, '_>>,
     open: &mut bool,
 ) -> (Vec<ContactsAction>, Vec<super::people::PeopleAction>) {
-    let mut dock = false;
+    let was_open = *open;
+    let mut dock = *open && super::chat::docking::title_drop(ctx, p, "contacts");
     let mut people = Vec::new();
     let screen = ctx.content_rect();
     let mut actions = widgets::Floater::new(
@@ -649,6 +650,10 @@ pub fn window(
     .unwrap_or_default();
     if dock {
         actions.push(ContactsAction::ToggleTornOff);
+    } else if was_open && !*open {
+        // Closing a detached pinned tab returns it to its host without
+        // opening that host (#1026).
+        settings.torn_off = false;
     }
     (actions, people)
 }

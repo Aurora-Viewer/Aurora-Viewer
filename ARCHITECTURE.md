@@ -8,6 +8,12 @@ the destination's real region name and origin. `app.rs` consumes each result
 once, copying through egui or restoring and centering the world map; failed or
 timed-out lookups report a translated inventory message.
 
+`ui/chat/docking.rs` shares title-bar drop detection between detached conversations
+and Contacts. The expanded Conversations window publishes its current-pass target;
+only a primary title drag released there uses the existing reattachment path.
+Detached entries leave both chat lists; closing nearby chat or Contacts restores
+its pinned tab without opening the container.
+
 First-person avatar visibility follows `LLAgent::needsRenderAvatar/Head` and
 `LLVOAvatarSelf::updateAttachmentVisibility`: `CameraSettings::show_avatar_in_mouselook`
 defaults off. System head faces and `avatar_lad.xml` attachment-point visibility

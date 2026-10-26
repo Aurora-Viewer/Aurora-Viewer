@@ -281,7 +281,7 @@ pub(super) fn show(
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             // Contacts and the nearby chat, pinned
-            if show_contacts_tab && matches(aurora_i18n::tr!("common-contacts")) {
+            if show_contacts_tab && docked && matches(aurora_i18n::tr!("common-contacts")) {
                 let e = Entry {
                     icon: Icon::Glyph("users", p.violet_pale),
                     name_color: None,
@@ -303,17 +303,13 @@ pub(super) fn show(
                     popped: false,
                 };
                 if entry(ui, p, &e, rail, entry_id(Pinned::Contacts)).resp.clicked() {
-                    if docked {
-                        contacts_clicked = true;
-                        st.contacts = true;
-                        st.show_profile = false;
-                    } else {
-                        actions.push(ConvAction::OpenContacts);
-                    }
+                    contacts_clicked = true;
+                    st.contacts = true;
+                    st.show_profile = false;
                 }
             }
             let local = aurora_i18n::tr!("common-nearby-chat");
-            if matches(local) {
+            if !st.popped.contains(None) && matches(local) {
                 let shown = st.selected.is_none() && !st.contacts;
                 let e = Entry {
                     icon: Icon::Glyph("map-pin-filled", p.teal),
@@ -327,7 +323,7 @@ pub(super) fn show(
                     ringing: false,
                     in_call: false,
                     flash: 0.0,
-                    popped: st.popped.contains(None),
+                    popped: false,
                 };
                 let picked = entry(ui, p, &e, rail, entry_id(Pinned::Local));
                 super::conv_menu::demo_mark(ui.ctx(), world, st, None, picked.resp.rect);
@@ -345,7 +341,11 @@ pub(super) fn show(
             st.flashes.begin(now);
             let sessions = st.reorder.sessions(world);
             for section in [Kind::Private, Kind::Group, Kind::Conference] {
-                let ids: Vec<(Uuid, usize)> = sessions.iter().copied().filter(|(id, _)| kind(world, id) == section).collect();
+                let ids: Vec<(Uuid, usize)> = sessions
+                    .iter()
+                    .copied()
+                    .filter(|(id, _)| !st.popped.contains(Some(*id)) && kind(world, id) == section)
+                    .collect();
                 let titled: Vec<(Uuid, usize, String)> = ids
                     .into_iter()
                     .map(|(id, unread)| (id, unread, entry_name(world, &id, section)))
@@ -398,7 +398,7 @@ pub(super) fn show(
                         ringing: world.calls.invite_for(&id).is_some(),
                         in_call: st.conversation_voice_indicator && (world.call_of(&id).is_some() || world.call_launched(&id).is_some()),
                         flash,
-                        popped: st.popped.contains(Some(id)),
+                        popped: false,
                     };
                     st.reorder.space_before(ui, id);
                     let picked = entry(ui, p, &e, rail, entry_id(Pinned::Conversation(id)));

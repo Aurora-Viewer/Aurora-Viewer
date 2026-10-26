@@ -3641,7 +3641,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude\|join-map\|join-contact\|join-fly\|join-fly-blocked\|join-fly-late\|join-fly-custom` | Remote friend's received map rights in contact, conversation and profile actions |
-| `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out` | Detached conversations, or nearby chat alone before any IM (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out\|dock\|dock-hold` | Detached conversations and title-bar docking (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: drop feedback, give confirmation, or give and its notice (all conversation styles) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
@@ -4671,7 +4671,7 @@ failure. Grid validation and any paid upload are performed by the human.
   (`aurora:conference`): Close, Hang up during its call, the transcript;
   `local`: the transcript only. The transcript rows are greyed in the demo
   (no transcript folder).
-- **`AURORA_DEMO_CONV_POPOUT=1|option|nearby|nearby-out`** (#717, #995): with an `AURORA_DEMO_CONV`
+- **`AURORA_DEMO_CONV_POPOUT=1|option|nearby|nearby-out|dock|dock-hold`** (#717, #995, #1026): with an `AURORA_DEMO_CONV`
   scenario (`aurora`, `aurora:compact`, `bubbles` or `bubbles:legacy`), at
   frame 640: `1` pops the friend's IM (Nova) and the Aurora Builders group
   out into their own windows, at the left of the screen, one above the
@@ -4681,16 +4681,22 @@ failure. Grid validation and any paid upload are performed by the human.
   Conversations window keeping its conversation. Capture at frame 760 with
   `AURORA_FPS_LIMIT=60`. What to see: each window with its head, lines and
   field, the "Attach to Conversations" button in its title bar; the column
-  (or the tabs) keeps their entries with the "Detach" icon where the unread
-  count goes; the Conversations window shows another conversation and its
+  (or the tabs) hides their entries until reattached. Drag a detached
+  window's title onto the expanded Conversations window: its violet outline
+  marks the target, and release reattaches and selects the conversation.
+  Dragging outside, resizing or selecting messages must not reattach.
+  `dock` uses the real pointer events at frames 700–741 to drag the friend's
+  title onto the container; capture frame 780 for the attached result.
+  `dock-hold` keeps the button down; capture frame 730 for the target outline.
+  Contacts uses the same title drop; closing Contacts or nearby chat restores
+  its pinned entry without opening the container. The Conversations window shows another conversation and its
   title bar a "Detach" button, including when nearby chat alone is left
   there. `nearby` clears the open IMs and shows nearby chat alone: Detach
   must already be available. `nearby-out` also detaches it: its own window
   stays open, the empty Conversations window closes, and "Attach to
   Conversations" reopens it on nearby chat. Opening a private conversation
-  afterwards must leave nearby chat detached. With `AURORA_DEMO_CONV_MENU=im` and `1`: the friend's menu starts
-  with "Attach to Conversations"; without `AURORA_DEMO_CONV_POPOUT`, with
-  "Detach".
+  afterwards must leave nearby chat detached. With `AURORA_DEMO_CONV_MENU=im`
+  without `AURORA_DEMO_CONV_POPOUT`, the friend's menu starts with "Detach".
 - **`AURORA_DEMO_CONV_EMOJI=1`**: with `AURORA_DEMO_CONV=aurora`,
   `aurora:compact`, `bubbles` or `bubbles:legacy`, the friend's
   conversation holds two more messages of emoji alone: Nova's three
