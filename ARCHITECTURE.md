@@ -1129,6 +1129,16 @@ same selection, and deselection uses the existing source-pose release without
 legacy fallback. Disabled/zero-height placement skips selection work.
 `AURORA_FOOT_IK_SCOPE=all|visible10` only overrides offline demos for historical
 A/B reproduction; a normal viewer always uses the saved limit.
+Selection and pose evaluation share the same world clock, including the
+held instant used while a photograph is drawn in tiles.
+
+Acquisition after an uncorrected or releasing pose starts from the visible
+correction over the current animation, captured before a new sole reference
+rebuilds the solver. Its first filter step has zero elapsed time. Terrain tilt
+and existing penetration ease over half a second; the permitted initial
+penetration decreases by elapsed time rather than a per-frame fraction.
+Ordinary acquired collision remains immediate. Pausing shifts the entry
+clock with the other placement clocks.
 
 Four shaped sole probes use the existing neutral shoe calibration.
 When an absolute pelvis track replaces a mesh rest translation, placement
@@ -1161,7 +1171,7 @@ trajectories remain unchanged. Support tilt preserves authored heel/toe roll.
 
 A single height filter follows absolute world elevation, absorbing physical
 root-height changes before they reach the rendered body. Without any known
-support, source body motion passes through unchanged. Initial placement
+support, source body motion passes through unchanged. Cold initial placement
 starts at the valid support height. The common support
 height raises a body compressed over two higher supports; both contact-leg
 reach intervals bound its displacement within the configured height. Down-step anticipation acts
