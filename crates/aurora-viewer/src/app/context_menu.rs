@@ -175,6 +175,7 @@ impl App {
                 f.render = self.settings.render_exception(id);
                 f.blocked = w.is_avatar_blocked(id);
                 f.particles_blocked = w.particles_blocked(id);
+                f.sound_blocks = w.derender.owner_sound_flags(*id);
                 f.contact_sets = w.contact_sets.set_names();
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
@@ -423,6 +424,7 @@ impl App {
                     self.world.system_message(e);
                 }
             }
+            CtxAction::SetOwnerSoundBlock { owner, flag, blocked } => self.set_owner_sound_block(owner, flag, blocked),
             CtxAction::InviteToGroup(id) => self.group_profile_ui.invite.choose_group(vec![id]),
             CtxAction::GiveCallingCard(id) => self.world.offer_calling_card(id),
             CtxAction::ToggleBlockObject { id, name } => {

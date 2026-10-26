@@ -928,6 +928,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         flip_window(
             ui,
             p,
+            "music",
+            aurora_i18n::tr!("toolbar-command-sound-explorer"),
+            super::sound_explorer::WINDOW,
+            &mut panels.sound_explorer,
+        );
+        flip_window(
+            ui,
+            p,
             "eye-off",
             aurora_i18n::tr!("blacklist-title"),
             super::blacklist::WINDOW,
@@ -1682,6 +1690,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "places" => toggle("places", &mut panels.places),
         "search" => toggle(super::search::WINDOW, &mut panels.search),
         "areasearch" => toggle(super::area_search::WINDOW, &mut panels.area_search),
+        "soundexplorer" => toggle(super::sound_explorer::WINDOW, &mut panels.sound_explorer),
+        "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
         "performance" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
         "preferences" => toggle("options", &mut panels.settings),
@@ -1746,6 +1756,8 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "places" => panels.places,
         "search" => panels.search,
         "areasearch" => panels.area_search,
+        "soundexplorer" => panels.sound_explorer,
+        "assetblacklist" => panels.asset_blacklist,
         "performance" => panels.perf,
         "snapshot" => panels.snapshot,
         "preferences" => panels.settings,
@@ -2997,6 +3009,8 @@ mod tests {
             ("people", "people", |p| p.people),
             ("preferences", "options", |p| p.settings),
             ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
+            ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
+            ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {

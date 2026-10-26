@@ -1,4 +1,4 @@
-//! Derender and the asset blacklist of objects and residents. Port of
+//! Derender and the asset blacklist of objects, residents and sounds. Port of
 //! FSAssetBlacklist (indra/newview/fsassetblacklist.cpp) for its object and
 //! resident entries, and of the derender list of LLViewerObjectList
 //! (mDerendered, addDerenderedItem / resetDerenderList,
@@ -34,12 +34,15 @@ const MAGIC_ID: Uuid = Uuid::from_u128(0x3c11_5e51_04f4_523c_9fa6_98af_f103_4730
 
 /// LLAssetType values of the file's entries Aurora acts on.
 const AT_OBJECT: i32 = 6;
+const AT_SOUND: i32 = 1;
 const AT_PERSON: i32 = 45;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Object,
     Resident,
+    /// 0: asset UUID; 1/2/4: owner's worn/rezzed/gesture sounds.
+    Sound(u8),
 }
 
 impl Kind {
@@ -47,6 +50,7 @@ impl Kind {
         match self {
             Kind::Object => AT_OBJECT,
             Kind::Resident => AT_PERSON,
+            Kind::Sound(_) => AT_SOUND,
         }
     }
 }
@@ -61,6 +65,21 @@ pub struct Entry {
     /// When it was added, in seconds since the epoch (UTC).
     pub date: i64,
     pub permanent: bool,
+}
+
+/// One blacklist row: a complete entry (flag 0), or one sound category.
+/// FSFloaterAssetBlacklist::addElementToList / removeElements use the same
+/// UUID with a separate flag for each category, keeping the saved bitmask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RowId {
+    pub id: Uuid,
+    pub flag: u8,
+}
+
+impl RowId {
+    pub fn whole(id: Uuid) -> Self {
+        Self { id, flag: 0 }
+    }
 }
 
 /// An object kept out of the world: the entry that hides it and its last
@@ -91,7 +110,7 @@ pub struct Restore {
 #[derive(Default)]
 pub struct Derender {
     entries: HashMap<Uuid, Entry>,
-    /// The file's entries of other asset types (textures, sounds,
+    /// The file's entries of other asset types (textures,
     /// animations): Aurora does not act on them and writes them back as
     /// they came.
     other: Vec<(String, Llsd)>,
@@ -173,11 +192,12 @@ impl Derender {
             if id.is_nil() {
                 continue;
             }
-            // only what derenders (no flags: FSAssetBlacklist::isBlacklisted
-            // with eBlacklistFlag::NONE)
+            // Derender entries and sound asset/owner categories share the
+            // legacy file; preserve unsupported asset types below.
             let kind = match value.get("asset_type").as_i32() {
                 AT_OBJECT => Kind::Object,
                 AT_PERSON => Kind::Resident,
+                AT_SOUND => Kind::Sound(value.get("asset_blacklist_flag").as_i32() as u8),
                 _ => {
                     list.other.push((key.clone(), value.clone()));
                     continue;
@@ -212,7 +232,11 @@ impl Derender {
             data.insert("asset_name".into(), Llsd::from(e.name.as_str()));
             data.insert("asset_region".into(), Llsd::from(e.region.as_str()));
             data.insert("asset_type".into(), Llsd::from(e.kind.asset_type()));
-            data.insert("asset_blacklist_flag".into(), Llsd::from(0));
+            let flags = match e.kind {
+                Kind::Sound(flags) => i32::from(flags),
+                _ => 0,
+            };
+            data.insert("asset_blacklist_flag".into(), Llsd::from(flags));
             data.insert("asset_date".into(), Llsd::from(format_date(e.date)));
             data.insert("asset_permanent".into(), Llsd::from(true));
             map.insert(mask(*id).to_string(), Llsd::Map(data));
@@ -220,7 +244,7 @@ impl Derender {
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        if let Err(e) = std::fs::write(path, aurora_llsd::to_xml(&Llsd::Map(map))) {
+        if let Err(e) = crate::atomic_file::write(path, &aurora_llsd::to_xml(&Llsd::Map(map))) {
             log::warn!("asset blacklist not saved: {e}");
         }
     }
@@ -230,12 +254,89 @@ impl Derender {
     }
 
     pub fn contains(&self, id: &Uuid) -> bool {
-        self.entries.contains_key(id)
+        self.entries
+            .get(id)
+            .is_some_and(|e| matches!(e.kind, Kind::Object | Kind::Resident))
+    }
+
+    pub fn sound_blocked(&self, asset: Uuid, owner: Uuid, flag: u8) -> bool {
+        self.entries.get(&asset).is_some_and(|e| e.kind == Kind::Sound(0))
+            || (!owner.is_nil()
+                && self
+                    .entries
+                    .get(&owner)
+                    .is_some_and(|e| matches!(e.kind, Kind::Sound(flags) if flags & flag != 0)))
+    }
+
+    pub fn owner_sound_flags(&self, owner: Uuid) -> u8 {
+        match self.entries.get(&owner).map(|e| e.kind) {
+            Some(Kind::Sound(flags)) => flags & 7,
+            _ => 0,
+        }
+    }
+
+    /// Set one category without changing the other two, using the same saved
+    /// mask as Sound Explorer. OFF removes only that category's row.
+    pub fn set_sound_category(&mut self, owner: Uuid, flag: u8, blocked: bool, mut entry: Entry) {
+        if owner.is_nil()
+            || !matches!(flag, 1 | 2 | 4)
+            || self.entries.get(&owner).is_some_and(|e| !matches!(e.kind, Kind::Sound(_)))
+            || (self.owner_sound_flags(owner) & flag != 0) == blocked
+        {
+            return;
+        }
+        if blocked {
+            entry.kind = Kind::Sound(flag);
+            self.add_sounds([(owner, entry)]);
+        } else {
+            self.remove_rows(&[RowId { id: owner, flag }]);
+        }
+    }
+
+    #[cfg(test)]
+    pub fn add_sound(&mut self, id: Uuid, entry: Entry) {
+        self.add_sounds(std::iter::once((id, entry)));
+    }
+
+    /// One selection is saved once, including when many rows share an owner.
+    pub fn add_sounds(&mut self, entries: impl IntoIterator<Item = (Uuid, Entry)>) {
+        let mut save = false;
+        let mut changed = false;
+        for (id, mut entry) in entries {
+            if id.is_nil() {
+                continue;
+            }
+            if let Kind::Sound(flags) = entry.kind
+                && flags != 0
+                && let Some(Entry {
+                    kind: Kind::Sound(old), ..
+                }) = self.entries.get(&id)
+                && *old != 0
+            {
+                entry.kind = Kind::Sound(flags | old);
+            }
+            save |= entry.permanent || self.entries.get(&id).is_some_and(|e| e.permanent);
+            self.entries.insert(id, entry);
+            changed = true;
+        }
+        if changed {
+            self.generation = self.generation.wrapping_add(1);
+        }
+        if save {
+            self.save();
+        }
     }
 
     /// The list, for the window.
     pub fn entries(&self) -> impl Iterator<Item = (&Uuid, &Entry)> {
         self.entries.iter()
+    }
+
+    pub fn has_row(&self, row: RowId) -> bool {
+        self.entries.get(&row.id).is_some_and(|entry| match entry.kind {
+            Kind::Sound(flags) if flags != 0 => row.flag != 0 && flags & row.flag == row.flag,
+            _ => row.flag == 0,
+        })
     }
 
     /// FSAssetBlacklist::addNewItemToBlacklist: an entry made again takes
@@ -260,7 +361,11 @@ impl Derender {
             region,
             local_id: u.local_id,
         };
-        let by = if self.entries.contains_key(&u.full_id) {
+        let by = if self
+            .entries
+            .get(&u.full_id)
+            .is_some_and(|e| matches!(e.kind, Kind::Object | Kind::Resident))
+        {
             Some(u.full_id)
         } else if u.parent_id != 0 && !u.is_avatar() {
             // (an avatar sitting on it stays, as markDead's getOffObject)
@@ -328,18 +433,50 @@ impl Derender {
 
     /// FSAssetBlacklist::removeItemsFromBlacklist: what they hid comes back.
     pub fn remove(&mut self, ids: &[Uuid]) -> Restore {
+        self.remove_rows(&ids.iter().copied().map(RowId::whole).collect::<Vec<_>>())
+    }
+
+    /// Remove only selected categories; aggregate multiple rows before saving.
+    /// FSAssetBlacklist::removeFlagsFromItem (fsassetblacklist.cpp).
+    pub fn remove_rows(&mut self, rows: &[RowId]) -> Restore {
+        let mut flags_by_id = HashMap::<Uuid, (u8, bool)>::new();
+        for row in rows {
+            let removal = flags_by_id.entry(row.id).or_default();
+            removal.0 |= row.flag;
+            removal.1 |= row.flag == 0;
+        }
         let mut save = false;
+        let mut changed = false;
         let mut gone = Vec::new();
-        for id in ids {
-            if let Some(e) = self.entries.remove(id) {
+        for (id, (flags, full)) in flags_by_id {
+            if !full {
+                let Some(e) = self.entries.get_mut(&id) else {
+                    continue;
+                };
+                let Kind::Sound(current) = e.kind else {
+                    continue;
+                };
+                let remaining = current & !flags;
+                if current == remaining {
+                    continue;
+                }
                 save |= e.permanent;
-                gone.push(*id);
+                changed = true;
+                if remaining != 0 {
+                    e.kind = Kind::Sound(remaining);
+                    continue;
+                }
+            }
+            if let Some(e) = self.entries.remove(&id) {
+                save |= e.permanent;
+                changed = true;
+                gone.push(id);
             }
         }
-        if gone.is_empty() {
+        if !changed {
             return Restore::default();
         }
-        self.generation += 1;
+        self.generation = self.generation.wrapping_add(1);
         if save {
             self.save();
         }
@@ -402,6 +539,11 @@ impl super::World {
     /// Entries removed from the list (the Asset blacklist window).
     pub fn underender(&mut self, ids: &[Uuid]) {
         let restore = self.derender.remove(ids);
+        self.put_back(restore);
+    }
+
+    pub fn remove_blacklist_rows(&mut self, rows: &[RowId]) {
+        let restore = self.derender.remove_rows(rows);
         self.put_back(restore);
     }
 
@@ -525,6 +667,122 @@ mod tests {
     }
 
     #[test]
+    fn sound_explorer_sound_flags_persist_merge_and_never_derender_the_owner() {
+        let dir = std::env::temp_dir().join(format!("aurora-sound-blacklist-{}", Uuid::new_v4()));
+        let path = dir.join(FILE);
+        let owner = Uuid::from_u128(101);
+        let asset = Uuid::from_u128(202);
+        let mut list = Derender::load(path.clone());
+        list.add_sound(owner, entry(Kind::Sound(1), true));
+        list.add_sound(owner, entry(Kind::Sound(4), true));
+        list.add_sound(asset, entry(Kind::Sound(0), true));
+        let mut list = Derender::load(path);
+        assert!(list.sound_blocked(asset, Uuid::nil(), 0));
+        assert!(list.sound_blocked(Uuid::nil(), owner, 1));
+        assert!(list.sound_blocked(Uuid::nil(), owner, 4));
+        assert!(!list.sound_blocked(Uuid::nil(), owner, 2));
+        assert!(
+            !list.contains(&owner),
+            "sound categories never affect water effects or derender checks"
+        );
+        assert!(list.filter(1, &update(11, 101, 0)).is_none());
+        assert!(list.remove(&[owner, asset]).updates.is_empty());
+        assert!(list.is_empty());
+        assert!(Derender::load(dir.join(FILE)).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn avatar_sound_category_switches_set_and_clear_independent_persistent_bits() {
+        let dir = std::env::temp_dir().join(format!("aurora-avatar-sound-categories-{}", Uuid::new_v4()));
+        let path = dir.join(FILE);
+        let owner = Uuid::from_u128(101);
+        let asset = Uuid::from_u128(202);
+        let mut list = Derender::load(path.clone());
+        list.add_sound(asset, entry(Kind::Sound(0), true));
+        for flag in [1, 2, 4] {
+            list.set_sound_category(owner, flag, true, entry(Kind::Sound(flag), true));
+        }
+        assert_eq!(list.owner_sound_flags(owner), 7);
+        let generation = list.generation;
+        list.set_sound_category(owner, 1, true, entry(Kind::Sound(1), true));
+        assert_eq!(list.generation, generation, "setting an existing state is idempotent");
+        list.set_sound_category(owner, 2, false, entry(Kind::Sound(2), true));
+        let mut list = Derender::load(path.clone());
+        assert_eq!(list.owner_sound_flags(owner), 5);
+        assert!(!list.sound_blocked(Uuid::nil(), owner, 2));
+        assert!(list.sound_blocked(Uuid::nil(), owner, 1) && list.sound_blocked(Uuid::nil(), owner, 4));
+        assert!(!list.contains(&owner), "muting categories never hides the avatar");
+        for flag in [1, 4] {
+            list.set_sound_category(owner, flag, false, entry(Kind::Sound(flag), true));
+        }
+        let mut list = Derender::load(path);
+        assert_eq!(list.owner_sound_flags(owner), 0);
+        assert!(list.entries().all(|(id, _)| *id == asset), "only the unrelated sound asset remains");
+        for (owner, flag) in [(owner, 0), (owner, 3), (Uuid::nil(), 1)] {
+            list.set_sound_category(owner, flag, true, entry(Kind::Sound(flag), true));
+        }
+        assert_eq!(list.entries().count(), 1);
+        let hidden = Uuid::from_u128(303);
+        list.add(hidden, entry(Kind::Resident, false));
+        list.set_sound_category(hidden, 1, true, entry(Kind::Sound(1), true));
+        assert!(list.contains(&hidden), "sound switches cannot replace a derender entry");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn blacklist_sound_categories_can_be_removed_independently_across_relogs() {
+        let dir = std::env::temp_dir().join(format!("aurora-blacklist-rows-{}", Uuid::new_v4()));
+        let path = dir.join(FILE);
+        let owner = Uuid::from_u128(101);
+        let asset = Uuid::from_u128(202);
+        let mut list = Derender::load(path.clone());
+        list.add_sounds([(owner, entry(Kind::Sound(7), true)), (asset, entry(Kind::Sound(0), true))]);
+        let rezzed = RowId { id: owner, flag: 2 };
+        assert!(list.has_row(rezzed));
+        let restore = list.remove_rows(&[rezzed]);
+        assert!(restore.updates.is_empty() && restore.requests.is_empty());
+        let mut list = Derender::load(path.clone());
+        assert!(!list.has_row(rezzed));
+        assert!(!list.sound_blocked(Uuid::nil(), owner, 2));
+        assert!(list.sound_blocked(Uuid::nil(), owner, 1) && list.sound_blocked(Uuid::nil(), owner, 4));
+        assert!(list.sound_blocked(asset, Uuid::nil(), 0));
+        let worn = RowId { id: owner, flag: 1 };
+        let gesture = RowId { id: owner, flag: 4 };
+        list.remove_rows(&[worn, gesture, worn]);
+        let mut list = Derender::load(path);
+        assert!(
+            !list.entries.contains_key(&owner),
+            "last selected category removes the saved owner entry"
+        );
+        assert!(list.has_row(RowId::whole(asset)), "an unrelated blocked asset stays");
+        list.add(owner, entry(Kind::Object, true));
+        list.remove_rows(&[rezzed]);
+        assert!(list.contains(&owner), "a stale category cannot remove a replacement object entry");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sound_explorer_owner_categories_follow_linked_attachments_and_gestures() {
+        let (mut world, _) = demo_world();
+        let owner = Uuid::from_u128(999);
+        let asset = Uuid::from_u128(777);
+        let worn = world.objects.iter().find(|(_, o)| o.key.local_id == 9100).unwrap().1.full_id;
+        let rezzed = world.objects.iter().find(|(_, o)| o.key.local_id == 101).unwrap().1.full_id;
+        world.derender.add_sound(owner, entry(Kind::Sound(1), false));
+        assert!(world.sound_blacklisted(asset, worn, owner));
+        assert!(!world.sound_blacklisted(asset, rezzed, owner));
+        assert!(!world.sound_blacklisted(asset, owner, owner));
+        world.derender.add_sound(owner, entry(Kind::Sound(4), false));
+        assert!(world.sound_blacklisted(asset, owner, owner));
+        assert!(!world.sound_blacklisted(asset, rezzed, owner));
+        world.derender.add_sound(owner, entry(Kind::Sound(2), false));
+        assert!(world.sound_blacklisted(asset, rezzed, owner));
+        world.derender.remove(&[owner]);
+        assert!(!world.sound_blacklisted(asset, worn, owner));
+    }
+
+    #[test]
     fn permanent_entries_survive_a_relog_and_others_are_kept_untouched() {
         let dir = std::env::temp_dir().join(format!("aurora-blacklist-{}", Uuid::new_v4()));
         let path = dir.join(FILE);
@@ -540,7 +798,7 @@ mod tests {
         std::fs::write(&path, aurora_llsd::to_xml(&Llsd::Map(legacy))).expect("write");
 
         let mut list = Derender::load(path.clone());
-        assert!(!list.contains(&sound));
+        assert!(list.sound_blocked(sound, Uuid::nil(), 0));
         let (avatar, object) = (Uuid::from_u128(1), Uuid::from_u128(2));
         list.add(avatar, entry(Kind::Resident, true));
         list.add(object, entry(Kind::Object, false));

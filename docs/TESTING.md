@@ -6362,6 +6362,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
+| `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
@@ -6576,6 +6577,41 @@ What the inventory must show with these scenarios:
   option off for the run, and the question comes; `worn-blocked` /
   `hud-blocked` put the site in the list as blocked: refused without a
   question, told in the local chat.
+- **`AURORA_DEMO_SOUND_EXPLORER=1|all|blacklist|blacklist-ignored|avatar-menu|avatar-menu-mixed|avatar-menu-pie`** exercises Sound Explorer
+  with a looping object, triggered avatar and default collision sound. `1`
+  keeps the default filters; `all` shows avatars, collisions and repeated
+  assets. The fixtures use the normal sound manager. Check pause/resume,
+  Ctrl/Shift selection, local preview/stop, source camera and blocking; open
+  Asset blacklist to remove a sound or owner category. Add
+  `AURORA_DEMO_SOUND=1` to hear the fixtures. Grid validation still requires
+  real scripted objects, gesture sounds and a relog for account persistence.
+  `blacklist` instead opens the blacklist with one resident's three sound
+  categories and an unrelated asset, held in memory without changing the
+  demo account's saved list. Each category has its own line and selection;
+  removing one must leave the other two, and removing the last must leave
+  the unrelated asset. Check type labels, Ctrl/Shift selection and both the
+  Remove selected button and row context menu.
+  Check the full UUID column at normal and narrow window sizes, searching by
+  UUID (also uppercase), sorting and Copy UUID in the row menu. A sound asset
+  shows its own UUID, while owner category rows show the owner's UUID; copying
+  several categories of one owner copies that UUID once. The Ignored objects
+  and residents button opens People › Blocked with its filter cleared, where
+  a separate in-memory ignored object fixture is listed. `blacklist-ignored`
+  opens that destination directly through the same app action. These fixtures
+  do not write either the asset blacklist or the mute cache. On the grid,
+  confirm that Ignore lists an object under People › Blocked and Block sound
+  lists the sound asset UUID in Asset blacklist; remove each through its own
+  list and verify account persistence after relog.
+  `avatar-menu` opens the other avatar's world menu with all three sound
+  categories OFF. `avatar-menu-mixed` starts with worn/gesture sounds ON and
+  rezzed-object sounds OFF; `avatar-menu-pie` exercises the same actions in
+  the radial menu. Open Disturbance and toggle each category in both directions:
+  ON blocks it, OFF removes only that category, and the list menu stays open.
+  The fixture blacklist stays in memory. Use AURORA_DEMO_POINTER to hover the
+  submenu or activate its controls. On the grid, check the real sounds, the
+  separate blacklist rows and persistence after relog. Sound filtering is local
+  and does not use the Bridge; blocking an object does not inherit to rez descendants.
+
 - **`AURORA_DEMO_SOUND=1|hud`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends

@@ -83,8 +83,8 @@ pub const COMMANDS: &[Command] = commands![
     "areasearch", "zoom-scan-filled", "toolbar-command-area-search", true;
     "settings_debug", "terminal-2", "toolbar-command-debug-settings", false;
     "statistics", "statistics", "toolbar-command-statistics", false;
-    "soundexplorer", "music", "toolbar-command-sound-explorer", false;
-    "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", false;
+    "soundexplorer", "music", "toolbar-command-sound-explorer", true;
+    "assetblacklist", "shield-off", "toolbar-command-asset-blacklist", true;
     "phototools", "camera-cog", "toolbar-command-phototools", false;
     "phototools_view", "video-filled", "toolbar-command-phototools-camera", false;
     "pose_stand", "man-filled", "toolbar-command-pose-stand", false;
