@@ -1,6 +1,7 @@
 //! Open-conversation order, shared by the workspace and the older tab styles.
 //! Follows LLTabContainer's locked-tab rearrangement (lltabcontainer.cpp).
-//! Aurora additionally keeps each conversation in its original category.
+//! Aurora additionally keeps each conversation in its original category
+//! (its kind, or the contact set shown apart that it belongs to, #1104).
 //!
 //! The entries of the list move apart where the dragged one would land
 //! (#910), and an entry dropped outside the Conversations window pops its
@@ -8,7 +9,7 @@
 //! Viewer's IM container is torn off (`popout.rs`). The nearby chat's
 //! entry, pinned, does not move in the list but drags out the same way.
 
-use super::sidebar::{Kind, kind};
+use super::sidebar::{Section, section};
 use crate::{theme::Palette, world::World};
 use egui::{Pos2, Rect, Response, Vec2};
 use std::collections::{HashMap, HashSet};
@@ -16,7 +17,7 @@ use uuid::Uuid;
 
 struct Row {
     id: Uuid,
-    kind: Kind,
+    section: Section,
     rect: Rect,
     /// Where the entry stands with no gap open above it: the drop is found
     /// on these, so that the gap opening does not move what it points at.
@@ -150,7 +151,7 @@ impl State {
         self.take(Some(id), response);
         self.rows.push(Row {
             id,
-            kind: kind(world, &id),
+            section: section(world, &id),
             rect: response.rect,
             rest: response.rect.translate(Vec2::new(0.0, -self.shift)),
         });
@@ -221,7 +222,7 @@ impl State {
         }
         // the section of the entry, as its entries stand without a gap: a
         // drop on a pinned entry, a section head or another section is none
-        let same: Vec<&Row> = self.rows.iter().filter(|row| row.kind == source.kind).collect();
+        let same: Vec<&Row> = self.rows.iter().filter(|row| row.section == source.section).collect();
         let (first, last) = (same.first()?, same.last()?);
         let half = source.rest.height() * 0.5;
         if at.y < first.rest.top() - half || at.y > last.rest.bottom() + half {
@@ -250,7 +251,7 @@ impl State {
             let second = self
                 .rows
                 .first()
-                .and_then(|first| self.rows.iter().skip(1).find(|row| row.kind == first.kind))
+                .and_then(|first| self.rows.iter().skip(1).find(|row| row.section == first.section))
                 .map(|row| row.rect);
             ui.ctx().data_mut(|d| {
                 d.insert_temp(
@@ -440,7 +441,7 @@ mod tests {
             let rect = Rect::from_min_size(egui::pos2(10.0, 100.0 + 46.0 * n as f32), egui::vec2(200.0, 44.0));
             st.rows.push(Row {
                 id,
-                kind: Kind::Private,
+                section: Section::Kind(super::super::sidebar::Kind::Private),
                 rect,
                 rest: rect,
             });

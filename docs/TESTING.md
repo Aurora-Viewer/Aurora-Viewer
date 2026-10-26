@@ -5262,7 +5262,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Chat › Show the channel selector does), `friend-away` / `friend-offline`
   (the friend of `im` away in the region or offline: the selected entry's
   dot keeps its crescent or hollow ring, cut in the entry's violet face;
-  with `narrow` too). The calls are those of
+  with `narrow` too), `sets` (the contact sets Family, with the friend and
+  Loup, and Clubbing, with Loup and Tess, both shown apart, Family the
+  higher: the column opens with a FAMILY section holding the friend and
+  Loup after Family's heart symbol, then CLUBBING with Tess after its
+  colour's dot, above Private messages; #1104). The calls are those of
   `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
   with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
   validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act
@@ -5548,7 +5552,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the run only, nothing is written to the account's files): `friends`
   (860 × 600: Nova and Orion online, pixelboutique and testtouch offline,
   the rights each way on the rows, Nova's sheet with "Nickname and contact
-  sets"), `groups` (860 × 500: "No active group", Aurora Builders active,
+  sets"), `friends-symbols` (`friends` with the contact sets of `visuals`:
+  a set's symbol after the name where the set has one, its colour's dot
+  otherwise, #1104), `groups` (860 × 500: "No active group", Aurora Builders active,
   pinned, two notices unread and its sheet open, the market's chat
   blocked, "3 groups out of 42"), `sets` (520 × 430: Family, Clubbing and
   Shop, the wolf's nickname, a non-friend, Nova chosen with her quick

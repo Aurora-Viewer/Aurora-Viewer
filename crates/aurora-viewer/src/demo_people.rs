@@ -12,7 +12,8 @@
 //! the plaza ("Orion le Grand" here) and the first friend of the demo list.
 //!
 //! The other tabs, with the mock-up's contents: `friends` (four friends,
-//! two online, Nova's sheet open), `groups` (the demo's three groups, the
+//! two online, Nova's sheet open; `friends-symbols` with the sets of
+//! `visuals`: their symbols after the names, #1104), `groups` (the demo's three groups, the
 //! first one pinned and its sheet open, the market's chat blocked), `sets`
 //! (Family, Clubbing and Shop, a nickname and a non-friend, a row under the
 //! pointer), `recent` (four residents met lately) and `blocked` (a resident
@@ -55,7 +56,7 @@ pub fn mode() -> Option<Mode> {
             "crowd-hover" => Some(Mode::CrowdHover),
             "sheet" | "fiche" => Some(Mode::Sheet),
             "legacy" => Some(Mode::Legacy),
-            "friends" | "amis" => Some(Mode::Friends),
+            "friends" | "amis" | "friends-symbols" => Some(Mode::Friends),
             "groups" | "groupes" => Some(Mode::Groups),
             "sets" | "cercles" | "visuals" | "visuals-stack" | "visuals-legacy" => Some(Mode::Sets),
             "recent" | "récent" => Some(Mode::Recent),
@@ -249,7 +250,7 @@ pub fn seed(world: &mut crate::world::World) {
 
 pub fn visuals() -> bool {
     static MODE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *MODE.get_or_init(|| std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v.starts_with("visuals")))
+    *MODE.get_or_init(|| std::env::var("AURORA_DEMO_PEOPLE").is_ok_and(|v| v.starts_with("visuals") || v.starts_with("friends-symbols")))
 }
 
 /// The crowd's density: `crowd` and `crowd-hover`.
