@@ -650,6 +650,8 @@ pub struct App {
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
+    /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
+    texture_missing_demo: Option<crate::demo::missing_texture::MissingTextureDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_TP_AWAY: the demo region's coarse locations while away.
@@ -1238,6 +1240,7 @@ impl App {
             arrival_demo: None,
             tex_refresh_demo: None,
             sculpt_missing_demo: None,
+            texture_missing_demo: None,
             experience_demo: None,
             away_coarse: Vec::new(),
             geometry_demo: None,
@@ -9760,6 +9763,9 @@ impl App {
         if let Some(demo) = &mut self.sculpt_missing_demo {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
         }
+        if let Some(demo) = &mut self.texture_missing_demo {
+            demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
+        }
         // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
         // without a click (walking into the pad, arriving)
         if let Some(reply) = self
@@ -15869,6 +15875,7 @@ impl ApplicationHandler for App {
             self.arrival_demo = crate::demo::arrival::ArrivalDemo::from_env();
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
+            self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             self.turn_demo = crate::demo::turn::TurnDemo::from_env();

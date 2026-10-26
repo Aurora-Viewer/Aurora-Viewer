@@ -5,7 +5,10 @@
 //! fades into its texture the moment that texture shows its first pixels
 //! (`Scene::rez_first_texels`): no face waits for another, nothing is ever
 //! grey, and nothing is followed on the CPU for it. The colors run along
-//! the brand gradient of the theme (`Palette::aurora_gradient`).
+//! the brand gradient of the theme (`Palette::aurora_gradient`). A texture
+//! that will not come (missing on the asset server, failing again and
+//! again) leaves the grid for the grey the Legacy Viewer shows in its place
+//! (`textures::MISSING`, `TextureStreamer::show_unavailable`).
 //!
 //! On top, the events get a whole-object effect (`DrawRecord::rez`, from
 //! the units below): a bright line rising from the bottom to the top
