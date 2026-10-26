@@ -6332,7 +6332,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
-| `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|rez-blocks\|rez-blocks-off` | Sound Explorer, separate blacklist categories or inherited sound blocking |
+| `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|rez-blocks\|rez-blocks-off` | Sound Explorer, separate blacklist categories, ignored objects or inherited sound blocking |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
@@ -6547,7 +6547,7 @@ What the inventory must show with these scenarios:
   option off for the run, and the question comes; `worn-blocked` /
   `hud-blocked` put the site in the list as blocked: refused without a
   question, told in the local chat.
-- **`AURORA_DEMO_SOUND_EXPLORER=1|all|blacklist|rez-blocks|rez-blocks-off`** exercises Sound Explorer
+- **`AURORA_DEMO_SOUND_EXPLORER=1|all|blacklist|blacklist-ignored|rez-blocks|rez-blocks-off`** exercises Sound Explorer
   with a looping object, triggered avatar and default collision sound. `1`
   keeps the default filters; `all` shows avatars, collisions and repeated
   assets. The fixtures use the normal sound manager. Check pause/resume,
@@ -6561,6 +6561,17 @@ What the inventory must show with these scenarios:
   removing one must leave the other two, and removing the last must leave
   the unrelated asset. Check type labels, Ctrl/Shift selection and both the
   Remove selected button and row context menu.
+  Check the full UUID column at normal and narrow window sizes, searching by
+  UUID (also uppercase), sorting and Copy UUID in the row menu. A sound asset
+  shows its own UUID, while owner category rows show the owner's UUID; copying
+  several categories of one owner copies that UUID once. The Ignored objects
+  and residents button opens People › Blocked with its filter cleared, where
+  a separate in-memory ignored object fixture is listed. `blacklist-ignored`
+  opens that destination directly through the same app action. These fixtures
+  do not write either the asset blacklist or the mute cache. On the grid,
+  confirm that Ignore lists an object under People › Blocked and Block sound
+  lists the sound asset UUID in Asset blacklist; remove each through its own
+  list and verify account persistence after relog.
   `rez-blocks` seeds a blocked rezzer, its direct and indirect descendants,
   and an unrelated source of the same owner. The offline Bridge returns their
   provenance through the regular query path. After provisioning, only the

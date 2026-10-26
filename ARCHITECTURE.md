@@ -69,6 +69,10 @@ without derendering their owners. The blacklist projects each owner's flags
 into separate rows keyed by UUID and category, and removes only the selected
 bits in one atomic save. Removing the final category removes the stored entry;
 object/resident entries still restore their hidden objects as before.
+The blacklist shows each unmasked UUID in a fixed-width column, searches by
+name or UUID, and copies unique selected keys from the row menu. Its Blocked
+shortcut opens the separate People mute list; Ignore never derenders an object
+or adds a sound asset to the blacklist.
 
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer

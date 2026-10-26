@@ -121,7 +121,7 @@ impl App {
         self.panels.sound_explorer = true;
         self.panels.chat = false;
         self.panels.people = false;
-        if mode == "blacklist" {
+        if mode.starts_with("blacklist") {
             self.panels.sound_explorer = false;
             self.panels.asset_blacklist = true;
             // Isolate the fixture from the demo account's saved preferences.
@@ -149,6 +149,20 @@ impl App {
                     },
                 ),
             ]);
+            // These lists have separate persistence. Keep both offline fixtures
+            // in memory, including the mute cache saved at logout.
+            self.world.cache_dir = None;
+            self.world.mutes.reset(self.world.agent_id);
+            self.world.mutes.state = crate::world::mutes::LoadState::Loaded;
+            let _ = self.world.block(
+                Uuid::from_u128(0x102),
+                aurora_i18n::tr!("common-object"),
+                crate::world::mutes::MuteType::Object,
+            );
+            if mode == "blacklist-ignored" {
+                self.panels.asset_blacklist = false;
+                self.open_ignored_list();
+            }
             return;
         }
         let (asset, clip) = crate::demo::chime();

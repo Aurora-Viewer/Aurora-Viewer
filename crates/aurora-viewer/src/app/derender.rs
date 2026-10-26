@@ -93,10 +93,17 @@ impl App {
         let action = self.blacklist_ui.show(ctx, p, &self.world.derender, &mut open);
         self.panels.asset_blacklist = open;
         match action {
+            Some(ui::blacklist::BlacklistAction::OpenIgnored) => self.open_ignored_list(),
             Some(ui::blacklist::BlacklistAction::Remove(rows)) => self.world.remove_blacklist_rows(&rows),
             Some(ui::blacklist::BlacklistAction::ClearTemporary) => self.world.clear_temporary_derenders(),
             None => {}
         }
+    }
+
+    pub(super) fn open_ignored_list(&mut self) {
+        self.people_ui.filter.clear();
+        self.panels.people_tab = ui::people::TAB_BLOCKED;
+        ui::widgets::open_floater(&self.egui_ctx, "people", &mut self.panels.people);
     }
 
     /// RequestMultipleObjects for the objects back from the list, and the
