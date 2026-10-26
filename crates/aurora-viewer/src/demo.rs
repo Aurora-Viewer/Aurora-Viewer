@@ -6022,31 +6022,33 @@ pub fn texture_stress_events(n: u32) -> Vec<NetEvent> {
 /// AURORA_DEMO_TP_AWAY=1: the arrival in a region out of reach at frame 760,
 /// then back in the demo region at frame 960, before its simulator would
 /// have closed it: the objects of the demo region are parked, then come
-/// back as they were (world/parked.rs). The arrival away forgets the demo
-/// region's coarse locations (`kept` holds them); back there, its simulator
-/// sends them again. The events of `frame`, if any.
+/// back as they were (world/parked.rs). The demo region's simulator still
+/// sends its coarse locations at frame 800, as the grid's does while we are
+/// its child (`kept` holds them from the departure): they wait with its
+/// objects (issue #1000). The events of `frame`, if any.
 pub fn away_teleport(frame: u64, world: &crate::world::World, kept: &mut Vec<(Uuid, Vec3)>) -> Option<Vec<NetEvent>> {
     let handle = match frame {
         760 => HANDLE + ((100 * 256u64) << 32),
+        800 => {
+            std::env::var_os("AURORA_DEMO_TP_AWAY")?;
+            return Some(vec![NetEvent::CoarseLocations {
+                handle: HANDLE,
+                positions: std::mem::take(kept),
+            }]);
+        }
         960 => HANDLE,
         _ => return None,
     };
     std::env::var_os("AURORA_DEMO_TP_AWAY")?;
+    if frame == 760 {
+        *kept = world.coarse.get(&HANDLE).cloned().unwrap_or_default();
+    }
     let (position, look_at) = (world.agent.position, world.agent.forward());
-    let mut events = vec![
+    Some(vec![
         NetEvent::TeleportFinished { handle },
         NetEvent::MainRegionChanged { handle },
         NetEvent::AgentMovementComplete { handle, position, look_at },
-    ];
-    if handle == HANDLE {
-        events.push(NetEvent::CoarseLocations {
-            handle,
-            positions: std::mem::take(kept),
-        });
-    } else {
-        *kept = world.coarse.get(&HANDLE).cloned().unwrap_or_default();
-    }
-    Some(events)
+    ])
 }
 
 /// AURORA_DEMO_TEXTURES_CHURN=1: streaming churn on top of the stress test,

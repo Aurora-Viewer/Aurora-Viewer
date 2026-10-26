@@ -6325,8 +6325,17 @@ mod motion_tests {
         assert!(world.avatar_map_position(friend).is_none());
         assert!(!world.can_locate_avatar(friend));
         assert!(world.avatar_map_position(stranger).is_some());
-        // a simulator still connected sends its list again
+        // the simulator left still sends its list while we are its child:
+        // it waits with the region's objects
+        assert!(world.parked.contains_key(&there));
         seen(&mut world, there, friend);
+        assert!(world.avatar_map_position(friend).is_none());
+        assert!(!world.can_locate_avatar(friend));
+        // back there before it closed, its last list is the current one
+        world.begin_teleport(false);
+        teleport_to(&mut world, there);
+        assert!(!world.parked.contains_key(&there));
+        assert_eq!(world.coarse.keys().copied().collect::<Vec<_>>(), vec![there]);
         assert!(world.avatar_map_position(friend).is_some());
     }
 
