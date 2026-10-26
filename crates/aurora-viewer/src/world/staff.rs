@@ -10,7 +10,12 @@ use super::World;
 use uuid::Uuid;
 
 /// The team's avatar keys.
-const TEAM: &[Uuid] = &[];
+const TEAM: &[Uuid] = &[
+    uuid::uuid!("348d7782-8438-4480-b482-608ca731b3a8"),
+    uuid::uuid!("eb902302-0a1a-4f51-9ca6-7148822d9e95"),
+    uuid::uuid!("322be05d-8851-4eaf-b4f2-a3347ebde023"),
+    uuid::uuid!("2401c1a6-0dde-4daf-b60f-420473687744"),
+];
 
 /// Whose staff a resident is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +65,16 @@ mod tests {
         assert!(!is_staff(&Uuid::nil()));
         assert!(!is_staff(&Uuid::from_u128(1)));
         assert!(TEAM.iter().all(|id| !id.is_nil()));
+    }
+
+    #[test]
+    fn the_team_is_marked_by_key() {
+        assert!(TEAM.iter().all(is_staff));
+        for (i, id) in TEAM.iter().enumerate() {
+            assert!(!TEAM[i + 1..].contains(id), "{id} twice");
+            // whatever their name says
+            assert_eq!(mark_named(id, "Someone Linden"), Some(Mark::Aurora));
+        }
     }
 
     #[test]
