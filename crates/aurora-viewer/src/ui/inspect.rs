@@ -211,20 +211,14 @@ fn slt_datetime(secs: u64) -> String {
     if secs == 0 {
         return String::new();
     }
-    let secs = secs as i64;
-    // SLT is US Pacific time; DST approximated by day of year like the top bar
-    let year_day = (secs / 86_400).rem_euclid(365);
-    let off = if (68..=307).contains(&year_day) { -7 } else { -8 };
-    let t = secs + off * 3600;
-    let (y, m, d) = aurora_net::profile::civil_from_days(t.div_euclid(86_400));
-    let tod = t.rem_euclid(86_400);
+    let (y, m, d, _, h, mi, _) = crate::ui::land::slt_parts(secs as i64);
     aurora_i18n::tr!(
         "inspect-date",
         year = format!("{y:04}"),
         month = format!("{m:02}"),
         day = format!("{d:02}"),
-        hour = format!("{:02}", tod / 3600),
-        minute = format!("{:02}", tod / 60 % 60)
+        hour = format!("{h:02}"),
+        minute = format!("{mi:02}")
     )
 }
 

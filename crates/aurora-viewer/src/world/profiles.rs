@@ -144,10 +144,9 @@ pub fn classified_maturity(flags: u8) -> &'static str {
 
 /// "mm/dd/yyyy" in SLT (date_fmt of panel_profile_classified.xml).
 pub fn slt_date(secs: u32) -> String {
-    let secs = secs as i64;
-    // SLT is US Pacific time; DST approximated by day of year like the top bar
-    let year_day = (secs / 86_400).rem_euclid(365);
-    let off = if (68..=307).contains(&year_day) { -7 } else { -8 };
+    let secs = i64::from(secs);
+    // SLT is US Pacific time, with its daylight saving rule
+    let off = crate::world::chat_log::format::pacific_offset_hours(secs);
     let (y, m, d) = civil_from_days((secs + off * 3600).div_euclid(86_400));
     aurora_i18n::tr!(
         "profile-date",
@@ -403,6 +402,20 @@ mod tests {
 
     fn date(y: i64, m: u32, d: u32) -> f64 {
         (days_from_civil(y, m, d) * 86_400) as f64
+    }
+
+    #[test]
+    fn slt_date_follows_daylight_saving_time() {
+        // 2026-10-27 07:30 UTC is 00:30 PDT on the 27th (23:30 PST the day before)
+        assert_eq!(
+            slt_date(1_793_086_200),
+            aurora_i18n::tr!("profile-date", month = "10", day = "27", year = "2026")
+        );
+        // 2026-11-02 07:30 UTC, after the switch: 23:30 PST on the 1st
+        assert_eq!(
+            slt_date(1_793_086_200 + 6 * 86_400),
+            aurora_i18n::tr!("profile-date", month = "11", day = "01", year = "2026")
+        );
     }
 
     #[test]
