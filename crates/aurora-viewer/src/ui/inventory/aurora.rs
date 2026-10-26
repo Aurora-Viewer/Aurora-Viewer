@@ -81,7 +81,8 @@ pub fn widen(ctx: &egui::Context, id: &str) {
     widgets::size_floater(ctx, id, egui::vec2(WIDE_SIZE, height.max(DEFAULT_SIZE.y)));
 }
 
-/// `AURORA_DEMO_INVENTORY=aurora|aurora-medium|aurora-wide|aurora-rights`.
+/// `AURORA_DEMO_INVENTORY=aurora|aurora-medium|aurora-wide|aurora-rights`,
+/// each width also with `-no-details`.
 fn demo_mode() -> Option<&'static str> {
     static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
     MODE.get_or_init(|| {
@@ -105,7 +106,8 @@ pub const DEMO_FOLDER_WINDOW: Uuid = Uuid::from_u128(0xA0F0);
 pub fn demo_place(ctx: &egui::Context, frame: u64) {
     let Some(mode) = demo_mode() else { return };
     if frame == 2 {
-        let size = match mode {
+        // "-no-details": the same width, the details hidden
+        let size = match mode.strip_suffix("-no-details").unwrap_or(mode) {
             "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" => egui::vec2(800.0, 640.0),
             "aurora-wide"
             | "aurora-worn-wide"
@@ -302,14 +304,20 @@ fn in_rect<R>(ui: &mut egui::Ui, rect: Rect, salt: &str, body: impl FnOnce(&mut 
 }
 
 /// The room left, split into the list and a foot `foot` high under it,
-/// `GAP` apart: together exactly the room, whatever they draw.
+/// 6 px apart: together exactly the room, whatever they draw. An empty
+/// foot leaves the whole room to the list.
 fn list_and_foot(ui: &egui::Ui, foot: f32) -> (Rect, Rect, Rect) {
-    const GAP: f32 = 6.0;
+    let gap = if foot > 0.0 { 6.0 } else { 0.0 };
     let room = ui.available_rect_before_wrap();
     let split = (room.bottom() - foot).max(room.top() + 60.0);
-    let list = Rect::from_min_max(room.min, egui::pos2(room.right(), split - GAP));
+    let list = Rect::from_min_max(room.min, egui::pos2(room.right(), split - gap));
     let foot = Rect::from_min_max(egui::pos2(room.left(), split), room.max);
     (room, list, foot)
+}
+
+/// The height of the selection's card at the bottom: none once hidden.
+fn card_height(prefs: &InventoryPreferences) -> f32 {
+    if prefs.show_details { details::STRIP } else { 0.0 }
 }
 
 /// The narrow window: tabs, search, the tree, the selection's card.
@@ -334,7 +342,7 @@ fn compact(
     ui.add_space(4.0);
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     let message = toolbar::message(p, st);
-    let foot_h = details::STRIP + if message.is_some() { toolbar::MESSAGE } else { 0.0 };
+    let foot_h = card_height(prefs) + if message.is_some() { toolbar::MESSAGE } else { 0.0 };
     let (room, list_rect, foot) = list_and_foot(ui, foot_h);
     let out = in_rect(ui, list_rect, "aurora_inventory_list_room", |ui| {
         list(
@@ -360,7 +368,9 @@ fn compact(
         if let Some((text, color)) = message {
             toolbar::message_line(ui, st, &text, color);
         }
-        details::strip(ui, p, icons, inv, st, prefs, facts, images, actions);
+        if prefs.show_details {
+            details::strip(ui, p, icons, inv, st, prefs, facts, images, actions);
+        }
     });
     ui.advance_cursor_after_rect(room);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
@@ -384,7 +394,7 @@ fn explorer(
     toolbar::explorer_row(ui, p, inv, st, prefs, layout, actions);
     ui.add_space(8.0);
     let area = ui.available_rect_before_wrap();
-    let pane_w = if layout == Layout::Wide && !st.hide_details { 300.0 } else { 0.0 };
+    let pane_w = if layout == Layout::Wide && prefs.show_details { 300.0 } else { 0.0 };
     const GAP: f32 = 8.0;
     let side_w = columns::sidebar(ui, p, area, pane_w, layout, &mut prefs.explorer);
     let side = Rect::from_min_size(area.min, egui::vec2(side_w, area.height()));
@@ -447,7 +457,7 @@ fn explorer_list(
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     let message = toolbar::message(p, st);
     let foot_h = match layout {
-        Layout::Medium => details::STRIP + if message.is_some() { toolbar::MESSAGE } else { 0.0 },
+        Layout::Medium => card_height(prefs) + if message.is_some() { toolbar::MESSAGE } else { 0.0 },
         _ => toolbar::STATUS,
     };
     let (room, list_rect, foot) = list_and_foot(ui, foot_h);
@@ -496,7 +506,9 @@ fn explorer_list(
             if let Some((text, color)) = message {
                 toolbar::message_line(ui, st, &text, color);
             }
-            details::strip(ui, p, icons, inv, st, prefs, facts, images, actions);
+            if prefs.show_details {
+                details::strip(ui, p, icons, inv, st, prefs, facts, images, actions);
+            }
         }
         _ => toolbar::status_bar(ui, p, st, explore, message),
     });
@@ -732,7 +744,7 @@ mod tests {
             h.st.search = "demo".into();
             h.frames(2);
             h.st.search.clear();
-            h.st.hide_details = true;
+            h.prefs.show_details = false;
             h.frames(2);
         }
     }

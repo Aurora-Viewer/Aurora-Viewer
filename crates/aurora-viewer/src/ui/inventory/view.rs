@@ -302,6 +302,9 @@ pub struct InventoryPreferences {
     pub warn_scripted_task_move: bool,
     /// The rights Aurora's rows show (its "CMT" menu).
     pub rights: super::permissions::Rights,
+    /// Aurora's window shows the selection's details: the card at the
+    /// bottom of the narrow and medium widths, the pane of the wide one.
+    pub show_details: bool,
 }
 impl Default for InventoryPreferences {
     fn default() -> Self {
@@ -332,6 +335,7 @@ impl Default for InventoryPreferences {
             warn_task_move: true,
             warn_scripted_task_move: true,
             rights: Default::default(),
+            show_details: true,
         }
     }
 }
@@ -1589,6 +1593,7 @@ mod tests {
         assert!(prefs.received_sort.by_date);
         assert!(!prefs.received_sort.folders_by_name);
         assert!(prefs.received_sort.system_first);
+        assert!(prefs.show_details, "the details stay shown until hidden");
         let changed = InventoryPreferences {
             sort: Sort {
                 by_date: false,
@@ -1606,6 +1611,7 @@ mod tests {
                 hours: 48,
                 ..Default::default()
             },
+            show_details: false,
             ..prefs
         };
         let json = serde_json::to_string(&changed).expect("serialize preferences");

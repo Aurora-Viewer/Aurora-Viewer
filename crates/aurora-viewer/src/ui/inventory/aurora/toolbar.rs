@@ -1,6 +1,6 @@
 //! The bars of Aurora's inventory window: the narrow width's icon tabs and
 //! search row, the explorer's toolbar (where it is, the search with its
-//! Ctrl+F, the filters, the details pane, the rights, "New"), the wide
+//! Ctrl+F, the filters, the details card or pane, the rights, "New"), the wide
 //! width's filter chips, the line of messages and the status bar. The
 //! sorting, the search field and the preferences are the Legacy Viewer's
 //! (LLPanelMainInventory's gear and view menus), gathered in one "Sort"
@@ -35,6 +35,21 @@ fn tool_button(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, lit: bool)
     }
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     response.on_hover_text(tip)
+}
+
+/// Shows or hides the selection's details, kept with the inventory
+/// preferences: the card at the bottom, or the pane at the wide width.
+fn details_button(ui: &mut egui::Ui, p: &Palette, prefs: &mut InventoryPreferences, layout: Layout) {
+    let shown = prefs.show_details;
+    let (icon, tip) = match (layout, shown) {
+        (Layout::Wide, true) => ("layout-sidebar-right-filled", aurora_i18n::tr!("inventory-details-hide")),
+        (Layout::Wide, false) => ("layout-sidebar-right-filled", aurora_i18n::tr!("inventory-details-show")),
+        (_, true) => ("layout-bottombar-filled", aurora_i18n::tr!("inventory-card-hide")),
+        (_, false) => ("layout-bottombar-filled", aurora_i18n::tr!("inventory-card-show")),
+    };
+    if tool_button(ui, p, icon, tip, shown).clicked() {
+        prefs.show_details = !shown;
+    }
 }
 
 /// The tabs of the narrow width: an icon over a short name each; the
@@ -253,7 +268,8 @@ fn filters_tip(st: &InventoryUi) -> &'static str {
     }
 }
 
-/// The narrow width's row: the search, the filters, the rights, Sort, New.
+/// The narrow width's row: the search, the filters, the details card, the
+/// rights, Sort, New.
 pub(super) fn search_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -266,12 +282,13 @@ pub(super) fn search_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let cmt = rights::button_width(ui);
-        let width = (ui.available_width() - 3.0 * (BAR + 6.0) - cmt - 6.0).max(60.0);
+        let width = (ui.available_width() - 4.0 * (BAR + 6.0) - cmt - 6.0).max(60.0);
         search(ui, p, inv, st, prefs, width, layout);
         let lit = st.filters_open || st.filters.active();
         if tool_button(ui, p, "adjustments-horizontal-filled", filters_tip(st), lit).clicked() {
             st.filters_open = !st.filters_open;
         }
+        details_button(ui, p, prefs, layout);
         rights::button(ui, p, &mut prefs.rights, BAR);
         let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
         menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
@@ -315,8 +332,8 @@ fn counted_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, count
     response
 }
 
-/// The explorer's toolbar. Medium: the search, the filters, the rights,
-/// Sort and New. Wide: where it is, the search with its key, the filters
+/// The explorer's toolbar. Medium: the search, the filters, the details
+/// card, the rights, Sort and New. Wide: where it is, the search with its key, the filters
 /// with their count, the details pane, the rights and New.
 pub(super) fn explorer_row(
     ui: &mut egui::Ui,
@@ -355,14 +372,7 @@ pub(super) fn explorer_row(
             {
                 st.filters_open = !st.filters_open;
             }
-            let pane_tip = if st.hide_details {
-                aurora_i18n::tr!("inventory-details-show")
-            } else {
-                aurora_i18n::tr!("inventory-details-hide")
-            };
-            if tool_button(ui, p, "layout-sidebar-right-filled", pane_tip, !st.hide_details).clicked() {
-                st.hide_details = !st.hide_details;
-            }
+            details_button(ui, p, prefs, layout);
             rights::button(ui, p, &mut prefs.rights, BAR);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
@@ -373,7 +383,7 @@ pub(super) fn explorer_row(
                 new_menu(ui, p, inv, st, prefs, layout, actions);
             });
         } else {
-            let width = (ui.available_width() - (BAR + 8.0) - 2.0 * (BAR + 8.0) - 112.0 - cmt - 8.0).max(120.0);
+            let width = (ui.available_width() - 4.0 * (BAR + 8.0) - 112.0 - cmt - 8.0).max(120.0);
             search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
@@ -390,6 +400,7 @@ pub(super) fn explorer_row(
             {
                 st.filters_open = !st.filters_open;
             }
+            details_button(ui, p, prefs, layout);
             rights::button(ui, p, &mut prefs.rights, BAR);
             let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
