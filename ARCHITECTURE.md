@@ -1122,6 +1122,10 @@ For large corrections, the body constraint keeps an upright source hip above
 its planted ankle so that the knee hinge cannot turn backward.
 
 Four shaped sole probes use the existing neutral shoe calibration.
+When an absolute pelvis track replaces a mesh rest translation, placement
+shifts its neutral clearance and body reference by the same origin change.
+Sole depth stays in the shaped rest frame; authored pelvis motion is retained.
+This prevents an already grounded pose from acquiring a crouch.
 The local avatar's sole geometry is measured whenever automatic height or
 Aurora foot placement needs it. Each other posed avatar has its own neutral
 shoe measurement, outfit signature and result channel in `RemoteSoles`.

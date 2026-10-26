@@ -544,9 +544,12 @@ when unfocused") is ignored during a screenshot.
   height. Capture at 700, 800 and 900: soles must keep their floor contact.
   `auto-ik-moving` also enables placement while walking; walk and stop to
   verify the same height with automatic adjustment on and off.
-  `auto-ik-others` puts a second resident wearing rigged shoes beside us and
-  frames both avatars. The second resident's feet must retain their own
-  floor contact through our automatic-height toggle at 720/840.
+  `auto-ik-others` puts a second resident wearing rigged shoes beside us,
+  with a 28 cm mesh pelvis-rest offset replaced by an absolute animation.
+  Its simulated height already places the shoes on the floor. Capture at
+  700/800/900: Aurora placement is OFF/ON/OFF, while our automatic height
+  also switches at 720/840. Both avatars must retain floor contact and
+  their upright posture, without an extra pelvis drop or knee flexion.
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera

@@ -52,6 +52,10 @@ pub(super) struct Pose<'a> {
     pub rotations: &'a [Quat],
     pub positions: &'a [Vec3],
     pub pelvis: Vec3,
+    /// Absolute pelvis tracks replace the shaped rest translation. Apply the
+    /// same origin change to neutral clearance, without changing shoe depth
+    /// or removing the animation's own pelvis motion.
+    pub reference_offset: Vec3,
     pub allowed: [bool; 2],
 }
 
@@ -349,12 +353,17 @@ impl Placement {
         let clearances = setup.legs.map(|leg| {
             let matrix = source[leg.joints[2]];
             footprint(matrix.w_axis.truncate(), orientation(matrix), leg.sole)
-                .map(|point| frame.to_world.transform_vector3(point - Vec3::Z * setup.floor).z)
+                .map(|point| {
+                    frame
+                        .to_world
+                        .transform_vector3(point - Vec3::Z * setup.floor - pose.reference_offset)
+                        .z
+                })
                 .into_iter()
                 .fold(f32::INFINITY, f32::min)
         });
         let source: Vec<Mat4> = source.into_iter().map(|matrix| frame.to_world * matrix).collect();
-        let reference_floor = frame.to_world.transform_point3(Vec3::Z * setup.floor).z;
+        let reference_floor = frame.to_world.transform_point3(Vec3::Z * setup.floor + pose.reference_offset).z;
         let inverse_frame = frame.to_world.inverse();
         let seed = self
             .release
@@ -630,6 +639,7 @@ mod tests {
                         rotations,
                         positions: &self.base.local_pos,
                         pelvis,
+                        reference_offset: Vec3::ZERO,
                         allowed: [true; 2],
                     },
                     frame,
@@ -690,6 +700,85 @@ mod tests {
                 );
             }
             output.into_iter().map(|matrix| frame.to_world * matrix).collect()
+        }
+    }
+
+    #[test]
+    fn grounding_absolute_pelvis_origin_keeps_authored_motion_and_shoe_depth() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let clip = crate::demo::grounding::contact_animation(&f.rig, &f.base, false);
+        for fps in [30, 60, 144] {
+            for shift in [-8.0, -0.28, 0.28, 10.53] {
+                let mut base = f.base.clone();
+                base.local_pos[f.rig.pelvis].z += shift;
+                let mut original = Placement::default();
+                let mut translated = Placement::default();
+                for frame in 0..=fps * 2 {
+                    let time = frame as f32 / fps as f32;
+                    let mut rotations = f.rig.local_rot.clone();
+                    let mut pelvis = Vec3::ZERO;
+                    for joint in &clip.joints {
+                        if let Some(&index) = f.rig.names.get(&joint.joint_name) {
+                            if let Some(rotation) = joint.rotation_at_loop(time, clip.loop_range()) {
+                                rotations[index] = rotation;
+                            }
+                            if index == f.rig.pelvis {
+                                pelvis = joint.position_at_loop(time, clip.loop_range()).unwrap_or(Vec3::ZERO);
+                            }
+                        }
+                    }
+                    let at = now + Duration::from_secs_f32(time);
+                    let frame = f.frame(Vec3::ZERO, 0.4);
+                    let expected = f.sample(&mut original, &rotations, pelvis, Some(frame), at, &flat);
+                    let shifted_pelvis = pelvis - Vec3::Z * shift;
+                    let actual = translated
+                        .apply(
+                            &f.rig,
+                            &base,
+                            Pose {
+                                rotations: &rotations,
+                                positions: &base.local_pos,
+                                pelvis: shifted_pelvis,
+                                reference_offset: -Vec3::Z * shift,
+                                allowed: [true; 2],
+                            },
+                            Some(Frame {
+                                sole_height: Some(f.floor + shift),
+                                ..frame
+                            }),
+                            at,
+                            &flat,
+                        )
+                        .expect("placement");
+                    let expected = f
+                        .rig
+                        .world_with(&expected.rotations, pelvis + expected.pelvis, &f.base.local_pos, &f.base.scale);
+                    let actual = f
+                        .rig
+                        .world_with(&actual.rotations, shifted_pelvis + actual.pelvis, &base.local_pos, &base.scale);
+                    for name in [
+                        "mPelvis",
+                        "mHipLeft",
+                        "mHipRight",
+                        "mKneeLeft",
+                        "mKneeRight",
+                        "mAnkleLeft",
+                        "mAnkleRight",
+                    ] {
+                        let joint = f.rig.names[name];
+                        // Metre-scale origin cancellation and a nearly straight
+                        // knee amplify f32 matrix noise. Compare visible joint
+                        // positions and angles in their own units instead.
+                        let distance = expected[joint].w_axis.distance(actual[joint].w_axis);
+                        let angle = orientation(expected[joint]).angle_between(orientation(actual[joint])).abs();
+                        assert!(
+                            distance < 0.001 && angle < 0.005,
+                            "{name} changed after a {shift} m rest-origin shift at {fps} fps, time {time}: {distance} m, {angle} radians"
+                        );
+                    }
+                }
+            }
         }
     }
 

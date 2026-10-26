@@ -1219,6 +1219,68 @@ mod tests {
         assert_eq!(scene.remote_soles.entries[&residents[1].avatar].value(), Some(baselines[1]));
     }
 
+    #[test]
+    fn remote_soles_preserve_absolute_pelvis_pose_without_crouching() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = true;
+        let resident = remote_shoes(&mut scene, &mut world, now, 1, 0.0);
+        let lib = world.avatar_lib.clone();
+        let mesh = scene.meshes.view(&resident.mesh).unwrap();
+        let mut skin = mesh.skin.as_deref().unwrap().clone();
+        skin.lock_scale_if_joint_position = false;
+        skin.alt_inverse_bind = skin
+            .joint_names
+            .iter()
+            .map(|name| {
+                Mat4::from_translation(if name == "mPelvis" {
+                    Vec3::Z * 0.28
+                } else {
+                    lib.rig.local_pos[lib.rig.names[name]]
+                })
+            })
+            .collect();
+        scene.meshes.insert_local(
+            resident.mesh,
+            Arc::new(mesh.bytes.first().unwrap().to_vec()),
+            mesh.header,
+            Some(Arc::new(skin)),
+        );
+        crate::demo::auto_hover::hold_pelvis(&mut world, &mut scene);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: resident.avatar,
+            sources: Vec::new(),
+            anims: world.own_signals().iter().map(|signal| (signal.id, signal.sequence)).collect(),
+        });
+        scene.ground_avatar_feet = true;
+        for frame in 0..90 {
+            remote_step(&mut scene, &mut world, now + Duration::from_secs_f32(frame as f32 / 60.0));
+        }
+        let source = world.avatar_poses[&resident.avatar].clone();
+        let at = now + Duration::from_secs_f32(89.0 / 60.0);
+        assert!(
+            rendered_remote_sole(&scene, &world, &resident, at).abs() < 0.003,
+            "source feet already touch the floor"
+        );
+        let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+        world.objects.get_mut(index).unwrap().velocity = Vec3::ZERO;
+        for frame in 90..180 {
+            let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+            remote_step(&mut scene, &mut world, at);
+            assert!(rendered_remote_sole(&scene, &world, &resident, at).abs() < 0.003);
+            let placed = &world.avatar_poses[&resident.avatar];
+            let hip = lib.rig.names["mHipLeft"];
+            let drop = placed[hip].w_axis.z - source[hip].w_axis.z;
+            assert!(drop.abs() < 0.005, "placement lowered an already grounded body by {drop:.6} m");
+            for name in ["mHipLeft", "mHipRight", "mKneeLeft", "mKneeRight"] {
+                let joint = lib.rig.names[name];
+                let before = source[joint].to_scale_rotation_translation().1;
+                let after = placed[joint].to_scale_rotation_translation().1;
+                assert!(before.angle_between(after).abs() < 0.1, "placement changed {name} on flat ground");
+            }
+        }
+    }
+
     struct RemoteShoes {
         avatar: uuid::Uuid,
         object: u32,

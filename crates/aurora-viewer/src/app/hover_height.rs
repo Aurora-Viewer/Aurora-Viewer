@@ -78,7 +78,18 @@ impl App {
                         self.settings.ground_feet_while_moving = mode == "auto-ik-moving";
                         if mode == "auto-ik-others" {
                             self.hover_height_ui.open = false;
-                            self.camera.demo_orbit(0.0, 0.25, Some(7.5), &self.settings.camera);
+                            self.settings
+                                .render_exceptions
+                                .retain(|(id, _)| id != &crate::demo::DEMO_LOUP.to_string());
+                            self.settings.render_exceptions.push((crate::demo::DEMO_LOUP.to_string(), 2));
+                            self.camera.demo_orbit(1.0, 0.25, Some(6.0), &self.settings.camera);
+                        }
+                    }
+                    if mode == "auto-ik-others" {
+                        match self.frame_count {
+                            660 | 840 => self.settings.ground_avatar_feet = false,
+                            720 => self.settings.ground_avatar_feet = true,
+                            _ => {}
                         }
                     }
                     match self.frame_count {
