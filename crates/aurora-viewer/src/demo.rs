@@ -6685,13 +6685,34 @@ pub fn hair_events(demo: HairDemo, crowd: u32) -> Vec<NetEvent> {
 /// opaque): what the contact shadows see of what touches the ground. Two
 /// blocks also stand on the ground in front of the start position of
 /// AURORA_DEMO_POS="129,134", left of the view: an opaque one and, further
-/// left, a blended one.
+/// left, a blended one; nearer, a hoof on the ground and a shoe hovering
+/// 2 cm above it (the thick casters of issue 988).
 pub fn feet_demo() -> Option<bool> {
     match std::env::var("AURORA_DEMO_FEET").ok()?.trim() {
         "blend" => Some(true),
         "opaque" => Some(false),
         _ => None,
     }
+}
+
+/// AURORA_DEMO_SUN=<azimuth>,<elevation> (degrees, azimuth 0 east, 90
+/// north): the direction towards the sun for the lighting and the shadows,
+/// the sky keeping its own. The demo camera looks east, so `0,10` puts a low
+/// sun in front of it, the light that shows the contact shadows' outlines
+/// under thick casters (issue 988).
+pub fn sun_override() -> Option<Vec3> {
+    static SUN: std::sync::OnceLock<Option<Vec3>> = std::sync::OnceLock::new();
+    *SUN.get_or_init(|| parse_sun(&std::env::var("AURORA_DEMO_SUN").ok()?))
+}
+
+fn parse_sun(v: &str) -> Option<Vec3> {
+    let mut it = v.split(',').map(|s| s.trim().parse::<f32>().ok());
+    let (azimuth, elevation) = (it.next()??.to_radians(), it.next()??.to_radians());
+    Some(Vec3::new(
+        elevation.cos() * azimuth.cos(),
+        elevation.cos() * azimuth.sin(),
+        elevation.sin(),
+    ))
 }
 
 /// The shoes of [`feet_demo`] (`blend`: blended faces).
@@ -6725,6 +6746,29 @@ pub fn feet_events(blend: bool, crowd: u32) -> Vec<NetEvent> {
             Vec3::new(0.3, 0.3, 0.6),
             aurora_prim::VolumeParams::default(),
             te([0.25, 0.12, 0.35, a], 0, false, 0.0),
+            ExtraParams::default(),
+            "",
+        ));
+    }
+    // thick casters about a foot's size nearer the camera (issue 988): a
+    // hoof standing on the ground and a shoe hovering 2 cm above it, blended
+    // as the shoes are
+    let hoof = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_CIRCLE, 100, 0, 0);
+    let shoe = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
+    for (i, (x, y, lift, size, volume)) in [
+        (130.2, 136.3, 0.0, Vec3::new(0.14, 0.14, 0.1), hoof),
+        (130.3, 135.9, 0.02, Vec3::new(0.26, 0.12, 0.1), shoe),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        objects.push(prim(
+            210_902 + i as u32,
+            Vec3::new(x, y, floor_at(x, y) + lift + size.z * 0.5),
+            Quat::IDENTITY,
+            size,
+            volume,
+            te([0.25, 0.12, 0.35, alpha], 0, false, 0.0),
             ExtraParams::default(),
             "",
         ));
@@ -6818,6 +6862,22 @@ pub fn local_texture_mips(id: &Uuid) -> bool {
         || *id == TEX_PROJECTED
         || *id == TEX_FOLIAGE
         || plants::is_texture(id)
+}
+
+#[cfg(test)]
+mod sun_tests {
+    use super::*;
+
+    #[test]
+    fn demo_sun_is_east_at_azimuth_zero_and_rises_with_elevation() {
+        let east = parse_sun("0, 10").expect("two angles");
+        assert!(east.x > 0.98 && east.y.abs() < 1e-6 && (east.z - 10f32.to_radians().sin()).abs() < 1e-6);
+        let north = parse_sun("90,0").expect("two angles");
+        assert!(north.x.abs() < 1e-6 && (north.y - 1.0).abs() < 1e-6);
+        assert!((parse_sun("200,35").expect("two angles").length() - 1.0).abs() < 1e-6);
+        assert_eq!(parse_sun("10"), None);
+        assert_eq!(parse_sun("east,10"), None);
+    }
 }
 
 #[cfg(test)]

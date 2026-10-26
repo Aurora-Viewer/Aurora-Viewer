@@ -8091,6 +8091,9 @@ impl App {
             self.world.cloud_scroll.y.rem_euclid(1024.0),
         );
         let mut env = Environment::from_eep(&sky_frame, &water_frame, self.world.cloud_scroll, self.settings.draw_distance);
+        if let Some(sun) = self.demo.then(crate::demo::sun_override).flatten() {
+            env.sun_dir = sun;
+        }
         self.options_ui.sky_tone_mapped = !env.sky.no_post;
         if in_world {
             // what the sky source is: region, day cycle, altitude track, preset

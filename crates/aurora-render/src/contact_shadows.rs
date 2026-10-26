@@ -18,9 +18,10 @@
 //! blended though they look opaque) and the impostor cards; those blended
 //! faces then also receive them.
 //!
-//! `AURORA_CONTACT_SHADOWS=0|1|alt|prepass` overrides the setting for a
-//! comparison; `alt` switches every second, `prepass`: the prepass alone
-//! casts (before the blended faces and the cards were added).
+//! `AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell` overrides the setting for
+//! a comparison; `alt` switches every second, `prepass`: the prepass alone
+//! casts (before the blended faces and the cards were added), `shell`: the
+//! occluders are Bend's thin shell instead of [`OCCLUDER_DEPTH`] deep.
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
@@ -36,6 +37,32 @@ pub(crate) const WAVE_SIZE: i32 = 64;
 const SURFACE_THICKNESS: f32 = 0.005;
 const BILINEAR_THRESHOLD: f32 = 0.02;
 const SHADOW_CONTRAST: f32 = 4.0;
+
+/// The deepest an occluder is taken to be behind its visible face, in
+/// metres. Bend's window is a shell of one surface thickness (1.5 cm at
+/// 3 m): a ray that went under a shoe or a hoof, through its body behind the
+/// visible faces, was not stopped, and only the outline where the edges
+/// cross the ray darkened the ground (issue 988). The shader takes the body
+/// as deep as the ray went under it, back to the pixel's own depth, up to
+/// this (`depth_delta`, contact_shadows.wgsl); one shell from 10 m on. With
+/// one layer of depth a ray that passes beside or behind a caster looks the
+/// same, so each caster also darkens a little of the ground beside it: at
+/// 15 cm that copy of its outline showed (demo `AURORA_DEMO_FEET`, sun
+/// ahead), at 5 cm it stays within the shadow's own edge.
+const OCCLUDER_DEPTH: f32 = 0.05;
+
+/// The shader's `tuning.w`: [`OCCLUDER_DEPTH`] in units of surface
+/// thickness per unit of reversed depth. With an infinite reversed
+/// projection a pixel at `z` metres has the depth `near / z`, so `depth`
+/// metres are `depth / (thickness × z)` units, `depth × d / (thickness ×
+/// near)`; 0 (Bend's shell) without a usable near plane.
+pub(crate) fn occluder_units(depth: f32, near: f32) -> f32 {
+    if near > 0.0 && depth > 0.0 {
+        depth / (SURFACE_THICKNESS * near)
+    } else {
+        0.0
+    }
+}
 
 /// One compute dispatch: workgroup counts and its first wave relative to
 /// the light (`DispatchData`).
@@ -200,6 +227,9 @@ pub(crate) enum Override {
     Alternate,
     /// On, with the depth prepass alone as caster.
     Prepass,
+    /// On, the occluders taken as Bend's shell of one surface thickness
+    /// (before issue 988).
+    Shell,
 }
 
 impl Override {
@@ -209,6 +239,7 @@ impl Override {
             Some("1" | "on") => Override::On,
             Some("alt") => Override::Alternate,
             Some("prepass") => Override::Prepass,
+            Some("shell") => Override::Shell,
             _ => Override::None,
         }
     }
@@ -223,8 +254,14 @@ impl Override {
         match self {
             Override::None => on,
             Override::Off => false,
-            Override::On | Override::Alternate | Override::Prepass => true,
+            Override::On | Override::Alternate | Override::Prepass | Override::Shell => true,
         }
+    }
+
+    /// The deepest an occluder is taken to be behind its visible face,
+    /// metres ([`OCCLUDER_DEPTH`], none with `shell`).
+    pub(crate) fn occluder_depth(self) -> f32 {
+        if self == Override::Shell { 0.0 } else { OCCLUDER_DEPTH }
     }
 
     /// Whether the blended faces and the impostor cards cast too.
@@ -445,16 +482,18 @@ impl ContactShadows {
     }
 
     /// The dispatches and their constants for a light at `light` (clip
-    /// position, [`light_projection`]), before the encoder runs.
-    pub(crate) fn write(&mut self, queue: &wgpu::Queue, t: &Targets, light: [f32; 4]) {
+    /// position, [`light_projection`]) seen through a projection whose near
+    /// plane is `near` metres away, before the encoder runs.
+    pub(crate) fn write(&mut self, queue: &wgpu::Queue, t: &Targets, light: [f32; 4], near: f32) {
         let (w, h) = (t.size.0 as i32, t.size.1 as i32);
         self.list = build_dispatch_list(light, [w, h], [0, 0], [w, h], WAVE_SIZE);
+        let occluder = occluder_units(Override::from_env().occluder_depth(), near);
         let mut bytes = vec![0u8; (self.stride as usize) * self.list.count];
         for (i, d) in self.list.dispatches().iter().enumerate() {
             let u = ParamsU {
                 light: self.list.light,
                 wave_offset: [d.wave_offset[0], d.wave_offset[1], 0, 0],
-                tuning: [SURFACE_THICKNESS, BILINEAR_THRESHOLD, SHADOW_CONTRAST, 0.0],
+                tuning: [SURFACE_THICKNESS, BILINEAR_THRESHOLD, SHADOW_CONTRAST, occluder],
             };
             let at = i * self.stride as usize;
             bytes[at..at + std::mem::size_of::<ParamsU>()].copy_from_slice(bytemuck::bytes_of(&u));
@@ -599,6 +638,32 @@ mod tests {
         assert!(behind[3] < 0.0);
     }
 
+    /// The occluders' depth in the shader's units: `tuning.w` times the
+    /// pixel's reversed depth is that many metres over one surface
+    /// thickness at the pixel's distance (issue 988).
+    #[test]
+    fn occluder_depth_is_metres_over_the_surface_thickness() {
+        let near = 0.1;
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(1.0, 1.6, near);
+        let w = occluder_units(OCCLUDER_DEPTH, proj.w_axis.z);
+        for z in [1.0f32, 3.0, 10.0, 40.0] {
+            let clip = proj * glam::Vec4::new(0.0, 0.0, -z, 1.0);
+            let units = w * clip.z / clip.w;
+            let expected = OCCLUDER_DEPTH / (SURFACE_THICKNESS * z);
+            assert!(
+                (units - expected).abs() < expected * 1e-3,
+                "{z} m: {units} units, {expected} expected"
+            );
+        }
+        // 5 cm is ten shells at 1 m, less than one past 10 m (the shader
+        // keeps one there)
+        assert!((w * near / 1.0 - 10.0).abs() < 1e-3);
+        assert!(w * near / 12.0 < 1.0);
+        assert_eq!(occluder_units(Override::Shell.occluder_depth(), near), 0.0);
+        assert_eq!(occluder_units(OCCLUDER_DEPTH, 0.0), 0.0);
+        assert_eq!(Override::None.occluder_depth(), OCCLUDER_DEPTH);
+    }
+
     #[test]
     fn override_keeps_the_mask_and_alternates_every_second() {
         assert_eq!(Override::parse(None), Override::None);
@@ -607,6 +672,8 @@ mod tests {
         assert_eq!(Override::parse(Some("1")), Override::On);
         assert_eq!(Override::parse(Some("maybe")), Override::None);
         assert_eq!(Override::parse(Some("prepass")), Override::Prepass);
+        assert_eq!(Override::parse(Some("shell")), Override::Shell);
+        assert!(Override::Shell.needed(false) && Override::Shell.all_casters());
         assert!(Override::Prepass.needed(false) && !Override::Prepass.all_casters());
         assert!(Override::None.all_casters() && Override::Alternate.all_casters());
         assert!(Override::None.needed(true) && !Override::None.needed(false));
