@@ -279,6 +279,13 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         0.0..=crate::settings::MAX_GROUND_FEET_HEIGHT,
                         " m",
                     );
+                    cx.slider(
+                        tr!("ui-options-aurora-ground-feet-avatars"),
+                        tr!("ui-options-aurora-ground-feet-avatars-help"),
+                        &field!(ground_feet_max_avatars),
+                        0..=crate::settings::MAX_GROUND_FEET_AVATARS,
+                        "",
+                    );
                 });
             });
             // PlayTypingAnim and FSTypeDuringEmote (panel_preferences_chat.xml)

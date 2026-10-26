@@ -98,8 +98,8 @@ impl App {
                         _ => {}
                     }
                 }
-                if matches!(mode, "auto-ik-perf" | "auto-ik-perf-off") && self.frame_count == 600 {
-                    self.settings.ground_avatar_feet = mode == "auto-ik-perf";
+                if matches!(mode, "auto-ik-perf" | "auto-ik-perf-off" | "auto-ik-budget") && self.frame_count == 600 {
+                    self.settings.ground_avatar_feet = mode != "auto-ik-perf-off";
                     self.settings.ground_feet_while_moving = true;
                     self.settings.ground_feet_max_height = crate::settings::DEFAULT_GROUND_FEET_HEIGHT;
                     self.settings.auto_hover_height = false;
@@ -107,6 +107,9 @@ impl App {
                     self.settings.max_complexity = 0;
                     self.settings.complexity_mode = 0;
                     self.hover_height_ui.open = false;
+                    if mode == "auto-ik-budget" {
+                        self.settings.ground_feet_max_avatars = crate::settings::DEFAULT_GROUND_FEET_AVATARS;
+                    }
                     let origin = self.world.agent.position;
                     let residents: Vec<_> = self
                         .world
@@ -139,6 +142,14 @@ impl App {
                         "foot IK benchmark ready: mode={mode} crowd={}",
                         crate::demo::crowd_count().unwrap_or(0)
                     );
+                }
+                if mode == "auto-ik-budget" {
+                    match self.frame_count {
+                        900 => self.settings.ground_feet_max_avatars = 0,
+                        1100 => self.settings.ground_feet_max_avatars = 12,
+                        1300 => self.settings.ground_feet_max_avatars = crate::settings::DEFAULT_GROUND_FEET_AVATARS,
+                        _ => {}
+                    }
                 }
                 // A separate ground height, then the sit shortcut: the avatar
                 // floats 0.5 m above its ground pose, and stands back at 0.

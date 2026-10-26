@@ -7798,6 +7798,7 @@ impl App {
             self.scene.ground_avatar_feet = self.settings.ground_avatar_feet;
             self.scene.ground_feet_while_moving = self.settings.ground_feet_while_moving;
             self.scene.ground_feet_max_height = self.settings.ground_feet_max_height;
+            self.scene.set_foot_scope_limit(self.settings.ground_feet_max_avatars);
             self.scene.body_physics = crate::scene::body_physics::Config {
                 enabled: self.settings.avatar_physics,
                 detail: self.settings.avatar_physics_detail,

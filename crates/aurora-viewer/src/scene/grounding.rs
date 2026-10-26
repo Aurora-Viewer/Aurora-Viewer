@@ -5,7 +5,15 @@ use super::anim::grounding::{Frame, Surface};
 use super::*;
 
 impl Scene {
+    pub fn set_foot_scope_limit(&mut self, maximum: u32) {
+        self.foot_scope.configure(maximum);
+    }
+
     pub fn update_foot_scope(&mut self, world: &World, view: CullView, now: Instant) {
+        if !self.ground_avatar_feet || crate::settings::foot_height_limit(self.ground_feet_max_height) == 0.0 {
+            self.foot_scope.clear_selection();
+            return;
+        }
         let origin = world
             .objects
             .index_of_uuid(&world.agent_id)
@@ -237,6 +245,7 @@ mod tests {
     fn grounding_movement_scope_covers_signals_custom_motion_and_immediate_input() {
         let _inline = super::super::jobs::execute_inline_on_this_thread();
         let (mut world, mut scene, _, _) = super::super::picking::tests::scene_with_two_objects();
+        scene.foot_scope = super::super::foot_scope::Scope::from_mode("all");
         let now = Instant::now();
         world.agent.flying = false;
         scene.ground_avatar_feet = true;

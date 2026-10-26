@@ -559,7 +559,10 @@ when unfocused") is ignored during a screenshot.
   other unseated residents intersecting the main camera frustum, nearest to
   our avatar (not the camera). Our own avatar keeps correction. Calibration
   follows the same budget, with existing 0.5 s pose release on deselection.
-  This is a runtime experiment, not a saved preference or a new default.
+  This override only applies to offline demos. Normal viewers use the saved
+  maximum in Preferences > Avatars > Animations (foot-placement cog):
+  five other avatars by default, 0-100, with zero meaning self only. Older
+  preferences without the new key acquire five; explicit saved values persist.
   `foot scope` log lines report selected/cached remote residents and support
   frames (including our avatar); verify the cap alongside timing results.
   Crowd foot-placement A/B (2026-10-26, source `92a040319`, optimized dev):
@@ -586,9 +589,18 @@ when unfocused") is ignored during a screenshot.
   this is a shared-desktop comparison, not an isolated solver benchmark.
   The avatar stage includes pose evaluation and calibration, not only IK.
   Captures were inspected in all three modes; runtime logs have no errors or
-  panics before the scheduled process stop. Normal behavior stays unlimited;
-  real outfits, camera transitions and grid behavior still need human validation.
+  panics before the scheduled process stop. Those results describe the historical source before the saved five-avatar
+  default. Real outfits, camera transitions and grid behavior still need human validation.
 
+  `auto-ik-budget` exercises the saved control with no benchmark override:
+  five at frame 600, zero at 900, twelve at 1100 and five at 1300. Combine
+  with `AURORA_DEMO_OPTIONS=avatars/3:cogs`, `AURORA_DEMO_CROWD=60`,
+  `AURORA_DEMO_FEET=opaque`, `AURORA_PROFILE=1` and capture 700/1000/1200/1400
+  in English and French. The control must be integral, enabled with Aurora
+  placement, searchable and reset to five with the Avatars page. Calibration
+  and support-frame counts must follow the saved limit; self stays eligible
+  at zero. On the grid the human checks live changes, camera turns and restart
+  persistence on their real outfits.
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
@@ -7228,7 +7240,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLEND_SHADOWS=0` | Alpha-blended faces that are not rigged cast no shadow, as before |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
-| `AURORA_FOOT_IK_SCOPE=<mode>` | Temporary foot-placement scope experiment (default: all) |
+| `AURORA_FOOT_IK_SCOPE=<mode>` | Offline foot-placement benchmark override (all or visible10) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |

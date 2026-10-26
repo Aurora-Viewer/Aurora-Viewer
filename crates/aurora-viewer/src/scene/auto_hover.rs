@@ -879,6 +879,9 @@ mod tests {
         region.avatar_hover_height = true;
         Arc::make_mut(&mut region.caps).insert("AgentPreferences".into(), String::new());
         let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        // Geometry/calibration fixtures have no main camera. Scope selection
+        // and the saved budget are exercised separately below.
+        scene.foot_scope = super::super::foot_scope::Scope::from_mode("all");
         let now = Instant::now();
         rest(&mut scene, &world, now);
         (world, scene, now)
@@ -1403,7 +1406,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_visible_ten_budget_bounds_calibration_and_keeps_our_avatar() {
+    fn remote_saved_budget_updates_calibration_live_and_keeps_our_avatar() {
         let _inline = super::super::jobs::execute_inline_on_this_thread();
         let (mut world, mut scene, now) = fixture();
         world.agent.flying = false;
@@ -1411,7 +1414,7 @@ mod tests {
         let residents: Vec<_> = (1..=16)
             .map(|serial| remote_shoes(&mut scene, &mut world, now, serial, 0.0))
             .collect();
-        scene.foot_scope = super::super::foot_scope::Scope::from_mode("visible10");
+        scene.foot_scope = super::super::foot_scope::Scope::default();
         scene.ground_avatar_feet = true;
         scene.ground_feet_while_moving = true;
         let eye = Vec3::Z;
@@ -1422,15 +1425,25 @@ mod tests {
             900.0,
             std::f32::consts::FRAC_PI_2,
         );
-        for frame in 0..90 {
-            let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
-            scene.update_foot_scope(&world, view, at);
-            remote_step(&mut scene, &mut world, at);
-        }
-        assert_eq!(scene.remote_soles.entries.len(), 10);
-        for (number, resident) in residents.iter().enumerate() {
-            let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
-            assert_eq!(scene.grounding_frame(&world, index, now).is_some(), number < 10);
+        let mut frame = 0;
+        for maximum in [5, 2, 0, 12] {
+            scene.set_foot_scope_limit(maximum);
+            for _ in 0..90 {
+                let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+                scene.update_foot_scope(&world, view, at);
+                remote_step(&mut scene, &mut world, at);
+                frame += 1;
+            }
+            assert_eq!(scene.remote_soles.entries.len(), maximum as usize);
+            for (number, resident) in residents.iter().enumerate() {
+                let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+                assert_eq!(scene.grounding_frame(&world, index, now).is_some(), number < maximum as usize);
+            }
+            let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            assert!(
+                scene.grounding_frame(&world, own, now).is_some(),
+                "our avatar stays corrected even with a zero budget"
+            );
         }
         let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
         assert!(
@@ -1443,7 +1456,7 @@ mod tests {
             900.0,
             std::f32::consts::FRAC_PI_2,
         );
-        let at = now + Duration::from_secs(2);
+        let at = now + Duration::from_secs(8);
         scene.update_foot_scope(&world, away, at);
         remote_step(&mut scene, &mut world, at);
         assert!(scene.remote_soles.entries.is_empty(), "out-of-view residents still calibrate");
