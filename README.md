@@ -555,8 +555,10 @@ command family by command family, is in [docs/RLVA.md](docs/RLVA.md).
 
 ### Animation Overrider (AO)
 
-The **AO** button of the bottom bar opens a compact panel: the set, the AO
-switch, swimming or water walking and speed boosts. Its **Settings** button
+The **AO** button of the bottom bar opens a compact panel: the set, the
+previous / next animation buttons of the state being played with the auto
+cycle button between them, the AO switch, and swimming or water walking. The
+run and flight boosts are in Settings › Movement. Its **Settings** button
 opens the full Animation Overrider, with its movement editor and the
 animation lists by category (General, Ground, Jumping, Flying, Swimming).
 Swimming has its own lists at the surface and underwater. Sets are kept under `#Aurora/Aurora AO`; at first

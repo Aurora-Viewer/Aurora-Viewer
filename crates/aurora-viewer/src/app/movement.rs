@@ -589,6 +589,7 @@ impl App {
             ctx,
             p,
             &self.ao_catalog,
+            &self.world.inventory,
             &mut self.ao_runtime,
             &mut account,
             &mut prefs,
