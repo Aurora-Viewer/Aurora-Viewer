@@ -16245,7 +16245,7 @@ impl ApplicationHandler for App {
                 if mode == crate::ui::text_menu::SpellingDemo::Replace {
                     crate::autoreplace::set_enabled(true);
                 } else {
-                    self.chat_ui.input = "Helo, I am teleporting to the sandbox with my frends".into();
+                    self.chat_ui.input = "Helo, I will teleport to the sandbox with my frends".into();
                     *self.chat_ui.draft_mut(self.chat_ui.selected) = "Teh avatar is waiting at the landng point".into();
                 }
             }

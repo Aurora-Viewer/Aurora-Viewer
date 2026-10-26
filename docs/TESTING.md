@@ -4876,11 +4876,13 @@ failure. Grid validation and any paid upload are performed by the human.
   closing `:` of a known code (`:smile:`) turns it into its emoji; a time
   (`12:30:`), a word before the colon or a link stay as typed.
 - **`AURORA_DEMO_SPELLING=1|menu|replace`** (`spelling.rs`,
-  `ui/spelling.rs`): `1` puts "Helo, I am teleporting to the sandbox with
+  `ui/spelling.rs`): `1` puts "Helo, I will teleport to the sandbox with
   my frends" in the chat bar and "Teh avatar is waiting at the landng
   point" in the Conversations input (opened): red squiggles under Helo,
   frends, Teh and landng only (the default English dictionary and the
-  Second Life glossary, so "sandbox" and "teleporting" pass). `menu`: the
+  Second Life glossary, so "sandbox" and "teleport" pass; the
+  glossary's words have no affixes, so "teleporting" is marked as in the
+  Legacy Viewer). `menu`: the
   chat bar takes the keyboard at frame 700, its caret at the end, and the
   text menu opens on "frends" at frame 706 (capture at frame 780 with
   `AURORA_FPS_LIMIT=60`): up to five suggestions ("friends" among them),

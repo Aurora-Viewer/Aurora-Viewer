@@ -84,7 +84,7 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-auto-replace-on-hint"),
             &field!(auto_replace),
         );
-        cx.greyed(!cx.s.auto_replace);
+        // the lists stay editable while it is off: they can be made ready
         cx.wide().below().row_with(
             tr!("ui-options-auto-replace-lists"),
             tr!("ui-options-auto-replace-lists-hint"),
@@ -161,6 +161,7 @@ fn extra_dictionaries(ui: &mut egui::Ui, p: &Palette, s: &mut crate::spelling::S
             }
         }
     });
+    ui.add_space(6.0);
     changed
 }
 
