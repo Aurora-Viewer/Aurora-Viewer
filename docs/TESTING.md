@@ -6473,7 +6473,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
-| `AURORA_DEMO_CHAT_BUBBLES=1` or `typing` | With `AURORA_DEMO_TAGS`: chat bubbles above the heads for this run, the residents talking; `typing`: the typing dots too |
+| `AURORA_DEMO_CHAT_BUBBLES=1`, `typing` or `talk` | With `AURORA_DEMO_TAGS`: the residents talk, chat bubbles above the heads for this run; `typing`: the typing dots too; `talk`: as Preferences say |
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
 | `AURORA_DEMO_VOICE_MODERATION=1` or `self` | Nearby voice moderation: the estate manager's entries, or a moderator muting us |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
@@ -6534,8 +6534,9 @@ What the inventory must show with these scenarios:
   two around 50 m (name only). A white wall stands behind the two on the
   left, to judge the glass on a light background next to the same plates on
   the dark scene. The People window is closed.
-  - `AURORA_DEMO_CHAT_BUBBLES=1|typing` turns the chat bubbles above the
-    heads on for the run (nothing saved; `typing` adds the typing dots) and
+  - `AURORA_DEMO_CHAT_BUBBLES=1|typing|talk` turns the chat bubbles above
+    the heads on for the run (nothing saved; `typing` adds the typing dots;
+    `talk` forces nothing, to try Preferences › Chat's options) and
     makes the residents talk every 30 s, 2 s after the start: Nova says a
     line, Orion whispers (italics), Tess shouts (bold), Lune emotes ("Lune
     … waves"), we ask something, Sol, farther, says a long line that wraps,

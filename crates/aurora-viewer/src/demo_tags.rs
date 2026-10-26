@@ -376,14 +376,18 @@ pub fn state_events(time: f64, shown: &mut Option<bool>) -> Vec<NetEvent> {
         .collect()
 }
 
-/// AURORA_DEMO_CHAT_BUBBLES=1|typing (with AURORA_DEMO_TAGS): the chat
-/// bubbles on for the run, the typing ones too with `typing`.
+/// AURORA_DEMO_CHAT_BUBBLES=1|typing|talk (with AURORA_DEMO_TAGS): the
+/// residents talk; the chat bubbles on for the run, the typing ones too with
+/// `typing`; `talk` leaves both to Preferences.
+fn chat_bubbles_mode() -> Option<&'static str> {
+    static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    MODE.get_or_init(|| std::env::var("AURORA_DEMO_CHAT_BUBBLES").ok().map(|v| v.trim().to_owned()))
+        .as_deref()
+}
+
+/// The bubbles forced on for the run: Some(typing dots too).
 pub fn chat_bubbles() -> Option<bool> {
-    static MODE: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
-    *MODE.get_or_init(|| {
-        let v = std::env::var("AURORA_DEMO_CHAT_BUBBLES").ok()?;
-        Some(v.trim() == "typing")
-    })
+    chat_bubbles_mode().filter(|m| *m != "talk").map(|m| m == "typing")
 }
 
 /// Seconds between two rounds of the scenario's chat, which starts
@@ -398,7 +402,7 @@ const CHAT_START: f64 = 2.0;
 /// `last`.
 pub fn chat_events(time: f64, last: &mut f64) -> Vec<NetEvent> {
     use aurora_net::{ChatMessage, ChatSourceType, ChatType};
-    if chat_bubbles().is_none() || mode().is_none() {
+    if chat_bubbles_mode().is_none() || mode().is_none() {
         return Vec::new();
     }
     use aurora_i18n::tr;
