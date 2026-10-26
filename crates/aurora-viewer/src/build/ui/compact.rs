@@ -505,11 +505,17 @@ pub fn body(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         "construction-primary",
     );
     band(&mut main, egui::Color32::TRANSPARENT, 10, 8, |ui| {
+        // Lay the content out at the width it keeps once the bar shows: the
+        // Create shape grid (and any wrapped text) grows taller as it widens,
+        // so a width that follows the bar would show it, narrow, fit, hide it
+        // and widen again on every frame (#1092).
+        let width = crate::ui::widgets::scrolled_width(ui).max(1.0);
         egui::ScrollArea::vertical()
             .id_salt(("c3_section", tool.tool as u8, tool.tab))
             .max_height((primary_bottom - rect.top() - 16.0).max(1.0))
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                ui.set_max_width(width);
                 if tool.tool == Tool::Edit {
                     selection(ui, p, tool, world, s);
                     if !tool.selection.is_empty() || tool.tab == 3 {
