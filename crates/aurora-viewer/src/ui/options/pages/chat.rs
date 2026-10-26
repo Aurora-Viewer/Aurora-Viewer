@@ -168,18 +168,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 &field!(mute_groups_without_notices),
             );
             // GroupSnoozeTime and FSEnablePerGroupSnoozeDuration: the
-            // snooze button of a group chat
+            // snooze button of a group chat, in minutes (#945)
             cx.row(
                 tr!("ui-options-group-snooze-duration"),
                 tr!("ui-options-group-snooze-duration-hint"),
-                &field!(group_snooze_seconds),
+                &field!(group_snooze_minutes),
                 |ui, s| {
                     ui.add(
-                        egui::DragValue::new(&mut s.group_snooze_seconds)
+                        egui::DragValue::new(&mut s.group_snooze_minutes)
                             .custom_parser(aurora_i18n::parse_number)
-                            .range(0..=i32::MAX as u32)
-                            .speed(10.0)
-                            .suffix(" s"),
+                            .range(0..=crate::settings::GROUP_SNOOZE_MAX_MINUTES)
+                            .speed(0.5)
+                            .suffix(tr!("ui-options-group-snooze-suffix")),
                     )
                     .changed()
                 },

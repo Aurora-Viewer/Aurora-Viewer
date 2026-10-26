@@ -728,8 +728,13 @@ pub struct Settings {
     /// notices are turned off.
     pub mute_groups_without_notices: bool,
     /// GroupSnoozeTime: how long the snooze of a group chat lasts, in
-    /// seconds (900; 0 only closes it until its next message).
-    pub group_snooze_seconds: u32,
+    /// minutes (15; 0 only closes it until its next message). The Legacy
+    /// Viewer counts seconds: a snooze is minutes to hours long (#945).
+    pub group_snooze_minutes: u32,
+    /// The former duration in seconds: read once, carried into
+    /// `group_snooze_minutes`.
+    #[serde(rename = "group_snooze_seconds", skip_serializing)]
+    pub(crate) former_group_snooze_seconds: Option<u32>,
     /// FSEnablePerGroupSnoozeDuration: ask the duration at each snooze
     /// (off).
     pub group_snooze_ask: bool,
@@ -1156,6 +1161,10 @@ pub(crate) const BLOOM_STRENGTH: f32 = 0.5;
 
 /// RenderTonemapMix's default (settings.xml).
 pub(crate) const TONEMAP_MIX: f32 = 0.7;
+
+/// The longest group chat snooze, as the Legacy Viewer's (GroupSnoozeTime,
+/// an S32 of seconds).
+pub(crate) const GROUP_SNOOZE_MAX_MINUTES: u32 = i32::MAX as u32 / 60;
 
 const SETTINGS_VERSION: u32 = 26;
 
@@ -1593,7 +1602,8 @@ impl Default for Settings {
             trusted_sites: Default::default(),
             mute_all_groups: false,
             mute_groups_without_notices: false,
-            group_snooze_seconds: 900,
+            group_snooze_minutes: 15,
+            former_group_snooze_seconds: None,
             group_snooze_ask: false,
             report_blocks: false,
             show_joined_group_invitations: false,
@@ -2036,6 +2046,11 @@ impl Settings {
             );
         }
         self.lookat = self.lookat.sanitized();
+        if let Some(seconds) = self.former_group_snooze_seconds.take() {
+            // rounded up: a short snooze stays a snooze, not "until the next message"
+            self.group_snooze_minutes = seconds.div_ceil(60);
+        }
+        self.group_snooze_minutes = self.group_snooze_minutes.min(GROUP_SNOOZE_MAX_MINUTES);
         self.ground_feet_max_height = foot_height_limit(self.ground_feet_max_height);
         self.camera = std::mem::take(&mut self.camera).sanitized();
         if self.settings_version < 5 {
@@ -3472,6 +3487,24 @@ mod tests {
         let file = serde_json::json!({ "look_at": true, "look_at_range": 64.0 });
         let s = serde_json::from_value::<Settings>(file).expect("read old settings").sanitized();
         assert_eq!(s.lookat, crate::world::lookat::Settings::default());
+    }
+
+    /// The snooze was saved in seconds (#945): it comes back in whole
+    /// minutes, rounded up so that a short one does not become 0.
+    #[test]
+    fn the_former_snooze_seconds_carry_into_minutes() {
+        let read = |file: serde_json::Value| serde_json::from_value::<Settings>(file).expect("read settings").sanitized();
+        for (seconds, minutes) in [(900, 15), (0, 0), (20, 1), (61, 2), (3600, 60)] {
+            let s = read(serde_json::json!({ "group_snooze_seconds": seconds }));
+            assert_eq!(s.group_snooze_minutes, minutes, "{seconds} s");
+        }
+        // saved again: only the minutes
+        let again = serde_json::to_value(read(serde_json::json!({ "group_snooze_seconds": 120 }))).expect("serialize");
+        assert!(again.get("group_snooze_seconds").is_none());
+        assert_eq!(read(again).group_snooze_minutes, 2);
+        assert_eq!(Settings::default().group_snooze_minutes, 15);
+        let huge = read(serde_json::json!({ "group_snooze_minutes": u32::MAX }));
+        assert_eq!(huge.group_snooze_minutes, GROUP_SNOOZE_MAX_MINUTES);
     }
 
     fn scratch_settings_file() -> PathBuf {
