@@ -258,6 +258,16 @@ pub enum LandCommand {
     Release { handle: RegionHandle, local_id: i32 },
     /// reclaimParcel (region owner).
     Reclaim { handle: RegionHandle, local_id: i32 },
+    /// LLAvatarActions::callbackLandFreeze: FreezeUser to the region the
+    /// resident stands in (Flags 0x1 unfreezes).
+    FreezeUser {
+        handle: RegionHandle,
+        target: Uuid,
+        unfreeze: bool,
+    },
+    /// LLAvatarActions::callbackLandEject: EjectUser to the region the
+    /// resident stands in (Flags 0x1 also bans them from the parcel).
+    EjectUser { handle: RegionHandle, target: Uuid, ban: bool },
     /// sendParcelDeed.
     DeedToGroup { handle: RegionHandle, local_id: i32, group: Uuid },
     /// buyPass.

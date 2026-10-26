@@ -206,6 +206,8 @@ pub struct Facts {
     pub worn: bool,
     pub avatar_travel: bool,
     pub following: bool,
+    /// "Freeze" / "Eject" of the avatar, and whether the eject may ban.
+    pub moderation: crate::world::land_moderation::Rights,
 }
 
 /// One attachment point of "Put on ▸ Attach" or "Attach HUD".
@@ -234,6 +236,10 @@ pub enum CtxAction {
     /// "New physics" of the outfit gallery: created, worn and edited
     /// (LLAgentWearables::createWearable).
     NewPhysics,
+    /// Avatar.Freeze / Avatar.Eject: asked first (LLAvatarActions::
+    /// landFreeze / landEject).
+    Freeze(Uuid),
+    Eject(Uuid),
     Touch(u32),
     Sit {
         target: Uuid,
@@ -1061,6 +1067,43 @@ pub fn ask(ctx: &egui::Context, p: &Palette, q: &Question, dont_ask: &mut bool) 
     });
     if modal.should_close() && answer.is_none() {
         answer = Some(false);
+    }
+    answer
+}
+
+/// One button of `choose`: icon, label and face.
+pub type Choice<'a> = (&'a str, &'a str, crate::ui::widgets::ActionKind);
+
+/// A question answered by one of its own buttons, then "Cancel" (the
+/// yesnocancelbuttons / okcancelbuttons templates: FreezeAvatarFullname,
+/// EjectAvatarFullname). Some(Some(i)) for `choices[i]`, Some(None) on
+/// "Cancel" or Escape.
+pub fn choose(ctx: &egui::Context, p: &Palette, id: &str, title: &str, lines: &[&str], choices: &[Choice]) -> Option<Option<usize>> {
+    use crate::ui::widgets::{ActionKind, action_button};
+    use egui::RichText;
+    let mut answer = None;
+    let modal = crate::ui::widgets::Modal::new(egui::Id::unique(id)).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.label(RichText::new(title).size(15.0).strong().color(p.ink));
+        for line in lines {
+            ui.add_space(6.0);
+            ui.label(RichText::new(*line).size(12.5).color(p.muted));
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let size = egui::Vec2::new(0.0, 26.0);
+            for (i, &(icon, label, kind)) in choices.iter().enumerate() {
+                if action_button(ui, p, icon, label, kind, size).clicked() {
+                    answer = Some(Some(i));
+                }
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                answer = Some(None);
+            }
+        });
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(None);
     }
     answer
 }

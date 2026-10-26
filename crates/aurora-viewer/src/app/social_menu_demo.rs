@@ -43,7 +43,7 @@ impl App {
     }
 
     /// The world menu of a resident, from their name plate.
-    fn demo_menu_of(&mut self, id: uuid::Uuid) {
+    pub(super) fn demo_menu_of(&mut self, id: uuid::Uuid) {
         let ppp = self.egui_ctx.pixels_per_point();
         match self.name_tags.iter().find(|t| t.id == id).map(|t| t.rect.center()) {
             Some(at) => {

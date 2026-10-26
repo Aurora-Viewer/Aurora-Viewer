@@ -614,8 +614,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
             aurora_i18n::tr!("common-report"),
             CtxAction::ReportAbuse(ReportTarget::Object(id)),
         );
-        ui.todo("snowflake", aurora_i18n::tr!("ui-context-freeze"));
-        ui.todo("player-eject-filled", aurora_i18n::tr!("ui-context-eject"));
+        moderation_items(ui, f, id);
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
@@ -669,6 +668,15 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     );
 }
 
+/// Avatar.Freeze / Avatar.Eject, visible only with the rights on the land
+/// the avatar stands on (on_visible Avatar.EnableFreezeEject).
+fn moderation_items(ui: &mut Builder, f: &Facts, id: Uuid) {
+    if f.moderation.allowed {
+        ui.item("snowflake", aurora_i18n::tr!("ui-context-freeze"), CtxAction::Freeze(id));
+        ui.item("player-eject-filled", aurora_i18n::tr!("ui-context-eject"), CtxAction::Eject(id));
+    }
+}
+
 /// menu_attachment_other.xml: the avatar's entries, then those of the
 /// attachment clicked, in Firestorm's order. Entries it hides unless they
 /// apply (Dump XML, Block Particle Owner, Freeze / Eject without the
@@ -718,6 +726,7 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
             aurora_i18n::tr!("common-report"),
             CtxAction::ReportAbuse(ReportTarget::Object(id)),
         );
+        moderation_items(ui, f, id);
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     // Avatar.Pay: the wearer is paid

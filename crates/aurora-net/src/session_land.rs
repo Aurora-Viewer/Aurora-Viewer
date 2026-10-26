@@ -237,6 +237,28 @@ impl Session<'_> {
                 m.data.local_id = local_id;
                 self.send(addr, &m, true);
             }
+            LandCommand::FreezeUser { handle, target, unfreeze } => {
+                let Some(addr) = self.land_sim(handle) else {
+                    return;
+                };
+                let mut m = FreezeUser::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.data.target_id = target;
+                m.data.flags = u32::from(unfreeze);
+                self.send(addr, &m, true);
+            }
+            LandCommand::EjectUser { handle, target, ban } => {
+                let Some(addr) = self.land_sim(handle) else {
+                    return;
+                };
+                let mut m = EjectUser::default();
+                m.agent_data.agent_id = agent;
+                m.agent_data.session_id = session;
+                m.data.target_id = target;
+                m.data.flags = u32::from(ban);
+                self.send(addr, &m, true);
+            }
             LandCommand::DeedToGroup { handle, local_id, group } => {
                 let Some(addr) = self.land_sim(handle) else {
                     return;
