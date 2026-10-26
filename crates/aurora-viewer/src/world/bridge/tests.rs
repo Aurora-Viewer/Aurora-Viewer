@@ -736,6 +736,37 @@ fn a_stopped_query_script_is_reinstalled_but_never_costs_movelock_its_controller
 }
 
 #[test]
+fn query_state_tells_a_silent_query_script_from_a_missing_or_starting_bridge() {
+    let mut sim = Simulator::new();
+    assert_eq!(sim.bridge.query_state(sim.now), QueryState::Starting);
+    sim.ready();
+    for _ in 0..4 {
+        sim.step();
+    }
+    assert_eq!(sim.bridge.query_state(sim.now), QueryState::Ready);
+    // The controller answers, the query script never does (bridge 1.34's
+    // query.lsl did not compile): unanswered probes, nothing processed.
+    sim.bridge.query = None;
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert_eq!(
+        sim.bridge.query_state(sim.now),
+        QueryState::Starting,
+        "a hello can still be on its way"
+    );
+    sim.now += SILENCE_CHECK;
+    sim.bridge.update(&mut sim.world, &sim.prefs, true, sim.now);
+    assert!(sim.bridge.available());
+    assert_eq!(sim.bridge.query_state(sim.now), QueryState::Silent);
+    sim.bridge.error = Some(aurora_i18n::tr!("bridge-stopped").into());
+    assert_eq!(sim.bridge.query_state(sim.now), QueryState::Failed);
+    sim.bridge.user_detached = true;
+    assert_eq!(sim.bridge.query_state(sim.now), QueryState::Detached);
+    // Repair (retry) starts again from the inventory.
+    sim.bridge.retry(sim.now);
+    assert_eq!(sim.bridge.query_state(sim.now), QueryState::Starting);
+}
+
+#[test]
 fn automatic_reinstalls_are_bounded_and_leave_repair_to_the_user() {
     let mut sim = Simulator::new();
     sim.ready();

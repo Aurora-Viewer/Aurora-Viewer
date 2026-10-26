@@ -2169,7 +2169,7 @@ That ignored test creates and removes its own isolated profile.
   list, parent-local numeric controls, markers and native save/load/import
   actions. No motorcycle, contacts or IK-project draft is loaded or written.
   Prefer the dedicated `AURORA_DEMO_POSER` scenarios below. See [Poser](POSER.md).
-- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder`**:
+- **`AURORA_DEMO_POSER=self|connected|camera|scale|hands|face|misc|physics|library|settings|animesh|consent-accept|consent-refuse|consent-timeout|consent-withdraw|consent-request|consent-reminder|bridge-starting|bridge-silent|bridge-failed|bridge-off`**:
   the full handoff trial, with the real local pose layer and consent state
   machine, on a standing avatar without motorcycle contacts or bone bindings.
   The additional `connected` mode restores a T-pose at 450 and moves the
@@ -2184,7 +2184,10 @@ That ignored test creates and removes its own isolated profile.
   or expire at 480, and optionally withdraw at 560. Incoming-request and
   reminder modes show the target UI; accept/withdraw modes select the peer
   and edit its head at 510. Library widens the native window; settings and
-  the remaining modes select the corresponding controls. Synthetic events
+  the remaining modes select the corresponding controls. The other modes
+  count as a ready bridge; `bridge-*` modes open the subject menu at 440 with
+  the peer's Ask disabled and the matching hint (starting, query script
+  silent, failed, taken off), plus Repair for `silent` and `failed`. Synthetic events
   do not validate real LSL delivery: two human-controlled grid clients must
   check bridge 1.34 provisioning and the complete consent round trip.
 - **`AURORA_DEMO_IK_EDIT=1|move|release|gizmo|gizmo-local|gizmo-rotate`**: reuse the synthetic motorcycle,

@@ -656,7 +656,15 @@ fn poser_subject_menu_queues_consent_actions_for_the_app_and_waits_for_the_bridg
     let p = crate::theme::Theme::default().palette();
     crate::ui::widgets::place_floater(&frames.ctx, "poser", egui::pos2(30.0, 30.0), egui::vec2(880.0, 760.0));
     let frame = editor.editor_frame(&world).unwrap();
-    for bridge in [false, true] {
+    use crate::world::bridge::QueryState;
+    for (bridge, hint) in [
+        (QueryState::Starting, Some("poser-bridge-starting")),
+        (QueryState::Silent, Some("poser-bridge-silent")),
+        (QueryState::Failed, Some("poser-bridge-failed")),
+        (QueryState::Detached, Some("poser-bridge-needed")),
+        (QueryState::Ready, None),
+    ] {
+        editor.poser.requests.clear();
         editor.set_poser_bridge(bridge);
         let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
         for _ in 0..3 {
@@ -669,18 +677,42 @@ fn poser_subject_menu_queues_consent_actions_for_the_app_and_waits_for_the_bridg
         for _ in 0..3 {
             texts = frames.run(Vec::new(), &mut draw);
         }
+        for key in [
+            "poser-bridge-starting",
+            "poser-bridge-silent",
+            "poser-bridge-failed",
+            "poser-bridge-needed",
+        ] {
+            assert_eq!(
+                texts.iter().any(|t| t.source == aurora_i18n::text(key)),
+                hint == Some(key),
+                "{bridge:?}: the menu says why Ask waits ({key})"
+            );
+        }
+        let repair = texts.iter().find(|t| t.source == aurora_i18n::text("bridge-repair")).map(|t| t.rect.center());
         assert_eq!(
-            texts.iter().any(|t| t.source == aurora_i18n::text("poser-bridge-needed")),
-            !bridge,
-            "the menu says why Ask waits"
+            repair.is_some(),
+            matches!(bridge, QueryState::Silent | QueryState::Failed),
+            "{bridge:?}: Repair only when a worn bridge does not answer"
         );
         let ask = painted(&texts, aurora_i18n::text("poser-consent-ask")).rect.center();
         frames.run(click(ask), &mut draw);
         let requests = editor.take_poser_requests();
-        if bridge {
+        if bridge == QueryState::Ready {
             assert_eq!(requests, vec![Request::Ask(peer)]);
         } else {
-            assert!(requests.is_empty(), "no request without the bridge");
+            assert!(requests.is_empty(), "{bridge:?}: no request without the bridge");
+        }
+        if let Some(repair) = repair {
+            let mut draw = |ui: &mut egui::Ui| editor.poser_ui(ui.ctx(), &p, &world, &frame);
+            frames
+                .ctx
+                .data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
+            for _ in 0..3 {
+                frames.run(Vec::new(), &mut draw);
+            }
+            frames.run(click(repair), &mut draw);
+            assert_eq!(editor.take_poser_requests(), vec![Request::RepairBridge]);
         }
     }
 }

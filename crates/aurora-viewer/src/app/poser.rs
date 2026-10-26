@@ -1,6 +1,10 @@
 //! Consent transport and UI remain independent of whether the editor is open.
 use super::*;
-use crate::{theme::Palette, ui::widgets, world::poser_consent};
+use crate::{
+    theme::Palette,
+    ui::widgets,
+    world::{bridge::QueryState, poser_consent},
+};
 
 impl App {
     pub(super) fn poser_demo(&mut self, mode: &str) {
@@ -12,7 +16,9 @@ impl App {
                 objects: vec![crate::demo::action_avatar(false)],
             });
         }
-        if mode.starts_with("consent-")
+        // bridge-* modes show the subject menu's bridge hints for the same peer.
+        let fixture = mode.starts_with("consent-") || mode.starts_with("bridge-");
+        if fixture
             && self.frame_count == 400
             && let Some(handle) = self.world.main_region
         {
@@ -49,7 +55,7 @@ impl App {
                 self.ik_editor.select_pose_subject(&self.world, id);
             }
         }
-        if mode.starts_with("consent-") {
+        if fixture {
             let peer = self
                 .world
                 .objects
@@ -64,9 +70,11 @@ impl App {
                         rights_has: 1,
                     });
                 }
-                let mut consent = std::mem::take(&mut self.world.poser_consent);
-                consent.demo(&self.world, peer, mode, self.frame_count);
-                self.world.poser_consent = consent;
+                if mode.starts_with("consent-") {
+                    let mut consent = std::mem::take(&mut self.world.poser_consent);
+                    consent.demo(&self.world, peer, mode, self.frame_count);
+                    self.world.poser_consent = consent;
+                }
                 if self.frame_count == 440 {
                     self.egui_ctx
                         .data_mut(|d| d.insert_temp(egui::Id::unique("poser-subjects-open"), true));
@@ -112,7 +120,19 @@ impl App {
             consent.preferences.clone_from(&self.settings.pose_requests);
         }
         consent.sync(&self.world, Instant::now());
-        self.ik_editor.set_poser_bridge(self.bridge_runtime.query_endpoint().is_some());
+        let bridge = match self.demo.then(|| std::env::var("AURORA_DEMO_POSER").ok()).flatten() {
+            // The demo has no worn bridge: its poser fixtures stand for a
+            // ready one, unless a bridge-* mode shows a waiting state.
+            Some(mode) => match mode.as_str() {
+                "bridge-starting" => QueryState::Starting,
+                "bridge-silent" => QueryState::Silent,
+                "bridge-failed" => QueryState::Failed,
+                "bridge-off" => QueryState::Detached,
+                _ => QueryState::Ready,
+            },
+            None => self.bridge_runtime.query_state(Instant::now()),
+        };
+        self.ik_editor.set_poser_bridge(bridge);
         for command in consent.commands(self.bridge_runtime.query_endpoint()) {
             self.net.send(command);
         }
@@ -132,6 +152,8 @@ impl App {
                     self.panels.settings = true;
                     self.options_ui.open(crate::ui::options::Page::Privacy, 0);
                 }
+                // The Movelock window's Repair: recompile and restart both scripts.
+                crate::ik_edit::poser::Request::RepairBridge => self.bridge_runtime.retry(Instant::now()),
             }
         }
         if let Some(request) = consent.incoming.front().copied() {
