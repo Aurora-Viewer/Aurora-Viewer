@@ -273,10 +273,6 @@ fn bar_frame(p: &Palette) -> egui::Frame {
 const TOP_SLOT: Vec2 = Vec2::new(22.0, 20.0);
 const TOP_ICON: f32 = 16.0;
 
-fn icon_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> bool {
-    icon_button_response(ui, p, icons, icon, tip, size).clicked()
-}
-
 fn icon_button_response(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
     if resp.hovered() {
