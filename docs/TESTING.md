@@ -2457,9 +2457,9 @@ of priority 5/6 must retain control. These fixtures never connect to a grid.
 AO quick controls: `AURORA_DEMO_AO=quick` opens the compact panel above the
 bottom AO button with a complete swimming set. `quick-missing` and
 `quick-empty` show the disabled swimming gate and empty catalogue. Inspect
-English/French, the set selector (selection keeps the panel open), AO enable,
-mutually exclusive swimming/water walking, run/flight switches and multipliers,
-and the manager button. Check Escape, click-away and repeated toolbar clicks.
+English/French, the set selector (selection keeps the panel open), the
+previous / auto cycle / next buttons beside it, AO enable, mutually exclusive
+swimming/water walking and the manager button. Check Escape, click-away and repeated toolbar clicks.
 Existing movement preferences and the full manager must reflect the same
 choices. The other menus/commands still open the full manager directly.
 

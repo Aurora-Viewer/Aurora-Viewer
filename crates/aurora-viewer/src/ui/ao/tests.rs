@@ -63,6 +63,7 @@ impl Fixture {
                     ui.ctx(),
                     &crate::theme::Theme::default().palette(),
                     &self.catalog,
+                    &self.inv,
                     &mut self.runtime,
                     &mut self.account,
                     &mut self.movement_prefs,
@@ -105,6 +106,25 @@ impl Fixture {
         }
         let shapes = self.draw(Vec::new()).1;
         let pos = shapes.iter().find_map(|s| position(&s.shape, label)).expect(label);
+        self.click_at(pos)
+    }
+
+    /// Clicks the button that paints this Tabler icon (icon-only buttons).
+    fn click_icon(&mut self, icon: &str) -> Vec<Action> {
+        fn position(shape: &egui::Shape, texture: egui::TextureId) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Mesh(m) if m.texture_id == texture => Some(m.calc_bounds().center()),
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| position(s, texture)),
+                _ => None,
+            }
+        }
+        let texture = super::super::icons::global(icon).expect(icon).id();
+        let shapes = self.draw(Vec::new()).1;
+        let pos = shapes.iter().find_map(|s| position(&s.shape, texture)).expect(icon);
+        self.click_at(pos)
+    }
+
+    fn click_at(&mut self, pos: egui::Pos2) -> Vec<Action> {
         let mut out = Vec::new();
         for pressed in [true, false] {
             out.extend(
@@ -775,16 +795,6 @@ fn quick_controls_share_preferences_and_preserve_water_mode_exclusion() {
     f.runtime.stands = false;
     assert!(matches!(f.click(aurora_i18n::tr!("ao-enabled")).as_slice(), [Action::Preferences]));
     assert!(f.account.enabled && !f.runtime.paused && f.runtime.stands);
-    assert!(matches!(
-        f.click(aurora_i18n::tr!("ao-quick-run")).as_slice(),
-        [Action::MovementPreferences]
-    ));
-    assert!(f.movement_prefs.running);
-    assert!(matches!(
-        f.click(aurora_i18n::tr!("ao-quick-fly")).as_slice(),
-        [Action::MovementPreferences]
-    ));
-    assert!(f.movement_prefs.fly_assist);
     f.click(aurora_i18n::tr!("movement-swimming"));
     assert!(f.movement_prefs.swimming && !f.movement_prefs.water_walk);
     f.click(aurora_i18n::tr!("movement-water-walk"));
@@ -795,6 +805,84 @@ fn quick_controls_share_preferences_and_preserve_water_mode_exclusion() {
     assert!(f.manager_open);
     assert!(!f.quick.as_ref().expect("quick").open);
     assert_eq!(f.inv.generation, generation, "quick controls must not mutate inventory");
+}
+
+#[test]
+fn quick_arrows_step_the_playing_state_and_wrap() {
+    let mut f = quick_fixture(true);
+    let set = f.catalog.selected(f.account.selected).expect("set").clone();
+    let stands = &set.states[&State::Standing];
+    let len = stands.steps.len();
+    assert!(len >= 2, "the demo set has several stands");
+    let index = |f: &Fixture| f.runtime.index(State::Standing, stands.folder);
+    // AOEngine::cycle does nothing while the AO is off.
+    assert!(f.click_icon("caret-right-filled").is_empty());
+    assert_eq!(index(&f), 0);
+    f.account.enabled = true;
+    assert!(f.click_icon("caret-right-filled").is_empty(), "stepping writes no inventory");
+    assert_eq!(index(&f), 1);
+    f.click_icon("caret-left-filled");
+    f.click_icon("caret-left-filled");
+    assert_eq!(index(&f), len - 1, "previous wraps to the last stand");
+    f.click_icon("caret-right-filled");
+    assert_eq!(index(&f), 0, "next wraps to the first stand");
+    // The buttons follow the playing state, as AOEngine::cycle uses mLastMotion.
+    let walks = set.states[&State::Walking].folder;
+    f.runtime.current = Some(State::Walking);
+    f.click_icon("caret-right-filled");
+    assert_eq!(f.runtime.index(State::Walking, walks), 0, "a single walk has nothing to step to");
+    assert_eq!(index(&f), 0);
+    assert!(f.quick.as_ref().expect("quick").open, "the arrows keep the panel open");
+}
+
+#[test]
+fn quick_cycle_button_toggles_the_state_cycle_option() {
+    let mut f = quick_fixture(true);
+    let cycle = |f: &Fixture| {
+        f.catalog.selected(f.account.selected).expect("set").states[&State::Standing]
+            .cycle
+            .clone()
+    };
+    let before = cycle(&f);
+    assert!(before.cycle && before.seconds > 0.0, "the demo stands cycle on a timer");
+    for expected in [false, true] {
+        let out = f.click_icon("repeat");
+        let [Action::Edit(change, None)] = out.as_slice() else {
+            panic!("the cycle button dispatches one inventory edit")
+        };
+        crate::world::inventory::actions::demo_mutate(&mut f.inv, Uuid::from_u128(1), change.clone()).expect("server ack");
+        f.catalog.invalidate();
+        f.catalog.refresh(&mut f.inv);
+        let after = cycle(&f);
+        assert_eq!(after.cycle, expected);
+        assert_eq!(after.seconds, before.seconds, "the interval is kept");
+        assert_eq!(after.random, before.random);
+    }
+}
+
+#[test]
+fn quick_cycle_without_interval_arms_a_timer() {
+    let off = Cycle::default();
+    let on = quick::toggled(&off);
+    assert!(
+        on.cycle && on.seconds > 0.0,
+        "a 0 s cycle would never change a stand while standing"
+    );
+    let off = quick::toggled(&on);
+    assert!(!off.cycle && off.seconds == on.seconds);
+    let random = Cycle {
+        cycle: false,
+        random: true,
+        seconds: 12.0,
+    };
+    assert_eq!(
+        quick::toggled(&random),
+        Cycle {
+            cycle: true,
+            random: true,
+            seconds: 12.0
+        }
+    );
 }
 
 #[test]

@@ -165,6 +165,20 @@ impl Runtime {
         c.next = None;
         c.manual = true;
     }
+    /// AOEngine::cycle(CyclePrevious / CycleNext): step the main list of
+    /// `state` by hand, wrapping at both ends. Like its resetTimer, the
+    /// state's automatic cycle restarts from the chosen animation.
+    pub fn step(&mut self, set: &Set, state: State, forward: bool) -> bool {
+        let Some(config) = set.animation_config(state) else { return false };
+        let len = config.steps.len();
+        if len < 2 {
+            return false;
+        }
+        let index = self.index(state, config.folder).min(len - 1);
+        let index = if forward { (index + 1) % len } else { (index + len - 1) % len };
+        self.choose(state, config.folder, index);
+        true
+    }
     pub fn finished(&mut self, id: Uuid) {
         if self.owned.contains_key(&id) {
             self.completed.insert(id);

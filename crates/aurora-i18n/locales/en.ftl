@@ -10968,10 +10968,11 @@ ik-seat-inactive = The script's IK is inactive. Its data is loaded for editing.
 ao-underwater-swimming = Swimming underwater
 ao-underwater-swimming-fallback = Uses the surface swimming list until animations are assigned here.
 
-ao-quick-boosts = Speed boosts
-ao-quick-run = Running
-ao-quick-fly = Flying
 ao-quick-manager = Settings
+ao-quick-previous = Previous animation ({ $state })
+ao-quick-next = Next animation ({ $state })
+ao-quick-cycle = Switch automatically ({ $state }, every { $seconds } s)
+ao-quick-cycle-entry = Switch automatically ({ $state }, each time it starts)
 ao-category-general = General
 ao-category-ground = Ground
 ao-category-jumping = Jumping
