@@ -202,9 +202,9 @@ pub fn page(cx: &mut Cx, tab: usize) {
             let classic_profiles = cx.s.classic_profiles;
             cx.subs(classic_profiles, |cx| {
                 cx.toggle(
-                    tr!("ui-options-aurora-profiles-rights-bar"),
-                    tr!("ui-options-aurora-profiles-rights-bar-help"),
-                    &field!(profile_rights_bar),
+                    tr!("ui-options-aurora-profiles-rights"),
+                    tr!("ui-options-aurora-profiles-rights-help"),
+                    &field!(profile_rights),
                 );
             });
             cx.wide().choice(

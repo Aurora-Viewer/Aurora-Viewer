@@ -1,10 +1,12 @@
 //! The Aurora profile window (mock-up A of the profiles, asked for by the
-//! human on 2026-10-14): a header that says who it is (a banner drawn from
-//! the profile picture, the picture with its status dot, the names, birth
-//! date and age, badges) and what to do (conversation, call, teleport, pay,
-//! block, more), the friendship rights bar, then the tabs, the Profile tab
-//! in cards. Under `COMPACT_W` the header shrinks, the actions keep their
-//! icons and the tabs go into a drop-down list.
+//! human on 2026-10-14, its head redrawn for #1089): a banner drawn from the
+//! profile picture, as tall as what it holds (`widgets::hero`), with the
+//! picture and its status dot, who it is (names, birth date and age,
+//! badges) and what to do (conversation, call, teleport, pay, block, more)
+//! centred on one line, the tabs along its bottom; then the Profile tab in
+//! cards, a friend's rights on the Info card. Under `COMPACT_W` the header
+//! shrinks, the actions keep their icons and the tabs go into a drop-down
+//! list.
 //!
 //! The data, requests and actions are those of the classic window (`super`,
 //! Firestorm's LLFloaterProfile), which Preferences › Aurora › Profiles
@@ -19,7 +21,7 @@ use super::{
 use crate::theme::Palette;
 use crate::ui::context::{self, CtxAction};
 use crate::ui::presence::{self, Status};
-use crate::ui::widgets::{self, ActionKind, Floater};
+use crate::ui::widgets::{self, ActionKind, Floater, hero};
 use crate::ui::{emoji::Emoji, fonts, group_profile, icons, menu};
 use crate::world::World;
 use crate::world::profiles::{self, Online};
@@ -63,8 +65,8 @@ pub(super) struct Env<'a, 'w> {
     pub wanted_images: &'a mut HashSet<Uuid>,
     pub actions: &'a mut Vec<ProfileAction>,
     pub pick_picture: &'a mut Option<(PictureSlot, Uuid)>,
-    /// `Settings::profile_rights_bar`.
-    pub rights_bar: bool,
+    /// `Settings::profile_rights`.
+    pub friend_rights: bool,
 }
 
 pub(super) fn window_id(id: Uuid) -> String {
@@ -299,7 +301,7 @@ enum Act {
 }
 
 /// The header's buttons. A stranger's "Add as friend" takes the place of
-/// the rights bar, or of "Call" in the compact row (the mock-up).
+/// "Call" in the compact row (the mock-up); it is in Info otherwise.
 fn header_acts(own: bool, editing: bool, friend: bool, compact: bool) -> Vec<Act> {
     use Act::*;
     match (own, editing) {
@@ -392,7 +394,6 @@ fn paint_icon(ui: &egui::Ui, name: &str, center: Pos2, size: f32, tint: Color32)
 
 fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     let world = env.world;
-    let p = env.p;
     let own = w.id == world.agent_id;
     if !own {
         w.editing = false;
@@ -402,52 +403,22 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
         env.wanted_pics.insert(w.id);
     }
     let compact = ui.available_width() < COMPACT_W;
-    // the gaps between the header, the bar and the tabs are the mock-up's
+    // the gaps between the header and the tabs are the mock-up's
     ui.spacing_mut().item_spacing.y = 0.0;
     let f = facts(world, &w.id, own, profile);
-    header(ui, env, w, compact, &f);
-    let friend = world.social.friends.iter().find(|fr| fr.id == w.id);
-    // a friend's rights bar can be hidden (Preferences › Aurora › Profiles):
-    // the rights stay in Contacts, "Remove from friends" in the "…" menu
-    let bar = match friend {
-        Some(_) => env.rights_bar,
-        None => !compact,
-    };
-    if !own && bar {
-        ui.add_space(10.0);
-        match friend {
-            Some(fr) => rights_bar(ui, env, w.id, fr, compact),
-            None => {
-                ui.horizontal(|ui| {
-                    ui.add_space(INSET);
-                    if widgets::action_button(
-                        ui,
-                        p,
-                        "user-plus",
-                        aurora_i18n::tr!("ui-profile-aurora-add-friend"),
-                        ActionKind::Flat,
-                        Vec2::new(0.0, BUTTON_H),
-                    )
-                    .clicked()
-                    {
-                        context::request(ui.ctx(), CtxAction::AddFriend(w.id));
-                    }
-                });
-            }
-        }
-    }
     let before = w.tab;
     if !tabs_of(own).contains(&w.tab) {
         w.tab = TAB_SL;
     }
     if compact {
+        header_compact(ui, env, w, &f);
         ui.add_space(10.0);
         tab_dropdown(ui, env, w, own);
         ui.add_space(8.0);
     } else {
-        ui.add_space(12.0);
-        tab_strip(ui, env, w, own);
-        ui.add_space(8.0);
+        // the tabs along the banner's bottom
+        header(ui, env, w, &f);
+        ui.add_space(10.0);
     }
     if before == TAB_FEED && w.tab != TAB_FEED {
         w.web.focused = false;
@@ -500,30 +471,28 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     }
 }
 
-/// The banner, the picture and who it is, the buttons, the birth line and
-/// the badges.
-fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &Facts) {
+/// The banner as tall as what it holds (`widgets::hero`): the picture on
+/// the left, who it is beside it and the buttons on the right, centred on
+/// one line, the tabs along its bottom.
+fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, f: &Facts) {
+    const PHOTO: f32 = 116.0;
     let (p, world) = (env.p, env.world);
     let id = w.id;
     let own = f.own;
     let profile = world.profiles.get(&id);
-    let friend = world.social.friends.iter().find(|fr| fr.id == id);
     let full = ui.max_rect();
     let top = ui.cursor().top();
-    let (banner_h, photo, photo_at) = if compact {
-        (70.0, 64.0, Vec2::new(14.0, 34.0))
-    } else {
-        (132.0, 116.0, Vec2::new(22.0, 66.0))
-    };
-    let banner = Rect::from_min_size(pos2(full.left(), top), Vec2::new(full.width(), banner_h));
+    let key = ui.scope_id().with(("profile-hero", id));
+    let who_h = hero::measured(ui, key, PHOTO);
+    let (banner, line, tabs) = hero::rows(full, top, who_h.max(PHOTO));
     let picture = profile.map(|pr| pr.sl_image).filter(|i| !i.is_nil());
     paint_banner(ui, p, banner, picture.and_then(|i| env.banners.get(&i)));
+    hero::veil(ui, ui.painter(), p, banner);
     let mark = crate::world::staff::mark(world, &id);
     crate::ui::staff::banner_light(ui, p, banner, mark);
-    let pic = env.pics.get(&id);
     // in edit mode, where the banner comes from; the picture in large is a
     // click on the round picture, with no second button for it
-    if !compact && w.editing {
+    if w.editing {
         banner_chip(
             ui,
             p,
@@ -532,24 +501,72 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
             aurora_i18n::tr!("ui-profile-aurora-banner-follows"),
         );
     }
-    let name = display_name(world, &id);
-    let photo_rect = Rect::from_min_size(banner.min + photo_at, Vec2::splat(photo));
-    let ring = if compact { 3.0 } else { 4.0 };
-    let status = status_of(world, &id, own, profile, friend);
-    paint_photo(ui, p, photo_rect, ring, pic, &name, status, w.editing);
-    let photo_resp = ui.interact(photo_rect, ui.scope_id().with(("profile-photo", id)), Sense::click());
-    if pic.is_some() && !w.editing && photo_resp.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked() {
-        w.open_photo(PictureSlot::SecondLife, profile.map_or(Uuid::nil(), |pr| pr.sl_image));
+    let photo_rect = Rect::from_center_size(pos2(full.left() + 22.0 + PHOTO / 2.0, line.center().y), Vec2::splat(PHOTO));
+    let status = photo(ui, env, w, photo_rect, 4.0);
+    // the buttons, centred on the line
+    let pad = 150.0;
+    let row = Rect::from_min_max(
+        pos2(full.left() + pad, line.center().y - BUTTON_H / 2.0),
+        pos2(full.right() - 14.0, line.center().y + BUTTON_H / 2.0),
+    );
+    let acts = header_acts(own, w.editing, f.friend, false);
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    // with their names while who it is keeps room for its badges on a line
+    // or two, else the main action alone named (a long language)
+    let mut probe = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(layout).sizing_pass().invisible());
+    probe.spacing_mut().item_spacing.x = 5.0;
+    for act in acts.iter().rev() {
+        act_button(&mut probe, env, w, *act, f, Look::Labelled);
     }
-    if w.editing {
-        camera_button(ui, env, photo_rect, profile);
+    let named = row.width() - probe.min_rect().width() - 18.0 >= hero::WHO_MIN_W;
+    let mut right = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(layout));
+    right.spacing_mut().item_spacing.x = 5.0;
+    for act in acts.iter().rev() {
+        let main = matches!(act, Act::Conversation | Act::Edit | Act::Done);
+        let look = if named || main { Look::Labelled } else { Look::Icon };
+        act_button(&mut right, env, w, *act, f, look);
     }
-    let pad = if compact { 82.0 } else { 150.0 };
+    let acts_w = right.min_rect().width() + 18.0;
+    // who it is, centred on the line too, measured for the next pass
+    let col = Rect::from_min_max(
+        pos2(full.left() + pad, line.center().y - who_h / 2.0),
+        pos2(full.right() - 14.0 - acts_w, line.center().y + who_h / 2.0 + 200.0),
+    );
+    let mut who = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(col)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+    );
+    who_it_is(&mut who, env, w, f, false, status, mark);
+    hero::measure(ui, key, who.min_rect().height());
+    let mut strip = ui.new_child(egui::UiBuilder::new().max_rect(tabs.shrink2(Vec2::new(10.0, 0.0))));
+    tab_strip(&mut strip, env, w, own);
+    ui.advance_cursor_after_rect(banner);
+}
+
+/// The compact header: a short banner, the picture over its edge, who it is
+/// beside it, then the actions in a row of icons as wide as the window.
+fn header_compact(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, f: &Facts) {
+    const PHOTO: f32 = 64.0;
+    let (p, world) = (env.p, env.world);
+    let id = w.id;
+    let own = f.own;
+    let profile = world.profiles.get(&id);
+    let full = ui.max_rect();
+    let top = ui.cursor().top();
+    let banner = Rect::from_min_size(pos2(full.left(), top), Vec2::new(full.width(), 70.0));
+    let picture = profile.map(|pr| pr.sl_image).filter(|i| !i.is_nil());
+    paint_banner(ui, p, banner, picture.and_then(|i| env.banners.get(&i)));
+    let mark = crate::world::staff::mark(world, &id);
+    crate::ui::staff::banner_light(ui, p, banner, mark);
+    let photo_rect = Rect::from_min_size(banner.min + Vec2::new(14.0, 34.0), Vec2::splat(PHOTO));
+    let status = photo(ui, env, w, photo_rect, 3.0);
+    let pad = 82.0;
     let y0 = banner.bottom() + 10.0;
-    let acts = header_acts(own, w.editing, f.friend, compact);
-    // the buttons at the right of the name, or a row of icons when compact
+    let acts = header_acts(own, w.editing, f.friend, true);
+    // our own buttons at the right of the name
     let mut acts_w = 0.0;
-    if !compact || own {
+    if own {
         let row = Rect::from_min_max(pos2(full.left() + pad, y0), pos2(full.right() - INSET, y0 + BUTTON_H));
         let mut right = ui.new_child(
             egui::UiBuilder::new()
@@ -558,84 +575,19 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
         );
         right.spacing_mut().item_spacing.x = 5.0;
         for act in acts.iter().rev() {
-            act_button(&mut right, env, w, *act, f, false, 0.0);
+            act_button(&mut right, env, w, *act, f, Look::Labelled);
         }
         acts_w = right.min_rect().width() + 14.0;
     }
-    // name and the line under it
-    let id_rect = Rect::from_min_max(pos2(full.left() + pad, y0), pos2(full.right() - INSET - acts_w, y0 + 200.0));
+    let col = Rect::from_min_max(pos2(full.left() + pad, y0), pos2(full.right() - INSET - acts_w, y0 + 200.0));
     let mut who = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(id_rect)
+            .max_rect(col)
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
-    who.spacing_mut().item_spacing.y = 1.0;
-    who.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let size = if compact { 16.0 } else { 22.0 };
-        let tag = if compact { 10.0 } else { 12.0 };
-        // a staff member's tag after the name, cut before it
-        let staff = mark.map_or(0.0, |mark| crate::ui::staff::Tag::new(ui, p, mark, tag).size().x + 8.0);
-        let max = (ui.available_width() - if w.editing { 30.0 } else { 0.0 } - staff).max(40.0);
-        ui.add(widgets::elided_label(
-            ui,
-            RichText::new(&name)
-                .font(semibold(ui, size))
-                .color(crate::ui::colors::resident_name(env.world, &w.id, p.ink)),
-            max,
-        ));
-        crate::ui::staff::after_name(ui, p, mark, tag);
-        if w.editing && widgets::icon_button(ui, p, "pencil-filled", aurora_i18n::tr!("common-set-display-name"), true) {
-            env.actions.push(ProfileAction::DisplayName);
-        }
-    });
-    let mut sub = names_line(world, &id, &name);
-    if compact {
-        // the username alone, then the age (the mock-up's "orion.exemple · 19 ans")
-        sub.retain(|s| !s.contains(' '));
-        if let Some(age) = profile.and_then(|pr| age_only(pr, own)) {
-            sub.push(age);
-        }
-    }
-    if !sub.is_empty() {
-        let max = who.available_width();
-        who.add(widgets::elided_label(
-            &who,
-            RichText::new(sub.join(" · ")).size(12.5).color(p.muted),
-            max,
-        ));
-    }
-    let who_bottom = who.min_rect().bottom();
-    // the birth line and the badges, under the buttons too
-    // under a name row 56 high (the mock-up's .idrow), or right under the
-    // names when compact
-    let line_top = if compact {
-        who_bottom + 5.0
-    } else {
-        who_bottom.max(banner.bottom() + 56.0) + 4.0
-    };
-    let line_rect = Rect::from_min_max(pos2(full.left() + pad, line_top), pos2(full.right() - INSET, line_top + 200.0));
-    let mut lines = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(line_rect)
-            .layout(egui::Layout::top_down(egui::Align::Min)),
-    );
-    lines.spacing_mut().item_spacing.y = 4.0;
-    lines.spacing_mut().interact_size.y = 16.0;
-    if !compact {
-        meta_line(&mut lines, env, w.id, own, profile, status);
-    }
-    let list = badges(f, compact);
-    if !list.is_empty() {
-        lines.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(5.0, 4.0);
-            for b in &list {
-                badge_widget(ui, env, w.id, b, friend.is_some(), compact);
-            }
-        });
-    }
-    let mut bottom = lines.min_rect().bottom().max(photo_rect.bottom()).max(y0 + BUTTON_H);
-    if compact && !own {
+    who_it_is(&mut who, env, w, f, true, status, mark);
+    let mut bottom = who.min_rect().bottom().max(photo_rect.bottom()).max(y0 + BUTTON_H);
+    if !own {
         // the actions in a row of icons, as wide as the window
         let row = Rect::from_min_size(pos2(full.left(), bottom + 10.0), Vec2::new(full.width(), BUTTON_H));
         let mut icons_row = ui.new_child(
@@ -647,11 +599,101 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
         let n = acts.len() as f32;
         let each = ((row.width() - 4.0 * (n - 1.0)) / n).floor();
         for act in &acts {
-            act_button(&mut icons_row, env, w, *act, f, true, each);
+            act_button(&mut icons_row, env, w, *act, f, Look::Row(each));
         }
         bottom = row.bottom();
     }
     ui.advance_cursor_after_rect(Rect::from_min_max(pos2(full.left(), top), pos2(full.right(), bottom)));
+}
+
+/// The round picture with its status, a click opens it in large; in edit
+/// mode, the camera that changes it.
+fn photo(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, rect: Rect, ring: f32) -> Status {
+    let (p, world) = (env.p, env.world);
+    let id = w.id;
+    let own = id == world.agent_id;
+    let profile = world.profiles.get(&id);
+    let friend = world.social.friends.iter().find(|fr| fr.id == id);
+    let pic = env.pics.get(&id);
+    let status = status_of(world, &id, own, profile, friend);
+    paint_photo(ui, p, rect, ring, pic, &display_name(world, &id), status, w.editing);
+    let resp = ui.interact(rect, ui.scope_id().with(("profile-photo", id)), Sense::click());
+    if pic.is_some() && !w.editing && resp.on_hover_text(aurora_i18n::tr!("ui-profile-aurora-big-photo")).clicked() {
+        w.open_photo(PictureSlot::SecondLife, profile.map_or(Uuid::nil(), |pr| pr.sl_image));
+    }
+    if w.editing {
+        camera_button(ui, env, rect, profile);
+    }
+    status
+}
+
+/// The name (with a staff member's tag), the names under it, the birth
+/// line and the badges; compact: the username and the age, no birth line.
+fn who_it_is(
+    ui: &mut egui::Ui,
+    env: &mut Env,
+    w: &Window,
+    f: &Facts,
+    compact: bool,
+    status: Status,
+    mark: Option<crate::world::staff::Mark>,
+) {
+    let (p, world) = (env.p, env.world);
+    let id = w.id;
+    let profile = world.profiles.get(&id);
+    let name = display_name(world, &id);
+    ui.spacing_mut().item_spacing.y = 1.0;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let size = if compact { 16.0 } else { 22.0 };
+        let tag = if compact { 10.0 } else { 12.0 };
+        // a staff member's tag after the name, cut before it
+        let staff = mark.map_or(0.0, |mark| crate::ui::staff::Tag::new(ui, p, mark, tag).size().x + 8.0);
+        let max = (ui.available_width() - if w.editing { 30.0 } else { 0.0 } - staff).max(40.0);
+        ui.add(widgets::elided_label(
+            ui,
+            RichText::new(&name)
+                .font(semibold(ui, size))
+                .color(crate::ui::colors::resident_name(world, &id, p.ink)),
+            max,
+        ));
+        crate::ui::staff::after_name(ui, p, mark, tag);
+        if w.editing && widgets::icon_button(ui, p, "pencil-filled", aurora_i18n::tr!("common-set-display-name"), true) {
+            env.actions.push(ProfileAction::DisplayName);
+        }
+    });
+    let mut sub = names_line(world, &id, &name);
+    if compact {
+        // the username alone, then the age (the mock-up's "orion.exemple · 19 ans")
+        sub.retain(|s| !s.contains(' '));
+        if let Some(age) = profile.and_then(|pr| age_only(pr, f.own)) {
+            sub.push(age);
+        }
+    }
+    if !sub.is_empty() {
+        let max = ui.available_width();
+        ui.add(widgets::elided_label(
+            ui,
+            RichText::new(sub.join(" · ")).size(12.5).color(p.muted),
+            max,
+        ));
+    }
+    ui.add_space(if compact { 4.0 } else { 6.0 });
+    ui.spacing_mut().item_spacing.y = 4.0;
+    ui.spacing_mut().interact_size.y = 16.0;
+    if !compact {
+        meta_line(ui, env, id, f.own, profile, status);
+    }
+    let list = badges(f, compact);
+    if !list.is_empty() {
+        let is_friend = world.social.friends.iter().any(|fr| fr.id == id);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(5.0, 4.0);
+            for b in &list {
+                badge_widget(ui, env, id, b, is_friend, compact);
+            }
+        });
+    }
 }
 
 /// The age alone, for the compact line under the name.
@@ -809,7 +851,18 @@ fn camera_button(ui: &mut egui::Ui, env: &mut Env, photo: Rect, profile: Option<
 
 /// One of the header's buttons; `icon_only` in the compact row, `width`
 /// wide.
-fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Facts, icon_only: bool, width: f32) {
+/// How a button of the header shows.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Look {
+    /// Its icon and its name.
+    Labelled,
+    /// Its icon alone, its name in its tooltip (a narrow large header).
+    Icon,
+    /// Its icon alone, this wide, in the compact header's row.
+    Row(f32),
+}
+
+fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Facts, look: Look) {
     let p = env.p;
     let id = w.id;
     let (icon, label, kind, enabled, tip): (&str, &str, ActionKind, bool, Option<&str>) = match act {
@@ -872,26 +925,28 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
         Act::Done => ("check", aurora_i18n::tr!("ui-profile-aurora-done"), ActionKind::Primary, true, None),
     };
     // the block button and "…" are icons in the large header too
-    let alone = icon_only || matches!(act, Act::Block | Act::More);
+    let alone = look != Look::Labelled || matches!(act, Act::Block | Act::More);
     let size = Vec2::new(
-        if icon_only {
-            width
-        } else if alone {
-            30.0
-        } else {
-            0.0
+        match look {
+            Look::Row(width) => width,
+            _ if alone => 30.0,
+            _ => 0.0,
         },
         BUTTON_H,
     );
     let shown = if alone { "" } else { label };
     let resp = widgets::action_button_if(ui, p, icon, shown, kind, size, enabled);
+    if alone {
+        // its name for a screen reader too
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    }
     let resp = match (tip, alone) {
         (Some(t), _) => resp.on_hover_text(format!("{label} · {t}")),
         (None, true) => resp.on_hover_text(label),
         _ => resp,
     };
     if act == Act::More {
-        more_menu(&resp, env, w, f, icon_only);
+        more_menu(&resp, env, w, f, matches!(look, Look::Row(_)));
         return;
     }
     if !resp.clicked() || !enabled {
@@ -1148,82 +1203,47 @@ fn badge_widget(ui: &mut egui::Ui, env: &Env, id: Uuid, b: &Badge, is_friend: bo
     }
 }
 
-/// The rights of a friendship: the ones we grant (a click changes one) and
-/// the ones we receive. Ending it is in the "…" menu.
-fn rights_bar(ui: &mut egui::Ui, env: &mut Env, id: Uuid, f: &Friend, compact: bool) {
+/// The rights of a friendship, on a line of Info: the ones we grant (a
+/// click changes one, in violet), then a step apart the ones we receive (in
+/// turquoise). Their tooltips say which is which; ending the friendship is
+/// in the "…" menu.
+fn rights_line(ui: &mut egui::Ui, env: &mut Env, id: Uuid, f: &Friend) {
     let p = env.p;
-    let full = ui.max_rect();
-    let margin = Rect::from_min_max(
-        pos2(full.left() + INSET, ui.cursor().top()),
-        pos2(full.right() - INSET, full.bottom()),
-    );
-    let mut row = ui.new_child(egui::UiBuilder::new().max_rect(margin));
-    egui::Frame::new()
-        .fill(p.field)
-        .corner_radius(ui.visuals().window_corner_radius)
-        .inner_margin(egui::Margin::symmetric(10, 5))
-        .show(&mut row, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("ui-profile-aurora-i-grant"))
-                        .size(12.0)
-                        .color(p.muted),
-                );
-                ui.add_space(4.0);
-                for (bit, icon, tip) in GRANTS {
-                    let on = f.rights_given & bit != 0;
-                    let state = if on {
-                        aurora_i18n::tr!("ui-profile-allowed")
-                    } else {
-                        aurora_i18n::tr!("ui-profile-not-allowed")
-                    };
-                    let tip = aurora_i18n::tr!("ui-profile-click-change-permissions", tip = aurora_i18n::text(tip), state = state);
-                    if right_icon(ui, p, icon, on, true).on_hover_text(tip).clicked() {
-                        match right_change(f.rights_given, bit) {
-                            RightChange::Send(rights) => env
-                                .actions
-                                .push(ProfileAction::Net(NetCommand::GrantUserRights { friend: id, rights })),
-                            RightChange::Ask { rights, grant } => {
-                                env.actions.push(ProfileAction::ModifyRights { friend: id, rights, grant })
-                            }
-                        }
-                    }
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        for (bit, icon, tip) in GRANTS {
+            let on = f.rights_given & bit != 0;
+            let state = if on {
+                aurora_i18n::tr!("ui-profile-allowed")
+            } else {
+                aurora_i18n::tr!("ui-profile-not-allowed")
+            };
+            let tip = aurora_i18n::tr!("ui-profile-click-change-permissions", tip = aurora_i18n::text(tip), state = state);
+            if right_icon(ui, p, icon, on, true).on_hover_text(tip).clicked() {
+                match right_change(f.rights_given, bit) {
+                    RightChange::Send(rights) => env
+                        .actions
+                        .push(ProfileAction::Net(NetCommand::GrantUserRights { friend: id, rights })),
+                    RightChange::Ask { rights, grant } => env.actions.push(ProfileAction::ModifyRights { friend: id, rights, grant }),
                 }
-                ui.add_space(12.0);
-                ui.label(
-                    RichText::new(aurora_i18n::tr!("ui-profile-aurora-i-receive"))
-                        .size(12.0)
-                        .color(p.muted),
-                );
-                ui.add_space(4.0);
-                for (bit, icon, tip) in RECEIVED {
-                    let on = f.rights_has & bit != 0;
-                    let state = if on {
-                        aurora_i18n::tr!("ui-profile-allowed")
-                    } else {
-                        aurora_i18n::tr!("ui-profile-not-allowed")
-                    };
-                    right_icon(ui, p, icon, on, false).on_hover_text(aurora_i18n::tr!(
-                        "ui-profile-aurora-received-tip",
-                        right = aurora_i18n::text(tip),
-                        state = state
-                    ));
-                }
-                if !compact {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(aurora_i18n::tr!("ui-profile-aurora-click-to-change"))
-                                .size(12.0)
-                                .color(p.muted),
-                        );
-                    });
-                }
-            });
-        });
-    let used = row.min_rect();
-    ui.advance_cursor_after_rect(used);
+            }
+        }
+        // a gap, not a line, between ours and theirs (docs/BRANDING.md)
+        ui.add_space(14.0);
+        for (bit, icon, tip) in RECEIVED {
+            let on = f.rights_has & bit != 0;
+            let state = if on {
+                aurora_i18n::tr!("ui-profile-allowed")
+            } else {
+                aurora_i18n::tr!("ui-profile-not-allowed")
+            };
+            right_icon(ui, p, icon, on, false).on_hover_text(aurora_i18n::tr!(
+                "ui-profile-aurora-received-tip",
+                right = aurora_i18n::text(tip),
+                state = state
+            ));
+        }
+    });
 }
 
 /// The rights we grant: online status, place on the map, our objects.
@@ -1615,7 +1635,8 @@ fn kv(ui: &mut egui::Ui, p: &Palette, key: &str, value: impl FnOnce(&mut egui::U
     });
 }
 
-/// Info: the account, the partner, the key (Account in edit mode).
+/// Info: the account, the partner, a friend's rights (a stranger's "Add as
+/// friend"), the key (Account in edit mode).
 fn info_card(ui: &mut egui::Ui, env: &mut Env, w: &Window, compact: bool) {
     let (p, world) = (env.p, env.world);
     let id = w.id;
@@ -1643,6 +1664,30 @@ fn info_card(ui: &mut egui::Ui, env: &mut Env, w: &Window, compact: bool) {
                 partner_chip(ui, env, pr.partner);
             }
         });
+        let friend = world.social.friends.iter().find(|fr| fr.id == id);
+        match friend {
+            // can be hidden (Preferences › Aurora › Profiles): the rights
+            // stay in Contacts
+            Some(fr) if env.friend_rights => kv(ui, p, aurora_i18n::tr!("ui-profile-aurora-permissions"), |ui| {
+                rights_line(ui, env, id, fr)
+            }),
+            // a stranger's way to it; the compact header has its own
+            None if !compact && id != world.agent_id => kv(ui, p, aurora_i18n::tr!("ui-profile-aurora-friendship"), |ui| {
+                if widgets::action_button(
+                    ui,
+                    p,
+                    "user-plus",
+                    aurora_i18n::tr!("ui-profile-aurora-add-friend"),
+                    ActionKind::Flat,
+                    Vec2::new(0.0, 24.0),
+                )
+                .clicked()
+                {
+                    context::request(ui.ctx(), CtxAction::AddFriend(id));
+                }
+            }),
+            _ => {}
+        }
         if !compact && !w.editing {
             kv(ui, p, aurora_i18n::tr!("ui-profile-aurora-key"), |ui| {
                 ui.horizontal(|ui| {

@@ -789,9 +789,9 @@ pub struct Settings {
     /// instead of the header and cards of `ui/profile/aurora.rs`; group
     /// profiles in the classic window too (`ui/group_profile.rs`).
     pub classic_profiles: bool,
-    /// The friendship rights bar under the Aurora profile's header (on by
-    /// default); off, a friend's rights stay in the Contacts window.
-    pub profile_rights_bar: bool,
+    /// A friend's rights on the Info card of the Aurora profile (on by
+    /// default); off, they stay in the Contacts window.
+    pub profile_rights: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
     /// The Legacy Viewer's money tracker (floater_fs_money_tracker.xml)
@@ -1622,7 +1622,7 @@ impl Default for Settings {
             name_tag_show_seconds: 10.0,
             classic_name_tags: false,
             classic_profiles: false,
-            profile_rights_bar: true,
+            profile_rights: true,
             classic_pay_window: false,
             legacy_money_tracker: false,
             classic_bars: false,

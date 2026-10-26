@@ -8,7 +8,7 @@ fn body_texts(world: &World, w: &mut Window, width: f32) -> Vec<String> {
 }
 
 /// `body_texts`, with the friendship rights bar shown or hidden.
-fn body_texts_with(world: &World, w: &mut Window, width: f32, rights_bar: bool) -> Vec<String> {
+fn body_texts_with(world: &World, w: &mut Window, width: f32, friend_rights: bool) -> Vec<String> {
     let p = crate::theme::Theme::default().palette();
     let ctx = egui::Context::default();
     let mut emoji = Emoji::load();
@@ -45,7 +45,7 @@ fn body_texts_with(world: &World, w: &mut Window, width: f32, rights_bar: bool) 
             wanted_images: &mut wanted_images,
             actions: &mut actions,
             pick_picture: &mut pick_picture,
-            rights_bar,
+            friend_rights,
         };
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -123,17 +123,16 @@ fn a_friends_profile_reads_in_the_order_of_the_mockup() {
         .get(&id)
         .and_then(|pr| profiles::birth_line(pr, false, now()))
         .unwrap_or_default();
+    // who it is, then the tabs along the banner's bottom; the buttons sit
+    // on the line of the picture, beside who it is
+    assert!(texts.iter().any(|t| t == tr("ui-profile-aurora-conversation")));
     assert_in_order(
         &texts,
         &[
-            tr("ui-profile-aurora-conversation"),
             &birth,
             tr("ui-profile-aurora-friend"),
             tr("world-profiles-premium"),
             tr("ui-profile-aurora-view-in-people"),
-            tr("ui-profile-aurora-i-grant"),
-            tr("ui-profile-aurora-i-receive"),
-            tr("ui-profile-aurora-click-to-change"),
             tr("ui-profile-aurora-tab-profile"),
             tr("ui-profile-aurora-tab-picks"),
             tr("ui-profile-aurora-tab-classifieds"),
@@ -152,6 +151,7 @@ fn a_friends_profile_reads_in_the_order_of_the_mockup() {
             &tr("ui-profile-aurora-infos").to_uppercase(),
             tr("ui-profile-aurora-account"),
             tr("ui-profile-aurora-partner"),
+            tr("ui-profile-aurora-permissions"),
             tr("ui-profile-aurora-key"),
             &aurora_i18n::tr!("ui-profile-aurora-groups", count = 1).to_uppercase(),
             "Aurora Builders",
@@ -160,34 +160,40 @@ fn a_friends_profile_reads_in_the_order_of_the_mockup() {
         ],
     );
     assert!(texts.iter().all(|t| !t.contains(tr("ui-profile-aurora-add-friend"))));
+    assert!(texts.iter().all(|t| t != tr("ui-profile-aurora-friendship")));
     // ending the friendship is in the "…" menu, giving a drop anywhere on
     // the window (#1089)
     assert!(texts.iter().all(|t| !t.contains(tr("ui-profile-aurora-remove-friend"))));
 }
 
 #[test]
-fn the_rights_bar_can_be_hidden() {
+fn a_friends_rights_can_be_hidden() {
     let (world, id) = friend_world();
     let tr = aurora_i18n::text;
     for width in [960.0, 380.0] {
         let mut w = Window::new(id);
         let texts = body_texts_with(&world, &mut w, width, false);
-        assert!(
-            texts
-                .iter()
-                .all(|t| t != tr("ui-profile-aurora-i-grant") && t != tr("ui-profile-aurora-i-receive"))
-        );
+        assert!(texts.iter().all(|t| t != tr("ui-profile-aurora-permissions")), "{width}");
         assert!(
             texts.iter().any(|t| t.contains("Musicienne du dimanche")),
             "{width}: the cards stay"
         );
     }
-    // a stranger's "Add as friend" is not the rights bar: it stays
+    // a stranger's "Add as friend" is not a right: it stays, on its line
+    // of Info
     let mut stranger = world;
     stranger.social.friends.clear();
     let mut w = Window::new(id);
     let texts = body_texts_with(&stranger, &mut w, 960.0, false);
-    assert!(texts.iter().any(|t| t == tr("ui-profile-aurora-add-friend")));
+    assert_in_order(
+        &texts,
+        &[
+            tr("ui-profile-aurora-partner"),
+            tr("ui-profile-aurora-friendship"),
+            tr("ui-profile-aurora-add-friend"),
+            tr("ui-profile-aurora-key"),
+        ],
+    );
 }
 
 #[test]
@@ -208,10 +214,10 @@ fn the_compact_window_stacks_its_cards() {
     assert_in_order(
         &texts,
         &[
-            tr("ui-profile-aurora-i-grant"),
             tr("ui-profile-aurora-tab-profile"),
             "Musicienne du dimanche",
             tr("ui-profile-aurora-account"),
+            tr("ui-profile-aurora-permissions"),
             "Aurora Builders",
             &tr("ui-profile-aurora-private-notes").to_uppercase(),
         ],
@@ -230,7 +236,7 @@ fn our_own_profile_in_edit_mode() {
     assert!(
         texts
             .iter()
-            .all(|t| t != tr("common-notes") && t != tr("ui-profile-aurora-i-grant"))
+            .all(|t| t != tr("common-notes") && t != tr("ui-profile-aurora-permissions") && t != tr("ui-profile-aurora-friendship"))
     );
     w.editing = true;
     w.about.text.push_str(" !");
