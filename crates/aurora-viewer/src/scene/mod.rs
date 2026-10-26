@@ -17,6 +17,7 @@ pub mod describe;
 pub mod drawn;
 pub mod fetch_priority;
 mod flexible;
+mod foot_scope;
 pub mod geometry_need;
 mod grounding;
 mod hand_ik;
@@ -721,6 +722,8 @@ pub struct AvatarSample {
 
 pub struct Scene {
     auto_hover: auto_hover::AutoHover,
+    remote_soles: auto_hover::RemoteSoles,
+    foot_scope: foot_scope::Scope,
     sculpt_watch: Option<sculpt_watch::SculptWatch>,
     /// Optional local-only diagnostic toggle, exposed in Hover Height by
     /// AURORA_TEST_NEUTRAL_POSE, initially off. Keep evaluating the real motion controller
@@ -1504,6 +1507,8 @@ impl Scene {
             pose_owners: Vec::new(),
             skin_binds: Default::default(),
             auto_hover: Default::default(),
+            remote_soles: Default::default(),
+            foot_scope: foot_scope::Scope::from_environment(),
             neutral_pose_test: (std::env::var("AURORA_TEST_NEUTRAL_POSE").as_deref() == Ok("1")).then_some(false),
         }
     }
@@ -1987,6 +1992,8 @@ impl Scene {
 
     /// Release everything (logout / teleport cleanup).
     pub fn clear(&mut self, renderer: &mut Renderer) {
+        self.remote_soles = Default::default();
+        self.foot_scope.clear();
         self.flexibles.clear();
         let mut gpus = std::mem::take(&mut self.gpu);
         for (idx, g) in gpus.iter_mut().enumerate() {
@@ -4868,6 +4875,7 @@ impl Scene {
             }
         }
         self.stats.posed = 0;
+        self.foot_scope.support_frames = 0;
         self.stats.skeletons_rebuilt = 0;
         let n = self.palette_count as usize * anim::PALETTE_JOINTS;
         if n == 0 {
@@ -5053,6 +5061,7 @@ impl Scene {
                 frame.sole_height = self.grounding_sole_height(world, owner);
             }
             let physics = self.physics_job(world, owner, idx, control, eye, now);
+            self.foot_scope.support_frames += usize::from(motions.ground.is_some());
             work.push((slot as usize, motions, base, owner, pose_now, physics));
             posed.push((owner, slot as usize));
             self.posed_now.insert(idx);

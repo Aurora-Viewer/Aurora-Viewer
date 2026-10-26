@@ -1121,8 +1121,45 @@ excluded. The application supplies this context anew with every AO update.
 For large corrections, the body constraint keeps an upright source hip above
 its planted ankle so that the knee hinge cannot turn backward.
 
-Four shaped sole probes use the existing neutral shoe calibration. Source
-clearance with hysteresis distinguishes contact and flight, measured before
+`scene/foot_scope.rs` applies `Settings::ground_feet_max_avatars`, a saved
+0-100 budget defaulting to five other avatars. It reuses the main render
+frustum and a bounded nearest list measured from our avatar. Own placement
+is outside the budget; zero means self only. Remote calibration follows the
+same selection, and deselection uses the existing source-pose release without
+legacy fallback. Disabled/zero-height placement skips selection work.
+`AURORA_FOOT_IK_SCOPE=all|visible10` only overrides offline demos for historical
+A/B reproduction; a normal viewer always uses the saved limit.
+Selection and pose evaluation share the same world clock, including the
+held instant used while a photograph is drawn in tiles.
+
+Acquisition after an uncorrected or releasing pose starts from the visible
+correction over the current animation, captured before a new sole reference
+rebuilds the solver. Its first filter step has zero elapsed time. Terrain tilt
+and existing penetration ease over half a second; the permitted initial
+penetration decreases by elapsed time rather than a per-frame fraction.
+Ordinary acquired collision remains immediate. Pausing shifts the entry
+clock with the other placement clocks.
+
+Four shaped sole probes use the existing neutral shoe calibration.
+When an absolute pelvis track replaces a mesh rest translation, placement
+shifts its neutral clearance and body reference by the same origin change.
+Sole depth stays in the shaped rest frame; authored pelvis motion is retained.
+This prevents an already grounded pose from acquiring a crouch.
+The local avatar's sole geometry is measured whenever automatic height or
+Aurora foot placement needs it. Each other posed avatar has its own neutral
+shoe measurement, outfit signature and result channel in `RemoteSoles`.
+Remote inspections rotate through at most four avatars per frame, no more
+than once per 200 ms per avatar; decoding and vertex work stay on the job
+pool. Departed/unposed avatars, disabled placement and scene cleanup retire
+their caches. Animesh is excluded. Remote measurements never change hover
+settings and do not depend on our account's automatic-height capability.
+With automatic height disabled, calibration
+updates only the cached sole reference; it never previews or commits hover
+height. Toggling automatic height preserves that reference while foot
+placement remains enabled, so manual height and movement scope cannot make
+the shoes sink when placement resumes.
+
+Source clearance with hysteresis distinguishes contact and flight, measured before
 the render-space translation to retain submillimetre precision. Contact targets
 follow the support; a flying foot retains the source arc from its departure
 elevation, transitioning toward the landing elevation during descent. Collision
@@ -1134,7 +1171,7 @@ trajectories remain unchanged. Support tilt preserves authored heel/toe roll.
 
 A single height filter follows absolute world elevation, absorbing physical
 root-height changes before they reach the rendered body. Without any known
-support, source body motion passes through unchanged. Initial placement
+support, source body motion passes through unchanged. Cold initial placement
 starts at the valid support height. The common support
 height raises a body compressed over two higher supports; both contact-leg
 reach intervals bound its displacement within the configured height. Down-step anticipation acts

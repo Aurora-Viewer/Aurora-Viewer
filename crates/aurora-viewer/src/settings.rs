@@ -894,6 +894,9 @@ pub struct Settings {
     pub ground_feet_while_moving: bool,
     /// Maximum vertical terrain correction in metres, relative to animation.
     pub ground_feet_max_height: f32,
+    /// Other avatars receiving Aurora leg correction, nearest in the camera
+    /// frustum. Our avatar is outside this budget; zero means self only.
+    pub ground_feet_max_avatars: u32,
     /// The region restart alert (Preferences › Interface › Region restart).
     pub region_restart: crate::world::region_restart::Settings,
     /// Bumps, pushes and hits told in nearby chat or to scripts
@@ -1175,6 +1178,8 @@ pub struct Settings {
 pub(crate) const SCREEN_INDIRECT_INTENSITY: f32 = 1.5;
 
 pub(crate) const DEFAULT_GROUND_FEET_HEIGHT: f32 = 0.4;
+pub(crate) const DEFAULT_GROUND_FEET_AVATARS: u32 = 5;
+pub(crate) const MAX_GROUND_FEET_AVATARS: u32 = 100;
 pub(crate) const MAX_GROUND_FEET_HEIGHT: f32 = 1.0;
 
 pub(crate) fn foot_height_limit(value: f32) -> f32 {
@@ -1698,6 +1703,7 @@ impl Default for Settings {
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,
+            ground_feet_max_avatars: DEFAULT_GROUND_FEET_AVATARS,
             region_restart: Default::default(),
             collisions: Default::default(),
             reduce_motion: false,
@@ -2100,6 +2106,7 @@ impl Settings {
         }
         self.group_snooze_minutes = self.group_snooze_minutes.min(GROUP_SNOOZE_MAX_MINUTES);
         self.ground_feet_max_height = foot_height_limit(self.ground_feet_max_height);
+        self.ground_feet_max_avatars = self.ground_feet_max_avatars.min(MAX_GROUND_FEET_AVATARS);
         self.camera = std::mem::take(&mut self.camera).sanitized();
         if self.settings_version < 5 {
             // new defaults: no vsync, no frame cap (the old "0 = screen rate,
@@ -2785,6 +2792,22 @@ mod tests {
         assert!(old.bubbles);
     }
     use super::*;
+
+    #[test]
+    fn foot_avatar_budget_migrates_defaults_round_trips_and_sanitizes() {
+        let previous: Settings = serde_json::from_str(r#"{"ground_avatar_feet":true,"ground_feet_max_height":0.4}"#).unwrap();
+        assert_eq!(previous.ground_feet_max_avatars, 5, "existing preferences get the new default");
+        assert!(previous.ground_avatar_feet);
+        for (maximum, expected) in [(0, 0), (5, 5), (27, 27), (100, 100), (u32::MAX, 100)] {
+            let settings = Settings {
+                ground_feet_max_avatars: maximum,
+                ..Settings::default()
+            };
+            let saved = serde_json::to_string(&settings).unwrap();
+            let restored: Settings = serde_json::from_str(&saved).unwrap();
+            assert_eq!(restored.sanitized().ground_feet_max_avatars, expected);
+        }
+    }
 
     #[test]
     fn foot_height_settings_sanitize_limits_and_nonfinite_values() {

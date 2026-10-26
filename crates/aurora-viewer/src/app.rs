@@ -7798,6 +7798,7 @@ impl App {
             self.scene.ground_avatar_feet = self.settings.ground_avatar_feet;
             self.scene.ground_feet_while_moving = self.settings.ground_feet_while_moving;
             self.scene.ground_feet_max_height = self.settings.ground_feet_max_height;
+            self.scene.set_foot_scope_limit(self.settings.ground_feet_max_avatars);
             self.scene.body_physics = crate::scene::body_physics::Config {
                 enabled: self.settings.avatar_physics,
                 detail: self.settings.avatar_physics_detail,
@@ -7898,6 +7899,7 @@ impl App {
                 log::info!("demo animation edit: {} frozen skeletons", self.scene.paused_skeletons.len());
             }
             // poses first: attachments follow their bone in the same frame
+            self.scene.update_foot_scope(&self.world, cull, world_frame);
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, world_frame);
             self.scene.set_auto_hover_second_life(matches!(
                 self.settings.grid,

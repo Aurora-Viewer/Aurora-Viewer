@@ -5,6 +5,31 @@ use super::anim::grounding::{Frame, Surface};
 use super::*;
 
 impl Scene {
+    pub fn set_foot_scope_limit(&mut self, maximum: u32) {
+        self.foot_scope.configure(maximum);
+    }
+
+    pub fn update_foot_scope(&mut self, world: &World, view: CullView, now: Instant) {
+        if !self.ground_avatar_feet || crate::settings::foot_height_limit(self.ground_feet_max_height) == 0.0 {
+            self.foot_scope.clear_selection();
+            return;
+        }
+        let origin = world
+            .objects
+            .index_of_uuid(&world.agent_id)
+            .and_then(|index| Self::object_transform(world, index, now, 0))
+            .map_or(world.agent.position, |transform| transform.0);
+        let hidden = &self.too_complex;
+        let candidates = world.objects.avatars().filter_map(|(index, avatar)| {
+            if avatar.full_id == world.agent_id || avatar.parent_id != 0 || hidden.contains(&index) {
+                return None;
+            }
+            let position = Self::object_transform(world, index, now, 0)?.0;
+            Some((avatar.full_id, position, (avatar.scale.z.abs() * 0.5).clamp(0.25, 3.0)))
+        });
+        self.foot_scope.select(candidates, origin, view);
+    }
+
     pub(super) fn grounding_frame(&self, world: &World, idx: usize, now: Instant) -> Option<Frame> {
         let object = world.objects.get(idx)?;
         let own = object.full_id == world.agent_id;
@@ -14,6 +39,8 @@ impl Scene {
             || !object.is_avatar()
             || object.parent_id != 0
             || (own && (world.agent.flying || (world.agent.is_sitting() && !standing_anchor) || world.animation_preview_clock.is_some()))
+            || (!own && self.grounding_sole_height(world, object.full_id).is_none())
+            || (!own && !self.foot_scope.allows(object.full_id))
         {
             return None;
         }
@@ -216,7 +243,9 @@ mod tests {
 
     #[test]
     fn grounding_movement_scope_covers_signals_custom_motion_and_immediate_input() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
         let (mut world, mut scene, _, _) = super::super::picking::tests::scene_with_two_objects();
+        scene.foot_scope = super::super::foot_scope::Scope::from_mode("all");
         let now = Instant::now();
         world.agent.flying = false;
         scene.ground_avatar_feet = true;
@@ -228,6 +257,13 @@ mod tests {
             .map(|(i, _)| i)
             .expect("other avatar");
         let remote_id = world.objects.get(remote).expect("remote").full_id;
+        for id in [world.agent_id, remote_id] {
+            scene.palette_base(id);
+        }
+        scene.update_poses(&mut world, Vec3::ZERO, now);
+        for delay in [0, 250, 500] {
+            scene.update_auto_hover(&mut world, false, 0.0, true, now + std::time::Duration::from_millis(delay));
+        }
         for (idx, id) in [(own, world.agent_id), (remote, remote_id)] {
             for state in [crate::ao::State::Walking, crate::ao::State::Running, crate::ao::State::CrouchWalk] {
                 world

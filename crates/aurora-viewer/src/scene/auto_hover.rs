@@ -11,6 +11,7 @@ use aurora_render::SkinVertex;
 use crossbeam_channel::{Receiver, Sender};
 use glam::{Mat4, Vec3};
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -37,6 +38,7 @@ pub(super) struct AutoHover {
     base_hash: u64,
     matrices: Vec<Mat4>,
     second_life: bool,
+    checked_at: Option<Instant>,
 }
 
 impl Default for AutoHover {
@@ -55,7 +57,89 @@ impl Default for AutoHover {
             base_hash: 0,
             matrices: Vec::new(),
             second_life: true,
+            checked_at: None,
         }
+    }
+}
+
+/// Remote residents have independent channels and signatures. Four inspections
+/// per frame, in round-robin order, bound asset traversal in crowded scenes.
+#[derive(Default)]
+pub(super) struct RemoteSoles {
+    entries: HashMap<uuid::Uuid, AutoHover>,
+    owners: Vec<uuid::Uuid>,
+    cursor: usize,
+}
+
+struct SoleSnapshot {
+    signature: u64,
+    ready: bool,
+    estimate: Estimate,
+    body_height: f32,
+    shape_hover: f32,
+    box_height: f32,
+    root_height: f32,
+}
+
+impl AutoHover {
+    fn value(&self) -> Option<f32> {
+        (self.observed.is_some() && self.finished == self.observed)
+            .then_some(self.measurement)
+            .flatten()
+            .map(|measurement| measurement.height)
+    }
+
+    fn prepare_base(&mut self, rig: &anim::Rig, base: &Arc<anim::SkeletonBase>) {
+        if self.base.as_ref().is_none_or(|cached| !Arc::ptr_eq(cached, base)) {
+            if self.base.as_deref() != Some(base.as_ref()) {
+                let mut hash = std::collections::hash_map::DefaultHasher::new();
+                for point in base.local_pos.iter().chain(&base.scale) {
+                    bits(&point.to_array(), &mut hash);
+                }
+                self.base_hash = hash.finish();
+                self.matrices = rig.world_with(&rig.local_rot, Vec3::ZERO, &base.local_pos, &base.scale);
+            }
+            self.base = Some(base.clone());
+        }
+    }
+
+    /// Poll and invalidate before accepting a result. The channel belongs to
+    /// one avatar; a retired cache's late job cannot reach its replacement.
+    fn update(&mut self, snapshot: SoleSnapshot, jobs: &super::jobs::Jobs, now: Instant) -> bool {
+        let SoleSnapshot {
+            signature,
+            ready,
+            estimate,
+            body_height,
+            shape_hover,
+            box_height,
+            root_height,
+        } = snapshot;
+        if self.observed != Some(signature) {
+            self.observed = Some(signature);
+            self.changed = now;
+            self.finished = None;
+        }
+        let mut completed = false;
+        while let Ok((stamp, result)) = self.rx.try_recv() {
+            self.pending = false;
+            if ready && self.observed == Some(stamp) {
+                self.finished = Some(stamp);
+                self.measurement = result;
+                completed = true;
+            }
+        }
+        if ready && !self.pending && self.finished != Some(signature) && now.saturating_duration_since(self.changed) >= SETTLE {
+            log::info!(
+                "auto hover standing model: shape body {body_height:.3} m, shape hover {shape_hover:.3} m, physical box {box_height:.3} m, neutral root reference {root_height:.3} m"
+            );
+            self.pending = true;
+            let tx = self.tx.clone();
+            jobs.execute(move || {
+                let _ = tx.send((signature, estimate.calculate()));
+            });
+        }
+        completed
     }
 }
 
@@ -130,13 +214,13 @@ fn standing_box_height(body_height: f32, shape_hover: f32, second_life: bool) ->
 
 /// HUDs without avatar foot skin cannot alter calibration. A foot-rigged
 /// mesh is still selected by its skin at ANY attachment point, even there.
-fn has_rigged_foot_mesh(scene: &Scene, world: &World, root: usize) -> bool {
+fn has_rigged_foot_mesh(scene: &Scene, world: &World, root: usize, avatar: uuid::Uuid) -> bool {
     let mut stack = vec![(root, 0)];
     while let Some((index, depth)) = stack.pop() {
         let Some(object) = world.objects.get(index) else { continue };
         if let Some(sculpt) = object.visual_volume().sculpt
             && let Some(skin) = scene.meshes.meta(&sculpt.texture).and_then(|meta| meta.skin)
-            && Scene::skeleton_owner(world, index).is_some_and(|owner| owner.0 == world.agent_id)
+            && Scene::skeleton_owner(world, index).is_some_and(|owner| owner.0 == avatar)
             && skin.joint_names.iter().any(|name| {
                 scene
                     .avatar_lib
@@ -181,7 +265,7 @@ impl Scene {
         let adjustment = if owner == world.agent_id {
             self.automatic_hover_base(world).unwrap_or(0.0)
         } else {
-            0.0
+            self.remote_soles.entries.get(&owner).and_then(AutoHover::value)?
         };
         Some(skeleton.neutral_root_height - height * 0.5 - adjustment)
     }
@@ -193,20 +277,20 @@ impl Scene {
         if !world.hover_height_available() || !world.hover_height.ready() {
             return None;
         }
-        let state = &self.auto_hover;
-        (state.observed.is_some() && state.finished == state.observed)
-            .then_some(state.measurement)
-            .flatten()
-            .map(|m| m.height)
+        self.auto_hover.value()
     }
 
     /// Called after the rest skeleton has been refreshed, before scene sync.
+    /// Foot placement also needs the neutral sole measurement when automatic
+    /// height is off; only `enabled` permits changing the user's hover height.
     /// Snapshots contain only Arc handles and transforms; decoding, skinning
     /// and vertex scans use the scene's low-priority pool. Old jobs are ignored
     /// after another wear/detach; HUDs without avatar foot skin cannot trigger
     /// a recalibration.
     pub fn update_auto_hover(&mut self, world: &mut World, enabled: bool, offset: f32, commit: bool, now: Instant) {
-        if !enabled {
+        self.update_remote_soles(world, now);
+        self.foot_scope.log(self.ground_avatar_feet, self.remote_soles.entries.len(), now);
+        if !enabled && !self.ground_avatar_feet {
             self.auto_hover.observed = None;
             self.auto_hover.finished = None;
             self.auto_hover.offset = None;
@@ -218,37 +302,112 @@ impl Scene {
         if !world.hover_height_available() || !world.hover_height.ready() {
             return;
         }
-        let Some(owner) = world.objects.index_of_uuid(&world.agent_id).and_then(|i| world.objects.get(i)) else {
-            return;
-        };
         let Some(skeleton) = self.skeletons.get(&world.agent_id) else {
             return;
         };
-        if !skeleton.neutral_root_height.is_finite() {
+        self.auto_hover.prepare_base(&self.avatar_lib.rig, &skeleton.base);
+        let Some(snapshot) = self.sole_snapshot(world, world.agent_id, &self.auto_hover) else {
             return;
+        };
+        let ready = snapshot.ready;
+        let completed = self.auto_hover.update(snapshot, &self.jobs, now);
+        let offset = crate::world::hover_height::bounded(offset).unwrap_or(0.0);
+        let offset_changed = self.auto_hover.offset != Some(offset);
+        self.auto_hover.offset = enabled.then_some(offset);
+        if enabled
+            && ready
+            && (completed || offset_changed)
+            && let Some(height) = self.auto_hover.value()
+        {
+            world.hover_height.preview(height + offset);
+            log::info!(
+                "auto hover height: {:.3} m (raw {height:.3} m, offset {offset:.3} m)",
+                world.hover_height.value()
+            );
+            if commit {
+                world.hover_height.commit();
+            }
+        }
+    }
+
+    /// Read-only remote calibration cannot preview or publish hover settings.
+    /// Its work is independent of our account's hover capability/readiness.
+    fn update_remote_soles(&mut self, world: &World, now: Instant) {
+        if !self.ground_avatar_feet || crate::settings::foot_height_limit(self.ground_feet_max_height) == 0.0 {
+            self.remote_soles = RemoteSoles::default();
+            return;
+        }
+        let mut owners = std::mem::take(&mut self.remote_soles.owners);
+        owners.clear();
+        owners.extend(world.avatar_poses.keys().copied().filter(|owner| {
+            *owner != world.agent_id
+                && self.foot_scope.allows(*owner)
+                && self.skeletons.contains_key(owner)
+                && world
+                    .objects
+                    .index_of_uuid(owner)
+                    .and_then(|index| world.objects.get(index))
+                    .is_some_and(|object| object.is_avatar())
+        }));
+        self.remote_soles.entries.retain(|owner, _| {
+            world.avatar_poses.contains_key(owner)
+                && self.foot_scope.allows(*owner)
+                && *owner != world.agent_id
+                && self.skeletons.contains_key(owner)
+                && world
+                    .objects
+                    .index_of_uuid(owner)
+                    .and_then(|index| world.objects.get(index))
+                    .is_some_and(|object| object.is_avatar())
+        });
+        if owners.is_empty() {
+            self.remote_soles.cursor = 0;
+            self.remote_soles.owners = owners;
+            return;
+        }
+        let count = owners.len().min(4);
+        for step in 0..count {
+            let owner = owners[(self.remote_soles.cursor + step) % owners.len()];
+            let Some(skeleton) = self.skeletons.get(&owner) else { continue };
+            let state = self.remote_soles.entries.entry(owner).or_default();
+            if state.checked_at.is_some_and(|at| now.saturating_duration_since(at) < SETTLE) {
+                continue;
+            }
+            state.checked_at = Some(now);
+            state.second_life = self.auto_hover.second_life;
+            state.prepare_base(&self.avatar_lib.rig, &skeleton.base);
+            let Some(snapshot) = self
+                .remote_soles
+                .entries
+                .get(&owner)
+                .and_then(|state| self.sole_snapshot(world, owner, state))
+            else {
+                continue;
+            };
+            if let Some(state) = self.remote_soles.entries.get_mut(&owner) {
+                state.update(snapshot, &self.jobs, now);
+            }
+        }
+        self.remote_soles.cursor = (self.remote_soles.cursor + count) % owners.len();
+        self.remote_soles.owners = owners;
+    }
+
+    /// Snapshot only handles, neutral transforms and the outfit signature.
+    /// Decoding, morphing and skinning remain on the low-priority job pool.
+    fn sole_snapshot(&self, world: &World, avatar: uuid::Uuid, state: &AutoHover) -> Option<SoleSnapshot> {
+        let owner = world.objects.index_of_uuid(&avatar).and_then(|index| world.objects.get(index))?;
+        let skeleton = self.skeletons.get(&avatar)?;
+        if !skeleton.neutral_root_height.is_finite() {
+            return None;
         }
         let rig = &self.avatar_lib.rig;
         let mut hash = std::collections::hash_map::DefaultHasher::new();
-        world.agent_id.hash(&mut hash);
-        world.visual_params(&world.agent_id).unwrap_or(&[]).hash(&mut hash);
-        let state = &mut self.auto_hover;
-        if state.base.as_ref().is_none_or(|base| !Arc::ptr_eq(base, &skeleton.base)) {
-            if state.base.as_deref() != Some(skeleton.base.as_ref()) {
-                let mut base_hash = std::collections::hash_map::DefaultHasher::new();
-                for p in skeleton.base.local_pos.iter().chain(&skeleton.base.scale) {
-                    bits(&p.to_array(), &mut base_hash);
-                }
-                state.base_hash = base_hash.finish();
-                state.matrices = rig.world_with(&rig.local_rot, Vec3::ZERO, &skeleton.base.local_pos, &skeleton.base.scale);
-            }
-            state.base = Some(skeleton.base.clone());
-        }
+        avatar.hash(&mut hash);
+        world.visual_params(&avatar).unwrap_or(&[]).hash(&mut hash);
         state.base_hash.hash(&mut hash);
         state.second_life.hash(&mut hash);
-        let Some(box_height) = standing_box_height(skeleton.neutral_body_height, skeleton.neutral_shape_hover, state.second_life) else {
-            return;
-        };
-        let matrices = &self.auto_hover.matrices;
+        let box_height = standing_box_height(skeleton.neutral_body_height, skeleton.neutral_shape_hover, state.second_life)?;
+        let matrices = &state.matrices;
         let ground = skeleton.neutral_root_height - 0.5 * box_height;
         bits(&[ground], &mut hash);
         let mut surfaces = Vec::new();
@@ -262,7 +421,7 @@ impl Scene {
             if root.state == 0 || root.is_client_preview() {
                 continue;
             }
-            if ((31..=38).contains(&point) || ap.is_some_and(|a| a.hud)) && !has_rigged_foot_mesh(self, world, root_idx) {
+            if ((31..=38).contains(&point) || ap.is_some_and(|a| a.hud)) && !has_rigged_foot_mesh(self, world, root_idx, avatar) {
                 continue;
             }
             (root.full_id, point).hash(&mut hash);
@@ -302,7 +461,7 @@ impl Scene {
                             } else {
                                 // Worn animesh has its own controller and does not
                                 // deform with the avatar's feet.
-                                let own_rig = skin.is_some() && Self::skeleton_owner(world, idx).is_some_and(|s| s.0 == world.agent_id);
+                                let own_rig = skin.is_some() && Self::skeleton_owner(world, idx).is_some_and(|s| s.0 == avatar);
                                 if own_rig || (skin.is_none() && on_foot) {
                                     surfaces.push(Surface::Mesh {
                                         mesh: Box::new(mesh),
@@ -334,66 +493,21 @@ impl Scene {
                 }
             }
         }
-        let signature = hash.finish();
-        let state = &mut self.auto_hover;
-        if state.observed != Some(signature) {
-            state.observed = Some(signature);
-            state.changed = now;
-            state.finished = None;
-        }
-        let offset = crate::world::hover_height::bounded(offset).unwrap_or(0.0);
-        let offset_changed = state.offset != Some(offset);
-        state.offset = Some(offset);
-        if ready
-            && offset_changed
-            && state.finished == Some(signature)
-            && let Some(measurement) = state.measurement
-        {
-            world.hover_height.preview(measurement.height + offset);
-            if commit {
-                world.hover_height.commit();
-            }
-        }
-        while let Ok((stamp, result)) = state.rx.try_recv() {
-            state.pending = false;
-            if ready && state.observed == Some(stamp) {
-                state.finished = Some(stamp);
-                state.measurement = result;
-                if let Some(Measurement { height: value, .. }) = result {
-                    world.hover_height.preview(value + offset);
-                    log::info!(
-                        "auto hover height: {:.3} m (raw {value:.3} m, offset {offset:.3} m)",
-                        world.hover_height.value()
-                    );
-                    if commit {
-                        world.hover_height.commit();
-                    }
-                }
-            }
-        }
-        if !ready || state.pending || state.finished == Some(signature) || now.duration_since(state.changed) < SETTLE {
-            return;
-        }
-        let estimate = Estimate {
-            lib: self.avatar_lib.clone(),
-            base: skeleton.base.clone(),
-            // Stored independently of the rendered root: a seated pose and
-            // the simulator's changing physical size cannot change this floor.
-            ground,
-            surfaces,
-            values: world.visual_params(&world.agent_id).unwrap_or(&[]).to_vec(),
-        };
-        log::info!(
-            "auto hover standing model: shape body {:.3} m, shape hover {:.3} m, physical box {box_height:.3} m, neutral root reference {:.3} m",
-            skeleton.neutral_body_height,
-            skeleton.neutral_shape_hover,
-            skeleton.neutral_root_height
-        );
-        state.pending = true;
-        let tx = state.tx.clone();
-        self.jobs.execute(move || {
-            let _ = tx.send((signature, estimate.calculate()));
-        });
+        Some(SoleSnapshot {
+            signature: hash.finish(),
+            ready,
+            estimate: Estimate {
+                lib: self.avatar_lib.clone(),
+                base: skeleton.base.clone(),
+                ground,
+                surfaces,
+                values: world.visual_params(&avatar).unwrap_or(&[]).to_vec(),
+            },
+            body_height: skeleton.neutral_body_height,
+            shape_hover: skeleton.neutral_shape_hover,
+            box_height,
+            root_height: skeleton.neutral_root_height,
+        })
     }
 }
 
@@ -765,6 +879,9 @@ mod tests {
         region.avatar_hover_height = true;
         Arc::make_mut(&mut region.caps).insert("AgentPreferences".into(), String::new());
         let mut scene = Scene::new(std::path::PathBuf::new(), lib);
+        // Geometry/calibration fixtures have no main camera. Scope selection
+        // and the saved budget are exercised separately below.
+        scene.foot_scope = super::super::foot_scope::Scope::from_mode("all");
         let now = Instant::now();
         rest(&mut scene, &world, now);
         (world, scene, now)
@@ -961,6 +1078,494 @@ mod tests {
         settle(&mut scene, &mut world, now + Duration::from_secs(1));
         assert_eq!(world.hover_height.value(), 0.35);
         assert_eq!(scene.auto_hover.finished, calibration);
+    }
+
+    #[test]
+    fn aurora_calibrates_shoes_without_writing_the_manual_hover_height() {
+        let (mut world, mut scene, now) = fixture();
+        let lib = world.avatar_lib.clone();
+        crate::demo::auto_hover::install_mesh(&lib, &mut scene).unwrap();
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        scene.ground_avatar_feet = true;
+        world.hover_height.preview(0.35);
+        world.hover_height.commit();
+        let Some(aurora_net::NetCommand::SetHoverHeight { request, .. }) = world.hover_height.next_update(Some(1)) else {
+            panic!("initial manual height");
+        };
+        world.hover_height.reply(request, 1, true);
+        rest(&mut scene, &world, now);
+        scene.update_auto_hover(&mut world, false, 0.5, true, now);
+        for _ in 0..1000 {
+            scene.update_auto_hover(&mut world, false, 0.5, true, now + SETTLE);
+            if scene.automatic_hover_base(&world).is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let baseline = scene
+            .automatic_hover_base(&world)
+            .expect("IK needs neutral shoe calibration even with automatic height off");
+        assert_eq!(world.hover_height.value(), 0.35);
+        assert!(
+            world.hover_height.next_update(Some(1)).is_none(),
+            "calibration must not publish a hover change"
+        );
+        scene.update_auto_hover(&mut world, true, 0.0, true, now + Duration::from_secs(1));
+        assert_eq!(
+            world.hover_height.value(),
+            baseline,
+            "enabling automatic height must apply the cached estimate"
+        );
+    }
+
+    #[test]
+    fn remote_soles_use_each_outfit_and_keep_contact_without_own_hover_support() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = true;
+        world.hover_height.preview(0.35);
+        world.hover_height.commit();
+        let Some(aurora_net::NetCommand::SetHoverHeight { request, .. }) = world.hover_height.next_update(Some(1)) else {
+            panic!("initial manual height");
+        };
+        world.hover_height.reply(request, 1, true);
+        let residents = [
+            remote_shoes(&mut scene, &mut world, now, 1, 0.0),
+            remote_shoes(&mut scene, &mut world, now, 2, 0.07),
+        ];
+        scene.ground_avatar_feet = true;
+        world.regions.get_mut(&1).unwrap().avatar_hover_height = false;
+        for resident in &residents {
+            let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+            world.objects.get_mut(index).unwrap().velocity = Vec3::ZERO;
+            assert!(
+                scene.grounding_frame(&world, index, now).is_none(),
+                "an uncalibrated resident must keep the source height"
+            );
+            world.objects.get_mut(index).unwrap().velocity = Vec3::X * 0.2;
+        }
+        for frame in 0..90 {
+            remote_step(&mut scene, &mut world, now + Duration::from_secs_f32(frame as f32 / 60.0));
+        }
+        let baselines = residents
+            .each_ref()
+            .map(|resident| scene.remote_soles.entries[&resident.avatar].value().unwrap());
+        assert!(
+            (baselines[1] - baselines[0] - 0.07).abs() < 0.0001,
+            "shoe depths were mixed between residents"
+        );
+        let mut frame = 90;
+        for while_moving in [false, true] {
+            scene.ground_feet_while_moving = while_moving;
+            for moving in [true, false] {
+                for resident in &residents {
+                    let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+                    world.objects.get_mut(index).unwrap().velocity = if moving { Vec3::X * 0.2 } else { Vec3::ZERO };
+                }
+                for _ in 0..90 {
+                    let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+                    remote_step(&mut scene, &mut world, at);
+                    for resident in &residents {
+                        let sole = rendered_remote_sole(&scene, &world, resident, at);
+                        assert!(
+                            sole.abs() < 0.003,
+                            "remote sole = {sole:.6}, moving={moving}, placement while moving={while_moving}"
+                        );
+                    }
+                    frame += 1;
+                }
+            }
+        }
+        assert_eq!(world.hover_height.value(), 0.35);
+        assert!(
+            world.hover_height.next_update(Some(1)).is_none(),
+            "observing residents published our hover height"
+        );
+        for (resident, baseline) in residents.iter().zip(baselines) {
+            assert_eq!(
+                scene.remote_soles.entries[&resident.avatar].value(),
+                Some(baseline),
+                "motion invalidated a neutral calibration"
+            );
+        }
+        scene.ground_feet_while_moving = false;
+        let _replacement = remote_shoes(&mut scene, &mut world, now + Duration::from_secs(20), 1, 0.04);
+        for frame in 0..90 {
+            remote_step(
+                &mut scene,
+                &mut world,
+                now + Duration::from_secs(20) + Duration::from_secs_f32(frame as f32 / 60.0),
+            );
+        }
+        let changed = scene.remote_soles.entries[&residents[0].avatar].value().unwrap();
+        assert!(
+            (changed - baselines[0] - 0.04).abs() < 0.0001,
+            "changed shoes kept an old sole reference"
+        );
+        assert_eq!(
+            scene.remote_soles.entries[&residents[1].avatar].value(),
+            Some(baselines[1]),
+            "an outfit change invalidated another resident"
+        );
+        let index = world.objects.index_of_uuid(&residents[0].avatar).unwrap();
+        world.objects.get_mut(index).unwrap().velocity = Vec3::ZERO;
+        remote_step(&mut scene, &mut world, now + Duration::from_secs(25));
+        assert!(rendered_remote_sole(&scene, &world, &residents[0], now + Duration::from_secs(25)).abs() < 0.003);
+        let stale = scene.remote_soles.entries[&residents[0].avatar].tx.clone();
+        world.apply(NetEvent::ObjectsKilled {
+            handle: 1,
+            local_ids: vec![residents[0].object, residents[0].shoe],
+        });
+        remote_step(&mut scene, &mut world, now + Duration::from_secs(30));
+        assert!(!scene.remote_soles.entries.contains_key(&residents[0].avatar));
+        assert!(stale.send((0, None)).is_err(), "retired resident still accepts jobs");
+        assert_eq!(scene.remote_soles.entries[&residents[1].avatar].value(), Some(baselines[1]));
+    }
+
+    #[test]
+    fn remote_soles_preserve_absolute_pelvis_pose_without_crouching() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = true;
+        let resident = remote_shoes(&mut scene, &mut world, now, 1, 0.0);
+        let lib = world.avatar_lib.clone();
+        let mesh = scene.meshes.view(&resident.mesh).unwrap();
+        let mut skin = mesh.skin.as_deref().unwrap().clone();
+        skin.lock_scale_if_joint_position = false;
+        skin.alt_inverse_bind = skin
+            .joint_names
+            .iter()
+            .map(|name| {
+                Mat4::from_translation(if name == "mPelvis" {
+                    Vec3::Z * 0.28
+                } else {
+                    lib.rig.local_pos[lib.rig.names[name]]
+                })
+            })
+            .collect();
+        scene.meshes.insert_local(
+            resident.mesh,
+            Arc::new(mesh.bytes.first().unwrap().to_vec()),
+            mesh.header,
+            Some(Arc::new(skin)),
+        );
+        crate::demo::auto_hover::hold_pelvis(&mut world, &mut scene);
+        world.apply(NetEvent::AvatarAnimations {
+            avatar: resident.avatar,
+            sources: Vec::new(),
+            anims: world.own_signals().iter().map(|signal| (signal.id, signal.sequence)).collect(),
+        });
+        scene.ground_avatar_feet = true;
+        for frame in 0..90 {
+            remote_step(&mut scene, &mut world, now + Duration::from_secs_f32(frame as f32 / 60.0));
+        }
+        let source = world.avatar_poses[&resident.avatar].clone();
+        let at = now + Duration::from_secs_f32(89.0 / 60.0);
+        assert!(
+            rendered_remote_sole(&scene, &world, &resident, at).abs() < 0.003,
+            "source feet already touch the floor"
+        );
+        let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+        world.objects.get_mut(index).unwrap().velocity = Vec3::ZERO;
+        for frame in 90..180 {
+            let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+            remote_step(&mut scene, &mut world, at);
+            assert!(rendered_remote_sole(&scene, &world, &resident, at).abs() < 0.003);
+            let placed = &world.avatar_poses[&resident.avatar];
+            let hip = lib.rig.names["mHipLeft"];
+            let drop = placed[hip].w_axis.z - source[hip].w_axis.z;
+            assert!(drop.abs() < 0.005, "placement lowered an already grounded body by {drop:.6} m");
+            for name in ["mHipLeft", "mHipRight", "mKneeLeft", "mKneeRight"] {
+                let joint = lib.rig.names[name];
+                let before = source[joint].to_scale_rotation_translation().1;
+                let after = placed[joint].to_scale_rotation_translation().1;
+                assert!(before.angle_between(after).abs() < 0.1, "placement changed {name} on flat ground");
+            }
+        }
+    }
+
+    struct RemoteShoes {
+        avatar: uuid::Uuid,
+        object: u32,
+        shoe: u32,
+        mesh: uuid::Uuid,
+    }
+
+    fn remote_shoes(scene: &mut Scene, world: &mut World, now: Instant, serial: u32, drop: f32) -> RemoteShoes {
+        use aurora_assets::import_mesh::{encode, process::Physics};
+        let lib = world.avatar_lib.clone();
+        let mut model = crate::demo::auto_hover::rigged_model(&lib);
+        for vertex in model.faces.iter_mut().take(2).flat_map(|face| &mut face.vertices) {
+            vertex.position[2] -= drop;
+        }
+        model.normalize().unwrap();
+        let data = encode::asset(
+            &[None, None, None, Some(model)],
+            None,
+            &Physics::default(),
+            encode::Options {
+                skin: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let header = aurora_assets::parse_mesh_header(&data).unwrap();
+        let skin = header
+            .skin
+            .map(|range| Arc::new(aurora_assets::decode_skin(aurora_assets::mesh::section_bytes(&data, range).unwrap()).unwrap()));
+        let fixture = RemoteShoes {
+            avatar: uuid::Uuid::from_u128(0xd0d0_bbbb_0000_0000_0000_0000_0000_0000 + u128::from(serial)),
+            object: 9500 + serial,
+            shoe: 9600 + serial,
+            mesh: uuid::Uuid::from_u128(0xd0d0_cccc_0000_0000_0000_0000_0000_0000 + u128::from(serial)),
+        };
+        scene.meshes.insert_local(fixture.mesh, Arc::new(data), header, skin);
+        let mut avatar = crate::demo::action_avatar(false);
+        avatar.local_id = fixture.object;
+        avatar.full_id = fixture.avatar;
+        avatar.velocity = Vec3::X * 0.2;
+        avatar.foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, 0.05));
+        let mut shoe = crate::demo::auto_hover::rigged_object();
+        shoe.local_id = fixture.shoe;
+        shoe.full_id = uuid::Uuid::from_u128(0xd0d0_dddd_0000_0000_0000_0000_0000_0000 + u128::from(serial));
+        shoe.parent_id = fixture.object;
+        shoe.extra.sculpt.as_mut().unwrap().texture = fixture.mesh;
+        shoe.volume.sculpt = shoe.extra.sculpt;
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![avatar, shoe],
+        });
+        let index = world.objects.index_of_uuid(&fixture.avatar).unwrap();
+        scene.skeleton_of(world, fixture.avatar, index, now);
+        let skeleton = &scene.skeletons[&fixture.avatar];
+        let half = 0.5 * standing_box_height(skeleton.neutral_body_height, skeleton.neutral_shape_hover, true).unwrap();
+        let neutral = lib
+            .rig
+            .world_with(&lib.rig.local_rot, Vec3::ZERO, &skeleton.base.local_pos, &skeleton.base.scale);
+        let mesh = scene.meshes.view(&fixture.mesh).unwrap();
+        let faces = aurora_assets::decode_mesh_lod(mesh.lod_section(3).unwrap()).unwrap();
+        let lowest = mesh_min(&faces, mesh.skin.as_deref(), None, &lib.rig, &neutral).unwrap();
+        let hover = skeleton.neutral_root_height - half - lowest;
+        world.objects.get_mut(index).unwrap().position = Vec3::new(serial as f32 * 3.0, 0.0, half + hover);
+        scene.palette_base(fixture.avatar);
+        fixture
+    }
+
+    fn remote_step(scene: &mut Scene, world: &mut World, at: Instant) {
+        scene.update_poses(world, Vec3::ZERO, at);
+        scene.update_auto_hover(world, false, 0.0, true, at);
+    }
+
+    fn rendered_remote_sole(scene: &Scene, world: &World, resident: &RemoteShoes, at: Instant) -> f32 {
+        let lib = &world.avatar_lib;
+        let mesh = scene.meshes.view(&resident.mesh).unwrap();
+        let faces = aurora_assets::decode_mesh_lod(mesh.lod_section(3).unwrap()).unwrap();
+        let matrices: Vec<_> = world.avatar_poses[&resident.avatar]
+            .iter()
+            .zip(&lib.rig.default_world_inv)
+            .map(|(pose, inv)| *pose * inv.inverse())
+            .collect();
+        let lowest = mesh_min(&faces, mesh.skin.as_deref(), None, &lib.rig, &matrices).unwrap();
+        let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+        Scene::object_transform(world, index, at, 0).unwrap().0.z - lib.pelvis.z + lowest
+    }
+
+    #[test]
+    fn remote_soles_bound_inspection_work_and_reach_every_visible_resident() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = true;
+        for serial in 1..=9 {
+            remote_shoes(&mut scene, &mut world, now, serial, serial as f32 * 0.01);
+        }
+        scene.ground_avatar_feet = true;
+        for frame in 0..90 {
+            let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+            remote_step(&mut scene, &mut world, at);
+            assert!(
+                scene
+                    .remote_soles
+                    .entries
+                    .values()
+                    .filter(|state| state.checked_at == Some(at))
+                    .count()
+                    <= 4
+            );
+        }
+        assert_eq!(scene.remote_soles.entries.len(), 9);
+        assert!(
+            scene.remote_soles.entries.values().all(|state| state.value().is_some()),
+            "round-robin scheduling starved a resident"
+        );
+        world.avatar_poses.clear();
+        scene.update_remote_soles(&world, now + Duration::from_secs(2));
+        assert!(scene.remote_soles.entries.is_empty(), "unposed residents retained their shoe cache");
+    }
+
+    #[test]
+    fn remote_saved_budget_updates_calibration_live_and_keeps_our_avatar() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = false;
+        world.agent.position = Vec3::new(-5.0, 0.0, 1.0);
+        let residents: Vec<_> = (1..=16)
+            .map(|serial| remote_shoes(&mut scene, &mut world, now, serial, 0.0))
+            .collect();
+        scene.foot_scope = super::super::foot_scope::Scope::default();
+        scene.ground_avatar_feet = true;
+        scene.ground_feet_while_moving = true;
+        let eye = Vec3::Z;
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, 0.1);
+        let view = super::super::CullView::new(
+            projection * glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::X, Vec3::Z),
+            eye,
+            900.0,
+            std::f32::consts::FRAC_PI_2,
+        );
+        let mut frame = 0;
+        for maximum in [5, 2, 0, 12] {
+            scene.set_foot_scope_limit(maximum);
+            for _ in 0..90 {
+                let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+                scene.update_foot_scope(&world, view, at);
+                remote_step(&mut scene, &mut world, at);
+                frame += 1;
+            }
+            assert_eq!(scene.remote_soles.entries.len(), maximum as usize);
+            for (number, resident) in residents.iter().enumerate() {
+                let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+                assert_eq!(scene.grounding_frame(&world, index, now).is_some(), number < maximum as usize);
+            }
+            let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            assert!(
+                scene.grounding_frame(&world, own, now).is_some(),
+                "our avatar stays corrected even with a zero budget"
+            );
+        }
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        assert!(
+            scene.grounding_frame(&world, own, now).is_some(),
+            "our avatar stays corrected outside the camera"
+        );
+        let away = super::super::CullView::new(
+            projection * glam::camera::rh::view::look_at_mat4(eye, eye - Vec3::X, Vec3::Z),
+            eye,
+            900.0,
+            std::f32::consts::FRAC_PI_2,
+        );
+        let at = now + Duration::from_secs(8);
+        scene.update_foot_scope(&world, away, at);
+        remote_step(&mut scene, &mut world, at);
+        assert!(scene.remote_soles.entries.is_empty(), "out-of-view residents still calibrate");
+        for resident in residents {
+            let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+            assert!(scene.grounding_frame(&world, index, at).is_none());
+        }
+        assert!(scene.grounding_frame(&world, own, at).is_some());
+    }
+
+    #[test]
+    fn remote_saved_budget_acquisition_stays_continuous_through_camera_reentry() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = true;
+        let resident = remote_shoes(&mut scene, &mut world, now, 1, 0.0);
+        let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+        world.objects.get_mut(index).unwrap().position.z -= 0.18;
+        // A moving resident's render root is already clamped above the land.
+        // Keep this fixture stationary to exercise actual source penetration.
+        world.objects.get_mut(index).unwrap().velocity = Vec3::ZERO;
+        scene.foot_scope = super::super::foot_scope::Scope::default();
+        scene.ground_avatar_feet = true;
+        scene.ground_feet_while_moving = true;
+        let eye = Vec3::Z;
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, 0.1);
+        let view = |direction| {
+            super::super::CullView::new(
+                projection * glam::camera::rh::view::look_at_mat4(eye, eye + direction, Vec3::Z),
+                eye,
+                900.0,
+                std::f32::consts::FRAC_PI_2,
+            )
+        };
+        let mut previous = None::<Vec<Mat4>>;
+        for frame in 0..540 {
+            let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+            scene.set_foot_scope_limit(if frame < 60 || (300..390).contains(&frame) { 0 } else { 5 });
+            scene.update_foot_scope(&world, view(if frame == 180 { -Vec3::X } else { Vec3::X }), at);
+            remote_step(&mut scene, &mut world, at);
+            let rig = &world.avatar_lib.rig;
+            let matrices: Vec<_> = world.avatar_poses[&resident.avatar]
+                .iter()
+                .zip(&rig.default_world_inv)
+                .map(|(pose, inverse)| *pose * inverse.inverse())
+                .collect();
+            if let Some(previous) = &previous {
+                for name in ["mPelvis", "mKneeLeft", "mKneeRight", "mAnkleLeft", "mAnkleRight"] {
+                    let joint = rig.names[name];
+                    let distance = matrices[joint].w_axis.distance(previous[joint].w_axis);
+                    assert!(distance < 2.5 / 60.0, "{name} jumped {distance:.6} m at frame {frame}");
+                }
+            }
+            previous = Some(matrices);
+            if frame == 59 || frame == 389 {
+                let sole = rendered_remote_sole(&scene, &world, &resident, at);
+                assert!(
+                    sole < -0.17,
+                    "the source penetration was not reproduced: sole {sole:.6} m at frame {frame}"
+                );
+            }
+            if [179, 299, 539].contains(&frame) {
+                let sole = rendered_remote_sole(&scene, &world, &resident, at);
+                assert!(sole.abs() < 0.003, "sole {sole:.6} m after acquisition at frame {frame}");
+            }
+        }
+    }
+
+    #[test]
+    fn aurora_idle_keeps_measured_shoe_soles_without_changing_manual_hover() {
+        for while_moving in [false, true] {
+            let (mut world, mut scene, now) = fixture();
+            let lib = world.avatar_lib.clone();
+            crate::demo::auto_hover::install_mesh(&lib, &mut scene).unwrap();
+            world.apply(NetEvent::ObjectUpdates {
+                handle: 1,
+                objects: vec![crate::demo::auto_hover::rigged_object()],
+            });
+            let owner = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            let skeleton = &scene.skeletons[&world.agent_id];
+            let box_height = standing_box_height(skeleton.neutral_body_height, skeleton.neutral_shape_hover, true).unwrap();
+            world.objects.get_mut(owner).unwrap().position.z = 0.5 * box_height;
+            world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, 0.05));
+            world.agent.position.z = 0.5 * box_height;
+            world.agent.flying = false;
+            settle(&mut scene, &mut world, now);
+            let manual = world.hover_height.value();
+            scene.ground_avatar_feet = true;
+            scene.ground_feet_while_moving = while_moving;
+            scene.palette_base(world.agent_id);
+            let mesh = scene.meshes.view(&crate::demo::auto_hover::MESH).unwrap();
+            let faces = aurora_assets::decode_mesh_lod(mesh.lod_section(3).unwrap()).unwrap();
+            for frame in 0..=180 {
+                let at = now + Duration::from_secs(1) + Duration::from_secs_f32(frame as f32 / 60.0);
+                scene.ground_feet_own_moving = frame < 60;
+                scene.update_auto_hover(&mut world, false, 0.0, true, at);
+                scene.update_poses(&mut world, Vec3::ZERO, at);
+                let matrices: Vec<_> = world.avatar_poses[&world.agent_id]
+                    .iter()
+                    .zip(&lib.rig.default_world_inv)
+                    .map(|(posed, inv)| *posed * inv.inverse())
+                    .collect();
+                let lowest = mesh_min(&faces, mesh.skin.as_deref(), None, &lib.rig, &matrices).unwrap();
+                let root = Scene::object_transform(&world, owner, at, 0).unwrap().0;
+                let sole = root.z - lib.pelvis.z + lowest;
+                assert!(sole.abs() < 0.003, "frame {frame}: stopping changed the sole height to {sole:.6} m");
+                assert_eq!(world.hover_height.value(), manual, "IK must not write the manual hover height");
+            }
+        }
     }
 
     #[test]

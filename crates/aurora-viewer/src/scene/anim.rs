@@ -1296,6 +1296,7 @@ impl Controller {
                         rotations: source_rotations,
                         positions: &local_pos,
                         pelvis: pelvis_offset,
+                        reference_offset: self.pelvis_offset.map_or(Vec3::ZERO, |_| -pelvis_rest),
                         allowed,
                     },
                     frame,

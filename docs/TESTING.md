@@ -524,7 +524,7 @@ when unfocused") is ignored during a screenshot.
   approach impulses or passing back and forth through the target.
   These actions do not route around walls.
 
-- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle|sit-ground`**:
+- **`AURORA_DEMO_HOVER_HEIGHT=panel|<metres>|cycle|camera|unsupported|failure|auto-static|auto-static-off|auto-rigged|auto-contact|auto-offset|auto-state|auto-pelvis|auto-stilt|auto-cycle|auto-ik|auto-ik-moving|auto-ik-others|sit-ground`**:
   opens the hover-height floater at frame 600. A number sets the height;
   `cycle` previews +0.4 m at 720, commits at 780 and resets at 960. `camera`
   repeats the cycle with "Affect camera view" enabled; otherwise the camera
@@ -539,6 +539,80 @@ when unfocused") is ignored during a screenshot.
   the floater follows to its "Sitting on the ground" tab, the avatar sits
   0.5 m above the plaza (capture at 780), then stands back at its standing
   height (capture at 1000).
+  `auto-ik` enables Aurora placement with rigged shoes, then disables automatic
+  height at frame 720 and enables it again at 840 without editing manual
+  height. Capture at 700, 800 and 900: soles must keep their floor contact.
+  `auto-ik-moving` also enables placement while walking; walk and stop to
+  verify the same height with automatic adjustment on and off.
+  `auto-ik-others` puts a second resident wearing rigged shoes beside us,
+  with a 28 cm mesh pelvis-rest offset replaced by an absolute animation.
+  Its simulated height already places the shoes on the floor. Capture at
+  700/800/900: Aurora placement is OFF/ON/OFF, while our automatic height
+  also switches at 720/840. Both avatars must retain floor contact and
+  their upright posture, without an extra pelvis drop or knee flexion.
+  `auto-ik-perf` / `auto-ik-perf-off` place the crowd around our avatar, fix
+  the same camera, enable 100 full avatars and compare Aurora placement ON/OFF.
+  Use `AURORA_DEMO_CROWD=200`, `AURORA_DEMO_FEET=opaque`,
+  `AURORA_IMPOSTOR_POSES=every`, `AURORA_PRESENT_MODE=immediate`,
+  `AURORA_FPS_LIMIT=500` and `AURORA_PROFILE=1`. Run the ON scene with
+  `AURORA_FOOT_IK_SCOPE=all` and `visible10`; the latter selects at most ten
+  other unseated residents intersecting the main camera frustum, nearest to
+  our avatar (not the camera). Our own avatar keeps correction. Calibration
+  follows the same budget, with existing 0.5 s pose release on deselection.
+  This override only applies to offline demos. Normal viewers use the saved
+  maximum in Preferences > Avatars > Animations (foot-placement cog):
+  five other avatars by default, 0-100, with zero meaning self only. Older
+  preferences without the new key acquire five; explicit saved values persist.
+  `foot scope` log lines report selected/cached remote residents and support
+  frames (including our avatar); verify the cap alongside timing results.
+  Crowd foot-placement A/B (2026-10-26, source `92a040319`, optimized dev):
+  200 extra residents around us, 202 skeletons posed every frame, 1600x900,
+  immediate presentation, 500 FPS cap. Three interleaved 45-second runs per
+  mode; discard startup/calibration, retain the last fifteen one-second
+  summaries at least eight seconds after the fixture is ready. Values below
+  are medians of the three per-run means (45 summaries per mode).
+
+  | Aurora placement | FPS | Frame ms | Avatar stage ms | GPU ms |
+  | --- | ---: | ---: | ---: | ---: |
+  | Off | 179.8 | 5.566 | 1.196 | 3.871 |
+  | All residents | 35.6 | 28.079 | 23.041 | 3.764 |
+  | Visible nearest ten + self | 137.9 | 7.253 | 2.734 | 3.713 |
+
+  All nine runs have the same render counts: 100 full models (35 in view),
+  102 impostors (74 in view), one silhouette and zero loading avatars.
+  Selection telemetry confirms 201 remote calibrations/202 support frames
+  for unlimited placement, ten/eleven for the limited experiment, zero/zero
+  when disabled. The limited mode uses about 88.1% less avatar-stage time
+  than unlimited placement and delivers about 3.87x its FPS in this fixture.
+  Across runs, FPS ranges were 176.2-212.3 off, 35.4-40.5 all and 136.5-141.2
+  limited. One to three other compiler processes were observed at run start:
+  this is a shared-desktop comparison, not an isolated solver benchmark.
+  The avatar stage includes pose evaluation and calibration, not only IK.
+  Captures were inspected in all three modes; runtime logs have no errors or
+  panics before the scheduled process stop. Those results describe the historical source before the saved five-avatar
+  default. Real outfits, camera transitions and grid behavior still need human validation.
+
+  `auto-ik-budget` exercises the saved control with no benchmark override:
+  five at frame 600, zero at 900, twelve at 1100 and five at 1300. Combine
+  with `AURORA_DEMO_OPTIONS=avatars/3:cogs`, `AURORA_DEMO_CROWD=60`,
+  `AURORA_DEMO_FEET=opaque`, `AURORA_PROFILE=1` and capture 700/1000/1200/1400
+  in English and French. The control must be integral, enabled with Aurora
+  placement, searchable and reset to five with the Avatars page. Calibration
+  and support-frame counts must follow the saved limit; self stays eligible
+  at zero. On the grid the human checks live changes, camera turns and restart
+  persistence on their real outfits.
+  Acquisition regression: begin with a resident outside the saved budget,
+  then increase the maximum. Also turn the camera away and back while its
+  release is still running. The first corrected frame must retain the visible
+  pose, followed by a roughly half-second transition, including shoes that
+  were initially below the surface or tilted. A new sole measurement during
+  release must not reset that transition. Automated cases exercise 30/60/144
+  FPS, live animation, final contact, and the real budget/camera/calibration
+  path. For a native sequence, use `auto-ik-budget` with 60 crowd avatars and
+  capture 1100/1124/1132/1144/1160/1200 without the options panel; twelve residents
+  become eligible at 1100 and acquire their correction after calibration.
+  Automated cases measure continuity, segment lengths and rendered sole contact.
+  Broader outfit/AO coverage remains tracked under #667.
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
@@ -7178,6 +7252,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLEND_SHADOWS=0` | Alpha-blended faces that are not rigged cast no shadow, as before |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
+| `AURORA_FOOT_IK_SCOPE=<mode>` | Offline foot-placement benchmark override (all or visible10) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
