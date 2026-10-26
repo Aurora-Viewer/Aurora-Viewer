@@ -601,6 +601,11 @@ when unfocused") is ignored during a screenshot.
   and support-frame counts must follow the saved limit; self stays eligible
   at zero. On the grid the human checks live changes, camera turns and restart
   persistence on their real outfits.
+  Saved-budget validation (source `99b2216a2`): full workspace check passes
+  5,541 tests, zero failures, 30 ignored; scripts, formatting and Clippy clean.
+  Native French captures at 5/0/12 and English after restoring 5 were inspected.
+  Both runs confirm 5/0/12 remote calibrations and 6/1/13 support frames
+  including self; no runtime error or panic. Grid validation remains pending.
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
