@@ -343,6 +343,13 @@ pub(crate) fn show(
     }
     keyboard(ui, available, profile, state);
     let mut resolved = profile.layout.resolve(available);
+    // Scene menus start with text actions. Keep a saved top bar only when
+    // it contains commands; extra bars can still be added while organizing.
+    if scope.starts_with("scene:") && resolved.get("top").is_none_or(Vec::is_empty) {
+        for rows in resolved.values_mut() {
+            rows.retain(|entry| entry.id != "bar:top");
+        }
+    }
     if profile.locked {
         super::menu_layout::hide_empty_groups(&mut resolved);
     }
