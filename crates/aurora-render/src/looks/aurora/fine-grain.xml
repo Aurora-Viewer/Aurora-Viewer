@@ -1,0 +1,10 @@
+<llsd>
+    <array>
+        <array>
+            <string>grain</string>
+            <real>0.035</real>
+            <real>1.0</real>
+            <real>1.0</real>
+        </array>
+    </array>
+</llsd>

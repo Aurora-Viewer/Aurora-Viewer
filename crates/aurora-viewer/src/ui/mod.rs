@@ -57,6 +57,7 @@ pub mod link_health;
 pub mod loading;
 pub mod login;
 pub mod lookat_targets;
+pub mod looks_editor;
 pub mod map_tiles;
 pub mod marketplace;
 pub mod marketplace_listings;

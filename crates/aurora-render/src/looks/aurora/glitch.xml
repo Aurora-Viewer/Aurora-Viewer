@@ -1,0 +1,10 @@
+<llsd>
+    <array>
+        <array>
+            <string>glitch</string>
+            <real>0.025</real>
+            <real>0.035</real>
+            <real>7.0</real>
+        </array>
+    </array>
+</llsd>

@@ -1,0 +1,10 @@
+<llsd>
+    <array>
+        <array>
+            <string>depthblur</string>
+            <real>0.012</real>
+            <real>0.25</real>
+            <real>1.0</real>
+        </array>
+    </array>
+</llsd>

@@ -17,6 +17,7 @@ use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, Stroke
 
 mod controls;
 mod isolate;
+mod looks;
 pub use controls::{CamMode, Pad, roll_text};
 pub use isolate::{Isolate, IsolateRow};
 #[cfg(test)]
@@ -42,6 +43,8 @@ pub struct Viewfinder {
     pub drawer: bool,
     /// The isolation panel (what the photo shows), on the right.
     pub isolate: bool,
+    /// The filter panel (`looks`).
+    pub looks: bool,
     pub dial: Dial,
     /// The shutter half-pressed (Enter or the button held).
     pub pressed: bool,
@@ -469,6 +472,7 @@ impl Viewfinder {
         view: &View,
     ) -> Vec<Out> {
         let mut out = Vec::new();
+        panel.looks.hover = None;
         let before = s.clone();
         let light_before = panel.light;
         let screen = ctx.content_rect();
@@ -488,6 +492,9 @@ impl Viewfinder {
         back.rect_stroke(frame, 0.0, Stroke::new(1.0, p.ink.gamma_multiply(border)), StrokeKind::Inside);
         if shows && s.guide != Guide::None {
             panel::guide_lines(&back, frame, s.guide, p.ink.gamma_multiply(0.4));
+        }
+        if !s.looks.is_empty() {
+            self.compare_line(ctx, p, frame, panel);
         }
 
         // the on-screen controls (lens ring, AF choices, camera pad)
@@ -516,7 +523,7 @@ impl Viewfinder {
         }
         if shows {
             self.bottom_bar(ctx, p, &back, screen, s, panel, fov, f, ctl, &mut out);
-            self.dock(ctx, p, screen, s, f, &mut out);
+            self.dock(ctx, p, screen, s, panel, f, &mut out);
         } else if ghost_disp(ctx, p, screen) {
             s.viewfinder.display = display.next();
         }
@@ -544,6 +551,9 @@ impl Viewfinder {
         if self.drawer {
             self.drawer(ctx, p, screen, s, panel, fov, default_fov, view, &mut out);
         }
+        if self.looks {
+            self.looks_panel(ctx, p, screen, s, panel, &mut out);
+        }
         if self.isolate {
             self.isolate_picking(ctx, p, frame, f, &mut out);
             self.isolate_panel(ctx, p, screen, f, &mut out);
@@ -567,7 +577,9 @@ impl Viewfinder {
                 || s.inventory_size != before.inventory_size
                 || s.profile_size != before.profile_size
                 || s.dof != before.dof
-                || s.huds != before.huds;
+                || s.huds != before.huds
+                || s.looks != before.looks
+                || s.look_settings != before.look_settings;
             out.push(Out::Panel(if photo { Action::Changed } else { Action::Saved }));
         }
         if panel.light != light_before && !out.contains(&Out::Panel(Action::Changed)) {
@@ -1373,7 +1385,16 @@ impl Viewfinder {
     }
 
     /// The dock on the right: everything the mouse needs.
-    fn dock(&mut self, ctx: &egui::Context, p: &Palette, screen: Rect, s: &mut Settings, f: &Frame, out: &mut Vec<Out>) {
+    fn dock(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        screen: Rect,
+        s: &mut Settings,
+        panel: &mut SnapshotUi,
+        f: &Frame,
+        out: &mut Vec<Out>,
+    ) {
         egui::Area::new(Id::unique("vf_dock"))
             .order(Order::Foreground)
             .fade_in(false)
@@ -1400,6 +1421,7 @@ impl Viewfinder {
                         self.drawer,
                     ) {
                         self.drawer = !self.drawer;
+                        self.looks &= !self.drawer;
                         if self.drawer && self.isolate {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
@@ -1417,8 +1439,7 @@ impl Viewfinder {
                     ) {
                         s.viewfinder.pad = !s.viewfinder.pad;
                     }
-                    // four above the shutter, four under it: the shutter in
-                    // the middle of the dock
+                    // four above the shutter, five under it
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
                     ui.add_space(6.0);
@@ -1426,7 +1447,28 @@ impl Viewfinder {
                     if dock_button(ui, p, Face::Icon("user-scan"), aurora_i18n::tr!("photo-isolate-tip"), isolating) {
                         self.isolate = !self.isolate;
                         self.drawer &= !self.isolate;
+                        self.looks &= !self.isolate;
                         if !self.isolate {
+                            out.push(Out::Isolate(Isolate::Picking(false)));
+                        }
+                    }
+                    if dock_button(
+                        ui,
+                        p,
+                        Face::Icon("color-filter"),
+                        aurora_i18n::tr!("photo-looks-tip"),
+                        self.looks || !s.looks.is_empty(),
+                    ) {
+                        self.looks = !self.looks;
+                        self.drawer &= !self.looks;
+                        // opens on the tab of the chosen look
+                        if self.looks
+                            && let Some(layer) = s.looks.get(panel.looks.selected)
+                        {
+                            panel.looks.tab = crate::snapshot::looks::tab_of(&layer.id);
+                        }
+                        if self.looks && self.isolate {
+                            self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
                         }
                     }

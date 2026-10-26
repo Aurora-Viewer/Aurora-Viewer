@@ -11,7 +11,10 @@
 pub mod gallery;
 pub mod inventory;
 pub mod isolate;
+pub mod knobs;
 pub mod light;
+pub mod looks;
+pub mod luts;
 pub mod profile;
 pub mod quality;
 pub mod save;
@@ -244,6 +247,12 @@ pub struct Settings {
     pub quality: bool,
     /// The viewfinder's display, AF area, peaking and beep.
     pub viewfinder: viewfinder::Prefs,
+    /// The photo's looks, the first one drawn first (`looks`); none: the
+    /// Legacy Viewer's "No Filter".
+    pub looks: Vec<looks::Layer>,
+    /// The settings of Aurora's looks by id (`knobs`), kept when a look is
+    /// taken out.
+    pub look_settings: std::collections::BTreeMap<String, Vec<f32>>,
 }
 
 impl Default for Settings {
@@ -272,6 +281,8 @@ impl Default for Settings {
             dof: Default::default(),
             quality: false,
             viewfinder: Default::default(),
+            looks: Vec::new(),
+            look_settings: Default::default(),
         }
     }
 }

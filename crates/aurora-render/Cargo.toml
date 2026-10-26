@@ -7,6 +7,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+aurora-llsd = { version = "0.1.0", path = "../aurora-llsd" }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 egui = { version = "0.37.0", features = ["monochrome_emoji_fonts"] }
 egui-wgpu = "0.37.0"

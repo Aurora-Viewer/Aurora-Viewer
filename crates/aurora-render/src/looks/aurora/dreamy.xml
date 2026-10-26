@@ -1,0 +1,20 @@
+<llsd>
+    <array>
+        <array>
+            <string>glow</string>
+            <real>0.7</real>
+            <real>0.02</real>
+            <real>0.55</real>
+            <real>1.0</real>
+            <real>0.95</real>
+            <real>0.9</real>
+        </array>
+        <array>
+            <string>contrast</string>
+            <real>0.95</real>
+            <real>1.0</real>
+            <real>1.0</real>
+            <real>1.0</real>
+        </array>
+    </array>
+</llsd>

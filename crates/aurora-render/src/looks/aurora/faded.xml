@@ -1,0 +1,24 @@
+<llsd>
+    <array>
+        <array>
+            <string>colorize</string>
+            <real>0.12</real>
+            <real>0.12</real>
+            <real>0.14</real>
+            <real>0.14</real>
+            <real>0.14</real>
+            <real>0.14</real>
+        </array>
+        <array>
+            <string>saturate</string>
+            <real>0.75</real>
+        </array>
+        <array>
+            <string>contrast</string>
+            <real>0.92</real>
+            <real>1.0</real>
+            <real>1.0</real>
+            <real>1.0</real>
+        </array>
+    </array>
+</llsd>

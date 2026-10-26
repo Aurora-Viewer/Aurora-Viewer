@@ -1,0 +1,29 @@
+<llsd>
+    <array>
+        <array>
+            <string>glow</string>
+            <real>1.1</real>
+            <real>0.012</real>
+            <real>0.65</real>
+            <real>1.0</real>
+            <real>0.22</real>
+            <real>0.08</real>
+        </array>
+        <array>
+            <string>split</string>
+            <real>0.2</real>
+            <real>0.35</real>
+            <real>0.5</real>
+            <real>0.55</real>
+            <real>0.6</real>
+            <real>0.5</real>
+            <real>0.45</real>
+        </array>
+        <array>
+            <string>grain</string>
+            <real>0.025</real>
+            <real>1.0</real>
+            <real>1.0</real>
+        </array>
+    </array>
+</llsd>

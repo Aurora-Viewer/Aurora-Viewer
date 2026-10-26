@@ -1,0 +1,16 @@
+<llsd>
+    <array>
+        <array>
+            <string>gradientmap</string>
+            <real>0.02</real>
+            <real>0.08</real>
+            <real>0.22</real>
+            <real>0.1</real>
+            <real>0.36</real>
+            <real>0.62</real>
+            <real>0.9</real>
+            <real>0.95</real>
+            <real>1.0</real>
+        </array>
+    </array>
+</llsd>

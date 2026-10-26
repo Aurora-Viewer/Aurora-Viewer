@@ -42,6 +42,10 @@ pub struct SnapshotUi {
     pub light: crate::snapshot::light::PhotoLight,
     /// The free camera's switch and flight (never saved).
     pub free: crate::camera::free::FreeSettings,
+    /// The looks editor's state (`ui::looks_editor`).
+    pub looks: super::looks_editor::LooksUi,
+    /// The user's 3D tables, by file name (`snapshot::luts`).
+    pub lut_names: Vec<String>,
 }
 
 /// Where a photo goes (Firestorm's snapshot panels; the profile feed
@@ -155,6 +159,12 @@ pub enum Action {
     Confirm(bool),
     /// The "cannot afford" message was closed.
     CloseAfford,
+    /// Choose a .cube file to add to the tables of the photo's look.
+    ImportLut,
+    /// Delete one of the tables (its file name).
+    RemoveLut(String),
+    /// Show the folder of the tables.
+    OpenLutFolder,
 }
 
 impl SnapshotUi {
@@ -173,6 +183,7 @@ impl SnapshotUi {
         classic: bool,
     ) -> Vec<Action> {
         let mut out = Vec::new();
+        self.looks.hover = None;
         let screen = ctx.content_rect();
         let mut full = false;
         let full_tip = aurora_i18n::tr!("photo-full-frame");
@@ -666,6 +677,18 @@ impl SnapshotUi {
         section(ui, p, "sun-filled", aurora_i18n::tr!("photo-section-light"));
         light_rows(ui, p, &mut self.light, view.exposure, out);
 
+        let filter = ui.cursor();
+        section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
+        let opts = super::looks_editor::Options {
+            list_height: 220.0,
+            compare: false,
+            luts: &self.lut_names,
+        };
+        self.looks.show(ui, p, s, opts, out);
+        if std::mem::take(&mut self.looks.reveal) {
+            ui.scroll_to_rect(filter.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
+        }
+
         ui.add_space(2.0);
         widgets::collapsing(ui, p, "photo_file", aurora_i18n::tr!("photo-section-file"), false, |ui| {
             row(ui, p, aurora_i18n::tr!("photo-base-name"), None, |ui| {
@@ -1098,7 +1121,9 @@ fn changed(s: &Settings, before: &Settings, out: &mut Vec<Action>) {
             || s.profile_size != before.profile_size
             || s.dof != before.dof
             || s.interface != before.interface
-            || s.huds != before.huds;
+            || s.huds != before.huds
+            || s.looks != before.looks
+            || s.look_settings != before.look_settings;
         out.push(if photo_changed { Action::Changed } else { Action::Saved });
     }
 }
@@ -1384,7 +1409,7 @@ fn row(ui: &mut egui::Ui, p: &Palette, label: &str, hint: Option<&str>, control:
 }
 
 /// A choice among several shown side by side: the accent when chosen.
-fn chip(ui: &mut egui::Ui, p: &Palette, label: &str, sub: Option<&str>, on: bool, enabled: bool) -> egui::Response {
+pub(crate) fn chip(ui: &mut egui::Ui, p: &Palette, label: &str, sub: Option<&str>, on: bool, enabled: bool) -> egui::Response {
     let font = egui::FontId::proportional(12.0);
     let main = ui.painter().layout_no_wrap(label.to_owned(), font, p.ink);
     let sub = sub.map(|t| ui.painter().layout_no_wrap(t.to_owned(), egui::FontId::proportional(10.0), p.ink));
