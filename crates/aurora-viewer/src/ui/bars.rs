@@ -938,6 +938,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::blacklist::WINDOW,
             &mut panels.asset_blacklist,
         );
+        flip_window(
+            ui,
+            p,
+            "eye-filled",
+            aurora_i18n::tr!("avatar-render-title"),
+            super::avatar_render_settings::WINDOW,
+            &mut panels.avatar_render_settings,
+        );
         menu::separator(ui, p);
         // Firestorm's View › Camera Controls and Movement Controls
         if menu::item_keys(ui, p, "video-filled", aurora_i18n::tr!("controls-camera-title"), "Ctrl+Shift+C") {

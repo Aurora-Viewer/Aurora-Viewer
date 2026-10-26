@@ -11560,3 +11560,10 @@ ui-options-auto-replace-keyword-hint = Keyword
 ui-options-auto-replace-replacement-hint = Replacement
 ui-options-auto-replace-add-keyword = Add
 ui-options-auto-replace-save-keyword = Save
+
+avatar-render-title = Avatar render settings
+avatar-render-filter = Filter residents by name or UUID
+avatar-render-detail = Full detail
+avatar-render-empty = No matching display exceptions
+avatar-render-always = Always
+avatar-render-never = Never
