@@ -291,7 +291,7 @@ impl Editor {
             menu::info(ui, p, "users", aurora_i18n::text("poser-nearby-none"));
         } else {
             // Say why Ask waits: a worn bridge whose query script is silent
-            // is not "take it on", and Repair is what fixes it.
+            // needs Repair, not "wear it".
             let hint = match self.poser.bridge {
                 QueryState::Ready => None,
                 QueryState::Starting => Some(("hourglass-filled", "poser-bridge-starting")),
