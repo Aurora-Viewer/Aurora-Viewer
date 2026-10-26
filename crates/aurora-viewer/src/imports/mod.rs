@@ -106,6 +106,8 @@ pub struct Preferences {
     pub mesh_auto_weights: bool,
     pub mesh_auto_preview_weights: bool,
     pub mesh_reliable_default: bool,
+    pub mesh_model_limit: u32,
+    pub mesh_upload_timeout: u32,
     pub mesh_suffixes: [String; 5],
     pub mesh_physics_preset: String,
     pub local_assume_meters: bool,
@@ -135,6 +137,8 @@ impl Default for Preferences {
             mesh_auto_weights: true,
             mesh_auto_preview_weights: true,
             mesh_reliable_default: false,
+            mesh_model_limit: aurora_assets::import_mesh::DEFAULT_MODEL_LIMIT,
+            mesh_upload_timeout: 600,
             mesh_suffixes: ["LOD0".into(), "LOD1".into(), "LOD2".into(), String::new(), "PHYS".into()],
             mesh_physics_preset: String::new(),
             local_assume_meters: false,
@@ -1141,6 +1145,7 @@ impl Imports {
                                     draft.lods[3].source = mesh::LodSource::File;
                                     draft.inspector.avatar = Arc::new(mesh::inspector::Avatar::new(&scene));
                                     draft.scene = scene;
+                                    draft.clamp_scale();
                                     draft.images = images;
                                     entry.path = path;
                                     entry.from_live = false;

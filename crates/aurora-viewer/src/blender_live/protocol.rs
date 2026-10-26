@@ -223,7 +223,7 @@ pub(super) fn prepare_snapshot(
                     position: v.position,
                     normal: Vec3::from_array(v.normal).normalize_or_zero().to_array(),
                     uv: v.uv,
-                    joints: v.joints,
+                    joints: v.joints.map(u16::from),
                     weights: if count == 0 {
                         [0.0; 4]
                     } else {
@@ -277,6 +277,7 @@ pub(super) fn prepare_snapshot(
                 name: mesh.name.clone(),
                 materials: model.faces.iter().map(|face| face.material).collect(),
             });
+            scene.normalized_bounds.insert(scene.models.len(), model.normalized_bounds());
             scene.models.push(model.clone());
             let colors = chunk.iter().map(|face| colors[face.material]).collect();
             let materials = chunk

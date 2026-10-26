@@ -4156,6 +4156,23 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 
 ### Import inspector layout
 
+Mesh importer parity regressions use the `mesh_import_parity` test filter
+with `cargo test --workspace mesh_import_parity`. They cover a DAE larger than
+64 MiB, a GLB with a 129 MiB embedded buffer, dense/redundant geometry,
+more than 256 instances, deep hierarchies, flat-axis normalization and actual
+preview dimensions, generated-model settings, authored
+LOD material subsets/order/suffixes and node identities, unused texture dependencies, crease and
+area-weighted normals, large source skin palettes, DAE axis-independent bind
+frames, and glTF shoulder orientation / inherited rest transforms.
+The large-input test briefly retains several hundred MiB; its two fixtures
+are generated and released sequentially. Use existing `AURORA_DEMO_IMPORT_FILE`
+with `mesh` or `mesh-avatar` for native captures of a supplied rigged asset;
+`mesh-avatar-rigged` deliberately replaces its skin with the synthetic fixture.
+The Mesh Options tab must show generated models = 768 and transfer timeout = 600.
+Human grid validation: compare the same DAE/GLB in the Legacy Viewer, including
+weights, optional joint positions/scale lock, authored lower LODs and a slow
+large-file upload. Only the human connects and confirms a paid transfer.
+
 `AURORA_DEMO_IMPORTS=mesh-avatar|mesh-avatar-rigged|mesh-journal` opens the
 complete Avatar or Journal tab of the native import window. The rigged mode
 uses a synthetic weighted cube and the ordinary geometry/preview worker.

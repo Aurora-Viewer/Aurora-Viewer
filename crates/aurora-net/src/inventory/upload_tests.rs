@@ -73,6 +73,7 @@ fn mesh_request() -> crate::inventory::mesh_upload::Request {
         description: "Test object".into(),
         query: std::sync::Arc::new(vec![1]),
         resources: std::sync::Arc::new(vec![1]),
+        timeout_secs: 600,
     }
 }
 
@@ -263,6 +264,7 @@ async fn mesh_permission_quote_and_llsd_transfer_create_an_object() {
         description: "Test object".into(),
         query: std::sync::Arc::new(aurora_llsd::to_xml(&llsd_map! {"asset_type"=>"mesh"})),
         resources: std::sync::Arc::new(aurora_llsd::to_xml(&resources)),
+        timeout_secs: 600,
     };
     let (base,task) = server(|base|vec![(200,llsd_map! {"mesh_upload_status"=>"valid"}),
         (200,llsd_map! {"state"=>"upload","uploader"=>format!("{base}/mesh"),"upload_price"=>17,"data"=>llsd_map! {"resource_cost"=>2.0}}),
@@ -302,6 +304,7 @@ async fn mesh_refuses_unqualified_accounts_without_a_fee_query() {
         description: "Test object".into(),
         query: std::sync::Arc::new(vec![1]),
         resources: std::sync::Arc::new(vec![1]),
+        timeout_secs: 600,
     };
     assert_eq!(
         mesh::quote(&reqwest::Client::new(), &base, &base, &upload).await.err(),

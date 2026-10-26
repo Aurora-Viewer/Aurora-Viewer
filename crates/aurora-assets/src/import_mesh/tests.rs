@@ -33,7 +33,7 @@ fn gltf_interleaved_vertices_instance_transforms_and_sparse_positions() {
     assert_eq!(gltf::attribute::<3>(&doc, 0).expect("sparse accessor")[2], [0.0, 1.0, 0.0]);
 }
 
-const DAE: &[u8] = br##"<COLLADA><asset><unit meter="0.01"/><up_axis>Z_UP</up_axis></asset><library_geometries><geometry id="geo"><mesh>
+pub(super) const DAE: &[u8] = br##"<COLLADA><asset><unit meter="0.01"/><up_axis>Z_UP</up_axis></asset><library_geometries><geometry id="geo"><mesh>
 <source id="positions"><float_array count="9">0 0 0 100 0 0 0 100 0</float_array><technique_common><accessor count="3" stride="3"/></technique_common></source>
 <vertices id="vertices"><input semantic="POSITION" source="#positions"/></vertices><triangles count="1"><input semantic="VERTEX" source="#vertices" offset="0"/><p>0 1 2</p></triangles>
 </mesh></geometry></library_geometries><library_visual_scenes><visual_scene id="scene"><node id="node"><matrix>1 0 0 2 0 1 0 3 0 0 1 4 0 0 0 1</matrix><instance_geometry url="#geo"/></node></visual_scene></library_visual_scenes><scene><instance_visual_scene url="#scene"/></scene></COLLADA>"##;
@@ -73,7 +73,7 @@ fn gltf_cycles_missing_accessor_data_and_singular_transform_are_rejected() {
     assert!(gltf::attribute::<3>(&document, 0).is_err());
 }
 
-fn collada_objects(visual: &str, rigged: bool) -> String {
+pub(super) fn collada_objects(visual: &str, rigged: bool) -> String {
     let mut geometries = String::new();
     let mut controllers = String::new();
     for id in ["a", "b"] {
@@ -391,7 +391,7 @@ fn lod_skin_names_are_remapped_and_unweighted_vertices_use_nearest_source() {
         pelvis_offset: 0.0,
     });
     for vertex in &mut high.faces[0].vertices {
-        vertex.joints = [u8::from(vertex.position[0] > 0.0), 0, 0, 0];
+        vertex.joints = [u16::from(vertex.position[0] > 0.0), 0, 0, 0];
         vertex.weights = [1.0, 0.0, 0.0, 0.0];
     }
     let mut low = high.clone();
@@ -426,7 +426,7 @@ fn gltf_palette_pruning_preserves_weighted_joints_and_active_groups() {
     };
     let mut model = cube();
     for vertex in &mut model.faces[0].vertices {
-        vertex.joints = [source as u8, 0, 0, 0];
+        vertex.joints = [source as u16, 0, 0, 0];
         vertex.weights = [0.7, 0.0, 0.0, 0.0];
     }
     skin::prune_gltf(&mut model.faces, &mut skin, &skeleton).expect("prune");

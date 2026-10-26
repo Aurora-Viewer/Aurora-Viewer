@@ -59,7 +59,7 @@ pub fn rigged_model(lib: &AvatarLibrary) -> Model {
                     position: p.to_array(),
                     normal: Vec3::Z.to_array(),
                     uv: [0.0; 2],
-                    joints: [joint as u8, 0, 0, 0],
+                    joints: [joint as u16, 0, 0, 0],
                     weights: [1.0, 0.0, 0.0, 0.0],
                 }
             })

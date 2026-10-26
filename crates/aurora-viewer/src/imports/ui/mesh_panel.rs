@@ -673,6 +673,14 @@ fn load_options(ui: &mut egui::Ui, p: &Palette, prefs: &mut Preferences) {
             aurora_i18n::tr!("import-auto-preview-weights"),
         );
         checkbox(ui, p, &mut prefs.mesh_reliable_default, aurora_i18n::tr!("import-default-reliable"));
+        ui.horizontal(|ui| {
+            ui.label(aurora_i18n::tr!("import-generated-model-limit"));
+            ui.add(egui::DragValue::new(&mut prefs.mesh_model_limit).range(0..=u32::MAX));
+        });
+        ui.horizontal(|ui| {
+            ui.label(aurora_i18n::tr!("import-mesh-upload-timeout"));
+            ui.add(egui::DragValue::new(&mut prefs.mesh_upload_timeout).range(1..=36000));
+        });
     });
 }
 

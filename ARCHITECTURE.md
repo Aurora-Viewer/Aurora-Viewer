@@ -1,5 +1,23 @@
 # Aurora Viewer architecture
 
+Mesh import acceptance follows `LLDAELoader` / `LLGLTFLoader`: file size and
+retained mesh drafts have no additional fixed byte budget. Allocations and
+source bounds are checked; mesh LLSD section sizes retain their signed 32-bit
+wire limits. `import_mesh/gltf_skin.rs` caches complete node rest transforms,
+adapts bind matrices and missing skeletal intermediates to the SL skeleton,
+and applies the reference two-shoulder XY orientation detection. Rigged DAE
+bind frames remain authored; object-axis conversion is separate.
+Scenes retain source material symbols for authored LOD reordering and missing
+`NoGeometry` surfaces, and glTF node identities allow independent authored LODs
+for nodes sharing source geometry. Source palettes use 16-bit joint indices before glTF
+usage pruning; encoded weights retain the protocol's one-byte joint indices.
+The import defaults expose the generated-model allowance (768, divided across
+source meshes) and mesh transfer timeout (600 seconds). Geometry and timeout
+are frozen in the same quoted request. Quote confirmation time starts on receipt,
+independently of a long fee transfer. Texture payloads follow used instances.
+Flat axes retain the reference unit normalization scale; worker-cached actual
+normalized extents keep preview dimensions and scene-span checks accurate.
+
 The application constructor returns its runtime state on the heap, avoiding
 large return-value temporaries on the Windows startup stack as editors grow.
 

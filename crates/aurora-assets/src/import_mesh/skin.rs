@@ -58,7 +58,7 @@ pub fn prune_gltf(faces: &mut [Face], skin: &mut Skin, skeleton: &crate::Skeleto
     }
     let mut remap = vec![None; skin.names.len()];
     for (index, source) in selected.iter().enumerate() {
-        remap[*source] = Some(index as u8);
+        remap[*source] = Some(index as u16);
     }
     for vertex in faces.iter_mut().flat_map(|face| &mut face.vertices) {
         for (joint, weight) in vertex.joints.iter_mut().zip(&mut vertex.weights) {
@@ -136,7 +136,7 @@ pub fn transfer_weights(model: &mut Model, high: &Model) -> Result<(), AssetErro
             for (joint, weight) in vertex.joints.iter_mut().zip(&mut vertex.weights) {
                 if *weight > 0.0 {
                     if let Some(Some(index)) = remap.get(*joint as usize) {
-                        *joint = *index as u8;
+                        *joint = *index as u16;
                     } else {
                         *weight = 0.0;
                     }

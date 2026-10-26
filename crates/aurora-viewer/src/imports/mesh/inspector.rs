@@ -37,7 +37,7 @@ impl Avatar {
         result
     }
     pub fn valid(&self) -> bool {
-        self.has_skin && !self.unknown && !self.too_many
+        self.has_skin && !self.unknown
     }
     pub fn conflicts(models: &[(String, Option<[f32; 3]>)]) -> bool {
         let mut positions = models.iter().filter_map(|(_, position)| position.as_ref());

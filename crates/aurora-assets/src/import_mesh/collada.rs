@@ -21,9 +21,6 @@ fn descendant<'a>(element: &'a Element, name: &str) -> Option<&'a Element> {
 fn numbers(text: &str) -> Result<Vec<f32>, AssetError> {
     let mut values = Vec::new();
     for token in text.split_whitespace() {
-        if values.len() >= 16 * 1024 * 1024 {
-            return Err(AssetError::TooLarge("Collada number array"));
-        }
         values.push(
             token
                 .parse::<f32>()
@@ -36,7 +33,6 @@ fn numbers(text: &str) -> Result<Vec<f32>, AssetError> {
 }
 fn integers(text: &str) -> Result<Vec<usize>, AssetError> {
     text.split_whitespace()
-        .take(16 * 1024 * 1024 + 1)
         .map(|n| n.parse().map_err(|_| AssetError::invalid("Collada index")))
         .collect()
 }
@@ -56,7 +52,7 @@ fn reference<'a>(ids: &HashMap<String, &'a Element>, uri: &str) -> Result<&'a El
 }
 fn index_ids<'a>(root: &'a Element, ids: &mut HashMap<String, &'a Element>) -> Result<(), AssetError> {
     if let Some(id) = root.attr("id")
-        && (ids.len() >= 65536 || ids.insert(id.into(), root).is_some())
+        && ids.insert(id.into(), root).is_some()
     {
         return Err(AssetError::invalid("too many or duplicate Collada IDs"));
     }
@@ -116,9 +112,10 @@ pub fn parse(data: &[u8], skeleton: &crate::Skeleton) -> Result<Scene, AssetErro
 }
 /// FSLocalMeshScaleAlwaysMeters deliberately overrides the declared unit.
 pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters: bool) -> Result<Scene, AssetError> {
-    if data.len() > 64 * 1024 * 1024 {
-        return Err(AssetError::TooLarge("Collada file"));
-    }
+    parse_with_options(data, skeleton, assume_meters, DEFAULT_MODEL_LIMIT)
+}
+
+pub fn parse_with_options(data: &[u8], skeleton: &crate::Skeleton, assume_meters: bool, model_limit: u32) -> Result<Scene, AssetError> {
     let root = xml::parse(data)?;
     if tag(&root) != "COLLADA" {
         return Err(AssetError::invalid("expected Collada document"));
@@ -220,8 +217,25 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
         .or_else(|| descendant(&root, "visual_scene"))
         .ok_or_else(|| AssetError::invalid("Collada visual scene"))?;
     let mut geometries = HashMap::<String, Vec<usize>>::new();
+    let mut joint_nodes = HashMap::new();
+    let mut pending = vec![&root];
+    while let Some(node) = pending.pop() {
+        if tag(node) == "node" {
+            for name in [node.attr("sid"), node.attr("id"), node.attr("name")].into_iter().flatten() {
+                let name = skeleton.find(name).map_or(name, |i| skeleton.joints[i].name.as_str());
+                joint_nodes.insert(name.to_owned(), node);
+            }
+        }
+        pending.extend(node.elements().collect::<Vec<_>>().into_iter().rev());
+    }
     let mut symbols = HashMap::<usize, Vec<String>>::new();
     let mut floats = HashMap::new();
+    let mesh_count = ids
+        .values()
+        .filter(|node| tag(node) == "geometry" && child(node, "mesh").is_some())
+        .count()
+        .max(1);
+    let face_limit = (model_limit as usize / mesh_count + 1).saturating_mul(8);
     fn visit(
         node: &Element,
         parent: Mat4,
@@ -233,11 +247,13 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
         materials: &HashMap<String, usize>,
         default: usize,
         skeleton: &crate::Skeleton,
+        joint_nodes: &HashMap<String, &Element>,
         scene: &mut Scene,
         visiting: &mut HashSet<String>,
         depth: usize,
+        face_limit: usize,
     ) -> Result<(), AssetError> {
-        if depth > 128 || scene.instances.len() > 256 {
+        if depth > 256 {
             return Err(AssetError::TooLarge("Collada hierarchy"));
         }
         let mut local = Mat4::IDENTITY;
@@ -290,9 +306,22 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
                 geometry.attr("id").unwrap_or(uri).into()
             };
             if !geometries.contains_key(&key) {
-                let (faces, face_symbols, position_indices) = read_geometry(geometry, basis, ids, floats, default)?;
+                // processDomModel keeps a rigged DAE's authored bind frame.
+                // up_axis/unit conversion belongs to its object instance;
+                // converting bone-local offsets as world vectors rotates
+                // the SL skeleton a second time when weights are enabled.
+                let geometry_basis = if controller.is_some() { Mat4::IDENTITY } else { basis };
+                let (faces, face_symbols, position_indices) = read_geometry(geometry, geometry_basis, ids, floats, default)?;
                 let skin = if let Some(controller) = controller {
-                    Some(read_skin(controller, basis, ids, floats, skeleton, &mut scene.warnings)?)
+                    Some(read_skin(
+                        controller,
+                        geometry_basis,
+                        ids,
+                        floats,
+                        skeleton,
+                        joint_nodes,
+                        &mut scene.warnings,
+                    )?)
                 } else {
                     None
                 };
@@ -315,10 +344,18 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
                     split_symbols.extend(std::iter::repeat_n(symbol, parts.len()));
                     split_faces.extend(parts);
                 }
-                let faces = split_faces;
-                let face_symbols = split_symbols;
+                let mut ordered: Vec<_> = split_faces.into_iter().zip(split_symbols).collect();
+                ordered.sort_by(|a, b| a.1.cmp(&b.1));
+                if ordered.len() > face_limit {
+                    scene.warnings.push(format!(
+                        "Generated model limit reached for {}",
+                        geometry.attr("name").unwrap_or("Mesh")
+                    ));
+                    ordered.truncate(face_limit);
+                }
+                let (faces, face_symbols): (Vec<_>, Vec<_>) = ordered.into_iter().unzip();
                 let mut models = Vec::new();
-                let (center, size) = normalization(&faces)?;
+                let (center, size) = normalization_with_flat_scale(&faces, geometry_basis.x_axis.truncate().length())?;
                 for (index, group) in faces.chunks(8).enumerate() {
                     let mut model = Model {
                         name: geometry.attr("name").or_else(|| geometry.attr("id")).unwrap_or("Mesh").into(),
@@ -330,7 +367,9 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
                     };
                     model.normalize_to(center, size)?;
                     let id = scene.models.len();
+                    scene.normalized_bounds.insert(id, model.normalized_bounds());
                     symbols.insert(id, face_symbols[index * 8..(index * 8 + group.len())].to_vec());
+                    scene.material_bindings.insert(id, symbols[&id].clone());
                     models.push(id);
                     scene.models.push(model);
                 }
@@ -351,7 +390,13 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
                 let normalized = Mat4::from_scale_rotation_translation(source.size, Quat::IDENTITY, source.center);
                 scene.instances.push(Instance {
                     model: *model,
-                    transform: basis * global * basis.inverse() * normalized,
+                    transform: basis
+                        * global
+                        * if controller.is_some() {
+                            normalized
+                        } else {
+                            basis.inverse() * normalized
+                        },
                     name: node.attr("name").or_else(|| node.attr("id")).unwrap_or(&source.name).into(),
                     materials: symbols[model]
                         .iter()
@@ -379,9 +424,11 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
                     materials,
                     default,
                     skeleton,
+                    joint_nodes,
                     scene,
                     visiting,
                     depth + 1,
+                    face_limit,
                 )?,
                 "instance_node" => {
                     let uri = nested.attr("url").ok_or_else(|| AssetError::invalid("node instance URI"))?;
@@ -399,9 +446,11 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
                         materials,
                         default,
                         skeleton,
+                        joint_nodes,
                         scene,
                         visiting,
                         depth + 1,
+                        face_limit,
                     )?;
                     visiting.remove(uri);
                 }
@@ -422,9 +471,11 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
             &materials,
             default,
             skeleton,
+            &joint_nodes,
             &mut scene,
             &mut HashSet::new(),
             0,
+            face_limit,
         )?;
     }
     // LLDAELoader::OpenFile / processDomModel also adds skinned geometry
@@ -462,9 +513,11 @@ pub fn parse_with_meters(data: &[u8], skeleton: &crate::Skeleton, assume_meters:
                 &materials,
                 default,
                 skeleton,
+                &joint_nodes,
                 &mut scene,
                 &mut HashSet::new(),
                 0,
+                face_limit,
             )?;
         }
     }
@@ -605,7 +658,7 @@ fn read_geometry(
                             _ => {}
                         }
                     }
-                    let index = vertices.len() as u32;
+                    let index = u32::try_from(vertices.len()).map_err(|_| AssetError::TooLarge("mesh vertices"))?;
                     vertices.push(vertex);
                     position_indices.push(original);
                     map.insert(tuple.to_vec(), index);
@@ -626,7 +679,7 @@ fn read_geometry(
             material: default,
         };
         if face.vertices.iter().all(|v| v.normal == [0.0; 3]) {
-            process::normals(&mut face, 180.0)?;
+            process::missing_normals(&mut face)?;
         }
         face.validate_geometry()?;
         faces.push(face);
@@ -639,13 +692,14 @@ fn read_geometry(
     Ok((faces, symbols, originals))
 }
 
-type Influences = Vec<([u8; 4], [f32; 4])>;
+type Influences = Vec<([u16; 4], [f32; 4])>;
 fn read_skin(
     skin: &Element,
     basis: Mat4,
     ids: &HashMap<String, &Element>,
     cache: &mut HashMap<String, FloatSource>,
     skeleton: &crate::Skeleton,
+    joint_nodes: &HashMap<String, &Element>,
     warnings: &mut Vec<String>,
 ) -> Result<(Skin, Influences), AssetError> {
     let joints = child(skin, "joints").ok_or_else(|| AssetError::invalid("skin joints"))?;
@@ -663,7 +717,7 @@ fn read_skin(
         .text();
     let mut output_names = Vec::new();
     for name in names.split_whitespace() {
-        if output_names.len() >= 254 {
+        if output_names.len() >= u16::MAX as usize {
             return Err(AssetError::TooLarge("skin joints"));
         }
         output_names.push(skeleton.find(name).map(|i| skeleton.joints[i].name.clone()).unwrap_or_else(|| {
@@ -690,24 +744,22 @@ fn read_skin(
         .unwrap_or_else(|| Mat4::IDENTITY.to_cols_array().to_vec());
     let mut alternate_bind = Vec::with_capacity(output_names.len());
     for (name, inverse) in output_names.iter().zip(&inverse_bind) {
-        let node = ids.values().find(|node| {
-            tag(node) == "node"
-                && [node.attr("sid"), node.attr("id"), node.attr("name")]
-                    .into_iter()
-                    .flatten()
-                    .any(|candidate| candidate == name || skeleton.find(candidate).is_some_and(|i| skeleton.joints[i].name == *name))
-        });
+        let node = joint_nodes.get(name).copied();
         let offset = if let Some(node) = node {
-            if let Some(matrix) = child(node, "matrix") {
-                let values: [f32; 16] = numbers(&matrix.text())?
-                    .try_into()
-                    .map_err(|_| AssetError::invalid("joint matrix"))?;
-                basis.transform_vector3(Mat4::from_cols_array(&values).transpose().w_axis.truncate())
-            } else if let Some(translation) = child(node, "translate") {
+            if let Some(translation) = node
+                .elements()
+                .find(|e| tag(e) == "translate" && e.attr("sid").is_some_and(|sid| sid == "translate" || sid == "location"))
+                .or_else(|| child(node, "translate"))
+            {
                 let values: [f32; 3] = numbers(&translation.text())?
                     .try_into()
                     .map_err(|_| AssetError::invalid("joint translation"))?;
                 basis.transform_vector3(Vec3::from_array(values))
+            } else if let Some(matrix) = child(node, "matrix").or_else(|| node.elements().find(|e| e.attr("sid") == Some("transform"))) {
+                let values: [f32; 16] = numbers(&matrix.text())?
+                    .try_into()
+                    .map_err(|_| AssetError::invalid("joint matrix"))?;
+                basis.transform_vector3(Mat4::from_cols_array(&values).transpose().w_axis.truncate())
             } else {
                 Vec3::ZERO
             }
@@ -772,7 +824,7 @@ fn read_skin(
                 return Err(AssetError::invalid("negative skin weight"));
             }
             if weight > 0.0 {
-                weighted.push((joint as u8, weight));
+                weighted.push((joint as u16, weight));
             }
         }
         weighted.sort_by(|a, b| b.1.total_cmp(&a.1));

@@ -5,6 +5,9 @@
 pub mod collada;
 pub mod encode;
 pub mod gltf;
+mod gltf_skin;
+#[cfg(test)]
+mod parity_tests;
 pub mod process;
 pub mod skin;
 #[cfg(test)]
@@ -19,7 +22,9 @@ pub struct Vertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
-    pub joints: [u8; 4],
+    /// Source palettes can exceed the upload palette; glTF pruning happens
+    /// after geometry has established which joints actually carry weights.
+    pub joints: [u16; 4],
     pub weights: [f32; 4],
 }
 impl meshopt::DecodePosition for Vertex {
@@ -72,17 +77,52 @@ pub struct Scene {
     pub warnings: Vec<String>,
     pub image_uris: std::collections::HashMap<usize, String>,
     pub source_uris: Vec<String>,
+    /// Source material symbols, including repeated symbols after a face split.
+    /// Instance bindings may give those symbols different material values.
+    pub material_bindings: std::collections::HashMap<usize, Vec<String>>,
+    /// Actual geometry extents after normalization. A flat source axis has
+    /// a unit normalization scale, but must retain its zero preview span.
+    pub normalized_bounds: std::collections::HashMap<usize, [Vec3; 2]>,
+}
+
+/// ImporterModelLimit (LLDAELoader / LLGLTFLoader): extra generated models,
+/// divided across source meshes, rather than a cap on scene instances.
+pub const DEFAULT_MODEL_LIMIT: u32 = 768;
+
+impl Scene {
+    pub fn used_materials(&self) -> std::collections::BTreeSet<usize> {
+        self.instances
+            .iter()
+            .flat_map(|instance| {
+                self.models.get(instance.model).into_iter().flat_map(move |model| {
+                    model
+                        .faces
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, face)| !face.indices.is_empty())
+                        .map(move |(slot, face)| instance.materials.get(slot).copied().unwrap_or(face.material))
+                })
+            })
+            .collect()
+    }
+}
+
+pub(crate) fn allocate<T: Clone>(count: usize, value: T, label: &'static str) -> Result<Vec<T>, AssetError> {
+    let mut result = Vec::new();
+    result.try_reserve_exact(count).map_err(|_| AssetError::TooLarge(label))?;
+    result.resize(count, value);
+    Ok(result)
 }
 
 impl Face {
     pub fn validate(&self) -> Result<(), AssetError> {
-        if self.vertices.len() > 65534 || self.indices.len() > 3 * 1024 * 1024 {
+        if self.vertices.len() > 65535 {
             return Err(AssetError::TooLarge("mesh face"));
         }
         self.validate_geometry()
     }
     pub fn validate_geometry(&self) -> Result<(), AssetError> {
-        if self.vertices.len() > 4 * 1024 * 1024 || self.indices.len() > 12 * 1024 * 1024 {
+        if self.vertices.len() > u32::MAX as usize || self.indices.len() > i32::MAX as usize / 2 {
             return Err(AssetError::TooLarge("mesh primitive"));
         }
         if !self.indices.len().is_multiple_of(3) || self.indices.iter().any(|i| *i as usize >= self.vertices.len()) {
@@ -116,6 +156,20 @@ impl Face {
     }
 }
 impl Model {
+    pub fn normalized_bounds(&self) -> [Vec3; 2] {
+        let mut min = Vec3::splat(f32::MAX);
+        let mut max = Vec3::splat(f32::MIN);
+        for vertex in self.faces.iter().flat_map(|face| &face.vertices) {
+            let point = Vec3::from_array(vertex.position);
+            min = min.min(point);
+            max = max.max(point);
+        }
+        if min.x == f32::MAX {
+            [Vec3::splat(-0.5), Vec3::splat(0.5)]
+        } else {
+            [min, max]
+        }
+    }
     pub fn normalize(&mut self) -> Result<(), AssetError> {
         let (center, size) = normalization(&self.faces)?;
         self.normalize_to(center, size)
@@ -150,6 +204,10 @@ impl Model {
 
 /// LLDAELoader normalizes the entire source before splitting extra faces.
 pub fn normalization(faces: &[Face]) -> Result<(Vec3, Vec3), AssetError> {
+    normalization_with_flat_scale(faces, 1.0)
+}
+
+fn normalization_with_flat_scale(faces: &[Face], flat_scale: f32) -> Result<(Vec3, Vec3), AssetError> {
     let mut min = Vec3::splat(f32::MAX);
     let mut max = Vec3::splat(f32::MIN);
     for face in faces {
@@ -163,15 +221,23 @@ pub fn normalization(faces: &[Face]) -> Result<(Vec3, Vec3), AssetError> {
     if !min.is_finite() || min.x == f32::MAX {
         return Err(AssetError::invalid("empty mesh"));
     }
-    Ok(((min + max) * 0.5, (max - min).max(Vec3::splat(0.00001))))
+    // LLModel::normalizeVolumeFaces uses a unit scale for flat axes. A tiny
+    // artificial prim scale is rejected by the upload service and also
+    // changes the bind/tangent frame of rigged planar surfaces.
+    let size = Vec3::from_array(
+        (max - min)
+            .to_array()
+            .map(|axis| if axis.abs() < 0.00001 * flat_scale { flat_scale } else { axis }),
+    );
+    Ok(((min + max) * 0.5, size))
 }
 
 /// Split a primitive by both the 16-bit vertex limit and the eight-face
 /// limit, preserving every triangle and every material instead of trimming.
 pub fn split_face(vertices: Vec<Vertex>, indices: Vec<u32>, material: usize) -> Result<Vec<Face>, AssetError> {
     use std::collections::HashMap;
-    if vertices.len() > 4 * 1024 * 1024
-        || indices.len() > 12 * 1024 * 1024
+    if vertices.len() > u32::MAX as usize
+        || indices.len() > i32::MAX as usize / 2
         || !indices.len().is_multiple_of(3)
         || indices.iter().any(|i| *i as usize >= vertices.len())
     {
@@ -185,8 +251,25 @@ pub fn split_face(vertices: Vec<Vertex>, indices: Vec<u32>, material: usize) -> 
         material,
     };
     for triangle in indices.as_chunks::<3>().0 {
-        let new = triangle.iter().filter(|i| !map.contains_key(*i)).count();
-        if face.vertices.len() + new > 65534 {
+        for old in triangle {
+            let vertex = &vertices[*old as usize];
+            let key = (
+                vertex.position.map(f32::to_bits),
+                vertex.normal.map(f32::to_bits),
+                vertex.uv.map(f32::to_bits),
+                vertex.joints,
+                vertex.weights.map(f32::to_bits),
+            );
+            let index = *map.entry(key).or_insert_with(|| {
+                let i = face.vertices.len() as u32;
+                face.vertices.push(vertex.clone());
+                i
+            });
+            face.indices.push(index);
+        }
+        // load_face_from_dom_triangles: finish a whole triangle before
+        // splitting, leaving room for its three new vertices.
+        if face.vertices.len() >= 65532 {
             face.validate()?;
             parts.push(face);
             face = Face {
@@ -195,14 +278,6 @@ pub fn split_face(vertices: Vec<Vertex>, indices: Vec<u32>, material: usize) -> 
                 material,
             };
             map.clear();
-        }
-        for old in triangle {
-            let index = *map.entry(*old).or_insert_with(|| {
-                let i = face.vertices.len() as u32;
-                face.vertices.push(vertices[*old as usize].clone());
-                i
-            });
-            face.indices.push(index);
         }
     }
     if !face.indices.is_empty() {
