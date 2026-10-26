@@ -24,6 +24,7 @@ mod histogram;
 pub mod hud;
 mod label_depth;
 pub mod light_tiles;
+pub mod looks;
 pub mod main_thread;
 mod occlusion;
 mod packet;

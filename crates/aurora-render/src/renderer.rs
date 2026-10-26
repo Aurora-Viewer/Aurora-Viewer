@@ -1439,6 +1439,8 @@ pub(crate) struct Backend {
     glow: Glow,
     /// Depth of field, made the first time it is on.
     dof: Option<crate::dof::Dof>,
+    /// The photo's look, made the first time one is on.
+    looks: Option<crate::looks::Looks>,
     rlva_spheres: Option<crate::rlva::Spheres>,
     rlva_overlays: Option<crate::rlva::overlay::Overlays>,
     rlva_resolution_divisor: u32,
@@ -2772,6 +2774,7 @@ impl Backend {
             shadow_sampler,
             glow,
             dof: None,
+            looks: None,
             rlva_spheres: None,
             rlva_overlays: None,
             rlva_resolution_divisor: 1,
@@ -7023,6 +7026,18 @@ impl Backend {
             self.rlva_spheres = None;
             composed_view
         };
+        // the photo's look: the post pass and SMAA draw into its input,
+        // and its passes into the frame
+        let look = f.look.as_ref().filter(|look| !look.ops.is_empty());
+        if look.is_some() {
+            self.looks
+                .get_or_insert_with(|| crate::looks::Looks::new(&self.device))
+                .prepare(&self.device, self.config.format, world_size);
+        } else if let Some(looks) = &mut self.looks {
+            looks.idle();
+        }
+        let looks = look.and(self.looks.as_ref()).and_then(|looks| Some((looks, looks.input()?)));
+        let post_target = looks.map_or(scene_target, |(_, input)| input);
         // ---- post (tonemap) to the swapchain
         {
             let ts = match (&self.timer, timer_slot) {
@@ -7036,7 +7051,7 @@ impl Backend {
             // with SMAA the post pass fills its gamma-encoded input image
             let (post_view, post_pipe, post_ts, smaa_ts) = match &self.smaa_targets {
                 Some(st) => (&st.ldr, &self.smaa.post_ldr, None, ts),
-                None => (scene_target, &self.pipelines.post, ts, None),
+                None => (post_target, &self.pipelines.post, ts, None),
             };
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -7061,7 +7076,11 @@ impl Backend {
                 pass.draw(0..3, 0..1);
             }
             if let Some(st) = &self.smaa_targets {
-                self.smaa.encode(&mut encoder, st, scene_target, smaa_ts);
+                self.smaa.encode(&mut encoder, st, post_target, smaa_ts);
+            }
+            if let (Some((looks, _)), Some(look)) = (looks, look) {
+                let passes = looks.encode(&self.queue, &mut encoder, look, scene_target);
+                calls.set(calls.get() + passes);
             }
         }
 

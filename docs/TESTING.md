@@ -249,6 +249,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
+| `AURORA_DEMO_PHOTO_LOOK=<filter>[:<percent>][:compare][:panel]` | The photo's filter (a Legacy Viewer photo filter), its strength, the before / after line |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
@@ -371,6 +372,21 @@ chosen` and `isolation demo: choosing stopped, 1 chosen`. `-panel` opens
 the viewfinder's isolation panel. Use `AURORA_FPS_LIMIT=60`
 and capture from frame 700 (`AURORA_AA=3` and `6` for the two edge paths,
 MSAA and SMAA).
+
+`AURORA_DEMO_PHOTO_LOOK` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
+mode): at frame 600 the photo takes that filter, named like the Legacy
+Viewer's file (`Sepia`, `Toycamera`, `Lightleak`, `Miniature`,
+`Posterize`…, see `crates/aurora-render/src/looks/legacy/`), at 100 % or the
+percentage given; the log gives `photo look demo: <filter> at <n> %`.
+`compare` puts the before / after line in the middle of the viewfinder's
+frame (the scene as it is on its left, "Before" and "After" over it);
+`panel` opens the viewfinder's filter panel, or scrolls the photo window to
+its Filter section. Without the variable, the photo scenarios start with no
+filter. With `viewfinder`, the whole frame shows the filter live; with
+`open` or `classic`, the view and the preview do; with `save:…`, the file
+is drawn with it (`Posterize` with `AURORA_DEMO_SNAPSHOT_TILE=1024`: the 15
+tiles share the histogram curves, no seam along their borders). Capture
+from frame 700.
 
 `AURORA_DEMO_CONTROLS` opens the Controls window at frame 600: `camera` on
 its Camera tab (joysticks, zoom, the four views, object view, mouselook,

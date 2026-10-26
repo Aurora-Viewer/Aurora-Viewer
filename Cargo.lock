@@ -627,6 +627,7 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "aurora-assets",
+ "aurora-llsd",
  "bcdec_rs",
  "bytemuck",
  "egui",

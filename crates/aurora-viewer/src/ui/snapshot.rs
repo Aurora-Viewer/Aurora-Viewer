@@ -42,6 +42,14 @@ pub struct SnapshotUi {
     pub light: crate::snapshot::light::PhotoLight,
     /// The free camera's switch and flight (never saved).
     pub free: crate::camera::free::FreeSettings,
+    /// The filter pointed at in a list, tried on the live view until the
+    /// next frame of the interface (Some(None): "No filter").
+    pub look_hover: Option<Option<&'static str>>,
+    /// The before / after comparison of the live view: the share of the
+    /// photo's width left as it is.
+    pub look_compare: Option<f32>,
+    /// The settings scroll to the filter once (AURORA_DEMO_PHOTO_LOOK).
+    pub look_reveal: bool,
 }
 
 /// Where a photo goes (Firestorm's snapshot panels; the profile feed
@@ -173,6 +181,7 @@ impl SnapshotUi {
         classic: bool,
     ) -> Vec<Action> {
         let mut out = Vec::new();
+        self.look_hover = None;
         let screen = ctx.content_rect();
         let mut full = false;
         let full_tip = aurora_i18n::tr!("photo-full-frame");
@@ -666,6 +675,13 @@ impl SnapshotUi {
         section(ui, p, "sun-filled", aurora_i18n::tr!("photo-section-light"));
         light_rows(ui, p, &mut self.light, view.exposure, out);
 
+        let filter = ui.cursor();
+        section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
+        look_rows(ui, p, s, &mut self.look_hover);
+        if std::mem::take(&mut self.look_reveal) {
+            ui.scroll_to_rect(filter.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
+        }
+
         ui.add_space(2.0);
         widgets::collapsing(ui, p, "photo_file", aurora_i18n::tr!("photo-section-file"), false, |ui| {
             row(ui, p, aurora_i18n::tr!("photo-base-name"), None, |ui| {
@@ -960,6 +976,43 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
     });
 }
 
+/// The photo's filter (the Legacy Viewer's Filter list, LLFloaterSnapshot's
+/// filters_combobox) and its strength; the filter pointed at in the list is
+/// tried on the live view.
+fn look_rows(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, hover: &mut Option<Option<&'static str>>) {
+    use crate::snapshot::looks;
+    row(ui, p, aurora_i18n::tr!("photo-look"), None, |ui| {
+        egui::ComboBox::from_id_salt("photo_look")
+            .selected_text(looks::label(s.look.as_deref()))
+            .width(ui.available_width().min(150.0))
+            .height(360.0)
+            .show_ui(ui, |ui| {
+                let none = ui.selectable_label(s.look.is_none(), aurora_i18n::tr!("photo-look-none"));
+                if none.hovered() {
+                    *hover = Some(None);
+                }
+                if none.clicked() {
+                    s.look = None;
+                }
+                for (id, name) in looks::list() {
+                    let resp = ui.selectable_label(s.look.as_deref() == Some(id), name);
+                    if resp.hovered() {
+                        *hover = Some(Some(id));
+                    }
+                    if resp.clicked() {
+                        s.look = Some(id.to_owned());
+                    }
+                }
+            });
+    });
+    if s.look.is_some() {
+        row(ui, p, aurora_i18n::tr!("photo-look-strength"), None, |ui| {
+            ui.spacing_mut().slider_width = (ui.available_width() - 60.0).clamp(40.0, 130.0);
+            ui.add(egui::Slider::new(&mut s.look_strength, 0..=100).suffix(" %"));
+        });
+    }
+}
+
 /// The window's quick light (Phototools' Quick Environments, Pause Clouds,
 /// Attached Lights and Exposure), for the photo only: the window gives the
 /// user's own back when it closes.
@@ -1098,7 +1151,9 @@ fn changed(s: &Settings, before: &Settings, out: &mut Vec<Action>) {
             || s.profile_size != before.profile_size
             || s.dof != before.dof
             || s.interface != before.interface
-            || s.huds != before.huds;
+            || s.huds != before.huds
+            || s.look != before.look
+            || s.look_strength != before.look_strength;
         out.push(if photo_changed { Action::Changed } else { Action::Saved });
     }
 }
@@ -1384,7 +1439,7 @@ fn row(ui: &mut egui::Ui, p: &Palette, label: &str, hint: Option<&str>, control:
 }
 
 /// A choice among several shown side by side: the accent when chosen.
-fn chip(ui: &mut egui::Ui, p: &Palette, label: &str, sub: Option<&str>, on: bool, enabled: bool) -> egui::Response {
+pub(crate) fn chip(ui: &mut egui::Ui, p: &Palette, label: &str, sub: Option<&str>, on: bool, enabled: bool) -> egui::Response {
     let font = egui::FontId::proportional(12.0);
     let main = ui.painter().layout_no_wrap(label.to_owned(), font, p.ink);
     let sub = sub.map(|t| ui.painter().layout_no_wrap(t.to_owned(), egui::FontId::proportional(10.0), p.ink));

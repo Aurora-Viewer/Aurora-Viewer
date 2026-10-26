@@ -8536,6 +8536,11 @@ impl App {
             },
             // the photo's isolation, "show only" on an empty background
             cutout: self.world.photo_isolation.empty_background(),
+            // a photo's look, or the live view's in the photo mode
+            look: match &photo {
+                Some(f) => f.look.clone(),
+                None => self.live_look((w, h)),
+            },
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 

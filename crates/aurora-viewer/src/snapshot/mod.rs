@@ -12,6 +12,7 @@ pub mod gallery;
 pub mod inventory;
 pub mod isolate;
 pub mod light;
+pub mod looks;
 pub mod profile;
 pub mod quality;
 pub mod save;
@@ -244,6 +245,11 @@ pub struct Settings {
     pub quality: bool,
     /// The viewfinder's display, AF area, peaking and beep.
     pub viewfinder: viewfinder::Prefs,
+    /// The photo's look: a Legacy Viewer filter by its file's name
+    /// (`looks`); None: none, the Legacy Viewer's "No Filter".
+    pub look: Option<String>,
+    /// How much of the look, in percent.
+    pub look_strength: u8,
 }
 
 impl Default for Settings {
@@ -272,6 +278,8 @@ impl Default for Settings {
             dof: Default::default(),
             quality: false,
             viewfinder: Default::default(),
+            look: None,
+            look_strength: 100,
         }
     }
 }

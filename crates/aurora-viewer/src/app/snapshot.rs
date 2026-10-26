@@ -9,6 +9,7 @@
 //! LLWebProfile::uploadImage).
 
 use super::App;
+use crate::snapshot::looks::{self, Placement};
 use crate::snapshot::{self, TilePass, gallery, inventory, profile, save};
 use crate::ui::snapshot::{Action, Destination, EmailView, InventoryView, ProfileView};
 use crate::ui_sound::UiSound;
@@ -99,6 +100,11 @@ struct Job {
     supersample: u32,
     /// Cut out by the isolation (`snapshot::isolate`): its alpha is kept.
     cutout: bool,
+    /// The look it is drawn with, chosen when it started, and its strength.
+    look: Option<(std::sync::Arc<[aurora_render::looks::LookOp]>, u8)>,
+    /// The photo's size, before its supersampling or the preview's
+    /// reduction: the look's pixels.
+    photo: (u32, u32),
 }
 
 /// A held photo (freeze frame) and what shows it.
@@ -118,6 +124,8 @@ pub(super) struct PhotoFrame {
     pub tile: Mat4,
     /// The photo's height: the levels of detail are chosen for it.
     pub height: u32,
+    /// Its look, placed for the part drawn.
+    pub look: Option<aurora_render::looks::PhotoLook>,
 }
 
 type Thumb = (PathBuf, Option<(u32, u32, Vec<u8>)>);
@@ -342,6 +350,16 @@ impl App {
         renderer.snapshot_request = Some(spec);
         job.asked = true;
         s.capturing = Some(spec);
+        // the look in the photo's own pixels, from the corner of the part
+        // drawn; the tiles share the histogram of the live view's last frame
+        let look = job.look.as_ref().map(|(ops, strength)| {
+            let place = Placement {
+                origin: [-(tile.x as f32), -(tile.y as f32)],
+                photo: job.photo,
+                scale: job.size.1 as f32 / job.photo.1.max(1) as f32,
+            };
+            looks::frame_look(ops.clone(), *strength, place, None, !single)
+        });
         Some(PhotoFrame {
             aspect: job.size.0 as f32 / job.size.1.max(1) as f32,
             tile: if single {
@@ -350,6 +368,7 @@ impl App {
                 snapshot::tile_matrix(job.size, tile)
             },
             height: job.size.1,
+            look,
         })
     }
 
@@ -731,7 +750,34 @@ impl App {
             started: Instant::now(),
             supersample,
             cutout: self.world.photo_isolation.empty_background(),
+            look: s.look.as_deref().and_then(looks::ops).map(|ops| (ops, s.look_strength)),
+            photo: full,
         });
+    }
+
+    /// The look of the live view (`snapshot::looks`) while the photo
+    /// window is open: the filter pointed at in a list, or the one chosen,
+    /// over the photo's frame of the `window` (pixels; `ui::snapshot::fit`),
+    /// with the viewfinder's before / after line.
+    pub(super) fn live_look(&self, window: (u32, u32)) -> Option<aurora_render::looks::PhotoLook> {
+        if !self.panels.snapshot {
+            return None;
+        }
+        let s = &self.settings.snapshot;
+        let id = match self.snapshots.ui.look_hover {
+            Some(pointed) => pointed?,
+            None => s.look.as_deref()?,
+        };
+        let photo = self.photo_size(window);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window.0 as f32, window.1 as f32));
+        let frame = crate::ui::snapshot::fit(screen, photo.0 as f32 / photo.1.max(1) as f32);
+        let place = Placement {
+            origin: [frame.left(), frame.top()],
+            photo,
+            scale: frame.height() / photo.1.max(1) as f32,
+        };
+        let compare = self.snapshots.ui.look_compare.filter(|_| self.viewfinder_on());
+        Some(looks::frame_look(looks::ops(id)?, s.look_strength, place, compare, false))
     }
 
     /// The largest side drawn in one pass: the card's, or in demo
@@ -1322,6 +1368,39 @@ impl App {
                 self.settings.save();
             }
             Action::Saved => self.settings.save(),
+        }
+    }
+
+    /// AURORA_DEMO_PHOTO_LOOK=<filter>[:<percent>][:compare][:panel], with
+    /// AURORA_DEMO_SNAPSHOT: the filter (its file's name, `Sepia`,
+    /// `Toycamera`…) at that strength (100 by default), the before / after
+    /// line in the middle, the viewfinder's filter panel open (the photo
+    /// window's settings scrolled to the filter). Without it,
+    /// the scenarios start with no filter.
+    fn photo_look_demo(&mut self) {
+        let value = std::env::var("AURORA_DEMO_PHOTO_LOOK").unwrap_or_default();
+        let mut parts = value.split(':');
+        let s = &mut self.settings.snapshot;
+        s.look = parts.next().filter(|id| looks::ops(id).is_some()).map(str::to_owned);
+        s.look_strength = 100;
+        self.snapshots.ui.look_compare = None;
+        for part in parts {
+            match part {
+                "compare" => self.snapshots.ui.look_compare = Some(0.5),
+                "panel" => {
+                    self.snapshots.vf.looks = true;
+                    self.snapshots.vf.hinted = true;
+                    self.snapshots.ui.look_reveal = true;
+                }
+                strength => {
+                    if let Ok(v) = strength.parse::<u8>() {
+                        s.look_strength = v.min(100);
+                    }
+                }
+            }
+        }
+        if let Some(id) = &s.look {
+            log::info!("photo look demo: {id} at {} %", s.look_strength);
         }
     }
 
@@ -1921,6 +2000,9 @@ impl App {
                 viewfinder,
             });
         }
+        if self.frame_count == 600 && self.snapshots.demo.is_some() {
+            self.photo_look_demo();
+        }
         let Some(demo) = self.snapshots.demo.as_ref() else {
             return;
         };
@@ -1991,7 +2073,7 @@ impl App {
                 vf.menu = v.menu;
                 vf.help = v.help;
                 vf.drawer = v.drawer;
-                vf.hinted = v.menu || v.help || v.drawer;
+                vf.hinted = v.menu || v.help || v.drawer || vf.looks;
             }
         }
         if demo.profile {
