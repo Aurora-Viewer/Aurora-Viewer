@@ -1400,7 +1400,7 @@ ui-context-at-least-one-object-is-not-yours = Au moins un des objets ne vous app
 ui-options-commands-on-the-ground = Au sol
 ui-options-above-this-limit-the-avatar-also-appears-as-a = Au-delà, l'avatar s'affiche aussi en silhouette (1000 m² comme le Legacy Viewer ; 0 = sans limite ; ignorée sans limite de complexité)
 ui-options-objects-beyond-this-distance-are-not-drawn-96-m = Au-delà, les objets ne sont pas dessinés (96 m par défaut)
-ui-options-textures-beyond-this-distance-use-a-lower-resolution = Au-delà, les textures lointaines sont réduites
+ui-options-video-memory-the-textures-may-use = Mémoire vidéo que les textures peuvent occuper ; au-delà, leur résolution baisse, d'abord celles hors du champ de vision
 ui-options-above-this-limit-the-avatar-appears-as-a-gray = Au-delà, un avatar s'affiche en silhouette grise sans ses objets (comme le Legacy Viewer ; tout à droite : sans limite)
 common-none = Aucun
 ui-land-access-no-valid-uuid-found-in-the-file = Aucun UUID valide trouvé dans le fichier.
