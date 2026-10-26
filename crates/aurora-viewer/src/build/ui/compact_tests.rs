@@ -1075,6 +1075,26 @@ fn construction_large_keeps_each_section_and_tool_inside_a_stable_window() {
 }
 
 #[test]
+fn create_panel_holds_still_at_every_width_around_its_scroll_bar() {
+    // #1092: the shape grid sized itself from the width left by the scroll
+    // bar, so at widths where only the wider grid overflowed the bar came
+    // and went on every frame and the whole panel jittered.
+    let mut inspector = Inspector::new();
+    inspector.tool.set_tool(Tool::Create);
+    let label = aurora_i18n::tr!("build-ui-tools-keep-selection-tool");
+    let place = |texts: &[(String, egui::Rect)]| texts.iter().find(|(text, _)| text == label).map(|(_, rect)| rect.min);
+    // Past about 650 points the grid pushes the options below the view.
+    for width in (300..=600).step_by(3) {
+        resize_inspector(&mut inspector, vec2(width as f32, 300.0));
+        let first = place(&inspector.show(vec![]).1);
+        assert!(first.is_some(), "Create options missing at width {width}");
+        for _ in 0..4 {
+            assert_eq!(place(&inspector.show(vec![]).1), first, "Create panel moved at width {width}");
+        }
+    }
+}
+
+#[test]
 fn construction_reflows_at_fixed_sizes_and_uses_saved_geometry_after_layout_reload() {
     let mut inspector = Inspector::new();
     inspector.tool.tab = 3;
