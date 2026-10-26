@@ -58,6 +58,10 @@ use std::collections::{HashMap, HashSet};
 pub struct ChatUi {
     pub input: String,
     pub focus_request: bool,
+    /// `start_gesture` resumes a nonempty draft at its existing caret.
+    gesture_keep_cursor: bool,
+    /// The slash press reserved for `start_gesture`, until its release.
+    gesture_key_down: Option<winit::keyboard::KeyCode>,
     pub has_focus: bool,
     /// The local chat field keeps the keyboard after a message is sent
     /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
@@ -228,6 +232,7 @@ pub struct ChatUi {
     pub own_windows: bool,
     /// The Conversations window was open last frame.
     main_open: bool,
+    main_was_minimized: bool,
     /// The window whose emoji picker is open (`popout::one_picker`).
     picker_window: Option<popout::WindowKey>,
 }
@@ -252,6 +257,47 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// `start_gesture` and FSNearbyChat::showDefaultChatBar
+    /// (indra/newview/llviewerinput.cpp, fsnearbychathub.cpp): take the local
+    /// bar's keyboard, adding `/` only to an empty editor. A conversation's
+    /// draft stays separate, even when its nearby-chat tab is in sight.
+    pub(crate) fn gesture_key(
+        &mut self,
+        ctx: &egui::Context,
+        key: &winit::keyboard::Key,
+        code: winit::keyboard::KeyCode,
+        pressed: bool,
+        mods: crate::keybinds::Mods,
+    ) -> bool {
+        let released = !pressed && self.gesture_key_down == Some(code);
+        if released {
+            self.gesture_key_down = None;
+        }
+        // A focused button or list is not a text editor. `egui_wants_keyboard_input`
+        // includes those too, whereas the Legacy action checks acceptsTextInput.
+        if ctx.text_edit_focused() || egui::Popup::is_any_open(ctx) || mods.ctrl || mods.alt {
+            return false;
+        }
+        if pressed && (self.gesture_key_down == Some(code) || crate::keybinds::gesture_chat_key(key, mods)) {
+            // Shift may be released before the slash key on AZERTY. Remember
+            // its physical key so the changed release character still works.
+            self.gesture_key_down = Some(code);
+            return true;
+        }
+        if released {
+            self.gesture_keep_cursor = !self.input.is_empty();
+            if self.input.is_empty() {
+                self.input.push('/');
+            }
+            self.focus_request = true;
+        }
+        released
+    }
+
+    pub(crate) fn cancel_gesture_key(&mut self) {
+        self.gesture_key_down = None;
+    }
+
     /// A demo scene's lines, given while its conversation is in sight,
     /// count as arrived while away: their "New" line shows.
     pub fn demo_lines_unseen(&mut self) {
@@ -2500,6 +2546,7 @@ pub fn show(
     let mut actions = Vec::new();
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
+    let opening_conversation = world.social.focus_im.is_some();
     if let Some(f) = world.social.focus_im.take() {
         let conversation = (!f.is_nil()).then_some(f);
         if popout::opens_in_own_window(&st.popped, conversation, st.own_windows) {
@@ -2542,6 +2589,11 @@ pub fn show(
         }
     };
     select_main(st, open);
+    let minimized = super::widgets::floater_minimized(ctx, "conversations");
+    // Opening a specific session keeps its existing composer/call focus rules.
+    if *open && !minimized && !st.contacts && !opening_conversation && (!st.main_open || st.main_was_minimized) {
+        st.conv_focus_request = true;
+    }
     // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`),
     // over the entries without a window of their own
     if *open && !enlarged {
@@ -2793,6 +2845,7 @@ pub fn show(
     };
     popout::show(ctx, env, world, st, &mut actions, open);
     st.main_open = *open;
+    st.main_was_minimized = minimized;
     // the column's "+" and search: one resident for an IM, several for a
     // conference (LLAvatarActions::startIM / startConference)
     if let Some(residents) = st.picker.show(ctx, p, world) {
@@ -2836,23 +2889,9 @@ fn classic_pane(
     h: f32,
     own_name: &str,
 ) {
-    // a resident dropped on it joins it (LLFloaterIMSession::
-    // handleDragAndDrop, DAD_PERSON / DAD_CALLINGCARD)
-    if let Some(conversation) = st.selected {
-        let pane = ui.available_rect_before_wrap();
-        let zone = ui.interact(pane, ui.scope_id().with("person_drop"), egui::Sense::hover());
-        if zone.dnd_hover_payload::<super::call_invite::PersonDrag>().is_some() {
-            ui.painter().rect_stroke(
-                pane,
-                ui.visuals().window_corner_radius,
-                egui::Stroke::new(1.5, p.violet),
-                egui::StrokeKind::Inside,
-            );
-        }
-        if let Some(person) = zone.dnd_release_payload::<super::call_invite::PersonDrag>() {
-            actions.push(ConvAction::AddPeople(conversation, vec![person.0]));
-        }
-    }
+    let pane = ui.available_rect_before_wrap();
+    let kind = st.selected.map(|id| sidebar::kind(world, &id));
+    workspace::drops(ui, p, pane, st, kind, actions);
     // who the conversation is with, and its actions
     header::show(ui, p, icons, pics, world, st, actions);
     ui.add_space(4.0);
@@ -3622,7 +3661,11 @@ pub(crate) fn bar_input(
     let focusing = std::mem::take(&mut st.focus_request);
     if focusing {
         resp.request_focus();
-        cursor_to_end(ui.ctx(), resp.id, &st.input);
+        // FSNearbyChat::showDefaultChatBar only moves the caret after
+        // inserting `/` into an empty field; a draft keeps its position.
+        if !std::mem::take(&mut st.gesture_keep_cursor) {
+            cursor_to_end(ui.ctx(), resp.id, &st.input);
+        }
     }
     st.has_focus = resp.has_focus();
     // Modified Enter does not surrender egui's single-line field focus.
@@ -3662,6 +3705,78 @@ pub(crate) fn bar_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gesture_chat_remembers_a_shifted_slash_until_its_own_release() {
+        let ctx = egui::Context::default();
+        let mut st = ChatUi::default();
+        let slash = winit::keyboard::Key::Character("/".into());
+        let period = winit::keyboard::Key::Character(".".into());
+        let code = winit::keyboard::KeyCode::Period;
+        let plain = crate::keybinds::Mods::default();
+        let shifted = crate::keybinds::Mods { shift: true, ..plain };
+        for _ in 0..3 {
+            assert!(st.gesture_key(&ctx, &slash, code, true, shifted));
+            assert!(st.input.is_empty());
+            assert!(!st.focus_request);
+        }
+        assert!(!st.gesture_key(&ctx, &period, winit::keyboard::KeyCode::ShiftLeft, false, plain));
+        assert!(st.gesture_key(&ctx, &period, code, false, plain));
+        assert_eq!(st.input, "/");
+        assert!(st.focus_request);
+
+        st.input.clear();
+        st.focus_request = false;
+        assert!(st.gesture_key(&ctx, &slash, code, true, shifted));
+        st.cancel_gesture_key();
+        assert!(!st.gesture_key(&ctx, &period, code, false, plain));
+        assert!(st.input.is_empty());
+        assert!(!st.focus_request);
+    }
+
+    #[test]
+    fn gesture_chat_respects_text_editors_and_popups_but_accepts_button_focus() {
+        let mut frames = Frames::new();
+        let mut st = ChatUi::default();
+        let slash = winit::keyboard::Key::Character("/".into());
+        let code = winit::keyboard::KeyCode::Slash;
+        let mods = crate::keybinds::Mods::default();
+        let mut search = "search".to_owned();
+        frames.run(vec![], |ui| {
+            egui::TextEdit::singleline(&mut search)
+                .id_salt("search")
+                .show(ui)
+                .response
+                .request_focus();
+        });
+        assert!(frames.ctx.text_edit_focused());
+        for pressed in [true, false] {
+            assert!(!st.gesture_key(&frames.ctx, &slash, code, pressed, mods));
+        }
+        frames.run(vec![egui::Event::Text("/".into())], |ui| {
+            egui::TextEdit::singleline(&mut search).id_salt("search").show(ui);
+        });
+        assert_eq!(search, "search/");
+        assert!(st.input.is_empty());
+        assert!(!st.focus_request);
+
+        frames.run(vec![], |ui| {
+            ui.button("A button").request_focus();
+        });
+        assert!(frames.ctx.egui_wants_keyboard_input());
+        assert!(!frames.ctx.text_edit_focused());
+        assert!(st.gesture_key(&frames.ctx, &slash, code, true, mods));
+        let popup = egui::Id::unique("gesture_popup");
+        egui::Popup::open_id(&frames.ctx, popup);
+        assert!(!st.gesture_key(&frames.ctx, &slash, code, false, mods));
+        assert!(!st.focus_request);
+        egui::Popup::close_all(&frames.ctx);
+        assert!(!st.gesture_key(&frames.ctx, &slash, code, false, mods));
+        assert!(st.gesture_key(&frames.ctx, &slash, code, true, mods));
+        assert!(st.gesture_key(&frames.ctx, &slash, code, false, mods));
+        assert_eq!(st.input, "/");
+        assert!(st.focus_request);
+    }
 
     /// One frame of a notification text with place links: the regions
     /// whose rating is not known are the ones asked, each once.
@@ -4215,6 +4330,110 @@ mod tests {
     }
 
     use crate::ui::widgets::elide_tests::{Frames, LONG, SHORT, WIDE, painted, tooltip_shown};
+
+    #[test]
+    fn opening_conversations_focuses_the_selected_chat_without_taking_it_back() {
+        for style in [
+            crate::settings::ChatStyle::Aurora,
+            crate::settings::ChatStyle::Compact,
+            crate::settings::ChatStyle::Bubbles,
+            crate::settings::ChatStyle::Legacy,
+        ] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = crate::ui::icons::Icons::load(&ctx, None);
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            let pics = HashMap::new();
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let (a, b) = (uuid::Uuid::from_u128(0xA), uuid::Uuid::from_u128(0xB));
+            world.social.session_mut(a);
+            world.social.session_mut(b);
+            let gestures = crate::gestures::Manager::default();
+            let mut st = ChatUi {
+                style,
+                selected: Some(a),
+                ..Default::default()
+            };
+            st.draft_mut(Some(a)).push_str("draft ");
+            st.draft_mut(Some(b)).push_str("other draft");
+            let mut contacts = super::super::contacts::ContactsUi::default();
+            let mut contacts_settings = super::super::contacts::ContactsSettings::default();
+            let other_id = egui::Id::unique("other_conversation_field");
+            let mut other = String::new();
+            let mut frame = |st: &mut ChatUi, mut open, events| {
+                frames.run(events, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut other).id(other_id));
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut emoji,
+                        &pics,
+                        &pics,
+                        &mut world,
+                        &gestures,
+                        st,
+                        &mut contacts,
+                        &mut contacts_settings,
+                        false,
+                        None,
+                        &mut open,
+                    );
+                });
+            };
+            super::super::widgets::minimize_floater(&ctx, "conversations");
+            frame(&mut st, true, Vec::new());
+            assert!(!st.conv_focus_request, "a minimized window does not queue keyboard focus");
+            super::super::widgets::expand_floater(&ctx, "conversations");
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            let field = |chat| egui::Id::unique(("conv_input", chat));
+            assert!(ctx.memory(|m| m.has_focus(field(Some(a)))), "{style:?}");
+            frame(&mut st, true, vec![egui::Event::Text("hello".into())]);
+            assert_eq!(st.draft_mut(Some(a)), "draft hello");
+            assert_eq!(st.draft_mut(Some(b)), "other draft");
+            assert!(st.side_filter.is_empty());
+            let other_field = if style.workspace() { sidebar::search_id() } else { other_id };
+            ctx.memory_mut(|m| m.request_focus(other_field));
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, vec![egui::Event::Text("filter".into())]);
+            assert!(ctx.memory(|m| m.has_focus(other_field)));
+            assert_eq!(st.draft_mut(Some(a)), "draft hello");
+            assert_eq!(st.side_filter, if style.workspace() { "filter" } else { "" });
+            frame(&mut st, false, Vec::new());
+            frame(&mut st, true, Vec::new());
+            assert!(ctx.memory(|m| m.has_focus(field(Some(a)))));
+            frame(&mut st, true, vec![egui::Event::Text("!".into())]);
+            assert_eq!(st.draft_mut(Some(a)), "draft hello!");
+            super::super::widgets::minimize_floater(&ctx, "conversations");
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, Vec::new());
+            super::super::widgets::expand_floater(&ctx, "conversations");
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            assert!(
+                ctx.memory(|m| m.has_focus(field(Some(a)))),
+                "expanding restores the selected chat's focus"
+            );
+            frame(&mut st, false, Vec::new());
+            st.selected = Some(b);
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, vec![egui::Event::Text("!".into())]);
+            assert_eq!(st.draft_mut(Some(b)), "other draft!");
+            assert_eq!(st.draft_mut(Some(a)), "draft hello!");
+            frame(&mut st, false, Vec::new());
+            st.selected = None;
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, vec![egui::Event::Text("nearby".into())]);
+            assert_eq!(st.draft_mut(None), "nearby");
+            assert_eq!(other, if style.workspace() { "" } else { "filter" });
+        }
+    }
 
     /// A tab chosen in the list gives its field the keyboard; what is typed
     /// stays with its conversation when another tab is shown, and goes when

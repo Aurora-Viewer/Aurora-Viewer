@@ -267,7 +267,7 @@ fn quality(cx: &mut Cx) {
             } else {
                 cx.row(
                     tr!("ui-options-texture-memory"),
-                    tr!("ui-options-textures-beyond-this-distance-use-a-lower-resolution"),
+                    tr!("ui-options-video-memory-the-textures-may-use"),
                     &field!(texture_budget_mb),
                     |ui, s| {
                         ui.add(

@@ -82,6 +82,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
+| `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
@@ -90,6 +91,12 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
+
+`AURORA_DEMO_SUN=<azimuth>,<elevation>`: the direction towards the sun for
+the lighting and the shadows (azimuth 0 east, 90 north), the sky keeping
+its own sun. The demo camera looks east, so `0,12` puts a low sun in front
+of it, which the times of day never do: the shadows come towards the
+camera (the contact shadows of issue 988, see `AURORA_DEMO_FEET`).
 
 The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
@@ -3091,11 +3098,17 @@ both open states and the selection count. Capture at frame 620.
   blended (color alpha 0.95: the many mesh bodies and shoes whose faces
   are blended though they look opaque), and two blocks stand on the ground
   left of the view from `AURORA_DEMO_POS="129,134"`, an opaque one and,
-  further left, a blended one. For the contact shadows
+  further left, a blended one; nearer the camera, a hoof (a cylinder 14 cm
+  wide) stands on the ground and a shoe hovers 2 cm above it, opaque or
+  blended like the shoes. For the contact shadows
   (`AURORA_CONTACT_SHADOWS`): with `AURORA_DEBUG_SHADOWS=1`, the blended
   block takes them as the opaque one does; with
   `AURORA_CONTACT_SHADOWS=prepass` it does not (the blended faces were not
-  in the depth the pass reads).
+  in the depth the pass reads). Issue 988: with `AURORA_DEMO_SUN=0,12`,
+  `AURORA_DEBUG_SHADOWS=1` and `AURORA_DEMO_CAMERA=close,615,672,50`
+  (frame 780 at 60 fps), the ground under the hovering shoe takes its
+  contact shadow; with `AURORA_CONTACT_SHADOWS=shell` it stays lit, a
+  thin dark line along the sole's edge.
 - **`AURORA_DEMO_LASHES=1`** (with `AURORA_DEMO_HAIR`, for example
   `1,48,20`): our avatar also wears a small red ball, a blended rigged
   mesh, inside the head shell on the side the default camera sees: the
@@ -3547,7 +3560,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude\|join-map\|join-contact\|join-fly\|join-fly-blocked\|join-fly-late\|join-fly-custom` | Remote friend's received map rights in contact, conversation and profile actions |
 | `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out` | Detached conversations, or nearby chat alone before any IM (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
+| `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: drop feedback, give confirmation, or give and its notice (all conversation styles) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
@@ -4053,6 +4066,12 @@ failure. Grid validation and any paid upload are performed by the human.
   Wolf in the offer's entry): "gives you « Aurora lantern »", "Object",
   Keep / Reject, and no toast. `offer-card-keep` keeps it from the card at
   frame 700: the card greys with "Kept" and the entry leaves the list.
+  The kept card offers "Show in inventory"; clicking it opens Inventory on
+  the received object, clearing filters and expanding its parent path.
+  A confirmation with the linked item name is also saved in the giver's
+  transcript so it remains available after reopening the conversation.
+  `offer-card-legacy-keep` exercises the same links in the Legacy lines.
+  Pending, rejected and unidentified offers show no inventory shortcut.
   `offer-card-legacy` shows the card as one line of the legacy lines;
   `offer-card-legacy-reject` rejects it from its notification at frame 700:
   the line ends with "· Rejected". Capture at frame 900, with
@@ -4408,7 +4427,7 @@ failure. Grid validation and any paid upload are performed by the human.
   reopening a conversation appends it again. No grid is needed.
 
 - **`AURORA_DEMO_CONV_GIVE=away|over|many|drop|give`**: with `AURORA_DEMO_CONV=aurora`
-  (also `aurora:compact` or `aurora:narrow`), an inventory drag starts at
+  (also `aurora:compact`, `aurora:narrow`, `bubbles` or `bubbles:legacy`), an inventory drag starts at
   frame 700 and is never released. `away` leaves the pointer outside the
   window: the friend's messages fade behind the gift and "Drop here to
   give to <name>" in the muted ink. `over` brings the pointer onto the
@@ -4423,6 +4442,9 @@ failure. Grid validation and any paid upload are performed by the human.
   with Enter at frame 740: the conversation then shows one muted notice
   per given root, "Inventory item « … » offered" (or "Inventory folder"),
   without counting as unread (#736). The field has no attach button.
+  Bubbles and Legacy use the same drop and confirmation path, including
+  detached conversations; their feedback is the violet outline and copy
+  cursor, without the workspace's fading hint.
   Manually: drag an item from the inventory onto a private conversation
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
@@ -6641,6 +6663,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
+| `AURORA_VRAM_BUDGET_MB=<n>` | The driver's video memory budget taken as n MB, a smaller card on a large one |
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
@@ -6654,7 +6677,8 @@ What the inventory must show with these scenarios:
 | `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
-| `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
+| `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
+| `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -6779,6 +6803,21 @@ What the inventory must show with these scenarios:
     run. The textures of this scenario are then reloaded on demand, like
     those of the grid (camera moved closer after a reduction). A huge value
     (1000000) removes all pressure, to compare.
+- **`AURORA_VRAM_BUDGET_MB=<n>`**: the budget the driver grants the viewer
+  is taken as n MB (at least 256), what the texture budget and the
+  Performance window then read (`aurora-render/src/vram.rs`); what the
+  driver counts for the viewer stays the real figure.
+  - In demo, `AURORA_DEMO_STREAM=3000` with `AURORA_VRAM_BUDGET_MB=2048`
+    behaves like a small card: the texture target leaves 20 % of the
+    budget free with the rest of what the viewer holds (render targets,
+    geometry, the free room of wgpu's memory blocks), the pressure climbs,
+    and once the textures are lowered what the driver counts falls back
+    under the budget (the `texture memory: pressure` lines give both).
+  - With a value under what the viewer holds even without textures (512),
+    the Memory section of the Performance window
+    (`AURORA_DEMO_PERF=monitor-memory`) shows the budget in the warning
+    colour and the overview the warning "Video memory over the driver's
+    budget".
 - **`AURORA_TEXTURE_SLOTS=<n>`**: the texture table holds n textures
   instead of 65,536 (`aurora-render/src/textures.rs`; the `renderer ready:`
   line of the log gives its size). Each texture known to the streamer holds
@@ -6912,14 +6951,25 @@ What the inventory must show with these scenarios:
   4, default 1.5; 1 is one physical bounce, which hardly shows);
   `AURORA_SSIL_INTENSITY=<0-8>` replaces it for a launch, to compare (at
   2 a glow starts around the foot of objects, at 4 it is grainy).
-- **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass`**: the sun's contact shadows
+- **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell`**: the sun's contact shadows
   (Preferences › Graphics › Contact shadows, `contact_shadows.rs`, after
   Bend Studio's screen space shadows) for this launch, without changing the
   saved setting: `0` off, `1` on, `alt` off and on by turns, one second
   each (on in odd seconds), the mask kept ready; `prepass` on, but cast by
   the depth prepass alone (opaque and masked faces, terrain), as before the
   blended faces opaque enough and the impostor cards were drawn into a copy
-  of it for them (see `AURORA_DEMO_FEET`). They only draw with the
+  of it for them (see `AURORA_DEMO_FEET`); `shell` on, each depth taken
+  as a shell of 0.5 % of its distance (Bend's window, before issue 988)
+  instead of a body as deep as the ray went under it (up to 5 cm, with
+  the sun ahead of the camera): a ray that goes under a thick caster is
+  stopped only where it grazes its edges. **`AURORA_CONTACT_SOFT=0`**:
+  the mask reaches the shading as the pass wrote it, without the 5 × 5
+  softening over each surface (`contact_shadows_filter.wgsl`): hard steps
+  of whole pixels on curved bodies (the sides of our avatar with
+  `AURORA_DEMO_SUN=0,12`) and a dotted line under the hovering shoe of
+  `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
+  frame 690). Softened, neither shows and no shadow spreads from the
+  ground onto a caster nor the reverse. They only draw with the
   sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
   takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
   `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS=129,134`: thin shadows appear

@@ -213,6 +213,13 @@ pub struct Vram {
     pub budget: Option<u64>,
 }
 
+impl Vram {
+    /// The driver counts more for the viewer than the budget it grants.
+    pub fn over_budget(&self) -> bool {
+        matches!((self.usage, self.budget), (Some(u), Some(b)) if u > b)
+    }
+}
+
 /// Everything one sample attributes.
 #[derive(Default)]
 pub struct Inputs<'a> {
@@ -692,6 +699,20 @@ mod tests {
         assert_eq!(a.get(RowId::Render).get(Column::Vram), Some(1000.0));
         assert_eq!(a.get(RowId::Other).get(Column::Vram), Some(600.0));
         assert_eq!(a.total(Column::Vram), Some(5600.0));
+    }
+
+    #[test]
+    fn past_the_drivers_budget() {
+        let v = |usage, budget| Vram {
+            usage,
+            budget,
+            ..Vram::default()
+        };
+        assert!(v(Some(8100), Some(8000)).over_budget());
+        assert!(!v(Some(8000), Some(8000)).over_budget());
+        // no figures from the driver: nothing said
+        assert!(!v(Some(8100), None).over_budget());
+        assert!(!v(None, Some(8000)).over_budget());
     }
 
     #[test]

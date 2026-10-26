@@ -10,6 +10,7 @@ pub mod arena;
 pub mod bc7;
 mod bloom;
 mod contact_shadows;
+mod dedicated;
 mod dof;
 mod drawn_pick;
 mod exposure;
@@ -982,6 +983,7 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn contact_shadows_shader_is_valid() {
         validate(include_str!("shaders/contact_shadows.wgsl"));
+        validate(include_str!("shaders/contact_shadows_filter.wgsl"));
     }
 
     #[test]

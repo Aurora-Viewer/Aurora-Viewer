@@ -79,6 +79,13 @@ pub fn learn(code: KeyCode, text: &str) {
     }
 }
 
+/// The Legacy Viewer's `start_gesture` (indra/newview/llviewerinput.cpp).
+/// Match the character, including Shift on AZERTY and the numeric keypad,
+/// rather than the US slash key's physical position (which can type `?`).
+pub fn gesture_chat_key(key: &winit::keyboard::Key, mods: Mods) -> bool {
+    !mods.ctrl && !mods.alt && matches!(key, winit::keyboard::Key::Character(text) if text == "/")
+}
+
 fn learned(k: &str) -> Option<String> {
     LEARNED.read().ok()?.as_ref()?.get(k).cloned()
 }
@@ -1127,6 +1134,24 @@ mod tests {
     use super::*;
     use crate::build::ui::Shortcut;
 
+    #[test]
+    fn gesture_chat_uses_the_typed_slash_without_ctrl_or_alt() {
+        use winit::keyboard::Key;
+        for shift in [false, true] {
+            let mods = Mods {
+                shift,
+                ..Default::default()
+            };
+            assert!(gesture_chat_key(&Key::Character("/".into()), mods));
+            for text in ["?", ":", "!", "m", "／"] {
+                assert!(!gesture_chat_key(&Key::Character(text.into()), mods), "{text}");
+            }
+            assert!(!gesture_chat_key(&Key::Named(winit::keyboard::NamedKey::Enter), mods));
+            for (ctrl, alt) in [(true, false), (false, true), (true, true)] {
+                assert!(!gesture_chat_key(&Key::Character("/".into()), Mods { ctrl, alt, shift }));
+            }
+        }
+    }
     #[test]
     fn history_keys_never_reach_avatar_camera_or_other_held_bindings_in_any_layout() {
         for (code, letter, history) in [

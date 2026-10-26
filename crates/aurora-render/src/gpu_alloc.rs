@@ -61,7 +61,17 @@ pub fn try_texture(
     }
     let oom = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
     let invalid = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let texture = device.create_texture(desc);
+    // in memory of its own when it can (dedicated.rs), else carved out of
+    // wgpu's blocks, as when the driver refuses it there (the blocks may
+    // still have room)
+    let texture = match crate::dedicated::texture(device, desc) {
+        Some(Ok(texture)) => texture,
+        Some(Err(e)) => {
+            log::debug!("texture '{}' in wgpu's memory blocks: {e}", desc.label.unwrap_or("?"));
+            device.create_texture(desc)
+        }
+        None => device.create_texture(desc),
+    };
     // (an invalid texture makes its view fail validation)
     let view = texture.create_view(view);
     let invalid = pollster::block_on(invalid.pop());
