@@ -74,7 +74,7 @@ shortcut opens the separate People mute list; Ignore never derenders an object
 or adds a sound asset to the blacklist.
 `world/portals.rs` owns bounded, immutable two-minute portal invitations and
 per-observer crossing gates. `aurora-net/src/bridge/portal.rs` validates their
-bounded base64/JSON wire format. Bridge 1.36 adds an owner-authenticated,
+bounded base64/JSON wire format. Bridge 1.37 uses an owner-authenticated,
 region-local relay to the independent query script; late arrivals discover
 existing portals once, with targeted replies and bounded traffic. The bridge
 never teleports anyone. Each recipient checks friendship or their own group
@@ -87,6 +87,24 @@ depth-tested and sorted with world transparency. `ui/portals.rs` provides
 World > Portals and depth-occluded destination/creator/access labels. This is
 an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation
 and teleportRequest (`indra/newview/llagent.cpp`).
+
+Portal wire v2 separates a public `Announcement` from targeted `Details`.
+Restricted announcements contain no destination, landmark asset/title or group
+identity. An observer makes one nonce-bound request with at most one retry;
+the creator checks their own friends or a fresh, complete server member list
+shared through `world/group_data.rs` before sending any details. Unsent grants
+are checked again at the bounded send cadence; unknown/denied requests remain
+silent. Responses cannot use regional broadcast, in both Rust and the bridge.
+Private details remain in session memory, bound to creator, portal and request;
+discovery is redacted and close/expiry/session changes retire pending exchanges.
+
+`app/portals/landmark.rs` resolves inventory landmark drops asynchronously through
+the ordinary landmark and map caches, including variable regions. A scene drop
+opens a Friends portal at the selected support; Shift at release makes it public.
+The shared overlay previews the selected access. Inventory items are never consumed;
+Ctrl insertion retains its existing behavior. Pending drops expire and cancel on
+region/session change, teleport or item replacement. `app/portals/demo.rs` drives
+actual world-drop input and authenticated in-memory peers for offline coverage.
 
 `scene/portals/clipping.rs` assigns a stable entry-side plane from the posed
 body and worn-object bounds, independently of locomotion or teleport gates.

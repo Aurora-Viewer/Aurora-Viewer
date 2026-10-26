@@ -107,7 +107,13 @@ pub enum Reply {
 impl Query {
     pub fn valid(&self) -> bool {
         match self {
-            Self::Portal { message, .. } => message.encode().is_some(),
+            Self::Portal { target, message } => {
+                message.encode().is_some()
+                    && (!matches!(
+                        message,
+                        super::portal::Message::Request { .. } | super::portal::Message::Details { .. }
+                    ) || !target.is_nil())
+            }
             Self::Pose { request, target, .. } => !request.is_nil() && !target.is_nil(),
             Self::Altitudes(ids) => {
                 !ids.is_empty()

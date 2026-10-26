@@ -66,3 +66,41 @@ fn portal_creator_requires_ready_bridge_and_destination_and_selects_an_actual_me
     let create = panel.rects[1].unwrap().center();
     assert!(!click(&ctx, &mut panel, &world, true, create).create);
 }
+
+#[test]
+fn private_portal_labels_hide_even_cached_destinations_after_friendship_is_revoked() {
+    use aurora_net::bridge::portal::{LIFETIME, Portal};
+    let mut world = World::new(Arc::new(AvatarLibrary::load()));
+    world.agent_id = Uuid::from_u128(1);
+    world.main_region = Some(256);
+    let owner = world.agent_id;
+    let destination = "Demo private destination";
+    let mut state = portals::State::default();
+    let unix = portals::unix_time();
+    state.sync(&world, None, unix);
+    state.create(
+        Portal {
+            id: Uuid::from_u128(3),
+            region: 256,
+            center: [10.0, 10.0, 25.0],
+            yaw: 0.0,
+            destination: destination.into(),
+            position: [987.0, 654.0, 321.0],
+            access: Access::Friends,
+            expires: unix + LIFETIME,
+        },
+        world.agent.position,
+        std::time::Instant::now(),
+        unix,
+    );
+    let entry = state.own().unwrap();
+    assert!(label_text(&world, entry).contains(destination));
+    world.agent_id = Uuid::from_u128(2);
+    let hidden = label_text(&world, entry);
+    assert!(!hidden.contains(destination) && !hidden.contains("987") && !hidden.contains("654"));
+    assert!(hidden.contains(aurora_i18n::tr!("portal-private")));
+    world.social.form_friendship(owner);
+    assert!(label_text(&world, entry).contains(destination));
+    world.social.end_friendship(&owner);
+    assert!(!label_text(&world, entry).contains(destination));
+}

@@ -1,10 +1,10 @@
-// Aurora LSL Bridge query and posing-consent services v1.36: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge query and posing-consent services v1.37: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.36";
+string VERSION = "1.37";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -60,8 +60,16 @@ query(key request, string kind, string targets) {
             || (!validKey(target) && llGetSubString(targets, 0, 35) != (string)NULL_KEY)) {
             llHTTPResponse(request, 400, "invalid"); return;
         }
-        if (target) llRegionSayTo(target, PORTAL_CHANNEL, "portal1|" + payload);
-        else llRegionSay(PORTAL_CHANNEL, "portal1|" + payload);
+        // Private detail requests/replies can never use the regional broadcast.
+        if (!validKey(target)) {
+            string decoded = llBase64ToString(payload);
+            if (llJsonValueType(decoded, ["Details"]) != JSON_INVALID
+                || llJsonValueType(decoded, ["Request"]) != JSON_INVALID) {
+                llHTTPResponse(request, 400, "invalid"); return;
+            }
+        }
+        if (target) llRegionSayTo(target, PORTAL_CHANNEL, "portal2|" + payload);
+        else llRegionSay(PORTAL_CHANNEL, "portal2|" + payload);
         llHTTPResponse(request, 200, "[]");
     } else if (kind == "pose") {
         list fields = llParseStringKeepNulls(targets, [","], []);
@@ -152,7 +160,7 @@ default {
     listen(integer channel, string name, key sender, string message) {
         if (channel == PORTAL_CHANNEL) {
             if (!llGetAttached() || !gPaired || llStringLength(message) > 648
-                || llGetSubString(message, 0, 7) != "portal1|") return;
+                || llGetSubString(message, 0, 7) != "portal2|") return;
             key peer = llGetOwnerKey(sender);
             if (!validKey(peer) || peer == sender || peer == gOwner) return;
             list attached = llGetObjectDetails(sender, [OBJECT_ATTACHED_POINT]);

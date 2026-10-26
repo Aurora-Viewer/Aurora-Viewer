@@ -4,7 +4,7 @@ use crate::{
     theme::Palette,
     world::{
         World,
-        portals::{self, HEIGHT, WIDTH},
+        portals::{HEIGHT, WIDTH},
     },
 };
 use aurora_render::{DrawCmd, DrawRecord, MeshAlloc, MipLevel, Renderer, Vertex, build_mips, types::flags};
@@ -95,7 +95,7 @@ impl Portals {
         for entry in &world.portals.entries {
             let portal = &entry.portal;
             let center = Vec3::from(portal.center);
-            let color = if portals::allowed(world, entry.owner, portal.access) {
+            let color = if entry.allowed(world) {
                 palette.violet_light
             } else {
                 palette.muted

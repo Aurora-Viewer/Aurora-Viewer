@@ -2,7 +2,7 @@ use super::*;
 use crate::scene::avatar::AvatarLibrary;
 use std::sync::Arc;
 
-fn portal() -> Portal {
+pub(super) fn portal() -> Portal {
     Portal {
         id: Uuid::from_u128(7),
         region: 256,
@@ -14,7 +14,7 @@ fn portal() -> Portal {
         expires: 1120,
     }
 }
-fn point(x: f32) -> Vec3 {
+pub(super) fn point(x: f32) -> Vec3 {
     Vec3::new(10.0 + x, 10.0, 25.0)
 }
 
@@ -26,10 +26,10 @@ fn portal_placement_stays_inside_standard_and_variable_size_regions() {
     assert!(fits_region(Vec3::new(500.0, 200.0, 25.0), [512, 256]));
     assert!(!fits_region(Vec3::new(128.0, 300.0, 25.0), [512, 256]));
 }
-fn wire(owner: Uuid, message: Message) -> String {
+pub(super) fn wire(owner: Uuid, message: Message) -> String {
     format!("<auroraPortal>{owner}|{}</auroraPortal>", message.encode().unwrap())
 }
-fn fixture() -> (World, State) {
+pub(super) fn fixture() -> (World, State) {
     let mut world = World::new(Arc::new(AvatarLibrary::load()));
     world.agent_id = Uuid::from_u128(1);
     world.main_region = Some(256);
@@ -45,17 +45,17 @@ fn portal_dropped_on_someone_requires_leaving_then_a_voluntary_plane_crossing() 
     let now = Instant::now();
     let mut gate = Gate::new(Vec3::from(p.center), point(0.0), now);
     let later = now + Duration::from_secs(1);
-    assert!(!gate.sample(&p, point(0.0), true, later));
+    assert!(!gate.sample(&p.announcement(), point(0.0), true, later));
     for x in [0.5, -0.5, 1.0, 2.0, 3.0] {
-        assert!(!gate.sample(&p, point(x), true, later));
+        assert!(!gate.sample(&p.announcement(), point(x), true, later));
     }
     assert!(!gate.armed);
-    assert!(!gate.sample(&p, point(3.5), true, later));
+    assert!(!gate.sample(&p.announcement(), point(3.5), true, later));
     assert!(gate.armed);
-    assert!(!gate.sample(&p, point(1.0), true, later));
-    assert!(gate.sample(&p, point(-0.5), true, later));
-    assert!(!gate.sample(&p, point(0.5), true, later));
-    assert!(!gate.sample(&p, point(-0.5), true, later));
+    assert!(!gate.sample(&p.announcement(), point(1.0), true, later));
+    assert!(gate.sample(&p.announcement(), point(-0.5), true, later));
+    assert!(!gate.sample(&p.announcement(), point(0.5), true, later));
+    assert!(!gate.sample(&p.announcement(), point(-0.5), true, later));
 }
 
 #[test]
@@ -64,20 +64,20 @@ fn portal_pushes_corrections_standing_inside_and_walking_around_do_not_teleport(
     let now = Instant::now();
     let later = now + Duration::from_secs(1);
     let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
-    assert!(!gate.sample(&p, point(1.0), false, later));
-    assert!(!gate.sample(&p, point(-0.5), false, later));
-    assert!(!gate.sample(&p, point(-0.5), true, later));
+    assert!(!gate.sample(&p.announcement(), point(1.0), false, later));
+    assert!(!gate.sample(&p.announcement(), point(-0.5), false, later));
+    assert!(!gate.sample(&p.announcement(), point(-0.5), true, later));
     assert!(!gate.armed);
     let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
-    assert!(!gate.sample(&p, point(-1.0), true, later));
+    assert!(!gate.sample(&p.announcement(), point(-1.0), true, later));
     assert!(!gate.armed);
     let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
     for x in [2.0, 0.5, -0.5] {
-        assert!(!gate.sample(&p, point(x) + Vec3::Y * 1.2, true, later));
+        assert!(!gate.sample(&p.announcement(), point(x) + Vec3::Y * 1.2, true, later));
     }
     let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
-    assert!(!gate.sample(&p, point(1.0), true, now));
-    assert!(!gate.sample(&p, point(-0.5), true, now));
+    assert!(!gate.sample(&p.announcement(), point(1.0), true, now));
+    assert!(!gate.sample(&p.announcement(), point(-0.5), true, now));
 }
 
 #[test]
@@ -87,20 +87,20 @@ fn portal_crossing_is_two_sided_bounded_by_the_aperture_and_rotates_with_its_pla
     let later = now + Duration::from_secs(1);
     let mut gate = Gate::new(Vec3::from(p.center), point(-4.0), now);
     for x in [-2.0, -0.5] {
-        assert!(!gate.sample(&p, point(x), true, later));
+        assert!(!gate.sample(&p.announcement(), point(x), true, later));
     }
-    assert!(gate.sample(&p, point(0.5), true, later));
+    assert!(gate.sample(&p.announcement(), point(0.5), true, later));
     let p = Portal {
         yaw: std::f32::consts::FRAC_PI_2,
         ..p
     };
     let center = Vec3::from(p.center);
     let mut gate = Gate::new(center, center + Vec3::Y * 4.0, now);
-    assert!(!gate.sample(&p, center + Vec3::Y, true, later));
-    assert!(gate.sample(&p, center - Vec3::Y * 0.5, true, later));
+    assert!(!gate.sample(&p.announcement(), center + Vec3::Y, true, later));
+    assert!(gate.sample(&p.announcement(), center - Vec3::Y * 0.5, true, later));
     let mut gate = Gate::new(center, center + Vec3::Y * 4.0 + Vec3::Z * 2.0, now);
-    assert!(!gate.sample(&p, center + Vec3::Y + Vec3::Z * 2.0, true, later));
-    assert!(!gate.sample(&p, center - Vec3::Y * 0.5 + Vec3::Z * 2.0, true, later));
+    assert!(!gate.sample(&p.announcement(), center + Vec3::Y + Vec3::Z * 2.0, true, later));
+    assert!(!gate.sample(&p.announcement(), center - Vec3::Y * 0.5 + Vec3::Z * 2.0, true, later));
 }
 
 #[test]
@@ -110,13 +110,13 @@ fn portal_replays_never_move_the_portal_or_rearm_its_proximity_gate_and_close_is
     let owner = Uuid::from_u128(2);
     world.agent.position = point(0.0);
     let p = portal();
-    state.receive(&world, &wire(owner, Message::Open(p.clone())), now, 1000);
+    state.receive(&world, &wire(owner, Message::Open(p.announcement())), now, 1000);
     assert_eq!(state.entries.len(), 1);
     assert!(state.entries[0].waiting_for_clearance());
     let mut changed = p.clone();
     changed.center[0] += 10.0;
-    state.receive(&world, &wire(owner, Message::Open(changed)), now, 1000);
-    assert_eq!(state.entries[0].portal, p);
+    state.receive(&world, &wire(owner, Message::Open(changed.announcement())), now, 1000);
+    assert_eq!(state.entries[0].portal, p.announcement());
     assert!(state.entries[0].waiting_for_clearance());
     state.receive(
         &world,
@@ -126,7 +126,7 @@ fn portal_replays_never_move_the_portal_or_rearm_its_proximity_gate_and_close_is
     );
     assert_eq!(state.entries.len(), 1);
     state.receive(&world, &wire(owner, Message::Close { region: 256, id: p.id }), now, 1000);
-    state.receive(&world, &wire(owner, Message::Open(p)), now, 1000);
+    state.receive(&world, &wire(owner, Message::Open(p.announcement())), now, 1000);
     assert!(state.entries.is_empty());
 }
 
@@ -155,10 +155,13 @@ fn portal_permissions_are_checked_at_crossing_and_expiry_region_and_session_clea
         &world,
         &wire(
             owner,
-            Message::Open(Portal {
-                access: Access::Friends,
-                ..portal()
-            }),
+            Message::Open(
+                Portal {
+                    access: Access::Friends,
+                    ..portal()
+                }
+                .announcement(),
+            ),
         ),
         now,
         1000,
@@ -246,7 +249,7 @@ fn portal_messages_from_wrong_regions_expired_and_close_before_open_are_rejected
     let now = Instant::now();
     let owner = Uuid::from_u128(2);
     for p in [Portal { region: 512, ..portal() }, Portal { expires: 1000, ..portal() }] {
-        state.receive(&world, &wire(owner, Message::Open(p)), now, 1000);
+        state.receive(&world, &wire(owner, Message::Open(p.announcement())), now, 1000);
     }
     state.receive(
         &world,
@@ -260,7 +263,7 @@ fn portal_messages_from_wrong_regions_expired_and_close_before_open_are_rejected
         now,
         1000,
     );
-    state.receive(&world, &wire(owner, Message::Open(portal())), now, 1000);
+    state.receive(&world, &wire(owner, Message::Open(portal().announcement())), now, 1000);
     assert!(state.entries.is_empty());
     assert!(state.out.is_empty());
 }

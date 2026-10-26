@@ -220,7 +220,7 @@ impl GroupMgr {
 
     /// LLGroupMgr::sendCapGroupMembersRequest: a new request id marks the
     /// list pending.
-    fn request_members(&mut self, group: Uuid) {
+    pub fn request_members(&mut self, group: Uuid) {
         let request = Uuid::new_v4();
         let g = self.data(group);
         g.members.clear();

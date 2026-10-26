@@ -288,6 +288,7 @@ pub(crate) struct WorldDrag {
     pub position: egui::Pos2,
     pub released: bool,
     pub ctrl: bool,
+    pub shift: bool,
 }
 
 /// Read before egui's end-pass clears released cargo. A dragging widget keeps
@@ -303,6 +304,7 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
             position: i.pointer.interact_pos()?,
             released: i.pointer.button_released(egui::PointerButton::Primary),
             ctrl: i.modifiers.ctrl,
+            shift: i.modifiers.shift,
         })
     })
 }

@@ -348,6 +348,9 @@ pub struct App {
     autopilot: Option<crate::autopilot::AutoPilot>,
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
+    portal_drop: Option<portals::landmark::Pending>,
+    /// A peer contains a full World; keep it off the Windows startup stack.
+    portal_demo_peer: Option<Box<portals::demo::Peer>>,
     follow_recovery: Option<follow::Recovery>,
     /// The control flags the walk asks for this frame.
     autopilot_flags: u32,
@@ -1151,6 +1154,8 @@ impl App {
             hover_height_ui: Default::default(),
             follow_ui: Default::default(),
             portal_ui: Default::default(),
+            portal_drop: None,
+            portal_demo_peer: None,
             follow_recovery: None,
             report_abuse: Default::default(),
             dof_focus: Default::default(),
@@ -2279,6 +2284,8 @@ impl App {
         self.hover_height_ui = Default::default();
         self.follow_ui = Default::default();
         self.portal_ui = Default::default();
+        self.portal_drop = None;
+        self.portal_demo_peer = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
         self.texture_library.reset();
@@ -8564,6 +8571,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             self.texture_library_demo_input(&mut raw);
+            self.portal_drop_demo_input(&mut raw);
             ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);

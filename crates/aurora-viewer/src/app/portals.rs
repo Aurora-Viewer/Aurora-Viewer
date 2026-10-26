@@ -1,6 +1,8 @@
 use super::*;
 use crate::world::portals::unix_time;
 use aurora_net::bridge::portal::{Access, LIFETIME, Portal};
+pub(super) mod demo;
+pub(super) mod landmark;
 
 impl App {
     pub(super) fn tick_portals(&mut self) {
@@ -9,6 +11,9 @@ impl App {
         let endpoint = self.bridge_runtime.query_endpoint();
         let mut state = std::mem::take(&mut self.world.portals);
         state.sync(&self.world, endpoint.as_ref().map(|endpoint| endpoint.token), unix);
+        if let Some(group) = state.take_group_refresh() {
+            self.world.group_data.request_members(group);
+        }
         let mut input = self.input;
         if self.camera.free().is_none() && !self.joystick.active {
             self.joystick.motion.apply_avatar(&mut input);
@@ -42,6 +47,11 @@ impl App {
             // cancellation and simulator access checks (LLAgent::teleportViaLocation).
             self.teleport_to_location(portal.destination, Vec3::from(portal.position));
         }
+        self.update_landmark_portal();
+        self.exchange_portal_demo();
+        if self.seed_portal_drop_demo() {
+            return;
+        }
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_PORTALS")
             && mode.starts_with("slice-")
@@ -65,13 +75,22 @@ impl App {
                 yaw: self.world.agent.yaw,
                 destination: "Demo destination".into(),
                 position: [128.0, 128.0, 25.0],
-                access: if mode == "friends" { Access::Friends } else { Access::Everyone },
+                access: if mode == "friends" || mode.starts_with("private-") {
+                    Access::Friends
+                } else {
+                    Access::Everyone
+                },
                 expires: unix + LIFETIME,
             };
             let mut state = std::mem::take(&mut self.world.portals);
-            if mode == "friends" {
+            if mode == "friends" || mode.starts_with("private-") {
+                self.portal_ui.open = false;
+                self.portal_ui.destination.clear();
                 let owner = uuid::Uuid::from_u128(0xA770);
-                if let Some(wire) = aurora_net::bridge::portal::Message::Open(portal).encode() {
+                if mode.starts_with("private-") {
+                    self.seed_portal_peer_demo(&mode, portal.clone(), owner);
+                }
+                if let Some(wire) = aurora_net::bridge::portal::Message::Open(portal.announcement()).encode() {
                     state.receive(&self.world, &format!("<auroraPortal>{owner}|{wire}</auroraPortal>"), now, unix);
                 }
             } else {
@@ -168,12 +187,14 @@ impl App {
         let ready = self.demo || self.bridge_runtime.query_endpoint().is_some();
         let actions = self.portal_ui.show(ctx, palette, &self.world, ready);
         if actions.close {
+            self.portal_drop = None;
             self.world.portals.close(unix_time());
         }
         if !actions.create {
             return;
         }
         self.portal_ui.notice = None;
+        self.portal_drop = None;
         let Some(location) = crate::slurl::parse(&self.portal_ui.destination).filter(|location| location.grid.is_none()) else {
             return;
         };
@@ -213,6 +234,41 @@ impl App {
             .create(portal, self.world.agent.position, Instant::now(), unix_time())
         {
             self.portal_ui.notice = Some(aurora_i18n::tr!("portal-invalid").into());
+        }
+    }
+
+    pub(super) fn create_portal_at(&mut self, destination: String, position: Vec3, access: Access, center: Vec3, yaw: f32) {
+        let Some(region) = self.world.main_region else { return };
+        let valid = self
+            .world
+            .main()
+            .is_some_and(|region| crate::world::portals::fits_region(center, [region.heightmap.size_x, region.heightmap.size_y]));
+        let destination_text = if self.world.rlva.has("showloc") {
+            String::new()
+        } else {
+            crate::slurl::make(&destination, position)
+        };
+        let portal = Portal {
+            id: uuid::Uuid::new_v4(),
+            region,
+            center: center.to_array(),
+            yaw,
+            destination,
+            position: position.to_array(),
+            access,
+            expires: unix_time() + LIFETIME,
+        };
+        if !valid
+            || !self
+                .world
+                .portals
+                .create(portal, self.world.agent.position, Instant::now(), unix_time())
+        {
+            self.portal_drop_notice("portal-invalid");
+        } else {
+            self.portal_ui.destination = destination_text;
+            self.portal_ui.access = access;
+            self.portal_ui.notice = None;
         }
     }
 }

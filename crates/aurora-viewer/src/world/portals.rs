@@ -5,7 +5,7 @@ use aurora_net::{
     NetCommand,
     bridge::{
         Endpoint,
-        portal::{Access, CLOCK_SKEW, LIFETIME, Message, Portal},
+        portal::{Access, Announcement, CLOCK_SKEW, Details, LIFETIME, Message, Portal},
         query::{Query, Reply},
     },
 };
@@ -20,6 +20,7 @@ pub const WIDTH: f32 = 1.0;
 pub const HEIGHT: f32 = 1.5;
 const LIMIT: usize = 64;
 const CLEARANCE: f32 = 3.5;
+const SEND_INTERVAL: Duration = Duration::from_millis(250);
 
 pub fn fits_region(center: Vec3, size: [u32; 2]) -> bool {
     center.is_finite() && (WIDTH..=size[0] as f32 - WIDTH).contains(&center.x) && (WIDTH..=size[1] as f32 - WIDTH).contains(&center.y)
@@ -41,12 +42,33 @@ pub fn allowed(world: &World, owner: Uuid, access: Access) -> bool {
 
 pub struct Entry {
     pub owner: Uuid,
-    pub portal: Portal,
+    pub portal: Announcement,
+    pub details: Option<Details>,
     gate: Gate,
     expires_at: Instant,
 }
 
 impl Entry {
+    pub fn allowed(&self, world: &World) -> bool {
+        self.details
+            .as_ref()
+            .is_some_and(|details| allowed(world, self.owner, details.access))
+    }
+
+    fn resolved(&self) -> Option<Portal> {
+        let details = self.details.as_ref()?;
+        Some(Portal {
+            id: self.portal.id,
+            region: self.portal.region,
+            center: self.portal.center,
+            yaw: self.portal.yaw,
+            expires: self.portal.expires,
+            destination: details.destination.region.clone(),
+            position: details.destination.position,
+            access: details.access,
+        })
+    }
+
     pub fn waiting_for_clearance(&self) -> bool {
         !self.gate.armed
     }
@@ -69,7 +91,7 @@ impl Gate {
         }
     }
 
-    fn sample(&mut self, portal: &Portal, position: Vec3, voluntary: bool, now: Instant) -> bool {
+    fn sample(&mut self, portal: &Announcement, position: Vec3, voluntary: bool, now: Instant) -> bool {
         let previous = self.previous;
         self.previous = position;
         let gap = now.saturating_duration_since(self.last_sample);
@@ -106,6 +128,19 @@ impl Gate {
     }
 }
 
+struct Fetch {
+    nonce: Uuid,
+    attempts: u8,
+    queued: Instant,
+}
+
+struct Inquiry {
+    id: Uuid,
+    nonce: Uuid,
+    received: Instant,
+    replied: bool,
+}
+
 #[derive(Default)]
 pub struct State {
     agent: Uuid,
@@ -116,8 +151,12 @@ pub struct State {
     out: VecDeque<(Uuid, Message)>,
     discovered: bool,
     last_send: Option<Instant>,
+    last_exchange: Option<Instant>,
     discoveries: HashMap<Uuid, Instant>,
     pending: HashMap<Uuid, (Instant, Option<Uuid>)>,
+    fetches: HashMap<(Uuid, Uuid), Fetch>,
+    inquiries: HashMap<Uuid, Inquiry>,
+    group_refresh: Option<Uuid>,
     pub failed: bool,
 }
 
@@ -135,14 +174,49 @@ impl State {
             .retain(|entry| entry.portal.live(now) && Instant::now() < entry.expires_at && !world.mutes.is_muted_id(&entry.owner));
         self.ended.retain(|_, until| *until > now);
         self.discoveries.retain(|_, at| at.elapsed() < Duration::from_secs(30));
+        self.fetches.retain(|(owner, id), _| {
+            self.entries
+                .iter()
+                .any(|e| e.owner == *owner && e.portal.id == *id && e.details.is_none())
+        });
+        self.inquiries
+            .retain(|_, inquiry| inquiry.received.elapsed() < Duration::from_secs(30));
+        self.out.retain(|(target, message)| match message {
+            Message::Open(portal) => portal.live(now),
+            Message::Details { id, .. } => self.entries.iter().any(|entry| entry.owner == self.agent && entry.portal.id == *id),
+            Message::Request { id, .. } => self
+                .entries
+                .iter()
+                .any(|entry| entry.owner == *target && entry.portal.id == *id && entry.details.is_none()),
+            _ => true,
+        });
     }
 
     pub fn own(&self) -> Option<&Entry> {
         self.entries.iter().find(|entry| entry.owner == self.agent)
     }
 
+    /// One fresh server-backed member list per group portal, shared by all
+    /// requesters. Never authorize using a claim made by the requesting viewer.
+    pub fn take_group_refresh(&mut self) -> Option<Uuid> {
+        self.group_refresh.take()
+    }
+
     pub fn create(&mut self, portal: Portal, position: Vec3, now: Instant, unix: u64) -> bool {
-        if Some(portal.region) != self.region || !portal.live(unix) || Message::Open(portal.clone()).encode().is_none() {
+        let private_fits = portal.access == Access::Everyone
+            || Message::Details {
+                region: portal.region,
+                id: portal.id,
+                nonce: portal.id,
+                details: portal.details(),
+            }
+            .encode()
+            .is_some();
+        if Some(portal.region) != self.region
+            || !portal.live(unix)
+            || !private_fits
+            || Message::Open(portal.announcement()).encode().is_none()
+        {
             return false;
         }
         if self.out.len() > LIMIT * 2 - 2 || self.entries.len() >= LIMIT && self.own().is_none() {
@@ -152,12 +226,15 @@ impl State {
         if self.entries.len() >= LIMIT {
             return false;
         }
-        self.queue(Uuid::nil(), Message::Open(portal.clone()));
+        self.group_refresh = if let Access::Group(id) = portal.access { Some(id) } else { None };
+        let announcement = portal.announcement();
+        self.queue(Uuid::nil(), Message::Open(announcement.clone()));
         self.entries.push(Entry {
             owner: self.agent,
             gate: Gate::new(Vec3::from(portal.center), position, now),
             expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
-            portal,
+            details: Some(portal.details()),
+            portal: announcement,
         });
         true
     }
@@ -166,8 +243,12 @@ impl State {
         if let Some(entry) = self.own() {
             let id = entry.portal.id;
             let region = entry.portal.region;
-            self.out
-                .retain(|(_, message)| !matches!(message, Message::Open(portal) if portal.id == id));
+            self.out.retain(|(_, message)| {
+                !matches!(message, Message::Open(portal) if portal.id == id)
+                    && !matches!(message, Message::Details { id: old, .. } if *old == id)
+            });
+            self.inquiries.clear();
+            self.group_refresh = None;
             self.remember(self.agent, id, unix);
             self.entries.retain(|entry| entry.owner != self.agent);
             if !self.queue(Uuid::nil(), Message::Close { region, id }) {
@@ -183,6 +264,9 @@ impl State {
     }
 
     fn queue(&mut self, target: Uuid, message: Message) -> bool {
+        if target.is_nil() && matches!(message, Message::Request { .. } | Message::Details { .. }) {
+            return false;
+        }
         if self.out.len() < LIMIT * 2 {
             if target.is_nil() {
                 // Our open/close actions precede responses to late arrivals,
@@ -228,12 +312,19 @@ impl State {
                     owner,
                     gate: Gate::new(Vec3::from(portal.center), world.agent.position, now),
                     expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
+                    details: portal.destination.clone().map(|destination| Details {
+                        destination,
+                        access: Access::Everyone,
+                    }),
                     portal,
                 });
             }
             Message::Close { id, .. } => {
                 self.remember(owner, id, unix);
                 self.entries.retain(|entry| entry.owner != owner || entry.portal.id != id);
+                self.fetches.remove(&(owner, id));
+                self.out
+                    .retain(|(target, message)| !(*target == owner && matches!(message, Message::Request { id: old, .. } if *old == id)));
             }
             Message::Discover { .. } => {
                 if self
@@ -251,10 +342,159 @@ impl State {
                     self.queue(owner, Message::Open(own.portal.clone()));
                 }
             }
+            Message::Request { id, nonce, .. } => {
+                if !self
+                    .own()
+                    .is_some_and(|entry| entry.portal.id == id && entry.portal.live(unix) && entry.portal.destination.is_none())
+                {
+                    return;
+                }
+                if self
+                    .inquiries
+                    .get(&owner)
+                    .is_some_and(|inquiry| now.saturating_duration_since(inquiry.received) < Duration::from_secs(1))
+                {
+                    return;
+                }
+                if self.inquiries.len() >= LIMIT * 4
+                    && let Some(oldest) = self
+                        .inquiries
+                        .iter()
+                        .min_by_key(|(_, inquiry)| inquiry.received)
+                        .map(|(peer, _)| *peer)
+                {
+                    self.inquiries.remove(&oldest);
+                }
+                self.inquiries.insert(
+                    owner,
+                    Inquiry {
+                        id,
+                        nonce,
+                        received: now,
+                        replied: false,
+                    },
+                );
+            }
+            Message::Details { id, nonce, details, .. } => {
+                if !self
+                    .fetches
+                    .get(&(owner, id))
+                    .is_some_and(|fetch| fetch.nonce == nonce && fetch.attempts > 0)
+                {
+                    return;
+                }
+                if let Some(entry) = self
+                    .entries
+                    .iter_mut()
+                    .find(|entry| entry.owner == owner && entry.portal.id == id && entry.portal.live(unix))
+                    && entry.details.is_none()
+                {
+                    entry.details = Some(details);
+                    self.fetches.remove(&(owner, id));
+                    self.out.retain(|(target, message)| {
+                        !(*target == owner && matches!(message, Message::Request { id: old, .. } if *old == id))
+                    });
+                }
+            }
+        }
+    }
+
+    fn exchange_details(&mut self, world: &World, now: Instant) {
+        if let Some(own) = self.own()
+            && let Some(details) = &own.details
+            && details.access != Access::Everyone
+        {
+            let id = own.portal.id;
+            let region = own.portal.region;
+            let access = details.access;
+            let group_ready = self.group_refresh.is_none();
+            let authorized = |peer| {
+                !world.mutes.is_muted_id(&peer)
+                    && match access {
+                        Access::Friends => world.social.friends.iter().any(|friend| friend.id == peer),
+                        Access::Group(group) => {
+                            group_ready
+                                && world.groups.groups.iter().any(|membership| membership.id == group)
+                                && world
+                                    .group_data
+                                    .get(&group)
+                                    .is_some_and(|data| data.members_complete && data.members.contains_key(&peer))
+                        }
+                        Access::Everyone => false,
+                    }
+            };
+            // Permissions can change while the bounded send queue drains.
+            // Remove unsent grants before selecting this frame's command.
+            self.out
+                .retain(|(peer, message)| !matches!(message, Message::Details { .. }) || authorized(*peer));
+            for (peer, inquiry) in &mut self.inquiries {
+                if !authorized(*peer) {
+                    inquiry.replied = false;
+                }
+            }
+            let replies: Vec<_> = self
+                .inquiries
+                .iter()
+                .filter(|(peer, inquiry)| inquiry.id == id && !inquiry.replied && authorized(**peer))
+                .map(|(peer, inquiry)| (*peer, inquiry.nonce))
+                .collect();
+            for (peer, nonce) in replies {
+                let Some(details) = self.own().and_then(|entry| entry.details.clone()) else {
+                    continue;
+                };
+                if self.queue(
+                    peer,
+                    Message::Details {
+                        region,
+                        id,
+                        nonce,
+                        details,
+                    },
+                ) && let Some(inquiry) = self.inquiries.get_mut(&peer)
+                {
+                    inquiry.replied = true;
+                }
+            }
+        }
+        // A logical request has at most one retry. Its nonce remains valid
+        // until portal expiry, including a delayed group-members response.
+        let requests: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.owner != self.agent && entry.details.is_none())
+            .map(|entry| (entry.owner, entry.portal.id, entry.portal.region))
+            .collect();
+        for (owner, id, region) in requests {
+            let fetch = self.fetches.entry((owner, id)).or_insert_with(|| Fetch {
+                nonce: Uuid::new_v4(),
+                attempts: 0,
+                queued: now,
+            });
+            if fetch.attempts < 2 && (fetch.attempts == 0 || now.saturating_duration_since(fetch.queued) >= Duration::from_secs(2)) {
+                let nonce = fetch.nonce;
+                if self.queue(owner, Message::Request { region, id, nonce })
+                    && let Some(fetch) = self.fetches.get_mut(&(owner, id))
+                {
+                    fetch.attempts += 1;
+                    fetch.queued = now;
+                }
+            }
         }
     }
 
     pub fn update(&mut self, world: &World, intent: Vec3, now: Instant) -> Option<Portal> {
+        // Authorization is refreshed immediately before a command can leave,
+        // at the transport cadence rather than every rendered frame.
+        let due = self
+            .last_exchange
+            .is_none_or(|at| now.saturating_duration_since(at) >= SEND_INTERVAL);
+        let sending_grant = self.pending.len() < 32
+            && self.last_send.is_none_or(|at| now.saturating_duration_since(at) >= SEND_INTERVAL)
+            && self.out.iter().any(|(_, message)| matches!(message, Message::Details { .. }));
+        if due || sending_grant {
+            self.exchange_details(world, now);
+            self.last_exchange = Some(now);
+        }
         let expired: Vec<_> = self
             .pending
             .iter()
@@ -267,14 +507,15 @@ impl State {
         let mut crossed = None;
         for entry in &mut self.entries {
             let travel = world.agent.position - entry.gate.previous;
-            let can_enter = intent.is_finite() && travel.dot(intent) > 1e-5 && allowed(world, entry.owner, entry.portal.access);
+            let can_enter = intent.is_finite() && travel.dot(intent) > 1e-5 && entry.allowed(world);
             if entry.gate.sample(&entry.portal, world.agent.position, can_enter, now) && crossed.is_none() {
-                crossed = Some(entry.portal.clone());
+                crossed = entry.resolved();
             }
         }
         crossed
     }
 
+    /// Drain after `update`, which rechecks queued grants against current rights.
     pub fn command(&mut self, endpoint: Option<&Endpoint>, now: Instant) -> Option<NetCommand> {
         let endpoint = endpoint?;
         if !self.discovered
@@ -283,11 +524,7 @@ impl State {
             self.queue(Uuid::nil(), Message::Discover { region });
             self.discovered = true;
         }
-        if self.pending.len() >= 32
-            || self
-                .last_send
-                .is_some_and(|at| now.saturating_duration_since(at) < Duration::from_millis(250))
-        {
+        if self.pending.len() >= 32 || self.last_send.is_some_and(|at| now.saturating_duration_since(at) < SEND_INTERVAL) {
             return None;
         }
         let (target, message) = self.out.pop_front()?;
@@ -298,6 +535,7 @@ impl State {
                 Message::Open(portal) => Some(portal.id),
                 Message::Close { id, .. } => Some(*id),
                 Message::Discover { .. } => None,
+                Message::Request { .. } | Message::Details { .. } => None,
             }
         } else {
             None
@@ -325,5 +563,7 @@ impl State {
     }
 }
 
+#[cfg(test)]
+mod privacy_tests;
 #[cfg(test)]
 mod tests;

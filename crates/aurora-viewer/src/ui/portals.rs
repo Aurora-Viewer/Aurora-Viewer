@@ -116,6 +116,40 @@ impl PortalUi {
     }
 }
 
+fn label_text(world: &World, entry: &portals::Entry) -> String {
+    let authorized = entry.allowed(world);
+    let details = entry.details.as_ref().filter(|_| authorized);
+    let destination = match details {
+        None => aurora_i18n::tr!("portal-private").to_string(),
+        Some(_) if world.rlva.has("showloc") => aurora_i18n::tr!("portal-destination-hidden").to_string(),
+        Some(details) => {
+            let destination = &details.destination;
+            format!(
+                "{} ({:.0}, {:.0}, {:.0})",
+                destination.region, destination.position[0], destination.position[1], destination.position[2]
+            )
+        }
+    };
+    let access = match details.map(|details| details.access) {
+        Some(Access::Everyone) => aurora_i18n::tr!("portal-everyone"),
+        Some(Access::Friends) => aurora_i18n::tr!("portal-friends"),
+        Some(Access::Group(_)) => aurora_i18n::tr!("portal-group"),
+        None => aurora_i18n::tr!("portal-private"),
+    };
+    let status = if !authorized {
+        aurora_i18n::tr!("portal-restricted")
+    } else if entry.waiting_for_clearance() {
+        aurora_i18n::tr!("portal-step-away")
+    } else {
+        aurora_i18n::tr!("portal-walk-through")
+    };
+    let name = world
+        .person_name(&entry.owner)
+        .unwrap_or_else(|| aurora_i18n::tr!("poser-resident").into());
+    let name = world.rlva_hover_privacy.apply(&name);
+    format!("{destination}\n{name} · {access}\n{status}")
+}
+
 pub fn labels(ctx: &egui::Context, p: &Palette, world: &World, projector: &Projector) {
     let painter = super::hud::world_painter(ctx);
     for entry in &world.portals.entries {
@@ -125,31 +159,7 @@ pub fn labels(ctx: &egui::Context, p: &Palette, world: &World, projector: &Proje
         }
         let anchor = center + Vec3::Z * (portals::HEIGHT + 0.25);
         let Some((position, _)) = projector.project(anchor) else { continue };
-        let destination = if world.rlva.has("showloc") {
-            aurora_i18n::tr!("portal-destination-hidden").to_string()
-        } else {
-            format!(
-                "{} ({:.0}, {:.0}, {:.0})",
-                entry.portal.destination, entry.portal.position[0], entry.portal.position[1], entry.portal.position[2]
-            )
-        };
-        let access = match entry.portal.access {
-            Access::Everyone => aurora_i18n::tr!("portal-everyone"),
-            Access::Friends => aurora_i18n::tr!("portal-friends"),
-            Access::Group(_) => aurora_i18n::tr!("portal-group"),
-        };
-        let status = if !portals::allowed(world, entry.owner, entry.portal.access) {
-            aurora_i18n::tr!("portal-restricted")
-        } else if entry.waiting_for_clearance() {
-            aurora_i18n::tr!("portal-step-away")
-        } else {
-            aurora_i18n::tr!("portal-walk-through")
-        };
-        let name = world
-            .person_name(&entry.owner)
-            .unwrap_or_else(|| aurora_i18n::tr!("poser-resident").into());
-        let name = world.rlva_hover_privacy.apply(&name);
-        let text = format!("{destination}\n{name} · {access}\n{status}");
+        let text = label_text(world, entry);
         let galley = painter.layout_no_wrap(text, egui::FontId::proportional(13.0), p.ink);
         let rect = egui::Rect::from_center_size(position, galley.size() + egui::vec2(18.0, 10.0));
         aurora_render::world_label_at(ctx, Some(anchor));

@@ -622,7 +622,10 @@ fn portal_relay_accepts_only_the_exact_ready_worn_bridge_and_never_enters_chat()
         access: Access::Everyone,
         expires: super::super::portals::unix_time() + LIFETIME,
     };
-    chat.message = format!("<auroraPortal>{owner}|{}</auroraPortal>", Message::Open(portal).encode().unwrap());
+    chat.message = format!(
+        "<auroraPortal>{owner}|{}</auroraPortal>",
+        Message::Open(portal.announcement()).encode().unwrap()
+    );
     for (source, claimed_owner) in [(Uuid::new_v4(), sim.world.agent_id), (sim.bridge.object, Uuid::new_v4())] {
         let mut invalid = chat.clone();
         invalid.source_id = source;

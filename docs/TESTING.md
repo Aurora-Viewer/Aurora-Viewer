@@ -112,11 +112,28 @@ must never teleport. `friends` previews a denied friends-only portal from a
 non-friend. Apertures use world depth, so walls hide them and their labels.
 Ordinary creation accepts a same-grid place link or region coordinates; one
 portal per creator expires after two minutes. Another Aurora client needs the
-ready 1.36 bridge and scripts enabled to receive regional invitations.
+ready 1.37 bridge and scripts enabled to receive regional invitations.
 Human two-client grid checks: public crossing, friends/non-friends, selected
 group members/non-members, appearing on a stationary or moving avatar,
 leaving and returning, crossing from either side, closing/replacing/expiry,
 late arrival discovery, failed/restricted destinations and teleport cancellation.
+
+`AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid`
+drags an inventory landmark over the world. Hover scenarios retain the cargo;
+the others release it at frame 560. Shift changes at frame 500 in public modes:
+capture around 530 for the access preview and 700 for the created portal or
+the unavailable-landmark notice. Use `AURORA_DEMO_POS=100,100` to avoid plaza
+props. The landmark stays in inventory. Ctrl insertion and other inventory drops
+retain their normal behavior.
+
+`AURORA_DEMO_PORTALS=private-friends-allowed|private-friends-denied|private-group-allowed|private-group-denied`
+exchanges real v2 codec messages between two offline peer states. Everyone sees
+the aperture; denied observers see only the creator and private/access labels.
+Only granted observers receive a destination. Group grants wait for a complete
+server-shaped members response. On the grid, also verify late arrivals, lost
+requests, revocation before a queued reply, close/expiry and bridge 1.37 upgrade.
+Both creation announcements and discovery replies must omit private destinations;
+inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted.
 
 `AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
