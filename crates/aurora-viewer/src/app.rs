@@ -103,6 +103,7 @@ mod settings_backup;
 mod shape_editor;
 mod snapshot;
 mod social_menu_demo;
+mod stream_list;
 mod suggest_demo;
 mod task_notecards;
 mod teleport_lookup;
@@ -775,6 +776,8 @@ pub struct App {
     folders: folders::Folders,
     /// The settings backup being written or read (app/settings_backup.rs).
     settings_backup: settings_backup::Job,
+    /// The stream list being exported or imported (app/stream_list.rs).
+    stream_list: stream_list::Job,
     /// AURORA_CAPTURE: file, frames to capture (several: one file each,
     /// `<name>-<frame>.png`), quit after the last one.
     capture: Option<(Vec<(u64, std::path::PathBuf)>, bool)>,
@@ -1342,6 +1345,7 @@ impl App {
             neighbours_refused: false,
             folders: Default::default(),
             settings_backup: Default::default(),
+            stream_list: Default::default(),
             capture: std::env::var_os("AURORA_CAPTURE").map(|p| {
                 let frames = std::env::var("AURORA_CAPTURE_FRAMES").unwrap_or_default();
                 (
@@ -10937,7 +10941,10 @@ impl App {
                 self.options_ui.open(ui::options::Page::Sound, 0);
             }
         }
+        self.poll_stream_list();
         match a.bar {
+            BarAction::ImportStreamList => self.import_stream_list(),
+            BarAction::ExportStreamList => self.export_stream_list(),
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
             BarAction::CopyVersion => self.copy_version(),

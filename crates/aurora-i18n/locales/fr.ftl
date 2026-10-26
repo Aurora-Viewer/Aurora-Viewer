@@ -5032,6 +5032,15 @@ ui-bars-edit-particles = Modifier les particules
 ui-bars-media-streams-backup = Sauvegarde des flux média
 ui-bars-import-stream-list = Importer la liste des flux…
 ui-bars-export-stream-list = Exporter la liste des flux…
+stream-list-file-type = Liste des flux
+stream-list-exported = Liste des flux exportée dans { $file }.
+stream-list-imported = { $count ->
+    [0] Liste des flux importée : elle est vide.
+    [one] Liste des flux importée : { $count } flux.
+   *[other] Liste des flux importée : { $count } flux.
+    }
+stream-list-not-a-list = Ce fichier n'est pas une liste de flux : les flux enregistrés n'ont pas changé.
+stream-list-failed = Le fichier de la liste des flux n'a pas pu être écrit ni lu.
 ui-bars-market-data = Cours du L$
 ui-bars-script-library = Bibliothèque de scripts
 ui-bars-message-of-the-day = Message du jour

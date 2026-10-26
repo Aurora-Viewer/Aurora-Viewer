@@ -36,6 +36,9 @@ pub enum BarAction {
     ServerReleaseNotes,
     /// Same import chooser toggle as the configurable Import shortcut.
     Import,
+    /// Advanced › Media streams backup (Streamlist.xml_import / xml_export).
+    ImportStreamList,
+    ExportStreamList,
     BlenderLive,
     ShowHuds(bool),
     HudZoom(f32),
@@ -1022,8 +1025,12 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 aurora_i18n::tr!("ui-bars-media-streams-backup"),
                 true,
                 |ui| {
-                    menu::todo(ui, p, "database-import", aurora_i18n::tr!("ui-bars-import-stream-list"));
-                    menu::todo(ui, p, "database-export", aurora_i18n::tr!("ui-bars-export-stream-list"));
+                    if menu::item(ui, p, "database-import", aurora_i18n::tr!("ui-bars-import-stream-list")) {
+                        *action = BarAction::ImportStreamList;
+                    }
+                    if menu::item(ui, p, "database-export", aurora_i18n::tr!("ui-bars-export-stream-list")) {
+                        *action = BarAction::ExportStreamList;
+                    }
                 },
             );
         });
