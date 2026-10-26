@@ -22,6 +22,9 @@ fn words_follow_the_legacy_scan() {
 fn numbers_names_and_addresses_are_left_alone() {
     let text = "see x3 and 2nd user_name at https://example.com/wrold or www.exemple.org/abcd, mail me@exemple.org (secondlife://Aurora%20Demo/1/2/3) end";
     assert_eq!(texts(text, &words(text)), ["see", "and", "mail", "end"]);
+    // emoji codes, typed or closed; a word after ": " stays a word
+    let text = "hi :hea and :smile: note: text";
+    assert_eq!(texts(text, &words(text)), ["and", "note", "text"]);
     // an apostrophe ends a word unless a letter follows it
     let text = "the dogs' bones 'quoted'";
     assert_eq!(texts(text, &words(text)), ["the", "dogs", "bones", "quoted"]);

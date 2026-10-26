@@ -8,8 +8,9 @@
 //! Deliberate differences, so that no squiggle lands where no dictionary
 //! can help: a word holding a digit or a `_` ("x3", "2nd", "user_name") is
 //! left alone, and so is a web or `secondlife://` address or an e-mail
-//! address (the Legacy Viewer checked the words of a link one by one). The
-//! typographic apostrophe (’) counts like the straight one.
+//! address (the Legacy Viewer checked the words of a link one by one), and
+//! an emoji code right after a `:`. The typographic apostrophe (’) counts
+//! like the straight one.
 
 use std::ops::Range;
 
@@ -88,7 +89,9 @@ pub fn words(text: &str) -> Vec<Word> {
             chars += 1;
             iter.next();
         }
-        if plain && chars - start_char >= MIN_CHARS {
+        // an emoji code (":smile:", or ":hea" being typed, `ui/emoji/codes.rs`)
+        let code = text[..start_byte].ends_with(':');
+        if plain && !code && chars - start_char >= MIN_CHARS {
             out.push(Word {
                 chars: start_char..chars,
                 bytes: start_byte..end_byte,
