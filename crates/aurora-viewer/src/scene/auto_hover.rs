@@ -289,6 +289,7 @@ impl Scene {
     /// a recalibration.
     pub fn update_auto_hover(&mut self, world: &mut World, enabled: bool, offset: f32, commit: bool, now: Instant) {
         self.update_remote_soles(world, now);
+        self.foot_scope.log(self.ground_avatar_feet, self.remote_soles.entries.len(), now);
         if !enabled && !self.ground_avatar_feet {
             self.auto_hover.observed = None;
             self.auto_hover.finished = None;
@@ -340,6 +341,7 @@ impl Scene {
         owners.clear();
         owners.extend(world.avatar_poses.keys().copied().filter(|owner| {
             *owner != world.agent_id
+                && self.foot_scope.allows(*owner)
                 && self.skeletons.contains_key(owner)
                 && world
                     .objects
@@ -349,6 +351,7 @@ impl Scene {
         }));
         self.remote_soles.entries.retain(|owner, _| {
             world.avatar_poses.contains_key(owner)
+                && self.foot_scope.allows(*owner)
                 && *owner != world.agent_id
                 && self.skeletons.contains_key(owner)
                 && world
@@ -1397,6 +1400,58 @@ mod tests {
         world.avatar_poses.clear();
         scene.update_remote_soles(&world, now + Duration::from_secs(2));
         assert!(scene.remote_soles.entries.is_empty(), "unposed residents retained their shoe cache");
+    }
+
+    #[test]
+    fn remote_visible_ten_budget_bounds_calibration_and_keeps_our_avatar() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = false;
+        world.agent.position = Vec3::new(-5.0, 0.0, 1.0);
+        let residents: Vec<_> = (1..=16)
+            .map(|serial| remote_shoes(&mut scene, &mut world, now, serial, 0.0))
+            .collect();
+        scene.foot_scope = super::super::foot_scope::Scope::from_mode("visible10");
+        scene.ground_avatar_feet = true;
+        scene.ground_feet_while_moving = true;
+        let eye = Vec3::Z;
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, 0.1);
+        let view = super::super::CullView::new(
+            projection * glam::camera::rh::view::look_at_mat4(eye, eye + Vec3::X, Vec3::Z),
+            eye,
+            900.0,
+            std::f32::consts::FRAC_PI_2,
+        );
+        for frame in 0..90 {
+            let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+            scene.update_foot_scope(&world, view, at);
+            remote_step(&mut scene, &mut world, at);
+        }
+        assert_eq!(scene.remote_soles.entries.len(), 10);
+        for (number, resident) in residents.iter().enumerate() {
+            let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+            assert_eq!(scene.grounding_frame(&world, index, now).is_some(), number < 10);
+        }
+        let own = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        assert!(
+            scene.grounding_frame(&world, own, now).is_some(),
+            "our avatar stays corrected outside the camera"
+        );
+        let away = super::super::CullView::new(
+            projection * glam::camera::rh::view::look_at_mat4(eye, eye - Vec3::X, Vec3::Z),
+            eye,
+            900.0,
+            std::f32::consts::FRAC_PI_2,
+        );
+        let at = now + Duration::from_secs(2);
+        scene.update_foot_scope(&world, away, at);
+        remote_step(&mut scene, &mut world, at);
+        assert!(scene.remote_soles.entries.is_empty(), "out-of-view residents still calibrate");
+        for resident in residents {
+            let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+            assert!(scene.grounding_frame(&world, index, at).is_none());
+        }
+        assert!(scene.grounding_frame(&world, own, at).is_some());
     }
 
     #[test]

@@ -1121,6 +1121,12 @@ excluded. The application supplies this context anew with every AO update.
 For large corrections, the body constraint keeps an upright source hip above
 its planted ankle so that the knee hinge cannot turn backward.
 
+`scene/foot_scope.rs` provides the runtime `AURORA_FOOT_IK_SCOPE=visible10`
+experiment. It reuses the main render frustum and a bounded nearest-ten
+list measured from our avatar. Own placement is retained, and remote sole
+calibration uses the same selection. Normal operation remains unlimited;
+deselection uses the existing source-pose release without legacy fallback.
+
 Four shaped sole probes use the existing neutral shoe calibration.
 When an absolute pelvis track replaces a mesh rest translation, placement
 shifts its neutral clearance and body reference by the same origin change.

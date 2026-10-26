@@ -550,6 +550,18 @@ when unfocused") is ignored during a screenshot.
   700/800/900: Aurora placement is OFF/ON/OFF, while our automatic height
   also switches at 720/840. Both avatars must retain floor contact and
   their upright posture, without an extra pelvis drop or knee flexion.
+  `auto-ik-perf` / `auto-ik-perf-off` place the crowd around our avatar, fix
+  the same camera, enable 100 full avatars and compare Aurora placement ON/OFF.
+  Use `AURORA_DEMO_CROWD=200`, `AURORA_DEMO_FEET=opaque`,
+  `AURORA_IMPOSTOR_POSES=every`, `AURORA_PRESENT_MODE=immediate`,
+  `AURORA_FPS_LIMIT=500` and `AURORA_PROFILE=1`. Run the ON scene with
+  `AURORA_FOOT_IK_SCOPE=all` and `visible10`; the latter selects at most ten
+  other unseated residents intersecting the main camera frustum, nearest to
+  our avatar (not the camera). Our own avatar keeps correction. Calibration
+  follows the same budget, with existing 0.5 s pose release on deselection.
+  This is a runtime experiment, not a saved preference or a new default.
+  `foot scope` log lines report selected/cached remote residents and support
+  frames (including our avatar); verify the cap alongside timing results.
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
@@ -7189,6 +7201,7 @@ What the inventory must show with these scenarios:
 | `AURORA_BLEND_SHADOWS=0` | Alpha-blended faces that are not rigged cast no shadow, as before |
 | `AURORA_DEBUG_SHADOWS=1` | Shadow view: the cascade each pixel reads, and its shadow |
 | `AURORA_PROFILE=1` | Profiling in the log (see [Profiling](#profiling)) |
+| `AURORA_FOOT_IK_SCOPE=<mode>` | Temporary foot-placement scope experiment (default: all) |
 | `AURORA_PROFILE_FRAMES=1` | Detailed profile of each frame |
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
