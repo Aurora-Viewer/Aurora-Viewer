@@ -22,6 +22,7 @@ pub mod color;
 pub mod demo;
 #[cfg(test)]
 pub(crate) mod elide_tests;
+pub(crate) mod hero;
 pub(crate) mod keycap;
 pub(crate) mod pills;
 mod resize;

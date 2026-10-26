@@ -1,13 +1,14 @@
 //! What the window shows of a group, gathered once a frame, and the head of
-//! the Aurora look: the banner with the insignia, the name, the founder and
-//! the counts, the actions, the badges and the tabs.
+//! the Aurora look, laid out like an avatar's (`widgets::hero`): the banner
+//! with the insignia, the name, the founder and the counts, the badges, the
+//! actions and the tabs.
 
 use super::{GroupAction, Tab};
 use crate::theme::Palette;
 use crate::ui::context::{self, CtxAction};
 use crate::ui::menu;
 use crate::ui::place_details::Ctx;
-use crate::ui::widgets::{self, ActionKind};
+use crate::ui::widgets::{self, ActionKind, hero};
 use crate::world::World;
 use crate::world::group_data::GroupData;
 use aurora_net::GroupMembership;
@@ -258,113 +259,54 @@ pub(super) fn badge_with(
     resp
 }
 
-/// The head of the window. Returns the group to join when "Join" was
-/// clicked (the window confirms it first).
+/// The head of the window, like an avatar's (`widgets::hero`): the banner
+/// as tall as what it holds, the insignia on its left, the name, the
+/// founder, the counts and the badges beside it, the actions on its right,
+/// centred on one line, the tabs along its bottom. Returns the group to
+/// join when "Join" was clicked (the window confirms it first).
 pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &mut Tab, actions: &mut Vec<GroupAction>) -> Option<Header> {
     let p = c.p;
     let mut clicked = None;
     let top = ui.cursor().min;
     let width = ui.available_width();
-    let banner_rect = Rect::from_min_size(top, Vec2::new(width, BANNER_H));
+    let full = Rect::from_min_size(top, Vec2::new(width, 0.0));
+    let key = ui.scope_id().with(("group-hero", v.id));
+    let who_h = hero::measured(ui, key, INSIGNIA);
+    let (banner_rect, line, tabs_rect) = hero::rows(full, top.y, who_h.max(INSIGNIA));
     let pic = v.profile.map(|g| g.insignia).filter(|i| !i.is_nil());
     if let Some(i) = pic {
         c.wanted_images.insert(i);
     }
     let tex = pic.and_then(|i| c.images.get(&i));
     banner(ui, p, banner_rect, tex);
-    let insignia_rect = Rect::from_min_size(top + Vec2::new(INSIGNIA_LEFT, INSIGNIA_TOP), Vec2::splat(INSIGNIA));
-
-    // the identity: name, founder and counts on the left, the actions on
-    // the right
-    let id_top = banner_rect.bottom() + 10.0;
-    let id_left = top.x + IDENTITY_LEFT;
-    let row = Rect::from_min_max(Pos2::new(id_left, id_top), Pos2::new(banner_rect.right() - 4.0, id_top + 56.0));
-    let mut acts = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(row)
-            .layout(egui::Layout::right_to_left(egui::Align::Min)),
+    hero::veil(ui, ui.painter(), p, banner_rect);
+    let insignia_rect = Rect::from_center_size(
+        Pos2::new(top.x + INSIGNIA_LEFT + INSIGNIA / 2.0, line.center().y),
+        Vec2::splat(INSIGNIA),
     );
+
+    // the actions, centred on the line: named while the identity keeps
+    // room for its badges, else the main one alone named (a long language)
+    let id_left = top.x + IDENTITY_LEFT;
+    let row = Rect::from_min_max(
+        Pos2::new(id_left, line.center().y - BUTTON_H / 2.0),
+        Pos2::new(banner_rect.right() - 14.0, line.center().y + BUTTON_H / 2.0),
+    );
+    let layout = egui::Layout::right_to_left(egui::Align::Center);
+    let mut probe = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(layout).sizing_pass().invisible());
+    probe.spacing_mut().item_spacing.x = 5.0;
+    let mut ignored = (None, Vec::new());
+    actions_row(&mut probe, c, v, env, true, &mut ignored.0, &mut ignored.1);
+    let named = row.width() - probe.min_rect().width() - 18.0 >= hero::WHO_MIN_W;
+    let mut acts = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(layout));
     acts.spacing_mut().item_spacing.x = 5.0;
-    let size = Vec2::new(0.0, BUTTON_H);
-    let more = widgets::action_button(
-        &mut acts,
-        p,
-        "dots-filled",
-        "",
-        ActionKind::Flat,
-        Vec2::new(BUTTON_H + 4.0, BUTTON_H),
-    )
-    .on_hover_text(aurora_i18n::tr!("ui-profile-more"));
-    more_menu(&more, c, v, actions);
-    if v.member.is_some() {
-        // LLGroupActions::leave, confirmed by the shared dialog
-        if widgets::action_button(
-            &mut acts,
-            p,
-            "door-exit",
-            aurora_i18n::tr!("ui-group-profile-leave"),
-            ActionKind::SoftDanger,
-            size,
-        )
-        .clicked()
-        {
-            context::request(acts.ctx(), CtxAction::LeaveGroup(v.id));
-        }
-        if v.can(powers::MEMBER_INVITE)
-            && widgets::action_button(
-                &mut acts,
-                p,
-                "user-plus",
-                aurora_i18n::tr!("ui-group-profile-invite"),
-                ActionKind::Flat,
-                size,
-            )
-            .clicked()
-        {
-            clicked = Some(Header::Invite);
-        }
-        // LLGroupActions::startCall, enabled with voice (`Env::group_calls`)
-        let call = widgets::action_button_if(
-            &mut acts,
-            p,
-            "phone-filled",
-            aurora_i18n::tr!("ui-group-profile-call"),
-            ActionKind::Flat,
-            size,
-            env.group_calls,
-        )
-        .on_disabled_hover_text(aurora_i18n::tr!("ui-call-voice-off"));
-        if call.clicked() {
-            actions.push(GroupAction::Call(v.id));
-        }
-        if widgets::action_button(
-            &mut acts,
-            p,
-            "messages-filled",
-            aurora_i18n::tr!("common-chat"),
-            ActionKind::Primary,
-            size,
-        )
-        .clicked()
-        {
-            context::request(acts.ctx(), CtxAction::GroupChat(v.id));
-        }
-    } else if let Some(g) = v.profile.filter(|g| g.open_enrollment) {
-        // LLPanelGroup::update: "Join" only for an open enrollment, its fee
-        // in the label
-        let label = if g.membership_fee > 0 {
-            aurora_i18n::tr!("ui-group-profile-join-fee", fee = aurora_i18n::integer(i64::from(g.membership_fee)))
-        } else {
-            aurora_i18n::tr!("ui-group-profile-join").to_owned()
-        };
-        if widgets::action_button(&mut acts, p, "door-enter", &label, ActionKind::Primary, size).clicked() {
-            clicked = Some(Header::Join);
-        }
-    }
+    actions_row(&mut acts, c, v, env, named, &mut clicked, actions);
     let buttons_left = acts.min_rect().left();
+
+    // who it is, centred on the line too, measured for the next pass
     let who = Rect::from_min_max(
-        Pos2::new(id_left, id_top),
-        Pos2::new((buttons_left - 14.0).max(id_left + 40.0), id_top + 56.0),
+        Pos2::new(id_left, line.center().y - who_h / 2.0),
+        Pos2::new((buttons_left - 18.0).max(id_left + 40.0), line.center().y + who_h / 2.0 + 200.0),
     );
     let mut who_ui = ui.new_child(
         egui::UiBuilder::new()
@@ -413,25 +355,14 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &
             );
         }
     });
-    // the insignia goes over the identity's column edge, after the banner
+    who_ui.add_space(6.0);
+    who_ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(5.0, 5.0);
+        badges_row(ui, c, v, actions);
+    });
+    hero::measure(ui, key, who_ui.min_rect().height());
     insignia(ui, p, insignia_rect, tex, &v.name);
 
-    // the badges
-    let badges_top = id_top + 56.0 + 4.0;
-    let badges = Rect::from_min_max(
-        Pos2::new(id_left, badges_top),
-        Pos2::new(banner_rect.right() - 4.0, badges_top + 40.0),
-    );
-    let mut b = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(badges)
-            .layout(egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true)),
-    );
-    b.spacing_mut().item_spacing = Vec2::new(5.0, 5.0);
-    b.add_space(0.0);
-    badges_row(&mut b, c, v, actions);
-    let used = b.min_rect().bottom().max(badges_top + 40.0);
-    ui.allocate_rect(Rect::from_min_max(top, Pos2::new(banner_rect.right(), used)), Sense::hover());
     let experiences = c
         .world
         .experiences
@@ -440,8 +371,104 @@ pub fn header(ui: &mut egui::Ui, c: &mut Ctx, v: &View, env: &super::Env, tab: &
         .and_then(|l| l.as_ref())
         .map(Vec::len)
         .filter(|_| v.member.is_some());
-    tabs(ui, p, v, tab, c.world.group_data.unread(&v.id), experiences);
+    let mut strip = ui.new_child(egui::UiBuilder::new().max_rect(tabs_rect.shrink2(Vec2::new(10.0, 0.0))));
+    tabs(&mut strip, p, v, tab, c.world.group_data.unread(&v.id), experiences);
+    ui.allocate_rect(banner_rect, Sense::hover());
+    ui.add_space(10.0);
     clicked
+}
+
+/// The header's buttons, right to left: "…", then Leave, Invite, Call and
+/// Chat for a member, or Join for an open enrollment. `named`: the
+/// secondary ones with their names too, else their icons alone (their
+/// names in tooltips).
+fn actions_row(
+    acts: &mut egui::Ui,
+    c: &mut Ctx,
+    v: &View,
+    env: &super::Env,
+    named: bool,
+    clicked: &mut Option<Header>,
+    actions: &mut Vec<GroupAction>,
+) {
+    let p = c.p;
+    let size = Vec2::new(0.0, BUTTON_H);
+    // a secondary button: named, or its icon alone
+    let secondary = |ui: &mut egui::Ui, icon: &str, label: &str, kind: ActionKind, enabled: bool| {
+        let (shown, size) = if named { (label, size) } else { ("", Vec2::new(30.0, BUTTON_H)) };
+        let resp = widgets::action_button_if(ui, p, icon, shown, kind, size, enabled);
+        if named {
+            resp
+        } else {
+            // its name for a screen reader too
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+            resp.on_hover_text(label)
+        }
+    };
+    let more = widgets::action_button(acts, p, "dots-filled", "", ActionKind::Flat, Vec2::new(BUTTON_H + 4.0, BUTTON_H))
+        .on_hover_text(aurora_i18n::tr!("ui-profile-more"));
+    more_menu(&more, c, v, actions);
+    if v.member.is_some() {
+        // LLGroupActions::leave, confirmed by the shared dialog
+        if secondary(
+            acts,
+            "door-exit",
+            aurora_i18n::tr!("ui-group-profile-leave"),
+            ActionKind::SoftDanger,
+            true,
+        )
+        .clicked()
+        {
+            context::request(acts.ctx(), CtxAction::LeaveGroup(v.id));
+        }
+        if v.can(powers::MEMBER_INVITE)
+            && secondary(
+                acts,
+                "user-plus",
+                aurora_i18n::tr!("ui-group-profile-invite"),
+                ActionKind::Flat,
+                true,
+            )
+            .clicked()
+        {
+            *clicked = Some(Header::Invite);
+        }
+        // LLGroupActions::startCall, enabled with voice (`Env::group_calls`)
+        let call = secondary(
+            acts,
+            "phone-filled",
+            aurora_i18n::tr!("ui-group-profile-call"),
+            ActionKind::Flat,
+            env.group_calls,
+        )
+        .on_disabled_hover_text(aurora_i18n::tr!("ui-call-voice-off"));
+        if call.clicked() {
+            actions.push(GroupAction::Call(v.id));
+        }
+        if widgets::action_button(
+            acts,
+            p,
+            "messages-filled",
+            aurora_i18n::tr!("common-chat"),
+            ActionKind::Primary,
+            size,
+        )
+        .clicked()
+        {
+            context::request(acts.ctx(), CtxAction::GroupChat(v.id));
+        }
+    } else if let Some(g) = v.profile.filter(|g| g.open_enrollment) {
+        // LLPanelGroup::update: "Join" only for an open enrollment, its fee
+        // in the label
+        let label = if g.membership_fee > 0 {
+            aurora_i18n::tr!("ui-group-profile-join-fee", fee = aurora_i18n::integer(i64::from(g.membership_fee)))
+        } else {
+            aurora_i18n::tr!("ui-group-profile-join").to_owned()
+        };
+        if widgets::action_button(acts, p, "door-enter", &label, ActionKind::Primary, size).clicked() {
+            *clicked = Some(Header::Join);
+        }
+    }
 }
 
 /// What the head's buttons ask of the window itself.
@@ -653,7 +680,6 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize, 
             Err(aurora_i18n::tr!("ui-group-profile-members-only"))
         }
     };
-    ui.add_space(12.0);
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         ui.spacing_mut().item_spacing.x = 2.0;
@@ -741,7 +767,6 @@ fn tabs(ui: &mut egui::Ui, p: &Palette, v: &View, tab: &mut Tab, unread: usize, 
             });
         }
     });
-    ui.add_space(8.0);
 }
 
 /// The Administration tab: amber, on an amber wash when chosen.

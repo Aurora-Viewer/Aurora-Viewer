@@ -119,6 +119,7 @@ fn uri_destinations_restore_on_explicit_open_and_stay_minimized_otherwise() {
                                             profile_base: None,
                                         },
                                         classic,
+                                        true,
                                     );
                                 }
                                 Destination::Group | Destination::Places | Destination::StandalonePlace => {

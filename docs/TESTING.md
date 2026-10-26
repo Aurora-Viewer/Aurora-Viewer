@@ -5719,10 +5719,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   three residents of the scenarios have a profile picture, so a banner:
   the scenarios of the profile mock-up are
   - a friend: `friend` (Nova, Premium, a contact set if
-    `AURORA_DEMO_CONTACTS` seeded one, rights bar, three favorite places,
-    two groups of which one in common, private notes);
-  - a stranger: `wolf` (blocked: red badge, "Unblock"; "Add as friend" in
-    place of the rights bar);
+    `AURORA_DEMO_CONTACTS` seeded one, the rights on the Permissions line of
+    Info, three favorite places, two groups of which one in common, private
+    notes);
+  - a stranger: `wolf` (blocked: red badge, "Unblock"; "Add as friend" on
+    the Friendship line of Info);
   - my profile: `self`, then `self:edit` (camera button, pencil, About
     editor, Visibility, the unsaved bar once About is changed);
   - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).

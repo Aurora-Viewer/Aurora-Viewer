@@ -199,6 +199,14 @@ pub fn page(cx: &mut Cx, tab: usize) {
                 tr!("ui-options-aurora-profiles-classic"),
                 &field!(classic_profiles),
             );
+            let classic_profiles = cx.s.classic_profiles;
+            cx.subs(classic_profiles, |cx| {
+                cx.toggle(
+                    tr!("ui-options-aurora-profiles-rights"),
+                    tr!("ui-options-aurora-profiles-rights-help"),
+                    &field!(profile_rights),
+                );
+            });
             cx.wide().choice(
                 tr!("ui-options-aurora-photo-window"),
                 tr!("ui-options-aurora-photo-window-help"),

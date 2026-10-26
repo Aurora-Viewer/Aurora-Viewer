@@ -433,6 +433,7 @@ impl ProfileUi {
         want_names: &mut HashSet<Uuid>,
         web: &WebContext,
         classic: bool,
+        friend_rights: bool,
     ) -> Vec<ProfileAction> {
         let mut actions = Vec::new();
         let screen = ctx.content_rect();
@@ -471,6 +472,7 @@ impl ProfileUi {
                     wanted_images: &mut self.wanted_images,
                     actions: &mut actions,
                     pick_picture: &mut pick_picture,
+                    friend_rights,
                 };
                 let open = aurora::window(ctx, &mut env, w, i);
                 photo_window(ctx, p, world, pics, images, w);
@@ -2323,6 +2325,7 @@ mod tests {
                                 &mut want_names,
                                 &web,
                                 classic,
+                                true,
                             )
                         },
                     );
