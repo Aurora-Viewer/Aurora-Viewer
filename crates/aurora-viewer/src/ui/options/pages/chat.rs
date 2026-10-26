@@ -62,6 +62,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-mention-autocomplete-hint"),
                     &field!(chat_mention_autocomplete),
                 );
+                // AutohideChatBar (Chat › Typing), off (#1009)
+                cx.toggle(
+                    tr!("ui-options-autohide-chat-bar"),
+                    tr!("ui-options-autohide-chat-bar-hint"),
+                    &field!(autohide_chat_bar),
+                );
                 cx.slider(
                     tr!("ui-options-chat-bubble-duration"),
                     tr!("ui-options-0-no-chat-bubbles-above-the-chat-bar"),

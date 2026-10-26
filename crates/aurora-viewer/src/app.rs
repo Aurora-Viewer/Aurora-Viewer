@@ -11101,7 +11101,7 @@ impl App {
         if before.is_none() || before == Some(access) {
             return;
         }
-        let layout = self.dock_layout.of(&self.skin.layout).clone();
+        let layout = self.dock_layout.of(&self.skin.layout, self.settings.autohide_chat_bar).clone();
         let toolbar = self.settings.toolbar.get_or_insert_default();
         let mut buttons = toolbar.buttons(&layout).to_vec();
         let has = buttons.iter().any(|b| b.command == "favorites");
@@ -12392,6 +12392,16 @@ impl App {
                     Default::default()
                 };
                 let mut demo_chat_width = demo_bars.chat_width;
+                // the chat bar shown only while it is used (#1009); also
+                // AURORA_DEMO_BARS=autohide, for this run, with either bars,
+                // and `chatstart`: Enter pressed at frame 300 on a draft
+                let demo_autohide = if self.demo { ui::bars::demo::get() } else { Default::default() };
+                let autohide_chat_bar = self.settings.autohide_chat_bar || demo_autohide.autohide;
+                self.chat_ui.autohide = autohide_chat_bar;
+                if demo_autohide.chat_start && ctx.cumulative_frame_nr() == 300 {
+                    self.chat_ui.input = "Hello!".into();
+                    self.chat_ui.focus_request = true;
+                }
                 let mut mic = ui::bars::MicButton {
                     on: self.mic_on,
                     hold: self.settings.audio.mic_hold,
@@ -12428,13 +12438,17 @@ impl App {
                 // AURORA_DEMO_TOOLBAR=custom|side|labels|right: the mockup's
                 // side bar, for this run only
                 if self.demo && std::env::var_os("AURORA_DEMO_TOOLBAR").is_some() {
-                    let layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
+                    let layout = if classic_bars {
+                        layout
+                    } else {
+                        self.dock_layout.of(layout, autohide_chat_bar)
+                    };
                     let mut t = self.settings.toolbar.clone().unwrap_or_default();
                     ui::toolbar::demo_settings(&mut t, layout);
                     demo_toolbar = Some(t);
                 }
                 if self.demo && ui::bars::demo::get().access == Some(crate::settings::FavoritesAccess::Dock) {
-                    let layout = self.dock_layout.of(layout).clone();
+                    let layout = self.dock_layout.of(layout, autohide_chat_bar).clone();
                     let mut t = demo_toolbar
                         .take()
                         .unwrap_or_else(|| self.settings.toolbar.clone().unwrap_or_default());
@@ -12458,7 +12472,11 @@ impl App {
                     None => self.settings.toolbar.get_or_insert_default(),
                 };
                 // the dock leaves the Conversations button out of its default
-                let bar_layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
+                let bar_layout = if classic_bars {
+                    layout
+                } else {
+                    self.dock_layout.of(layout, autohide_chat_bar)
+                };
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
                 // the chat fields' suggestions (#980); the residents around

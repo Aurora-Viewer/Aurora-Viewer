@@ -68,6 +68,13 @@ pub struct ChatUi {
     /// The local chat field keeps the keyboard after a message is sent
     /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
     pub keep_focus: bool,
+    /// The chat bar shows only while it is used (Preferences › Chat; the
+    /// Legacy Viewer's AutohideChatBar, #1009): `bar_shown`.
+    pub autohide: bool,
+    /// The pointer was over the chat bar the last time it was drawn: a
+    /// click on it (its emoji, its handle) does not hide it under the
+    /// pointer once the field lets the keyboard go.
+    pub bar_hovered: bool,
     /// Conversation shown in the floater (None = local chat).
     pub selected: Option<uuid::Uuid>,
     /// Conversation whose entry the list scrolls to: one opened from
@@ -348,6 +355,17 @@ impl ChatUi {
             self.reveal = conversation;
             super::notifications::open_conversations(ctx, open);
         }
+    }
+
+    /// The chat bar is drawn this frame: always, or with `autohide` while it
+    /// is used. As the Legacy Viewer's autohidden bar (FSNearbyChat::
+    /// showDefaultChatBar, FSNearbyChatControl::autohide), Enter or a letter
+    /// key brings it with the keyboard, and Escape or a message sent with
+    /// "Keep the chat bar active" off puts it away; a click elsewhere on an
+    /// empty bar puts it away too, where the Legacy Viewer waited for
+    /// Escape. A draft keeps it.
+    pub fn bar_shown(&self) -> bool {
+        !self.autohide || self.has_focus || self.focus_request || !self.input.trim().is_empty() || self.bar_emoji_open || self.bar_hovered
     }
 
     /// The nearby chat is in its own window (#910): the chat island's
