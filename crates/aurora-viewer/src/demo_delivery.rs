@@ -2,15 +2,16 @@
 //! with no offer (#752), added the way the server's BulkUpdateInventory adds
 //! them. The inbox is seeded at frame 600 (not news), the delivery lands at
 //! 700: `1` one purchase, its card unrolls from the bell; `several` three at
-//! once, one card counting them; `history` one, closed at 900, then the
-//! bell's History tab opens on it with its "Show in inventory".
+//! once, one card counting them; `open` one, its "Show in inventory"
+//! pressed at 900; `history` one, closed at 900, then the bell's History tab
+//! opens on it with its "Show in inventory".
 
 use crate::world::inventory::Inventory;
 use aurora_net::NetEvent;
 use aurora_net::inventory::{InvFolder, InvItem};
 use uuid::Uuid;
 
-/// The scenario, if asked: `1`, `several` or `history`.
+/// The scenario, if asked: `1`, `several`, `open` or `history`.
 pub fn mode() -> Option<String> {
     std::env::var("AURORA_DEMO_DELIVERY").ok()
 }
@@ -19,7 +20,8 @@ pub fn mode() -> Option<String> {
 pub const SEED_AT: u64 = 600;
 /// The new delivery lands in the inbox.
 pub const ARRIVE_AT: u64 = 700;
-/// `history`: the card is closed, then the list opens on History.
+/// `open`: "Show in inventory" is pressed; `history`: the card is closed,
+/// then the list opens on History.
 pub const READ_AT: u64 = 900;
 
 /// The deliveries of `ARRIVE_AT`: a folder each with its object inside,

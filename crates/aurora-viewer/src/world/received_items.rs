@@ -538,13 +538,15 @@ impl World {
     /// (`marketplace_deliveries`, #752), named as the inventory shows them.
     pub fn notify_deliveries(&mut self, ids: &[Uuid]) -> Option<u64> {
         let inv = &self.inventory;
-        let named: Vec<(Uuid, String)> = ids
+        let mut named: Vec<(Uuid, String)> = ids
             .iter()
             .filter_map(|id| {
                 let name = inv.folders.get(id).map(|f| f.info.name.clone());
                 Some((*id, name.or_else(|| inv.items.get(id).map(|item| item.name.clone()))?))
             })
             .collect();
+        // the badge finds them in no particular order
+        named.sort_by_cached_key(|(_, name)| name.to_lowercase());
         let inbox = actions::system(inv, 50).unwrap_or(inv.root);
         self.notifications.push_deliveries(&named, inbox)
     }

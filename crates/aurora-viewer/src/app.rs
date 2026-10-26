@@ -4293,12 +4293,21 @@ impl App {
                     }
                 }
                 Follow::Inventory(item) => {
-                    self.inventory_ui.show_original(&self.world.inventory, item);
+                    self.inventory_ui.show_notified(&self.world.inventory, item);
                     self.panels.inventory = true;
                     self.notif_ui.open = false;
                 }
             },
         }
+    }
+
+    /// A Marketplace delivery's "Show in inventory" (#752): the card is
+    /// read, the delivery selected in the inventory.
+    fn show_delivery(&mut self, id: u64, object: uuid::Uuid) {
+        let _ = self.world.respond_notification(id, crate::world::notifications::Response::Open);
+        self.inventory_ui.show_notified(&self.world.inventory, object);
+        self.panels.inventory = true;
+        self.notif_ui.open = false;
     }
 
     fn update_sounds(&mut self) {
@@ -9371,19 +9380,24 @@ impl App {
             {
                 self.on_app_event(e);
             }
-            if mode == "history" && self.frame_count == READ_AT {
-                let card = self
-                    .world
-                    .notifications
-                    .list
-                    .iter()
-                    .find(|n| matches!(n.data, crate::world::notifications::Data::Delivery { .. }))
-                    .map(|n| n.id);
-                if let Some(id) = card {
-                    let _ = self.world.respond_notification(id, crate::world::notifications::Response::Dismiss);
+            let card = (self.frame_count == READ_AT)
+                .then(|| {
+                    self.world.notifications.list.iter().find_map(|n| match n.data {
+                        crate::world::notifications::Data::Delivery { object } => Some((n.id, object)),
+                        _ => None,
+                    })
+                })
+                .flatten();
+            match (mode.as_str(), card) {
+                ("open", Some((id, object))) => self.show_delivery(id, object),
+                ("history", card) if self.frame_count == READ_AT => {
+                    if let Some((id, _)) = card {
+                        let _ = self.world.respond_notification(id, crate::world::notifications::Response::Dismiss);
+                    }
+                    self.notif_ui.open = true;
+                    self.notif_ui.center.tab = ui::notification_center::Tab::History;
                 }
-                self.notif_ui.open = true;
-                self.notif_ui.center.tab = ui::notification_center::Tab::History;
+                _ => {}
             }
         }
         if self.demo
@@ -13452,11 +13466,7 @@ impl App {
                             _ => None,
                         })
                     {
-                        // "Show in inventory": read, and selected in the inventory
-                        let _ = self.world.respond_notification(id, r);
-                        self.inventory_ui.show_original(&self.world.inventory, object);
-                        self.panels.inventory = true;
-                        self.notif_ui.open = false;
+                        self.show_delivery(id, object);
                         continue;
                     }
                     if matches!(r, crate::world::notifications::Response::Open) {

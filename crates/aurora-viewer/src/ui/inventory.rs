@@ -511,6 +511,16 @@ impl InventoryUi {
         self.reveal_item(inv, id);
     }
 
+    /// "Show in inventory" from a notification: like `show_original`, on the
+    /// Received tab for what sits in the Marketplace inbox, which the main
+    /// tab leaves out (#752).
+    pub fn show_notified(&mut self, inv: &Inventory, id: Uuid) {
+        self.show_original(inv, id);
+        if crate::world::inventory::actions::system(inv, 50).is_some_and(|inbox| crate::world::inventory::actions::under(inv, id, inbox)) {
+            self.tab = RECEIVED_TAB;
+        }
+    }
+
     /// LLPanelMainInventory::onClearSearch / LLOpenFoldersWithSelection
     /// (indra/newview/llpanelmaininventory.cpp): reopen the selected path
     /// without replacing the selection or the window's current tab/filters.

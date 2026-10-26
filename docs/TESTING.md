@@ -3607,6 +3607,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object` | Notification center: cards, burst, paused bell, history, Legacy toasts and object inventory offers |
+| `AURORA_DEMO_DELIVERY=1\|several\|open\|history` | A Marketplace delivery arriving in Received items: its card under the bell, several at once, "Show in inventory", its history entry |
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
@@ -4305,6 +4306,19 @@ failure. Grid validation and any paid upload are performed by the human.
   700: "Open conversations", then "Don't flash for nearby chat" (unchecked).
   Capture with `AURORA_FPS_LIMIT=60` at `690,715,730,915,1200` (715 and 915:
   the top of a rise; 730: its bottom), `760` for `menu`.
+- **`AURORA_DEMO_DELIVERY=1|several|open|history`**: the Marketplace inbox
+  (Received items) appears at frame 600 with an earlier purchase, which is
+  not announced; at 700 a new delivery lands in it the way the server's
+  inventory update adds it, with no offer (#752). `1`: one "Marketplace
+  delivery" card unrolls from the bell with the purchase's name and "Show in
+  inventory". `several`: three land at once, one card counts them and lists
+  their names in order. `open`: the button is pressed at 900, the Inventory
+  window shows the Received tab with the delivery selected and the card
+  leaves the list. `history`: the card is closed at 900 and the bell's list
+  opens on History, where the entry reads "Read" with "Show in inventory".
+  Capture with `AURORA_FPS_LIMIT=60` at `760` for `1` and `several`, `960`
+  for `open` and `history`. Turning off Preferences › Inventory › Received
+  items › "Notify Marketplace deliveries" leaves only the Received badge.
 - **`AURORA_DEMO_KEYWORDS=1|prefs`**: keyword alerts on for the run, never saved
   (the two keywords of `demo-keywords-words`, "party, builders" in English,
   "fête, constructeurs" in French; colour change and sound on), with the
