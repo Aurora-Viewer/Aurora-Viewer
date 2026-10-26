@@ -11438,3 +11438,4 @@ parcel-visibility-add-selected = Add selected parcel
 parcel-visibility-empty = No parcels added
 demo-parcel-visibility-pinned = Always-visible neighbour
 demo-parcel-visibility-long = Aurora Observatory and Northern Gardens — Visitor Centre and Exhibition Pavilion
+ui-appearance-selected-outfits = { $count } outfits selected

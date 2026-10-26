@@ -15460,7 +15460,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.appearance_ui.open(
                     match view.as_str() {
-                        "outfits" => 1,
+                        "outfits" | "multi-outfits" => 1,
                         "worn" | "save" => 2,
                         _ => 0,
                     },
@@ -15468,6 +15468,9 @@ impl ApplicationHandler for App {
                 );
                 if view == "save" {
                     self.appearance_ui.begin_save_as(&self.world.inventory);
+                }
+                if matches!(view.as_str(), "multi-gallery" | "multi-outfits") {
+                    self.appearance_ui.demo_multiselection();
                 }
                 if view == "duplicates" {
                     crate::world::appearance::seed_duplicate_response(&mut self.world.inventory, self.world.agent_id);

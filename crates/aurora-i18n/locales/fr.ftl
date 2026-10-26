@@ -11434,3 +11434,4 @@ parcel-visibility-add-selected = Ajouter la parcelle sélectionnée
 parcel-visibility-empty = Aucune parcelle ajoutée
 demo-parcel-visibility-pinned = Parcelle voisine toujours affichée
 demo-parcel-visibility-long = Observatoire Aurora et jardins du Nord — Accueil des visiteurs et pavillon d’exposition
+ui-appearance-selected-outfits = { $count } tenues sélectionnées

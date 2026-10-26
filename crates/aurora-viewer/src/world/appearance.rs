@@ -46,6 +46,7 @@ pub enum WearMode {
 #[derive(Clone, Debug)]
 pub enum Action {
     Wear(Uuid, bool),
+    WearOutfits { folders: Vec<Uuid>, append: bool },
     WearContents { folder: Uuid, mode: WearMode },
     Save(Option<String>),
     Remove(Uuid),
@@ -59,6 +60,7 @@ pub enum Action {
     Category(Uuid, aurora_net::outfits::categories::Update),
     SaveTo(Uuid),
     RemoveOutfit(Uuid),
+    RemoveOutfits(Vec<Uuid>),
     MoveLayer(Uuid, bool),
     Revert,
 }
@@ -314,6 +316,8 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             | Action::Remove(_)
             | Action::RemoveItems(_)
             | Action::RemoveOutfit(_)
+            | Action::RemoveOutfits(_)
+            | Action::WearOutfits { append: true, .. }
             | Action::MoveLayer(..)
     ) {
         for id in worn.keys() {
@@ -397,36 +401,66 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 sync = false;
             }
         }
-        Action::Wear(id, _) | Action::WearContents { folder: id, .. } => {
-            let append = matches!(
-                action,
-                Action::Wear(_, true)
-                    | Action::WearContents {
-                        mode: WearMode::Append | WearMode::ReplaceItems,
-                        ..
+        Action::Wear(..) | Action::WearOutfits { .. } | Action::WearContents { .. } => {
+            let (folders, append, replace_items, contents) = match action {
+                Action::Wear(id, append) => (vec![id], append, false, false),
+                Action::WearOutfits { folders, append } => {
+                    if folders.is_empty() {
+                        return Err(aurora_i18n::tr!("world-appearance-the-outfit-folder-is-unavailable").into());
                     }
-            );
-            let replace_items = matches!(
-                action,
-                Action::WearContents {
-                    mode: WearMode::ReplaceItems,
-                    ..
+                    for id in &folders {
+                        require_outfit(inv, *id)?;
+                    }
+                    (folders, append, false, false)
                 }
-            );
-            require_complete(inv, id)?;
-            let mut next: Vec<_> = (if matches!(action, Action::WearContents { .. }) {
-                wearable_contents(inv, id)?
-            } else {
-                folder_links(inv, id)
-            })
-            .into_iter()
-            .filter(|l| !l.folder && inv.items.get(&l.target).is_none_or(|it| it.asset_type != 0))
-            .collect();
+                Action::WearContents { folder, mode } => (
+                    vec![folder],
+                    !matches!(mode, WearMode::ReplaceOutfit),
+                    matches!(mode, WearMode::ReplaceItems),
+                    true,
+                ),
+                _ => unreachable!(),
+            };
+            // Collect every selected folder before one COF mutation. Sending
+            // separate wears loses later selections while the first is pending.
+            let mut links = Vec::new();
+            let mut seen = HashSet::new();
+            for id in &folders {
+                if !seen.insert(*id) {
+                    continue;
+                }
+                require_complete(inv, *id)?;
+                links.extend(if contents {
+                    wearable_contents(inv, *id)?
+                } else {
+                    folder_links(inv, *id)
+                });
+            }
+            let mut next: Vec<_> = links
+                .into_iter()
+                .filter(|l| !l.folder && inv.items.get(&l.target).is_none_or(|it| it.asset_type != 0))
+                .collect();
             if next
                 .iter()
                 .any(|l| inv.items.get(&l.target).is_none_or(|it| !matches!(it.asset_type, 5 | 6 | 13 | 21)))
             {
                 return Err(aurora_i18n::tr!("world-appearance-this-outfit-contains-a-link-that-cannot-be-worn").into());
+            }
+            if seen.len() > 1 {
+                // LLAppearanceMgr::removeDuplicateItems / filterWearableItems
+                // (indra/newview/llappearancemgr.cpp) keep the last original
+                // and body part of each type. Combine in displayed order.
+                let mut targets = HashSet::new();
+                let mut body = HashSet::new();
+                next.reverse();
+                next.retain(|link| {
+                    targets.insert(link.target)
+                        && inv
+                            .items
+                            .get(&link.target)
+                            .is_none_or(|item| item.asset_type != 13 || body.insert(item.flags & 0xff))
+                });
+                next.reverse();
             }
             for old in current.iter().filter(|l| !l.folder) {
                 let preserve = (append
@@ -464,7 +498,10 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             if let Some(base) = if append {
                 base(inv)
             } else {
-                inv.folders.get(&id).filter(|f| f.info.type_default == FT_OUTFIT).map(|_| id)
+                // A combination has no single saved outfit to overwrite.
+                (seen.len() == 1)
+                    .then_some(folders[0])
+                    .filter(|id| inv.folders.get(id).is_some_and(|f| f.info.type_default == FT_OUTFIT))
             } {
                 next.push(base_link(inv, base));
             }
@@ -505,14 +542,24 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             current.retain(|l| l.folder || !removable.contains(&l.target));
             change.links = current;
         }
-        Action::RemoveOutfit(id) => {
-            require_complete(inv, id)?;
+        Action::RemoveOutfit(_) | Action::RemoveOutfits(_) => {
+            let folders = match action {
+                Action::RemoveOutfit(id) => vec![id],
+                Action::RemoveOutfits(ids) => ids,
+                _ => unreachable!(),
+            };
             // takeOffOutfit never removes the four required body parts.
-            let removable: HashSet<_> = wearable_contents(inv, id)?
-                .iter()
-                .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13))
-                .map(|l| l.target)
-                .collect();
+            let mut removable = HashSet::new();
+            for id in folders {
+                require_outfit(inv, id)?;
+                require_complete(inv, id)?;
+                removable.extend(
+                    wearable_contents(inv, id)?
+                        .iter()
+                        .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type != 13))
+                        .map(|l| l.target),
+                );
+            }
             current.retain(|l| l.folder || !removable.contains(&l.target));
             change.links = current;
         }
@@ -1210,6 +1257,189 @@ mod tests {
         let mut inv = Inventory::default();
         seed_demo(&mut inv, Uuid::from_u128(1));
         inv
+    }
+
+    #[test]
+    fn combined_outfits_wear_once_deduplicate_and_preserve_required_parts() {
+        let inv = fixture();
+        let folders = vec![Uuid::from_u128(703), Uuid::from_u128(704), Uuid::from_u128(703)];
+        let (change, sync) = plan(&inv, Action::WearOutfits { folders, append: false }, &HashMap::new()).expect("combined wear");
+        assert!(sync);
+        assert_eq!(change.folder, cof(&inv).expect("COF"));
+        assert!(change.cof.is_none());
+        let targets: HashSet<_> = change.links.iter().map(|link| link.target).collect();
+        assert_eq!(targets.len(), change.links.len());
+        for id in (710..719).chain(std::iter::once(723)) {
+            assert!(targets.contains(&Uuid::from_u128(id)), "missing combined item {id}");
+        }
+        assert!(!targets.contains(&Uuid::from_u128(721)), "replace removes unrelated HUD");
+        assert!(
+            !change.links.iter().any(|link| link.folder),
+            "a combination has no single saved base"
+        );
+        for kind in 0..4 {
+            assert_eq!(
+                change
+                    .links
+                    .iter()
+                    .filter(|link| inv.items[&link.target].asset_type == 13 && inv.items[&link.target].flags & 0xff == kind)
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn combined_outfits_add_preserves_current_base_and_unlinked_attachments() {
+        let mut inv = fixture();
+        let mut attachment = inv.items[&Uuid::from_u128(723)].clone();
+        attachment.id = Uuid::from_u128(724);
+        inv.add_items(vec![attachment]);
+        let worn = HashMap::from([(Uuid::from_u128(724), 5)]);
+        let (change, sync) = plan(
+            &inv,
+            Action::WearOutfits {
+                folders: vec![Uuid::from_u128(703), Uuid::from_u128(704)],
+                append: true,
+            },
+            &worn,
+        )
+        .expect("combined add");
+        assert!(sync);
+        for id in (710..722).chain([723, 724]) {
+            assert!(
+                change.links.iter().any(|link| link.target == Uuid::from_u128(id)),
+                "missing item {id}"
+            );
+        }
+        assert!(change.links.iter().any(|link| link.folder && Some(link.target) == base(&inv)));
+    }
+
+    #[test]
+    fn combined_outfits_bodypart_conflicts_follow_last_in_display_order() {
+        let mut inv = fixture();
+        let mut shape = inv.items[&Uuid::from_u128(710)].clone();
+        shape.id = Uuid::from_u128(724);
+        inv.add_items(vec![shape.clone()]);
+        let folder = Uuid::from_u128(704);
+        let mut links = folder_links(&inv, folder);
+        links.retain(|link| link.target != Uuid::from_u128(710));
+        links.push(item_link(&shape));
+        demo_replace(&mut inv, Uuid::from_u128(1), folder, &links);
+        for (folders, expected) in [
+            (vec![Uuid::from_u128(703), folder], shape.id),
+            (vec![folder, Uuid::from_u128(703)], Uuid::from_u128(710)),
+        ] {
+            for append in [false, true] {
+                let (change, _) = plan(
+                    &inv,
+                    Action::WearOutfits {
+                        folders: folders.clone(),
+                        append,
+                    },
+                    &HashMap::new(),
+                )
+                .expect("combined wear");
+                let shapes: Vec<_> = change
+                    .links
+                    .iter()
+                    .filter(|link| !link.folder && inv.items[&link.target].asset_type == 13 && inv.items[&link.target].flags & 0xff == 0)
+                    .map(|link| link.target)
+                    .collect();
+                assert_eq!(shapes, vec![expected]);
+            }
+        }
+    }
+
+    #[test]
+    fn combined_outfits_enforce_attachment_limit_on_the_complete_selection() {
+        let mut inv = fixture();
+        let template = inv.items[&Uuid::from_u128(723)].clone();
+        let objects: Vec<_> = (8000..8039)
+            .map(|id| InvItem {
+                id: Uuid::from_u128(id),
+                ..template.clone()
+            })
+            .collect();
+        inv.add_items(objects.clone());
+        for (id, items) in [Uuid::from_u128(703), Uuid::from_u128(704)].into_iter().zip(objects.chunks(20)) {
+            demo_replace(&mut inv, Uuid::from_u128(1), id, &items.iter().map(item_link).collect::<Vec<_>>());
+            assert!(plan(&inv, Action::Wear(id, false), &HashMap::new()).is_ok());
+        }
+        assert!(
+            plan(
+                &inv,
+                Action::WearOutfits {
+                    folders: vec![Uuid::from_u128(703), Uuid::from_u128(704)],
+                    append: false,
+                },
+                &HashMap::new()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn combined_outfits_fail_atomically_on_unloaded_missing_or_invalid_folders() {
+        for failure in 0..4 {
+            let mut inv = fixture();
+            let id = Uuid::from_u128(704);
+            match failure {
+                0 => inv.folders.get_mut(&id).expect("folder").state = FetchState::Fetching,
+                1 => {
+                    inv.items.remove(&Uuid::from_u128(723));
+                }
+                2 => inv.folders.get_mut(&id).expect("folder").library = true,
+                _ => {
+                    inv.folders.remove(&id);
+                }
+            }
+            for append in [false, true] {
+                assert!(
+                    plan(
+                        &inv,
+                        Action::WearOutfits {
+                            folders: vec![Uuid::from_u128(703), id],
+                            append,
+                        },
+                        &HashMap::new()
+                    )
+                    .is_err()
+                );
+            }
+        }
+        assert!(
+            plan(
+                &fixture(),
+                Action::WearOutfits {
+                    folders: vec![],
+                    append: false
+                },
+                &HashMap::new()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn combined_outfits_remove_preserves_body_parts_and_unrelated_items() {
+        let inv = fixture();
+        let (change, sync) = plan(
+            &inv,
+            Action::RemoveOutfits(vec![Uuid::from_u128(703), Uuid::from_u128(704)]),
+            &HashMap::new(),
+        )
+        .expect("combined take off");
+        assert!(sync);
+        for id in [710, 711, 712, 713, 719, 720, 721] {
+            assert!(
+                change.links.iter().any(|link| link.target == Uuid::from_u128(id)),
+                "missing preserved item {id}"
+            );
+        }
+        for id in 714..719 {
+            assert!(!change.links.iter().any(|link| link.target == Uuid::from_u128(id)));
+        }
     }
 
     #[test]
