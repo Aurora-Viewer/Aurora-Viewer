@@ -159,7 +159,7 @@ pub(crate) struct State {
     submenus: Vec<egui::LayerId>,
     /// Offline capture fixture: the first pointer frame of a held drag.
     demo_drag: Option<u64>,
-    pub(super) notecard: Option<super::context_notecards::Mode>,
+    pub(crate) notecard: Option<super::context_notecards::Mode>,
     queries: std::collections::BTreeMap<String, String>,
     #[cfg(test)]
     rects: std::collections::BTreeMap<String, egui::Rect>,
@@ -952,10 +952,7 @@ impl View<'_> {
                     "folder-filled",
                     aurora_i18n::tr!("inventory-menu-load-notecard"),
                 ),
-            ]
-            .into_iter()
-            .filter(|_| !self.scope.starts_with("scene:"))
-            {
+            ] {
                 let button = widgets::action_button(
                     ui,
                     self.p,

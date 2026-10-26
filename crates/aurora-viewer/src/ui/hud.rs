@@ -346,6 +346,7 @@ pub fn draw(
     proj: &Projector,
     eye: Vec3,
     show_own: bool,
+    avatar_tags: bool,
     settings: &crate::settings::Settings,
     visibility: &mut NameTagVisibility,
     voice: &HashMap<uuid::Uuid, (f32, bool)>,
@@ -392,6 +393,10 @@ pub fn draw(
             continue;
         }
         if o.is_avatar() {
+            // immersive mode without name tags: no plate, no bubble under it
+            if !avatar_tags {
+                continue;
+            }
             if world.rlva.has("shownearby") && o.full_id != world.agent_id {
                 continue;
             }
@@ -895,6 +900,7 @@ mod tests {
                             &proj,
                             Vec3::new(128.0, 128.0, 5.0),
                             true,
+                            true,
                             settings,
                             &mut visibility,
                             &empty,
@@ -1003,6 +1009,7 @@ mod tests {
                             &scene,
                             &proj,
                             eye,
+                            true,
                             true,
                             settings,
                             &mut visibility,

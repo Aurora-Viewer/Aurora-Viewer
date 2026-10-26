@@ -46,7 +46,19 @@ fn world(member: bool, powers: u64) -> World {
 /// The texts of the window's second frame, top to bottom, and the actions
 /// of both frames.
 fn texts(st: &mut GroupProfileUi, world: &World, classic: bool) -> (Vec<String>, Vec<GroupAction>) {
+    let (texts, actions, _) = frames(st, world, classic);
+    (texts, actions)
+}
+
+/// The names of the second frame's buttons, an icon alone's included (its
+/// name for a screen reader).
+fn buttons(st: &mut GroupProfileUi, world: &World) -> Vec<String> {
+    frames(st, world, false).2
+}
+
+fn frames(st: &mut GroupProfileUi, world: &World, classic: bool) -> (Vec<String>, Vec<GroupAction>, Vec<String>) {
     let ctx = egui::Context::default();
+    ctx.enable_accesskit();
     crate::theme::Theme::default().apply(&ctx, 1.0);
     let p = crate::theme::Theme::default().palette();
     let images = HashMap::new();
@@ -61,6 +73,7 @@ fn texts(st: &mut GroupProfileUi, world: &World, classic: bool) -> (Vec<String>,
     };
     let mut actions = Vec::new();
     let mut shapes = Vec::new();
+    let mut buttons = Vec::new();
     for _ in 0..2 {
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -82,6 +95,17 @@ fn texts(st: &mut GroupProfileUi, world: &World, classic: bool) -> (Vec<String>,
         );
         output.textures_delta.clear();
         shapes = output.shapes;
+        buttons = output
+            .platform_output
+            .accesskit_update
+            .map(|u| {
+                u.nodes
+                    .iter()
+                    .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+                    .filter_map(|(_, n)| n.label().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
     }
     fn collect(shape: &Shape, out: &mut Vec<(f32, f32, String)>) {
         match shape {
@@ -93,7 +117,7 @@ fn texts(st: &mut GroupProfileUi, world: &World, classic: bool) -> (Vec<String>,
     let mut out = Vec::new();
     shapes.iter().for_each(|s| collect(&s.shape, &mut out));
     out.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
-    (out.into_iter().map(|t| t.2).collect(), actions)
+    (out.into_iter().map(|t| t.2).collect(), actions, buttons)
 }
 
 /// A text of the window, or a card title (in capitals).
@@ -389,9 +413,10 @@ fn invite_shows_with_the_ability_and_call_waits_for_group_voice() {
     for (abilities, invites) in [(MEMBER, false), (MEMBER | powers::MEMBER_INVITE, true)] {
         let mut world = world(true, abilities);
         let mut st = opened(&mut world);
-        let (texts, _) = texts(&mut st, &world, false);
-        assert_eq!(has(&texts, "ui-group-profile-invite"), invites);
-        assert!(has(&texts, "ui-group-profile-call"));
+        // named, or their icons alone in a narrow head (#1089)
+        let names = buttons(&mut st, &world);
+        assert_eq!(has(&names, "ui-group-profile-invite"), invites, "{names:?}");
+        assert!(has(&names, "ui-group-profile-call"), "{names:?}");
     }
 }
 

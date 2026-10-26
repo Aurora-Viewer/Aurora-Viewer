@@ -633,6 +633,12 @@ pub enum NetEvent {
     /// Help › Server release notes: the page to open, or why there is none
     /// (`NetCommand::ServerReleaseNotes`, release_notes.rs).
     ServerReleaseNotes(Result<String, String>),
+    Pathfinding {
+        request: Uuid,
+        region: RegionHandle,
+        kind: crate::pathfinding::Kind,
+        result: Result<Vec<crate::pathfinding::Row>, crate::pathfinding::Error>,
+    },
     /// The region console's output (`SimConsoleResponse`), or Err when the
     /// command did not reach the simulator (sim_console.rs).
     SimConsoleReply(Result<String, String>),
@@ -1455,6 +1461,11 @@ pub enum NetCommand {
     /// Fetch the page of the region's ServerReleaseNotes capability,
     /// answered by `NetEvent::ServerReleaseNotes`.
     ServerReleaseNotes,
+    FetchPathfinding {
+        request: Uuid,
+        region: RegionHandle,
+        kind: crate::pathfinding::Kind,
+    },
     /// One command line for the region console (SimConsoleAsync); the
     /// output comes as `NetEvent::SimConsoleReply`.
     SimConsole(String),

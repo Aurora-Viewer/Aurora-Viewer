@@ -12,10 +12,10 @@ use aurora_net::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-mod picker;
+pub(crate) mod picker;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Mode {
+pub(crate) enum Mode {
     Export,
     Load,
 }
@@ -45,8 +45,12 @@ fn invalid() -> String {
 }
 
 fn valid(profile: &Profile) -> bool {
-    let l = &profile.layout;
     let id = |text: &str| !text.is_empty() && text.len() <= 128 && text.bytes().all(|c| c.is_ascii_alphanumeric() || b":_-".contains(&c));
+    valid_with(profile, id)
+}
+
+pub(crate) fn valid_with(profile: &Profile, id: impl Fn(&str) -> bool) -> bool {
+    let l = &profile.layout;
     l.groups.len() <= 64
         && l.icon_bars.len() <= 16
         && l.separators.len() <= 128
@@ -109,7 +113,7 @@ fn write(prefs: &Preferences) -> Result<String, String> {
     Ok(text)
 }
 
-fn available(inv: &Inventory, id: Uuid) -> Option<&InvItem> {
+pub(crate) fn available(inv: &Inventory, id: Uuid) -> Option<&InvItem> {
     inv.items
         .get(&id)
         .filter(|item| item.asset_type == 7 && item.owner_mask & actions::COPY != 0 && !inv.in_folder_type(id, 14))

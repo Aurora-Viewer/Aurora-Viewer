@@ -211,7 +211,11 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
     ui.item_if("man-filled", aurora_i18n::tr!("common-stand-up"), o.stand, CtxAction::StandUp);
     ui.separator();
     ui.submenu("box", aurora_i18n::tr!("common-object"), true, |ui| {
-        ui.todo("info-circle-filled", aurora_i18n::tr!("common-profile"));
+        ui.item(
+            "info-circle-filled",
+            aurora_i18n::tr!("common-profile"),
+            CtxAction::ObjectProfile(id),
+        );
         ui.item("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"), CtxAction::Inspect(id));
         ui.item("code", aurora_i18n::tr!("ui-context-script-information"), CtxAction::ScriptInfo(id));
         ui.item("box", aurora_i18n::tr!("ui-context-object-information"), CtxAction::ObjectInfo(id));
@@ -244,10 +248,16 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         }
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
-    // Pathfinding.Linksets.Select / Characters.Select: the pathfinding
-    // windows are not in Aurora yet
-    ui.todo("list-details-filled", aurora_i18n::tr!("ui-context-show-in-region-objects"));
-    ui.todo("walk", aurora_i18n::tr!("ui-context-show-in-characters"));
+    ui.item(
+        "list-details-filled",
+        aurora_i18n::tr!("ui-context-show-in-region-objects"),
+        CtxAction::Pathfinding { id, characters: false },
+    );
+    ui.item(
+        "walk",
+        aurora_i18n::tr!("ui-context-show-in-characters"),
+        CtxAction::Pathfinding { id, characters: true },
+    );
     ui.separator();
     put_on_submenu(ui, f, id);
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
@@ -487,7 +497,12 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
     );
     ui.separator();
     community_submenu(ui, f.me);
-    ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
+    ui.item_if(
+        "info-circle-filled",
+        aurora_i18n::tr!("ui-context-object-profile"),
+        !f.object.id.is_nil(),
+        CtxAction::ObjectProfile(f.object.id),
+    );
     ui.item_if(
         "zoom-scan-filled",
         aurora_i18n::tr!("ui-context-inspect-2"),
@@ -612,7 +627,11 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     );
     ui.separator();
     reset_skeleton_items(ui, id);
-    ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
+    ui.item(
+        "restore",
+        aurora_i18n::tr!("ui-context-reset-mesh-lod-2"),
+        CtxAction::ResetMeshLod(id),
+    );
     ui.separator();
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
         let (icon, label) = if f.blocked {
@@ -630,8 +649,7 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
             aurora_i18n::tr!("common-report"),
             CtxAction::ReportAbuse(ReportTarget::Object(id)),
         );
-        ui.todo("snowflake", aurora_i18n::tr!("ui-context-freeze"));
-        ui.todo("player-eject-filled", aurora_i18n::tr!("ui-context-eject"));
+        moderation_items(ui, f, id);
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
@@ -689,6 +707,15 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     );
 }
 
+/// Avatar.Freeze / Avatar.Eject, visible only with the rights on the land
+/// the avatar stands on (on_visible Avatar.EnableFreezeEject).
+fn moderation_items(ui: &mut Builder, f: &Facts, id: Uuid) {
+    if f.moderation.allowed {
+        ui.item("snowflake", aurora_i18n::tr!("ui-context-freeze"), CtxAction::Freeze(id));
+        ui.item("player-eject-filled", aurora_i18n::tr!("ui-context-eject"), CtxAction::Eject(id));
+    }
+}
+
 /// menu_attachment_other.xml: the avatar's entries, then those of the
 /// attachment clicked, in Firestorm's order. Entries it hides unless they
 /// apply (Dump XML, Block Particle Owner, Freeze / Eject without the
@@ -725,7 +752,11 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
     );
     ui.separator();
     reset_skeleton_items(ui, id);
-    ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod-2"));
+    ui.item(
+        "restore",
+        aurora_i18n::tr!("ui-context-reset-mesh-lod-2"),
+        CtxAction::ResetMeshLod(id),
+    );
     ui.separator();
     ui.submenu("alert-triangle-filled", aurora_i18n::tr!("ui-context-disturbance"), true, |ui| {
         let (icon, label) = if f.blocked {
@@ -742,12 +773,17 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
             aurora_i18n::tr!("common-report"),
             CtxAction::ReportAbuse(ReportTarget::Object(id)),
         );
+        moderation_items(ui, f, id);
     });
     ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
     // Avatar.Pay: the wearer is paid
     ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
     ui.separator();
-    ui.todo("info-circle-filled", aurora_i18n::tr!("ui-context-object-profile"));
+    ui.item(
+        "info-circle-filled",
+        aurora_i18n::tr!("ui-context-object-profile"),
+        CtxAction::ObjectProfile(attachment),
+    );
     ui.separator();
     // Avatar.SetImpostorMode 2 / 1, and 0 once there is an exception
     ui.check(
@@ -939,7 +975,11 @@ fn appearance_submenu(ui: &mut Builder, f: &Facts) {
         );
         ui.separator();
         reset_skeleton_items(ui, f.me);
-        ui.todo("restore", aurora_i18n::tr!("ui-context-reset-mesh-lod"));
+        ui.item(
+            "restore",
+            aurora_i18n::tr!("ui-context-reset-mesh-lod"),
+            CtxAction::ResetMeshLod(f.me),
+        );
         // Avatar › Avatar Health › "Force Appearance Update (Rebake)" in
         // Firestorm's menu bar, next to the resets here (Ctrl+Alt+R)
         ui.item("reload", aurora_i18n::tr!("ui-context-rebake"), CtxAction::Rebake);
@@ -1370,15 +1410,9 @@ mod tests {
             .filter(|e| matches!(e.kind, Kind::Unavailable))
             .map(|e| e.label)
             .collect();
-        // The object profile, the pathfinding
-        // windows and the exporters are windows of their own. Script info
+        // The pathfinding windows and exporters are separate subsystems. Script info
         // is available through the Aurora bridge.
-        let expected = tr(&[
-            "common-profile",
-            "ui-context-show-in-region-objects",
-            "ui-context-show-in-characters",
-            "common-save-as",
-        ]);
+        let expected = tr(&["common-save-as"]);
         let mut left_sorted = left.clone();
         left_sorted.sort();
         let mut expected_sorted = expected;

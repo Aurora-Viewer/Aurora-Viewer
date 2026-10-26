@@ -1,12 +1,15 @@
 //! Behaviour reference: LLToolDragAndDrop::{pick,dad3dRezObjectOnLand,
 //! dad3dRezObjectOnObject,dropObject,willObjectAcceptInventory} and
 //! FSCommon::getGroupForRezzing (Firestorm indra/newview, LGPL 2.1).
-//! Aurora owns the input, geometry queries and command preparation.
+//! Aurora owns the input, geometry queries and command preparation; what
+//! goes into an object's contents is decided by `build::contents_drop`.
 
 use super::*;
+pub(super) use crate::build::contents_drop::target_allowed;
+use crate::build::contents_drop::{self, Target, copyable};
 use crate::ui::inventory::InvDrag;
 use crate::world::inventory::{Inventory, actions as rules};
-use aurora_net::build::{BuildCmd, TaskItem};
+use aurora_net::build::BuildCmd;
 use aurora_net::inventory::{InvItem, rez::RezInventory};
 use uuid::Uuid;
 
@@ -16,6 +19,8 @@ pub(super) struct InventoryDrag {
     ray: Option<(Vec3, Vec3)>,
     checked: Option<Instant>,
     surface: Option<(Vec3, Option<usize>)>,
+    /// whether the object under the pointer takes the cargo into its contents
+    contents: contents_drop::PlanCheck,
     pub cursor: Option<egui::CursorIcon>,
 }
 
@@ -53,19 +58,14 @@ pub(super) struct InventoryDrop {
 
 fn reason_text(reason: &str) -> &'static str {
     match reason {
-        "rez-marketplace" => aurora_i18n::tr!("rez-marketplace"),
-        "rez-incomplete" => aurora_i18n::tr!("rez-incomplete"),
-        "rez-object-only" => aurora_i18n::tr!("rez-object-only"),
-        "rez-worn" => aurora_i18n::tr!("rez-worn"),
-        "rez-contents-denied" => aurora_i18n::tr!("rez-contents-denied"),
-        "rez-transfer-denied" => aurora_i18n::tr!("rez-transfer-denied"),
         "portal-bridge-required" => aurora_i18n::tr!("portal-bridge-required"),
         "portal-invalid" => aurora_i18n::tr!("portal-invalid"),
         "portal-landmark-unavailable" => aurora_i18n::tr!("portal-landmark-unavailable"),
-        _ => aurora_i18n::tr!("rez-no-surface"),
+        _ => contents_drop::reason_text(reason),
     }
 }
 
+#[cfg(test)]
 fn original(world: &World, id: Uuid) -> Result<&InvItem, &'static str> {
     cargo(world, id, false)
 }
@@ -84,7 +84,7 @@ fn cargo(world: &World, id: Uuid, contents: bool) -> Result<&InvItem, &'static s
     let item = inv
         .items
         .get(&original)
-        .filter(|it| it.asset_type == 6 || contents && matches!(it.asset_type, 0 | 1 | 3 | 7 | 10 | 20 | 57))
+        .filter(|it| it.asset_type == 6 || contents)
         .ok_or("rez-object-only")?;
     if inv.in_folder_type(original, 53) {
         return Err("rez-marketplace");
@@ -105,16 +105,6 @@ fn cargo(world: &World, id: Uuid, contents: bool) -> Result<&InvItem, &'static s
     Ok(item)
 }
 
-fn copyable(item: &InvItem, agent: Uuid) -> bool {
-    // allowCopyBy(agent), without an active-group override, like Firestorm.
-    let mask = if item.owner == agent && !item.group_owned {
-        item.owner_mask
-    } else {
-        item.everyone_mask
-    };
-    mask & rules::COPY != 0
-}
-
 fn remove_on_rez(inv: &Inventory, item: &InvItem, agent: Uuid, on_object: bool) -> bool {
     !copyable(item, agent) || (on_object && inv.in_folder_type(item.id, 14))
 }
@@ -127,52 +117,6 @@ fn group_for_rez(world: &World, under_land: bool) -> Uuid {
         .map(|p| p.group_id)
         .filter(|id| !id.is_nil() && world.groups.groups.iter().any(|g| g.id == *id))
         .unwrap_or(world.groups.active)
-}
-
-pub(super) fn target_allowed(world: &World, idx: usize, item: &InvItem, ctrl: bool) -> Result<(), &'static str> {
-    let o = world.objects.get(idx).ok_or("rez-no-surface")?;
-    if o.is_avatar() || o.is_tree() {
-        return Err("rez-no-surface");
-    }
-    // Attachments are avatar targets in Firestorm. Giving / wearing through
-    // world drag is a separate operation; never rez through an avatar.
-    let mut current = idx;
-    let mut rooted = false;
-    for _ in 0..64 {
-        let p = world.objects.get(current).ok_or("rez-no-surface")?;
-        if p.is_avatar() {
-            return Err("rez-no-surface");
-        }
-        if p.parent_id == 0 {
-            rooted = true;
-            break;
-        }
-        current = world.objects.parent_of(p).ok_or("rez-no-surface")?;
-    }
-    if !rooted {
-        return Err("rez-no-surface");
-    }
-    if ctrl {
-        use crate::ui::context::flags::{OBJECT_MODIFY, OBJECT_YOU_OWNER};
-        const ALLOW_INVENTORY_DROP: u32 = 1 << 16;
-        let root = world.objects.get(current).ok_or("rez-no-surface")?;
-        if o.pcode != aurora_prim::params::LL_PCODE_VOLUME
-            || root.update_flags & OBJECT_MODIFY == 0 && o.update_flags & ALLOW_INVENTORY_DROP == 0
-            || item.asset_type == 10 && root.update_flags & OBJECT_MODIFY == 0
-        {
-            return Err("rez-contents-denied");
-        }
-        let owned = root.update_flags & OBJECT_YOU_OWNER != 0;
-        let transfer = if item.owner == world.agent_id && !item.group_owned {
-            item.owner_mask
-        } else {
-            item.everyone_mask
-        };
-        if !(owned && item.owner == world.agent_id) && transfer & rules::TRANSFER == 0 {
-            return Err("rez-transfer-denied");
-        }
-    }
-    Ok(())
 }
 
 /// The avatar an object is, or is worn by: an attachment counts as its
@@ -201,70 +145,29 @@ fn prepare(
     selected: bool,
     under_land: bool,
 ) -> Result<InventoryDrop, &'static str> {
-    let item = if ctrl && surface.1.is_some() {
-        cargo(world, id, true)?
-    } else {
-        original(world, id)?
-    };
     let (point, target) = surface;
+    let item = cargo(world, id, target.is_some())?;
+    // Over an object, Ctrl puts an object into its contents; the other
+    // items go there without it (dad3dUpdateInventory, dad3dRezScript).
+    let contents = target.is_some() && (ctrl || item.asset_type != 6);
+    if !contents && item.asset_type != 6 {
+        return Err("rez-object-only");
+    }
     if !point.is_finite() || !eye.is_finite() {
         return Err("rez-no-surface");
     }
     if let Some(idx) = target {
-        target_allowed(world, idx, item, ctrl)?;
-    }
-    if ctrl && let Some(o) = target.and_then(|idx| world.objects.get(idx)) {
-        // willObjectAcceptInventory explicitly refuses giving links.
-        if world.inventory.items.get(&id).is_some_and(|it| it.asset_type == 24) {
-            return Err("rez-contents-denied");
+        target_allowed(world, idx, item, false)?;
+        if contents {
+            let drop = contents_drop::plan(world, &[id], idx, ctrl, Target::World)?
+                .pop()
+                .ok_or("rez-contents-denied")?;
+            return Ok(InventoryDrop {
+                command: drop.command,
+                consume: drop.consume,
+                selected: false,
+            });
         }
-        let task = TaskItem {
-            item_id: item.id,
-            parent_id: o.full_id,
-            creator_id: item.creator,
-            owner_id: item.owner,
-            group_id: item.group_id,
-            group_owned: item.group_owned,
-            base_mask: item.base_mask,
-            owner_mask: item.owner_mask,
-            group_mask: item.group_mask,
-            everyone_mask: item.everyone_mask,
-            next_owner_mask: item.next_owner_mask,
-            asset_id: item.asset_id,
-            asset_type: item.asset_type as i8,
-            inv_type: item.inv_type as i8,
-            flags: item.flags,
-            sale_type: item.sale_type,
-            sale_price: item.sale_price,
-            name: item.name.clone(),
-            description: item.desc.clone(),
-            // dropInventory dates the new contents entry at drop time.
-            creation_date: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(item.created_at as i32, |d| d.as_secs() as i32),
-            ..Default::default()
-        };
-        return Ok(InventoryDrop {
-            // LLToolDragAndDrop::dropScript / saveScript use RezScript;
-            // Ctrl inserts scripts stopped, with their actual permissions.
-            command: if item.asset_type == 10 {
-                BuildCmd::RezScript {
-                    handle: o.key.region,
-                    local_id: o.key.local_id,
-                    enabled: !ctrl,
-                    group_id: Uuid::nil(),
-                    item: Box::new(task),
-                }
-            } else {
-                BuildCmd::UpdateTaskInventory {
-                    handle: o.key.region,
-                    local_id: o.key.local_id,
-                    item: Box::new(task),
-                }
-            },
-            consume: (!copyable(item, world.agent_id)).then_some(item.id),
-            selected: false,
-        });
     }
     let (handle, offset) = world
         .regions
@@ -303,7 +206,7 @@ impl App {
     /// Run inside the UI pass, after all windows: egui clears released cargo
     /// at end-pass. Wants-pointer stays true during a drag from a widget;
     /// only the actual destination area decides whether the world gets it.
-    pub(super) fn inventory_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
+    pub(super) fn inventory_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Vec<InventoryDrop> {
         self.inventory_drag.cursor = ui::inventory::task_drop::cursor(ctx).or_else(|| ui::inventory::drag::cursor(ctx));
         ui::inventory::drag::badge(ctx, &self.palette);
         if ui::inventory::drag::carried_count(ctx).is_none() {
@@ -311,12 +214,115 @@ impl App {
         }
         let give = self.avatar_give_input(ctx, renderer);
         self.scene.mark_give_target(&self.world, give);
-        if give.is_some() || !egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) {
-            return None;
+        if give.is_some() || !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
+            return Vec::new();
         }
-        if !matches!(self.screen, Screen::World) || self.world.teleporting || self.exit_prompt.open {
-            return None;
+        if egui::DragAndDrop::has_payload_of_type::<InvDrag>(ctx) {
+            self.item_drag_input(ctx, renderer).into_iter().collect()
+        } else {
+            self.selection_drag_input(ctx, renderer)
         }
+    }
+
+    /// A selection of several entries, or a folder, dragged over the world:
+    /// only an object's contents take it, with Ctrl when it holds objects,
+    /// textures, materials or folders (LLToolDragAndDrop::dragOrDrop3D: rez
+    /// and folders accept a single entry, contents accept many).
+    fn selection_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Vec<InventoryDrop> {
+        let Some(ids) = ui::inventory::drag::carried_ids(ctx) else {
+            return Vec::new();
+        };
+        if ctx.is_pointer_over_egui() {
+            return Vec::new();
+        }
+        let Some((pos, released, ctrl)) = ctx.input(|i| {
+            Some((
+                i.pointer.interact_pos()?,
+                i.pointer.button_released(egui::PointerButton::Primary),
+                i.modifiers.ctrl,
+            ))
+        }) else {
+            return Vec::new();
+        };
+        let ppp = ctx.pixels_per_point();
+        let Some(ray) = renderer.cursor_ray(pos.x * ppp, pos.y * ppp) else {
+            return Vec::new();
+        };
+        self.inventory_drag.refresh_surface(
+            &self.scene,
+            &self.world,
+            self.settings.draw_distance,
+            ray,
+            (pos.x * ppp, pos.y * ppp),
+            released,
+        );
+        let target = self.inventory_drag.surface.and_then(|(_, idx)| idx);
+        let result = match target {
+            Some(idx) => self
+                .inventory_drag
+                .contents
+                .check(&self.world, &ids, idx, ctrl, Target::World)
+                .map(|_| idx),
+            // the land rezzes a single object
+            None => Err(if ctrl { "rez-no-surface" } else { "rez-hold-ctrl" }),
+        };
+        self.inventory_drag.cursor = Some(if result.is_ok() {
+            egui::CursorIcon::Copy
+        } else {
+            egui::CursorIcon::NotAllowed
+        });
+        let outline = result.ok().and_then(|idx| self.contents_outline(idx));
+        self.scene.mark_give_target(&self.world, outline);
+        if !released {
+            return Vec::new();
+        }
+        egui::DragAndDrop::clear_payload(ctx);
+        self.scene.mark_give_target(&self.world, None);
+        // Checked again on release: the cached answer may be a few frames old.
+        let result = result.and_then(|idx| contents_drop::plan(&self.world, &ids, idx, ctrl, Target::World));
+        log::debug!(
+            "inventory selection drop: {} entries, ctrl={ctrl}, {:?}",
+            ids.len(),
+            result.as_ref().map(Vec::len)
+        );
+        match result {
+            Ok(drops) => {
+                self.inventory_ui.release_world_drag_focus(ctx);
+                drops
+                    .into_iter()
+                    .map(|drop| InventoryDrop {
+                        command: drop.command,
+                        consume: drop.consume,
+                        selected: false,
+                    })
+                    .collect()
+            }
+            Err(reason) => {
+                self.inventory_ui.message = reason_text(reason).into();
+                self.world
+                    .system_notice(reason_text(reason), crate::world::notice_topics::Topic::Items);
+                Vec::new()
+            }
+        }
+    }
+
+    /// The linkset outlined while a drop would go into the prim `idx`'s
+    /// contents (LLSelectMgr::highlightObjectAndFamily in dragOrDrop3D).
+    fn contents_outline(&self, idx: usize) -> Option<usize> {
+        let mut current = idx;
+        for _ in 0..64 {
+            let o = self.world.objects.get(current)?;
+            if o.parent_id == 0 {
+                return Some(current);
+            }
+            current = self.world.objects.parent_of(o)?;
+        }
+        None
+    }
+
+    /// One inventory item dragged over the world: rezzed, put into an
+    /// object's contents, or a landmark turned into a portal.
+    fn item_drag_input(&mut self, ctx: &egui::Context, renderer: &Renderer) -> Option<InventoryDrop> {
         if egui::DragAndDrop::payload::<InvDrag>(ctx)
             .is_some_and(|drag| crate::ui::texture_library::catalogue::resource(&self.world.inventory, drag.0).is_some())
         {
@@ -334,10 +340,8 @@ impl App {
         }
         let item = if landmark {
             super::portals::landmark::cargo(&self.world.inventory, drag.item).ok_or("portal-landmark-unavailable")
-        } else if ctrl {
-            cargo(&self.world, drag.item, true)
         } else {
-            original(&self.world, drag.item)
+            cargo(&self.world, drag.item, true)
         };
         if item.is_ok() {
             self.inventory_drag.refresh_surface(
@@ -349,11 +353,13 @@ impl App {
                 released,
             );
         }
+        let mut outline = None;
         let result = item.and_then(|item| {
             let surface = self.inventory_drag.surface.ok_or("rez-no-surface")?;
+            let contents = !landmark && surface.1.is_some() && (ctrl || item.asset_type != 6);
             // Avoid cloning inventory metadata in the frame loop.
             if let Some(idx) = surface.1 {
-                target_allowed(&self.world, idx, item, ctrl)?;
+                target_allowed(&self.world, idx, item, false)?;
             }
             if landmark {
                 if !portal_ready {
@@ -371,10 +377,11 @@ impl App {
                     return Err("portal-invalid");
                 }
                 Ok(egui::CursorIcon::Copy)
-            } else if ctrl && surface.1.is_some() {
-                if self.world.inventory.items.get(&drag.item).is_some_and(|it| it.asset_type == 24) {
-                    return Err("rez-contents-denied");
-                }
+            } else if let Some(idx) = surface.1.filter(|_| contents) {
+                self.inventory_drag
+                    .contents
+                    .check(&self.world, &[drag.item], idx, ctrl, Target::World)?;
+                outline = Some(idx);
                 Ok(egui::CursorIcon::Copy)
             } else if item.asset_type != 6 {
                 Err("rez-object-only")
@@ -385,10 +392,13 @@ impl App {
             }
         });
         self.inventory_drag.cursor = Some(result.unwrap_or(egui::CursorIcon::NotAllowed));
+        self.scene
+            .mark_give_target(&self.world, outline.and_then(|idx| self.contents_outline(idx)));
         if !released {
             return None;
         }
         egui::DragAndDrop::clear_payload(ctx);
+        self.scene.mark_give_target(&self.world, None);
         if landmark {
             match result {
                 Ok(_) => {
@@ -720,6 +730,32 @@ mod tests {
         );
         // No permission to edit the support is needed for ordinary rez.
         assert!(prepare(&w, item(8100), Vec3::ZERO, (point, Some(target)), false, false, true).is_ok());
+    }
+
+    #[test]
+    fn a_single_item_other_than_an_object_goes_into_the_contents_without_ctrl() {
+        let mut w = world();
+        let target = object(&w);
+        let point = w.objects.get(target).unwrap().position;
+        let o = w.objects.get_mut(target).unwrap();
+        o.update_flags |= crate::ui::context::flags::OBJECT_MODIFY | crate::ui::context::flags::OBJECT_YOU_OWNER;
+        o.owner_id = w.agent_id;
+        // dad3dUpdateInventory / dad3dRezScript: no Ctrl needed, scripts run.
+        let drop = prepare(&w, item(8103), Vec3::ZERO, (point, Some(target)), false, false, true).unwrap();
+        assert!(matches!(drop.command, BuildCmd::UpdateTaskInventory { ref item, .. } if item.item_id == Uuid::from_u128(8103)));
+        let drop = prepare(&w, item(8102), Vec3::ZERO, (point, Some(target)), false, false, true).unwrap();
+        assert!(matches!(drop.command, BuildCmd::RezScript { enabled: true, .. }));
+        // An object still rezzes, and nothing but an object goes on the land.
+        assert!(matches!(
+            prepare(&w, item(8100), Vec3::ZERO, (point, Some(target)), false, false, true)
+                .unwrap()
+                .command,
+            BuildCmd::RezInventory(_)
+        ));
+        assert_eq!(
+            prepare(&w, item(8103), Vec3::ZERO, (point, None), false, false, true).err(),
+            Some("rez-object-only")
+        );
     }
 
     #[test]

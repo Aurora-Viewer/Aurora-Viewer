@@ -955,7 +955,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
 | `AURORA_DEMO_TEXTURE_MISSING=1` | Boxes whose texture is missing: the Legacy Viewer's grey, never the rez grid for ever |
-| `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
+| `AURORA_DEMO_OBJECT_MENU=<mode>` | Object actions, scene menu customization/notecards, object profile and pathfinding readers |
 
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
 
@@ -1429,6 +1429,18 @@ No real L$ and no connection to a grid.
   stops the click without touching; `ignore-build` selects this screen in
   build mode.
 - `open` shows three simulated content items.
+- `open-copy`, `open-replace`, `open-add` (#1103): after `open`, the
+  window's "Copy to inventory" at frame 420 (`replace` / `add`: the "Copy
+  and wear" menu's "Replace outfit with contents" / "Add contents to
+  outfit"). The cube is ours and its "Spare cube" is no copy, so the move
+  warning opens and waits; add `-yes` to confirm it at frame 480. The
+  inventory opens at frame 540 on a new folder named after the cube (under
+  Clothing for `replace` / `add`) holding the three items, and the cube's
+  contents lose the spare cube. The log has one `demo contents copy: 3
+  item(s), 1 moved` line; for `replace` / `add`, then `contents copy: all
+  items arrived, wearing the folder`. Wearing needs a Current Outfit folder:
+  add `AURORA_DEMO_APPEARANCE=worn` (the cube is then linked in the outfit;
+  the demo does not attach it).
 - `play` starts a local HTML page; `pause` and `open-media-playing`
   inject a simulated playback state before the click; `open-media` simulates
   the opening of the external browser.
@@ -1835,8 +1847,23 @@ object receives commands, and list/radial menus share visibility and ordering.
 Show Textures on an avatar or attachment opens the same grid;
 changing avatars replaces the inspected bakes without exposing full asset UUIDs.
 
-**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop|customize|customize-land|customize-self|customize-avatar|customize-hud|pbr|textures`**
-— at frame 600, a violet bell of ours (scripted, touch text "Ring the
+**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop|customize|customize-land|customize-self|customize-avatar|customize-hud|pbr|textures|profile|reset-lod|menu-export|menu-load|region-objects|characters`**
+`profile` opens the bell's actual demo ObjectProperties; Edit properties opens
+General. `region-objects` and `characters` pass synthetic LLSD through the same
+parser and reply correlation as the live capabilities, reveal the bell and show
+its selected details. Search, select, refresh, Profile, Inspect, Zoom and Copy UUID
+are available; these lists are read-only. `menu-export` opens the seven-profile
+notecard naming dialog; `menu-load` opens the shared searchable COPY-aware picker.
+`reset-lod` invokes our avatar's transient worn-mesh LOD reset. Capture these
+windows at frame 860. On the grid, the human should save menus of several types,
+alter their arrangements, import the notecard and confirm all seven restore,
+locked; an inventory-menu notecard must be rejected without changing scene menus.
+Verify object properties on own/other objects and attachments/HUDs, and the two
+pathfinding lists in supported/unsupported regions, including a non-character
+absent from the character list. Navmesh editing and terrain rows are not covered
+by this read-only implementation.
+
+At frame 600, a violet bell of ours (scripted, touch text "Ring the
 bell", sit text "Lie down"), a teal crate of ours and a cloud of large
 amber particles another resident owns stand in a row 5 m ahead, where the
 camera looks. At frame 700 the right click opens the menu of the bell
@@ -3665,7 +3692,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden, the chat bar autohidden |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden, immersive mode, the chat bar autohidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
@@ -3700,7 +3727,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|links\|net` | Picture, GIF and YouTube cards; `links[:gif\|image\|video]` isolates URL actions; `services[:gyazo,…]` shows service pages and social posts; `net` uses real sites |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|clips\|services\|links\|net` | Picture, GIF and YouTube cards; `clips` shows video files and an animated WebP; `links[:gif\|image\|video]` isolates URL actions; `services[:gyazo,…]` shows service pages and social posts; `net` uses real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
 | `AURORA_DEMO_GIFS=1\|klipy\|sent\|menu\|nokey\|net` | Conversations open on the GIF picker of the field, its results made here; `sent` sends the first GIF; `menu` the button's right-click menu; `nokey` no button; `net` the real services |
@@ -3717,10 +3744,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
+| `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
-| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]` | A large wardrobe in the Appearance demo: generated outfits, the window closed or scrolled |
+| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
@@ -3736,6 +3764,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
+| `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban` | "Freeze" and "Eject" of a resident on our land |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>[:wide,open]` | "Places" on a tab, widened, its first place selected |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -4470,6 +4499,9 @@ failure. Grid validation and any paid upload are performed by the human.
   voice, `8` Shortcuts, `10` Camera, `11` Commands, `12` Privacy, `13`
   Aurora, `14` Accessibility); `9`, the former Debug page, opens the Dev
   Toolbox instead. `<what>`:
+  - `group-titles` on `avatars/1`: reveals the group-title dropdown with
+    All except mine selected. The separate hide-own-title switch is absent;
+    check None / Only mine / All except mine / All and the French labels.
   - `search=<text>`: the window's search filled in. Every row whose name,
     help or choices have a word starting with each word typed shows under
     its page and group, its control live, its "go to" arrow and the group's
@@ -4632,6 +4664,24 @@ failure. Grid validation and any paid upload are performed by the human.
   Manually: drag an item from the inventory onto a private conversation
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
+
+- **`AURORA_DEMO_CONTENTS_DROP=world|panel[:ctrl][:drop]`**: with
+  `AURORA_DEMO_INVENTORY=1` and `AURORA_DEMO_ACTIONS=1`, a selection of
+  four entries (a notecard, a script, a sound and an object) is carried
+  from frame 700, without a press. `world` puts the pointer on the yellow
+  action object 976 (yours, modifiable): without `:ctrl` the object in the
+  selection needs Ctrl, so nothing is outlined and `:drop` says "Hold Ctrl
+  over an object…"; with `:ctrl` the box gets the violet outline and
+  `:drop` (frame 720) puts the four entries into its contents, the script
+  stopped. `panel` puts the pointer on the Contents tab: add
+  `AURORA_DEMO_BUILD=move,object:976` and `AURORA_DEMO_BUILD_TAB=contents`
+  (also useful with `world` to see the contents arrive); the list gets its
+  violet outline and `:drop` adds the four entries, the script running
+  unless `:ctrl`. Capture at frame 715 (hover) or 800 (drop) with
+  `AURORA_FPS_LIMIT=60`: "Contents (3 items)" becomes "(7 items)".
+  Manually: select several items (Ctrl+click) or a folder and drag them
+  onto an object you own with and without Ctrl, onto someone else's (a
+  no-transfer item refuses the whole drop), and onto the Contents tab.
 
 - **`AURORA_DEMO_GIVE=profile|avatar[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
   its entries are carried from frame 700, without a press. `profile`, with
@@ -4858,7 +4908,14 @@ failure. Grid validation and any paid upload are performed by the human.
   not trusted, then shows it). `services:gyazo,flickr`
   keeps the listed services only (`gyazo`, `flickr`, `imgur`, `lightshot`,
   `reddit`, `bluesky`, `x`, `nextcloud`, `none` for the two links without a
-  card). The Legacy lines (`bubbles:legacy`)
+  card).
+  `clips` (#983): an `.mp4` of an unknown site (the link alone: clips play
+  from trusted sites only), a GIPHY WebP animated like a GIF, a Gyazo video
+  capture (the thumbnail of the saved answer, a video card with the play
+  button, the site as its channel) and our Imgur `.gifv` link (a video card
+  with the film icon, no thumbnail). Playing a clip needs the network and a
+  real file: send a Gyazo video, Imgur `.gifv` or `.mp4` link of a trusted
+  site in a demo conversation. The Legacy lines (`bubbles:legacy`)
   show the same cards, including animated GIFs and consent prompts (#976);
   combine with `AURORA_DEMO_CONV_POPOUT=1` to check independent windows.
   Transcript history and the chat lines at the bottom stay text-only. Capture at frame 900
@@ -5252,7 +5309,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Chat › Show the channel selector does), `friend-away` / `friend-offline`
   (the friend of `im` away in the region or offline: the selected entry's
   dot keeps its crescent or hollow ring, cut in the entry's violet face;
-  with `narrow` too). The calls are those of
+  with `narrow` too), `sets` (the contact sets Family, with the friend and
+  Loup, and Clubbing, with Loup and Tess, both shown apart, Family the
+  higher: the column opens with a FAMILY section holding the friend and
+  Loup after Family's heart symbol, then CLUBBING with Tess after its
+  colour's dot, above Private messages; #1104). The calls are those of
   `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
   with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
   validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act
@@ -5538,7 +5599,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the run only, nothing is written to the account's files): `friends`
   (860 × 600: Nova and Orion online, pixelboutique and testtouch offline,
   the rights each way on the rows, Nova's sheet with "Nickname and contact
-  sets"), `groups` (860 × 500: "No active group", Aurora Builders active,
+  sets"), `friends-symbols` (`friends` with the contact sets of `visuals`:
+  a set's symbol after the name where the set has one, its colour's dot
+  otherwise, #1104), `groups` (860 × 500: "No active group", Aurora Builders active,
   pinned, two notices unread and its sheet open, the market's chat
   blocked, "3 groups out of 42"), `sets` (520 × 430: Family, Clubbing and
   Shop, the wolf's nickname, a non-friend, Nova chosen with her quick
@@ -5612,7 +5675,14 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Firestorm's question instead), `peek` (hidden, the pointer held at the
   top edge: the top islands back, no hint under them), `peekleft` (hidden,
   the pointer held at the left edge: the left toolbar back, with
-  `AURORA_DEMO_TOOLBAR=side`).
+  `AURORA_DEMO_TOOLBAR=side`), `immersive` (#859: Conversations opened at
+  frame 300, immersive mode at frame 600: the bars and the other windows
+  go, Conversations and the chat lines stay, the avatars' name tags go
+  (the objects' floating texts stay), no edge brings a bar back, no hint;
+  two faint square glass buttons in the top right corner, 8 px from the
+  edges and as high as the islands: the name tags (struck-through label)
+  and the way out), `immersivetags` (the same with the name tags shown:
+  the label violet; nothing saved).
   The chat bar: `autohide` (shown only while it is used, as with
   Preferences › Chat › "Hide the chat bar when not in use", with either
   bars: with the islands the chat island goes and the dock gets its
@@ -5729,10 +5799,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   three residents of the scenarios have a profile picture, so a banner:
   the scenarios of the profile mock-up are
   - a friend: `friend` (Nova, Premium, a contact set if
-    `AURORA_DEMO_CONTACTS` seeded one, rights bar, three favorite places,
-    two groups of which one in common, private notes);
-  - a stranger: `wolf` (blocked: red badge, "Unblock"; "Add as friend" in
-    place of the rights bar);
+    `AURORA_DEMO_CONTACTS` seeded one, the rights on the Permissions line of
+    Info, three favorite places, two groups of which one in common, private
+    notes);
+  - a stranger: `wolf` (blocked: red badge, "Unblock"; "Add as friend" on
+    the Friendship line of Info);
   - my profile: `self`, then `self:edit` (camera button, pencil, About
     editor, Visibility, the unsaved bar once About is changed);
   - compact: `wolf:compact` (icons in a row, the tabs in a drop-down list).
@@ -5978,6 +6049,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Group Name, insignia and charter, Anyone can join, Cost to join, the
   maturity list, the fees by membership, Create group for L$ 100, the
   48-hour note), and the new group's classic profile.
+- **`AURORA_DEMO_LAND_MODERATION=menu|none|freeze|eject|eject-ban`**: the
+  violet wolf stands on our land (the ParcelOverlay cell under it becomes
+  ours), then at frame 600 `menu` opens its world menu from its name plate
+  (capture 720 with `AURORA_DEMO_PIE=0` and the pointer on Disturbance,
+  `AURORA_DEMO_POINTER="830,585,s"` in the default window): "Freeze" and
+  "Eject" follow "Report". `none` leaves the land someone else's: the two
+  entries are hidden, as in the Legacy Viewer. `freeze` asks Freeze /
+  Unfreeze / Cancel; `eject` asks Eject / Cancel and `eject-ban` adds
+  "Eject and ban" (a parcel whose ban list is ours). An answer logs the
+  FreezeUser or EjectUser command (`land moderation:`); the demo simulator
+  does nothing with it. On the grid, test as the parcel owner, an estate
+  manager and a group member with and without "Eject and freeze": the
+  resident must be frozen, unfrozen, ejected, or ejected and banned.
 - **`AURORA_DEMO_SOCIAL_MENU=menu|picker|invite|new-set|new-set-done|particles|card|card-offer`**:
   a resident's "Invite to group", "Add to contact set", "Block
   particles" and "Give my calling card", on the wolf (unblocked for the scenario, owner of the
@@ -6222,13 +6306,16 @@ opens its submenu.
 These operations stay offline; creating new clothing and
 new body parts is not available yet.
 
-**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]`** — with
+**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`** — with
 `AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names like
 "Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
 clothes, objects and body parts, a thumbnail id (never loaded offline) on
 one in four. `closed` leaves the window closed; `scroll` turns the wheel
 over the list or gallery of the default window from frame 700, down then up
-every 300 frames. With `AURORA_PROFILE=1`, read `ui` of `perf summary`
+every 300 frames; `locate` presses the locate button of the current outfit
+banner at start: the gallery or list scrolls to the worn outfit, selects
+it and flashes it for 1.6 s (the flash is gone by frame 620, the selection
+stays). With `AURORA_PROFILE=1`, read `ui` of `perf summary`
 (and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8 ms with
 the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms open and
 2.5 ms closed before the wardrobe's links were walked only on inventory
@@ -7043,6 +7130,7 @@ What the inventory must show with these scenarios:
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's, and the other overlays' unless allowed in Preferences) |
+| `AURORA_VULKAN_DRIVERS=keep` | Loads Dozen (Vulkan on Direct3D 12) when installed, which the viewer keeps out |
 | `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
 | `AURORA_GPU_START_FAIL=1` | Start as if no graphics card could draw the window: the message the user gets then |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
@@ -7115,6 +7203,21 @@ What the inventory must show with these scenarios:
   running viewer instead (Discord) cannot be kept out: the log names them
   when they arrive (`overlay hook loaded in the viewer`). To
   see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
+- **`AURORA_VULKAN_DRIVERS=keep`**: at start the viewer sets
+  `VK_LOADER_DRIVERS_DISABLE=*dzn*` in its own process, so that the Vulkan
+  loader skips Dozen (`vulkan_dzn.dll`, Vulkan on Direct3D 12, from
+  Microsoft's "OpenCL, OpenGL, and Vulkan Compatibility Pack"): while it
+  lists its devices, Dozen opens every Direct3D 12 adapter, and an old AMD
+  Direct3D 12 driver crashed there at start (`vulkan_dzn` → `d3d12core` →
+  `amdxc64` in the crash report). The log says so (`Vulkan driver kept out
+  of the viewer`). Nothing is set when the user already set
+  `VK_LOADER_DRIVERS_DISABLE`, `VK_LOADER_DRIVERS_SELECT`, `VK_DRIVER_FILES`,
+  `VK_ICD_FILENAMES` or `VK_ADD_DRIVER_FILES`; a loader older than 1.3.234
+  ignores the variable. When no Vulkan adapter is left without Dozen (a GPU
+  with no Vulkan driver of its own), the renderer lets it back in and tries
+  again (`GPU: no Vulkan adapter without Dozen` in the log). `keep` leaves
+  the environment as it is. To see which drivers the loader loads:
+  `VK_LOADER_DEBUG=driver` in a console.
 - **`AURORA_GPU=<number>|<name>|auto`**: the adapter the renderer opens,
   over Preferences › Graphics › Fluidity › Graphics card (#894): its number
   in the `GPU adapter <n>:` lines of the log, or a part of its name in any

@@ -10,7 +10,7 @@
 mod color;
 mod common;
 mod compact;
-mod contents;
+pub(crate) mod contents;
 pub(crate) mod contents_permissions;
 mod contents_selection;
 mod features;
@@ -168,6 +168,8 @@ pub struct FloaterState {
     /// Independent from every personal/folder inventory window.
     pub contents_show_next_owner: bool,
     pub contents_selection: contents_selection::Selection,
+    /// Whether the inventory held over the Contents tab may go in.
+    pub contents_drop: crate::build::contents_drop::PlanCheck,
     /// Item being renamed in the Contents tab.
     pub rename: Option<contents_selection::Rename>,
     pub open_notecard: Option<(Uuid, Uuid)>,

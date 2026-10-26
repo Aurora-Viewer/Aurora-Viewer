@@ -1329,6 +1329,7 @@ impl Session<'_> {
                 im_via_email,
             } => self.update_user_info(directory_visibility, im_via_email),
             NetCommand::ServerReleaseNotes => self.fetch_server_release_notes(),
+            NetCommand::FetchPathfinding { request, region, kind } => self.fetch_pathfinding(request, region, kind),
             NetCommand::SimConsole(command) => self.send_sim_console(command),
             NetCommand::ModerateVoice { target, mute } => self.moderate_voice(target, mute),
             NetCommand::FetchLslSyntax { id, cache_dir } => self.fetch_lsl_syntax(id, cache_dir),

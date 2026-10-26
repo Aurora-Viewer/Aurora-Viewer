@@ -122,6 +122,12 @@ impl DemoSim {
         })
     }
 
+    /// Contents listed by another demo (`demo.rs`'s click-action cubes):
+    /// MoveTaskInventory then finds their items.
+    pub fn adopt_contents(&mut self, id: Uuid, items: &[TaskItem]) {
+        self.contents.entry(id).or_insert_with(|| (1, items.to_vec()));
+    }
+
     fn contents_of(&mut self, id: Uuid) -> &mut (i16, Vec<TaskItem>) {
         if id == super::replace::demo::id(super::replace::demo::SOURCE) {
             return self.contents.entry(id).or_insert((1, Vec::new()));

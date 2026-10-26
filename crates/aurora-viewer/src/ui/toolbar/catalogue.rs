@@ -1,7 +1,7 @@
 //! The commands of the "Toolbar buttons" window: Firestorm's toybox
 //! (indra/newview/app_settings/commands.xml, the 67 commands with
 //! `available_in_toybox`, originally LGPL 2.1) and Aurora's own (friends,
-//! home, favourites). Aurora keeps its command names where it had one
+//! home, favourites, immersive mode). Aurora keeps its command names where it had one
 //! (`conversations` for Firestorm's `chat`, `worldmap` for `map`…), so that
 //! saved toolbars stay valid; the others take Firestorm's. A command Aurora
 //! cannot run yet stays in the list, dimmed, with "Not available in Aurora
@@ -66,6 +66,8 @@ pub const COMMANDS: &[Command] = commands![
     "block_list", "ban", "toolbar-command-block-list", true;
     "contact_sets", "users-group", "toolbar-command-contact-sets", true;
     "stop_animations", "player-stop-filled", "ui-context-stop-animations", true;
+    // Aurora's own: the interface hidden but the chat (#859)
+    "immersive", "maximize", "ui-bars-immersive", true;
     // Firestorm's, not in Aurora yet
     "avatar", "user-circle", "toolbar-command-avatar", false;
     "destinations", "map-2", "toolbar-command-destinations", false;

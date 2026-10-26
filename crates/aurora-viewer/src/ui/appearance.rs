@@ -24,6 +24,13 @@ pub struct AppearanceUi {
     search: String,
     outfit_selection: selection::Selection,
     reveal_outfit: Option<Uuid>,
+    /// The current outfit to bring into view in the gallery or the list
+    /// once its row is laid out (`locate_current`).
+    locate: Option<Uuid>,
+    /// The frames left to keep `locate` in view (`reveal_located`).
+    locate_frames: u8,
+    /// The located outfit and the time it came into view, for its flash.
+    flash: Option<(Uuid, f64)>,
     selected_item: Option<Uuid>,
     pub save_as: Option<String>,
     select_name: bool,
@@ -122,6 +129,70 @@ impl AppearanceUi {
         self.tab = tab.min(2);
         self.editing = editing;
         self.adding = false;
+    }
+
+    /// Scrolls the gallery or the list to the current outfit and selects
+    /// it, after clearing a filter that hides it; from the worn tab, in the
+    /// gallery. An Aurora addition (#971): the Legacy Viewer only marks the
+    /// current outfit in bold (LLOutfitsList::onHighlightBaseOutfit), which a
+    /// wardrobe of thousands of outfits leaves to be scrolled to by hand.
+    pub fn locate_current(&mut self, inv: &crate::world::inventory::Inventory) {
+        let Some(id) = locatable(inv) else {
+            return;
+        };
+        if self.tab >= 2 {
+            self.tab = 0;
+        }
+        self.editing = false;
+        self.adding = false;
+        if !self.shown_outfits(inv).contains(&id) {
+            self.search.clear();
+        }
+        self.outfit_selection.single(id);
+        self.selected_item = None;
+        self.locate = Some(id);
+        self.locate_frames = LOCATE_FRAMES;
+        self.flash = None;
+    }
+
+    /// Scrolls to `rect` when it is the outfit to locate, and starts its
+    /// flash. The rows out of sight are not laid out but given a measured
+    /// height: while a window opens, its scroll bar narrows the tiles by a
+    /// point, which over hundreds of rows moves the outfit by a whole row.
+    /// It is brought back for `LOCATE_FRAMES` frames, at once (a jump to the
+    /// same place is idempotent), until the layout has settled; the sizing
+    /// pass of an opening window is skipped.
+    fn reveal_located(&mut self, ui: &egui::Ui, id: Uuid, rect: egui::Rect, align: egui::Align) {
+        if self.locate != Some(id) || ui.is_sizing_pass() {
+            return;
+        }
+        ui.scroll_to_rect_animation(rect, Some(align), egui::style::ScrollAnimation::none());
+        self.locate_frames = self.locate_frames.saturating_sub(1);
+        if self.locate_frames == 0 {
+            self.locate = None;
+        }
+        // "Reduce animations" keeps the selection alone
+        if self.flash.is_none() && ui.style().animation_time > 0.0 {
+            self.flash = Some((id, ui.input(|i| i.time)));
+        }
+    }
+
+    /// How lit the located outfit `id` still is: 1 when it came into view,
+    /// down to 0 after `FLASH_SECONDS`.
+    fn flash(&mut self, ui: &egui::Ui, id: Uuid) -> f32 {
+        let Some((flashed, start)) = self.flash else {
+            return 0.0;
+        };
+        if flashed != id {
+            return 0.0;
+        }
+        let t = ((ui.input(|i| i.time) - start) / FLASH_SECONDS) as f32;
+        if t >= 1.0 {
+            self.flash = None;
+            return 0.0;
+        }
+        ui.ctx().request_repaint();
+        1.0 - t.max(0.0)
     }
 
     fn select_outfit(&mut self, response: &egui::Response, id: Uuid, outfits: &[Uuid]) {
@@ -332,6 +403,21 @@ impl AppearanceUi {
     }
 }
 
+/// How long the outfit brought into view by `locate_current` stays lit.
+const FLASH_SECONDS: f64 = 1.6;
+
+/// How many frames `locate_current` keeps the outfit in view while the
+/// layout settles (`AppearanceUi::reveal_located`).
+const LOCATE_FRAMES: u8 = 12;
+
+/// The current outfit when the gallery and the list can show it: a
+/// folder of My Outfits, as `shown_outfits` lists them.
+fn locatable(inv: &crate::world::inventory::Inventory) -> Option<Uuid> {
+    let id = model::base(inv)?;
+    let my = inv.folders.get(&model::system_folder(inv, model::FT_MY_OUTFITS)?)?;
+    my.children.contains(&id).then_some(id)
+}
+
 fn icon(ui: &mut egui::Ui, name: &str, size: f32, color: egui::Color32) {
     if let Some(t) = icons::global(name) {
         ui.add(egui::Image::new(&t).fit_to_exact_size(Vec2::splat(size)).tint(color));
@@ -466,7 +552,8 @@ fn gallery(
     for pair in outfits.chunks(columns) {
         if let Some(pitch) = pitch {
             let height = pitch + st.rows.gallery.get(&pair[0]).copied().unwrap_or(0.0);
-            if !in_sight(ui.cursor().top(), height, view) {
+            let located = st.locate.is_some_and(|id| pair.contains(&id));
+            if !located && !in_sight(ui.cursor().top(), height, view) {
                 skip_row(ui, height);
                 continue;
             }
@@ -503,6 +590,18 @@ fn gallery(
                             egui::Rect::from_center_size(rect.center(), Vec2::splat(width * 0.55)),
                             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
                             p.violet_light,
+                        );
+                    }
+                    st.reveal_located(ui, *id, rect, egui::Align::Center);
+                    let flash = st.flash(ui, *id);
+                    if flash > 0.0 {
+                        let radius = ui.visuals().window_corner_radius;
+                        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.3 * flash));
+                        ui.painter().rect_stroke(
+                            rect,
+                            radius,
+                            egui::Stroke::new(2.0, p.violet_light.gamma_multiply(flash)),
+                            egui::StrokeKind::Inside,
                         );
                     }
                     if response.double_clicked() && !ui.input(|i| i.modifiers.any()) {
@@ -636,6 +735,7 @@ fn outfit_list(
             && !known_open.contains(id)
             && st.outfit_selection.focus != Some(*id)
             && st.reveal_outfit != Some(*id)
+            && st.locate != Some(*id)
             && let Some(height) = st.rows.list.get(id).copied().or(st.rows.list_typical)
             && !in_sight(ui.cursor().top(), height, view)
         {
@@ -729,13 +829,15 @@ fn outfit_list(
             row_gap(ui);
         }
         st.select_outfit(&response.header, *id, outfits);
-        if st.outfit_selection.contains(*id) {
+        st.reveal_located(ui, *id, response.header.rect, egui::Align::Min);
+        let flash = st.flash(ui, *id);
+        if st.outfit_selection.contains(*id) || flash > 0.0 {
             ui.painter().set(
                 highlight,
                 egui::Shape::rect_filled(
                     response.header.rect,
                     ui.visuals().window_corner_radius,
-                    p.violet.gamma_multiply(0.25),
+                    p.violet.gamma_multiply(0.25 + 0.45 * flash),
                 ),
             );
         }
@@ -1071,10 +1173,14 @@ pub fn show(
                 );
             });
         }
+        let shape = crate::shape_editor::worn_shape(world);
         widgets::surface(ui, p, |ui| {
             ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
-                let name_width = (ui.available_width() - 30.0 - 28.0 - ui.spacing().item_spacing.x * 2.0).max(100.0);
+                // locate and edit outfit while browsing outfits, edit shape when one is worn
+                let buttons = if st.editing { 0.0 } else { 2.0 } + if shape.is_some() { 1.0 } else { 0.0 };
+                let spacing = ui.spacing().item_spacing.x;
+                let name_width = (ui.available_width() - 30.0 - buttons * (28.0 + spacing) - spacing).max(100.0);
                 icon(ui, "shirt-filled", 30.0, p.muted);
                 ui.vertical(|ui| {
                     ui.set_width(name_width);
@@ -1091,27 +1197,37 @@ pub fn show(
                     );
                     ui.add(egui::Label::new(RichText::new(&name).size(16.0).strong().color(p.ink)).truncate());
                 });
+                // right to left: edit outfit, edit shape, then locate next to the name
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !st.editing && icon_button(ui, p, "edit-filled", aurora_i18n::tr!("ui-appearance-edit-this-outfit")).clicked() {
                         st.editing = true;
+                    }
+                    if let Some(shape) = shape
+                        && icon_button(ui, p, "man-filled", aurora_i18n::tr!("shape-edit-worn")).clicked()
+                    {
+                        super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(shape));
+                    }
+                    if !st.editing {
+                        let can_locate = locatable(inv).is_some();
+                        let locate = ui
+                            .add_enabled_ui(can_locate, |ui| {
+                                icon_button(
+                                    ui,
+                                    p,
+                                    "current-location-filled",
+                                    aurora_i18n::tr!("ui-appearance-show-current-outfit"),
+                                )
+                            })
+                            .inner
+                            .on_disabled_hover_text(aurora_i18n::tr!("ui-appearance-current-outfit-not-in-my-outfits"));
+                        if locate.clicked() {
+                            st.locate_current(inv);
+                        }
                     }
                 });
             });
         });
         ui.add_space(8.0);
-        if let Some(shape) = crate::shape_editor::worn_shape(world)
-            && widgets::action_button(
-                ui,
-                p,
-                "man-filled",
-                aurora_i18n::tr!("shape-edit-worn"),
-                widgets::ActionKind::Flat,
-                Vec2::new(ui.available_width(), 30.0),
-            )
-            .clicked()
-        {
-            super::context::request(ui.ctx(), super::context::CtxAction::EditWorn(shape));
-        }
         if !st.editing {
             ui.horizontal(|ui| {
                 let width = (ui.available_width() - 28.0 - ui.spacing().item_spacing.x).max(100.0);
@@ -2213,6 +2329,92 @@ mod tests {
         assert!(!in_sight(30.0, 30.0, view));
         assert!(in_sight(425.0, 30.0, view), "the row after the view");
         assert!(!in_sight(431.0, 30.0, view));
+    }
+
+    /// Where the outfit list or gallery shows `name` within its view: the
+    /// room above and below its text, `None` out of sight. The banner names
+    /// the current outfit too, clipped to the whole window; the list's clip
+    /// rectangle is the smaller one.
+    fn listed_in_view(ctx: &egui::Context, world: &mut World, st: &mut AppearanceUi, name: &str) -> Option<(f32, f32)> {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+            ..Default::default()
+        };
+        let shapes = draw_output(ctx, world, st, input).1;
+        let hits: Vec<_> = shapes
+            .iter()
+            .filter_map(|s| text_position(&s.shape, name).map(|pos| (s.clip_rect, pos)))
+            .collect();
+        let window = hits.iter().map(|(clip, _)| clip.height()).fold(0.0, f32::max);
+        hits.iter()
+            .find(|(clip, pos)| clip.height() < window && clip.contains(*pos))
+            .map(|(clip, pos)| (pos.y - clip.top(), clip.bottom() - pos.y))
+    }
+
+    /// The banner's locate button brings the current outfit into view and
+    /// selects it, in the gallery and the list, through a filter that hid
+    /// it and from the worn tab (#971).
+    #[test]
+    fn locating_the_current_outfit_scrolls_to_it_and_selects_it() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = wardrobe(400);
+        let current = model::base(&world.inventory).expect("current outfit");
+        // in the middle of 404 outfits, far out of sight: an outfit at the
+        // end would be reached by any scroll that overshoots
+        let name = "Lzz Current";
+        world.inventory.folders.get_mut(&current).expect("outfit").info.name = name.into();
+        world.inventory.generation += 1;
+        assert_eq!(locatable(&world.inventory), Some(current));
+        // last, a window opened on the outfit to locate (the demo's `locate`)
+        for (tab, filter, shown_tab, opening) in [(0, "", 0, false), (1, "beach", 1, false), (2, "", 0, false), (0, "", 0, true)] {
+            let ctx = if opening { egui::Context::default() } else { ctx.clone() };
+            crate::theme::Theme::default().apply(&ctx, 1.0);
+            let _icons = icons::Icons::load(&ctx, None);
+            let mut st = AppearanceUi::default();
+            st.open(tab, false);
+            st.search = filter.into();
+            if !opening {
+                for _ in 0..3 {
+                    draw(&ctx, &mut world, &mut st, None);
+                }
+                assert!(
+                    listed_in_view(&ctx, &mut world, &mut st, name).is_none(),
+                    "out of sight first, tab {tab}"
+                );
+            }
+            st.locate_current(&world.inventory);
+            // the scroll is animated
+            for _ in 0..120 {
+                draw(&ctx, &mut world, &mut st, None);
+            }
+            assert!(st.locate.is_none(), "located, tab {tab}");
+            assert_eq!(st.tab, shown_tab);
+            assert!(st.search.is_empty(), "the filter that hid it is cleared");
+            let shown = st.shown_outfits(&world.inventory);
+            assert_eq!(st.outfit_selection.ordered(&shown), vec![current]);
+            let (above, below) = listed_in_view(&ctx, &mut world, &mut st, name).expect("in sight");
+            if shown_tab == 0 {
+                // the tile above its name is whole, in the middle of the view
+                assert!(above > 160.0 && below > 20.0, "centred, tab {tab}: {above} above, {below} below");
+            } else {
+                assert!(above < 40.0, "header at the top: {above} above");
+            }
+        }
+        // an outfit worn from outside My Outfits cannot be shown there
+        let my = model::system_folder(&world.inventory, model::FT_MY_OUTFITS).expect("My Outfits");
+        world
+            .inventory
+            .folders
+            .get_mut(&my)
+            .expect("My Outfits")
+            .children
+            .retain(|id| *id != current);
+        assert_eq!(locatable(&world.inventory), None);
+        let mut st = AppearanceUi::default();
+        st.locate_current(&world.inventory);
+        assert!(st.locate.is_none());
     }
 
     fn outfit_names(shapes: &[egui::epaint::ClippedShape], world: &World) -> HashMap<String, egui::Pos2> {

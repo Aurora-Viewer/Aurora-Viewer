@@ -778,6 +778,9 @@ fn system_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusI
     if super::interface_item(ui, p, st) {
         *action = BarAction::ToggleInterface;
     }
+    if super::immersive_item(ui, p) {
+        *action = BarAction::ToggleImmersive;
+    }
     if menu::item(ui, p, "layout-bottombar-filled", aurora_i18n::tr!("ui-bars-customize-bars")) {
         *action = BarAction::CustomizeBars;
     }
@@ -1045,6 +1048,7 @@ mod tests {
             parcel_icons: Vec::new(),
             local_env: false,
             double_click: Default::default(),
+            quickjump: false,
             marketplace: false,
             parcel_landmark: None,
             can_set_home: false,

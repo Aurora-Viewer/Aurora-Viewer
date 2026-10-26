@@ -96,6 +96,12 @@ impl App {
                 let action = match mode {
                     mode if mode.starts_with("customize") => self.context_menu.clone().map(|m| CtxAction::CustomizeMenu(Box::new(m))),
                     "pbr" => bell.map(CtxAction::EditPbr),
+                    "profile" => bell.map(CtxAction::ObjectProfile),
+                    "region-objects" | "characters" => bell.map(|id| CtxAction::Pathfinding {
+                        id,
+                        characters: mode == "characters",
+                    }),
+                    "reset-lod" => Some(CtxAction::ResetMeshLod(self.world.agent_id)),
                     "textures" => Some(CtxAction::ShowAvatarTextures(self.world.agent_id)),
                     "scripts" | "scripts-run" => bell.map(|id| CtxAction::Scripts {
                         id,
@@ -111,6 +117,11 @@ impl App {
                     log::info!("demo object menu: {action:?}");
                     self.context_menu = None;
                     self.on_ctx_action(action);
+                }
+                if matches!(mode, "menu-export" | "menu-load") {
+                    self.context_menu = None;
+                    crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                    self.context_customization.demo_notecard(mode == "menu-load");
                 }
                 // the question answered yes, without touching the saved
                 // "ignore" choices

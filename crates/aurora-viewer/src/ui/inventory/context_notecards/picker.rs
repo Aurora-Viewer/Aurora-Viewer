@@ -17,7 +17,7 @@ use std::{
 use uuid::Uuid;
 
 #[derive(Default)]
-pub(super) struct Picker {
+pub(crate) struct Picker {
     view: view::ViewCache,
     tree: view::TreeState,
     known: HashSet<Uuid>,
@@ -68,7 +68,7 @@ impl Picker {
         self.tree.prepare(&self.view, inv.root, usize::from(!query.trim().is_empty()), true);
     }
 
-    pub(super) fn show(
+    pub(crate) fn show(
         &mut self,
         ctx: &egui::Context,
         p: &Palette,

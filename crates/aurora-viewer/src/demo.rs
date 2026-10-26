@@ -1216,7 +1216,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             if let Some(extra) = emoji_lines {
                 lines.splice(4..4, extra);
             }
-            // AURORA_DEMO_CONV_PREVIEWS=1|states|videos: links with their
+            // AURORA_DEMO_CONV_PREVIEWS=1|states|videos|clips: links with their
             // cards (#538, #739, #848), made here without network
             // (`link_preview::demo`)
             let preview_lines = std::env::var("AURORA_DEMO_CONV_PREVIEWS").ok().map(|mode| {
@@ -1276,6 +1276,23 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
                         ),
                         line(ago(5), &me, Uuid::nil(), ChatKind::Own, "https://youtube.com/shorts/DemoShort01"),
+                    ]
+                } else if mode == "clips" {
+                    // video files and an animated WebP (#983): an unknown
+                    // site's .mp4 stays a link, a GIPHY WebP, then the
+                    // video cards in sight: a Gyazo video capture (its
+                    // thumbnail from the saved answer), an Imgur .gifv
+                    vec![
+                        line(ago(9), name, friend, ChatKind::Im, "https://videos.example.net/clip.mp4"),
+                        line(ago(8), name, friend, ChatKind::Im, "https://media.giphy.com/media/demo/giphy.webp"),
+                        line(
+                            ago(7),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            "https://gyazo.com/9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+                        ),
+                        line(ago(6), &me, Uuid::nil(), ChatKind::Own, "https://i.imgur.com/DemoClp.gifv"),
                     ]
                 } else if let Some(only) = mode.strip_prefix("services") {
                     // the pages of image services (#923) and the posts of
@@ -1447,7 +1464,8 @@ pub fn conv_scroll_new(world: &mut crate::world::World, scrolled: bool) {
 /// (the menu of the nearby chat's volume open, with `local`), `channel`
 /// (its channel selector shown, as the preferences can), `friend-away` or
 /// `friend-offline` (the friend of `im` away in the region, or offline:
-/// their crescent or ring on the selected entry, #744).
+/// their crescent or ring on the selected entry, #744), `sets` (two
+/// contact sets shown apart in the column, #1104).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AuroraScene {
     pub view: Bubbles,
@@ -1465,6 +1483,9 @@ pub struct AuroraScene {
     /// `friend-away` / `friend-offline`: the friend's status, online
     /// otherwise.
     pub friend: Option<crate::ui::presence::Status>,
+    /// `sets`: Family (the friend and Loup) and Clubbing (Loup and Tess)
+    /// shown apart, Family first (Loup goes to it) with its heart symbol.
+    pub sets: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1500,6 +1521,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
         volume_menu: false,
         channel: false,
         friend: None,
+        sets: false,
     };
     let mut away = false;
     for flag in flags {
@@ -1523,6 +1545,7 @@ fn parse_aurora_scene(v: &str) -> Option<AuroraScene> {
             "channel" => scene.channel = true,
             "friend-away" => scene.friend = Some(crate::ui::presence::Status::Away),
             "friend-offline" => scene.friend = Some(crate::ui::presence::Status::Offline),
+            "sets" => scene.sets = true,
             "call-away" => {
                 scene.call = Some(AuroraCall::InCall);
                 away = true;
@@ -1655,6 +1678,30 @@ pub fn aurora_lines(world: &mut crate::world::World, scene: AuroraScene) {
     unread(world, DEMO_LOUP, 1);
     if matches!(scene.view, Bubbles::Friend) {
         unread(world, DEMO_FRIEND, 3);
+    }
+    if scene.sets {
+        // in memory only: the demo account's file stays as it was
+        let sets = &mut world.contact_sets;
+        sets.keep_in_memory();
+        let family = aurora_i18n::tr!("demo-family");
+        for (name, color, members) in [
+            (family, [0.957, 0.447, 0.714, 1.0], [DEMO_FRIEND, DEMO_LOUP]),
+            ("Clubbing", [0.369, 0.918, 0.831, 1.0], [DEMO_LOUP, DEMO_TESS]),
+        ] {
+            sets.add_set(name);
+            sets.set_color(name, color);
+            sets.add_to_set(&members, name, |_| true);
+            sets.set_separate_chats(name, true);
+        }
+        sets.move_priority(family, true);
+        // Family's symbol heads its section; Clubbing, without one, its dot
+        sets.set_visuals(
+            family,
+            crate::world::contact_sets::Visuals {
+                icon: Some(0),
+                ..Default::default()
+            },
+        );
     }
 }
 

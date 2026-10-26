@@ -111,6 +111,9 @@ impl App {
             None => Target::Ground,
         };
         self.object_menu_pick(picked, point);
+        if let Target::Avatar { id, own: false, .. } = target {
+            self.moderation_menu_opened(id);
+        }
         if self.clicks.scripted() || self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             log::info!("demo menu: {target:?}");
         }
@@ -181,6 +184,7 @@ impl App {
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
                 f.worn = !super::inspect::worn_roots(w, id).is_empty();
+                f.moderation = self.moderation_rights(*id);
             }
             _ => {}
         }
@@ -276,8 +280,53 @@ impl App {
         }
     }
 
+    pub(super) fn open_object_profile(&mut self, id: Uuid) {
+        let Some(index) = self.world.objects.index_of_uuid(&id) else {
+            return;
+        };
+        let root = linkset_root(&self.world, index);
+        let Some(object) = self.world.objects.get(root) else { return };
+        let (id, key, local) = (object.full_id, object.key, object.is_client_preview());
+        self.object_profile.object = Some(id);
+        if !local {
+            let selected = self.build.highlighted(&self.world).iter().any(|(index, _)| *index == root);
+            self.send(NetCommand::Build(aurora_net::build::BuildCmd::Select {
+                handle: key.region,
+                local_ids: vec![key.local_id],
+            }));
+            if !selected {
+                self.send(NetCommand::Build(aurora_net::build::BuildCmd::Deselect {
+                    handle: key.region,
+                    local_ids: vec![key.local_id],
+                }));
+            }
+        }
+    }
+
     pub(super) fn on_ctx_action(&mut self, act: CtxAction) {
         match act {
+            CtxAction::ObjectProfile(id) => self.open_object_profile(id),
+            CtxAction::Pathfinding { id, characters } => {
+                if let Some(index) = self.world.objects.index_of_uuid(&id)
+                    && let Some(object) = self.world.objects.get(linkset_root(&self.world, index))
+                {
+                    let kind = if characters {
+                        aurora_net::pathfinding::Kind::Characters
+                    } else {
+                        aurora_net::pathfinding::Kind::Objects
+                    };
+                    let command = self.pathfinding_ui.open(object.key.region, kind, object.full_id);
+                    if self.demo {
+                        self.pathfinding_ui.demo(&self.world, command);
+                    } else {
+                        self.send(command);
+                    }
+                }
+            }
+            CtxAction::ResetMeshLod(id) => {
+                let roots = super::inspect::worn_roots(&self.world, &id);
+                self.scene.reset_mesh_lods(&mut self.world, &roots, Instant::now());
+            }
             CtxAction::ShowAvatarTextures(id) => self.avatar_textures.avatar = Some(id),
             CtxAction::SitAt(point) => self.sit_at(point),
             CtxAction::SitStand => self.on_ctx_action(if self.world.agent.is_sitting() {
@@ -352,6 +401,8 @@ impl App {
                 }
             }
             CtxAction::NewPhysics => self.new_physics(),
+            CtxAction::Freeze(id) => self.ask_moderation(id, false),
+            CtxAction::Eject(id) => self.ask_moderation(id, true),
             CtxAction::EditWorn(item) => {
                 if Some(item) == crate::shape_editor::worn_shape(&self.world) {
                     self.open_shape_editor(item);

@@ -271,9 +271,56 @@ fn ui_text_width(ctx: &egui::Context, text: &str) -> f32 {
     })
 }
 
-pub enum ContentsOpen {
+pub enum ContentsAction {
     Script(uuid::Uuid, uuid::Uuid),
     Notecard(uuid::Uuid, uuid::Uuid),
+    Copy(Box<CopyRequest>),
+}
+
+/// "Copy to inventory" (LLFloaterOpenObject::onClickCopy): every item into
+/// a new folder named after the object, then worn in `wear` mode ("Replace
+/// outfit with contents" / "Add contents to outfit").
+#[derive(Clone)]
+pub struct CopyRequest {
+    pub object: uuid::Uuid,
+    pub name: String,
+    pub items: Vec<aurora_net::build::TaskItem>,
+    pub transfer: crate::build::task_inventory::ContentsTransfer,
+    pub wear: Option<crate::world::appearance::WearMode>,
+}
+
+/// A copy that moves no-copy items, waiting for the user's answer
+/// (warn_move_inventory: MoveInventoryFromObject / ...FromScriptedObject).
+pub struct CopyConfirm {
+    pub request: CopyRequest,
+    pub ignore: bool,
+}
+
+/// The copy the contents window's button asks for (without wearing), or why
+/// it cannot: the listing not there yet, the object gone, an item refused.
+pub fn copy_request(
+    c: &crate::interaction::Contents,
+    props: Option<&aurora_net::build::ObjectProps>,
+    world: &World,
+) -> Result<CopyRequest, String> {
+    use crate::build::task_inventory as task;
+    if world.objects.index_of_uuid(&c.target.object).is_none() {
+        return Err(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-available").to_owned());
+    }
+    let items = match &c.result {
+        Some(Ok(items)) => items,
+        Some(Err(error)) => return Err(error.clone()),
+        None => return Err(aurora_i18n::tr!("ui-object-actions-loading-contents").to_owned()),
+    };
+    let items: Vec<_> = items.iter().map(|item| task::from_inventory(c.target.object, item)).collect();
+    let transfer = task::contents_transfer(world, c.target.object, &items, task::owned(world, c.target.object, props))?;
+    Ok(CopyRequest {
+        object: c.target.object,
+        name: props.map(|props| props.name.clone()).unwrap_or_default(),
+        items,
+        transfer,
+        wear: None,
+    })
 }
 
 /// LLFloaterOpenObject: load and show the root object's task inventory.
@@ -283,7 +330,7 @@ pub fn show_contents(
     icons: &super::icons::Icons,
     state: &mut Interactions,
     world: &World,
-) -> Vec<ContentsOpen> {
+) -> Vec<ContentsAction> {
     let Some(c) = state.contents.as_ref() else { return Vec::new() };
     let selection_id = egui::Id::unique("object_contents_selected");
     let mut selected = ctx
@@ -292,18 +339,27 @@ pub fn show_contents(
         .map(|(_, item)| item);
     let mut documents = Vec::new();
     let mut open = true;
+    let mut close = false;
     let center = ctx.content_rect().center();
     Floater::new(
         "object_contents",
         aurora_i18n::tr!("common-object-contents"),
         egui::pos2(center.x - 190.0, center.y - 130.0),
-        Vec2::new(380.0, 260.0),
+        Vec2::new(380.0, 300.0),
     )
     .show(ctx, p, &mut open, |ui| {
-        if let Some(props) = state.props.get(&c.target.root) {
+        let props = state.props.get(&c.target.root);
+        if let Some(props) = props {
             ui.label(RichText::new(&props.name).strong().color(p.ink));
         }
-        if world.objects.index_of_uuid(&c.target.object).is_none() {
+        let present = world.objects.index_of_uuid(&c.target.object).is_some();
+        // the button stays in view, greyed with the reason (the Legacy Viewer's
+        // OpenObjectCannotCopy alert after the click)
+        let copyable = copy_request(c, props, world);
+        let (mut list, footer) = super::widgets::above_footer(ui);
+        let outer = ui;
+        let ui = &mut list;
+        if !present {
             ui.label(RichText::new(aurora_i18n::tr!("ui-object-actions-this-object-is-no-longer-available")).color(p.danger));
         } else {
             match &c.result {
@@ -366,9 +422,9 @@ pub fn show_contents(
                                             if matches!(item.asset_type, 7 | 10) {
                                                 let document = || {
                                                     if item.asset_type == 10 {
-                                                        ContentsOpen::Script(c.target.object, item.id)
+                                                        ContentsAction::Script(c.target.object, item.id)
                                                     } else {
-                                                        ContentsOpen::Notecard(c.target.object, item.id)
+                                                        ContentsAction::Notecard(c.target.object, item.id)
                                                     }
                                                 };
                                                 if response.double_clicked() {
@@ -401,7 +457,47 @@ pub fn show_contents(
                 }
             }
         }
+        footer.show(outer, |ui| {
+            use super::widgets::{ActionKind, action_button_if, action_menu_button};
+            let mut copy = None;
+            ui.horizontal(|ui| {
+                let ready = copyable.is_ok();
+                let tip = match &copyable {
+                    Ok(_) => aurora_i18n::tr!("contents-copy-tip"),
+                    Err(reason) => reason.as_str(),
+                };
+                let label = aurora_i18n::tr!("contents-copy-button");
+                let size = Vec2::new(0.0, 26.0);
+                let button = action_button_if(ui, p, "briefcase-filled", label, ActionKind::Primary, size, ready);
+                if button.on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+                    copy = Some(None);
+                }
+                let wear = ui.add_enabled(ready, |ui: &mut egui::Ui| {
+                    action_menu_button(ui, p, "shirt-filled", aurora_i18n::tr!("contents-copy-wear"), false, 26.0)
+                });
+                let wear = wear.on_disabled_hover_text(tip);
+                super::menu::dropdown(&wear, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                    use crate::world::appearance::WearMode;
+                    if super::menu::item(ui, p, "shirt-filled", aurora_i18n::tr!("contents-copy-replace")) {
+                        copy = Some(Some(WearMode::ReplaceOutfit));
+                    }
+                    if super::menu::item(ui, p, "plus", aurora_i18n::tr!("contents-copy-add")) {
+                        copy = Some(Some(WearMode::Append));
+                    }
+                });
+            });
+            // the window closes on the copy (LLFloaterOpenObject::onClickCopy)
+            if let Some(wear) = copy
+                && let Ok(request) = &copyable
+            {
+                documents.push(ContentsAction::Copy(Box::new(CopyRequest { wear, ..request.clone() })));
+                close = true;
+            }
+        });
     });
+    if close {
+        open = false;
+    }
     if let Some(item) = selected {
         ctx.data_mut(|d| d.insert_temp(selection_id, (c.target.object, item)));
     }
@@ -411,3 +507,67 @@ pub fn show_contents(
     }
     documents
 }
+
+/// The move warning of a copy with no-copy items: their names, the scripts'
+/// warning, "do not show again". Returns the confirmed copy.
+pub fn confirm_copy(ctx: &egui::Context, p: &Palette, pending: &mut Option<CopyConfirm>) -> Option<CopyConfirm> {
+    let confirm = pending.as_mut()?;
+    let mut answer = None;
+    super::widgets::Modal::new(egui::Id::unique("object_contents_copy")).show(ctx, |ui| {
+        ui.set_max_width(380.0);
+        ui.label(
+            RichText::new(aurora_i18n::tr!("task-transfer-title"))
+                .size(15.0)
+                .strong()
+                .color(p.ink),
+        );
+        ui.add_space(8.0);
+        let request = &confirm.request;
+        ui.label(
+            RichText::new(crate::build::task_inventory::contents_folder_name(&request.name))
+                .strong()
+                .color(p.ink),
+        );
+        ui.label(aurora_i18n::tr!("contents-copy-move-warning", count = request.transfer.moved.len()));
+        for id in request.transfer.moved.iter().take(MOVED_SHOWN) {
+            if let Some(item) = request.items.iter().find(|item| item.item_id == *id) {
+                ui.label(RichText::new(format!("• {}", item.name)).color(p.ink));
+            }
+        }
+        if request.transfer.moved.len() > MOVED_SHOWN {
+            ui.label(
+                RichText::new(aurora_i18n::tr!(
+                    "contents-copy-move-more",
+                    count = request.transfer.moved.len() - MOVED_SHOWN
+                ))
+                .color(p.muted),
+            );
+        }
+        if request.transfer.scripted {
+            ui.label(RichText::new(aurora_i18n::tr!("task-transfer-scripted-warning")).color(p.warn));
+        }
+        ui.add_space(8.0);
+        let ignore = aurora_i18n::tr!("task-transfer-ignore");
+        super::widgets::switch_labeled(ui, p, &mut confirm.ignore, ignore);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            use super::widgets::{ActionKind, action_button};
+            let size = Vec2::new(0.0, 26.0);
+            if action_button(ui, p, "check", aurora_i18n::tr!("task-transfer-confirm"), ActionKind::Primary, size).clicked() {
+                answer = Some(true);
+            }
+            if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
+                answer = Some(false);
+            }
+        });
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            answer = Some(false);
+        }
+    });
+    let answer = answer?;
+    let confirm = pending.take()?;
+    answer.then_some(confirm)
+}
+
+/// The no-copy items named in the move warning, the rest counted.
+const MOVED_SHOWN: usize = 8;

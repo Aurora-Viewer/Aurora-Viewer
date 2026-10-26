@@ -8,6 +8,13 @@
 //! says how to bring it back, and a screen edge hovered shows its bars for
 //! as long as the pointer stays on them (the bars mockup); with Firestorm's
 //! bars, its ConfirmHideUI question comes first.
+//!
+//! Immersive mode (#859, an Aurora addition: the Legacy Viewer has none) is
+//! the same hidden interface with the chat kept: the conversation windows
+//! stay, the chat lines and the chat bar (Enter) as when hidden; no edge
+//! brings the bars back, no hint: two small glass buttons in the top right
+//! corner, faint until hovered, show or hide the avatars' name tags (hidden
+//! by default, `immersive_name_tags`) and leave it.
 
 use super::bars::islands::{HEIGHT, MARGIN};
 use crate::theme::Palette;
@@ -24,6 +31,8 @@ const HINT_H: f32 = 30.0;
 pub struct Interface {
     /// Hidden by its shortcut or its menus (HideUIControls, not saved).
     pub hidden: bool,
+    /// Hidden by immersive mode (not saved).
+    pub immersive: bool,
     /// When it was hidden (`ctx` time), for the hint.
     hidden_at: Option<f64>,
     /// The bars an edge brought back.
@@ -68,15 +77,27 @@ pub struct Shown {
 
 impl Interface {
     /// Hide or show the interface, between two frames: the windows open now
-    /// go with it and come back with it; the menus close.
+    /// go with it and come back with it; the menus close. Shown, immersive
+    /// mode ends too.
     pub fn set_hidden(&mut self, ctx: &egui::Context, hidden: bool) {
+        self.set(ctx, hidden, false);
+    }
+
+    /// Enter immersive mode, between two frames: hidden, the chat windows
+    /// kept.
+    pub fn set_immersive(&mut self, ctx: &egui::Context) {
+        self.set(ctx, true, true);
+    }
+
+    fn set(&mut self, ctx: &egui::Context, hidden: bool, immersive: bool) {
         self.hidden = hidden;
+        self.immersive = hidden && immersive;
         self.hidden_at = hidden.then(|| ctx.input(|i| i.time));
         self.peek_top = false;
         self.peek_bottom = false;
         self.peek_sides = [false; 2];
         self.confirm = false;
-        super::widgets::hide_windows(ctx, hidden);
+        super::widgets::hide_windows(ctx, hidden, self.immersive);
         if hidden {
             egui::Popup::close_all(ctx);
         }
@@ -86,7 +107,7 @@ impl Interface {
     /// bar while it is used, unless the interface stays in mouselook.
     /// Hidden: none; with the islands, an edge hovered brings its bars back
     /// while the pointer stays on them, a menu open from them or the chat in
-    /// use.
+    /// use. Immersive: the chat bar in use only.
     pub fn bars(&mut self, f: &Frame) -> Shown {
         if f.mouselook {
             return if f.show_in_mouselook && !self.hidden {
@@ -101,7 +122,7 @@ impl Interface {
         if !self.hidden {
             return Shown { top: true, bottom: true };
         }
-        if f.classic {
+        if f.classic || self.immersive {
             return Shown {
                 top: false,
                 bottom: f.chat_active,
@@ -124,7 +145,7 @@ impl Interface {
     /// none in mouselook unless the interface stays there; hidden, with the
     /// islands, the left or right edge hovered brings its toolbar back while
     /// the pointer stays on it (`edges`: their inner sides, last frame) or a
-    /// menu is open.
+    /// menu is open. Immersive: none.
     pub fn sides(&mut self, f: &Frame, edges: [f32; 2]) -> [bool; 2] {
         if f.mouselook {
             let on = f.show_in_mouselook && !self.hidden;
@@ -133,7 +154,7 @@ impl Interface {
         if !self.hidden {
             return [true, true];
         }
-        if f.classic {
+        if f.classic || self.immersive {
             return [false, false];
         }
         let near = |test: &dyn Fn(Pos2) -> bool| f.pointer.is_some_and(test);
@@ -145,10 +166,11 @@ impl Interface {
         self.peek_sides
     }
 
-    /// Seconds left to the hint at `now` (the islands' look), while shown.
+    /// Seconds left to the hint at `now` (the islands' look), while shown;
+    /// none in immersive mode, which has its button.
     pub fn hint_left(&self, now: f64) -> Option<f64> {
         self.hidden_at
-            .filter(|_| self.hidden)
+            .filter(|_| self.hidden && !self.immersive)
             .map(|at| HINT_S - (now - at))
             .filter(|s| *s > 0.0)
     }
@@ -213,6 +235,62 @@ pub fn hint(ctx: &egui::Context, p: &Palette, binding: Option<&crate::keybinds::
             let at = crate::ui::widgets::row_text_origin(ui.painter(), &recall, x, cy);
             ui.painter().galley(at, recall.clone(), p.muted);
         });
+}
+
+/// Opacity of the immersive mode's buttons at rest: there, but out of the
+/// way.
+const BUTTONS_REST: f32 = 0.4;
+
+/// What the immersive mode's buttons ask for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImmersiveAction {
+    /// Leave immersive mode.
+    Leave,
+    /// The avatars' name tags shown or hidden.
+    NameTags(bool),
+}
+
+/// The immersive mode's buttons, square, as high as the islands, in the top
+/// right corner at their margin, faint until one is hovered: the name tags
+/// (`name_tags`: shown now), then the way out.
+pub fn immersive_buttons(ctx: &egui::Context, p: &Palette, name_tags: bool) -> Option<ImmersiveAction> {
+    let screen = ctx.content_rect();
+    let size = Vec2::splat(HEIGHT);
+    let rect = Rect::from_min_max(
+        Pos2::new(screen.right() - 2.0 * (MARGIN + HEIGHT), screen.top() + MARGIN),
+        Pos2::new(screen.right() - MARGIN, screen.top() + MARGIN + HEIGHT),
+    );
+    let hot = ctx.pointer_hover_pos().is_some_and(|at| rect.contains(at));
+    let mut action = None;
+    egui::Area::new(Id::unique("immersive_buttons"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(rect.min)
+        .constrain(false)
+        .show(ctx, |ui| {
+            ui.set_opacity(if hot { 1.0 } else { BUTTONS_REST });
+            ui.spacing_mut().item_spacing = Vec2::new(MARGIN, 0.0);
+            ui.horizontal(|ui| {
+                let (icon, label, tint) = if name_tags {
+                    ("label-filled", aurora_i18n::tr!("ui-bars-immersive-hide-tags"), p.violet_light)
+                } else {
+                    ("label-off", aurora_i18n::tr!("ui-bars-immersive-show-tags"), p.ink)
+                };
+                if super::widgets::glass_action_icon(ui, p, icon, label, size, tint)
+                    .on_hover_text(label)
+                    .clicked()
+                {
+                    action = Some(ImmersiveAction::NameTags(!name_tags));
+                }
+                let label = aurora_i18n::tr!("ui-bars-immersive-leave");
+                if super::widgets::glass_action_icon(ui, p, "minimize", label, size, p.ink)
+                    .on_hover_text(label)
+                    .clicked()
+                {
+                    action = Some(ImmersiveAction::Leave);
+                }
+            });
+        });
+    action
 }
 
 /// Firestorm's ConfirmHideUI, with Firestorm's bars: "This action will hide
@@ -382,6 +460,28 @@ mod tests {
         assert_eq!(ui.sides(&ml, edges), [true, true]);
     }
 
+    /// Immersive mode: hidden, the chat bar back while it is used, but no
+    /// edge brings a bar or a toolbar back and there is no hint; shown again
+    /// (its button or the shortcut), it ends.
+    #[test]
+    fn immersive_mode_keeps_only_the_chat() {
+        let ctx = egui::Context::default();
+        let mut ui = Interface::default();
+        ui.set_immersive(&ctx);
+        assert!(ui.hidden && ui.immersive);
+        assert_eq!(ui.bars(&frame(Some(Pos2::new(700.0, 2.0)))), NONE, "no top edge");
+        assert_eq!(ui.bars(&frame(Some(Pos2::new(700.0, 862.0)))), NONE, "no bottom edge");
+        let mut chat = frame(None);
+        chat.chat_active = true;
+        assert_eq!(ui.bars(&chat), Shown { top: false, bottom: true });
+        assert_eq!(ui.sides(&frame(Some(Pos2::new(1.0, 400.0))), [50.0, 1486.0]), [false, false]);
+        assert_eq!(ui.hint_left(ctx.input(|i| i.time)), None, "its button, no hint");
+        ui.set_hidden(&ctx, false);
+        assert!(!ui.hidden && !ui.immersive);
+        ui.set_hidden(&ctx, true);
+        assert!(!ui.immersive, "Show User Interface hides without it");
+    }
+
     #[test]
     fn the_hint_lasts_a_few_seconds() {
         let ui = Interface {
@@ -433,5 +533,35 @@ mod tests {
         frame(&mut a, &mut b);
         a = true;
         assert!(frame(&mut a, &mut b).0, "opened again, shown");
+    }
+
+    /// Immersive mode keeps the chat windows open and hides the others; the
+    /// hidden interface hides both.
+    #[test]
+    fn immersive_mode_keeps_the_chat_windows() {
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let frame = || {
+            let mut shown = (false, false);
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                let at = Pos2::new(100.0, 100.0);
+                let size = Vec2::new(200.0, 100.0);
+                let (mut a, mut b) = (true, true);
+                let floater = super::super::widgets::Floater::new("other", "other", at, size);
+                shown.0 = floater.show(ui.ctx(), &p, &mut a, |_| ()).is_some();
+                let chat = super::super::widgets::Floater::new("conversations", "chat", at, size).chat();
+                shown.1 = chat.show(ui.ctx(), &p, &mut b, |_| ()).is_some();
+            });
+            out.textures_delta.clear();
+            shown
+        };
+        assert_eq!(frame(), (true, true));
+        let mut ui = Interface::default();
+        ui.set_immersive(&ctx);
+        assert_eq!(frame(), (false, true), "immersive: the chat stays");
+        ui.set_hidden(&ctx, false);
+        assert_eq!(frame(), (true, true));
+        ui.set_hidden(&ctx, true);
+        assert_eq!(frame(), (false, false), "hidden: the chat goes too");
     }
 }

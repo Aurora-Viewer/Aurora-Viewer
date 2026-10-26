@@ -12,6 +12,7 @@ pub struct Customization {
     editor: context_customize::State,
     scope: Option<String>,
     list: bool,
+    pub(crate) notecards: super::notecards::State,
 }
 
 pub(super) fn scope(target: &Target, facts: &Facts) -> &'static str {
@@ -46,7 +47,7 @@ impl Customization {
         profile(prefs, scope).locked = false;
     }
 
-    pub(super) fn close(&mut self, ctx: &egui::Context, prefs: &mut Preferences) {
+    pub(crate) fn close(&mut self, ctx: &egui::Context, prefs: &mut Preferences) {
         if let Some(scope) = self.scope.take() {
             self.editor.relock(ctx, profile(prefs, &scope));
         }
@@ -56,6 +57,11 @@ impl Customization {
 
     pub(super) fn force_list(&self) -> bool {
         self.list
+    }
+
+    pub(crate) fn demo_notecard(&mut self, load: bool) {
+        use crate::ui::inventory::context_notecards::Mode;
+        self.notecards.demo(if load { Mode::Load } else { Mode::Export });
     }
 
     pub(super) fn show(
@@ -97,6 +103,9 @@ impl Customization {
             if !matches!(action, CtxAction::SetOwnerSoundBlock { .. }) {
                 ui.close();
             }
+        }
+        if let Some(mode) = self.editor.notecard.take() {
+            self.notecards.open(mode);
         }
     }
 }
@@ -246,8 +255,14 @@ fn action_key(action: &CtxAction) -> String {
         CtxAction::CustomizeMenu(..) => "CustomizeMenu",
         CtxAction::SitAt(..) => "SitAt",
         CtxAction::SitStand => "SitStand",
+        CtxAction::Freeze(..) => "Freeze",
+        CtxAction::Eject(..) => "Eject",
         CtxAction::LookAtAvatar(..) => "LookAtAvatar",
         CtxAction::EditPbr(..) => "EditPbr",
+        CtxAction::ObjectProfile(..) => "ObjectProfile",
+        CtxAction::Pathfinding { characters: false, .. } => "RegionObjects",
+        CtxAction::Pathfinding { characters: true, .. } => "PathfindingCharacters",
+        CtxAction::ResetMeshLod(..) => "ResetMeshLod",
         CtxAction::ShowAvatarTextures(..) => "ShowAvatarTextures",
         CtxAction::TakeOffClothing(..) => "TakeOffClothing",
         CtxAction::DetachAt(..) => "DetachAt",

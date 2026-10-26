@@ -129,6 +129,13 @@ pub(crate) fn carried_ids(ctx: &egui::Context) -> Option<Vec<Uuid>> {
     Cargo::carried(ctx).map(|c| c.ids().to_vec())
 }
 
+/// The cursor a destination outside the inventory windows gives the cargo
+/// held over it this pass (an object's Contents tab).
+pub(crate) fn feedback(ctx: &egui::Context, cursor: egui::CursorIcon) {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(feedback_id(), Feedback { pass, cursor }));
+}
+
 /// The cargo of `AURORA_DEMO_CONV_GIVE`: one item, or a selection of several.
 pub(crate) fn demo_carry(ctx: &egui::Context, ids: Vec<Uuid>) {
     match ids[..] {

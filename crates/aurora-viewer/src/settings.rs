@@ -796,6 +796,9 @@ pub struct Settings {
     /// instead of the header and cards of `ui/profile/aurora.rs`; group
     /// profiles in the classic window too (`ui/group_profile.rs`).
     pub classic_profiles: bool,
+    /// A friend's rights on the Info card of the Aurora profile (on by
+    /// default); off, they stay in the Contacts window.
+    pub profile_rights: bool,
     /// Firestorm's Pay window (floater_pay.xml) instead of `ui/pay.rs`.
     pub classic_pay_window: bool,
     /// The Legacy Viewer's money tracker (floater_fs_money_tracker.xml)
@@ -820,6 +823,9 @@ pub struct Settings {
     /// Firestorm's ConfirmHideUI ("Confirm before hiding UI"): with
     /// Firestorm's bars, hiding the interface asks first.
     pub confirm_hide_interface: bool,
+    /// The avatars' name tags in immersive mode (#859): off by default, its
+    /// button beside the one that leaves it.
+    pub immersive_name_tags: bool,
     /// Firestorm's traffic indicator (ShowNetStats, off by default): a
     /// small curve of the network in the system island.
     pub show_net_stats: bool,
@@ -965,6 +971,9 @@ pub struct Settings {
     pub fly_after_teleport: bool,
     /// The crouch key stays down until pressed again (FSCrouchToggle, off).
     pub crouch_toggle: bool,
+    /// Quickjump: jump and land without waiting for the pre-jump and landing
+    /// animations (FSIgnoreFinishAnimation, off; Me › Quickjump too).
+    pub quickjump: bool,
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
@@ -1078,8 +1087,9 @@ pub struct Settings {
     pub show_usernames: bool,
     /// Which group titles the name tags show (GroupTitlesTagMode, all).
     pub group_titles: crate::world::names::GroupTitles,
-    /// Hide our own group title from everyone (RenderHideGroupTitle, off).
-    pub hide_own_group_title: bool,
+    /// Read the former separate switch once; the dropdown now owns this choice (#803).
+    #[serde(rename = "hide_own_group_title", skip_serializing)]
+    pub(crate) former_hide_own_group_title: bool,
     pub legacy_username_format: bool,
     pub trim_resident: bool,
     pub display_name_notices: bool,
@@ -1632,6 +1642,7 @@ impl Default for Settings {
             name_tag_show_seconds: 10.0,
             classic_name_tags: false,
             classic_profiles: false,
+            profile_rights: true,
             classic_pay_window: false,
             legacy_money_tracker: false,
             classic_bars: false,
@@ -1641,6 +1652,7 @@ impl Default for Settings {
             favorites_row_folded: false,
             system_island: SystemIsland::default(),
             confirm_hide_interface: true,
+            immersive_name_tags: false,
             show_net_stats: false,
             classic_people: false,
             classic_restart_alert: false,
@@ -1692,6 +1704,7 @@ impl Default for Settings {
             walk_backwards_without_turning: false,
             fly_after_teleport: false,
             crouch_toggle: false,
+            quickjump: false,
             block_click_sit: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
             follow: Default::default(),
@@ -1733,7 +1746,7 @@ impl Default for Settings {
             use_display_names: true,
             show_usernames: true,
             group_titles: Default::default(),
-            hide_own_group_title: false,
+            former_hide_own_group_title: false,
             legacy_username_format: true,
             trim_resident: true,
             display_name_notices: true,
@@ -2014,6 +2027,9 @@ impl Settings {
             profile.locked = true;
         }
         self.grids.retain_mut(|grid| grid.validate().is_ok());
+        if std::mem::take(&mut self.former_hide_own_group_title) {
+            self.group_titles = crate::world::names::GroupTitles::AllExceptMine;
+        }
         if self.settings_version < 2 {
             // new defaults: 96 m draw distance, LOD factor 2
             self.draw_distance = 96.0;
@@ -2640,6 +2656,30 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(read(&serde_json::to_string(&local).expect("json")), local);
+    }
+
+    #[test]
+    fn group_title_choices_migrate_the_former_switch_and_survive_reload() {
+        use crate::world::names::GroupTitles;
+
+        let old: super::Settings = serde_json::from_str("{}").expect("old settings");
+        assert_eq!(old.sanitized().group_titles, GroupTitles::All);
+        for mode in GroupTitles::ALL {
+            for hide in [false, true] {
+                let old: super::Settings = serde_json::from_value(serde_json::json!({
+                    "group_titles": mode,
+                    "hide_own_group_title": hide,
+                }))
+                .expect("former title preferences");
+                let migrated = old.sanitized();
+                let expected = if hide { GroupTitles::AllExceptMine } else { mode };
+                assert_eq!(migrated.group_titles, expected);
+                let saved = serde_json::to_value(&migrated).expect("save title choice");
+                assert!(saved.get("hide_own_group_title").is_none(), "only the combined choice is saved");
+                let reloaded: super::Settings = serde_json::from_value(saved).expect("reload title choice");
+                assert_eq!(reloaded.sanitized().group_titles, expected);
+            }
+        }
     }
 
     #[test]

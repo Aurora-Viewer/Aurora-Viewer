@@ -26,6 +26,9 @@ pub(super) const MORE_W: f32 = 24.0;
 /// Height of a toolbar (search, buttons).
 pub(super) const TOOLBAR_H: f32 = 30.0;
 
+/// The side of a contact set's symbol after a name (`SetMark::Icon`).
+const SET_ICON: f32 = 12.0;
+
 /// The name a row shows: the display name as the name preferences make it
 /// (a contact set nickname included), as Near you's rows do.
 pub(super) fn display_name(world: &World, id: &Uuid) -> String {
@@ -143,6 +146,14 @@ pub(super) fn initials(name: &str) -> String {
     std::iter::once(first).chain(second).flat_map(|c| c.to_uppercase()).collect()
 }
 
+/// What follows a resident's name for their contact set: the set's symbol
+/// in its colour when it has one, else a dot of its colour (#1104).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum SetMark {
+    Dot(Color32),
+    Icon(&'static str, Color32),
+}
+
 /// The two lines of a row between `left` and `right`: the first in
 /// semi-bold, with a dot of `dot` (a contact set's color) and a tag after
 /// it when they fit, the second muted. Returns whether the first was cut.
@@ -159,7 +170,7 @@ pub(super) fn names(
     dot: Option<Color32>,
     tag: Option<(&str, Color32, Color32)>,
 ) -> bool {
-    person_names(ui, p, rect, left, right, first, color, second, dot, tag, None)
+    person_names(ui, p, rect, left, right, first, color, second, dot.map(SetMark::Dot), tag, None)
 }
 
 /// `names` for a resident: a member of the Aurora team or of Linden Lab
@@ -175,7 +186,7 @@ pub(super) fn person_names(
     first: &str,
     color: Color32,
     second: &str,
-    dot: Option<Color32>,
+    set: Option<SetMark>,
     tag: Option<(&str, Color32, Color32)>,
     mark: Option<crate::world::staff::Mark>,
 ) -> bool {
@@ -205,9 +216,17 @@ pub(super) fn person_names(
     {
         x = r.right() + 6.0;
     }
-    if let Some(c) = dot.filter(|_| !cut && x + 9.0 <= right) {
-        ui.painter().circle_filled(Pos2::new(x + 4.5, y), 4.5, c);
-        x += 9.0 + 6.0;
+    match set.filter(|_| !cut) {
+        Some(SetMark::Dot(c)) if x + 9.0 <= right => {
+            ui.painter().circle_filled(Pos2::new(x + 4.5, y), 4.5, c);
+            x += 9.0 + 6.0;
+        }
+        Some(SetMark::Icon(icon, c)) if x + SET_ICON <= right => {
+            let cell = Rect::from_min_size(Pos2::new(x, y - SET_ICON / 2.0), Vec2::splat(SET_ICON));
+            super::radar::icon(ui, icon, cell, SET_ICON, c);
+            x += SET_ICON + 6.0;
+        }
+        _ => {}
     }
     if let Some((text, ink, fill)) = tag.filter(|_| !cut) {
         let g = ui

@@ -392,6 +392,7 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
         let mut open = true;
         let mut dock = super::docking::title_drop(ctx, p, &w.floater);
         let mut floater = crate::ui::widgets::Floater::new(&w.floater, title, default.min, default.size())
+            .chat()
             .action("login-2", aurora_i18n::tr!("ui-chat-attach-to-conversations"), &mut dock)
             .attention(unread > 0)
             .steady_size()

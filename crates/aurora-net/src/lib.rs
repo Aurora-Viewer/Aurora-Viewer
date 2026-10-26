@@ -27,6 +27,7 @@ pub mod objcache;
 pub mod objects;
 pub mod offline_im;
 pub mod outfits;
+pub mod pathfinding;
 pub mod postcard;
 pub mod probe;
 pub mod profile;

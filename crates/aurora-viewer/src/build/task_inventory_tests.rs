@@ -264,3 +264,54 @@ fn demo_delivery_copies_a_copyable_item_and_removes_only_the_no_copy_original() 
         assert_eq!(current.iter().any(|i| i.item_id == task.item_id), copy);
     }
 }
+
+#[test]
+fn contents_copy_copies_moves_or_refuses_the_whole_object() {
+    let (world, object, item) = fixture();
+    let card = TaskItem {
+        item_id: Uuid::from_u128(99010),
+        name: "Card".into(),
+        ..item.clone()
+    };
+    let cube = TaskItem {
+        item_id: Uuid::from_u128(99011),
+        name: "Cube".into(),
+        owner_id: Uuid::from_u128(99012),
+        owner_mask: perm::TRANSFER,
+        ..item.clone()
+    };
+    let script = TaskItem {
+        item_id: Uuid::from_u128(99013),
+        asset_type: 10,
+        inv_type: 10,
+        ..item.clone()
+    };
+    let all = contents_transfer(&world, object, &[card.clone(), script.clone()], false).expect("copyable");
+    assert!(all.moved.is_empty());
+    assert!(all.scripted);
+    // move_inv_category_world_to_agent: a no-copy item moves out of our own object
+    let ours = contents_transfer(&world, object, &[card.clone(), cube.clone()], true).expect("ours");
+    assert_eq!(ours.moved, vec![cube.item_id]);
+    assert!(!ours.scripted);
+    // ...and refuses the whole copy from someone else's
+    let refused = contents_transfer(&world, object, &[card.clone(), cube], false).expect_err("refused");
+    assert!(refused.contains("Cube"), "{refused}");
+    let folder = TaskItem { is_folder: true, ..card };
+    assert_eq!(
+        contents_transfer(&world, object, &[folder], true),
+        Err(aurora_i18n::tr!("contents-copy-nothing").to_owned())
+    );
+}
+
+#[test]
+fn contents_folder_name_drops_what_an_inventory_name_cannot_hold() {
+    assert_eq!(
+        contents_folder_name(
+            "  Boutique | Gift
+ box "
+        ),
+        "Boutique  Gift box"
+    );
+    assert_eq!(contents_folder_name(" 	"), aurora_i18n::tr!("common-object"));
+    assert_eq!(contents_folder_name(&"x".repeat(80)).chars().count(), 63);
+}

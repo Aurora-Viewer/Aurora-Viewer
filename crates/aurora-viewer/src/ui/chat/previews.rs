@@ -1,7 +1,8 @@
 //! The cards under the links of a conversation (`link_preview.rs` decides,
-//! downloads and decodes): a picture, an animated GIF, a YouTube video that
-//! plays in its card or in a window of its own, or a card that asks before
-//! anything reaches the site. Drawn by all four styles of the Conversations
+//! downloads and decodes): a picture, an animated GIF or WebP, a YouTube
+//! video or a video file of a trusted site (#983) that plays in its card or
+//! in a window of its own, or a card that asks before anything reaches the
+//! site. Drawn by all four styles of the Conversations
 //! window and its detached conversations. The History window, transcript
 //! history and chat lines at the bottom of the screen show links as text.
 //!
@@ -137,6 +138,8 @@ enum Entry {
         thumbnail: Option<Shown>,
         /// Width over height of the video.
         aspect: f32,
+        /// A video file, not a YouTube video.
+        clip: Option<lp::Clip>,
     },
     Failed(Failure),
 }
@@ -397,6 +400,14 @@ impl Previews {
                     channel: v.channel,
                     thumbnail: v.thumbnail.map(|p| Shown::new(ctx, &url, p)),
                     aspect: v.aspect.unwrap_or(DEFAULT_ASPECT),
+                    clip: None,
+                },
+                Ok(Content::Clip(c)) => Entry::Video {
+                    title: String::new(),
+                    channel: String::new(),
+                    thumbnail: c.thumbnail.map(|p| Shown::new(ctx, &url, p)),
+                    aspect: c.aspect.unwrap_or(DEFAULT_ASPECT),
+                    clip: Some(c.clip),
                 },
                 Err(f) => Entry::Failed(f),
             };
@@ -404,6 +415,24 @@ impl Previews {
                 c.entry = entry;
                 ctx.request_repaint();
             }
+        }
+        // a clip's page tells its shape once it plays: its card and the
+        // player window take it
+        if let Some((key, aspect)) = lp::take_clip_aspect()
+            && let Some(v) = self.playing.as_mut().filter(|v| v.key == key)
+        {
+            if (v.aspect - aspect).abs() > 0.01 {
+                v.aspect = aspect;
+                v.fitted = false;
+            }
+            if let Some(Cached {
+                entry: Entry::Video { aspect: kept, .. },
+                ..
+            }) = self.cache.get_mut(&v.link)
+            {
+                *kept = aspect;
+            }
+            ctx.request_repaint();
         }
         while self.in_flight < MAX_IN_FLIGHT
             && let Some((url, target, trusted_only)) = self.queue.pop_front()
@@ -484,6 +513,12 @@ impl Previews {
             let result = match &target {
                 Target::Picture => lp::fetch_picture(&client, &url).await.map(Content::Picture),
                 Target::Video(v) => lp::fetch_video(&client, v).await.map(Content::Video),
+                // nothing reaches the site before it plays
+                Target::Clip(clip) => Ok(Content::Clip(lp::ClipInfo {
+                    clip: clip.clone(),
+                    thumbnail: None,
+                    aspect: None,
+                })),
                 Target::Page(_) => lp::fetch_page(&client, &url, trusted_only).await,
             };
             let _ = tx.send((url, result));
@@ -503,10 +538,11 @@ impl Previews {
         let w = self.settings.size.width();
         links(text)
             .iter()
-            .filter_map(|url| lp::decide(&self.settings, self.place, url))
-            .map(|(target, _)| match target {
-                Target::Picture | Target::Page(_) => w,
-                Target::Video(_) => w + VIDEO_EXTRA,
+            .filter_map(|url| lp::decide(&self.settings, self.place, url).map(|(target, _)| (url, target)))
+            .map(|(url, target)| match target {
+                // a Gyazo page may lead to a video capture
+                Target::Picture | Target::Page(_) if !matches!(self.cache.get(url).map(|c| &c.entry), Some(Entry::Video { .. })) => w,
+                _ => w + VIDEO_EXTRA,
             })
             .fold(0.0, f32::max)
     }
@@ -725,7 +761,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
     let mut window = false;
     let resp = match (&cached.entry, target) {
         (Entry::Queued | Entry::Loading, Target::Picture | Target::Page(_)) => placeholder(ui, p, Vec2::new(width, (width * 0.75).round())),
-        (Entry::Queued | Entry::Loading, Target::Video(_)) => {
+        (Entry::Queued | Entry::Loading, Target::Video(_) | Target::Clip(_)) => {
             let w = width + VIDEO_EXTRA;
             placeholder(ui, p, Vec2::new(w, (w * 9.0 / 16.0).round()))
         }
@@ -775,9 +811,13 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
             }
             out.resp
         }
-        (Entry::Video { .. }, Target::Video(video)) => {
-            let video = video.clone();
-            video_card(ui, p, pv, k, url, &video, width + VIDEO_EXTRA);
+        // a YouTube video, a clip, or the clip a Gyazo page leads to
+        (Entry::Video { .. }, _) => {
+            let video = match target {
+                Target::Video(video) => Some(video.clone()),
+                _ => None,
+            };
+            video_card(ui, p, pv, k, url, video.as_ref(), width + VIDEO_EXTRA);
             return;
         }
         (Entry::Failed(Failure::TooLarge(size)), _) => {
@@ -1083,6 +1123,8 @@ fn ask_card(ui: &mut egui::Ui, p: &Palette, url: &str, target: &Target, width: f
             "brand-youtube-filled",
             aurora_i18n::tr!("ui-chat-preview-video-from", site = site.as_str()),
         ),
+        // no filled icon of a film strip
+        Target::Clip(_) => ("movie", aurora_i18n::tr!("ui-chat-preview-video-from", site = site.as_str())),
     };
     compact_card(ui, p, width, icon, &title, aurora_i18n::tr!("ui-chat-preview-not-loaded"), |ui| {
         crate::ui::widgets::primary_button_sized(ui, p, aurora_i18n::tr!("ui-chat-preview-show"), Vec2::new(84.0, 28.0)).clicked()
@@ -1105,10 +1147,10 @@ fn too_large(ui: &mut egui::Ui, p: &Palette, url: &str, size: Option<u64>, width
     }
 }
 
-/// A YouTube video: its picture with the play button, its title and
-/// channel; playing, the player in place of the picture with its buttons
-/// under it.
-fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, video: &lp::Video, width: f32) {
+/// A YouTube video (`video`) or a clip: its picture with the play button,
+/// its title and channel (a clip: its site); playing, the player in place of
+/// the picture with its buttons under it.
+fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, video: Option<&lp::Video>, width: f32) {
     let pass = ui.ctx().cumulative_pass_nr();
     let Some(Cached {
         entry: Entry::Video {
@@ -1116,6 +1158,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             channel,
             thumbnail,
             aspect,
+            clip,
         },
         ..
     }) = pv.cache.get(url)
@@ -1123,15 +1166,24 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
         return;
     };
     let aspect = *aspect;
+    let clip = clip.clone();
+    if clip.is_none() && video.is_none() {
+        return;
+    }
     let title = if title.is_empty() {
-        aurora_i18n::tr!("ui-chat-preview-video").to_owned()
+        if clip.is_some() {
+            aurora_i18n::tr!("ui-chat-preview-clip")
+        } else {
+            aurora_i18n::tr!("ui-chat-preview-video")
+        }
+        .to_owned()
     } else {
         title.clone()
     };
-    let channel = if channel.is_empty() {
-        "YouTube".to_owned()
-    } else {
-        format!("{channel} · YouTube")
+    let channel = match (&clip, channel.is_empty()) {
+        (Some(_), _) => lp::host(url).unwrap_or_default(),
+        (None, true) => "YouTube".to_owned(),
+        (None, false) => format!("{channel} · YouTube"),
     };
     let here = pv.playing.as_ref().filter(|v| v.key == k).map(|v| v.window);
     let width = if here == Some(false) {
@@ -1188,7 +1240,7 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                             ui.painter().rect_filled(rect, radius, p.field);
                             paint_icon(
                                 ui.painter(),
-                                "brand-youtube-filled",
+                                if clip.is_some() { "movie" } else { "brand-youtube-filled" },
                                 egui::Rect::from_center_size(rect.center(), Vec2::splat(40.0)),
                                 p.muted_dim,
                             );
@@ -1309,7 +1361,11 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
             title: title.clone(),
             web: {
                 let mut web = WebView::default();
-                web.navigate(&video.player_page(&options));
+                match (&clip, video) {
+                    (Some(clip), _) => web.navigate(&clip.player_page(&options, k)),
+                    (None, Some(video)) => web.navigate(&video.player_page(&options)),
+                    (None, None) => {}
+                }
                 web
             },
             window: demo.unwrap_or(pv.settings.player) == lp::Player::Window,
@@ -1462,6 +1518,7 @@ mod tests {
                         channel: String::new(),
                         thumbnail: None,
                         aspect: DEFAULT_ASPECT,
+                        clip: None,
                     },
                     used: 0,
                 },

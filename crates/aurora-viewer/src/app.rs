@@ -44,6 +44,7 @@ mod buy_land;
 mod chat_commands;
 mod click_pick;
 mod color_picker;
+mod contents_copy;
 mod context_menu;
 mod controls;
 mod crash_state;
@@ -53,6 +54,7 @@ mod describe;
 mod dev_toolbox;
 mod folders;
 use folders::chat_log_root;
+mod contents_drop_demo;
 mod dof;
 mod double_click;
 mod driver_check;
@@ -74,6 +76,7 @@ mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
 mod joystick;
+mod land_moderation;
 mod link_health;
 mod marketplace_listings;
 mod money_tracker;
@@ -330,6 +333,8 @@ pub struct App {
     context_menu: Option<ui::context::ContextMenu>,
     context_customization: ui::context::Customization,
     avatar_textures: ui::context::AvatarTexturesUi,
+    object_profile: ui::context::ObjectProfileUi,
+    pathfinding_ui: ui::context::PathfindingUi,
     /// What a left-button drag does (steer the avatar, orbit a focus point).
     mouse_mode: MouseMode,
     /// Build tools (selection, manipulators, create, terraform).
@@ -443,6 +448,8 @@ pub struct App {
     context_menu_was: bool,
     /// "Delete" waiting for a yes: (object, why it asks).
     delete_confirm: Option<(uuid::Uuid, String)>,
+    /// "Freeze" / "Eject" waiting for an answer (app/land_moderation.rs).
+    moderation_ask: Option<land_moderation::Ask>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -725,6 +732,8 @@ pub struct App {
     imports: crate::imports::Imports,
     blender_live: crate::blender_live::Live,
     task_transfer: Option<ui::inventory::task_drop::PendingTransfer>,
+    /// "Copy to inventory" of objects' contents (app/contents_copy.rs).
+    contents_copies: contents_copy::ContentsCopies,
     /// Inventory edits asked by the world (`World::take_inventory_edits`),
     /// awaiting their reply.
     world_edits: std::collections::HashSet<uuid::Uuid>,
@@ -1064,6 +1073,8 @@ impl App {
             context_menu: None,
             context_customization: Default::default(),
             avatar_textures: Default::default(),
+            object_profile: Default::default(),
+            pathfinding_ui: Default::default(),
             mouse_mode: MouseMode::None,
             build: Default::default(),
             ik_editor: Default::default(),
@@ -1122,6 +1133,7 @@ impl App {
             mic_was: false,
             context_menu_was: false,
             delete_confirm: None,
+            moderation_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
             url_confirm: None,
@@ -1306,6 +1318,7 @@ impl App {
             imports: Default::default(),
             blender_live: Default::default(),
             task_transfer: None,
+            contents_copies: Default::default(),
             world_edits: Default::default(),
             demo_offer_shown: None,
             ao_ui: Default::default(),
@@ -2471,6 +2484,16 @@ impl App {
             self.group_profile_ui.on_created(&mut self.world, *group, *success, message);
             return;
         }
+        if let NetEvent::Pathfinding {
+            request,
+            region,
+            kind,
+            result,
+        } = ev
+        {
+            self.pathfinding_ui.reply(request, region, kind, result);
+            return;
+        }
         if let NetEvent::ServerReleaseNotes(page) = ev {
             // LLFloaterAbout::handleServerReleaseNotes, then LLWeb::loadURL
             match page {
@@ -2562,6 +2585,12 @@ impl App {
                 }
                 return;
             }
+            if self.context_customization.notecards.saved(request, &result) {
+                if let Ok(item) = result {
+                    self.world.inventory.add_items(vec![item]);
+                }
+                return;
+            }
             if crate::build::ui::layout_notecard_saved(&mut self.build, request, &result) {
                 if let Ok(item) = result {
                     self.world.inventory.add_items(vec![item]);
@@ -2643,6 +2672,10 @@ impl App {
                 }
                 return;
             }
+            if self.contents_copies.owns(request) {
+                self.contents_copy_result(request, result);
+                return;
+            }
             if self.world_edits.remove(&request) {
                 match result {
                     Ok(reply) => {
@@ -2666,6 +2699,13 @@ impl App {
                 return;
             }
             if ui::inventory::context_notecards::loaded(&mut self.inventory_ui, &mut self.settings.inventory, item, &result) {
+                self.settings.save();
+            }
+            if let Some(menus) = self.context_customization.notecards.loaded(item, &result) {
+                self.context_customization
+                    .close(&self.egui_ctx, &mut self.settings.world_context_menus);
+                self.context_menu = None;
+                self.settings.world_context_menus = menus;
                 self.settings.save();
             }
             if crate::build::ui::layout_notecard_loaded(&mut self.build, &mut self.world, &mut self.settings.build, item, &result) {
@@ -2824,6 +2864,11 @@ impl App {
             NetEvent::AbuseCategories(list) => self.report_abuse.set_categories(list),
             NetEvent::AbuseReportSent(result) => self.report_abuse_sent(result),
             NetEvent::TaskInventory { object, serial, result } => {
+                if self.demo
+                    && let Ok(items) = &result
+                {
+                    self.build_demo.adopt_contents(object, items);
+                }
                 self.interactions.on_purchase_inventory(object, &result);
                 let items = result
                     .as_ref()
@@ -5431,6 +5476,9 @@ impl App {
         if mode.ends_with("-ready") && !mode.starts_with("blend-") && !mode.starts_with("mask-") {
             return;
         }
+        if let Some(copy) = mode.strip_prefix("open-") {
+            self.demo_contents_copy(copy);
+        }
         let id = crate::demo::action_mode_id(&mode);
         let click_frame = if mode.starts_with("linked-") { 724 } else { 284 };
         if self.frame_count == 260
@@ -7284,6 +7332,7 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, id);
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
+            self.contents_copy_tick(Instant::now());
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
                 self.world_edits.insert(request);
@@ -7471,7 +7520,7 @@ impl App {
                 c.flags |= crate::autopilot::AU_FLAGS_CLIENT_AUTOPILOT;
             }
             // RenderHideGroupTitle (send_agent_update)
-            if self.settings.hide_own_group_title {
+            if self.settings.group_titles == crate::world::names::GroupTitles::AllExceptMine {
                 c.flags |= crate::autopilot::AU_FLAGS_HIDETITLE;
             }
             let moving = control::AT_POS | control::AT_NEG | control::LEFT_POS | control::LEFT_NEG | control::UP_POS | control::UP_NEG;
@@ -7482,6 +7531,7 @@ impl App {
             if self.world.status.away {
                 c.control_flags |= control::AWAY;
             }
+            c.control_flags = crate::agent::AgentState::quickjump_flags(c.control_flags, self.settings.quickjump);
             // send_agent_update: Alt or Ctrl turns script clicks into releases
             c.alt_or_ctrl = self.alt || self.ctrl;
             if self.chat_ui.local_typing() && self.world.rlva.can_send_typing_start() {
@@ -8723,6 +8773,7 @@ impl App {
             self.texture_library_demo_input(&mut raw);
             self.portal_drop_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
+            self.contents_drop_demo_input(&mut raw, vp, (w, h));
             ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
             self.suggest_demo_input(&mut raw);
@@ -8840,7 +8891,7 @@ impl App {
             || egui_state.clipboard_text(),
             self.demo.then_some(self.frame_count),
         );
-        let mut inventory_drop = None;
+        let mut inventory_drop = Vec::new();
         let mut library_drop = None;
         let t_pass = Instant::now();
         let mut windows_ms = 0.0;
@@ -8852,7 +8903,7 @@ impl App {
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
-            if inventory_drop.is_none() {
+            if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
                     library_drop = self.texture_library_drag_input(ui.ctx(), &gfx.renderer);
@@ -8903,7 +8954,7 @@ impl App {
         // Native bitmap cursors, including the original Firestorm hotspot.
         // Set this every frame because egui's custom cursor output is sticky.
         full.platform_output.cursor_image = None;
-        if let Some(drop) = inventory_drop {
+        for drop in inventory_drop {
             self.apply_inventory_drop(drop);
         }
         if let Some(drop) = library_drop {
@@ -9731,6 +9782,7 @@ impl App {
         self.demo_worn_steps();
         self.demo_derender_steps();
         self.demo_social_menu_steps();
+        self.demo_land_moderation();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -11070,6 +11122,7 @@ impl App {
             BarAction::Favorite(f) => self.favorite_action(f),
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
+            BarAction::ToggleImmersive => self.toggle_immersive(),
             BarAction::HoverTips(menu) => {
                 let tips = &mut self.settings.hover_tips;
                 tips.enabled = menu.enabled;
@@ -11107,6 +11160,11 @@ impl App {
             }
             BarAction::CameraControls => self.panels.camera_controls = true,
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
+            BarAction::ToggleQuickjump => {
+                self.settings.quickjump = !self.settings.quickjump;
+                self.settings.save();
+                log::info!("quickjump: {}", self.settings.quickjump);
+            }
             BarAction::ToggleWaterWalk => self.toggle_water_walk(),
             BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
@@ -11136,6 +11194,20 @@ impl App {
             self.interface.confirm_again = true;
         } else {
             self.interface.set_hidden(&self.egui_ctx, true);
+        }
+    }
+
+    /// Immersive mode (#859): nothing in mouselook, as Show User Interface;
+    /// no question first (asked for by its own button); on, its button or
+    /// the shortcut of Show User Interface leaves it.
+    fn toggle_immersive(&mut self) {
+        if self.camera.mouselook() {
+            return;
+        }
+        if self.interface.immersive {
+            self.interface.set_hidden(&self.egui_ctx, false);
+        } else {
+            self.interface.set_immersive(&self.egui_ctx);
         }
     }
 
@@ -12271,6 +12343,7 @@ impl App {
                         projector,
                         self.camera.position,
                         !self.camera.mouselook(),
+                        !self.interface.immersive || self.settings.immersive_name_tags,
                         &self.settings,
                         &mut self.name_tag_visibility,
                         &voice_levels,
@@ -12399,6 +12472,7 @@ impl App {
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
+                    quickjump: self.settings.quickjump,
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
@@ -12925,10 +12999,32 @@ impl App {
                         }
                     }
                 }
+                if self.interface.immersive && !self.camera.mouselook() {
+                    match ui::interface::immersive_buttons(&ctx, &p, self.settings.immersive_name_tags) {
+                        Some(ui::interface::ImmersiveAction::Leave) => a.bar = BarAction::ToggleImmersive,
+                        Some(ui::interface::ImmersiveAction::NameTags(on)) => {
+                            self.settings.immersive_name_tags = on;
+                            self.settings.save();
+                        }
+                        None => {}
+                    }
+                }
                 // AURORA_DEMO_BARS=hidden / peek: hidden at frame 600 (asked
-                // first with Firestorm's bars)
+                // first with Firestorm's bars); `immersive`: Conversations
+                // opened at frame 300, immersive mode at 600 (`immersivetags`:
+                // the name tags shown, not saved)
                 if demo_hidden.is_some() && ctx.cumulative_frame_nr() == 600 && !self.interface.hidden {
                     a.bar = BarAction::ToggleInterface;
+                }
+                if self.demo && ui::bars::demo::get().immersive {
+                    match ctx.cumulative_frame_nr() {
+                        300 => ui::widgets::open_floater(&ctx, "conversations", &mut self.panels.chat),
+                        600 if !self.interface.hidden => {
+                            self.settings.immersive_name_tags = ui::bars::demo::get().immersive_tags;
+                            a.bar = BarAction::ToggleImmersive;
+                        }
+                        _ => {}
+                    }
                 }
                 t = self.ui_parts.lap(Part::UiOverlays, t);
                 let map_cam = {
@@ -13511,8 +13607,35 @@ impl App {
                     self.build.release_menu_selection(&self.world);
                     self.flush_build();
                 }
+                if let Some(command) =
+                    self.context_customization
+                        .notecards
+                        .show(&ctx, &p, &mut self.world.inventory, &self.settings.world_context_menus)
+                {
+                    self.send(command);
+                }
                 self.object_menu_ui(&ctx, &p);
                 self.avatar_textures.show(&ctx, &p, &self.world, &self.ui_images);
+                let properties = self.object_profile.object.and_then(|id| {
+                    self.interactions
+                        .props
+                        .get(&id)
+                        .filter(|props| props.full)
+                        .or_else(|| self.build.props.get(&id))
+                });
+                if let Some(id) = self.object_profile.show(&ctx, &p, &mut self.world, properties) {
+                    self.on_ctx_action(ui::context::CtxAction::Edit(id));
+                    self.build.tab = 6;
+                }
+
+                if let Some(command) = self.pathfinding_ui.show(&ctx, &p, &mut self.world) {
+                    if self.demo {
+                        self.pathfinding_ui.demo(&self.world, command);
+                    } else {
+                        self.send(command);
+                    }
+                }
+                self.land_moderation_ui(&ctx, &p);
                 if let Some((id, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
@@ -13565,18 +13688,22 @@ impl App {
                 }
                 self.show_pay(&ctx, &p, &mut a);
                 self.show_money_tracker(&ctx, &p, &mut a);
-                for document in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
-                    match document {
-                        ui::object_actions::ContentsOpen::Script(object, item) => {
+                for action in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
+                    match action {
+                        ui::object_actions::ContentsAction::Script(object, item) => {
                             self.open_script(aurora_net::scripts::ScriptTarget { object, item })
                         }
-                        ui::object_actions::ContentsOpen::Notecard(object, item) => self.open_task_notecard(object, item),
+                        ui::object_actions::ContentsAction::Notecard(object, item) => self.open_task_notecard(object, item),
+                        ui::object_actions::ContentsAction::Copy(request) => self.copy_contents(*request),
                     }
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);
                 if let Some(action) = ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
+                }
+                if let Some(confirm) = ui::object_actions::confirm_copy(&ctx, &p, &mut self.contents_copies.confirm) {
+                    self.contents_copy_confirmed(confirm);
                 }
                 // a teleport invitation or an inventory offer whose card is in
                 // sight needs no toast (LLOfferHandler: a toast only when the
@@ -13905,6 +14032,7 @@ impl App {
                     &mut self.chat_ui.wanted_names,
                     &web,
                     self.settings.classic_profiles,
+                    self.settings.profile_rights,
                 );
                 for pa in acts {
                     match pa {
@@ -14612,6 +14740,9 @@ impl ApplicationHandler for App {
                 }
                 if value.split(':').nth(1) == Some("animations-sync") {
                     self.settings.synchronize_animations = true;
+                }
+                if value == "avatars/1:group-titles" {
+                    self.settings.group_titles = crate::world::names::GroupTitles::AllExceptMine;
                 }
                 // the confirmation of a restore, for a backup of the demo's
                 // own profile
@@ -15829,6 +15960,9 @@ impl ApplicationHandler for App {
                 }
                 if matches!(view.as_str(), "menu" | "duplicates") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
+                }
+                if crate::world::appearance::demo_outfit_mode("locate") {
+                    self.appearance_ui.locate_current(&self.world.inventory);
                 }
             }
             self.demo_shape_editor();

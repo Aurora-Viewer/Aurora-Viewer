@@ -202,6 +202,14 @@ impl AgentState {
         }
     }
 
+    /// Port of LLAgent::getControlFlags (indra/newview/llagent.cpp, LGPL 2.1).
+    /// Quickjump (FSIgnoreFinishAnimation) puts FINISH_ANIM in every
+    /// AgentUpdate: the simulator no longer holds the jump until the
+    /// pre-jump animation ends, nor the next move until the landing one does.
+    pub fn quickjump_flags(flags: u32, quickjump: bool) -> u32 {
+        if quickjump { flags | control::FINISH_ANIM } else { flags }
+    }
+
     /// LLAgent::isSitting: on an object or on the ground.
     pub fn is_sitting(&self) -> bool {
         self.seated || self.ground_sit
@@ -829,6 +837,14 @@ mod tests {
             assert_eq!(agent.animation_stop_flags(landing, false, at(now, 1.0)), control::FINISH_ANIM);
         }
         assert_eq!(agent.animation_stop_flags(Uuid::from_u128(1), false, released), 0);
+    }
+
+    #[test]
+    fn quickjump_finishes_animations_in_every_update() {
+        let walking = control::AT_POS | control::FAST_AT;
+        assert_eq!(AgentState::quickjump_flags(walking, false), walking);
+        assert_eq!(AgentState::quickjump_flags(walking, true), walking | control::FINISH_ANIM);
+        assert_eq!(AgentState::quickjump_flags(0, true), control::FINISH_ANIM);
     }
 
     #[test]

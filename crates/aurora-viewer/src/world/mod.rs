@@ -39,6 +39,7 @@ pub mod inventory;
 pub mod inventory_offers;
 pub mod land;
 pub mod land_buy;
+pub mod land_moderation;
 pub mod landmarks;
 pub mod lookat;
 pub mod lsl_syntax;

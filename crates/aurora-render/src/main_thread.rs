@@ -231,18 +231,28 @@ impl Renderer {
         vsync: bool,
         gpu: &str,
     ) -> Result<Renderer, RenderError> {
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-        desc.backends = wgpu::Backends::VULKAN;
-        desc.flags = if std::env::var_os("AURORA_GPU_VALIDATION").is_some() {
-            wgpu::InstanceFlags::debugging()
-        } else {
-            wgpu::InstanceFlags::empty()
+        let desc = || {
+            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+            desc.backends = wgpu::Backends::VULKAN;
+            desc.flags = if std::env::var_os("AURORA_GPU_VALIDATION").is_some() {
+                wgpu::InstanceFlags::debugging()
+            } else {
+                wgpu::InstanceFlags::empty()
+            };
+            desc
         };
-        let instance = wgpu::Instance::new(desc);
-        let surface = instance.create_surface(target).map_err(|e| RenderError::Surface(e.to_string()))?;
+        let mut instance = wgpu::Instance::new(desc());
         // ---- the GPU: every adapter listed, then tried in our order
         // (adapter_choice.rs), the next one if one fails to open
         let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN));
+        // Dozen, kept out at start (vulkan_drivers.rs), may be the only
+        // Vulkan driver of this PC: let it back in rather than draw nothing
+        if adapters.is_empty() && crate::vulkan_drivers::allow_again() {
+            log::warn!("GPU: no Vulkan adapter without Dozen (Vulkan on Direct3D 12): trying again with it");
+            instance = wgpu::Instance::new(desc());
+            adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN));
+        }
+        let surface = instance.create_surface(target).map_err(|e| RenderError::Surface(e.to_string()))?;
         let candidates: Vec<crate::adapter_choice::Candidate> = adapters
             .iter()
             .map(|a| {

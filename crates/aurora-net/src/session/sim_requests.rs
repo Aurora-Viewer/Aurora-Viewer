@@ -9,6 +9,34 @@ use crate::types::NetEvent;
 use crate::voice_moderation::{self, Target};
 
 impl Session<'_> {
+    pub(super) fn fetch_pathfinding(&mut self, request: uuid::Uuid, region: crate::RegionHandle, kind: crate::pathfinding::Kind) {
+        use crate::pathfinding::{self, Error};
+        let events = self.sh.events.clone();
+        let url = self
+            .sims
+            .values()
+            .find(|sim| sim.handle == region)
+            .and_then(|sim| sim.caps.get(kind.capability()))
+            .cloned();
+        let http = self.sh.caps_http.clone();
+        tokio::spawn(async move {
+            let result = if let Some(url) = url {
+                match tokio::time::timeout(std::time::Duration::from_secs(20), caps::get_llsd(&http, &url)).await {
+                    Ok(Ok(data)) => pathfinding::parse(&data, kind),
+                    _ => Err(Error::Failed),
+                }
+            } else {
+                Err(Error::Unsupported)
+            };
+            let _ = events.send(NetEvent::Pathfinding {
+                request,
+                region,
+                kind,
+                result,
+            });
+        });
+    }
+
     /// LLFloaterAbout::startFetchServerReleaseNotes: the page behind the
     /// capability, or ErrorFetchingServerReleaseNotesURL.
     pub(super) fn fetch_server_release_notes(&mut self) {

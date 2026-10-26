@@ -207,7 +207,7 @@ fn kilobytes(bytes: u64) -> String {
 }
 
 /// Date and time in SLT (the timeStamp of floater_inspect.xml, kept short).
-fn slt_datetime(secs: u64) -> String {
+pub(crate) fn slt_datetime(secs: u64) -> String {
     if secs == 0 {
         return String::new();
     }

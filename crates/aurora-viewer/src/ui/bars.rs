@@ -53,6 +53,8 @@ pub enum BarAction {
     SetHome,
     ToggleFly,
     ToggleMoveLock,
+    /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
+    ToggleQuickjump,
     ToggleWaterWalk,
     ToggleSwimming,
     MoveLockOptions,
@@ -120,6 +122,8 @@ pub enum BarAction {
     /// Show User Interface (Alt+Shift+U), and hiding it once confirmed.
     ToggleInterface,
     HideInterface,
+    /// Immersive mode (#859): the interface hidden but the chat.
+    ToggleImmersive,
     /// World › World tooltips: the three checks, as they are now.
     HoverTips(HoverTipsMenu),
     WorldOverlays(crate::world::beacons::Overlays),
@@ -176,6 +180,8 @@ pub struct StatusInfo<'a> {
     pub local_env: bool,
     /// What a double click on the ground does (Me › Double-click on the ground).
     pub double_click: crate::autopilot::DoubleClick,
+    /// Quickjump is on (Me › Quickjump).
+    pub quickjump: bool,
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
@@ -382,6 +388,11 @@ pub(super) fn interface_item(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo) ->
         ("eye-off", aurora_i18n::tr!("ui-bars-hide-interface"))
     };
     menu::item_keys(ui, p, icon, label, &st.interface_keys)
+}
+
+/// The menus' Immersive mode, after Show User Interface (#859).
+pub(super) fn immersive_item(ui: &mut egui::Ui, p: &Palette) -> bool {
+    menu::item(ui, p, "maximize", aurora_i18n::tr!("ui-bars-immersive"))
 }
 
 fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, enabled: bool) -> bool {
@@ -617,6 +628,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         if menu::item(ui, p, "settings-filled", aurora_i18n::tr!("movelock-options")) {
             *action = BarAction::MoveLockOptions;
         }
+        // menu_viewer.xml: Avatar › Movement › Quickjump, after Movelock
+        let quickjump = aurora_i18n::tr!("ui-bars-quickjump");
+        if menu::check(ui, p, "arrow-big-up-lines-filled", quickjump, st.quickjump, true) {
+            *action = BarAction::ToggleQuickjump;
+        }
         if menu::item(ui, p, "swimming", aurora_i18n::tr!("movement-title")) {
             *action = BarAction::MovementEnhancer;
         }
@@ -645,6 +661,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // Preferences, Toolbar Buttons and Show HUD Attachments
         if interface_item(ui, p, st) {
             *action = BarAction::ToggleInterface;
+        }
+        if immersive_item(ui, p) {
+            *action = BarAction::ToggleImmersive;
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "logout", aurora_i18n::tr!("ui-bars-log-out")) {
@@ -766,7 +785,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             "worldmap",
             &mut panels.world_map,
         );
-        // menu_viewer.xml: Landmark this Place, after the maps
+        // menu_viewer.xml: Stream Title (its window keeps the history of
+        // the titles), then Landmark this Place, after the maps
+        menu::todo(ui, p, "playlist-filled", aurora_i18n::tr!("ui-bars-stream-title"));
         if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-create-here")) {
             *action = BarAction::CreateLandmark;
         }
@@ -809,7 +830,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             if flip(
                 ui,
                 p,
-                "sparkles",
+                "sparkles-filled",
                 aurora_i18n::tr!("world-hide-particles"),
                 &mut overlays.hide_particles,
                 true,
@@ -930,6 +951,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             super::sound_explorer::WINDOW,
             &mut panels.sound_explorer,
         );
+        menu::todo(ui, p, "run", aurora_i18n::tr!("ui-bars-animation-explorer"));
         flip_window(
             ui,
             p,
@@ -968,7 +990,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         build_menu(ui, p, action, &st.ik_keys);
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
-        contents_menu(ui, p, panels);
+        contents_menu(ui, p, panels, st.marketplace);
     });
     if advanced {
         menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {
@@ -998,9 +1020,29 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     &mut panels.sim_console,
                 );
             }
+            // Advanced › Media Streams Backup: the parcel stream list to
+            // and from an XML file (Streamlist.xml_import / xml_export)
+            menu::submenu(
+                ui,
+                p,
+                "database-filled",
+                aurora_i18n::tr!("ui-bars-media-streams-backup"),
+                true,
+                |ui| {
+                    menu::todo(ui, p, "database-import", aurora_i18n::tr!("ui-bars-import-stream-list"));
+                    menu::todo(ui, p, "database-export", aurora_i18n::tr!("ui-bars-export-stream-list"));
+                },
+            );
         });
     }
     menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
+        // menu_viewer.xml: the viewer's wiki and the grid's help first, then
+        // Check Grid status before the reports
+        menu::todo(ui, p, "book-filled", aurora_i18n::tr!("ui-bars-wiki"));
+        menu::todo(ui, p, "article-filled", aurora_i18n::tr!("ui-bars-knowledge-base"));
+        menu::separator(ui, p);
+        let grid_status = aurora_i18n::tr!("toolbar-command-grid-status");
+        menu::todo(ui, p, "building-broadcast-tower-filled", grid_status);
         if crate::updater::checks_enabled() && menu::item(ui, p, "download-filled", aurora_i18n::tr!("update-check")) {
             *action = BarAction::CheckUpdates;
         }
@@ -1017,6 +1059,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::ServerReleaseNotes;
         }
         menu::separator(ui, p);
+        // Enable Sysinfo Button (SysinfoButtonInIM), then About, whose
+        // window carries the system information
+        menu::todo(ui, p, "device-desktop-filled", aurora_i18n::tr!("ui-bars-sysinfo-button"));
+        menu::separator(ui, p);
+        menu::todo(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-bars-about"));
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
         menu::info(ui, p, "info-circle-filled", &version);
         menu::separator(ui, p);
@@ -1114,6 +1161,8 @@ fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &
             *action = BarAction::Build(mode);
         }
     }
+    // menu_viewer.xml: Build › Object › Edit Particles (the particle editor)
+    menu::todo(ui, p, "sparkles-filled", aurora_i18n::tr!("ui-bars-edit-particles"));
     menu::separator(ui, p);
     if menu::item(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu")) {
         *action = BarAction::Import;
@@ -1123,7 +1172,11 @@ fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &
     }
 }
 
-fn contents_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels) {
+/// Inventory and gestures, then the entries of the Legacy Viewer's Content
+/// menu that Aurora's World menu does not hold already (Search and SL
+/// Marketplace are there). L$ Market Data shows on the Second Life grids
+/// only (GridCheck "secondlife"), as the Marketplace.
+fn contents_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, marketplace: bool) {
     flip_window(
         ui,
         p,
@@ -1135,6 +1188,13 @@ fn contents_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels) {
     if menu::item_keys(ui, p, "hand-move", aurora_i18n::tr!("gesture-title"), "Ctrl+G") {
         super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
     }
+    menu::separator(ui, p);
+    if marketplace {
+        menu::todo(ui, p, "chart-candle-filled", aurora_i18n::tr!("ui-bars-market-data"));
+    }
+    menu::todo(ui, p, "code", aurora_i18n::tr!("ui-bars-script-library"));
+    menu::separator(ui, p);
+    menu::todo(ui, p, "message-filled", aurora_i18n::tr!("ui-bars-message-of-the-day"));
 }
 
 /// Draw a (white mask) icon tinted, centered in `rect`.
@@ -1742,6 +1802,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "landmark_here" => return BarAction::CreateLandmark,
         "marketplacelistings" => return BarAction::MarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
+        "immersive" => return BarAction::ToggleImmersive,
         _ => {}
     }
     BarAction::None

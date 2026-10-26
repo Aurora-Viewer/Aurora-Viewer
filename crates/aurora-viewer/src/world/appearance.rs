@@ -1024,7 +1024,7 @@ pub fn seed_demo(inv: &mut Inventory, agent: Uuid) {
     demo_replace(inv, agent, cof, &current);
 }
 
-/// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]`: the number of generated
+/// `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`: the number of generated
 /// outfits added to the Appearance demo (a large wardrobe), 0 without it.
 pub fn demo_outfit_count() -> usize {
     std::env::var("AURORA_DEMO_OUTFITS")
@@ -1033,7 +1033,7 @@ pub fn demo_outfit_count() -> usize {
         .unwrap_or(0)
 }
 
-/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`).
+/// A mode of `AURORA_DEMO_OUTFITS` (`closed`, `scroll`, `locate`).
 pub fn demo_outfit_mode(mode: &str) -> bool {
     std::env::var("AURORA_DEMO_OUTFITS").is_ok_and(|v| v.split(',').skip(1).any(|m| m.trim() == mode))
 }

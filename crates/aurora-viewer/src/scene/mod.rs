@@ -861,6 +861,7 @@ pub struct Scene {
     inspected_mesh: Option<Uuid>,
     /// Temporary build-tool overrides, never saved or sent to the simulator.
     mesh_lod_overrides: HashMap<crate::world::objects::ObjKey, u8>,
+    mesh_lod_resets: HashMap<crate::world::objects::ObjKey, mesh_inspection::LodReset>,
     /// Selected prims whose deformed silhouette is prepared with their mesh.
     pub selection_silhouettes: HashSet<usize>,
     /// Selected texture-entry bits for each prim; all 45 TE slots must fit.
@@ -1423,6 +1424,7 @@ impl Scene {
             selection_wire: Default::default(),
             inspected_mesh: None,
             mesh_lod_overrides: HashMap::new(),
+            mesh_lod_resets: HashMap::new(),
             selection_silhouettes: Default::default(),
             selection_faces: Default::default(),
             selection_changed: None,
@@ -2419,6 +2421,7 @@ impl Scene {
     /// full `sync_object`. What an avatar wears is placed by the GPU from
     /// the anchors written here (anchors.rs) and is not visited.
     pub fn sync(&mut self, renderer: &mut Renderer, world: &mut World, view: &CullView) {
+        self.finish_mesh_lod_resets(world, Instant::now());
         if self.parcel_visibility_version != world.parcel_visibility.version {
             self.parcel_visibility_version = world.parcel_visibility.version;
             for (idx, object) in world.objects.slots.iter_mut().enumerate() {

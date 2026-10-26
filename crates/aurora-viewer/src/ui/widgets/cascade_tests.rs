@@ -172,9 +172,9 @@ fn cascade_temporarily_hidden_documents_keep_their_positions() {
     let first = f.open(CascadeGroup::Script, egui::vec2(320.0, 260.0));
     let second = f.open(CascadeGroup::Script, egui::vec2(320.0, 260.0));
     let before = [f.rect(first), f.rect(second)];
-    hide_windows(&f.ctx, true);
+    hide_windows(&f.ctx, true, false);
     f.settle();
-    hide_windows(&f.ctx, false);
+    hide_windows(&f.ctx, false, false);
     f.settle();
     assert_eq!([f.rect(first), f.rect(second)], before);
 }

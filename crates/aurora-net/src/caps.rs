@@ -20,6 +20,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     "AvatarPickerSearch",
     "AvatarRenderInfo",
     "ChatSessionRequest",
+    "CharacterProperties",
     "CopyInventoryFromNotecard",
     "DeclineFriendship",
     "DeclineGroupInvite",
@@ -86,6 +87,7 @@ pub const REQUESTED_CAPS: &[&str] = &[
     // instant messages kept while offline (LLIMProcessing::requestOfflineMessages)
     "ReadOfflineMsgs",
     "RegionExperiences",
+    "RegionObjects",
     "RegionSchedule",
     // LLViewerRegionImpl::buildCapabilityNames: parcel UUID lookup before
     // About Land's script resources, and remote place profiles.

@@ -249,6 +249,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "occlusion" => row(Page::Graphics, 1, tr!("ui-options-screen-indirect-light")),
         "bloom" => row(Page::Graphics, 1, tr!("ui-options-bloom")),
         "name-tags" => row(Page::Avatars, 0, tr!("ui-options-show-own-tag")),
+        "group-titles" => row(Page::Avatars, 1, tr!("ui-options-group-titles")),
         "plates" => row(Page::Avatars, 0, tr!("ui-options-plate-click")),
         "attention" => row(Page::Chat, 1, tr!("ui-options-flash-on-message")),
         "keywords" => row(Page::Chat, 2, tr!("ui-options-keywords-on")),
