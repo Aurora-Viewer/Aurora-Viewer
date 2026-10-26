@@ -317,6 +317,8 @@ pub struct OptionsUi {
     pub tab: usize,
     /// The search of the sidebar, and the view of the modified settings.
     pub query: String,
+    was_open: bool,
+    focus_search: bool,
     pub modified_view: bool,
     /// Measured each frame (`Cx`): the size of each row's control, the
     /// number of rows behind each cog and whether its row is off, the cogs
@@ -1015,6 +1017,7 @@ fn reset_rows(
 
 pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, st: &mut OptionsUi, open: &mut bool) -> OptionsResult {
     let _ = icons;
+    st.focus_search = *open && (st.focus_search || !st.was_open);
     let mut r = OptionsResult::default();
     let d = st.defaults.take().unwrap_or_else(|| Box::new(Settings::default()));
     let now = ctx.input(|i| i.time);
@@ -1040,6 +1043,7 @@ pub fn show(ctx: &egui::Context, p: &Palette, icons: &Icons, s: &mut Settings, s
     if close {
         *open = false;
     }
+    st.was_open = *open && !super::widgets::floater_minimized(ctx, WINDOW);
     if !*open {
         // the window closed: a reset waiting for its undo is done
         st.finish_undo(&mut r);
@@ -1185,6 +1189,10 @@ fn sidebar(
             aurora_i18n::tr!("ui-options-search-settings"),
             width - clear_w,
         );
+        if st.focus_search && !ui.is_sizing_pass() && ui.is_enabled() {
+            st.focus_search = false;
+            field.request_focus();
+        }
         if field.changed() {
             st.modified_view = false;
             st.capture = None;

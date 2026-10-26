@@ -3,6 +3,53 @@ use crate::keybinds::{Action, Input};
 use crate::ui::widgets::elide_tests::Frames;
 use winit::keyboard::KeyCode;
 
+#[test]
+fn opening_preferences_focuses_search_without_taking_it_back() {
+    let mut frames = Frames::new();
+    let ctx = frames.ctx.clone();
+    let theme = crate::theme::Theme::default();
+    theme.apply(&ctx, 1.0);
+    let p = theme.palette();
+    let icons = Icons::load(&ctx, None);
+    let mut settings = Settings::default();
+    let mut st = OptionsUi::default();
+    let other_id = egui::Id::unique("other_preferences_field");
+    let mut other = String::new();
+    let mut frame = |st: &mut OptionsUi, mut open, events| {
+        frames.run(events, |ui| {
+            ui.add(egui::TextEdit::singleline(&mut other).id(other_id));
+            show(ui.ctx(), &p, &icons, &mut settings, st, &mut open);
+        });
+    };
+    for _ in 0..3 {
+        frame(&mut st, true, Vec::new());
+    }
+    frame(&mut st, true, vec![egui::Event::Text("volume".into())]);
+    assert_eq!(st.query, "volume");
+    let search = ctx.memory(|m| m.focused()).expect("search focused");
+    assert_ne!(search, other_id);
+    ctx.memory_mut(|m| m.request_focus(other_id));
+    frame(&mut st, true, Vec::new());
+    frame(&mut st, true, vec![egui::Event::Text("elsewhere".into())]);
+    assert!(ctx.memory(|m| m.has_focus(other_id)));
+    assert_eq!(st.query, "volume");
+    frame(&mut st, false, Vec::new());
+    frame(&mut st, true, Vec::new());
+    assert!(ctx.memory(|m| m.has_focus(search)), "reopening restores search focus");
+    frame(&mut st, true, vec![egui::Event::Text("!".into())]);
+    assert_eq!(st.query, "volume!");
+    crate::ui::widgets::minimize_floater(&ctx, WINDOW);
+    frame(&mut st, true, Vec::new());
+    ctx.memory_mut(|m| m.request_focus(other_id));
+    frame(&mut st, true, Vec::new());
+    crate::ui::widgets::expand_floater(&ctx, WINDOW);
+    for _ in 0..3 {
+        frame(&mut st, true, Vec::new());
+    }
+    assert!(ctx.memory(|m| m.has_focus(search)), "expanding restores search focus");
+    assert_eq!(other, "elsewhere");
+}
+
 /// The settings each page of the window showed before the reorganisation
 /// (the lists of its former "Reset this section", page by page): every one
 /// must still have a row, or be reset with a page.

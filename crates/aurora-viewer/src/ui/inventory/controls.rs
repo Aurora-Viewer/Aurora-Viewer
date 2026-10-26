@@ -189,6 +189,10 @@ pub fn search_input(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi, hint: 
         aurora_i18n::tr!("common-clear")
     };
     let (field, cleared) = super::tree::search_field(ui, p, &mut st.search, hint, width, clear_shown, tip);
+    if st.focus_search && !ui.is_sizing_pass() && ui.is_enabled() {
+        st.focus_search = false;
+        field.request_focus();
+    }
     super::clipboard::demo_search(&field, st);
     if cleared {
         if st.links_filter.take().is_some() {
