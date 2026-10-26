@@ -82,6 +82,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
+| `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
 | `AURORA_FPS_LIMIT=<n>` | Frames-per-second cap for tests (10–500) |
 | `AURORA_WINDOW_SIZE="w,h"` | Window size for this launch |
@@ -90,6 +91,12 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
+
+`AURORA_DEMO_SUN=<azimuth>,<elevation>`: the direction towards the sun for
+the lighting and the shadows (azimuth 0 east, 90 north), the sky keeping
+its own sun. The demo camera looks east, so `0,12` puts a low sun in front
+of it, which the times of day never do: the shadows come towards the
+camera (the contact shadows of issue 988, see `AURORA_DEMO_FEET`).
 
 The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
@@ -3089,11 +3096,17 @@ both open states and the selection count. Capture at frame 620.
   blended (color alpha 0.95: the many mesh bodies and shoes whose faces
   are blended though they look opaque), and two blocks stand on the ground
   left of the view from `AURORA_DEMO_POS="129,134"`, an opaque one and,
-  further left, a blended one. For the contact shadows
+  further left, a blended one; nearer the camera, a hoof (a cylinder 14 cm
+  wide) stands on the ground and a shoe hovers 2 cm above it, opaque or
+  blended like the shoes. For the contact shadows
   (`AURORA_CONTACT_SHADOWS`): with `AURORA_DEBUG_SHADOWS=1`, the blended
   block takes them as the opaque one does; with
   `AURORA_CONTACT_SHADOWS=prepass` it does not (the blended faces were not
-  in the depth the pass reads).
+  in the depth the pass reads). Issue 988: with `AURORA_DEMO_SUN=0,12`,
+  `AURORA_DEBUG_SHADOWS=1` and `AURORA_DEMO_CAMERA=close,615,672,50`
+  (frame 780 at 60 fps), the ground under the hovering shoe takes its
+  contact shadow; with `AURORA_CONTACT_SHADOWS=shell` it stays lit, a
+  thin dark line along the sole's edge.
 - **`AURORA_DEMO_LASHES=1`** (with `AURORA_DEMO_HAIR`, for example
   `1,48,20`): our avatar also wears a small red ball, a blended rigged
   mesh, inside the head shell on the side the default camera sees: the
@@ -6659,7 +6672,8 @@ What the inventory must show with these scenarios:
 | `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
-| `AURORA_CONTACT_SHADOWS=0`, `1`, `alt` or `prepass` | Sun contact shadows off, on, by turns, or cast by the depth prepass alone |
+| `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
+| `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -6932,14 +6946,25 @@ What the inventory must show with these scenarios:
   4, default 1.5; 1 is one physical bounce, which hardly shows);
   `AURORA_SSIL_INTENSITY=<0-8>` replaces it for a launch, to compare (at
   2 a glow starts around the foot of objects, at 4 it is grainy).
-- **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass`**: the sun's contact shadows
+- **`AURORA_CONTACT_SHADOWS=0|1|alt|prepass|shell`**: the sun's contact shadows
   (Preferences › Graphics › Contact shadows, `contact_shadows.rs`, after
   Bend Studio's screen space shadows) for this launch, without changing the
   saved setting: `0` off, `1` on, `alt` off and on by turns, one second
   each (on in odd seconds), the mask kept ready; `prepass` on, but cast by
   the depth prepass alone (opaque and masked faces, terrain), as before the
   blended faces opaque enough and the impostor cards were drawn into a copy
-  of it for them (see `AURORA_DEMO_FEET`). They only draw with the
+  of it for them (see `AURORA_DEMO_FEET`); `shell` on, each depth taken
+  as a shell of 0.5 % of its distance (Bend's window, before issue 988)
+  instead of a body as deep as the ray went under it (up to 5 cm, with
+  the sun ahead of the camera): a ray that goes under a thick caster is
+  stopped only where it grazes its edges. **`AURORA_CONTACT_SOFT=0`**:
+  the mask reaches the shading as the pass wrote it, without the 5 × 5
+  softening over each surface (`contact_shadows_filter.wgsl`): hard steps
+  of whole pixels on curved bodies (the sides of our avatar with
+  `AURORA_DEMO_SUN=0,12`) and a dotted line under the hovering shoe of
+  `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
+  frame 690). Softened, neither shows and no shadow spreads from the
+  ground onto a caster nor the reverse. They only draw with the
   sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
   takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
   `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS=129,134`: thin shadows appear

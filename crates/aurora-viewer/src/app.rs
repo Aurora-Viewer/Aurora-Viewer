@@ -8185,6 +8185,9 @@ impl App {
             self.world.cloud_scroll.y.rem_euclid(1024.0),
         );
         let mut env = Environment::from_eep(&sky_frame, &water_frame, self.world.cloud_scroll, self.settings.draw_distance);
+        if let Some(sun) = self.demo.then(crate::demo::sun_override).flatten() {
+            env.sun_dir = sun;
+        }
         self.options_ui.sky_tone_mapped = !env.sky.no_post;
         if in_world {
             // what the sky source is: region, day cycle, altitude track, preset
@@ -16243,6 +16246,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Focused(false) => {
                 self.alt_codes.reset();
+                self.chat_ui.cancel_gesture_key();
                 self.gesture_state.manager.release(None);
                 self.numeric_drag.cancel();
                 self.build.reset_selection_wheel();
@@ -16377,6 +16381,7 @@ impl ApplicationHandler for App {
                         Some(p) => Some(p),
                         None => self.search_ui.focused_web(),
                     };
+                    let web_focused = web.is_some();
                     if !typing && let Some(p) = web {
                         use winit::platform::scancode::PhysicalKeyExtScancode;
                         let scancode = ke.physical_key.to_scancode().unwrap_or(0);
@@ -16405,6 +16410,17 @@ impl ApplicationHandler for App {
                         {
                             return;
                         }
+                    }
+                    // `start_gesture` (indra/newview/llviewerinput.cpp) takes
+                    // the default chat bar on release, after text/web owners.
+                    // Reserve the press too: letter-to-chat must not insert
+                    // another slash or focus the Conversations field first.
+                    if self.in_world()
+                        && !web_focused
+                        && self.media.focus.is_none()
+                        && self.chat_ui.gesture_key(&self.egui_ctx, &ke.logical_key, code, pressed, mods)
+                    {
+                        return;
                     }
                     // "Letter keys move me" off: a printable key (Shift allowed),
                     // with the keyboard nowhere, starts the nearby chat with its

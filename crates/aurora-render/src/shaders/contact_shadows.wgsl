@@ -32,7 +32,9 @@
 // integer texel loads instead of a clamp-to-border sampler (outside the
 // screen reads the far depth), the early-out of a whole wavefront through
 // workgroup memory (no wave intrinsics in WGSL), the shadow stored rather
-// than the light, no debug outputs, Bend's defaults otherwise
+// than the light, no debug outputs, occluders taken as deep as the ray went
+// under them (up to `tuning.w`) rather than a shell (`depth_delta`), Bend's
+// defaults otherwise
 // (BilinearSamplingOffsetMode and IgnoreEdgePixels off, no precision
 // offset).
 
@@ -42,7 +44,9 @@ struct Params {
     light: vec4<f32>,
     // xy: this dispatch's first wave, relative to the light (WaveOffset)
     wave_offset: vec4<i32>,
-    // x surface thickness, y bilinear threshold, z shadow contrast
+    // x surface thickness, y bilinear threshold, z shadow contrast, w the
+    // occluders' depth in units of surface thickness per unit of reversed
+    // depth (0: Bend's shell of one unit)
     tuning: vec4<f32>,
 };
 
@@ -74,6 +78,41 @@ fn load_depth(p: vec2<i32>) -> f32 {
         return FAR_DEPTH;
     }
     return textureLoad(depth_tex, p, 0);
+}
+
+// The pixel's side of the comparison: its own depth along the ray, made
+// perspective-correct and scaled to units of surface thickness.
+struct ShadowWindow {
+    start: f32,
+    scale: f32,
+    z_sign: f32,
+    // the pixel's distance to the light point, and -1 or 1 per sample
+    // along the ray (sample_distance[0], direction)
+    distance: f32,
+    direction: f32,
+    // the deepest an occluder is taken to be, in units (1: Bend's shell)
+    depth: f32,
+};
+
+// How far the sample `k` pixels along the ray is from shadowing the pixel:
+// 0.75 or less is full shadow (with the contrast of 4), 1 or more lit.
+// Bend takes |v - 1|, v being how far the sample's surface lies in front of
+// the ray, in units: only a shell from 0.25 to 1.75 units in front shadows.
+// A ray that goes under a hoof or a shoe and through its body, behind the
+// visible faces, was then stopped only where it grazed their edges: the
+// ground took the outline of the caster instead of its shadow (issue 988).
+// The window now reaches back to the pixel's own depth when the ray recedes
+// from the camera (a sun ahead), up to `depth`: a surface between the pixel
+// and the ray is a body the ray went under. One nearer than the pixel keeps
+// the shell, or each caster would darken the ground just behind it with a
+// copy of its silhouette.
+fn depth_delta(w: ShadowWindow, sample_depth: f32, k: i32) -> f32 {
+    let v = (sample_depth * w.scale - w.start) * -w.z_sign;
+    // the pixel's depth seen from the sample, in front of the ray by
+    // start × (distance / distance_k - 1)
+    let distance_k = max(w.distance + f32(k) * w.direction, 1.0);
+    let receding = w.start * f32(k) * w.direction * w.z_sign / distance_k;
+    return max(1.0 - v, v - clamp(receding, 1.0, w.depth));
 }
 
 fn isign(v: vec2<i32>) -> vec2<i32> {
@@ -158,27 +197,32 @@ fn main(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index
         return;
     }
 
-    var start_depth = (sampling_depth[0] - params.light.z) / sample_distance[0];
+    let start_depth = (sampling_depth[0] - params.light.z) / sample_distance[0];
     let sample_index = i32(tid) + 1;
     var shadow_value = vec4<f32>(1.0);
     var hard_shadow = 1.0;
-    // the shadowing window: a thickness of SurfaceThickness of the depth
-    // left to the far plane, at least one pixel near the light point
+    // the shadowing window, in units of SurfaceThickness of the depth left
+    // to the far plane (at least one pixel near the light point)
     let depth_scale = min(sample_distance[0] + direction, 1.0 / params.tuning.x) * sample_distance[0] / depth_thickness_scale[0];
-    start_depth = start_depth * depth_scale - z_sign;
+    let window = ShadowWindow(
+        start_depth * depth_scale,
+        depth_scale,
+        z_sign,
+        sample_distance[0],
+        direction,
+        max(1.0, params.tuning.w * sampling_depth[0]),
+    );
+    // sample i lies i + 1 pixels along the ray
     for (var i = 0; i < HARD_SHADOW_SAMPLES; i++) {
-        let depth_delta = abs(start_depth - depth_data[sample_index + i] * depth_scale);
-        hard_shadow = min(hard_shadow, depth_delta);
+        hard_shadow = min(hard_shadow, depth_delta(window, depth_data[sample_index + i], i + 1));
     }
     // the bulk, in four groups averaged at the end
     for (var i = HARD_SHADOW_SAMPLES; i < SAMPLE_COUNT - FADE_OUT_SAMPLES; i++) {
-        let depth_delta = abs(start_depth - depth_data[sample_index + i] * depth_scale);
-        shadow_value[i & 3] = min(shadow_value[i & 3], depth_delta);
+        shadow_value[i & 3] = min(shadow_value[i & 3], depth_delta(window, depth_data[sample_index + i], i + 1));
     }
     for (var i = SAMPLE_COUNT - FADE_OUT_SAMPLES; i < SAMPLE_COUNT; i++) {
-        let depth_delta = abs(start_depth - depth_data[sample_index + i] * depth_scale);
         let fade_out = f32(i + 1 - (SAMPLE_COUNT - FADE_OUT_SAMPLES)) / f32(FADE_OUT_SAMPLES + 1) * 0.75;
-        shadow_value[i & 3] = min(shadow_value[i & 3], depth_delta + fade_out);
+        shadow_value[i & 3] = min(shadow_value[i & 3], depth_delta(window, depth_data[sample_index + i], i + 1) + fade_out);
     }
     // a sample on the reference depth is full shadow; the contrast widens it
     let contrast = params.tuning.z;
