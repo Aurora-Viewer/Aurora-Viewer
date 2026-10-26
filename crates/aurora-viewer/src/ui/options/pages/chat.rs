@@ -50,6 +50,33 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     0.0..=60.0,
                     " s",
                 );
+                // the Legacy Viewer's Chat › Visuals (UseChatBubbles and what
+                // depends on it; ChatBubbleOpacity is in its Colors), #673
+                cx.toggle(
+                    tr!("ui-options-chat-bubbles"),
+                    tr!("ui-options-chat-bubbles-hint"),
+                    &field!(chat_bubbles),
+                );
+                let off = !cx.s.chat_bubbles;
+                cx.subs(off, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-chat-bubbles-hide-console"),
+                        tr!("ui-options-chat-bubbles-hide-console-hint"),
+                        &field!(chat_bubbles_hide_console),
+                    );
+                    cx.toggle(
+                        tr!("ui-options-typing-bubbles"),
+                        tr!("ui-options-typing-bubbles-hint"),
+                        &field!(typing_bubbles),
+                    );
+                    cx.slider(
+                        tr!("ui-options-chat-bubble-opacity"),
+                        "",
+                        &field!(chat_bubble_opacity),
+                        0.0..=1.0,
+                        "",
+                    );
+                });
             });
             cx.group(tr!("ui-options-conversations"), |cx| {
                 cx.toggle(

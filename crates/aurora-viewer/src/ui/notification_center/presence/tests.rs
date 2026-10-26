@@ -316,6 +316,7 @@ fn frames_with(size: Vec2, classic: bool, at: PresencePosition, center: Center) 
                 !classic,
                 !classic,
                 false,
+                true,
             );
             let mut env = ToastEnv {
                 pics: &pics,

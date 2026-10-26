@@ -288,6 +288,8 @@ pub struct App {
     name_tags_alt_classic: bool,
     /// AURORA_DEMO_TAGS: the set of states its residents show.
     demo_tag_states: Option<bool>,
+    /// AURORA_DEMO_CHAT_BUBBLES: when its residents' chat was last sent.
+    demo_bubble_chat: f64,
     /// AURORA_DEMO_PEOPLE: the states of its residents were sent.
     demo_people_states: bool,
     /// Interface parts of the frame's profile (`u_*`).
@@ -1023,6 +1025,7 @@ impl App {
             sync_alt: 0,
             name_tags_alt_classic: false,
             demo_tag_states: None,
+            demo_bubble_chat: 0.0,
             demo_people_states: false,
             ui_parts: Parts::default(),
             egui_hand_over: EguiHandOver::default(),
@@ -2091,6 +2094,12 @@ impl App {
 
     fn in_world(&self) -> bool {
         matches!(self.screen, Screen::World | Screen::Loading { .. })
+    }
+
+    /// Nearby chat in bubbles above the heads (#673); AURORA_DEMO_CHAT_BUBBLES
+    /// turns them on for the run, without saving it.
+    fn chat_bubbles(&self) -> bool {
+        self.settings.chat_bubbles || (self.demo && crate::demo::tags::chat_bubbles().is_some())
     }
 
     /// The avatar name tags are the classic ones, not the name plates: the
@@ -9127,6 +9136,9 @@ impl App {
             for event in crate::demo::tags::state_events(time, &mut self.demo_tag_states) {
                 self.world.apply(event);
             }
+            for event in crate::demo::tags::chat_events(time, &mut self.demo_bubble_chat) {
+                self.world.apply(event);
+            }
         }
         if self.demo && std::env::var_os("AURORA_DEMO_ANIM_LOOP").is_some() {
             // acos(dot) amplifies f32 normalization error near identical poses.
@@ -12087,6 +12099,7 @@ impl App {
                 // AURORA_VOICE_LEVEL_LOG=1 (temporary): our own plate's voice level in the log
                 self.plates.probe = ui::nameplate::level_log().then_some(self.world.agent_id);
                 self.update_plate_hover(&ctx);
+                let chat_bubbles = self.chat_bubbles();
                 self.name_tags = if held {
                     self.name_tag_visibility.clear();
                     Vec::new()
@@ -12126,6 +12139,13 @@ impl App {
                             too_complex: &self.scene.too_complex,
                             demo_too_complex: crate::demo::tags::too_complex().filter(|_| self.demo),
                             own_typing: self.chat_ui.local_typing(),
+                        }),
+                        chat_bubbles.then(|| ui::chat_bubbles::Frame {
+                            chat: &self.world.bubble_chat,
+                            typing: self.settings.typing_bubbles || (self.demo && crate::demo::tags::chat_bubbles() == Some(true)),
+                            own_typing: self.chat_ui.local_typing(),
+                            opacity: self.settings.chat_bubble_opacity,
+                            now: Instant::now(),
                         }),
                     )
                 };
@@ -12673,6 +12693,9 @@ impl App {
                     }
                 }
                 if self.skin.layout.chat_toasts && !(self.panels.chat && ui::chat::local_chat_shown(&ctx, &self.chat_ui)) {
+                    // FSBubblesHideConsoleAndToasts: the residents' lines are
+                    // in their bubbles
+                    let residents = !(self.chat_bubbles() && self.settings.chat_bubbles_hide_console);
                     ui::chat::toasts(
                         &ctx,
                         &p,
@@ -12688,6 +12711,7 @@ impl App {
                         // for the session, nothing saved
                         !(self.settings.classic_chat_lines || crate::demo::chat_lines_scenario() == Some(true)),
                         self.chat_ui.compact_automated,
+                        residents,
                     );
                 }
                 // the hidden interface: how to bring it back (the islands), or

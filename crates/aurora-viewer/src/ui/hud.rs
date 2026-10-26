@@ -351,13 +351,14 @@ pub fn draw(
     complexity: Option<TagComplexity<'_>>,
     loading: Option<&HashMap<uuid::Uuid, f32>>,
     plates: Option<PlateFrame<'_>>,
+    bubbles: Option<super::chat_bubbles::Frame<'_>>,
 ) -> Vec<NameTag> {
     let painter = world_painter(ctx);
     let now = Instant::now();
     let now_s = ctx.input(|i| i.time);
     visibility.begin(settings, world.agent_id);
     // (distance, anchor, lines, voice: (level, speaking), loading, avatar,
-    // where it stands in the world)
+    // where it stands in the world, temporary fade, chat bubble)
     #[allow(clippy::type_complexity)]
     let mut tags: Vec<(
         f32,
@@ -368,7 +369,10 @@ pub fn draw(
         Option<uuid::Uuid>,
         Vec3,
         f32,
+        Option<super::chat_bubbles::Bubble>,
     )> = Vec::new();
+    // the bubbles under the plates, painted right after their plate
+    let mut plate_bubbles: HashMap<uuid::Uuid, super::chat_bubbles::Bubble> = HashMap::new();
     let mut name_tags = Vec::new();
     let (plates, plate_frame) = match plates {
         Some(f) => (Some(f.plates), Some((f.pictures, f.too_complex, f.demo_too_complex, f.own_typing))),
@@ -389,7 +393,7 @@ pub fn draw(
                 continue;
             }
             let own = o.full_id == world.agent_id;
-            if (own && !show_own) || !name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) {
+            if own && !show_own {
                 continue;
             }
             let Some((pos, _, _)) = Scene::object_transform(world, idx, now, 0) else {
@@ -402,7 +406,11 @@ pub fn draw(
             {
                 continue;
             }
-            if d > settings.name_tag_distance {
+            // a resident with a bubble shows it under their name whatever
+            // the name tags' settings, their distance and their timer
+            // (LLVOAvatar::idleUpdateNameTag: visible_chat)
+            let chatting = bubbles.as_ref().is_some_and(|b| super::chat_bubbles::shows(world, b, o.full_id, d));
+            if !chatting && (!name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) || d > settings.name_tag_distance) {
                 continue;
             }
             let head = scene.name_tag_anchor(&o.full_id, pos);
@@ -413,9 +421,16 @@ pub fn draw(
                 continue;
             };
             let alpha = visibility.alpha(o.full_id, now_s, settings);
+            let alpha = if chatting { 1.0 } else { alpha };
             if alpha <= 0.0 {
                 continue;
             }
+            let bubble = bubbles
+                .as_ref()
+                .filter(|_| chatting)
+                .and_then(|b| super::chat_bubbles::layout(&painter, p, world, b, o.full_id, d));
+            // the name tag rises above its bubble
+            let lift = bubble.as_ref().map_or(0.0, |b| b.size.y + super::chat_bubbles::GAP);
             let at = tag_point(head, eye);
             if let Some((pictures, too_complex, demo_too_complex, own_typing)) = plate_frame {
                 use super::nameplate::Picture;
@@ -428,9 +443,12 @@ pub fn draw(
                     None if world.profiles.get(&id).is_some_and(|pr| pr.sl_image.is_nil()) => Picture::None,
                     None => Picture::Wanted,
                 };
+                if let Some(bubble) = bubble {
+                    plate_bubbles.insert(id, bubble);
+                }
                 plate_tags.push(super::nameplate::Tag {
                     id,
-                    anchor: sp,
+                    anchor: sp - egui::vec2(0.0, lift),
                     at,
                     distance: d,
                     // the distance fade of the classic tags
@@ -544,7 +562,17 @@ pub fn draw(
             }
             let in_voice = voice.get(&o.full_id).copied();
             let progress = loading.and_then(|l| l.get(&o.full_id).copied());
-            tags.push((d, sp, lines, in_voice, progress, Some(o.full_id), at, alpha));
+            tags.push((
+                d,
+                sp - egui::vec2(0.0, lift),
+                lines,
+                in_voice,
+                progress,
+                Some(o.full_id),
+                at,
+                alpha,
+                bubble,
+            ));
         } else {
             let Some((pos, _, hud)) = Scene::object_transform(world, idx, now, 0) else {
                 continue;
@@ -583,7 +611,7 @@ pub fn draw(
             let col = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], (c[3] as f32 * fade) as u8);
             let text = world.rlva_hover_privacy.apply(&o.text);
             let lines = text.lines().map(|l| (l.to_owned(), col, 12.0)).collect();
-            tags.push((d + 1000.0, sp, lines, None, None, None, anchor, 1.0));
+            tags.push((d + 1000.0, sp, lines, None, None, None, anchor, 1.0, None));
         }
     }
     visibility.finish();
@@ -591,7 +619,8 @@ pub fn draw(
     let tag_radius = ctx.global_style().visuals.window_corner_radius;
     // far first so near tags draw on top
     tags.sort_by(|a, b| b.0.total_cmp(&a.0));
-    for (d, sp, lines, in_voice, progress, avatar, at, alpha) in tags {
+    let opacity = bubbles.as_ref().map_or(0.0, |b| b.opacity);
+    for (d, sp, lines, in_voice, progress, avatar, at, alpha, bubble) in tags {
         // the scene hides what it has in front of this point
         aurora_render::world_label_at(ctx, Some(at));
         let is_avatar = d < 1000.0;
@@ -662,6 +691,10 @@ pub fn draw(
                     p.danger.gamma_multiply(fade),
                 );
             }
+            if let Some(b) = &bubble {
+                let top = Pos2::new(sp.x, r.bottom() + super::chat_bubbles::GAP);
+                super::chat_bubbles::paint(&painter, p, b, top, fade, opacity, false, now_s);
+            }
         }
         for g in galleys {
             let h = g.size().y;
@@ -684,7 +717,18 @@ pub fn draw(
     }
     if let Some(plates) = plates {
         plate_tags.sort_by(|a, b| b.distance.total_cmp(&a.distance));
+        let fades: HashMap<uuid::Uuid, f32> = if plate_bubbles.is_empty() {
+            HashMap::new()
+        } else {
+            plate_tags.iter().map(|t| (t.id, t.fade)).collect()
+        };
         plates.paint(&painter, p, icons, &plate_tags, now_s, |id, rect, at| {
+            // right after its plate, before the nearer ones
+            if let Some(b) = plate_bubbles.get(&id) {
+                let top = Pos2::new(rect.center().x, rect.bottom() + super::chat_bubbles::GAP);
+                let fade = fades.get(&id).copied().unwrap_or(1.0);
+                super::chat_bubbles::paint(&painter, p, b, top, fade, opacity, true, now_s);
+            }
             name_tags.push(NameTag::new(id, rect, at, proj))
         });
     }
@@ -824,6 +868,7 @@ mod tests {
                                 demo_too_complex: None,
                                 own_typing: false,
                             }),
+                            None,
                         );
                     },
                 );
@@ -864,6 +909,125 @@ mod tests {
                 frame(&settings, 12.0).is_empty(),
                 "expired tags cannot receive clicks, classic={classic}"
             );
+        }
+    }
+
+    /// LLVOAvatar::idleUpdateNameTag's `visible_chat`: a resident who
+    /// speaks shows their tag, raised above the bubble, with the name tags
+    /// off, expired or out of their distance; up to 45 m only.
+    #[test]
+    fn a_bubble_shows_its_tag_whatever_the_name_tag_settings_and_raises_it() {
+        use crate::world::bubble_chat::{BubbleChat, Utterance, Voice};
+        use std::collections::HashSet;
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events().into_iter().chain(crate::demo::tags::events()) {
+            world.apply(event);
+        }
+        let scene = Scene::new(std::path::PathBuf::new(), world.avatar_lib.clone());
+        let ctx = egui::Context::default();
+        let p = crate::theme::Theme::default().palette();
+        let icons = super::super::icons::Icons::default();
+        let proj = Projector {
+            view_proj: Mat4::from_scale(Vec3::splat(1.0 / 512.0)),
+            width: 1600.0,
+            height: 900.0,
+            ppp: 1.0,
+        };
+        let eye = Vec3::new(128.0, 128.0, 5.0);
+        let empty = HashMap::new();
+        let pictures = HashMap::new();
+        let too_complex = HashSet::new();
+        let now = Instant::now();
+        let distance = |id: &uuid::Uuid| {
+            let idx = world.objects.index_of_uuid(id).expect("avatar");
+            Scene::object_transform(&world, idx, now, 0).expect("placed").0.distance(eye)
+        };
+        for classic in [false, true] {
+            let mut visibility = NameTagVisibility::default();
+            let mut plates = super::super::nameplate::Plates::default();
+            let mut voice_tags = super::super::voice_tag::VoiceTags::default();
+            let mut frame = |settings: &crate::settings::Settings, chat: Option<&BubbleChat>, time| {
+                let mut hits = Vec::new();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        time: Some(time),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        hits = draw(
+                            ui.ctx(),
+                            &p,
+                            &icons,
+                            &world,
+                            &scene,
+                            &proj,
+                            eye,
+                            true,
+                            settings,
+                            &mut visibility,
+                            &empty,
+                            &settings.audio,
+                            &mut voice_tags,
+                            None,
+                            None,
+                            (!classic).then_some(PlateFrame {
+                                plates: &mut plates,
+                                pictures: &pictures,
+                                too_complex: &too_complex,
+                                demo_too_complex: None,
+                                own_typing: false,
+                            }),
+                            chat.map(|chat| crate::ui::chat_bubbles::Frame {
+                                chat,
+                                typing: false,
+                                own_typing: false,
+                                opacity: 0.5,
+                                now,
+                            }),
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                hits.into_iter().map(|tag| (tag.id, tag.rect)).collect::<HashMap<_, _>>()
+            };
+            let mut settings = crate::settings::Settings {
+                name_tag_distance: 128.0,
+                ..Default::default()
+            };
+            let all = frame(&settings, None, 0.0);
+            let mut chat = BubbleChat::default();
+            for id in all.keys() {
+                chat.add(
+                    *id,
+                    Utterance {
+                        text: "Hello".into(),
+                        from: "Someone".into(),
+                        voice: Voice::Normal,
+                        said: now,
+                    },
+                );
+            }
+            let near: HashSet<_> = all.keys().copied().filter(|id| distance(id) < 45.0).collect();
+            assert!(!near.is_empty() && near.len() < all.len(), "fixture: near and far residents");
+            // the tags rise above their bubbles
+            let raised = frame(&settings, Some(&chat), 1.0);
+            for id in &near {
+                assert!(raised[id].bottom() < all[id].bottom() - 10.0, "classic={classic}");
+            }
+            // the name tags off, then near enough only, then expired
+            settings.show_own_name_tag = false;
+            settings.show_friend_name_tags = false;
+            settings.show_other_name_tags = false;
+            assert!(frame(&settings, None, 2.0).is_empty());
+            let shown: HashSet<_> = frame(&settings, Some(&chat), 3.0).into_keys().collect();
+            assert_eq!(shown, near, "classic={classic}");
+            settings = crate::settings::Settings {
+                name_tag_distance: 1.0,
+                temporary_name_tags: true,
+                ..Default::default()
+            };
+            let shown: HashSet<_> = frame(&settings, Some(&chat), 30.0).into_keys().collect();
+            assert_eq!(shown, near, "classic={classic}");
         }
     }
 

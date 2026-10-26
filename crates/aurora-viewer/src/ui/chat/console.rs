@@ -87,12 +87,14 @@ pub(super) fn cards(
     seconds: f32,
     times: bool,
     compact_automated: bool,
+    residents: bool,
 ) {
     let now = std::time::SystemTime::now();
     let mut recent: Vec<&ChatLine> = world
         .chat
         .iter()
         .rev()
+        .filter(|l| residents || !super::said_by_resident(l))
         .take(6)
         .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
         .collect();
@@ -461,6 +463,7 @@ mod tests {
                                 1e10,
                                 true,
                                 true,
+                                true,
                             )
                         },
                     )
@@ -577,6 +580,7 @@ mod tests {
                         20.0,
                         false,
                         false,
+                        true,
                     )
                 },
             );
