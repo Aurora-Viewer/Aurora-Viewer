@@ -7639,7 +7639,11 @@ workspace-land-identity = Identité et propriété
 workspace-land-sale = Vente et informations
 workspace-land-actions = Actions sur la parcelle
 workspace-outfit-selection = Sélectionnez une tenue
-workspace-outfit-items = { $count } éléments dans cette tenue
+workspace-outfit-items =
+    { $count ->
+        [one] { $count } élément
+       *[other] { $count } éléments
+    }
 
 ui-inventory-received-purchases = Éléments reçus
 ui-inventory-no-received-purchases = Aucun élément reçu pour le moment.
@@ -11435,3 +11439,4 @@ parcel-visibility-add-selected = Ajouter la parcelle sélectionnée
 parcel-visibility-empty = Aucune parcelle ajoutée
 demo-parcel-visibility-pinned = Parcelle voisine toujours affichée
 demo-parcel-visibility-long = Observatoire Aurora et jardins du Nord — Accueil des visiteurs et pavillon d’exposition
+ui-appearance-selected-outfits = { $count } tenues sélectionnées

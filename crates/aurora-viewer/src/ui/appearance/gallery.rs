@@ -81,26 +81,55 @@ pub(super) fn context_menu(
         let Some(rules) = menu_rules(inv, &worn, st.pending.is_some(), id) else {
             return;
         };
+        let outfits = st.shown_outfits(inv);
+        let selection = st.outfit_selection.ordered(&outfits);
+        let multiple = selection.len() > 1;
+        let all_rules: Option<Vec<_>> = selection
+            .iter()
+            .map(|id| menu_rules(inv, &worn, st.pending.is_some(), *id))
+            .collect();
+        let ready = all_rules.as_ref().is_some_and(|rules| rules.iter().all(|rule| rule.folder))
+            && selection.iter().all(|id| model::complete(inv, *id));
+        let enabled = |single, test: fn(&MenuRules) -> bool| {
+            if multiple {
+                ready && all_rules.as_ref().is_some_and(|rules| rules.iter().any(test))
+            } else {
+                single
+            }
+        };
         if menu::item_if(
             ui,
             p,
             "shirt-filled",
             aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
-            rules.replace,
+            enabled(rules.replace, |rule| rule.replace),
         ) {
-            actions.push(Action::Wear(id, false));
+            actions.push(st.wear_selection(&outfits, false));
         }
         if menu::item_if(
             ui,
             p,
             "plus",
             aurora_i18n::tr!("ui-appearance-gallery-add-to-your-outfit"),
-            rules.add,
+            enabled(rules.add, |rule| rule.add),
         ) {
-            actions.push(Action::Wear(id, true));
+            actions.push(st.wear_selection(&outfits, true));
         }
-        if menu::item_if(ui, p, "minus", aurora_i18n::tr!("ui-appearance-gallery-take-off"), rules.remove) {
-            actions.push(Action::RemoveOutfit(id));
+        if menu::item_if(
+            ui,
+            p,
+            "minus",
+            aurora_i18n::tr!("ui-appearance-gallery-take-off"),
+            enabled(rules.remove, |rule| rule.remove),
+        ) {
+            actions.push(if multiple {
+                Action::RemoveOutfits(selection)
+            } else {
+                Action::RemoveOutfit(id)
+            });
+        }
+        if multiple {
+            return;
         }
         menu::separator(ui, p);
         if menu::item_if(ui, p, "photo-filled", aurora_i18n::tr!("common-image-2"), rules.folder) {
@@ -410,10 +439,8 @@ mod tests {
         let _icons = crate::ui::icons::Icons::load(&ctx, None);
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
-        let mut st = AppearanceUi {
-            selected_outfit: Some(Uuid::from_u128(702)),
-            ..Default::default()
-        };
+        let mut st = AppearanceUi::default();
+        st.outfit_selection.single(Uuid::from_u128(702));
         for _ in 0..4 {
             frame(&ctx, &mut world, &mut st, vec![]);
         }
@@ -421,7 +448,7 @@ mod tests {
         let shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
         let pos = shapes.iter().find_map(|s| text_position(&s.shape, &label)).expect("outfit tile") + egui::vec2(10.0, -50.0);
         assert!(click(&ctx, &mut world, &mut st, pos, PointerButton::Secondary).is_empty());
-        assert_eq!(st.selected_outfit, Some(Uuid::from_u128(703)));
+        assert_eq!(st.outfit_selection.focus, Some(Uuid::from_u128(703)));
         let mut shapes = Vec::new();
         for _ in 0..4 {
             shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
@@ -556,7 +583,7 @@ mod tests {
                 .find_map(|s| text_position(&s.shape, &label))
                 .expect("outfit header");
             assert!(click(&ctx, &mut world, &mut st, pos, PointerButton::Secondary).is_empty());
-            assert_eq!(st.selected_outfit, Some(Uuid::from_u128(id)));
+            assert_eq!(st.outfit_selection.focus, Some(Uuid::from_u128(id)));
             let mut shapes = Vec::new();
             for _ in 0..4 {
                 shapes = frame(&ctx, &mut world, &mut st, vec![]).1;
