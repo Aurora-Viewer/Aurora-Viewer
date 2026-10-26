@@ -10,6 +10,7 @@ pub mod arena;
 pub mod bc7;
 mod bloom;
 mod contact_shadows;
+mod dedicated;
 mod dof;
 mod drawn_pick;
 mod exposure;

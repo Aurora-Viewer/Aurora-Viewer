@@ -70,6 +70,17 @@ fn body(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot) {
 fn alerts(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot) {
     let t = &s.texture;
     let mut list: Vec<(String, &'static str, Tab)> = Vec::new();
+    if let (true, Some(usage), Some(budget)) = (s.vram.over_budget(), s.vram.usage, s.vram.budget) {
+        list.push((
+            tr!(
+                "monitor-alert-vram-over",
+                usage = fmt::bytes(usage as f64),
+                budget = fmt::bytes(budget as f64)
+            ),
+            tr!("monitor-see-memory"),
+            Tab::Memory,
+        ));
+    }
     if t.pressure > 0 {
         list.push((
             tr!(
@@ -99,11 +110,14 @@ fn alerts(ui: &mut egui::Ui, p: &Palette, m: &mut Monitor, s: &Snapshot) {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     widgets::glyph(ui, "alert-triangle-filled", p.warn, 15.0);
-                    ui.add(egui::Label::new(egui::RichText::new(text).size(draw::BODY).color(p.ink)).truncate());
+                    // the link first, the text cut in the room left before it
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if draw::link(ui, p, action).clicked() {
                             m.tab = tab;
                         }
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(egui::Label::new(egui::RichText::new(text).size(draw::BODY).color(p.ink)).truncate());
+                        });
                     });
                 });
             });

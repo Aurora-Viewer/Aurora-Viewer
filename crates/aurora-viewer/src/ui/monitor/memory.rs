@@ -39,10 +39,14 @@ pub(super) fn two(ui: &mut egui::Ui, left: impl FnOnce(&mut egui::Ui), right: im
 }
 
 fn big(ui: &mut egui::Ui, p: &Palette, value: &str, note: &str) {
+    big_noted(ui, p, value, note, p.muted);
+}
+
+fn big_noted(ui: &mut egui::Ui, p: &Palette, value: &str, note: &str, note_color: Color32) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         draw::text(ui, value, 22.0, p.ink);
-        draw::text(ui, note, draw::BODY, p.muted);
+        draw::text(ui, note, draw::BODY, note_color);
     });
 }
 
@@ -107,12 +111,15 @@ fn vram_card(ui: &mut egui::Ui, p: &Palette, s: &Snapshot, out: &mut Vec<Action>
     let v = s.vram;
     draw::card(ui, p, |ui| {
         draw::card_title(ui, p, tr!("monitor-tile-vram"), tr!("monitor-driver-budget"));
-        big(
+        // past the budget, Windows moves video memory out to system memory
+        let over = v.over_budget();
+        big_noted(
             ui,
             p,
             &v.usage.map_or("–".into(), |u| fmt::bytes(u as f64)),
             &v.budget
                 .map_or(String::new(), |b| tr!("monitor-of-value", value = fmt::bytes(b as f64))),
+            if over { p.warn } else { p.muted },
         );
         let colors = draw::part_colors(p);
         let rest = v.allocated.map(|a| a.saturating_sub(v.pages + v.geometry) as f64);

@@ -6661,6 +6661,7 @@ What the inventory must show with these scenarios:
 | `AURORA_FONT_FALLBACK=0` | Without the system fallback fonts |
 | `AURORA_UI_FONT=<font>`, `AURORA_UI_SCALE=<scale>` | Interface font and scale for this launch, without changing the Preferences |
 | `AURORA_TEXTURE_BUDGET_MB=<n>` | Forces the texture memory budget |
+| `AURORA_VRAM_BUDGET_MB=<n>` | The driver's video memory budget taken as n MB, a smaller card on a large one |
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
@@ -6800,6 +6801,21 @@ What the inventory must show with these scenarios:
     run. The textures of this scenario are then reloaded on demand, like
     those of the grid (camera moved closer after a reduction). A huge value
     (1000000) removes all pressure, to compare.
+- **`AURORA_VRAM_BUDGET_MB=<n>`**: the budget the driver grants the viewer
+  is taken as n MB (at least 256), what the texture budget and the
+  Performance window then read (`aurora-render/src/vram.rs`); what the
+  driver counts for the viewer stays the real figure.
+  - In demo, `AURORA_DEMO_STREAM=3000` with `AURORA_VRAM_BUDGET_MB=2048`
+    behaves like a small card: the texture target leaves 20 % of the
+    budget free with the rest of what the viewer holds (render targets,
+    geometry, the free room of wgpu's memory blocks), the pressure climbs,
+    and once the textures are lowered what the driver counts falls back
+    under the budget (the `texture memory: pressure` lines give both).
+  - With a value under what the viewer holds even without textures (512),
+    the Memory section of the Performance window
+    (`AURORA_DEMO_PERF=monitor-memory`) shows the budget in the warning
+    colour and the overview the warning "Video memory over the driver's
+    budget".
 - **`AURORA_TEXTURE_SLOTS=<n>`**: the texture table holds n textures
   instead of 65,536 (`aurora-render/src/textures.rs`; the `renderer ready:`
   line of the log gives its size). Each texture known to the streamer holds

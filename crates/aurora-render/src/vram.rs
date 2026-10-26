@@ -12,15 +12,16 @@
 //! indra/llwindow/llwindowwin32.cpp), read once; here it is read again as
 //! it changes.
 //!
-//! Two measures of what the process holds, and why the budget is kept on
-//! the second: `usage` is what the driver counts, the memory blocks wgpu's
-//! allocator took from it; `allocated` is the textures and buffers alive in
-//! those blocks. A texture page that is freed leaves a hole in its block,
-//! which goes back to the driver only once every resource in it is gone: on
-//! the grid, 3.9 GB of pages freed brought `usage` down by 1 GB only. The
-//! holes are not lost, the next pages and render targets fill them, but
-//! counted against the textures they would keep the budget exceeded however
-//! much the textures give back.
+//! Two measures of what the process holds: `usage` is what the driver
+//! counts, the memory blocks wgpu's allocator took from it and the texture
+//! pages' memory of their own (dedicated.rs); `allocated` is the textures
+//! and buffers alive in all that. The difference is the free room of the
+//! blocks, which goes back to the driver only once every resource in a
+//! block is gone. Texture pages used to be carved out of those blocks too:
+//! on the grid, 3.9 GB of pages freed brought `usage` down by 1 GB only,
+//! and the viewer could stay past the budget with its textures lowered.
+//! They now give their memory back as they go, and the texture budget
+//! counts `usage` (scene/texture_budget.rs in the viewer).
 
 use ash::vk;
 
@@ -32,6 +33,17 @@ pub struct VideoMemory {
     pub budget: u64,
     pub usage: u64,
     pub allocated: u64,
+}
+
+/// AURORA_VRAM_BUDGET_MB: the driver's budget taken as this many megabytes
+/// (a smaller card on a large one: the texture budget, the Performance
+/// window's warning).
+fn forced_budget() -> Option<u64> {
+    static FORCED: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *FORCED.get_or_init(|| {
+        let mb: u64 = std::env::var("AURORA_VRAM_BUDGET_MB").ok()?.trim().parse().ok()?;
+        Some(mb.clamp(256, 1 << 20) << 20)
+    })
 }
 
 /// Reads [`VideoMemory`] from the adapter. A physical device query: it takes
@@ -60,10 +72,12 @@ impl VideoMemoryProbe {
     /// The figures of the moment; None when the driver does not report them.
     pub fn read(&self, device: &wgpu::Device) -> Option<VideoMemory> {
         let (budget, usage) = Self::query(&self.adapter, self.heap?)?;
+        let budget = forced_budget().unwrap_or(budget);
         // (wgpu's counters: a few atomics, no lock; every buffer counts,
         // those in system memory too, a few hundred MB at most)
         let live = device.get_internal_counters().hal;
-        let allocated = (live.texture_memory.read() + live.buffer_memory.read()).max(0) as u64;
+        // (the texture pages in memory of their own are not in them)
+        let allocated = (live.texture_memory.read() + live.buffer_memory.read()).max(0) as u64 + crate::dedicated::bytes();
         Some(VideoMemory { budget, usage, allocated })
     }
 
