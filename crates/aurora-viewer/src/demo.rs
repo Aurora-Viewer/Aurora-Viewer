@@ -1236,6 +1236,25 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             "https://www.youtube.com/watch?v=jNQXAC9IVRw&t=5s",
                         ),
                     ]
+                } else if let Some(only) = mode.strip_prefix("links") {
+                    let only = only.trim_start_matches(':');
+                    [
+                        ("gif", "https://i.gyazo.com/demo-dance.gif"),
+                        ("image", "https://i.imgur.com/demo-outfit.jpg"),
+                        ("video", "https://youtu.be/jNQXAC9IVRw"),
+                    ]
+                    .into_iter()
+                    .filter(|(kind, _)| only.is_empty() || only == *kind)
+                    .enumerate()
+                    .map(|(i, (kind, url))| {
+                        let text = if kind == "image" {
+                            with(aurora_i18n::tr!("demo-previews-outfit"), url)
+                        } else {
+                            url.to_owned()
+                        };
+                        line(ago(8 - i as u64), name, friend, ChatKind::Im, &text)
+                    })
+                    .collect()
                 } else if mode == "videos" {
                     // a 4:3 clip and an upright short (#848)
                     vec![

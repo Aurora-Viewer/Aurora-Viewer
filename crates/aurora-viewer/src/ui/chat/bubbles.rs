@@ -238,6 +238,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     // the text: an emote is the name in italics, a shout or a whisper says so
     let (text, italics) = super::line_body(line, &name);
     let text = world.rlva_filter_text(&text).into_owned();
+    let visible = super::previews::text(env.previews.as_deref(), line, &text, max_bubble - 20.0);
     let text_color = match (own, tone) {
         (true, None) => p.on_accent,
         (true, Some(_)) => p.on_accent.gamma_multiply(0.75),
@@ -261,10 +262,10 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
     ui.with_layout(layout, |ui| {
         ui.add_space(lead);
         let behind = ui.painter().add(egui::Shape::Noop);
-        let size = env.emoji.message_size(&text, TEXT_SIZE);
+        let size = env.emoji.message_size(&visible, TEXT_SIZE);
         // as wide as its widest card, within the bubble's share of the row
         let cards = env.previews.as_ref().map_or(0.0, |pv| pv.width(line, &text));
-        let width = text_width(ui, &text, size, max_bubble).max(cards.min(max_bubble - 20.0));
+        let width = text_width(ui, &visible, size, max_bubble).max(cards.min(max_bubble - 20.0));
         let bubble = egui::Frame::new().inner_margin(PAD).show(ui, |ui| {
             // the width of the text, on the bubble's side of the row
             ui.set_max_width(width);
@@ -273,7 +274,9 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                 super::select::colors(p.on_accent, p.violet);
             }
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                chat_text_marked(ui, p, env.emoji, world, env.want_names, &text, size, text_color, italics, mark);
+                if !visible.is_empty() {
+                    chat_text_marked(ui, p, env.emoji, world, env.want_names, &visible, size, text_color, italics, mark);
+                }
                 super::previews::cards(ui, env, line, &text);
             });
         });

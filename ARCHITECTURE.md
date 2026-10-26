@@ -1,5 +1,11 @@
 # Aurora Viewer architecture
 
+Ready chat media replace raw URL text through `ui/chat/previews.rs` in every
+conversation style, while the stored message stays intact for history, search
+and copying. Preview hover actions expose Copy link and Open in browser with
+the original URL in their tooltips; image copying remains independent. Pending,
+hidden, blurred, unavailable and disabled previews retain their text links.
+
 Inventory landmark destination actions use the shared context-menu catalogue.
 Saved orders gain unseen destination entries beside About without moving edited entries.
 `world/landmarks.rs` retains at most one Copy SLurl and one Show on map request

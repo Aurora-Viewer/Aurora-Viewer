@@ -992,6 +992,12 @@ fn link_previews_survive_style_switches_and_detached_conversations() {
                 texts.iter().any(|t| t.source == "GIF"),
                 "{style:?}, popped={popped}: the animated picture is drawn"
             );
+            assert!(
+                texts
+                    .iter()
+                    .all(|t| t.source != "https://i.imgur.com/demo.gif" || t.rect.right() <= painted(&texts, "GIF").rect.left()),
+                "{style:?}, popped={popped}: the ready GIF replaces its raw link in the thread (#933); the sidebar keeps its message summary"
+            );
         }
         h.st.set_style(ChatStyle::Legacy);
         h.world
