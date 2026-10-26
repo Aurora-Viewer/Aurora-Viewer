@@ -41,6 +41,9 @@ impl Destination {
 #[serde(deny_unknown_fields)]
 pub struct Announcement {
     pub id: Uuid,
+    /// Return relays retain the original creator for access checks and labels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<Uuid>,
     pub region: u64,
     pub center: [f32; 3],
     pub yaw: f32,
@@ -51,6 +54,7 @@ pub struct Announcement {
 impl Announcement {
     pub fn valid(&self) -> bool {
         !self.id.is_nil()
+            && self.creator.is_none_or(|id| !id.is_nil())
             && self.region != 0
             && self.center.iter().all(|v| v.is_finite())
             && (0.0..=8192.0).contains(&self.center[0])
@@ -107,6 +111,7 @@ impl Portal {
     pub fn announcement(&self) -> Announcement {
         Announcement {
             id: self.id,
+            creator: None,
             region: self.region,
             center: self.center,
             yaw: self.yaw,

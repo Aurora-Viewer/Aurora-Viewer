@@ -107,9 +107,10 @@ gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 
 `AURORA_DEMO_PORTALS=1` opens World > Portals with a fixed aperture four metres
 ahead and its destination, owner and access label. `near` spawns it around our
-avatar: standing inside and moving across it before leaving the 3.5 m clearance
+avatar: standing inside and moving across it before leaving the 1 m clearance (3.5 m for another resident’s portal)
 must never teleport. `friends` previews a denied friends-only portal from a
 non-friend. Apertures use world depth, so walls hide them and their labels.
+`AURORA_DEMO_PORTALS=return|return-private` shows a personal arrival return four metres behind the avatar, with a side view of the aperture with two additional in-memory arrival relays; all three share one aperture, including private redaction on the wire.
 Ordinary creation accepts a same-grid place link or region coordinates; one
 portal per creator expires after two minutes. Another Aurora client needs the
 ready 1.37 bridge and scripts enabled to receive regional invitations.
@@ -117,6 +118,7 @@ Human two-client grid checks: public crossing, friends/non-friends, selected
 group members/non-members, appearing on a stationary or moving avatar,
 leaving and returning, crossing from either side, closing/replacing/expiry,
 late arrival discovery, failed/restricted destinations and teleport cancellation.
+Cross a freshly placed portal without first retreating, then use its arrival return twice. Send several travelers through the same source: destination observers must see one aperture with one unchanged expiry, including late discovery. Private destination observers see a redacted label unless authorized; Friends grants come only from the original creator, while each traveler keeps a personal return. Verify no return is created after a failed, canceled or redirected-to-another-region teleport.
 
 `AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid|drop-focus`
 drags an inventory landmark over the world. Hover scenarios retain the cargo;

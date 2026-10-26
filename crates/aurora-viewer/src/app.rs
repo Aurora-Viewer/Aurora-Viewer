@@ -361,6 +361,7 @@ pub struct App {
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
     portal_drop: Option<portals::landmark::Pending>,
+    portal_journey: Option<portals::Journey>,
     /// A peer contains a full World; keep it off the Windows startup stack.
     portal_demo_peer: Option<Box<portals::demo::Peer>>,
     follow_recovery: Option<follow::Recovery>,
@@ -1172,6 +1173,7 @@ impl App {
             follow_ui: Default::default(),
             portal_ui: Default::default(),
             portal_drop: None,
+            portal_journey: None,
             portal_demo_peer: None,
             follow_recovery: None,
             report_abuse: Default::default(),
@@ -2314,6 +2316,7 @@ impl App {
         self.follow_ui = Default::default();
         self.portal_ui = Default::default();
         self.portal_drop = None;
+        self.portal_journey = None;
         self.portal_demo_peer = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
@@ -3040,6 +3043,9 @@ impl App {
                 }
             }
             NetEvent::AgentMovementComplete { .. } => {
+                if let Some(journey) = &mut self.portal_journey {
+                    journey.arrived = true;
+                }
                 aurora_net::transition::step(|| {
                     format!(
                         "viewer: arrival applied ({}), seated {}, {} worn objects",
@@ -5026,6 +5032,10 @@ impl App {
     }
 
     fn teleport_to_location(&mut self, region: String, pos: Vec3) {
+        self.teleport_to_location_looking(region, pos, Vec3::X);
+    }
+
+    fn teleport_to_location_looking(&mut self, region: String, pos: Vec3, look_at: Vec3) {
         let Some(region) = self.grid_region(&region) else {
             return;
         };
@@ -5038,14 +5048,14 @@ impl App {
             NetCommand::TeleportTo {
                 handle,
                 position: pos,
-                look_at: Vec3::X,
+                look_at,
             }
         } else {
             NetCommand::TeleportToRegion {
                 request: uuid::Uuid::new_v4(),
                 name: region.clone(),
                 position: pos,
-                look_at: Vec3::X,
+                look_at,
             }
         };
         if !self.user_teleport_allowed(&command) {
@@ -5900,6 +5910,7 @@ impl App {
     }
 
     fn begin_teleport(&mut self, dest: String, show_progress: bool) {
+        self.portal_journey = None;
         self.drop_clicks();
         self.stop_autopilot(true);
         if self.hud_drag.is_some() {

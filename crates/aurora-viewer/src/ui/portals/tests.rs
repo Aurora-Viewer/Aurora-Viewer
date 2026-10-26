@@ -99,6 +99,8 @@ fn private_portal_labels_hide_even_cached_destinations_after_friendship_is_revok
     let hidden = label_text(&world, entry);
     assert!(!hidden.contains(destination) && !hidden.contains("987") && !hidden.contains("654"));
     assert!(hidden.contains(aurora_i18n::tr!("portal-private")));
+    assert!(!hidden.contains(aurora_i18n::tr!("poser-resident")));
+    assert!(!hidden.contains(aurora_i18n::tr!("portal-friends")));
     world.social.form_friendship(owner);
     assert!(label_text(&world, entry).contains(destination));
     world.social.end_friendship(&owner);
