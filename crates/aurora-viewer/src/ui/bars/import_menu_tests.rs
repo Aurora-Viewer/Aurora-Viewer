@@ -52,7 +52,7 @@ fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submen
             |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button(aurora_i18n::tr!("common-build"), |ui| build_menu(ui, &p, &mut action, ""));
-                    ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| contents_menu(ui, &p, &mut panels));
+                    ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| contents_menu(ui, &p, &mut panels, true));
                 });
             },
         );
@@ -98,5 +98,51 @@ fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submen
         let (_, action) = frame(click_events(import, false));
         assert!(matches!(action, BarAction::Import));
         assert!(!has_text(&frame(Vec::new()).0, aurora_i18n::tr!("import-menu")));
+    }
+}
+
+/// The Legacy Viewer's Content entries Aurora does not do yet are listed
+/// greyed (#670), L$ market data only on a grid with a Marketplace
+/// (GridCheck "secondlife").
+#[test]
+fn contents_menu_lists_the_legacy_content_entries_greyed() {
+    for marketplace in [true, false] {
+        let ctx = egui::Context::default();
+        let theme = crate::theme::Theme::default();
+        theme.apply(&ctx, 1.0);
+        let p = theme.palette();
+        let mut panels = Panels::from_settings(&crate::settings::Settings::default());
+        let mut time = 0.0;
+        let mut frame = |events| {
+            time += 0.2;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::MenuBar::new().ui(ui, |ui| {
+                        ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| {
+                            contents_menu(ui, &p, &mut panels, marketplace)
+                        });
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let contents = text_position(&frame(Vec::new()), aurora_i18n::tr!("common-contents"));
+        for pressed in [true, false] {
+            frame(click_events(contents, pressed));
+        }
+        for _ in 0..4 {
+            frame(Vec::new());
+        }
+        let output = frame(Vec::new());
+        assert_eq!(has_text(&output, aurora_i18n::tr!("ui-bars-market-data")), marketplace);
+        assert!(has_text(&output, aurora_i18n::tr!("ui-bars-script-library")));
+        assert!(has_text(&output, aurora_i18n::tr!("ui-bars-message-of-the-day")));
     }
 }
