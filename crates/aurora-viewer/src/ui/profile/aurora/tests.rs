@@ -172,8 +172,15 @@ fn the_rights_bar_can_be_hidden() {
     for width in [960.0, 380.0] {
         let mut w = Window::new(id);
         let texts = body_texts_with(&world, &mut w, width, false);
-        assert!(texts.iter().all(|t| t != tr("ui-profile-aurora-i-grant") && t != tr("ui-profile-aurora-i-receive")));
-        assert!(texts.iter().any(|t| t.contains("Musicienne du dimanche")), "{width}: the cards stay");
+        assert!(
+            texts
+                .iter()
+                .all(|t| t != tr("ui-profile-aurora-i-grant") && t != tr("ui-profile-aurora-i-receive"))
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("Musicienne du dimanche")),
+            "{width}: the cards stay"
+        );
     }
     // a stranger's "Add as friend" is not the rights bar: it stays
     let mut stranger = world;
