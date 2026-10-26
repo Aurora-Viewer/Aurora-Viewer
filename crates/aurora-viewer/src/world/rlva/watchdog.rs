@@ -277,6 +277,8 @@ impl super::super::World {
             .collect();
         self.rlva.watchdog.sources.extend(bindings);
         self.rlva.watchdog.sources.retain(|source, _| self.rlva.rules.contains_key(source));
+        // every attachment, every frame: the folder locks are resolved once
+        let locks = super::inventory::FolderLocks::default();
         let locked: BTreeSet<_> = self
             .rlva
             .watchdog
@@ -291,13 +293,13 @@ impl super::super::World {
                         .inventory
                         .items
                         .get(item)
-                        .is_none_or(|it| self.rlva_folder_allowed(it.parent, false, Uuid::nil()));
+                        .is_none_or(|it| self.rlva_folder_allowed_in(&locks, it.parent, false, Uuid::nil()));
                 (!allowed).then_some(*item)
             })
             .collect();
         let allowed = current
             .iter()
-            .map(|(item, attachment)| (*item, self.rlva_can_add(*item, attachment.point, Uuid::nil())))
+            .map(|(item, attachment)| (*item, self.rlva_can_add_in(&locks, *item, attachment.point, Uuid::nil())))
             .collect();
         let inventory = &self.inventory.items;
         self.rlva.watchdog.deny_locked_replacement = !self.rlva.preferences.replace_unlocked;
