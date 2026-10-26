@@ -303,6 +303,78 @@ pub(crate) struct ContactShadows {
     stride: u64,
     /// This frame's dispatches (`write`, then `encode`).
     list: DispatchList,
+    filter: Filter,
+}
+
+/// The softening of the mask before the shading reads it
+/// (shaders/contact_shadows_filter.wgsl).
+struct Filter {
+    soft: wgpu::ComputePipeline,
+    copy: wgpu::ComputePipeline,
+    layout: wgpu::BindGroupLayout,
+}
+
+impl Filter {
+    fn new(device: &wgpu::Device) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("contact shadows filter"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/contact_shadows_filter.wgsl").into()),
+        });
+        let texture = |binding: u32, sample_type: wgpu::TextureSampleType| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Texture {
+                sample_type,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("contact shadows filter"),
+            entries: &[
+                texture(0, wgpu::TextureSampleType::Depth),
+                texture(1, wgpu::TextureSampleType::Float { filterable: false }),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: RESULT_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("contact shadows filter"),
+            bind_group_layouts: &[Some(&layout)],
+            immediate_size: 0,
+        });
+        let make = |entry: &'static str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("contact shadows filter"),
+                layout: Some(&pl),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        Filter {
+            soft: make("main"),
+            copy: make("copy"),
+            layout,
+        }
+    }
+}
+
+/// `AURORA_CONTACT_SOFT=0`: the mask reaches the shading as the pass wrote
+/// it, hard pixel steps, for a comparison.
+fn soft_from_env() -> bool {
+    static SOFT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SOFT.get_or_init(|| std::env::var("AURORA_CONTACT_SOFT").map_or(true, |v| v.trim() != "0"))
 }
 
 /// The mask of one window size, the depth it may read instead of the
@@ -313,9 +385,13 @@ pub(crate) struct Targets {
     group: wgpu::BindGroup,
     /// Reading `depth`: the prepass with the blended faces and the cards.
     group_more: wgpu::BindGroup,
+    /// The filter's, reading the same depths and the pass's mask.
+    filter_group: wgpu::BindGroup,
+    filter_group_more: wgpu::BindGroup,
     depth_texture: wgpu::Texture,
     depth: wgpu::TextureView,
-    /// The shadow in `.r`, 0 lit, 1 in contact shadow; read by the shading.
+    /// The shadow in `.r`, 0 lit, 1 in contact shadow, softened; read by the
+    /// shading.
     pub result: wgpu::TextureView,
 }
 
@@ -390,6 +466,7 @@ impl ContactShadows {
             })
         };
         let (pipeline, clear) = (make("main"), make("clear"));
+        let filter = Filter::new(device);
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("contact shadows params"),
             size: stride * 8,
@@ -403,6 +480,7 @@ impl ContactShadows {
             buffer,
             stride,
             list: DispatchList::default(),
+            filter,
         }
     }
 
@@ -417,21 +495,26 @@ impl ContactShadows {
         height: u32,
     ) -> Targets {
         let size = (width.max(1), height.max(1));
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("contact shadows"),
-            size: wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: RESULT_FORMAT,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let result = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mask = |label: &str| {
+            device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: size.0,
+                        height: size.1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: RESULT_FORMAT,
+                    usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&wgpu::TextureViewDescriptor::default())
+        };
+        // the pass writes `raw`, the filter `result`
+        let (raw, result) = (mask("contact shadows raw"), mask("contact shadows"));
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("contact shadows depth"),
             size: wgpu::Extent3d {
@@ -466,6 +549,26 @@ impl ContactShadows {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&raw),
+                    },
+                ],
+            })
+        };
+        let filter_group = |depth: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("contact shadows filter"),
+                layout: &self.filter.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(depth),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&raw),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
                         resource: wgpu::BindingResource::TextureView(&result),
                     },
                 ],
@@ -475,6 +578,8 @@ impl ContactShadows {
             size,
             group: group(depth),
             group_more: group(&own_depth),
+            filter_group: filter_group(depth),
+            filter_group_more: filter_group(&own_depth),
             depth_texture,
             depth: own_depth,
             result,
@@ -507,9 +612,14 @@ impl ContactShadows {
     /// the blended faces and the cards were drawn into `depth`). No barrier is
     /// needed between them: each writes its own pixels. The target is
     /// emptied first (0, lit): the pixel under the light's point, which no
-    /// wavefront writes, and the sky stay lit.
+    /// wavefront writes, and the sky stay lit. Then the filter softens the
+    /// mask into `result`, over the same depth.
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, t: &Targets, more: bool) {
-        let group = if more { &t.group_more } else { &t.group };
+        let (group, filter_group) = if more {
+            (&t.group_more, &t.filter_group_more)
+        } else {
+            (&t.group, &t.filter_group)
+        };
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("contact shadows"),
             timestamp_writes: None,
@@ -522,6 +632,9 @@ impl ContactShadows {
             pass.set_bind_group(0, group, &[(i as u64 * self.stride) as u32]);
             pass.dispatch_workgroups(d.wave_count[0] as u32, d.wave_count[1] as u32, d.wave_count[2] as u32);
         }
+        pass.set_pipeline(if soft_from_env() { &self.filter.soft } else { &self.filter.copy });
+        pass.set_bind_group(0, filter_group, &[]);
+        pass.dispatch_workgroups(t.size.0.div_ceil(8), t.size.1.div_ceil(8), 1);
     }
 }
 

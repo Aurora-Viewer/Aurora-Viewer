@@ -6587,6 +6587,7 @@ What the inventory must show with these scenarios:
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
+| `AURORA_CONTACT_SOFT=0` | Contact shadows with hard pixel edges (no softening) |
 | `AURORA_BLOOM=0`, `1` or `alt` | Bloom off, on or one second in two for this launch |
 | `AURORA_AUTO_EXPOSURE=0`, `1` or `alt` | Automatic exposure of non-classic skies off, on or one second in two |
 | `AURORA_SPECULAR_AA=0`, `1` or `alt` | Specular anti-aliasing off, on or one second in two for this launch |
@@ -6836,7 +6837,14 @@ What the inventory must show with these scenarios:
   as a shell of 0.5 % of its distance (Bend's window, before issue 988)
   instead of a body as deep as the ray went under it (up to 5 cm, with
   the sun ahead of the camera): a ray that goes under a thick caster is
-  stopped only where it grazes its edges. They only draw with the
+  stopped only where it grazes its edges. **`AURORA_CONTACT_SOFT=0`**:
+  the mask reaches the shading as the pass wrote it, without the 5 × 5
+  softening over each surface (`contact_shadows_filter.wgsl`): hard steps
+  of whole pixels on curved bodies (the sides of our avatar with
+  `AURORA_DEMO_SUN=0,12`) and a dotted line under the hovering shoe of
+  `AURORA_DEMO_FEET` seen from above (`AURORA_DEMO_CAMERA=alt,615,672`,
+  frame 690). Softened, neither shows and no shadow spreads from the
+  ground onto a caster nor the reverse. They only draw with the
   sun shadows on. To see them, `AURORA_DEBUG_SHADOWS=1` (the shadow view
   takes them too) with `AURORA_DEMO_TOD=2` (high sun) or `3` (low sun),
   `AURORA_DEMO_CROWD=40` and `AURORA_DEMO_POS=129,134`: thin shadows appear
