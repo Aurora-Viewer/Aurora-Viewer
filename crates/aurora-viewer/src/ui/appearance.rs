@@ -359,8 +359,9 @@ fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl F
     menu::dropdown(&response, p, egui::PopupCloseBehavior::CloseOnClick, body);
 }
 
-/// Pulls what follows an item row up to the inventory's row pitch. The
-/// list's spacing itself stays: the rows' context menus inherit it.
+/// Pulls what follows a row (an item, a closed outfit header) up to the
+/// inventory's row pitch. The list's spacing itself stays: the rows'
+/// context menus inherit it.
 fn row_gap(ui: &mut egui::Ui) {
     ui.add_space(1.0 - ui.spacing().item_spacing.y);
 }
@@ -655,7 +656,12 @@ fn outfit_list(
                 .then(|| known_open.as_ref().is_some_and(|open| open.contains(id)))
         });
         let highlight = ui.painter().add(egui::Shape::Noop);
+        // The headers take the inventory's row height; their body keeps the
+        // window's own sizes (buttons, labels).
+        let interact = ui.spacing().interact_size.y;
+        ui.spacing_mut().interact_size.y = super::inventory::AURORA_ROW_HEIGHT;
         let response = widgets::collapsing_forced(ui, p, ("outfit", id), galley.clone(), default_open, forced, |ui| {
+            ui.spacing_mut().interact_size.y = interact;
             if ui
                 .selectable_label(
                     st.outfit_selection.contains(*id),
@@ -717,6 +723,11 @@ fn outfit_list(
                 }
             });
         });
+        ui.spacing_mut().interact_size.y = interact;
+        // closed headers follow one another at the inventory's row pitch
+        if response.body.is_none() {
+            row_gap(ui);
+        }
         st.select_outfit(&response.header, *id, outfits);
         if st.outfit_selection.contains(*id) {
             ui.painter().set(

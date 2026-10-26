@@ -6083,8 +6083,8 @@ opens its submenu.
   Conflicting body parts use the last selected outfit in display order,
   following `LLAppearanceMgr::filterWearableItems`.
 - `outfits`: the list of outfits; `worn`: the worn items. A right click on
-  an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,387,r"`
-  (Neurolab) or `"90,419,r"` (the worn outfit) in the default window, capture
+  an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,372,r"`
+  (Neurolab) or `"90,397,r"` (the worn outfit) in the default window, capture
   at frame 380;
 - `save`: the Save as dialog; `edit`: the outfit editor;
 - `menu`: an expanded outfit with an object that is not worn, for the right
