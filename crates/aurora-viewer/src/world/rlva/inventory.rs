@@ -7,8 +7,33 @@ use super::super::{
 };
 use super::Command;
 use aurora_net::outfits::OutfitLink;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+
+/// The folders of every "…this" lock, resolved on first use and shared by
+/// the checks of one pass (the watchdog's attachments, a folder tree): the
+/// resolution walks the whole inventory, and once per attachment and per
+/// rule it cost tens of ms a frame with a large inventory. Build one per
+/// pass, never keep it: the rules, the inventory and what is worn change.
+#[derive(Default)]
+pub(crate) struct FolderLocks(std::cell::OnceCell<HashMap<(Uuid, String), Vec<Uuid>>>);
+
+impl FolderLocks {
+    fn folders(&self, world: &World, source: Uuid, option: &str) -> &[Uuid] {
+        let all = self.0.get_or_init(|| {
+            world.rlva_context_folders_of(
+                world
+                    .rlva
+                    .rules
+                    .iter()
+                    .flat_map(|(source, rules)| rules.iter().map(move |r| (*source, r)))
+                    .filter(|(_, r)| r.behaviour.contains("this"))
+                    .map(|(source, r)| (source, r.option.as_str())),
+            )
+        });
+        all.get(&(source, option.to_owned())).map_or(&[], Vec::as_slice)
+    }
+}
 
 pub const LAYERS: &[&str] = &[
     "shape",
@@ -281,42 +306,78 @@ impl World {
         let point = self.avatar_lib.attach_points.get(&point)?;
         if point.hud { Some("hud") } else { group_name(point.group) }
     }
-    /// Shared originals can live elsewhere; folder locks follow every
-    /// shared link, then fold attachment-point folders into their parent.
-    fn rlva_item_folders(&self, item: Uuid) -> Vec<Uuid> {
-        self.inventory
-            .items
-            .values()
-            .filter(|it| it.id == item || (it.asset_type == 24 && it.asset_id == item))
-            .map(|it| folded_parent(&self.inventory, it.parent, self.rlva.preferences.legacy_naming))
-            .filter(|id| path(&self.inventory, *id).is_some())
-            .collect()
-    }
-
-    fn rlva_context_folders(&self, source: Uuid, option: &str) -> Vec<Uuid> {
+    /// The folders of the "…this" locks of `keys` (issuer, option), sorted.
+    /// An option naming items (none: the issuer's own; a point, a layer, an
+    /// object) locks the folders of those items: shared originals can live
+    /// elsewhere, so every shared link counts, and attachment-point folders
+    /// fold into their parent. Finding the links walks the whole inventory:
+    /// one walk for all the keys.
+    fn rlva_context_folders_of<'a>(&self, keys: impl IntoIterator<Item = (Uuid, &'a str)>) -> HashMap<(Uuid, String), Vec<Uuid>> {
         let worn = self.rlva_worn_attachment_points();
-        let items: Vec<_> = if option.is_empty() {
-            self.rlva_attachment_item(source).into_iter().collect()
-        } else if let Some(p) = point(option) {
-            worn.iter().filter(|(_, at)| **at == p).map(|(id, _)| *id).collect()
-        } else if let Some(kind) = layer(option) {
-            appearance::cof(&self.inventory)
-                .map(|id| appearance::folder_links(&self.inventory, id))
-                .unwrap_or_default()
+        let mut cof = None;
+        let mut out = HashMap::new();
+        // item → the keys locking its folders
+        let mut wanted = HashMap::<Uuid, Vec<(Uuid, String)>>::new();
+        for (source, option) in keys {
+            let key = (source, option.to_owned());
+            if out.contains_key(&key) {
+                continue;
+            }
+            let items: Vec<_> = if option.is_empty() {
+                self.rlva_attachment_item(source).into_iter().collect()
+            } else if let Some(p) = point(option) {
+                worn.iter().filter(|(_, at)| **at == p).map(|(id, _)| *id).collect()
+            } else if let Some(kind) = layer(option) {
+                cof.get_or_insert_with(|| {
+                    appearance::cof(&self.inventory)
+                        .map(|id| appearance::folder_links(&self.inventory, id))
+                        .unwrap_or_default()
+                })
                 .iter()
                 .filter_map(|l| self.inventory.items.get(&l.target))
-                .filter(|it| matches!(it.asset_type, 5 | 13) && it.flags & 0xff == kind as u32)
+                .filter(|it| matches!(it.asset_type, 5 | 13) && it.flags & 0xff == u32::from(kind))
                 .map(|it| it.id)
                 .collect()
-        } else if let Ok(id) = Uuid::parse_str(option) {
-            self.rlva_attachment_item(id).into_iter().collect()
-        } else {
-            return resolve(&self.inventory, option).into_iter().collect();
-        };
-        let mut folders: Vec<_> = items.into_iter().flat_map(|id| self.rlva_item_folders(id)).collect();
-        folders.sort();
-        folders.dedup();
-        folders
+            } else if let Ok(id) = Uuid::parse_str(option) {
+                self.rlva_attachment_item(id).into_iter().collect()
+            } else {
+                out.insert(key, resolve(&self.inventory, option).into_iter().collect());
+                continue;
+            };
+            for item in items {
+                wanted.entry(item).or_default().push(key.clone());
+            }
+            out.insert(key, Vec::new());
+        }
+        if !wanted.is_empty() {
+            // a few items among the whole inventory: a sorted list tells most
+            // of them apart faster than hashing every id
+            let mut targets: Vec<_> = wanted.keys().copied().collect();
+            targets.sort_unstable();
+            for it in self.inventory.items.values() {
+                let mut add = |item: &Uuid| {
+                    if targets.binary_search(item).is_err() {
+                        return;
+                    }
+                    let Some(keys) = wanted.get(item) else { return };
+                    let folder = folded_parent(&self.inventory, it.parent, self.rlva.preferences.legacy_naming);
+                    if path(&self.inventory, folder).is_some() {
+                        for key in keys {
+                            out.entry(key.clone()).or_default().push(folder);
+                        }
+                    }
+                };
+                add(&it.id);
+                if it.asset_type == 24 && it.asset_id != it.id {
+                    add(&it.asset_id);
+                }
+            }
+        }
+        for folders in out.values_mut() {
+            folders.sort();
+            folders.dedup();
+        }
+        out
     }
 
     /// RlvCommandOptionGetPath and RlvInventory::getPath use original COF
@@ -375,7 +436,11 @@ impl World {
     }
 
     pub(super) fn rlva_folder_allowed(&self, folder: Uuid, add: bool, actor: Uuid) -> bool {
-        self.rlva_folder_signature(folder, add, actor).is_empty()
+        self.rlva_folder_allowed_in(&FolderLocks::default(), folder, add, actor)
+    }
+
+    pub(super) fn rlva_folder_allowed_in(&self, locks: &FolderLocks, folder: Uuid, add: bool, _actor: Uuid) -> bool {
+        self.rlva_folder_signature_in(locks, folder, add, Uuid::nil()).is_empty()
     }
 
     fn rlva_folder_signature(&self, folder: Uuid, add: bool, _actor: Uuid) -> std::collections::BTreeSet<(Uuid, String, String)> {
@@ -383,6 +448,16 @@ impl World {
     }
 
     fn rlva_folder_signature_except(&self, folder: Uuid, add: bool, except: Uuid) -> std::collections::BTreeSet<(Uuid, String, String)> {
+        self.rlva_folder_signature_in(&FolderLocks::default(), folder, add, except)
+    }
+
+    fn rlva_folder_signature_in(
+        &self,
+        locks: &FolderLocks,
+        folder: Uuid,
+        add: bool,
+        except: Uuid,
+    ) -> std::collections::BTreeSet<(Uuid, String, String)> {
         let folder = folded_parent(&self.inventory, folder, self.rlva.preferences.legacy_naming);
         let mut ancestors = Vec::new();
         let mut id = folder;
@@ -424,9 +499,10 @@ impl World {
                 let distance = if global {
                     Some(usize::MAX)
                 } else {
-                    self.rlva_context_folders(*source, &rule.option)
-                        .into_iter()
-                        .filter_map(|root| ancestors.iter().position(|id| *id == root))
+                    locks
+                        .folders(self, *source, &rule.option)
+                        .iter()
+                        .filter_map(|root| ancestors.iter().position(|id| id == root))
                         .filter(|d| *d == 0 || name.contains("all"))
                         .min()
                 };
@@ -464,8 +540,9 @@ impl World {
             return false;
         };
         let folder = self.inventory.folders.contains_key(&item);
+        let locks = FolderLocks::default();
         let signature = |id, add| {
-            self.rlva_folder_signature(id, add, actor)
+            self.rlva_folder_signature_in(&locks, id, add, Uuid::nil())
                 .into_iter()
                 .filter(|(_, name, _)| folder || name.contains("this"))
                 .collect::<std::collections::BTreeSet<_>>()
@@ -473,17 +550,17 @@ impl World {
         [false, true]
             .into_iter()
             .all(|add| signature(if folder { item } else { parent }, add) == signature(destination, add))
-            && (!folder || !self.rlva_explicit_folder_descendant(item, actor))
+            && (!folder || !self.rlva_explicit_folder_descendant(&locks, item, actor))
     }
 
-    fn rlva_explicit_folder_descendant(&self, folder: Uuid, actor: Uuid) -> bool {
+    fn rlva_explicit_folder_descendant(&self, locks: &FolderLocks, folder: Uuid, actor: Uuid) -> bool {
         self.rlva
             .rules
             .iter()
             .filter(|(source, _)| **source != actor)
             .any(|(source, rules)| {
                 rules.iter().filter(|r| r.behaviour.contains("this")).any(|rule| {
-                    self.rlva_context_folders(*source, &rule.option).into_iter().any(|mut root| {
+                    locks.folders(self, *source, &rule.option).iter().copied().any(|mut root| {
                         let mut seen = HashSet::new();
                         while seen.insert(root) {
                             if root == folder {
@@ -499,7 +576,8 @@ impl World {
     }
 
     fn rlva_inventory_tree_unlocked(&self, folder: Uuid, actor: Uuid) -> bool {
-        if self.rlva_explicit_folder_descendant(folder, actor) {
+        let locks = FolderLocks::default();
+        if self.rlva_explicit_folder_descendant(&locks, folder, actor) {
             return false;
         }
         let mut stack = vec![folder];
@@ -517,7 +595,7 @@ impl World {
             };
             if !appearance::loaded(&self.inventory, id)
                 || [false, true].into_iter().any(|add| {
-                    self.rlva_folder_signature(id, add, actor)
+                    self.rlva_folder_signature_in(&locks, id, add, Uuid::nil())
                         .iter()
                         .any(|(_, name, _)| name.contains("this"))
                 })
@@ -549,7 +627,7 @@ impl World {
                     let moved = body.as_map().is_some_and(|m| m.contains_key("parent_id"));
                     let renamed = body.as_map().is_some_and(|m| m.contains_key("name"));
                     (!moved || self.rlva_inventory_move_allowed(*id, body["parent_id"].as_uuid(), actor))
-                        && (!renamed || !*folder || !self.rlva_explicit_folder_descendant(*id, actor))
+                        && (!renamed || !*folder || !self.rlva_explicit_folder_descendant(&FolderLocks::default(), *id, actor))
                 }
                 Operation::Delete { id, folder: true } | Operation::Purge(id) => self.rlva_inventory_tree_unlocked(*id, actor),
                 Operation::Delete { id, folder: false } => {
@@ -817,6 +895,10 @@ impl World {
     }
 
     pub fn rlva_can_add(&self, item: Uuid, at: u8, actor: Uuid) -> bool {
+        self.rlva_can_add_in(&FolderLocks::default(), item, at, actor)
+    }
+
+    pub(super) fn rlva_can_add_in(&self, locks: &FolderLocks, item: Uuid, at: u8, actor: Uuid) -> bool {
         let r = &self.rlva;
         if r.enabled() && actor == super::watchdog::ACTOR {
             return r.watchdog.restore_allowed(item, at);
@@ -839,7 +921,7 @@ impl World {
         if matches!(it.asset_type, 5 | 13) && self.rlva_layer_locked("addoutfit", (it.flags & 0xff) as u8, actor) {
             return false;
         }
-        self.rlva_folder_allowed(it.parent, true, actor)
+        self.rlva_folder_allowed_in(locks, it.parent, true, actor)
     }
 
     pub fn rlva_attachment_item(&self, object: Uuid) -> Option<Uuid> {

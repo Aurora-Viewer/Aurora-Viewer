@@ -7,6 +7,7 @@ impl World {
     /// RlvAttachmentLocks::hasLockedHUD / RlvActions::canViewWireframe:
     /// actual worn HUDs count, including temporary and folder-locked ones.
     pub fn rlva_has_locked_hud(&self) -> bool {
+        let locks = super::inventory::FolderLocks::default();
         self.rlva.inventory_locked()
             && self.rlva_worn_attachment_points().into_iter().any(|(item, point)| {
                 self.avatar_lib.attach_points.get(&point).is_some_and(|point| point.hud)
@@ -15,7 +16,7 @@ impl World {
                             .inventory
                             .items
                             .get(&item)
-                            .is_some_and(|item| !self.rlva_folder_allowed(item.parent, false, Uuid::nil())))
+                            .is_some_and(|item| !self.rlva_folder_allowed_in(&locks, item.parent, false, Uuid::nil())))
             })
     }
 

@@ -1604,3 +1604,119 @@ fn rlva_render_aliases_release_without_mutating_saved_settings_and_touch_measure
     world.rlva.configure(false);
     assert!(world.rlva_can_touch_at(key.region, key.local_id, Some(world.agent.position + glam::Vec3::X * 100.0)));
 }
+
+/// The watchdog checks every worn attachment each frame. Its folder locks,
+/// resolved once for all of them (one walk of the inventory, links
+/// included), lock exactly what the one-off checks lock.
+#[test]
+fn rlva_watchdog_folder_locks_resolved_once_match_single_checks() {
+    use crate::world::inventory::{FetchState, Folder};
+    use aurora_net::inventory::{InvFolder, InvItem};
+    let mut world = crate::world::World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+    for event in crate::demo::events() {
+        world.apply(event);
+    }
+    world.rlva_configure(true);
+    world.movement_complete = true;
+    let add_folder = |world: &mut crate::world::World, id: Uuid, parent: Uuid, name: &str| {
+        world.inventory.folders.insert(
+            id,
+            Folder {
+                info: InvFolder {
+                    id,
+                    parent,
+                    name: name.into(),
+                    type_default: -1,
+                    ..Default::default()
+                },
+                children: vec![],
+                items: vec![],
+                state: FetchState::Fetched,
+                library: false,
+            },
+        );
+        if let Some(parent) = world.inventory.folders.get_mut(&parent) {
+            parent.children.push(id);
+        }
+    };
+    let root = Uuid::from_u128(0xF000);
+    world.inventory.root = root;
+    add_folder(&mut world, root, Uuid::nil(), "My Inventory");
+    let rlv = Uuid::from_u128(0xF001);
+    let collar = Uuid::from_u128(0xF002);
+    let cuffs = Uuid::from_u128(0xF003);
+    let other = Uuid::from_u128(0xF004);
+    add_folder(&mut world, rlv, root, "#RLV");
+    add_folder(&mut world, collar, rlv, "Collar");
+    add_folder(&mut world, cuffs, rlv, "Cuffs");
+    add_folder(&mut world, other, root, "Clothes");
+    let item = |world: &mut crate::world::World, n: u128, parent: Uuid, link_to: Option<Uuid>| {
+        let id = Uuid::from_u128(n);
+        world.inventory.items.insert(
+            id,
+            InvItem {
+                id,
+                parent,
+                asset_type: if link_to.is_some() { 24 } else { 6 },
+                asset_id: link_to.unwrap_or_default(),
+                flags: 5,
+                ..Default::default()
+            },
+        );
+        world.inventory.folders.get_mut(&parent).unwrap().items.push(id);
+        id
+    };
+    // the collar lives outside #RLV; its link in #RLV/Collar carries the lock
+    let collar_item = item(&mut world, 0xC000, other, None);
+    item(&mut world, 0xC001, collar, Some(collar_item));
+    let cuff = item(&mut world, 0xC002, cuffs, None);
+    let shirt = item(&mut world, 0xC003, other, None);
+    for n in 0..2000 {
+        item(&mut world, 0xD000 + n, other, None);
+    }
+    let handle = world.main_region.unwrap();
+    for (n, worn) in [collar_item, cuff, shirt].into_iter().enumerate() {
+        world.objects.upsert(
+            handle,
+            crate::demo::outfit_attachment(&aurora_net::AttachRequest {
+                item_id: worn,
+                owner_id: world.agent_id,
+                point: n as u8 + 1,
+                add: true,
+                flags: 0,
+                group_mask: 0,
+                everyone_mask: 0,
+                next_owner_mask: 0,
+                name: String::new(),
+                desc: String::new(),
+            }),
+        );
+    }
+    command(&mut world.rlva, collar_item, "@detachallthis=n,attachallthis=n");
+    command(&mut world.rlva, cuff, "@detachthis:Cuffs=n");
+    let locks = super::inventory::FolderLocks::default();
+    for folder in [root, rlv, collar, cuffs, other] {
+        for add in [false, true] {
+            assert_eq!(
+                world.rlva_folder_allowed_in(&locks, folder, add, Uuid::nil()),
+                world.rlva_folder_allowed(folder, add, Uuid::nil()),
+                "folder {folder} add {add}"
+            );
+        }
+    }
+    assert!(
+        !world.rlva_folder_allowed_in(&locks, collar, false, Uuid::nil()),
+        "the link's folder is locked"
+    );
+    assert!(
+        !world.rlva_folder_allowed_in(&locks, cuffs, false, Uuid::nil()),
+        "a named folder is locked"
+    );
+    assert!(
+        world.rlva_folder_allowed_in(&locks, other, false, Uuid::nil()),
+        "outside #RLV stays free"
+    );
+    world.rlva_watchdog_tick(std::time::Instant::now());
+    world.rlva_watchdog_tick(std::time::Instant::now());
+    assert!(world.rlva.watchdog.rejected.is_empty(), "nothing worn is rejected");
+}
