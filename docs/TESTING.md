@@ -6372,6 +6372,12 @@ offline; the files and snapshots uploaded in demo stay offline.
   column holds the folder itself and its subfolders only (no shortcuts, no
   Trash); the explorer and the breadcrumb stop at the folder; a search stays
   inside it.
+- `aurora-additional`: the narrow main window, its "Additional inventory
+  window" button (a second briefcase, right of CMT) lit, and the additional
+  window on its left: the whole inventory with its tabs but no Received
+  tab, and no such button. Click the lit button: the additional window
+  closes; click it again: it reopens at the same place, its folders and
+  search forgotten. Drag an item from one window onto a folder of the other.
 - `aurora-worn`, `aurora-worn-medium`, `aurora-worn-wide`: Aurora's three
   widths on the clothing folder with no selection. Worn clothing names stay
   semi-bold and use the exact text colour of their Worn tag beside the
@@ -6570,6 +6576,11 @@ offline; the files and snapshots uploaded in demo stay offline.
   as in Firestorm; a landmark already present for the same asset is reused.
 - `image-photo-save`: captures then saves a thumbnail at frame 2100
   and closes the snapshot window while keeping the Image editor open.
+- `additional`: the Legacy Viewer's window with its "Additional inventory
+  window" button lit at the bottom, right of "+", and the additional window
+  opened on its left: Inventory, Recent, Worn and Favorites tabs but no
+  Received, and no such button at its bottom. The button closes it and
+  opens it again.
 - `folder-window`: a window limited to the contents of the personal folder,
   with its name as the title and a filter of its own; `folder-window-search`
   shows this search limited to the descendants.

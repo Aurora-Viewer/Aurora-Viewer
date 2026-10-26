@@ -15912,6 +15912,8 @@ impl ApplicationHandler for App {
                         | "aurora-favorites-multi"
                         | "aurora-folder-window"
                         | "aurora-folder-window-wide"
+                        | "additional"
+                        | "aurora-additional"
                         | "show-original"
                         | "aurora-show-original"
                 );
@@ -15944,6 +15946,12 @@ impl ApplicationHandler for App {
                     if view == "sort" {
                         self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8000));
                         self.inventory_ui.open_folder_window(uuid::Uuid::from_u128(8000));
+                    }
+                    if view.ends_with("additional") {
+                        // the main window on a folder, the additional one
+                        // opened by its button beside it
+                        self.inventory_ui.show_original(&self.world.inventory, uuid::Uuid::from_u128(8100));
+                        self.inventory_ui.toggle_additional_window(&self.egui_ctx);
                     }
                     if view.starts_with("aurora") {
                         if view.starts_with("aurora-sidebar-") {

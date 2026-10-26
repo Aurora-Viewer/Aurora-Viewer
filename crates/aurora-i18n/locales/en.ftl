@@ -530,6 +530,7 @@ inventory-move-selection-name = Move “{ $name }”
 inventory-move-selection-count = Move { $count } items
 inventory-move-no-folders = No folders available for this filter.
 inventory-widen = Widen the window
+inventory-additional-window = Additional inventory window
 inventory-items-count = { $count ->
     [one] { $number } item
    *[other] { $number } items

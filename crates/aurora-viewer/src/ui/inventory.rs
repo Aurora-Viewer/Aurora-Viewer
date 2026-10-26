@@ -269,10 +269,24 @@ impl From<&aurora_net::inventory::InvItem> for PropertyEdit {
 
 pub struct InventoryWindow {
     pub id: Uuid,
-    /// Nil for a standalone document, otherwise a partial inventory tree.
+    /// Nil for a standalone document or the additional window, otherwise a
+    /// partial inventory tree.
     pub root: Uuid,
+    /// The additional inventory window: the whole inventory with its tabs.
+    pub additional: bool,
     pub state: Box<InventoryUi>,
     pub open: bool,
+}
+
+/// The additional window's id: one at a time, its place and size kept
+/// between openings (`save_rect` of floater_my_inventory.xml).
+const ADDITIONAL_WINDOW: Uuid = Uuid::from_u128(0x6b1f_2c4e_9a37_4d58_8e21_0f3c_5a90_1090);
+
+/// Its button's icon: a second inventory briefcase.
+const ADDITIONAL_ICON: &str = "briefcase-2-filled";
+
+fn floater_id(id: Uuid) -> String {
+    format!("inventory_{id}")
 }
 
 /// Inventory cargo shared by world placement and the build contents floater.
@@ -476,9 +490,54 @@ impl InventoryUi {
         self.windows.push(InventoryWindow {
             id: Uuid::new_v4(),
             root,
+            additional: false,
             state: Box::new(InventoryUi::default()),
             open: true,
         });
+    }
+
+    /// The main Inventory window; the others (folders, documents, the
+    /// additional window) carry the id of their own window.
+    pub(crate) fn is_main(&self) -> bool {
+        self.ui_id.is_nil()
+    }
+
+    pub(crate) fn additional_open(&self) -> bool {
+        self.windows.iter().any(|w| w.additional && w.open)
+    }
+
+    /// The main window's "Additional inventory window" button: the
+    /// `new_inv_btn` of panel_main_inventory.xml toggles the
+    /// `secondary_inventory` floater (LLSidepanelInventory::
+    /// createSecondaryInventoryWindow, indra/newview/llsidepanelinventory.cpp),
+    /// a second window on the whole inventory without that button. A shown
+    /// window closes, a minimized one expands; once closed it is dropped
+    /// with its folders and search, as LLFloaterSidePanelContainer::
+    /// closeFloater destroys it.
+    pub fn toggle_additional_window(&mut self, ctx: &egui::Context) {
+        let id = floater_id(ADDITIONAL_WINDOW);
+        // Still kept by a document or a dialog it opened: the same window.
+        if let Some(w) = self.windows.iter_mut().find(|w| w.additional) {
+            super::widgets::toggle_floater(ctx, &id, &mut w.open);
+            return;
+        }
+        let mut open = false;
+        super::widgets::open_floater(ctx, &id, &mut open);
+        self.windows.push(InventoryWindow {
+            id: ADDITIONAL_WINDOW,
+            root: Uuid::nil(),
+            additional: true,
+            state: Box::new(InventoryUi::default()),
+            open,
+        });
+    }
+
+    /// RLVa's @showinv closes the additional window with the main one
+    /// (RlvBehaviourToggleHandler<RLV_BHVR_SHOWINV>, rlvhandler.cpp).
+    pub fn close_additional_window(&mut self) {
+        for w in self.windows.iter_mut().filter(|w| w.additional) {
+            w.open = false;
+        }
     }
 
     /// LLFolderView::startRenamingSelectedItem: edit and select the name in place.
@@ -1030,6 +1089,7 @@ fn status(
                 actions,
             );
         });
+        additional_button(ui, p, st);
         ui.label(
             RichText::new(aurora_i18n::tr!("workspace-inventory-selected", count = st.selection.len()))
                 .size(11.0)
@@ -1045,6 +1105,36 @@ fn status(
                 .on_hover_text(if message.is_empty() { count } else { format!("{message}\n{count}") });
         });
     });
+}
+
+/// The main window's "Additional inventory window" button, beside "+" as
+/// the Legacy Viewer's `new_inv_btn`, lit while that window is open; the
+/// other windows have none.
+fn additional_button(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
+    if !st.is_main() {
+        return;
+    }
+    let button = ui.scope(|ui| {
+        super::widgets::icon_toggle(
+            ui,
+            p,
+            ADDITIONAL_ICON,
+            aurora_i18n::tr!("inventory-additional-window"),
+            st.additional_open(),
+        )
+    });
+    additional_button_drawn(ui, button.response.rect);
+    if button.inner {
+        st.toggle_additional_window(ui.ctx());
+    }
+}
+
+/// Where the additional window's button was drawn, for the tests to click.
+fn additional_button_drawn(ui: &egui::Ui, rect: egui::Rect) {
+    if cfg!(test) {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_additional_button"), rect));
+    }
 }
 
 fn request_search(inv: &mut Inventory, root: Uuid, st: &mut InventoryUi, prefs: &InventoryPreferences) {
@@ -1454,7 +1544,8 @@ fn inventory_contents(
         (2, aurora_i18n::tr!("common-recent"), prefs.show_recent),
         (3, aurora_i18n::tr!("common-worn"), prefs.show_worn),
         (4, aurora_i18n::tr!("common-favorites"), prefs.show_favorites),
-        (RECEIVED_TAB, aurora_i18n::tr!("ui-inventory-received-purchases"), true),
+        // LLSidepanelInventory::postBuild: the Received Items in the main window only
+        (RECEIVED_TAB, aurora_i18n::tr!("ui-inventory-received-purchases"), st.is_main()),
     ] {
         if show {
             tab_ids.push(id);
@@ -1476,6 +1567,32 @@ fn inventory_contents(
     drag::target(ui, p, &zone.response, inv, target, st, prefs, facts, actions);
     status(ui, p, inv, st, prefs, facts, actions, filtered);
     clipboard::shortcuts(ui, inv, target, st, prefs, facts, actions);
+}
+
+/// Full fetches requested by mutation dialogs must keep running even when
+/// the window showing the whole inventory is closed, independently of
+/// search scopes.
+fn fetch_whole_inventory(inv: &mut Inventory, st: &mut InventoryUi) {
+    if st.fetch_all && st.search.trim().is_empty() && !st.filters.active() && st.links_filter.is_none() && st.tab == 0 {
+        st.fetch_all = !rules::request_tree(inv, inv.root);
+    }
+}
+
+/// The additional window first opens on the left of the main one, so that
+/// both lists sit side by side; then where the resident left it.
+fn additional_window_pos(ctx: &egui::Context, screen: egui::Rect) -> egui::Pos2 {
+    let main = egui::AreaState::load(ctx, egui::Id::unique("inventory"))
+        .filter(|state| state.size.is_some())
+        .map_or_else(
+            || egui::Rect::from_min_size(egui::pos2(screen.right() - DEFAULT_SIZE.x - 20.0, 56.0), DEFAULT_SIZE),
+            |state| state.rect(),
+        );
+    let left = main.left() - DEFAULT_SIZE.x - 12.0;
+    if left >= screen.left() + 8.0 {
+        egui::pos2(left, main.top())
+    } else {
+        main.min + egui::vec2(32.0, 32.0)
+    }
 }
 
 pub fn show(
@@ -1562,11 +1679,7 @@ pub fn show(
     let inv = &mut world.inventory;
     bulk_permissions::show(ctx, p, inv, st, prefs, world.agent_id, &mut actions);
     st.visible.clear();
-    if st.fetch_all && st.search.trim().is_empty() && !st.filters.active() && st.links_filter.is_none() && st.tab == 0 {
-        // Full fetches requested by mutation dialogs must keep running even
-        // when the inventory window is closed, independently of search scopes.
-        st.fetch_all = !rules::request_tree(inv, inv.root);
-    }
+    fetch_whole_inventory(inv, st);
     // Copied folders load their whole tree for the paste; once loaded, they
     // are not walked again every frame until the inventory changes.
     if st
@@ -1658,40 +1771,60 @@ pub fn show(
         w.state.merchant = st.merchant;
         w.state.playing = st.playing;
         let before = (w.state.clipboard.clone(), w.state.cut);
-        let title = aurora_i18n::tr!("ui-inventory-inventory", value0 = folder_name(&world.inventory, w.root).to_string());
-        let window_id = format!("inventory_{}", w.id);
-        let floater = super::widgets::Floater::new(
-            &window_id,
-            title,
-            screen.center() - egui::vec2(210.0, 220.0),
-            Vec2::new(420.0, 440.0),
-        )
+        let window_id = floater_id(w.id);
+        let floater = if w.additional {
+            fetch_whole_inventory(&mut world.inventory, &mut w.state);
+            super::widgets::Floater::new(
+                &window_id,
+                aurora_i18n::tr!("common-inventory"),
+                additional_window_pos(ctx, screen),
+                DEFAULT_SIZE,
+            )
+        } else {
+            super::widgets::Floater::new(
+                &window_id,
+                aurora_i18n::tr!("ui-inventory-inventory", value0 = folder_name(&world.inventory, w.root).to_string()),
+                screen.center() - egui::vec2(210.0, 220.0),
+                Vec2::new(420.0, 440.0),
+            )
+        }
         .compact_header();
         if classic {
             w.state.aurora = None;
             floater.show(ctx, p, &mut w.open, |ui| {
-                folder_window_contents(
-                    ui,
-                    p,
-                    icons,
-                    &mut world.inventory,
-                    w.root,
-                    &mut w.state,
-                    prefs,
-                    &facts,
-                    &mut actions,
-                );
+                if w.additional {
+                    inventory_contents(ui, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
+                } else {
+                    folder_window_contents(
+                        ui,
+                        p,
+                        icons,
+                        &mut world.inventory,
+                        w.root,
+                        &mut w.state,
+                        prefs,
+                        &facts,
+                        &mut actions,
+                    );
+                }
             });
         } else {
-            // Aurora's window, kept under its folder.
+            // Aurora's window, kept under its folder (the whole inventory
+            // for the additional window).
             w.state.scope = w.root;
             let mut widen = false;
             let layout = aurora::Layout::of_window(ctx, &window_id);
-            let floater = if layout == aurora::Layout::Compact {
-                floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen)
-            } else {
-                floater
-            };
+            let mut floater = floater;
+            if w.additional {
+                floater = floater.title_note(aurora::item_count(&world.inventory, layout));
+                if layout != aurora::Layout::Compact {
+                    let (dot, text) = aurora::sync_state(p, &world.inventory, &w.state);
+                    floater = floater.title_state(dot, text);
+                }
+            }
+            if layout == aurora::Layout::Compact {
+                floater = floater.action("arrow-autofit-width-filled", aurora_i18n::tr!("inventory-widen"), &mut widen);
+            }
             floater.show(ctx, p, &mut w.open, |ui| {
                 aurora::contents(
                     ui,
@@ -1864,6 +1997,122 @@ mod tests {
             }
             assert!(ctx.memory(|m| m.has_focus(search)), "expanding restores search focus");
             assert_eq!(other, "elsewhere");
+        }
+    }
+
+    /// #1090: the main window's button opens the additional window on the
+    /// whole inventory and stays lit while it shows; that window has neither
+    /// the button nor the Received tab; a second click closes it and forgets
+    /// its search.
+    #[test]
+    fn the_main_window_toggles_one_additional_inventory_window() {
+        use crate::ui::widgets::elide_tests::Frames;
+        let button_id = egui::Id::unique("inventory_additional_button");
+        for classic in [false, true] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            crate::world::appearance::seed_demo(&mut world.inventory, crate::demo::DEMO_AGENT);
+            let mut st = InventoryUi::default();
+            let mut prefs = InventoryPreferences::default();
+            let images = Default::default();
+            let scripts = Default::default();
+            let mut frame = |st: &mut InventoryUi, mut open: bool, events: Vec<egui::Event>| {
+                frames.run(events, |ui| {
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut world,
+                        st,
+                        &mut prefs,
+                        &mut open,
+                        false,
+                        &images,
+                        &scripts,
+                        classic,
+                    );
+                })
+            };
+            let click = |ctx: &egui::Context| {
+                let pos = ctx
+                    .data(|d| d.get_temp::<egui::Rect>(button_id))
+                    .expect("the main window draws the button")
+                    .center();
+                [true, false].map(|pressed| {
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ]
+                })
+            };
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            assert!(!st.additional_open(), "classic={classic}");
+            for events in click(&ctx) {
+                frame(&mut st, true, events);
+            }
+            for _ in 0..2 {
+                frame(&mut st, true, Vec::new());
+            }
+            assert!(st.additional_open(), "classic={classic}: the click opens it");
+            let [w] = st.windows.as_slice() else {
+                panic!("classic={classic}: one window")
+            };
+            assert!(w.additional && w.root.is_nil() && w.state.ui_id == ADDITIONAL_WINDOW);
+            assert!(w.state.scope.is_nil(), "classic={classic}: the whole inventory");
+
+            // Alone on screen, the additional window shows its tabs but no
+            // Received tab, and has no button of its own.
+            ctx.data_mut(|d| d.remove::<egui::Rect>(button_id));
+            let texts = frame(&mut st, false, Vec::new());
+            let received = if classic {
+                aurora_i18n::tr!("ui-inventory-received-purchases")
+            } else {
+                aurora_i18n::tr!("inventory-tab-received")
+            };
+            let all = if classic {
+                aurora_i18n::tr!("common-inventory")
+            } else {
+                aurora_i18n::tr!("inventory-tab-all")
+            };
+            assert!(texts.iter().any(|t| t.source == all), "classic={classic}: its tabs");
+            assert!(!texts.iter().any(|t| t.source == received), "classic={classic}: no Received tab");
+            assert!(
+                ctx.data(|d| d.get_temp::<egui::Rect>(button_id)).is_none(),
+                "classic={classic}: no button"
+            );
+
+            // The lit button closes it; once reopened it starts afresh.
+            st.windows[0].state.search = "shirt".into();
+            for _ in 0..2 {
+                frame(&mut st, true, Vec::new());
+            }
+            for events in click(&ctx) {
+                frame(&mut st, true, events);
+            }
+            frame(&mut st, true, Vec::new());
+            assert!(!st.additional_open(), "classic={classic}: the second click closes it");
+            assert!(st.windows.is_empty(), "classic={classic}: dropped once closed");
+            for events in click(&ctx) {
+                frame(&mut st, true, events);
+            }
+            frame(&mut st, true, Vec::new());
+            assert!(st.additional_open());
+            assert!(st.windows[0].state.search.is_empty(), "classic={classic}: a fresh window");
+            st.close_additional_window();
+            frame(&mut st, true, Vec::new());
+            assert!(!st.additional_open(), "classic={classic}: @showinv closes it");
         }
     }
 
