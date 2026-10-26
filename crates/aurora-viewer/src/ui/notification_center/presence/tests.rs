@@ -181,6 +181,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         hover_tips: Default::default(),
         world_overlays: Default::default(),
         show_transparency: false,
+        conversation_thumbnails: 0,
     }
 }
 

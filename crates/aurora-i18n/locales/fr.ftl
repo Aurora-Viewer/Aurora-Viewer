@@ -2080,6 +2080,17 @@ ui-options-typing-chevron = Chevron devant « écrit »
 ui-options-typing-chevron-hint = Ajoute « > » à l'onglet d'une conversation privée pendant que l'autre résident écrit.
 ui-options-flash-unread = Faire clignoter les conversations non lues
 ui-options-flash-unread-hint = L'entrée d'une conversation qui reçoit un message pendant que vous en lisez une autre clignote doucement en violet, puis reste teintée jusqu'à sa lecture.
+ui-options-chat-thumbnails = Vignettes des conversations
+ui-options-chat-thumbnails-hint = Une image par conversation ouverte, avec son nombre de messages non lus : un clic affiche la conversation, un clic droit ouvre son menu.
+ui-options-chat-thumbnails-off = Masquées
+ui-options-chat-thumbnails-chat-bar = À côté de la barre de chat
+ui-options-chat-thumbnails-top-right = En haut à droite
+ui-options-chat-thumbnails-flash = Faire clignoter les vignettes à chaque nouveau message
+ui-options-chat-thumbnails-flash-hint = La vignette d'une conversation qui reçoit un message clignote, puis garde une marque jusqu'à la lecture de la conversation.
+ui-chat-thumbnails-more = { $n ->
+    [one] { $n } autre conversation
+   *[other] { $n } autres conversations
+    }
 ui-options-flash-conversations-button = Faire clignoter le bouton Conversations pour les nouveaux messages
 ui-options-flash-conversations-button-hint = Quand un message arrive alors que la fenêtre Conversations est fermée, son bouton clignote doucement en violet, puis reste teinté jusqu'à l'ouverture de la fenêtre. Minimisée, c'est la barre de la fenêtre qui clignote, puis reste teintée tant que des messages attendent d'être lus.
 ui-options-flash-conversations-nearby = Aussi pour le chat local
@@ -5047,6 +5058,19 @@ common-online-status-visible-to-this-friend = Statut connecté visible pour cet 
 ui-bars-online-status = Statut de connexion
 ui-bars-quickjump = Saut rapide
 ui-bars-stream-title = Titre du flux
+stream-title-window = En cours de lecture
+stream-title-none = Aucun flux en lecture
+stream-title-text-only = Afficher le titre seul, sur le monde
+stream-title-text-tip = Faites-le glisser pour le déplacer. Clic droit : historique, copier, fenêtre.
+stream-title-copy = Copier le titre
+stream-title-history = Historique
+stream-title-as-window = Afficher en fenêtre
+stream-title-history-window = Écoutés récemment
+stream-title-history-empty = Aucun titre écouté pour l'instant.
+stream-title-clear = Effacer
+stream-title-max-entries = Entrées max. :
+stream-title-copy-selected = Copier dans le presse-papiers
+stream-title-copy-short = Copier
 ui-bars-animation-explorer = Explorateur d'animations
 ui-bars-edit-particles = Modifier les particules
 ui-bars-media-streams-backup = Sauvegarde des flux média

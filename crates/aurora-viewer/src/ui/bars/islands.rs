@@ -58,7 +58,7 @@ fn row(screen: Rect, left: f32, right: f32) -> Rect {
 
 /// The slot face: the raised face under the pointer or while its menu is
 /// open, the accent while `active`, nothing at rest.
-pub(super) fn slot_face(ui: &egui::Ui, p: &Palette, rect: Rect, hot: bool, active: bool) {
+pub(crate) fn slot_face(ui: &egui::Ui, p: &Palette, rect: Rect, hot: bool, active: bool) {
     let fill = match (active, hot) {
         (true, true) => Some(p.violet.gamma_multiply(0.55)),
         (true, false) => Some(p.violet.gamma_multiply(0.40)),
@@ -201,6 +201,15 @@ pub fn top(
     right = sys_rect.left() - MARGIN;
     let acc_rect = row(screen, right - account_width(ui, p, st), right);
     right = acc_rect.left() - MARGIN;
+    // the conversations' thumbnails in an island of their own, left of the
+    // account, where the Legacy Viewer's chiclets stand (#1134); the place
+    // keeps two thirds of the row
+    let thumbs_w = crate::ui::chat::thumbnails::top_width(st.conversation_thumbnails, SLOT, PAD, (right - screen.left()) / 3.0);
+    if thumbs_w > 0.0 {
+        let thumbs = row(screen, right - thumbs_w, right);
+        crate::ui::chat::thumbnails::reserve_top(&ctx, thumbs, SLOT, true);
+        right = thumbs.left() - MARGIN;
+    }
     let left = screen.left() + MARGIN;
     let menu_rect = row(screen, left, left + PAD * 2.0 + SLOT);
     // the bug report in an island of its own after the wolf's (the human's
@@ -320,7 +329,7 @@ fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mu
 
 /// One island in an area of its own at `rect`, its surface under what
 /// `body` draws there (in screen coordinates).
-pub(super) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+pub(crate) fn area<R>(ctx: &egui::Context, p: &Palette, name: &'static str, rect: Rect, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
     // (the windows keep their title clear of it: `layout::clear_of_islands`)
     crate::ui::layout::island_drawn(ctx, rect);
     egui::Area::new(Id::unique(("bars_island", name)))
@@ -1076,6 +1085,7 @@ mod tests {
             hover_tips: Default::default(),
             world_overlays: Default::default(),
             show_transparency: false,
+            conversation_thumbnails: 0,
         }
     }
 

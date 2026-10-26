@@ -3716,6 +3716,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: drop feedback, give confirmation, or give and its notice (all conversation styles) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
+| `AURORA_DEMO_THUMBNAILS=bar\|top\|off` | The conversations' thumbnails beside the chat bar, at the top right or hidden, for the run (#1134) |
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
@@ -4706,6 +4707,17 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_FPS_LIMIT=60`: the chat at frame 780, gone at 1500, back at
   2280 with the message of the 34th second. With `ask`, the dialog shows
   from frame 840 until it is answered.
+- **`AURORA_DEMO_THUMBNAILS=bar|top|off`**: where the conversations'
+  thumbnails stand for the run (`ui/chat/thumbnails.rs`), Preferences ›
+  Chat › Conversation thumbnails left alone. `bar` (the default): a glass
+  island between the chat island and the dock, or in the Legacy bar after
+  the chat field; `top`: an island at the top right of the windows' area;
+  `off`: none. One square per open conversation (picture, insignia or
+  conference glyph) with the red unread counter; with more conversations
+  than room (`AURORA_DEMO_CONV=many`), a "+N" square lists the others and
+  the unread ones stay in sight. With `AURORA_DEMO_FLASH=1`, Tess's
+  thumbnail flashes from the 10th second (eight rises, then a faint mark
+  until her conversation is opened).
 - **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every
   8 seconds ("Are you there? (n)"), while the Conversations window is
   open. With another conversation shown, her entry (the column in
@@ -6761,6 +6773,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
+| `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
@@ -7055,6 +7068,16 @@ What the inventory must show with these scenarios:
   separate blacklist rows and persistence after relog. Sound filtering is local
   and does not use the Bridge; blocking an object does not inherit to rez descendants.
 
+- **`AURORA_DEMO_STREAM_TITLE=[window|history|text][,stop]`**: the demo
+  parcel's radio changes title every 6 seconds, one title too long for the
+  window (it slides to show its end, waits, comes back), after five titles
+  played during the loading, so the history is filled. At frame 600
+  World › Stream title opens: the window (`window`, the default), the
+  window and its history (`history`: newest first, Ctrl / Shift to choose,
+  Clear, Max. entries, Copy to clipboard), or the title alone over the
+  world (`text`: drag it anywhere, right click for the history, the copy
+  and the window). `stop` ends the stream after the last title: "No
+  stream playing", the history kept. No sound is played.
 - **`AURORA_DEMO_SOUND=1|hud`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends

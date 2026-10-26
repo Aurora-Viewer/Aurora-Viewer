@@ -212,7 +212,7 @@ pub(super) fn entry_id(entry: Pinned) -> egui::Id {
 }
 
 /// The picture of an entry.
-enum Icon<'a> {
+pub(super) enum Icon<'a> {
     /// A resident: their picture and status.
     Avatar(Option<&'a egui::TextureHandle>, presence::Status),
     /// A group: its insignia, once loaded (none: the group glyph).
@@ -638,7 +638,7 @@ pub(super) fn tab_order(world: &World, st: &ChatUi) -> Vec<Option<Uuid>> {
     order
 }
 
-fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
+pub(super) fn entry_name(world: &World, id: &Uuid, kind: Kind) -> String {
     if kind == Kind::Private && world.social.avatar_names.get(id).is_some() {
         return world.social.display_name_of(id);
     }
@@ -871,7 +871,7 @@ fn entry(ui: &mut egui::Ui, p: &Palette, e: &Entry, rail: bool, id: egui::Id) ->
 
 /// The picture of an entry: a resident's with its status, a group's
 /// insignia, a glyph on a tinted square.
-fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str, rect: egui::Rect, ring: Color32) {
+pub(super) fn paint_picture(ui: &egui::Ui, p: &Palette, icon: &Icon, name: &str, rect: egui::Rect, ring: Color32) {
     let radius = ui.visuals().window_corner_radius;
     match icon {
         Icon::Avatar(pic, status) => {

@@ -53,9 +53,29 @@ impl Flashes {
     /// messages this frame (0 for the conversation shown), and whether it
     /// is still moving (a repaint is due).
     pub(super) fn wash(&mut self, id: Uuid, unread: usize, now: f64, on: bool) -> (f32, bool) {
+        match self.track(id, unread, now) {
+            Some(start) if on => breathe(start, now),
+            _ => (0.0, false),
+        }
+    }
+
+    /// `wash` for a small face that wears the Conversations button's mark
+    /// (a conversation's thumbnail, `thumbnails.rs`): the button's
+    /// strength, held at the top of a rise with Reduce motion (`still`).
+    pub(super) fn mark(&mut self, id: Uuid, unread: usize, now: f64, still: bool) -> (f32, bool) {
+        let Some(start) = self.track(id, unread, now) else {
+            return (0.0, false);
+        };
+        let (wash, moving) = if still { hold(start, now) } else { breathe(start, now) };
+        (BUTTON * wash, moving)
+    }
+
+    /// When the flash of `id` with `unread` messages began (None: no
+    /// flash, the faint wash only), or None when nothing is unread.
+    fn track(&mut self, id: Uuid, unread: usize, now: f64) -> Option<Option<f64>> {
         if unread == 0 {
             self.seen.remove(&id);
-            return (0.0, false);
+            return None;
         }
         // more unread than last frame while the list was on screen: news
         // (a conversation seen for the first time too: an IM that opens it)
@@ -64,10 +84,7 @@ impl Flashes {
             *start = Some(now);
         }
         *count = unread;
-        if !on {
-            return (0.0, false);
-        }
-        breathe(*start, now)
+        Some(*start)
     }
 }
 
