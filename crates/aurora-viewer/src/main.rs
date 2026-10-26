@@ -78,6 +78,7 @@ mod slurl_handoff;
 mod snapshot;
 mod spelling;
 mod sys_probe;
+mod system_info;
 mod system_notify;
 mod theme;
 mod tolerant;
@@ -113,6 +114,8 @@ fn main() -> anyhow::Result<()> {
     // SAFETY: the first lines of main, before any other thread starts (the
     // read above starts none).
     let vulkan_layers_off = unsafe { aurora_render::vulkan_layers::disable(allow_overlays) };
+    // SAFETY: as above, no other thread yet.
+    let dozen_off = unsafe { aurora_render::vulkan_drivers::disable() };
     if aurora_updater::install::run_helper()? {
         return Ok(());
     }
@@ -145,6 +148,13 @@ fn main() -> anyhow::Result<()> {
             "Vulkan layers kept out of the viewer (overlays: crashes and lost images, #901): {}; overlays {} in Preferences › Graphics, AURORA_VULKAN_LAYERS=keep loads them all",
             names.join(", "),
             if allow_overlays { "allowed" } else { "not allowed" }
+        );
+    }
+    if dozen_off {
+        log::info!(
+            "Vulkan driver kept out of the viewer: Dozen (Vulkan on Direct3D 12, from Microsoft's compatibility pack; crashed an old Direct3D 12 driver at start), {}={}; AURORA_VULKAN_DRIVERS=keep loads it",
+            aurora_render::vulkan_drivers::DISABLE_VARIABLE,
+            aurora_render::vulkan_drivers::DOZEN_GLOB
         );
     }
     // the hooks injected later (Discord's overlay…) cannot be kept out:

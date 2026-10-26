@@ -66,8 +66,9 @@ struct Line {
     username: String,
     /// The second line: their status and where they are, when known.
     status: String,
-    /// The color of their first contact set.
-    set: Option<egui::Color32>,
+    /// Their contact set's symbol (the highest-priority set with one), else
+    /// the color of their first contact set.
+    set: Option<rows::SetMark>,
 }
 
 fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
@@ -106,14 +107,22 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
                 (true, Some(region)) => region.clone(),
                 _ => state.to_owned(),
             };
-            let set = world
-                .contact_sets
-                .friend_color(&f.id, |id| world.social.is_friend(id))
-                .or_else(|| {
-                    let first = world.contact_sets.friend_sets(&f.id).into_iter().next()?;
-                    Some(world.contact_sets.set(&first)?.color)
-                })
-                .map(crate::ui::contacts::color32);
+            let icon = world.contact_sets.appearance(&f.id).icons.first().map(|i| {
+                rows::SetMark::Icon(
+                    crate::world::contact_sets::appearance::ICONS[i.icon],
+                    crate::ui::colors::set_color(i.color),
+                )
+            });
+            let set = icon.or_else(|| {
+                world
+                    .contact_sets
+                    .friend_color(&f.id, |id| world.social.is_friend(id))
+                    .or_else(|| {
+                        let first = world.contact_sets.friend_sets(&f.id).into_iter().next()?;
+                        Some(world.contact_sets.set(&first)?.color)
+                    })
+                    .map(|c| rows::SetMark::Dot(crate::ui::contacts::color32(c)))
+            });
             Line {
                 friend: f.clone(),
                 name,

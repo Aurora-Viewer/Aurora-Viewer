@@ -43,6 +43,9 @@ pub struct ContactSet {
     pub color: [f32; 4],
     pub priority: i32,
     pub visuals: Visuals,
+    /// The members' private conversations have a section of their own in
+    /// Conversations (#1104, an Aurora addition).
+    pub separate_chats: bool,
     /// Per-set automatic responses: kept as read so that the file round-trips
     /// (not used by Aurora yet).
     autoresponse: BTreeMap<String, Llsd>,
@@ -58,6 +61,7 @@ impl ContactSet {
             color,
             priority: 0,
             visuals: Visuals::default(),
+            separate_chats: false,
             autoresponse: BTreeMap::new(),
         }
     }
@@ -69,6 +73,10 @@ pub struct ContactSets {
     sets: BTreeMap<String, ContactSet>,
     pub stack_icons: bool,
     appearances: std::collections::HashMap<Uuid, std::sync::Arc<Appearance>>,
+    /// The sets with `separate_chats`, highest priority first, and the one
+    /// of them each member's conversation goes to (an index in it).
+    chat_sections: Vec<String>,
+    chat_section_of: std::collections::HashMap<Uuid, usize>,
     pub default_color: [f32; 4],
     /// Non-friends added to a set or given an alias (mExtraAvatars).
     extra: BTreeSet<Uuid>,
@@ -167,6 +175,7 @@ impl ContactSets {
                     let mut set = ContactSet::new(name, color_from(&value["color"], self.default_color));
                     set.priority = value["aurora_priority"].as_i32();
                     set.visuals = Visuals::read(&value["aurora_visuals"]);
+                    set.separate_chats = value["aurora_separate_chats"].as_bool();
                     set.notify = value["notify"].as_bool();
                     set.sort_by_online = !value.has("sort_by_online_status") || value["sort_by_online_status"].as_bool();
                     for k in AUTORESPONSE_KEYS {
@@ -182,6 +191,7 @@ impl ContactSets {
             }
         }
         self.rebuild_appearances();
+        self.rebuild_chat_sections();
     }
 
     /// exportToLLSD.
@@ -206,6 +216,7 @@ impl ContactSets {
             s.insert("color", color_llsd(set.color));
             s.insert("aurora_priority", set.priority);
             s.insert("aurora_visuals", set.visuals.write());
+            s.insert("aurora_separate_chats", set.separate_chats);
             s.insert("notify", set.notify);
             s.insert("sort_by_online_status", set.sort_by_online);
             for (k, v) in &set.autoresponse {
@@ -225,6 +236,7 @@ impl ContactSets {
     fn changed(&mut self) {
         self.generation += 1;
         self.rebuild_appearances();
+        self.rebuild_chat_sections();
         let Some(path) = &self.path else {
             return;
         };
@@ -303,6 +315,43 @@ impl ContactSets {
         if let Some(s) = self.sets.get_mut(name) {
             s.sort_by_online = on;
             self.changed();
+        }
+    }
+
+    pub fn set_separate_chats(&mut self, name: &str, on: bool) {
+        if let Some(s) = self.sets.get_mut(name)
+            && s.separate_chats != on
+        {
+            s.separate_chats = on;
+            self.changed();
+        }
+    }
+
+    /// The sets whose members' conversations have their own section of
+    /// Conversations, highest priority first (#1104).
+    pub fn chat_sections(&self) -> &[String] {
+        &self.chat_sections
+    }
+
+    /// The section of `id`'s private conversation (an index in
+    /// `chat_sections`): the highest-priority such set they are in.
+    pub fn chat_section(&self, id: &Uuid) -> Option<usize> {
+        self.chat_section_of.get(id).copied()
+    }
+
+    /// Rebuilt on every change, like the appearances: the column of
+    /// conversations looks each entry up without sorting sets.
+    fn rebuild_chat_sections(&mut self) {
+        self.chat_sections = self
+            .ordered_set_names()
+            .into_iter()
+            .filter(|name| self.sets[name].separate_chats)
+            .collect();
+        self.chat_section_of.clear();
+        for (i, name) in self.chat_sections.iter().enumerate() {
+            for id in &self.sets[name].friends {
+                self.chat_section_of.entry(*id).or_insert(i);
+            }
         }
     }
 
@@ -544,6 +593,42 @@ mod tests {
         cs.clear_pseudonym(&[id(7)], is_friend);
         assert!(cs.members(EXTRA_AVS, &[id(1)], is_friend).is_empty());
         assert_eq!(cs.members(PSEUDONYM, &[id(1)], is_friend), vec![id(1)]);
+    }
+
+    /// A resident in several sets with their own section of Conversations
+    /// goes to the highest-priority one; the option round-trips the file.
+    #[test]
+    fn separate_chats_follow_the_set_priority() {
+        let is_friend = |_: &Uuid| true;
+        let mut cs = ContactSets::default();
+        for name in ["Besties", "Work", "Quiet"] {
+            cs.add_set(name);
+        }
+        cs.add_to_set(&[id(1), id(2)], "Besties", is_friend);
+        cs.add_to_set(&[id(1), id(3)], "Work", is_friend);
+        cs.add_to_set(&[id(4)], "Quiet", is_friend);
+        assert!(cs.chat_sections().is_empty() && cs.chat_section(&id(1)).is_none());
+        cs.set_separate_chats("Besties", true);
+        cs.set_separate_chats("Work", true);
+        // equal priorities: by name, Besties first
+        assert_eq!(cs.chat_sections(), ["Besties", "Work"]);
+        assert_eq!(cs.chat_section(&id(1)), Some(0));
+        assert_eq!(cs.chat_section(&id(3)), Some(1));
+        assert_eq!(cs.chat_section(&id(4)), None, "Quiet keeps its members with the others");
+        // above Quiet, then above Besties
+        cs.move_priority("Work", true);
+        assert_eq!(cs.chat_sections(), ["Besties", "Work"]);
+        cs.move_priority("Work", true);
+        assert_eq!(cs.chat_sections(), ["Work", "Besties"]);
+        assert_eq!(cs.chat_section(&id(1)), Some(0), "the higher set wins");
+        assert_eq!(cs.chat_section(&id(2)), Some(1));
+        let mut again = ContactSets::default();
+        again.import(&aurora_llsd::from_xml(&aurora_llsd::to_xml(&cs.export())).expect("valid xml"));
+        assert_eq!(again.chat_sections(), cs.chat_sections());
+        assert_eq!(again.chat_section(&id(1)), Some(0));
+        cs.set_separate_chats("Work", false);
+        assert_eq!(cs.chat_section(&id(1)), Some(0));
+        assert_eq!(cs.chat_sections(), ["Besties"]);
     }
 
     #[test]

@@ -6,9 +6,10 @@
 use super::contents_selection;
 use crate::build::BuildTool;
 use crate::build::contents::AT_LSL_TEXT;
+use crate::build::contents_drop;
 use crate::theme::Palette;
+use crate::ui::inventory::item_icon;
 use crate::ui::inventory::permissions::Permissions;
-use crate::ui::inventory::{InvDrag, item_icon};
 use crate::ui::{menu, widgets};
 use crate::world::World;
 use aurora_net::build::{TaskItem, perm};
@@ -158,28 +159,61 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         ui.memory_mut(|m| m.surrender_focus(contents_selection::focus_id(object_id)));
     }
     contents_selection::finish_if_hidden_or_blurred(ui.ctx(), tool, world);
+    if demo_enabled() {
+        ui.ctx().data_mut(|d| d.insert_temp(demo_zone_id(), zone.response.rect));
+    }
     // egui's generic drop zone replaces the frame fill with a button color.
     // Keep the inventory surface and show a border while cargo is over it.
     if egui::DragAndDrop::has_any_payload(ui.ctx()) && zone.response.contains_pointer() {
-        let allowed = editable && egui::DragAndDrop::has_payload_of_type::<InvDrag>(ui.ctx());
+        let carried = crate::ui::inventory::drag::carried_ids(ui.ctx());
+        let ctrl = ui.input(|i| i.modifiers.ctrl);
+        // Items, folders and selections alike (LLTaskCategoryBridge::dragOrDrop),
+        // all of them accepted or none.
+        let check = carried
+            .as_ref()
+            .map(|ids| tool.ui.contents_drop.check(world, ids, idx, ctrl, contents_drop::Target::Panel));
+        let allowed = check.is_some_and(|c| c.is_ok());
         ui.painter().rect_stroke(
             zone.response.rect,
             ui.visuals().window_corner_radius,
             egui::Stroke::new(1.0, if allowed { p.violet_light } else { p.muted_dim }),
             egui::StrokeKind::Inside,
         );
-    }
-    let dropped = zone.response.dnd_release_payload::<InvDrag>();
-    if let Some(d) = dropped
-        && let Some(item) = world.inventory.items.get(&d.0).cloned()
-    {
-        if editable {
-            let ctrl = ui.input(|i| i.modifiers.ctrl);
-            tool.drop_inventory_item(world, idx, &item, ctrl);
-        } else {
-            tool.status = aurora_i18n::tr!("build-ui-contents-you-cannot-edit-this-object-s-contents").into();
+        if carried.is_some() {
+            crate::ui::inventory::drag::feedback(
+                ui.ctx(),
+                if allowed {
+                    egui::CursorIcon::Copy
+                } else {
+                    egui::CursorIcon::NotAllowed
+                },
+            );
+        }
+        if let Some(ids) = carried
+            && ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary))
+        {
+            egui::DragAndDrop::clear_payload(ui.ctx());
+            match contents_drop::plan(world, &ids, idx, ctrl, contents_drop::Target::Panel) {
+                Ok(drops) => tool.drop_inventory(world, idx, drops),
+                Err(reason) => tool.status = contents_drop::reason_text(reason).into(),
+            }
         }
     }
+}
+
+/// `AURORA_DEMO_CONTENTS_DROP=panel…` carries inventory onto the list.
+fn demo_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_DEMO").as_deref() == Ok("1") && std::env::var_os("AURORA_DEMO_CONTENTS_DROP").is_some())
+}
+
+fn demo_zone_id() -> egui::Id {
+    egui::Id::unique("contents_drop_demo_zone")
+}
+
+/// Where the Contents list was drawn, for the demo pointer.
+pub(crate) fn demo_zone(ctx: &egui::Context) -> Option<egui::Rect> {
+    ctx.data(|d| d.get_temp(demo_zone_id()))
 }
 
 #[allow(clippy::too_many_arguments)]

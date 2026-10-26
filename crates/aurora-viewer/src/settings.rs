@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub mod backup;
 mod hover_height;
+pub mod stream_list;
 
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
@@ -969,6 +970,9 @@ pub struct Settings {
     pub fly_after_teleport: bool,
     /// The crouch key stays down until pressed again (FSCrouchToggle, off).
     pub crouch_toggle: bool,
+    /// Quickjump: jump and land without waiting for the pre-jump and landing
+    /// animations (FSIgnoreFinishAnimation, off; Me › Quickjump too).
+    pub quickjump: bool,
     /// A left click on an object whose click action is Sit does not sit
     /// (FSBlockClickSit, off); the menu's Sit still does.
     pub block_click_sit: bool,
@@ -1698,6 +1702,7 @@ impl Default for Settings {
             walk_backwards_without_turning: false,
             fly_after_teleport: false,
             crouch_toggle: false,
+            quickjump: false,
             block_click_sit: false,
             double_click: crate::autopilot::DoubleClick::Nothing,
             follow: Default::default(),

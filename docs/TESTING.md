@@ -328,7 +328,11 @@ photo divided by it: 15 tiles of 640 x 600 for 3200 x 1800 with
 `AURORA_DEMO_DEBUG=ao`, no dark line may cross the ground along the tiles'
 borders. With `AURORA_DEBUG_SHADOWS=1`, the sun's shadows are those of the
 photo in one pass, in every tile (the shadow of the box on the right of the
-plaza, with `AURORA_DEMO_POS=129,134`).
+plaza, with `AURORA_DEMO_POS=129,134`). The world keeps the first tile's
+instant until the last: with `AURORA_DEMO_SNAPSHOT_TILE=1024` at
+3840 x 3840 (36 parts), `AURORA_DEMO_CROWD=12,3`, `AURORA_DEMO_PHYSICS=1`
+and `AURORA_DEMO_POS=129,134`, the hopping avatars are never cut along the
+tiles' borders.
 `inventory[:<side>|window]` opens the window on the Inventory destination
 (512 by default), asks the price at `AURORA_DEMO_SNAPSHOT_FRAME` and
 confirms it 60 frames later: the texture is encoded, the demo answers the
@@ -3675,6 +3679,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
+| `AURORA_DEMO_ABOUT=info\|licences[:end]` | Help › About Aurora Viewer opens on its Info or Licences tab |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
@@ -3716,6 +3721,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
+| `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -4303,6 +4309,13 @@ failure. Grid validation and any paid upload are performed by the human.
   arrives. Capture with `AURORA_FPS_LIMIT=60` at 800 (and 960 with
   `later`), in `--language en` and `fr`; Preferences › Interface › "Reduce
   animations" leaves the card still.
+- **`AURORA_DEMO_ABOUT=info|licences[:end]`**: the About window
+  (`ui/about.rs`) opens at frame 600 on the tab asked for (`info` when the
+  value is anything else); `:end` scrolls the tab to its last card. Info shows the demo region and simulator, the
+  computer once `system_info.rs` has read it in the background (a
+  "Reading…" line for a moment), and "Copy to clipboard"; Licences lists
+  NOTICE.md, a card per heading. Capture at frame 700 with
+  `AURORA_FPS_LIMIT=60`, in `--language en` and `fr`.
 - **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
   sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
   pushes & hits" window opens at frame 600, a resident bumps the agent at
@@ -4636,6 +4649,24 @@ failure. Grid validation and any paid upload are performed by the human.
   Manually: drag an item from the inventory onto a private conversation
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
+
+- **`AURORA_DEMO_CONTENTS_DROP=world|panel[:ctrl][:drop]`**: with
+  `AURORA_DEMO_INVENTORY=1` and `AURORA_DEMO_ACTIONS=1`, a selection of
+  four entries (a notecard, a script, a sound and an object) is carried
+  from frame 700, without a press. `world` puts the pointer on the yellow
+  action object 976 (yours, modifiable): without `:ctrl` the object in the
+  selection needs Ctrl, so nothing is outlined and `:drop` says "Hold Ctrl
+  over an object…"; with `:ctrl` the box gets the violet outline and
+  `:drop` (frame 720) puts the four entries into its contents, the script
+  stopped. `panel` puts the pointer on the Contents tab: add
+  `AURORA_DEMO_BUILD=move,object:976` and `AURORA_DEMO_BUILD_TAB=contents`
+  (also useful with `world` to see the contents arrive); the list gets its
+  violet outline and `:drop` adds the four entries, the script running
+  unless `:ctrl`. Capture at frame 715 (hover) or 800 (drop) with
+  `AURORA_FPS_LIMIT=60`: "Contents (3 items)" becomes "(7 items)".
+  Manually: select several items (Ctrl+click) or a folder and drag them
+  onto an object you own with and without Ctrl, onto someone else's (a
+  no-transfer item refuses the whole drop), and onto the Contents tab.
 
 - **`AURORA_DEMO_GIVE=profile|avatar[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
   its entries are carried from frame 700, without a press. `profile`, with
@@ -5263,7 +5294,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Chat › Show the channel selector does), `friend-away` / `friend-offline`
   (the friend of `im` away in the region or offline: the selected entry's
   dot keeps its crescent or hollow ring, cut in the entry's violet face;
-  with `narrow` too). The calls are those of
+  with `narrow` too), `sets` (the contact sets Family, with the friend and
+  Loup, and Clubbing, with Loup and Tess, both shown apart, Family the
+  higher: the column opens with a FAMILY section holding the friend and
+  Loup after Family's heart symbol, then CLUBBING with Tess after its
+  colour's dot, above Private messages; #1104). The calls are those of
   `AURORA_DEMO_CALL` and start 3 s after the login: capture at frame 780
   with `AURORA_FPS_LIMIT=60`. What to look for: the layout of the
   validated mockups (variant A, and B with `compact`); the column's entries, a message's right-click menu (copy, quote, its author's menu; no buttons and the arrow under the pointer) and the head's buttons all act
@@ -5549,7 +5584,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the run only, nothing is written to the account's files): `friends`
   (860 × 600: Nova and Orion online, pixelboutique and testtouch offline,
   the rights each way on the rows, Nova's sheet with "Nickname and contact
-  sets"), `groups` (860 × 500: "No active group", Aurora Builders active,
+  sets"), `friends-symbols` (`friends` with the contact sets of `visuals`:
+  a set's symbol after the name where the set has one, its colour's dot
+  otherwise, #1104), `groups` (860 × 500: "No active group", Aurora Builders active,
   pinned, two notices unread and its sheet open, the market's chat
   blocked, "3 groups out of 42"), `sets` (520 × 430: Family, Clubbing and
   Shop, the wolf's nickname, a non-friend, Nova chosen with her quick
@@ -7091,6 +7128,7 @@ What the inventory must show with these scenarios:
 | `AURORA_OWN_MOTION_TRACE=1` | Aurora's movement of our avatar frame by frame on a grid |
 | `AURORA_GPU_VALIDATION=1` | wgpu validation layers |
 | `AURORA_VULKAN_LAYERS=keep` | Loads the third-party Vulkan layers the viewer keeps out (Overwolf's, and the other overlays' unless allowed in Preferences) |
+| `AURORA_VULKAN_DRIVERS=keep` | Loads Dozen (Vulkan on Direct3D 12) when installed, which the viewer keeps out |
 | `AURORA_GPU=<number>`, `<name>` or `auto` | The GPU to draw with for this launch, over Preferences › Graphics |
 | `AURORA_GPU_START_FAIL=1` | Start as if no graphics card could draw the window: the message the user gets then |
 | `AURORA_HOVER_CHECK=1` | Diagnostics of the hover cursor |
@@ -7163,6 +7201,21 @@ What the inventory must show with these scenarios:
   running viewer instead (Discord) cannot be kept out: the log names them
   when they arrive (`overlay hook loaded in the viewer`). To
   see which layers the loader loads: `VK_LOADER_DEBUG=layer` in a console.
+- **`AURORA_VULKAN_DRIVERS=keep`**: at start the viewer sets
+  `VK_LOADER_DRIVERS_DISABLE=*dzn*` in its own process, so that the Vulkan
+  loader skips Dozen (`vulkan_dzn.dll`, Vulkan on Direct3D 12, from
+  Microsoft's "OpenCL, OpenGL, and Vulkan Compatibility Pack"): while it
+  lists its devices, Dozen opens every Direct3D 12 adapter, and an old AMD
+  Direct3D 12 driver crashed there at start (`vulkan_dzn` → `d3d12core` →
+  `amdxc64` in the crash report). The log says so (`Vulkan driver kept out
+  of the viewer`). Nothing is set when the user already set
+  `VK_LOADER_DRIVERS_DISABLE`, `VK_LOADER_DRIVERS_SELECT`, `VK_DRIVER_FILES`,
+  `VK_ICD_FILENAMES` or `VK_ADD_DRIVER_FILES`; a loader older than 1.3.234
+  ignores the variable. When no Vulkan adapter is left without Dozen (a GPU
+  with no Vulkan driver of its own), the renderer lets it back in and tries
+  again (`GPU: no Vulkan adapter without Dozen` in the log). `keep` leaves
+  the environment as it is. To see which drivers the loader loads:
+  `VK_LOADER_DEBUG=driver` in a console.
 - **`AURORA_GPU=<number>|<name>|auto`**: the adapter the renderer opens,
   over Preferences › Graphics › Fluidity › Graphics card (#894): its number
   in the `GPU adapter <n>:` lines of the log, or a part of its name in any

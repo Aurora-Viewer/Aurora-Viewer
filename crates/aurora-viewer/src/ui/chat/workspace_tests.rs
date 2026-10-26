@@ -361,6 +361,33 @@ fn sessions_fall_in_their_sections() {
     assert_eq!(super::super::sidebar::kind(&h.world, &JANE), Kind::Private);
 }
 
+/// A contact set shown apart takes its members' private conversations into
+/// a section of its own, named after it, above the private messages
+/// (#1104): the keyboard follows it, and a drag does not leave it.
+#[test]
+fn a_set_shown_apart_has_its_own_section() {
+    use super::super::sidebar::{Section, section, tab_order};
+    let mut h = Harness::new(ChatStyle::Aurora);
+    crate::ui::widgets::place_floater(&h.frames.ctx, "conversations", egui::pos2(20.0, 20.0), egui::vec2(960.0, 650.0));
+    h.world.contact_sets.add_set("Besties");
+    h.world.contact_sets.add_to_set(&[BOB], "Besties", |_| true);
+    let texts = h.settle();
+    assert_eq!(tab_order(&h.world, &h.st), [None, Some(JANE), Some(BOB)], "off: with the others");
+    assert!(texts.iter().all(|t| t.source != "BESTIES"));
+    h.world.contact_sets.set_separate_chats("Besties", true);
+    let texts = h.settle();
+    assert_eq!(section(&h.world, &BOB), Section::Set(0));
+    assert_eq!(tab_order(&h.world, &h.st), [None, Some(BOB), Some(JANE)]);
+    let head = painted(&texts, "BESTIES").rect;
+    let private = painted(&texts, &aurora_i18n::tr!("ui-chat-section-private").to_uppercase()).rect;
+    let (bob, jane) = (h.conversation_rect(BOB), h.conversation_rect(JANE));
+    assert!(head.center().y < bob.center().y, "{head:?} {bob:?}");
+    assert!(bob.center().y < private.center().y && private.center().y < jane.center().y);
+    let original = h.st.reorder.sessions(&h.world);
+    h.drag_conversation(bob.center(), jane.center(), Harness::drop_at(jane.center()));
+    assert_eq!(h.st.reorder.sessions(&h.world), original, "no move out of the set's section");
+}
+
 impl Harness {
     fn conversation_rect(&mut self, id: Uuid) -> egui::Rect {
         let texts = self.settle();

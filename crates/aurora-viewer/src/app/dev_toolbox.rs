@@ -47,7 +47,7 @@ pub(super) struct Toolbox {
     /// That press came: the next frame takes its surface.
     pick_now: bool,
     /// What does not change during a session (OS, processor, memory).
-    machine: Option<std::sync::Arc<std::sync::OnceLock<String>>>,
+    machine: Option<crate::system_info::Reading>,
     /// Bumped with every result, so the preview is composed again only when
     /// something it shows changed.
     generation: u64,
@@ -631,31 +631,11 @@ impl App {
 
     /// J4: what the build runs on.
     fn system_text(&mut self, renderer: &Renderer) -> String {
-        let machine = self
-            .toolbox
-            .machine
-            .get_or_insert_with(|| {
-                let cell = std::sync::Arc::new(std::sync::OnceLock::new());
-                let fill = cell.clone();
-                // sysinfo reads the system for a while: off the frame
-                std::thread::spawn(move || {
-                    use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
-                    let system = System::new_with_specifics(
-                        RefreshKind::nothing()
-                            .with_cpu(CpuRefreshKind::nothing())
-                            .with_memory(MemoryRefreshKind::nothing().with_ram()),
-                    );
-                    let _ = fill.set(format!(
-                        "OS: {} ({}) · CPU: {} · RAM {} GB",
-                        System::long_os_version().unwrap_or_else(|| std::env::consts::OS.into()),
-                        std::env::consts::ARCH,
-                        system.cpus().first().map_or("unknown", |c| c.brand().trim()),
-                        system.total_memory().div_ceil(1024 * 1024 * 1024)
-                    ));
-                });
-                cell
-            })
-            .clone();
+        let machine = self.toolbox.machine.get_or_insert_with(crate::system_info::Reading::start).clone();
+        let machine = machine.get().map_or_else(
+            || MACHINE_PENDING.to_owned(),
+            |m| format!("OS: {} · CPU: {} · RAM {} GB", m.os, m.cpu, m.memory_mb.div_ceil(1024)),
+        );
         let info = &renderer.info;
         let mut out = String::new();
         let _ = writeln!(
@@ -665,7 +645,7 @@ impl App {
             aurora_version::commit(),
             env!("AURORA_BUILD_PROFILE")
         );
-        let _ = writeln!(out, "{}", machine.get().map_or(MACHINE_PENDING, String::as_str));
+        let _ = writeln!(out, "{machine}");
         let _ = writeln!(
             out,
             "GPU: {} ({}, driver {}, {} MB VRAM, {})",

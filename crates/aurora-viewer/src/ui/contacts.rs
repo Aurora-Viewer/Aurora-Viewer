@@ -1923,6 +1923,13 @@ fn set_config_window(ctx: &egui::Context, p: &Palette, world: &mut World, st: &m
                 if widgets::switch_labeled(ui, p, &mut sort, aurora_i18n::tr!("ui-contacts-sort-by-online-status")).changed() {
                     world.contact_sets.set_sort_by_online(&set, sort);
                 }
+                let mut apart = cfg.separate_chats;
+                if widgets::switch_labeled(ui, p, &mut apart, aurora_i18n::tr!("ui-contacts-separate-chats"))
+                    .on_hover_text(aurora_i18n::tr!("ui-contacts-separate-chats-tip"))
+                    .changed()
+                {
+                    world.contact_sets.set_separate_chats(&set, apart);
+                }
                 visuals::editor(ui, p, world, &set, &cfg.visuals);
                 widgets::divider(ui, p);
                 ui.label(

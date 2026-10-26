@@ -11,6 +11,7 @@
 pub mod align;
 pub mod anim_pause;
 pub mod contents;
+pub mod contents_drop;
 pub mod costs;
 mod cycle;
 pub mod demo;

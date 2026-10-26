@@ -9,7 +9,8 @@ use aurora_net::{ChatMessage, ChatSourceType, ChatType, NetCommand};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
-const VERSION: &str = version::VERSION_NEW;
+/// What @version answers; About shows it too.
+pub const VERSION: &str = version::VERSION_NEW;
 
 pub mod camera;
 mod chat;

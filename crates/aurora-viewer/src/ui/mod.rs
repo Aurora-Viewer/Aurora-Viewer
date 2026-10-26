@@ -1,5 +1,6 @@
 //! egui user interface.
 
+pub mod about;
 pub mod ao;
 pub mod appearance;
 pub mod area_search;
@@ -176,6 +177,9 @@ pub struct Panels {
     pub bumps: bool,
     /// "Grid status" (Help menu, toolbar): the grid's incidents.
     pub grid_status: bool,
+    /// "About Aurora Viewer" (Help menu): the version, the system
+    /// information and the licences.
+    pub about: bool,
     /// The Controls window on its Camera tab (Firestorm's camera window
     /// with Preferences › Aurora), and on its Movement tab (the movement
     /// window).
@@ -226,6 +230,7 @@ impl Panels {
             money_tracker: false,
             bumps: false,
             grid_status: false,
+            about: false,
             camera_controls: false,
             movement_controls: false,
             nav_edit: None,

@@ -524,6 +524,44 @@ pub fn stitch(photo: &mut [u8], photo_width: u32, pass: TilePass, pixels: &[u8])
     }
 }
 
+/// The instant a photo drawn in several frames shows, kept from its first
+/// part to its last (issues #977, #1109). The Legacy Viewer draws every tile
+/// in one call (LLViewerWindow::rawSnapshot, indra/newview/llviewerwindow.cpp,
+/// originally LGPL 2.1: display() per tile, no idle() between them), so
+/// nothing moves from one tile to the next; Aurora draws a tile per frame and
+/// stops the world's clock instead, or an avatar that moves is cut at every
+/// seam.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hold {
+    /// The world's time: animations, motions, flexible prims, rez effects.
+    pub at: std::time::Instant,
+    /// The shaders' clock (water, portals), seconds since the start.
+    pub clock: f32,
+    /// A later part: nothing moves since the first (no network event
+    /// applied, no step of time); the first part is drawn from the live
+    /// world, whose instant is kept.
+    pub later: bool,
+}
+
+impl Hold {
+    /// The hold of the frame that draws part `next` of a photo of `tiles`
+    /// parts, `now` this frame's; `kept`, the job's, records the first
+    /// part's. None for a photo in one pass.
+    pub fn for_part(tiles: usize, next: usize, kept: &mut Option<Hold>, now: Hold) -> Option<Hold> {
+        if tiles <= 1 {
+            return None;
+        }
+        match *kept {
+            Some(first) if next > 0 => Some(Hold { later: true, ..first }),
+            _ => {
+                let first = Hold { later: false, ..now };
+                *kept = Some(first);
+                Some(first)
+            }
+        }
+    }
+}
+
 /// Vertical field of view of a focal length on a full-frame camera (the
 /// 24 mm side of 36 x 24 mm), the photographer's way to set the camera's.
 pub fn fov_of_focal(mm: f32) -> f32 {

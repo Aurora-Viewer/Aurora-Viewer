@@ -153,6 +153,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         parcel_icons: Vec::new(),
         local_env: false,
         double_click: Default::default(),
+        quickjump: false,
         marketplace: false,
         parcel_landmark: None,
         can_set_home: false,

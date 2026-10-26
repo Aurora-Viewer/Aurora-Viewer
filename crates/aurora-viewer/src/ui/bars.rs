@@ -36,6 +36,9 @@ pub enum BarAction {
     ServerReleaseNotes,
     /// Same import chooser toggle as the configurable Import shortcut.
     Import,
+    /// Advanced › Media streams backup (Streamlist.xml_import / xml_export).
+    ImportStreamList,
+    ExportStreamList,
     BlenderLive,
     ShowHuds(bool),
     HudZoom(f32),
@@ -53,6 +56,8 @@ pub enum BarAction {
     SetHome,
     ToggleFly,
     ToggleMoveLock,
+    /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
+    ToggleQuickjump,
     ToggleWaterWalk,
     ToggleSwimming,
     MoveLockOptions,
@@ -178,6 +183,8 @@ pub struct StatusInfo<'a> {
     pub local_env: bool,
     /// What a double click on the ground does (Me › Double-click on the ground).
     pub double_click: crate::autopilot::DoubleClick,
+    /// Quickjump is on (Me › Quickjump).
+    pub quickjump: bool,
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
@@ -625,7 +632,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::MoveLockOptions;
         }
         // menu_viewer.xml: Avatar › Movement › Quickjump, after Movelock
-        menu::todo(ui, p, "arrow-big-up-lines-filled", aurora_i18n::tr!("ui-bars-quickjump"));
+        let quickjump = aurora_i18n::tr!("ui-bars-quickjump");
+        if menu::check(ui, p, "arrow-big-up-lines-filled", quickjump, st.quickjump, true) {
+            *action = BarAction::ToggleQuickjump;
+        }
         if menu::item(ui, p, "swimming", aurora_i18n::tr!("movement-title")) {
             *action = BarAction::MovementEnhancer;
         }
@@ -1022,8 +1032,12 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                 aurora_i18n::tr!("ui-bars-media-streams-backup"),
                 true,
                 |ui| {
-                    menu::todo(ui, p, "database-import", aurora_i18n::tr!("ui-bars-import-stream-list"));
-                    menu::todo(ui, p, "database-export", aurora_i18n::tr!("ui-bars-export-stream-list"));
+                    if menu::item(ui, p, "database-import", aurora_i18n::tr!("ui-bars-import-stream-list")) {
+                        *action = BarAction::ImportStreamList;
+                    }
+                    if menu::item(ui, p, "database-export", aurora_i18n::tr!("ui-bars-export-stream-list")) {
+                        *action = BarAction::ExportStreamList;
+                    }
                 },
             );
         });
@@ -1057,7 +1071,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // window carries the system information
         menu::todo(ui, p, "device-desktop-filled", aurora_i18n::tr!("ui-bars-sysinfo-button"));
         menu::separator(ui, p);
-        menu::todo(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-bars-about"));
+        let about = aurora_i18n::tr!("ui-bars-about");
+        flip_window(ui, p, "info-circle-filled", about, super::about::WINDOW, &mut panels.about);
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
         menu::info(ui, p, "info-circle-filled", &version);
         menu::separator(ui, p);
