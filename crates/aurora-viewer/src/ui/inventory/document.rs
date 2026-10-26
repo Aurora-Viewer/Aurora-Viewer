@@ -209,6 +209,7 @@ impl InventoryUi {
         self.windows.push(InventoryWindow {
             id: state.ui_id,
             root: Uuid::nil(),
+            additional: false,
             state: Box::new(state),
             open: false,
         });

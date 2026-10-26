@@ -139,6 +139,13 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             widgets::place_floater(ctx, &format!("inventory_{DEMO_FOLDER_WINDOW}"), pos, size);
             return;
         }
+        if mode == "aurora-additional" {
+            // the main window, the additional window opened on its left
+            let main = egui::pos2(30.0 + DEFAULT_SIZE.x + 12.0, 60.0);
+            widgets::place_floater(ctx, "inventory", main, egui::vec2(DEFAULT_SIZE.x, 640.0));
+            widgets::place_floater(ctx, &floater_id(ADDITIONAL_WINDOW), egui::pos2(30.0, 60.0), DEFAULT_SIZE);
+            return;
+        }
         widgets::place_floater(ctx, "inventory", egui::pos2(30.0, 60.0), size);
     }
 }

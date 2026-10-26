@@ -60,7 +60,8 @@ pub(super) fn tabs(ui: &mut egui::Ui, p: &Palette, inv: &Inventory, st: &mut Inv
         (2, "clock-filled", aurora_i18n::tr!("inventory-tab-recent"), prefs.show_recent),
         (3, "hanger-2-filled", aurora_i18n::tr!("inventory-tab-worn"), prefs.show_worn),
         (4, "star-filled", aurora_i18n::tr!("inventory-tab-favorites"), prefs.show_favorites),
-        (RECEIVED_TAB, "inbox", aurora_i18n::tr!("inventory-tab-received"), true),
+        // the Received Items in the main window only
+        (RECEIVED_TAB, "inbox", aurora_i18n::tr!("inventory-tab-received"), st.is_main()),
     ] {
         if shown {
             entries.push((tab, icon, label));
@@ -268,8 +269,33 @@ fn filters_tip(st: &InventoryUi) -> &'static str {
     }
 }
 
+/// The main window's button for the additional inventory window, lit while
+/// that window is open (the Legacy Viewer's `new_inv_btn`); the other
+/// windows have none.
+fn additional_button(ui: &mut egui::Ui, p: &Palette, st: &mut InventoryUi) {
+    if !st.is_main() {
+        return;
+    }
+    let button = tool_button(
+        ui,
+        p,
+        ADDITIONAL_ICON,
+        aurora_i18n::tr!("inventory-additional-window"),
+        st.additional_open(),
+    );
+    additional_button_drawn(ui, button.rect);
+    if button.clicked() {
+        st.toggle_additional_window(ui.ctx());
+    }
+}
+
+/// The room `additional_button` takes in a row whose buttons are `gap` apart.
+fn additional_width(st: &InventoryUi, gap: f32) -> f32 {
+    if st.is_main() { BAR + gap } else { 0.0 }
+}
+
 /// The narrow width's row: the search, the filters, the details card, the
-/// rights, Sort, New.
+/// rights, the additional window, Sort, New.
 pub(super) fn search_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -282,7 +308,7 @@ pub(super) fn search_row(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         let cmt = rights::button_width(ui);
-        let width = (ui.available_width() - 4.0 * (BAR + 6.0) - cmt - 6.0).max(60.0);
+        let width = (ui.available_width() - 4.0 * (BAR + 6.0) - additional_width(st, 6.0) - cmt - 6.0).max(60.0);
         search(ui, p, inv, st, prefs, width, layout);
         let lit = st.filters_open || st.filters.active();
         if tool_button(ui, p, "adjustments-horizontal-filled", filters_tip(st), lit).clicked() {
@@ -290,6 +316,7 @@ pub(super) fn search_row(
         }
         details_button(ui, p, prefs, layout);
         rights::button(ui, p, &mut prefs.rights, BAR);
+        additional_button(ui, p, st);
         let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
         menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             sort_menu(ui, p, st, prefs, layout)
@@ -333,8 +360,9 @@ fn counted_button(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, count
 }
 
 /// The explorer's toolbar. Medium: the search, the filters, the details
-/// card, the rights, Sort and New. Wide: where it is, the search with its key, the filters
-/// with their count, the details pane, the rights and New.
+/// card, the rights, the columns, the additional window, Sort and New. Wide:
+/// where it is, the search with its key, the filters with their count, the
+/// details pane, the rights, the columns, the additional window and New.
 pub(super) fn explorer_row(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -355,7 +383,8 @@ pub(super) fn explorer_row(
             let new_label = aurora_i18n::tr!("inventory-new");
             let new_w = widgets::action_button_fit(ui, "plus", new_label);
             let filters_w = 150.0;
-            let width = (ui.available_width() - (BAR + 8.0) - filters_w - (BAR + 8.0) - cmt - 8.0 - new_w - 8.0 - 8.0).max(120.0);
+            let width = (ui.available_width() - (BAR + 8.0) - filters_w - (BAR + 8.0) - additional_width(st, 8.0) - cmt - 8.0 - new_w - 8.0 - 8.0)
+                .max(120.0);
             search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
@@ -378,12 +407,13 @@ pub(super) fn explorer_row(
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
                 super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
             });
+            additional_button(ui, p, st);
             let new = widgets::action_button(ui, p, "plus", new_label, widgets::ActionKind::Primary, Vec2::new(new_w, BAR));
             menu::dropdown(&new, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                 new_menu(ui, p, inv, st, prefs, layout, actions);
             });
         } else {
-            let width = (ui.available_width() - 4.0 * (BAR + 8.0) - 112.0 - cmt - 8.0).max(120.0);
+            let width = (ui.available_width() - 4.0 * (BAR + 8.0) - additional_width(st, 8.0) - 112.0 - cmt - 8.0).max(120.0);
             search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
@@ -406,6 +436,7 @@ pub(super) fn explorer_row(
             menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
                 super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
             });
+            additional_button(ui, p, st);
             let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
             menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                 sort_menu(ui, p, st, prefs, layout)
