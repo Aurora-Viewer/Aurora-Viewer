@@ -114,6 +114,10 @@ impl Builder {
 
 pub(super) fn world_menu(target: &Target, f: &Facts, point: Vec3) -> Vec<Entry> {
     let mut entries = Builder::default();
+    if f.particle_only {
+        particle_owner_item(&mut entries, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+        return entries.0;
+    }
     if f.object.local_preview {
         if let Target::Object { key, full_id, .. } = target {
             preview_menu(&mut entries, f, *key, *full_id, point, false);
@@ -1049,6 +1053,20 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_particle_over_sky_has_its_owner_command_without_unrelated_land_actions() {
+        let owner = Uuid::from_u128(71);
+        let facts = Facts {
+            particle_owner: Some(owner),
+            particle_only: true,
+            ..Default::default()
+        };
+        let menu = world_menu(&Target::Ground, &facts, Vec3::new(10.0, 0.0, 20.0));
+        assert_eq!(menu.len(), 1);
+        assert!(menu[0].enabled);
+        assert!(matches!(menu[0].kind, Kind::Action(CtxAction::BlockParticleOwner(id)) if id == owner));
+    }
 
     #[test]
     fn derender_is_grouped_in_disturbance_and_keeps_the_clicked_target() {

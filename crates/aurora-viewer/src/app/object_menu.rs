@@ -33,6 +33,7 @@ pub(super) struct ObjectMenu {
     /// (LLPickInfo::mParticleOwnerID) and the touched surface of the object
     /// (the SurfaceInfo of send_ObjectGrab_message).
     pub particle_owner: Option<Uuid>,
+    pub particle_only: bool,
     touch: Option<(ObjKey, aurora_net::TouchSurface)>,
 }
 
@@ -50,13 +51,16 @@ enum Confirm {
 impl App {
     /// The right click opened the menu on `target`: what the entries of
     /// the object menus read from the pick itself.
-    pub(super) fn object_menu_pick(&mut self, picked: Option<usize>, point: Vec3) {
-        let ray = self
-            .gfx
-            .as_ref()
-            .and_then(|g| g.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1));
+    pub(super) fn object_menu_pick(
+        &mut self,
+        picked: Option<usize>,
+        ray: Option<(Vec3, Vec3)>,
+        particle: Option<crate::scene::particles::ParticleHit>,
+        particle_only: bool,
+    ) {
         let m = &mut self.object_menu;
         m.particle_owner = None;
+        m.particle_only = particle_only;
         m.touch = None;
         let Some((origin, dir)) = ray else {
             return;
@@ -65,14 +69,7 @@ impl App {
         // none in front of a HUD
         let hud = picked.is_some_and(|i| self.scene.gpu.get(i).is_some_and(|g| g.hud));
         if !hud {
-            m.particle_owner = self
-                .scene
-                .particles
-                .pick(origin, dir, (point - origin).length())
-                .and_then(|source| self.world.objects.index_of_uuid(&source))
-                .and_then(|i| self.world.objects.get(i))
-                .map(|o| o.owner_id)
-                .filter(|owner| !owner.is_nil());
+            m.particle_owner = particle.map(|hit| hit.owner).filter(|owner| !owner.is_nil());
         }
         if let Some(idx) = picked
             && let Some(o) = self.world.objects.get(idx)

@@ -18,6 +18,12 @@ hierarchy (including radial paths); ordinary commands explicitly close it.
 The shared editor gives scene submenus outside-click dismissal instead of
 closing on every selection. `context/toggle_tests.rs` exercises actual render
 choices, sound/particle/block toggles, custom nested groups and dismissal.
+Particle context clicks capture `scene/particles.rs::ParticleHit` before the
+asynchronous object-depth read (`app/click_pick.rs`). Particle geometry follows
+the rendered billboard, velocity-aligned quad or ribbon; cached source owners
+survive emitter removal. `app/context_menu.rs` checks the captured hit against
+foreground depth and can open a particle-only menu against the sky. Touch and
+particle metadata use the original click ray, not the camera after readback.
 Scene reset clears only the current profile. `context/notecards.rs` validates
 bounded versioned snapshots of all seven scene profiles, reuses the inventory's
 COPY-aware picker and native transfers, and applies only correlated successful

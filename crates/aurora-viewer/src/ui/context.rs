@@ -207,6 +207,8 @@ pub struct Facts {
     /// The owner of the particle under the right click
     /// (LLPickInfo::mParticleOwnerID), when it is not us.
     pub particle_owner: Option<Uuid>,
+    /// A particle over the sky: show the particle command without land actions.
+    pub particle_only: bool,
     /// "Put on ▸ Attach" and "Attach HUD" (LLVOAvatarSelf::buildMenus).
     pub attach_points: Vec<AttachChoice>,
     /// Voice is enabled: "Call" works (LLAvatarActions::canCall).

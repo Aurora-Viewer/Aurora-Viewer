@@ -107,6 +107,7 @@ pub(super) struct Picked {
     /// A displayed name tag captured at the original press, before waiting
     /// for the depth. Camera/avatar motion cannot move its hit rectangle.
     pub tag: Option<(Uuid, Vec3)>,
+    pub particle: Option<crate::scene::particles::ParticleHit>,
 }
 
 impl Picked {
@@ -134,6 +135,7 @@ struct Pending {
     /// Alt, Ctrl, Shift.
     mods: [bool; 3],
     ray: Option<(Vec3, Vec3)>,
+    particle: Option<crate::scene::particles::ParticleHit>,
     tags: Vec<(Uuid, Vec3)>,
     asked: Instant,
     frame: u64,
@@ -319,6 +321,30 @@ impl App {
         let (x, y) = self.cursor_pos;
         let g = self.gfx.as_mut()?;
         let ray = g.renderer.cursor_ray(x, y);
+        // Capture before waiting for object depth: a moving particle must not
+        // have to remain under this pixel for another two or three frames.
+        let particle = if !self.settings.world_overlays.hide_particles && matches!(self.clicks.running, None | Some(Click::Menu)) {
+            ray.and_then(|ray| {
+                self.scene
+                    .particles
+                    .pick(ray, g.renderer.particle_view(), self.settings.draw_distance)
+            })
+            .map(|mut hit| {
+                if let Some(owner) = self
+                    .world
+                    .objects
+                    .index_of_uuid(&hit.source)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| o.owner_id)
+                    .filter(|id| !id.is_nil())
+                {
+                    hit.owner = owner;
+                }
+                hit
+            })
+        } else {
+            None
+        };
         let mode = pick_mode();
         let Some(click) = self.clicks.running.filter(|_| mode != PickMode::Wait) else {
             let t = Instant::now();
@@ -331,6 +357,7 @@ impl App {
                 depth,
                 drawn: Default::default(),
                 tag: super::plate_click::visible_tag(&self.name_tag_candidates(ray), depth, ray),
+                particle,
             };
             return self.rlva_filter_pick(picked);
         };
@@ -364,6 +391,7 @@ impl App {
             cursor: (x, y),
             mods: [self.alt, self.ctrl, self.shift],
             ray,
+            particle,
             tags,
             asked: Instant::now(),
             frame: self.frame_count,
@@ -393,7 +421,7 @@ impl App {
                     None
                 }
             });
-        if picked.tag.is_some() || object.is_some_and(|idx| self.world.hud_root(idx).is_none()) {
+        if picked.tag.is_some() || picked.particle.is_some() || object.is_some_and(|idx| self.world.hud_root(idx).is_none()) {
             None
         } else {
             Some(picked)
@@ -454,6 +482,7 @@ impl App {
                     depth,
                     drawn,
                     tag,
+                    particle: p.particle,
                 });
                 if p.click != Click::Press || !self.camera.mouselook() {
                     self.run_click(p.click);

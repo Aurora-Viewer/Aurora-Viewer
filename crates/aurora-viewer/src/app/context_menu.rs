@@ -25,6 +25,8 @@ impl App {
         // frames the avatar, like handle_look_at_selection)
         if let Some((idx, point, _)) = self.scene.hud_edit_pick(&self.world, (x, y)) {
             // (a HUD does not need the depth of the world behind it)
+            let ray = self.gfx.as_ref().and_then(|g| g.renderer.cursor_ray(x, y));
+            self.object_menu_pick(Some(idx), ray, None, false);
             return Some((Some(idx), point));
         }
         let picked = self.click_pick()?;
@@ -37,7 +39,7 @@ impl App {
             self.settings.build.select_probes,
             self.settings.draw_distance,
         );
-        match self.pick_name_tag(hit, ray) {
+        let surface = match self.pick_name_tag(hit, ray) {
             Some((idx, p)) => Some((
                 Some(idx),
                 Scene::object_transform(&self.world, idx, now, 0).map_or(p, |(pos, _, _)| pos),
@@ -50,7 +52,18 @@ impl App {
                 Some(d) => Some((Some(d.idx), d.hit.point)),
                 None => hit.map(|p| (target, p)),
             },
-        }
+        };
+        let particle = picked
+            .particle
+            .filter(|p| ray.is_some_and(|ray| p.before_surface(ray, surface.map(|(_, point)| point))));
+        let particle_only = surface.is_none();
+        let (object, point) = surface.or_else(|| {
+            particle
+                .filter(|p| !p.owner.is_nil() && p.owner != self.world.agent_id)
+                .map(|p| (None, p.point))
+        })?;
+        self.object_menu_pick(object, ray, particle, particle_only);
+        Some((object, point))
     }
 
     pub(super) fn world_menu(&mut self) {
@@ -110,7 +123,6 @@ impl App {
             }
             None => Target::Ground,
         };
-        self.object_menu_pick(picked, point);
         if let Target::Avatar { id, own: false, .. } = target {
             self.moderation_menu_opened(id);
         }
@@ -157,6 +169,7 @@ impl App {
             property_lines: self.settings.world_overlays.property_lines,
             voice: self.settings.audio.voice_enabled,
             particle_owner: self.object_menu.particle_owner.filter(|o| *o != w.agent_id),
+            particle_only: self.object_menu.particle_only,
             ..Facts::default()
         };
         match self.context_menu.as_ref().map(|m| &m.target) {

@@ -19,6 +19,23 @@ struct Source {
     slot: u32,
     /// Loading cloud of an avatar (not an object's particle system).
     cloud: bool,
+    owner: Uuid,
+}
+
+/// Captured at the press, before asynchronous object-depth readback. Retain
+/// identity even if the particle moves or its emitter leaves the object store.
+#[derive(Clone, Copy, Debug)]
+pub struct ParticleHit {
+    pub source: Uuid,
+    pub owner: Uuid,
+    pub point: Vec3,
+    pub distance: f32,
+}
+
+impl ParticleHit {
+    pub fn before_surface(&self, ray: (Vec3, Vec3), surface: Option<Vec3>) -> bool {
+        surface.is_none_or(|point| self.distance <= (point - ray.0).dot(ray.1) + 0.001)
+    }
 }
 
 impl Source {
@@ -125,6 +142,7 @@ impl ParticleManager {
                     texture: Uuid::nil(),
                     slot: 0,
                     cloud: true,
+                    owner: Uuid::nil(),
                 },
             );
         }
@@ -150,13 +168,12 @@ impl ParticleManager {
     /// The particle a right click lands on (LLPipeline::
     /// lineSegmentIntersectParticle, LLVOPartGroup::lineSegmentIntersect):
     /// the source object of the nearest live particle the ray `origin` +
-    /// t·`dir` crosses for t in 0..`max`, each particle a quad of its size
-    /// facing the ray. Loading clouds and HUD particles are not picked.
-    pub fn pick(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<Uuid> {
+    /// t·`dir` crosses for t in 0..`max`. Use particle_vs geometry, including
+    /// velocity-aligned quads and ribbons. Clouds/HUD particles are excluded.
+    pub fn pick(&self, ray: (Vec3, Vec3), view: (Vec3, Vec3, Vec3), max: f32) -> Option<ParticleHit> {
+        let (origin, dir) = ray;
         let dir = dir.try_normalize()?;
-        let right = dir.cross(Vec3::Z).try_normalize().unwrap_or(Vec3::X);
-        let up = right.cross(dir);
-        let mut best: Option<(f32, Uuid)> = None;
+        let mut best: Option<ParticleHit> = None;
         for (id, s) in &self.sources {
             if s.cloud {
                 continue;
@@ -165,15 +182,21 @@ impl ParticleManager {
                 if p.flags & ps::LL_PART_HUD != 0 {
                     continue;
                 }
-                let Some(t) = quad_hit(origin, dir, right, up, p.pos, p.size) else {
+                let Some((pos, right, up)) = pick_geometry(p, view) else { continue };
+                let Some(t) = quad_hit(origin, dir, right, up, pos) else {
                     continue;
                 };
-                if t <= max && best.is_none_or(|(b, _)| t < b) {
-                    best = Some((t, *id));
+                if t <= max && best.is_none_or(|hit| t < hit.distance) {
+                    best = Some(ParticleHit {
+                        source: *id,
+                        owner: s.owner,
+                        point: origin + dir * t,
+                        distance: t,
+                    });
                 }
             }
         }
-        best.map(|(_, id)| id)
+        best
     }
 
     /// Release every source (region change, logout).
@@ -230,6 +253,7 @@ impl ParticleManager {
                             texture,
                             slot,
                             cloud: false,
+                            owner: o.owner_id,
                         },
                     );
                 }
@@ -253,6 +277,9 @@ impl ParticleManager {
         let mut dead = Vec::new();
         for (id, s) in self.sources.iter_mut() {
             let idx = world.objects.index_of_uuid(id);
+            if let Some(owner) = idx.and_then(|i| world.objects.get(i)).map(|o| o.owner_id).filter(|id| !id.is_nil()) {
+                s.owner = owner;
+            }
             let transform = idx.and_then(|i| Scene::object_transform(world, i, now, 0));
             let Some((pos, rot, hud)) = transform else {
                 // object gone: stop emitting, let the particles live out
@@ -397,20 +424,166 @@ fn geometry(p: &ps::Particle) -> Option<(Vec3, Vec3, [f32; 2], u32)> {
     Some((p.pos, Vec3::ZERO, [p.size.x, p.size.y], 0))
 }
 
-/// Distance along the ray (`dir` unit, perpendicular to the quad) to a
-/// particle quad centred on `pos`, `size` wide along `right` and `up`.
-fn quad_hit(origin: Vec3, dir: Vec3, right: Vec3, up: Vec3, pos: Vec3, size: glam::Vec2) -> Option<f32> {
-    let t = (pos - origin).dot(dir);
-    if t < 0.0 {
+/// Full quad axes from object.wgsl::particle_vs, not an approximation facing
+/// the click ray. Picking must follow the geometry actually visible on screen.
+fn pick_geometry(p: &ps::Particle, (eye, mut right, mut up): (Vec3, Vec3, Vec3)) -> Option<(Vec3, Vec3, Vec3)> {
+    let (pos, axis, size, shape) = geometry(p)?;
+    if shape == particle_flags::FOLLOW_VELOCITY {
+        let to_cam = (eye - pos).try_normalize()?;
+        let view_right = Vec3::Z.cross(to_cam);
+        if view_right.length_squared() > 1e-8 {
+            right = view_right.normalize();
+            up = to_cam.cross(right).normalize();
+        }
+        let projected = glam::Vec2::new(axis.dot(right), axis.dot(up));
+        if projected.length_squared() > 1e-8 {
+            let direction = projected.normalize();
+            (right, up) = (right * direction.y - up * direction.x, right * direction.x + up * direction.y);
+        }
+    } else if shape == particle_flags::AXIS {
+        let to_cam = (eye - pos).try_normalize()?;
+        let side = to_cam.cross(axis.normalize());
+        if side.length_squared() > 1e-6 {
+            right = side.normalize();
+        }
+        return Some((pos, right * size[0], axis));
+    }
+    Some((pos, right * size[0], up * size[1]))
+}
+
+/// Ray/parallelogram intersection, with full edge vectors (also handles the
+/// ribbon fallback's non-orthogonal axes). Like LLVOPartGroup triangle picking.
+fn quad_hit(origin: Vec3, dir: Vec3, right: Vec3, up: Vec3, pos: Vec3) -> Option<f32> {
+    let normal = right.cross(up);
+    let norm2 = normal.length_squared();
+    let denom = dir.dot(normal);
+    if norm2 <= 1e-12 || denom.abs() <= 1e-8 {
+        return None;
+    }
+    let t = (pos - origin).dot(normal) / denom;
+    if !t.is_finite() || t < 0.0 {
         return None;
     }
     let local = origin + dir * t - pos;
-    (local.dot(right).abs() <= size.x * 0.5 && local.dot(up).abs() <= size.y * 0.5).then_some(t)
+    let u = local.cross(up).dot(normal) / norm2;
+    let v = right.cross(local).dot(normal) / norm2;
+    (u.abs() <= 0.5 && v.abs() <= 0.5).then_some(t)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pick_source(flags: u32, size: glam::Vec2, acceleration: Vec3) -> Source {
+        let mut data = ps::PartSysData {
+            pattern: ps::LL_PART_SRC_PATTERN_DROP,
+            burst_rate: 0.1,
+            burst_part_count: 1,
+            part_accel: acceleration,
+            ..Default::default()
+        };
+        data.part.flags = flags;
+        data.part.start_scale = size;
+        data.part.end_scale = size;
+        let mut source = Source {
+            ps: ParticleSource::new(data, 1),
+            texture: Uuid::nil(),
+            slot: 0,
+            cloud: false,
+            owner: Uuid::from_u128(71),
+        };
+        source.ps.update_with_wind(
+            0.0,
+            &SourceContext {
+                pos: Vec3::X * 10.0,
+                ..Default::default()
+            },
+            &mut 1,
+            |_| Vec3::ZERO,
+        );
+        source
+    }
+
+    #[test]
+    fn particle_pick_matches_velocity_aligned_rendering_and_captures_owner() {
+        let id = Uuid::from_u128(72);
+        let mut source = pick_source(ps::LL_PART_FOLLOW_VELOCITY_MASK, glam::Vec2::new(0.1, 6.0), Vec3::Y * 10.0);
+        source.ps.stop();
+        source.ps.update_with_wind(
+            0.1,
+            &SourceContext {
+                pos: Vec3::X * 10.0,
+                ..Default::default()
+            },
+            &mut 0,
+            |_| Vec3::ZERO,
+        );
+        let center = source.ps.particles()[0].pos;
+        let mut manager = ParticleManager::default();
+        manager.sources.insert(id, source);
+        let view = (Vec3::ZERO, Vec3::NEG_Y, Vec3::Z);
+        // The long axis is horizontal on screen, not the old vertical quad.
+        let ray = (Vec3::ZERO, (center + Vec3::Y * 2.5).normalize());
+        let hit = manager.pick(ray, view, 30.0).expect("visible stretched particle");
+        assert_eq!((hit.source, hit.owner), (id, Uuid::from_u128(71)));
+        assert!(
+            manager
+                .pick((Vec3::ZERO, (center + Vec3::Y * 2.5 + Vec3::Z * 0.2).normalize()), view, 30.0)
+                .is_none()
+        );
+        assert!(hit.before_surface(ray, None), "a particle in front of sky is selectable");
+        assert!(hit.before_surface(ray, Some(ray.1 * 20.0)));
+        assert!(
+            !hit.before_surface(ray, Some(ray.1 * 5.0)),
+            "opaque foreground still occludes particles"
+        );
+        // An asynchronous click keeps the sampled point/owner after movement
+        // or emitter removal, without looking them up from a reused object ID.
+        manager.sources.clear();
+        assert_eq!(hit.owner, Uuid::from_u128(71));
+        assert!(hit.before_surface(ray, None));
+    }
+
+    #[test]
+    fn particle_pick_uses_the_visible_ribbon_segment_instead_of_its_endpoint() {
+        let mut source = pick_source(ps::LL_PART_RIBBON_MASK, glam::Vec2::splat(0.2), Vec3::ZERO);
+        source.ps.update_with_wind(
+            0.1,
+            &SourceContext {
+                pos: Vec3::new(10.0, 5.0, 0.0),
+                ..Default::default()
+            },
+            &mut 1,
+            |_| Vec3::ZERO,
+        );
+        let mut manager = ParticleManager::default();
+        manager.sources.insert(Uuid::from_u128(72), source);
+        let view = (Vec3::ZERO, Vec3::NEG_Y, Vec3::Z);
+        let ray = (Vec3::ZERO, Vec3::new(10.0, 2.5, 0.0).normalize());
+        assert!(manager.pick(ray, view, 30.0).is_some());
+        assert!(
+            manager
+                .pick((Vec3::ZERO, Vec3::new(10.0, 2.5, 0.3).normalize()), view, 30.0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn particle_pick_respects_camera_billboard_axes_and_excludes_clouds_huds() {
+        let id = Uuid::from_u128(72);
+        let mut manager = ParticleManager::default();
+        manager.sources.insert(id, pick_source(0, glam::Vec2::new(0.1, 6.0), Vec3::ZERO));
+        // A rolled camera rotates the visible long axis with the billboard.
+        let view = (Vec3::ZERO, Vec3::Z, Vec3::Y);
+        let ray = (Vec3::ZERO, Vec3::new(10.0, 2.5, 0.0).normalize());
+        assert!(manager.pick(ray, view, 30.0).is_some());
+        manager.sources.get_mut(&id).unwrap().cloud = true;
+        assert!(manager.pick(ray, view, 30.0).is_none());
+        manager
+            .sources
+            .insert(id, pick_source(ps::LL_PART_HUD, glam::Vec2::splat(6.0), Vec3::ZERO));
+        assert!(manager.pick(ray, view, 30.0).is_none());
+    }
 
     #[test]
     fn particle_beacons_exclude_clouds_and_expired_sources_with_live_particles() {
@@ -431,6 +604,7 @@ mod tests {
                 texture: Uuid::nil(),
                 slot: 0,
                 cloud: false,
+                owner: Uuid::nil(),
             },
         );
         let mut budget = 1;
@@ -490,6 +664,7 @@ mod tests {
             texture: Uuid::nil(),
             slot: 0,
             cloud: false,
+            owner: Uuid::nil(),
         };
         let ctx = SourceContext {
             pos: Vec3::new(24.0, 8.0, 20.0),
@@ -553,14 +728,14 @@ mod tests {
     #[test]
     fn a_ray_picks_a_particle_quad_in_front_only() {
         let (dir, right, up) = (Vec3::X, Vec3::NEG_Y, Vec3::Z);
-        let size = glam::Vec2::new(1.0, 0.5);
+        let (right, up) = (right, up * 0.5);
         let at = Vec3::new(10.0, 0.0, 0.0);
-        assert_eq!(quad_hit(Vec3::ZERO, dir, right, up, at, size), Some(10.0));
+        assert_eq!(quad_hit(Vec3::ZERO, dir, right, up, at), Some(10.0));
         // within the half sizes, sideways and up
-        assert!(quad_hit(Vec3::new(0.0, 0.45, 0.2), dir, right, up, at, size).is_some());
-        assert!(quad_hit(Vec3::new(0.0, 0.0, 0.3), dir, right, up, at, size).is_none());
+        assert!(quad_hit(Vec3::new(0.0, 0.45, 0.2), dir, right, up, at).is_some());
+        assert!(quad_hit(Vec3::new(0.0, 0.0, 0.3), dir, right, up, at).is_none());
         // behind the eye
-        assert!(quad_hit(Vec3::new(11.0, 0.0, 0.0), dir, right, up, at, size).is_none());
+        assert!(quad_hit(Vec3::new(11.0, 0.0, 0.0), dir, right, up, at).is_none());
     }
 
     #[test]

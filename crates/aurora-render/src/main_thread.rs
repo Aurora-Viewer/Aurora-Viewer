@@ -175,6 +175,7 @@ pub struct Renderer {
     anim_clock: crate::tex_anim::AnimClock,
     /// Inverse view-projection of the last frame built (cursor rays).
     last_inv_vp: Mat4,
+    last_view: Mat4,
     /// Pixel to read the depth of in the next frame, and the last answer.
     hover_request: Option<(u32, u32)>,
     hover_latest: Option<Vec3>,
@@ -442,6 +443,7 @@ impl Renderer {
             can_capture,
             anim_clock,
             last_inv_vp: Mat4::IDENTITY,
+            last_view: Mat4::IDENTITY,
             hover_request: None,
             hover_latest: None,
             pick_requests: Vec::new(),
@@ -957,6 +959,7 @@ impl Renderer {
             None => capture_for(self.capture_scene, self.capture_request, self.can_capture),
         };
         self.last_inv_vp = (params.proj * params.view).inverse();
+        self.last_view = params.view;
         let index = self.frames;
         let packet = FramePacket {
             index,
@@ -1231,6 +1234,17 @@ impl Renderer {
         let far = un(ndc(0.001))?;
         let dir = (far - near).try_normalize()?;
         Some((near, dir))
+    }
+
+    /// Camera/axes of the submitted frame, matching particle_vs billboards.
+    /// Invert only for a particle click, not on every rendered frame.
+    pub fn particle_view(&self) -> (Vec3, Vec3, Vec3) {
+        let inv = self.last_view.inverse();
+        (
+            inv.w_axis.truncate(),
+            inv.transform_vector3(Vec3::X).normalize_or(Vec3::X),
+            inv.transform_vector3(Vec3::Y).normalize_or(Vec3::Z),
+        )
     }
 
     /// Project a world position to screen pixels (None if behind camera).

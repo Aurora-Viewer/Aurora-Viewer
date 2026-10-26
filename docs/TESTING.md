@@ -1891,7 +1891,10 @@ camera looks. At frame 700 the right click opens the menu of the bell
 (`list`: "Ring the bell" and "Lie down" as labels, Return enabled, the
 script actions and Put on in their submenus), or lands on the particles
 (`particle`: the menu of what is behind, with "Ignore particle owner"
-enabled). At frame 740: `scripts` chooses Reset scripts (the "modify
+enabled). Particle clicks retain the source/owner sampled at the press while
+object depth is read asynchronously. Velocity-aligned quads and ribbons use
+the displayed geometry; particles against the sky expose the particle command
+alone, with no land actions. At frame 740: `scripts` chooses Reset scripts (the "modify
 scripts" question), `scripts-run` answers it yes (the Reset progress
 window lists the bell's script, then "Done."); `return` / `return-yes`
 choose Return (the question; answered yes, the bell goes); `wear` chooses
