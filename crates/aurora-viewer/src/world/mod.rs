@@ -73,6 +73,7 @@ pub mod script_debug;
 pub mod search;
 pub mod sim_console;
 pub mod social;
+pub mod staff;
 pub mod status;
 pub mod teleport_invites;
 pub mod terrain;

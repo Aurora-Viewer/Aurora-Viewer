@@ -245,6 +245,7 @@ fn picture_and_names(
                 {
                     actions.push(ConvAction::Profile(a));
                 }
+                crate::ui::staff::after_name(ui, p, &a, 10.0);
             }
             if let Some(s) = status.filter(|s| s.pill()) {
                 status_pill(ui, p, s);

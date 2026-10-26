@@ -227,6 +227,7 @@ pub(super) fn draw(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::world::Ch
                 {
                     super::super::profile::request_open(ui.ctx(), avatar);
                 }
+                crate::ui::staff::after_name(ui, p, &avatar, 9.0);
             }
         });
         ui.spacing_mut().item_spacing.y = spacing;

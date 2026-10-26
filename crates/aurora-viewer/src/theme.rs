@@ -122,6 +122,20 @@ impl Palette {
     pub fn aurora_gradient(&self) -> [Color32; 3] {
         [self.teal, self.indigo_light, self.violet]
     }
+
+    /// A northern light, from the green of its foot to the violet of its
+    /// top: the Aurora team's marks (`world::staff`) run along it.
+    pub fn borealis(&self) -> [Color32; 4] {
+        [self.success, self.teal, self.indigo_light, self.violet]
+    }
+
+    /// The color `t` along `borealis` (0 the green foot, 1 the violet top).
+    pub fn borealis_at(&self, t: f32) -> Color32 {
+        let stops = self.borealis();
+        let x = t.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
+        let i = (x as usize).min(stops.len() - 2);
+        stops[i].lerp_to_gamma(stops[i + 1], x - i as f32)
+    }
 }
 
 impl Theme {

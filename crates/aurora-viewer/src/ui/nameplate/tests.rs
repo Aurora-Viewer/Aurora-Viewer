@@ -15,6 +15,7 @@ fn content() -> Content {
         friend: false,
         too_complex: false,
         blocked: false,
+        staff: false,
     }
 }
 
@@ -443,6 +444,31 @@ fn measured(m: &Metrics, name: usize, subs: [Option<usize>; 2]) -> TextSize {
     TextSize {
         name: size(name, m.name_pt),
         subs: subs.map(|s| s.map(|chars| size(chars, m.sub_pt))),
+    }
+}
+
+/// A team member's "Aurora Staff" tag floats from the text's left: the
+/// plate is as wide as it needs, and the floating badges start past it.
+#[test]
+fn the_staff_tag_has_its_room_over_the_top_edge() {
+    for level in [Level::Full, Level::Compact] {
+        let m = Metrics::of(level, SCALE);
+        for (name, badges) in [(3, 0), (3, 5), (40, 2)] {
+            let text = measured(&m, name, [None, None]);
+            let lead = 70.0;
+            let plain = layout(level, &m, &text, badges);
+            let l = layout_with(level, &m, &text, badges, lead);
+            assert!(l.size.x >= plain.size.x && l.size.y == plain.size.y);
+            assert!(l.size.x >= l.text_x.0 + lead + m.pad_right - 0.01);
+            if level == Level::Full {
+                for badge in &l.badges[..badges] {
+                    assert!(badge.left() >= l.text_x.0 + lead + m.gap - 0.01, "{name} {badges}");
+                }
+            }
+        }
+        // a long name already makes the room: nothing changes
+        let text = measured(&m, 60, [None, None]);
+        assert_eq!(layout_with(level, &m, &text, 0, 20.0), layout(level, &m, &text, 0));
     }
 }
 

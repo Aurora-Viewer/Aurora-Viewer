@@ -175,6 +175,9 @@ pub mod sky;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
+#[path = "demo_staff.rs"]
+pub mod staff;
 /// Streaming hitch test: objects and textures arriving in waves
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]

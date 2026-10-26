@@ -983,7 +983,10 @@ fn second_life_tab(
                     )
                     .truncate(),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| copy_menu(ui, p, world, id));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    copy_menu(ui, p, world, id);
+                    crate::ui::staff::after_name(ui, p, &id, 9.5);
+                });
             });
         });
         if own

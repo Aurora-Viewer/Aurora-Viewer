@@ -6384,6 +6384,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
+| `AURORA_DEMO_STAFF=1` | A few demo residents count as Aurora team members: their plate's northern light and the "Aurora Staff" tag |
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
 | `AURORA_DEMO_VOICE_MODERATION=1` or `self` | Nearby voice moderation: the estate manager's entries, or a moderator muting us |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
@@ -6438,6 +6439,22 @@ What the inventory must show with these scenarios:
   or People › Nearby onto the conversation) join it at once, and our
   message "<names> was / were invited to the conversation." follows in it
   (`conference-invite` adds Orion by itself once the conference is connected).
+- **`AURORA_DEMO_STAFF`**: the members of the Aurora team (`world/staff.rs`)
+  are marked everywhere Aurora shows a resident: on the name plate, green
+  to violet curtains of light rise from behind the top edge, the border's
+  colours flow around it over a soft halo, and the full and compact plates
+  carry the "Aurora Staff" tag over their top left edge (the far pill keeps
+  the light alone); after the name in People (Nearby, Friends, Recent,
+  Contact sets, the radar table), in the Conversations window (the name of
+  a message, the head of a conversation) and on the profile, the same tag
+  in the windows' corners, plus the light over the Aurora profile's
+  banner. With "Reduce animations" the light holds still. The demo's
+  members: ourselves, the first friend of the buddy list
+  (`AURORA_DEMO_PROFILE=friend`, the conversation of `AURORA_DEMO_CONV=bubbles`),
+  the resident who speaks in nearby chat (`AURORA_DEMO_CONV=bubbles:local`
+  and the chat console), and with `AURORA_DEMO_TAGS=voice`
+  Orion (full plate, speaking: the voice ring over the light), Sol (compact
+  pill) and Vega (far pill).
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

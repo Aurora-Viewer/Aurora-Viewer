@@ -323,6 +323,7 @@ fn plate_content(
         friend,
         too_complex: !own && too_complex,
         blocked,
+        staff: crate::world::staff::is_staff(&id),
     }
 }
 

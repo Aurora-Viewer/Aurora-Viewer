@@ -509,6 +509,9 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
     let banner = Rect::from_min_size(pos2(full.left(), top), Vec2::new(full.width(), banner_h));
     let picture = profile.map(|pr| pr.sl_image).filter(|i| !i.is_nil());
     paint_banner(ui, p, banner, picture.and_then(|i| env.banners.get(&i)));
+    if crate::world::staff::is_staff(&id) {
+        crate::ui::staff::banner_light(ui, p, banner);
+    }
     let pic = env.pics.get(&id);
     // the chip at the top right: the picture in large, or in edit mode
     // where the banner comes from
@@ -563,7 +566,14 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
     who.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         let size = if compact { 16.0 } else { 22.0 };
-        let max = (ui.available_width() - if w.editing { 30.0 } else { 0.0 }).max(40.0);
+        let tag = if compact { 10.0 } else { 12.0 };
+        // a member of the Aurora team's tag after the name, cut before it
+        let staff = if crate::world::staff::is_staff(&w.id) {
+            crate::ui::staff::Tag::new(ui, p, tag).size().x + 8.0
+        } else {
+            0.0
+        };
+        let max = (ui.available_width() - if w.editing { 30.0 } else { 0.0 } - staff).max(40.0);
         ui.add(widgets::elided_label(
             ui,
             RichText::new(&name)
@@ -571,6 +581,7 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
                 .color(crate::ui::colors::resident_name(env.world, &w.id, p.ink)),
             max,
         ));
+        crate::ui::staff::after_name(ui, p, &w.id, tag);
         if w.editing && widgets::icon_button(ui, p, "pencil-filled", aurora_i18n::tr!("common-set-display-name"), true) {
             env.actions.push(ProfileAction::DisplayName);
         }

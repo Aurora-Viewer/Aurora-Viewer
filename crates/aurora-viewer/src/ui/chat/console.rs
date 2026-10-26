@@ -221,6 +221,15 @@ fn card<'a>(
                 let (r, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                 ui.painter().galley(r.min, galley, p.ink);
                 names.push((r, first));
+                // a member of the Aurora team (objects never are)
+                let author = if first.kind == ChatKind::Own {
+                    world.agent_id
+                } else {
+                    first.source
+                };
+                if !matches!(first.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
+                    crate::ui::staff::after_name(ui, p, &author, 9.5);
+                }
                 tags(ui, p, first);
                 if times {
                     ui.label(egui::RichText::new(hhmm(first.time)).size(10.5).color(p.muted_dim));
