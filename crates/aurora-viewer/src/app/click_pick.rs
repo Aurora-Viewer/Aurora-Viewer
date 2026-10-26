@@ -593,7 +593,15 @@ impl App {
                 self.interactions.media_url.is_some(),
             ),
             DemoNote::Media(pos, frame) => log::info!("demo media click at {pos:?} (frame {frame}): focus {:?}", self.media.focus),
-            DemoNote::Mmo => log::info!("demo mmo: mode {:?}, pos {:?}", self.mouse_mode, self.world.agent.position),
+            DemoNote::Mmo => log::info!(
+                "demo mmo: mode {:?}, pos {:?}, walks={}, pending={}, consumed={}, menu={}",
+                self.mouse_mode,
+                self.world.agent.position,
+                self.mouse_walks(),
+                self.world_mouse_walk_pending,
+                self.right_gesture.walked,
+                self.context_menu.is_some()
+            ),
         }
     }
 

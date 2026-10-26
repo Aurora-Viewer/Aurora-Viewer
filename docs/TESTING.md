@@ -409,7 +409,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_KEY=<arrow>[:pulse]` | Holds an arrow key (or presses and releases it, over and over) |
 | `AURORA_DEMO_SIT=<n>` | Clicks n times on the Sit button |
 | `AURORA_DEMO_SIT_TP=local\|region` | Sits on the nearest prim, then teleports from the seat |
-| `AURORA_DEMO_MMO="x,y[,1\|2]"` | Steering the avatar with the mouse |
+| `AURORA_DEMO_MMO="x,y[,flags]"` | Mouse steering and optional world walking with both buttons |
 | `AURORA_DEMO_DOUBLECLICK=walk\|run\|tp[,x,y]` or `menu` | Double click on the ground, its wolf menu entry |
 | `AURORA_DEMO_AVATAR_TRAVEL=<mode>` | Avatar navigation menu, approach, persistent follow and automatic flight |
 | `AURORA_DEMO_RCLICK="x,y"` or `tag` | Right click (context menu) |
@@ -744,7 +744,17 @@ when unfocused") is ignored during a screenshot.
   seated far out of the region).
 - **`AURORA_DEMO_MMO="x,y[,1|2]"`**: left press on the avatar then right
   button held (steering with the mouse); `1`: right arrow instead,
-  `2`: double right click (running).
+  `2`: double right click (running). Additional comma-separated flags:
+  `world` enables the world mouse-walk preference for this demo; `world-off`
+  disables it. Aim at land or a noninteractive object to compare both.
+  `left-first` releases the left button before the right; by default the
+  right is released first. `right-before-left` presses the right button first.
+  `quick` queues both buttons and both releases behind the deferred left
+  pick in the same frame. `menu-after` adds an ordinary right click after
+  both releases. The log reports walking, release consumption and
+  menu state: a walked chord must never open a context menu, and an ordinary
+  subsequent right click must still work. Interactive objects, HUDs, media,
+  build tools, modified clicks and ground double-click actions retain priority.
 - **`AURORA_DEMO_DOUBLECLICK=walk|run|tp[,x,y]`**: the double-click action
   of the session (the saved one is left alone), and a double click of the
   left button at pixel (x, y) at frames 700 to 703 (ground ahead and to the
