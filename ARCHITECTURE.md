@@ -13,8 +13,8 @@ bounded versioned snapshots of all seven scene profiles, reuses the inventory's
 COPY-aware picker and native transfers, and applies only correlated successful
 imports, relocked. Inventory and scene documents have separate formats.
 `context/object_profile.rs` renders the shared `build/ui/general.rs` editor
-directly, with a private BuildTool holding only the requested root and its
-drafts. Native properties update both editors; outgoing changes use the existing
+directly, with a private heap-allocated BuildTool holding only the requested
+root and its drafts, keeping App small enough for the Windows startup stack. Native properties update both editors; outgoing changes use the existing
 build commands and the normal permission/RLVa checks. The profile holds a live
 simulator selection until closed; unrelated deselections preserve that root,
 and closing releases it unless the build tools still select it. Group selection

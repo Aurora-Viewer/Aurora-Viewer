@@ -14,7 +14,8 @@ use uuid::Uuid;
 #[derive(Default)]
 pub struct ObjectProfileUi {
     pub(crate) object: Option<Uuid>,
-    editor: BuildTool,
+    // A second full editor must not enlarge App's Windows startup stack.
+    editor: Box<BuildTool>,
 }
 
 pub(super) fn person(ui: &mut egui::Ui, p: &Palette, world: &mut World, id: Uuid) {

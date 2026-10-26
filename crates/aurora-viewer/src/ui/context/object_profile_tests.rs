@@ -2,6 +2,11 @@ use super::*;
 use crate::ui::widgets::elide_tests::{Frames, Text, painted};
 use aurora_net::build::{BuildCmd, perm, perm_field};
 
+#[test]
+fn object_profile_state_stays_small_on_the_windows_startup_stack() {
+    assert!(std::mem::size_of::<ObjectProfileUi>() <= 64);
+}
+
 struct Harness {
     frames: Frames,
     palette: Palette,
