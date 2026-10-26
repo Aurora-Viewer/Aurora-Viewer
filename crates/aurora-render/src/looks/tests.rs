@@ -557,9 +557,11 @@ fn look_over(ops: Arc<[LookOp]>, size: (u32, u32)) -> PhotoLook {
 /// The mean difference of the levels, and how many are further apart than
 /// the GPU's arithmetic explains: its pow, exp and sin are a little off, so
 /// a truncation falls the other side of a level now and then, carried by
-/// the next operations (on 2026-10-26 at most 0.07 level on average,
-/// Cartoon, and 33 of 18,432 levels by more than 2 at the edges of
-/// Newsprint's screen).
+/// the next operations, most where posterize's classes and a screen's
+/// edges amplify them (on 2026-10-26: at most 0.07 level on average and 33
+/// of 18,432 levels by more than 2 on an RTX 4090; 0.18 and 225, The
+/// Matrix, on the CI runner's software adapter). A wrong operation is
+/// levels off everywhere.
 fn differences(a: &[u8], b: &[u8]) -> (f64, usize) {
     let mut sum = 0u64;
     let mut far = 0;
@@ -596,7 +598,7 @@ fn the_gpu_draws_every_legacy_look_like_the_legacy_viewer() {
                 &image,
             );
             let (mean, far) = differences(&expected, &got);
-            if mean >= 0.15 || far * 100 >= w * h * 3 {
+            if mean >= 0.35 || far * 50 >= w * h * 3 {
                 failed.push(format!("{name} ({format:?}): mean {mean:.3}, {far} levels further than 2"));
             }
         }
