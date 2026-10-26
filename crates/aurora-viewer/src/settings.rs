@@ -568,6 +568,8 @@ pub struct Settings {
     pub people_tab: u8,
     pub show_inventory: bool,
     pub show_appearance: bool,
+    /// Crop outfit gallery previews to fill their frames (off: fit the whole image).
+    pub appearance_fill_previews: bool,
     pub show_ao: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
@@ -1485,6 +1487,7 @@ impl Default for Settings {
             people_tab: 0,
             show_inventory: false,
             show_appearance: false,
+            appearance_fill_previews: false,
             show_ao: false,
             ao: Default::default(),
             bridge: Default::default(),

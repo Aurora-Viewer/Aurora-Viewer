@@ -1134,6 +1134,7 @@ ui-options-enable-media = Activer les médias
 ui-emoji-activities = Activités
 ui-profile-enabled = Activé
 ui-appearance-refresh = Actualiser
+ui-appearance-fill-previews = Remplir les aperçus des tenues
 ui-options-refresh-list = Actualiser la liste
 ui-land-objects-refresh-object-list = Actualiser la liste des objets
 ui-context-refresh-textures = Actualiser les textures

@@ -1131,6 +1131,7 @@ ui-options-enable-media = Enable media
 ui-emoji-activities = Activities
 ui-profile-enabled = Enabled
 ui-appearance-refresh = Refresh
+ui-appearance-fill-previews = Fill outfit previews
 ui-options-refresh-list = Refresh list
 ui-land-objects-refresh-object-list = Refresh object list
 ui-context-refresh-textures = Refresh textures

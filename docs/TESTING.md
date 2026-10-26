@@ -5944,11 +5944,17 @@ unit tests, the real requests by a grid test. The menu itself:
 `AURORA_DEMO_DOUBLECLICK=menu,<y>` with the height of the Avatar health row
 opens its submenu.
 
-**`AURORA_DEMO_APPEARANCE=gallery|outfits|worn|save|edit|menu|duplicates`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|worn|save|edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
   choice, save to the chosen outfit and move to the Trash);
+- `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
+  cards. Fit shows the whole image; Fill uses a centred crop without stretching.
+  The discs stay round, the images stay inside their frames and the names and
+  Worn tags stay below. Toggle **Fill outfit previews** in the gallery's bottom
+  options menu; this setting is saved and off by default. Reopen Appearance
+  and restart with `gallery` to check persistence without a forced mode;
 - `outfits`: the list of outfits; `worn`: the worn items. A right click on
   an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,387,r"`
   (Neurolab) or `"90,419,r"` (the worn outfit) in the default window, capture
