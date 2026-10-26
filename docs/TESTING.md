@@ -601,12 +601,6 @@ when unfocused") is ignored during a screenshot.
   and support-frame counts must follow the saved limit; self stays eligible
   at zero. On the grid the human checks live changes, camera turns and restart
   persistence on their real outfits.
-  Saved-budget validation (source `99b2216a2`): full workspace check passes
-  5,541 tests, zero failures, 30 ignored; scripts, formatting and Clippy clean.
-  Native French captures at 5/0/12 and English after restoring 5 were inspected.
-  Both runs confirm 5/0/12 remote calibrations and 6/1/13 support frames
-  including self; no runtime error or panic. The human accepted the combined
-  test viewer on 2026-10-26 and authorized merging.
   Acquisition regression: begin with a resident outside the saved budget,
   then increase the maximum. Also turn the camera away and back while its
   release is still running. The first corrected frame must retain the visible
@@ -617,14 +611,7 @@ when unfocused") is ignored during a screenshot.
   path. For a native sequence, use `auto-ik-budget` with 60 crowd avatars and
   capture 1100/1124/1132/1144/1160/1200 without the options panel; twelve residents
   become eligible at 1100 and acquire their correction after calibration.
-  Acquisition validation (source `f36039b8`): full workspace check passes
-  5,544 tests, zero failures, 30 ignored; scripts, formatting and Clippy clean.
-  Default dev build `0.7.8-beta.20261026.1+43.gf36039b8d` succeeds. The native
-  60-resident sequence exits zero; all six captures were inspected, and logs
-  confirm 5/0/12 remote calibrations and 6/1/13 support frames without runtime
-  errors or panics. This fixture shows the demo crowd geometry; continuity,
-  segment lengths and rendered sole contact are measured by the automated
-  cases. The human accepted the combined test viewer on 2026-10-26 and authorized merging.
+  Automated cases measure continuity, segment lengths and rendered sole contact.
   Broader outfit/AO coverage remains tracked under #667.
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
