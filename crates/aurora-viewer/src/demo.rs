@@ -2704,6 +2704,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         method: *method,
                         session: *session,
                         result: Some(aurora_llsd::Llsd::Undef),
+                        not_found: false,
                     }];
                     ev.push(NetEvent::SessionAgents {
                         session: *session,
@@ -2769,6 +2770,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         method: *method,
                         session: *session,
                         result: Some(history),
+                        not_found: false,
                     }]
                 }
                 aurora_net::SessionMethod::DeclineInvitation => Vec::new(),
@@ -6531,7 +6533,7 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
 /// AURORA_DEMO_LIGHTS=<n>: `n` small local lights (64 for any value that is
 /// not a number) over the crowd's place and around it, 1.6 m apart at head
 /// height, as the face lights avatars wear and the lamps of a club. The
-/// renderer takes the 64 nearest.
+/// renderer takes 64, those that reach the view first (#1032).
 pub fn lights_count() -> Option<u32> {
     let v = std::env::var("AURORA_DEMO_LIGHTS").ok()?;
     Some(v.trim().parse().unwrap_or(64).min(256))
