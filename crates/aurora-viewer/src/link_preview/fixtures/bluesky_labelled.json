@@ -1,0 +1,50 @@
+{
+  "thread": {
+    "$type": "app.bsky.feed.defs#threadViewPost",
+    "post": {
+      "uri": "at://did:plc:auroraexampledemo2345abcd/app.bsky.feed.post/3demolabelled",
+      "cid": "bafyreiauroraexampledemolabelledcid",
+      "author": {
+        "did": "did:plc:auroraexampledemo2345abcd",
+        "handle": "aurora-demo.bsky.social",
+        "displayName": "Aurora Demo",
+        "labels": []
+      },
+      "record": {
+        "$type": "app.bsky.feed.post",
+        "createdAt": "2026-10-26T12:05:00.000Z",
+        "text": "Quoting the build, with a clip",
+        "labels": {
+          "$type": "com.atproto.label.defs#selfLabels",
+          "values": [{ "val": "nudity" }]
+        }
+      },
+      "embed": {
+        "$type": "app.bsky.embed.recordWithMedia#view",
+        "media": {
+          "$type": "app.bsky.embed.video#view",
+          "cid": "bafkreiauroraexampledemovideo01",
+          "playlist": "https://video.bsky.app/watch/did%3Aplc%3Aauroraexampledemo2345abcd/bafkreiauroraexampledemovideo01/playlist.m3u8",
+          "thumbnail": "https://video.bsky.app/watch/did%3Aplc%3Aauroraexampledemo2345abcd/bafkreiauroraexampledemovideo01/thumbnail.jpg",
+          "aspectRatio": { "width": 1280, "height": 720 }
+        },
+        "record": {
+          "record": {
+            "$type": "app.bsky.embed.record#viewRecord",
+            "uri": "at://did:plc:auroraexampledemo2345abcd/app.bsky.feed.post/3demopost2abc"
+          }
+        }
+      },
+      "indexedAt": "2026-10-26T12:05:01.000Z",
+      "labels": [
+        {
+          "src": "did:plc:auroraexampledemo2345abcd",
+          "uri": "at://did:plc:auroraexampledemo2345abcd/app.bsky.feed.post/3demolabelled",
+          "val": "nudity",
+          "cts": "2026-10-26T12:05:00.000Z"
+        }
+      ]
+    },
+    "replies": []
+  }
+}

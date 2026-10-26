@@ -3633,7 +3633,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services; `net` from the real sites |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services and Bluesky / X posts; `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
 | `AURORA_DEMO_GIFS=1\|klipy\|sent\|menu\|nokey\|net` | Conversations open on the GIF picker of the field, its results made here; `sent` sends the first GIF; `menu` the button's right-click menu; `nokey` no button; `net` the real services |
@@ -4718,11 +4718,12 @@ failure. Grid validation and any paid upload are performed by the human.
   (#923): links to the pages of image services, read from the saved answers
   of `link_preview/fixtures/` (made-up ids, no network): a removed Lightshot
   screenshot and a Reddit text post (the links alone, no card), then a
-  Gyazo page, a Flickr short link, an Imgur album, a Lightshot screenshot
-  and a Reddit post, each with its picture (the demo draws it); the Reddit
-  one blurred until clicked. `services:gyazo,flickr` keeps the listed
-  services only (`gyazo`, `flickr`, `imgur`, `lightshot`, `reddit`, `none`
-  for the two links without a card). The Legacy lines (`bubbles:legacy`)
+  Gyazo page, a Flickr short link, an Imgur album, a Lightshot screenshot,
+  a Reddit post, a Bluesky post, an X post and a Bluesky post labelled
+  `nudity` (#1051), each with its picture (the demo draws it); the Reddit
+  one and the labelled one blurred until clicked. `services:gyazo,flickr`
+  keeps the listed services only (`gyazo`, `flickr`, `imgur`, `lightshot`,
+  `reddit`, `bluesky`, `x`, `none` for the two links without a card). The Legacy lines (`bubbles:legacy`)
   show the same cards, including animated GIFs and consent prompts (#976);
   combine with `AURORA_DEMO_CONV_POPOUT=1` to check independent windows.
   Transcript history and the chat lines at the bottom stay text-only. Capture at frame 900

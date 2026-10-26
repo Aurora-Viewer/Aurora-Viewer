@@ -54,6 +54,9 @@ const TRUSTED: &[&str] = &[
     "redd.it",
     "prnt.sc",
     "prntscr.com",
+    // X's picture servers (pbs.twimg.com) and its embed widget's API
+    // (cdn.syndication.twimg.com), for the previews of X posts (#1051)
+    "twimg.com",
     // the GIF services of the Conversations field's GIF picker (#932,
     // gif_search.rs): what it sends is a link to their media servers
     // (media*.giphy.com, static*.klipy.com)

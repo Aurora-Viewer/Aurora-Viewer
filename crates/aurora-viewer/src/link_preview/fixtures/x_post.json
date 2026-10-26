@@ -1,0 +1,38 @@
+{
+  "__typename": "Tweet",
+  "lang": "en",
+  "possibly_sensitive": false,
+  "created_at": "2026-10-26T12:10:00.000Z",
+  "id_str": "1850000000000000001",
+  "text": "A new build on the plaza https://t.co/DemoPic01",
+  "user": {
+    "id_str": "1000000000000000001",
+    "name": "Aurora Demo",
+    "screen_name": "AuroraDemo"
+  },
+  "mediaDetails": [
+    {
+      "display_url": "pic.x.com/DemoPic01",
+      "expanded_url": "https://x.com/AuroraDemo/status/1850000000000000001/photo/1",
+      "media_url_https": "https://pbs.twimg.com/media/AuroraDemoPic01.jpg",
+      "original_info": { "height": 1200, "width": 1600 },
+      "type": "photo",
+      "url": "https://t.co/DemoPic01"
+    },
+    {
+      "display_url": "pic.x.com/DemoPic01",
+      "expanded_url": "https://x.com/AuroraDemo/status/1850000000000000001/photo/2",
+      "media_url_https": "https://pbs.twimg.com/media/AuroraDemoPic02.jpg",
+      "original_info": { "height": 1080, "width": 1080 },
+      "type": "photo",
+      "url": "https://t.co/DemoPic01"
+    }
+  ],
+  "photos": [
+    {
+      "url": "https://pbs.twimg.com/media/AuroraDemoPic01.jpg",
+      "width": 1600,
+      "height": 1200
+    }
+  ]
+}

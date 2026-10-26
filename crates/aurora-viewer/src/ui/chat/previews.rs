@@ -8,7 +8,8 @@
 //! A picture's card: hovered, buttons to open it in the browser, copy it or
 //! hide the preview; a click enlarges it over the conversation (`lightbox`);
 //! a right click also hides every preview of its site. A group's
-//! pictures are blurred until clicked (Preferences › Chat). A preview hidden,
+//! pictures are blurred until clicked (Preferences › Chat), as are Reddit's
+//! and those of a post its network marks sensitive. A preview hidden,
 //! asked for or unblurred stays so until the viewer closes; a site hidden
 //! from the menu is saved in the settings.
 
@@ -71,6 +72,8 @@ struct Shown {
     /// Where the picture came from when it is not the link itself (the
     /// page of an image service): the enlargement asks it again.
     source: Option<String>,
+    /// A post its network marks sensitive: blurred until clicked.
+    sensitive: bool,
 }
 
 impl Shown {
@@ -90,6 +93,7 @@ impl Shown {
             size: p.size,
             copy,
             source: None,
+            sensitive: false,
         }
     }
 
@@ -379,8 +383,13 @@ impl Previews {
             self.in_flight = self.in_flight.saturating_sub(1);
             let entry = match result {
                 Ok(Content::Picture(p)) => Entry::Picture(Shown::new(ctx, &url, p)),
-                Ok(Content::Page { picture, source }) => Entry::Picture(Shown {
+                Ok(Content::Page {
+                    picture,
+                    source,
+                    sensitive,
+                }) => Entry::Picture(Shown {
                     source: Some(source),
+                    sensitive,
                     ..Shown::new(ctx, &url, picture)
                 }),
                 Ok(Content::Video(v)) => Entry::Video {
@@ -475,9 +484,7 @@ impl Previews {
             let result = match &target {
                 Target::Picture => lp::fetch_picture(&client, &url).await.map(Content::Picture),
                 Target::Video(v) => lp::fetch_video(&client, v).await.map(Content::Video),
-                Target::Page(_) => lp::fetch_page(&client, &url, trusted_only)
-                    .await
-                    .map(|(picture, source)| Content::Page { picture, source }),
+                Target::Page(_) => lp::fetch_page(&client, &url, trusted_only).await,
             };
             let _ = tx.send((url, result));
         });
@@ -656,11 +663,14 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
     // a load allowed by the trust of the site stays on trusted sites
     let trusted_only = start == Start::Load && pv.settings.load == lp::Load::Trusted;
     pv.request(url, target, trusted_only, pass);
-    // a group's pictures as set in Preferences, Reddit's always
-    let blur = ((pv.place == Place::Group && pv.settings.blur_groups) || lp::blurred_until_clicked(url)) && !pv.revealed.contains(&k);
     let Some(cached) = pv.cache.get(url) else {
         return;
     };
+    // a group's pictures as set in Preferences, Reddit's always, a post its
+    // network marks sensitive
+    let marked = matches!(&cached.entry, Entry::Picture(shown) if shown.sensitive);
+    let blur =
+        ((pv.place == Place::Group && pv.settings.blur_groups) || lp::blurred_until_clicked(url) || marked) && !pv.revealed.contains(&k);
     let mut enlarge = false;
     let mut window = false;
     let resp = match (&cached.entry, target) {

@@ -205,11 +205,132 @@ fn reddit_pictures_are_blurred_until_clicked() {
     }
 }
 
+/// Every form of a Bluesky or X post's link; profiles, other pages and
+/// look-alikes are not posts.
+#[test]
+fn bluesky_and_x_posts_are_recognized() {
+    let thread = |actor: &str, key: &str| {
+        Some(Step::Post(format!(
+            "https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=at%3A%2F%2F{actor}%2Fapp.bsky.feed.post%2F{key}&depth=0&parentHeight=0"
+        )))
+    };
+    assert_eq!(
+        step("https://bsky.app/profile/aurora-demo.bsky.social/post/3demopost2abc"),
+        thread("aurora-demo.bsky.social", "3demopost2abc")
+    );
+    assert_eq!(
+        step("https://bsky.app/profile/did:plc:auroraexampledemo2345abcd/post/3demopost2abc?ref=share"),
+        thread("did%3Aplc%3Aauroraexampledemo2345abcd", "3demopost2abc")
+    );
+    let post = Some(Step::Post(
+        "https://cdn.syndication.twimg.com/tweet-result?id=1850000000000000001&lang=en&token=4hfy2jnxph".into(),
+    ));
+    for url in [
+        "https://x.com/AuroraDemo/status/1850000000000000001",
+        "https://www.x.com/AuroraDemo/status/1850000000000000001?s=20",
+        "https://twitter.com/AuroraDemo/status/1850000000000000001/photo/1",
+        "https://mobile.twitter.com/AuroraDemo/status/1850000000000000001",
+        "https://x.com/i/status/1850000000000000001",
+        "https://x.com/i/web/status/1850000000000000001",
+        "https://twitter.com/aurora_demo/statuses/1850000000000000001",
+    ] {
+        assert_eq!(step(url), post, "{url}");
+    }
+    for url in [
+        "https://bsky.app/profile/aurora-demo.bsky.social",
+        "https://bsky.app/profile/aurora-demo.bsky.social/post/",
+        "https://bsky.app/profile/aurora-demo.bsky.social/feed/whats-hot",
+        "https://bsky.app/profile/not a handle/post/3demopost2abc",
+        "https://bsky.app/profile/nodot/post/3demopost2abc",
+        "https://bsky.app/profile/aurora-demo.bsky.social/post/..",
+        "https://x.com/AuroraDemo",
+        "https://x.com/AuroraDemo/status/",
+        "https://x.com/AuroraDemo/status/12a4",
+        "https://x.com/AuroraDemo/status/99999999999999999999999",
+        "https://x.com/a_name_far_too_long/status/1850000000000000001",
+        "https://x.com.evil.example/AuroraDemo/status/1850000000000000001",
+        "https://fxtwitter.com/AuroraDemo/status/1850000000000000001",
+    ] {
+        assert_eq!(recognize(url), None, "{url}");
+    }
+}
+
+/// The token is the one X's embed widget computes, digit for digit as
+/// JavaScript writes the number (values from Node).
+#[test]
+fn x_tokens_match_the_widget_s() {
+    for (id, token) in [
+        (20, "6dq1a2xwd93"),
+        (999, "8uqo9xs4uzm"),
+        (1_000_000_000_000_000, "353i5ab8p5f"),
+        (1_585_341_984_679_469_056, "3uchycv2wqc"),
+        (1_850_000_000_000_000_001, "4hfy2jnxph"),
+        (1_234_567_890_123_456_789, "2zqic77uqyk"),
+        (9_223_372_036_854_775_807, "mcw2svce2ao"),
+    ] {
+        assert_eq!(x_token(id), token, "{id}");
+    }
+    assert_eq!(js_base36(1.5), "1.i");
+    assert_eq!(js_base36(36.0), "10");
+}
+
+/// A post's first picture or its video's thumbnail; the marks of its
+/// network; nothing for a text post or a picture elsewhere.
+#[test]
+fn posts_lead_to_their_picture_and_its_mark() {
+    assert_eq!(
+        from_post(Service::Bluesky, BLUESKY_POST.as_bytes()),
+        Some((
+            "https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:auroraexampledemo2345abcd/bafkreiauroraexampledemopicture01@jpeg".into(),
+            false
+        ))
+    );
+    assert_eq!(
+        from_post(Service::Bluesky, BLUESKY_LABELLED.as_bytes()),
+        Some((
+            "https://video.bsky.app/watch/did%3Aplc%3Aauroraexampledemo2345abcd/bafkreiauroraexampledemovideo01/thumbnail.jpg".into(),
+            true
+        ))
+    );
+    // an account's label marks its posts; a removed label ("neg") does not
+    let account = BLUESKY_POST.replacen(r#""labels": []"#, r#""labels": [{"val": "porn"}]"#, 1);
+    assert_eq!(from_post(Service::Bluesky, account.as_bytes()).map(|p| p.1), Some(true));
+    let removed = BLUESKY_POST.replacen(r#""labels": []"#, r#""labels": [{"val": "porn", "neg": true}]"#, 1);
+    assert_eq!(from_post(Service::Bluesky, removed.as_bytes()).map(|p| p.1), Some(false));
+    // a text post, a link card, a post not found
+    let text = r#"{"thread": {"post": {"labels": [], "author": {}, "record": {"text": "hi"}}}}"#;
+    assert_eq!(from_post(Service::Bluesky, text.as_bytes()), None);
+    let card = r#"{"thread": {"post": {"embed": {"$type": "app.bsky.embed.external#view", "external": {"thumb": "https://cdn.bsky.app/img/a@jpeg"}}}}}"#;
+    assert_eq!(from_post(Service::Bluesky, card.as_bytes()), None);
+    assert_eq!(from_post(Service::Bluesky, br#"{"error": "NotFound"}"#), None);
+
+    assert_eq!(
+        from_post(Service::X, X_POST.as_bytes()),
+        Some(("https://pbs.twimg.com/media/AuroraDemoPic01.jpg".into(), false))
+    );
+    let sensitive = X_POST.replace(r#""possibly_sensitive": false"#, r#""possibly_sensitive": true"#);
+    assert_eq!(from_post(Service::X, sensitive.as_bytes()).map(|p| p.1), Some(true));
+    // a removed post, a picture said to be elsewhere, X's answer to Bluesky
+    assert_eq!(from_post(Service::X, br#"{"__typename": "TweetTombstone"}"#), None);
+    let elsewhere = X_POST.replace("https://pbs.twimg.com/", "https://pics.example.net/");
+    assert_eq!(from_post(Service::X, elsewhere.as_bytes()), None);
+    assert_eq!(from_post(Service::Bluesky, X_POST.as_bytes()), None);
+    assert_eq!(from_post(Service::X, b"<!DOCTYPE html>"), None);
+}
+
 #[test]
 fn the_demo_s_links_use_the_saved_answers() {
     assert_eq!(
-        demo_source("https://gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9").as_deref(),
-        Some("https://i.gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png")
+        demo_source("https://gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9"),
+        Some(("https://i.gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9.png".into(), false))
+    );
+    assert_eq!(
+        demo_source("https://bsky.app/profile/aurora-demo.bsky.social/post/3demolabelled").map(|p| p.1),
+        Some(true)
+    );
+    assert_eq!(
+        demo_source("https://x.com/AuroraDemo/status/1850000000000000001").map(|p| p.1),
+        Some(false)
     );
     assert!(demo_source("https://prnt.sc/demo42").is_some());
     assert_eq!(demo_source("https://prnt.sc/removed1"), None);

@@ -18,8 +18,9 @@
 //! * pictures are kept at the size they are drawn at, the frames of an
 //!   animated GIF within a memory budget.
 //!
-//! The page of an image service (Gyazo, Flickr, Imgur, Lightshot, Reddit)
-//! leads to its picture first (`services.rs`, #923), within the same rules.
+//! The page of an image service (Gyazo, Flickr, Imgur, Lightshot, Reddit) or
+//! a Bluesky or X post leads to its picture first (`services.rs`, #923,
+//! #1051), within the same rules.
 
 use crate::link_trust::Trust;
 use serde::{Deserialize, Serialize};
@@ -492,6 +493,8 @@ pub enum Content {
     Page {
         picture: Picture,
         source: String,
+        /// The post's network marks it sensitive: blurred until clicked.
+        sensitive: bool,
     },
 }
 
@@ -639,11 +642,13 @@ async fn text_head(client: &reqwest::Client, url: &str, accept: &str, end: &str)
 }
 
 /// The picture an image service's page leads to: the address of the
-/// picture, judged as a link would be, then the picture. `trusted_only`: a
-/// load allowed by the trust of the site stays on trusted sites.
-pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool) -> Result<(Picture, String), Failure> {
+/// picture, judged as a link would be, then the picture (`Content::Page`).
+/// `trusted_only`: a load allowed by the trust of the site stays on trusted
+/// sites.
+pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool) -> Result<Content, Failure> {
     use services::Step;
     let (service, step) = services::recognize(url).ok_or(Failure::NotPicture)?;
+    let mut sensitive = false;
     let source = match step {
         Step::Direct(source) => Some(source),
         Step::OEmbed(endpoint) => download(client, &endpoint, "application/json", 64 * 1024)
@@ -655,6 +660,14 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
             .0
             .ok()
             .and_then(|html| services::from_head(service, &html)),
+        Step::Post(endpoint) => download(client, &endpoint, "application/json", HEAD_BYTES as u64)
+            .await
+            .ok()
+            .and_then(|(body, _)| services::from_post(service, &body))
+            .map(|(source, marked)| {
+                sensitive = marked;
+                source
+            }),
         Step::Feed(feed) => {
             let now = std::time::Instant::now();
             if REDDIT_PAUSE.lock().ok().and_then(|p| *p).is_some_and(|until| now < until) {
@@ -677,7 +690,11 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
         _ => {}
     }
     let picture = fetch_picture(client, &source).await?;
-    Ok((picture, source))
+    Ok(Content::Page {
+        picture,
+        source,
+        sensitive,
+    })
 }
 
 /// Title, channel and picture of a video.
@@ -847,14 +864,18 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
         Target::Picture => Ok(Content::Picture(demo_still(640, 480, 0))),
         // the saved answers of each service lead to the picture's address
         Target::Page(service) => {
-            let source = services::demo_source(url).ok_or(Failure::Unavailable)?;
+            let (source, sensitive) = services::demo_source(url).ok_or(Failure::Unavailable)?;
             let picture = match service {
-                Service::Gyazo => demo_still(640, 360, 0),
+                Service::Gyazo | Service::Bluesky => demo_still(640, 360, 0),
                 Service::Imgur => demo_still(480, 600, 1),
-                Service::Lightshot => demo_still(640, 400, 1),
+                Service::Lightshot | Service::X => demo_still(640, 400, 1),
                 Service::Flickr | Service::Reddit => demo_still(640, 480, 0),
             };
-            Ok(Content::Page { picture, source })
+            Ok(Content::Page {
+                picture,
+                source,
+                sensitive,
+            })
         }
     }
 }
@@ -969,6 +990,12 @@ mod tests {
             ("https://prnt.sc/demo42", Service::Lightshot),
             ("https://redd.it/demo01", Service::Reddit),
             ("https://www.reddit.com/media?url=https%3A%2F%2Fi.redd.it%2Fa.jpeg", Service::Reddit),
+            (
+                "https://bsky.app/profile/aurora-demo.bsky.social/post/3demopost2abc",
+                Service::Bluesky,
+            ),
+            ("https://x.com/AuroraDemo/status/1850000000000000001", Service::X),
+            ("https://twitter.com/AuroraDemo/status/1850000000000000001", Service::X),
         ] {
             assert_eq!(target(url), Some(Target::Page(service)), "{url}");
             assert_eq!(decide(&s, Place::Im, url), Some((Target::Page(service), Start::Load)), "{url}");
@@ -1034,11 +1061,21 @@ mod tests {
             "https://flic.kr/p/4yVr8K",
             // a well-known public post
             "https://www.reddit.com/r/pics/comments/haucpf/",
+            // public posts of Bluesky's own account (a picture) and of X (a
+            // video's thumbnail)
+            "https://bsky.app/profile/bsky.app/post/3mxu3hsnebc2v",
+            "https://x.com/elonmusk/status/1585341984679469056",
             // no such picture: no card
             "https://gyazo.com/0123456789abcdef0123456789abcdef",
+            "https://x.com/i/status/1",
         ] {
             match rt.block_on(fetch_page(&client, url, true)) {
-                Ok((p, source)) => println!("{url}: {}x{} from {source}", p.size[0], p.size[1]),
+                Ok(Content::Page {
+                    picture: p,
+                    source,
+                    sensitive,
+                }) => println!("{url}: {}x{} from {source}, sensitive {sensitive}", p.size[0], p.size[1]),
+                Ok(_) => println!("{url}: not a page's picture"),
                 Err(f) => println!("{url}: {f:?}"),
             }
         }
