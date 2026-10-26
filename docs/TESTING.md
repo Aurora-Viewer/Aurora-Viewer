@@ -3650,6 +3650,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
+| `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]` | A large wardrobe in the Appearance demo: generated outfits, the window closed or scrolled |
@@ -4531,6 +4532,27 @@ failure. Grid validation and any paid upload are performed by the human.
   Manually: drag an item from the inventory onto a private conversation
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
+
+- **`AURORA_DEMO_GIVE=profile|avatar[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
+  its entries are carried from frame 700, without a press. `profile`, with
+  `AURORA_DEMO_PROFILE=wolf` (or any other resident), leaves the pointer
+  beside the profile window: the whole window fades behind the gift and
+  "Drop here to give to <name>" in the muted ink, "7 items" under it.
+  `profile:over` puts the pointer on the window: its violet outline and the
+  hint in the ink. `profile:drop` releases there at frame 720: the give
+  confirmation of the conversations opens for that resident. `avatar` puts
+  the pointer on the other avatar nearest the middle of the view: it and
+  what it wears get the violet outline of the photo's chosen subjects;
+  `avatar:drop` releases there at frame 720 and opens the confirmation. For
+  a readable avatar capture use `AURORA_DEMO_CROWD=12`,
+  `AURORA_DEMO_POS=129,134` and `AURORA_DEMO_CAMERA=close,1110,420,20`;
+  capture at frame 715 (`over`) or 760 (`drop`) with `AURORA_FPS_LIMIT=60`.
+  The demo crowd is drawn as a grid: compare with a capture without the
+  variable to see the outline. Manually: drag an item, a folder or a
+  selection onto another resident's profile (any tab, both styles), onto
+  our own (nothing), onto an avatar, onto what it wears, onto an avatar
+  behind a wall (the wall wins), and Escape during the drag. No grid is
+  needed.
 
 - **`AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]`**: from the 10th second in
   world, Tess writes in the Aurora Builders group chat every 6 seconds

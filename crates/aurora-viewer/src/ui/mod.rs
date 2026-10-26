@@ -39,6 +39,7 @@ pub mod follow;
 pub mod fonts;
 pub mod friend_prompt;
 pub mod gestures;
+pub(crate) mod give_drop;
 pub mod grids;
 pub mod group_profile;
 pub mod hover_height;

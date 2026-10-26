@@ -121,10 +121,12 @@ pub(super) fn window(ctx: &egui::Context, env: &mut Env, w: &mut Window, index: 
     let screen = ctx.content_rect();
     let pos = screen.center() - DEFAULT_SIZE * 0.5 + Vec2::splat(24.0 * (index % 6) as f32);
     let win_id = window_id(w.id);
-    let mut floater = Floater::new(&win_id, title, pos, DEFAULT_SIZE).help(aurora_i18n::tr!("ui-profile-aurora-help"));
+    let mut floater = Floater::new(&win_id, title.clone(), pos, DEFAULT_SIZE).help(aurora_i18n::tr!("ui-profile-aurora-help"));
     floater.min_size = MIN_SIZE;
     let mut open = true;
-    floater.show(ctx, env.p, &mut open, |ui| body(ui, env, w));
+    if floater.show(ctx, env.p, &mut open, |ui| body(ui, env, w)).is_some() && !own {
+        super::give_drop(ctx, env.p, &win_id, &title, w.id, env.actions);
+    }
     open
 }
 
@@ -916,14 +918,15 @@ fn more_menu(resp: &Response, env: &mut Env, w: &Window, f: &Facts, compact: boo
     let display = names.get(&id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
     let mappable = world.can_locate_avatar(id);
-    let soon = aurora_i18n::tr!("ui-profile-coming-soon");
     menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         let ctx = ui.ctx().clone();
         let act = |a: CtxAction| context::request(&ctx, a);
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             act(CtxAction::ShowOnMap(id));
         }
-        menu::item_tip(ui, p, "share", aurora_i18n::tr!("common-share"), false, soon);
+        if menu::item(ui, p, "share", aurora_i18n::tr!("common-share")) {
+            env.actions.push(ProfileAction::Share(id));
+        }
         if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
             act(CtxAction::RequestTeleport(id));
         }
@@ -1932,14 +1935,14 @@ fn groups_card(ui: &mut egui::Ui, env: &mut Env, w: &Window) {
     });
 }
 
-/// "Drop an item here to give it" (giving from the inventory is not ported
-/// yet: the zone says so on hover).
+/// "Drop an item here to give it": the whole window takes the drop
+/// (`super::give_drop`), this zone says so before any drag.
 fn give_zone(ui: &mut egui::Ui, env: &Env, w: &Window) {
     if w.id == env.world.agent_id {
         return;
     }
     let p = env.p;
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
     let stroke = egui::Stroke::new(1.5, p.ink.gamma_multiply(0.14));
     let r = rect.shrink(0.75);
     let path = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
@@ -1952,7 +1955,6 @@ fn give_zone(ui: &mut egui::Ui, env: &Env, w: &Window) {
     let left = rect.center().x - total / 2.0;
     paint_icon(ui, "gift-filled", pos2(left + 7.0, rect.center().y), 14.0, p.muted_dim);
     widgets::paint_ink_left(ui.painter(), galley, pos2(left + 20.0, rect.center().y), p.muted_dim);
-    resp.on_hover_text(aurora_i18n::tr!("ui-profile-give-inventory-object-coming-soon"));
 }
 
 /// Our private notes on someone, a click away from the Notes tab.

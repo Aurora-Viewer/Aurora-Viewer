@@ -2295,7 +2295,6 @@ common-home = Home
 ui-profile-give = Give:
 ui-context-give-my-calling-card = Give my calling card
 ui-chat-give-object-coming-soon = Give object (coming soon)
-ui-profile-give-inventory-object-coming-soon = Give inventory object (coming soon)
 ui-contacts-give-this-resident-a-nickname = Give this resident a nickname
 ui-land-objects-deeded-to-group = Deeded to group:
 ui-options-folder-containing-llplugin-blank-aurora-s-own-plugins = Folder containing llplugin\ and SLPlugin, for example that of another installed viewer (blank: Aurora's own plugins)

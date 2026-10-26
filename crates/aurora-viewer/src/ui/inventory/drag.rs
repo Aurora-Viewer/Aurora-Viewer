@@ -123,6 +123,12 @@ pub(crate) fn carried_count(ctx: &egui::Context) -> Option<usize> {
     Cargo::carried(ctx).map(|c| c.ids().len())
 }
 
+/// The entries a drag of inventory carries (an item, a folder or a
+/// selection), wherever the pointer is.
+pub(crate) fn carried_ids(ctx: &egui::Context) -> Option<Vec<Uuid>> {
+    Cargo::carried(ctx).map(|c| c.ids().to_vec())
+}
+
 /// The cargo of `AURORA_DEMO_CONV_GIVE`: one item, or a selection of several.
 pub(crate) fn demo_carry(ctx: &egui::Context, ids: Vec<Uuid>) {
     match ids[..] {
@@ -137,10 +143,15 @@ pub(crate) fn demo_carry(ctx: &egui::Context, ids: Vec<Uuid>) {
 /// indra/newview/llfloaterimsession.cpp): the items carried, and whether
 /// they were released over `zone` this frame.
 pub(crate) fn give_target(ui: &egui::Ui, zone: egui::Rect) -> Option<(Vec<Uuid>, bool)> {
-    if !ui.rect_contains_pointer(zone) {
+    give_target_on(ui.ctx(), ui.layer_id(), ui.clip_rect().intersect(zone))
+}
+
+/// `give_target` for a zone of the layer `layer`, from outside its `Ui`: a
+/// whole window, frame included (the profiles, #991).
+pub(crate) fn give_target_on(ctx: &egui::Context, layer: egui::LayerId, zone: egui::Rect) -> Option<(Vec<Uuid>, bool)> {
+    if !ctx.rect_contains_pointer(layer, zone) {
         return None;
     }
-    let ctx = ui.ctx();
     let cargo = Cargo::carried(ctx)?;
     let pass = ctx.cumulative_pass_nr();
     ctx.data_mut(|d| {
@@ -152,7 +163,7 @@ pub(crate) fn give_target(ui: &egui::Ui, zone: egui::Rect) -> Option<(Vec<Uuid>,
             },
         )
     });
-    let released = ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+    let released = ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
     if released {
         egui::DragAndDrop::clear_payload(ctx);
     }

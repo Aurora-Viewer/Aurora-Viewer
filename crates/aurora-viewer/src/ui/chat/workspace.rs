@@ -13,6 +13,7 @@ use super::{
     ChatUi, ConvAction, Lines, Rows, ToField, compose, conversation_lines, find, head, mark_read, members, sidebar, stage, thread, view,
 };
 use crate::theme::Palette;
+use crate::ui::give_drop;
 use crate::world::{ChatKind, ChatLine, World};
 use std::collections::{HashMap, VecDeque};
 use uuid::Uuid;
@@ -289,12 +290,13 @@ pub(super) fn pane(
     let mut to_field = ToField::Nothing;
     let body_top = ui.cursor().top();
     let give_to = st.selected.filter(|_| kind == Some(sidebar::Kind::Private));
-    let fade = drop_fade(ui, give_to.is_some());
+    let give_id = ui.scope_id().with("give_drop");
+    let fade = give_drop::fade(ui.ctx(), give_id, give_to.is_some());
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(lines_w);
             if fade > 0.0 {
-                ui.multiply_opacity(1.0 - DROP_DIM * fade);
+                ui.multiply_opacity(1.0 - give_drop::DIM * fade);
             }
             let mut th = thread::Thread {
                 compact,
@@ -322,8 +324,11 @@ pub(super) fn pane(
     if fade > 0.0
         && let Some(id) = give_to
     {
+        // the hint over the faded messages; over the pane, where `drops`
+        // outlines the zone, it takes the ink
         let area = egui::Rect::from_min_size(egui::pos2(pane.left(), body_top), egui::vec2(lines_w, lines_h));
-        drop_hint(ui, p, area, pane, &world.session_title(&id), fade);
+        let over = ui.rect_contains_pointer(pane) && crate::ui::inventory::drag::carried_count(ui.ctx()).is_some();
+        give_drop::hint(ui.painter(), p, give_id, area, over, &world.session_title(&id), fade);
     }
     let mut quote = None;
     for a in asked {
@@ -399,76 +404,6 @@ pub(super) fn drops(
         if released && !items.is_empty() {
             actions.push(ConvAction::GiveItems { to: conversation, items });
         }
-    }
-}
-
-/// How much an IM's messages fade behind the drop hint, at most.
-const DROP_DIM: f32 = 0.85;
-/// The time the messages take to fade, and to come back.
-const DROP_FADE: f32 = 0.12;
-/// The size of the hint's gift.
-const DROP_ICON: f32 = 28.0;
-
-fn drop_count_id(ui: &egui::Ui) -> egui::Id {
-    ui.scope_id().with("drop_hint_count")
-}
-
-/// How far an IM's messages have faded behind the drop hint (0 to 1). It
-/// starts with the drag of inventory, wherever the pointer is: the IM says
-/// what a drop on it does before it is reached (#627). The Legacy Viewer
-/// only changes the cursor over it (LLFloaterIMSession::handleDragAndDrop).
-fn drop_fade(ui: &egui::Ui, im: bool) -> f32 {
-    let carried = crate::ui::inventory::drag::carried_count(ui.ctx()).filter(|_| im);
-    if let Some(n) = carried {
-        // kept for the fade back, once the drag is over
-        ui.ctx().data_mut(|d| d.insert_temp(drop_count_id(ui), n));
-    }
-    ui.ctx()
-        .animate_bool_with_time(ui.scope_id().with("drop_hint"), carried.is_some(), DROP_FADE)
-}
-
-/// The hint over the faded messages: to whom a drop gives, and how many
-/// entries when several. Over the pane, where `drops` outlines the zone, it
-/// takes the ink.
-fn drop_hint(ui: &egui::Ui, p: &Palette, area: egui::Rect, pane: egui::Rect, name: &str, fade: f32) {
-    let ctx = ui.ctx();
-    let count = ctx.data(|d| d.get_temp::<usize>(drop_count_id(ui))).unwrap_or(1);
-    let over = ui.rect_contains_pointer(pane) && crate::ui::inventory::drag::carried_count(ctx).is_some();
-    let ink = if over { p.ink } else { p.muted };
-    let mut painter = ui.painter().with_clip_rect(area);
-    painter.multiply_opacity(fade);
-    let centred = |text: String, size: f32, color: egui::Color32| {
-        let mut job = egui::text::LayoutJob::simple(text, egui::FontId::proportional(size), color, (area.width() - 32.0).max(60.0));
-        // centred on x = 0
-        job.halign = egui::Align::Center;
-        painter.layout_job(job)
-    };
-    let title = centred(aurora_i18n::tr!("ui-chat-drop-to-give", name = name), 13.5, ink);
-    let number = aurora_i18n::integer(count as i64);
-    let sub = (count > 1).then(|| {
-        centred(
-            aurora_i18n::tr!("inventory-items-count", count = count, number = number),
-            12.0,
-            p.muted,
-        )
-    });
-    let height = DROP_ICON + 8.0 + title.size().y + sub.as_ref().map_or(0.0, |s| 3.0 + s.size().y);
-    let x = area.center().x;
-    let mut y = area.center().y - height / 2.0;
-    if let Some(icon) = crate::ui::icons::global("gift-filled") {
-        let rect = egui::Rect::from_min_size(egui::pos2(x - DROP_ICON / 2.0, y), egui::Vec2::splat(DROP_ICON));
-        painter.image(
-            icon.id(),
-            rect,
-            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-            ink,
-        );
-    }
-    y += DROP_ICON + 8.0;
-    let title_h = title.size().y;
-    painter.galley(egui::pos2(x, y), title, ink);
-    if let Some(sub) = sub {
-        painter.galley(egui::pos2(x, y + title_h + 3.0), sub, p.muted);
     }
 }
 

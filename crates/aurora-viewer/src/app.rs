@@ -61,6 +61,7 @@ mod env_editor;
 mod external_links;
 mod follow;
 mod gestures;
+mod give_demo;
 mod gpu_stall;
 mod graphics_start;
 mod hover_height;
@@ -8572,6 +8573,7 @@ impl App {
         if self.demo {
             self.texture_library_demo_input(&mut raw);
             self.portal_drop_demo_input(&mut raw);
+            self.give_demo_input(&mut raw, vp, (w, h));
             ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
@@ -13632,6 +13634,23 @@ impl App {
                         ui::profile::ProfileAction::GroupChat(id) => {
                             self.world.start_group_chat(id);
                             self.show_conversations();
+                        }
+                        // the conversations' give confirmation (#991)
+                        ui::profile::ProfileAction::Give { to, items } => {
+                            self.inventory_ui.dialog = Some(ui::inventory::EditDialog::Share(items, to));
+                        }
+                        // shown and in front, as the conversation's "Give an
+                        // inventory item…"; RLVa @share refuses it first
+                        // (LLAvatarActions::share)
+                        ui::profile::ProfileAction::Share(id) => {
+                            if self.world.rlva.allows("share", &id.to_string()) {
+                                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+                                self.egui_ctx
+                                    .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique("inventory")));
+                            } else {
+                                self.world
+                                    .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+                            }
                         }
                         ui::profile::ProfileAction::Save { target, data } => {
                             let cmd = self.world.save_profile(target, data);

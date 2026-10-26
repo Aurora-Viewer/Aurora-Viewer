@@ -772,6 +772,9 @@ pub struct Scene {
     /// The avatars and linksets chosen for the photo, every prim and
     /// attachment, outlined while choosing (`snapshot::isolate`).
     pub photo_marks: std::collections::HashSet<usize>,
+    /// The avatar an inventory drag would give to, and what it wears,
+    /// outlined like the photo's (`mark_give_target`, #991).
+    give_marks: (Option<usize>, std::collections::HashSet<usize>),
     rlva_silhouettes: std::collections::HashSet<usize>,
     /// Objects the sync visits: moving, changed, pending (sync_sets.rs).
     sets: SyncSets,
@@ -1382,6 +1385,7 @@ impl Scene {
             parcel_visibility_version: 0,
             photo_isolation_version: 0,
             photo_marks: Default::default(),
+            give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
             sets: SyncSets::default(),
             xf_cache: XfCache::default(),
@@ -2013,6 +2017,7 @@ impl Scene {
         self.sets.clear();
         self.anchors.clear();
         self.hud_roots.clear();
+        self.give_marks = Default::default();
         self.posed_slots.clear();
         self.palette_slots.clear();
         self.motions.clear();
@@ -2345,6 +2350,27 @@ impl Scene {
                 {
                     stack.extend(world.objects.children_of(&o.key).iter().copied());
                 }
+            }
+        }
+    }
+
+    /// Outline the avatar `avatar` (an object index) and everything it
+    /// wears while an inventory drag would give to it, as the photo's
+    /// chosen subjects are (#991); `None` once the drag leaves it. Read again
+    /// at each call: what it wears may arrive meanwhile.
+    pub fn mark_give_target(&mut self, world: &World, avatar: Option<usize>) {
+        let (target, marks) = &mut self.give_marks;
+        if avatar.is_none() && target.is_none() {
+            return;
+        }
+        *target = avatar;
+        marks.clear();
+        let mut stack: Vec<usize> = avatar.into_iter().collect();
+        while let Some(idx) = stack.pop() {
+            if marks.insert(idx)
+                && let Some(o) = world.objects.get(idx)
+            {
+                stack.extend(world.objects.children_of(&o.key).iter().copied());
             }
         }
     }
@@ -4270,6 +4296,7 @@ impl Scene {
                         || selection.contains_key(&i)
                         || self.selection_faces.contains_key(&i)
                         || self.photo_marks.contains(&i)
+                        || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || (capturing && self.gpu.get(i).is_some_and(|g| captured(g, i)))
                     {
@@ -4288,6 +4315,7 @@ impl Scene {
                         || selection.contains_key(&i)
                         || self.selection_faces.contains_key(&i)
                         || self.photo_marks.contains(&i)
+                        || self.give_marks.1.contains(&i)
                         || self.beacon_highlights.contains(&i)
                         || captured(g, i)
                     {
@@ -4315,6 +4343,7 @@ impl Scene {
         let selection_wire = &self.selection_wire;
         let selection_faces = &self.selection_faces;
         let photo_marks = &self.photo_marks;
+        let give_marks = &self.give_marks.1;
         struct Local {
             water_exclusion: Vec<DrawCmd>,
             opaque: Vec<DrawCmd>,
@@ -4479,7 +4508,7 @@ impl Scene {
                     if selection_faces
                         .get(&idx)
                         .is_some_and(|mask| mask & 1u64.checked_shl(f.te_index.into()).unwrap_or(0) != 0)
-                        || (photo_marks.contains(&idx) && pass != Pass::Hidden)
+                        || ((photo_marks.contains(&idx) || give_marks.contains(&idx)) && pass != Pass::Hidden)
                     {
                         l.select_faces.push(cmd);
                     }
