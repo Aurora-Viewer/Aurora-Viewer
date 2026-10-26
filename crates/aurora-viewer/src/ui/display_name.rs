@@ -23,30 +23,14 @@ pub type SetDisplayName = (String, String);
 
 /// "10/15/2026 at 14:30 SLT" (Firestorm LockOutDateFormat, in SLT).
 fn slt_datetime(secs: f64) -> String {
-    let secs = secs as i64;
-    // SLT is US Pacific time; DST approximated by day of year like the top bar
-    let year_day = (secs / 86400).rem_euclid(365);
-    let off = if (68..=307).contains(&year_day) { -7 } else { -8 };
-    let t = secs + off * 3600;
-    let days = t.div_euclid(86400);
-    let tod = t.rem_euclid(86400);
-    // civil date from days since 1970-01-01 (H. Hinnant)
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
+    let (y, m, d, _, h, mi, _) = crate::ui::land::slt_parts(secs as i64);
     aurora_i18n::tr!(
         "ui-display-name-at-slt",
         d = format!("{:02}", d),
         m = format!("{:02}", m),
         y = format!("{}", y),
-        value0 = format!("{:02}", tod / 3600),
-        value1 = format!("{:02}", (tod / 60) % 60)
+        value0 = format!("{:02}", h),
+        value1 = format!("{:02}", mi)
     )
 }
 

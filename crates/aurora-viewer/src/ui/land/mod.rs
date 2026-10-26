@@ -923,28 +923,17 @@ fn maturity(ui: &mut egui::Ui, p: &Palette, v: &View) {
     text(ui, p, name);
 }
 
-/// Seconds since the epoch in SLT (US Pacific, DST approximated by the
-/// day of the year like the top bar): (year, month, day, weekday 0 = Sunday,
-/// hour, minute, second).
+/// Seconds since the epoch in SLT (US Pacific time with its daylight saving
+/// rule, like the bars' clock): (year, month, day, weekday 0 = Sunday, hour,
+/// minute, second).
 pub(crate) fn slt_parts(secs: i64) -> (i64, usize, i64, usize, i64, i64, i64) {
-    let year_day = (secs / 86400).rem_euclid(365);
-    let off = if (68..=307).contains(&year_day) { -7 } else { -8 };
-    let t = secs + off * 3600;
+    let t = secs + crate::world::chat_log::format::pacific_offset_hours(secs) * 3600;
     let days = t.div_euclid(86400);
     let tod = t.rem_euclid(86400);
-    // civil date from days since 1970-01-01 (H. Hinnant)
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
+    let (y, m, d) = aurora_net::profile::civil_from_days(days);
     // 1970-01-01 was a Thursday
     let wday = (days + 4).rem_euclid(7) as usize;
-    (y, m as usize, d, wday, tod / 3600, (tod / 60) % 60, tod % 60)
+    (y, m as usize, i64::from(d), wday, tod / 3600, (tod / 60) % 60, tod % 60)
 }
 
 pub(crate) fn weekdays() -> [&'static str; 7] {
@@ -1017,6 +1006,22 @@ mod tests {
                 "Wed Jun 05 21:18:48 2024"
             }
         );
+    }
+
+    #[test]
+    fn slt_follows_the_2026_daylight_saving_switches() {
+        // 2026-03-08 10:00 UTC: 2:00 PST becomes 3:00 PDT, a Sunday
+        let spring = 1_772_964_000;
+        assert_eq!(slt_parts(spring - 1), (2026, 3, 8, 0, 1, 59, 59));
+        assert_eq!(slt_parts(spring), (2026, 3, 8, 0, 3, 0, 0));
+        // 2026-11-01 09:00 UTC: 2:00 PDT becomes 1:00 PST
+        let fall = 1_793_523_600;
+        assert_eq!(slt_parts(fall - 1), (2026, 11, 1, 0, 1, 59, 59));
+        assert_eq!(slt_parts(fall), (2026, 11, 1, 0, 1, 0, 0));
+        // the weeks the day-of-year approximation got wrong: 2026-03-01
+        // 20:00 UTC is still PST, 2026-10-26 19:00 UTC still PDT
+        assert_eq!(slt_parts(1_772_395_200).4, 12);
+        assert_eq!(slt_parts(1_793_041_200), (2026, 10, 26, 1, 12, 0, 0));
     }
 
     #[test]
