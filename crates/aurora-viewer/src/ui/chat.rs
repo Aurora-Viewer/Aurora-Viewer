@@ -202,7 +202,6 @@ pub struct ChatUi {
     new_lines: workspace::NewLines,
     /// The search field of the column.
     side_filter: String,
-    focus_side_filter: bool,
     /// The nearby chat's volume: whisper, say or shout.
     volume: compose::Volume,
     /// Our typing notices, and what the field did this frame.
@@ -229,6 +228,7 @@ pub struct ChatUi {
     pub own_windows: bool,
     /// The Conversations window was open last frame.
     main_open: bool,
+    main_was_minimized: bool,
     /// The window whose emoji picker is open (`popout::one_picker`).
     picker_window: Option<popout::WindowKey>,
 }
@@ -2544,12 +2544,11 @@ pub fn show(
         }
     };
     select_main(st, open);
+    let minimized = super::widgets::floater_minimized(ctx, "conversations");
     // Opening a specific session keeps its existing composer/call focus rules.
-    st.focus_side_filter = *open
-        && style.workspace()
-        && !opening_conversation
-        && !st.conv_focus_request
-        && (st.focus_side_filter || !st.main_open || super::widgets::floater_minimized(ctx, "conversations"));
+    if *open && !minimized && !st.contacts && !opening_conversation && (!st.main_open || st.main_was_minimized) {
+        st.conv_focus_request = true;
+    }
     // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`),
     // over the entries without a window of their own
     if *open && !enlarged {
@@ -2801,6 +2800,7 @@ pub fn show(
     };
     popout::show(ctx, env, world, st, &mut actions, open);
     st.main_open = *open;
+    st.main_was_minimized = minimized;
     // the column's "+" and search: one resident for an IM, several for a
     // conference (LLAvatarActions::startIM / startConference)
     if let Some(residents) = st.picker.show(ctx, p, world) {
@@ -4225,8 +4225,13 @@ mod tests {
     use crate::ui::widgets::elide_tests::{Frames, LONG, SHORT, WIDE, painted, tooltip_shown};
 
     #[test]
-    fn opening_conversations_focuses_search_without_taking_it_back() {
-        for style in [crate::settings::ChatStyle::Aurora, crate::settings::ChatStyle::Compact] {
+    fn opening_conversations_focuses_the_selected_chat_without_taking_it_back() {
+        for style in [
+            crate::settings::ChatStyle::Aurora,
+            crate::settings::ChatStyle::Compact,
+            crate::settings::ChatStyle::Bubbles,
+            crate::settings::ChatStyle::Legacy,
+        ] {
             let mut frames = Frames::new();
             let ctx = frames.ctx.clone();
             let theme = crate::theme::Theme::default();
@@ -4236,15 +4241,24 @@ mod tests {
             let mut emoji = crate::ui::emoji::Emoji::load();
             let pics = HashMap::new();
             let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let (a, b) = (uuid::Uuid::from_u128(0xA), uuid::Uuid::from_u128(0xB));
+            world.social.session_mut(a);
+            world.social.session_mut(b);
             let gestures = crate::gestures::Manager::default();
             let mut st = ChatUi {
                 style,
+                selected: Some(a),
                 ..Default::default()
             };
+            st.draft_mut(Some(a)).push_str("draft ");
+            st.draft_mut(Some(b)).push_str("other draft");
             let mut contacts = super::super::contacts::ContactsUi::default();
             let mut contacts_settings = super::super::contacts::ContactsSettings::default();
+            let other_id = egui::Id::unique("other_conversation_field");
+            let mut other = String::new();
             let mut frame = |st: &mut ChatUi, mut open, events| {
                 frames.run(events, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut other).id(other_id));
                     show(
                         ui.ctx(),
                         &p,
@@ -4263,23 +4277,31 @@ mod tests {
                     );
                 });
             };
+            super::super::widgets::minimize_floater(&ctx, "conversations");
+            frame(&mut st, true, Vec::new());
+            assert!(!st.conv_focus_request, "a minimized window does not queue keyboard focus");
+            super::super::widgets::expand_floater(&ctx, "conversations");
             for _ in 0..3 {
                 frame(&mut st, true, Vec::new());
             }
-            assert!(ctx.memory(|m| m.has_focus(sidebar::search_id())));
-            frame(&mut st, true, vec![egui::Event::Text("Nova".into())]);
-            assert_eq!(st.side_filter, "Nova");
-            st.select_tab(None);
-            frame(&mut st, true, Vec::new());
+            let field = |chat| egui::Id::unique(("conv_input", chat));
+            assert!(ctx.memory(|m| m.has_focus(field(Some(a)))), "{style:?}");
             frame(&mut st, true, vec![egui::Event::Text("hello".into())]);
-            assert_eq!(st.draft_mut(None), "hello");
-            assert_eq!(st.side_filter, "Nova");
+            assert_eq!(st.draft_mut(Some(a)), "draft hello");
+            assert_eq!(st.draft_mut(Some(b)), "other draft");
+            assert!(st.side_filter.is_empty());
+            let other_field = if style.workspace() { sidebar::search_id() } else { other_id };
+            ctx.memory_mut(|m| m.request_focus(other_field));
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, vec![egui::Event::Text("filter".into())]);
+            assert!(ctx.memory(|m| m.has_focus(other_field)));
+            assert_eq!(st.draft_mut(Some(a)), "draft hello");
+            assert_eq!(st.side_filter, if style.workspace() { "filter" } else { "" });
             frame(&mut st, false, Vec::new());
             frame(&mut st, true, Vec::new());
-            assert!(ctx.memory(|m| m.has_focus(sidebar::search_id())));
+            assert!(ctx.memory(|m| m.has_focus(field(Some(a)))));
             frame(&mut st, true, vec![egui::Event::Text("!".into())]);
-            assert_eq!(st.side_filter, "Nova!");
-            assert_eq!(st.draft_mut(None), "hello");
+            assert_eq!(st.draft_mut(Some(a)), "draft hello!");
             super::super::widgets::minimize_floater(&ctx, "conversations");
             frame(&mut st, true, Vec::new());
             frame(&mut st, true, Vec::new());
@@ -4287,7 +4309,22 @@ mod tests {
             for _ in 0..3 {
                 frame(&mut st, true, Vec::new());
             }
-            assert!(ctx.memory(|m| m.has_focus(sidebar::search_id())), "expanding restores search focus");
+            assert!(
+                ctx.memory(|m| m.has_focus(field(Some(a)))),
+                "expanding restores the selected chat's focus"
+            );
+            frame(&mut st, false, Vec::new());
+            st.selected = Some(b);
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, vec![egui::Event::Text("!".into())]);
+            assert_eq!(st.draft_mut(Some(b)), "other draft!");
+            assert_eq!(st.draft_mut(Some(a)), "draft hello!");
+            frame(&mut st, false, Vec::new());
+            st.selected = None;
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, vec![egui::Event::Text("nearby".into())]);
+            assert_eq!(st.draft_mut(None), "nearby");
+            assert_eq!(other, if style.workspace() { "" } else { "filter" });
         }
     }
 
