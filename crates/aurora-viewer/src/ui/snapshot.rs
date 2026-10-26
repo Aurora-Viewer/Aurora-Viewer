@@ -419,13 +419,14 @@ impl SnapshotUi {
             );
         }
         ui.label(RichText::new(aurora_i18n::tr!("photo-email-message")).color(p.ink));
-        ui.add(
-            egui::TextEdit::multiline(&mut form.message)
-                .hint_text(aurora_i18n::tr!("photo-email-default-message"))
-                .char_limit(POSTCARD_MESSAGE_MAX)
-                .desired_rows(3)
-                .desired_width(f32::INFINITY),
-        );
+        let mut message = egui::TextEdit::multiline(&mut form.message)
+            .hint_text(aurora_i18n::tr!("photo-email-default-message"))
+            .char_limit(POSTCARD_MESSAGE_MAX)
+            .desired_rows(3)
+            .desired_width(f32::INFINITY)
+            .show(ui);
+        // spell checked, as panel_postcard_message.xml
+        crate::ui::spelling::field(ui, p, &mut message, &mut form.message, false);
         row(ui, p, aurora_i18n::tr!("photo-jpeg-quality"), None, |ui| {
             ui.spacing_mut().slider_width = 130.0;
             ui.add(egui::Slider::new(&mut s.jpeg_quality, 1..=100));
@@ -549,13 +550,14 @@ impl SnapshotUi {
                     ui.label(RichText::new(aurora_i18n::tr!("photo-profile-not-ready")).color(p.muted));
                 }
                 ui.label(RichText::new(aurora_i18n::tr!("photo-profile-caption")).color(p.ink));
-                ui.add(
-                    egui::TextEdit::multiline(&mut self.caption)
-                        .hint_text(aurora_i18n::tr!("photo-profile-caption-hint"))
-                        .char_limit(crate::snapshot::profile::MAX_CAPTION)
-                        .desired_rows(2)
-                        .desired_width(f32::INFINITY),
-                );
+                let mut caption = egui::TextEdit::multiline(&mut self.caption)
+                    .hint_text(aurora_i18n::tr!("photo-profile-caption-hint"))
+                    .char_limit(crate::snapshot::profile::MAX_CAPTION)
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .show(ui);
+                // spell checked, as panel_snapshot_profile.xml
+                crate::ui::spelling::field(ui, p, &mut caption, &mut self.caption, false);
                 row(ui, p, aurora_i18n::tr!("photo-profile-location"), None, |ui| {
                     widgets::switch(ui, p, &mut s.profile_location);
                 });

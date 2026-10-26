@@ -423,11 +423,12 @@ impl CreateLandmarkUi {
             }
             ui.add_space(6.0);
             label(ui, aurora_i18n::tr!("landmark-create-notes"));
-            ui.add(
-                egui::TextEdit::multiline(&mut self.notes)
-                    .desired_rows(4)
-                    .desired_width(f32::INFINITY),
-            );
+            let mut notes = egui::TextEdit::multiline(&mut self.notes)
+                .desired_rows(4)
+                .desired_width(f32::INFINITY)
+                .show(ui);
+            // spell checked, as floater_create_landmark.xml
+            crate::ui::spelling::field(ui, p, &mut notes, &mut self.notes, false);
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 if editing {

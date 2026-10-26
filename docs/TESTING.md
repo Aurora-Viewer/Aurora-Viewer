@@ -3648,6 +3648,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
+| `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services and Bluesky / X posts; `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
@@ -4884,6 +4885,28 @@ failure. Grid validation and any paid upload are performed by the human.
   is not sent), Escape closes the list until the letters change. Typing the
   closing `:` of a known code (`:smile:`) turns it into its emoji; a time
   (`12:30:`), a word before the colon or a link stay as typed.
+- **`AURORA_DEMO_SPELLING=1|menu|replace`** (`spelling.rs`,
+  `ui/spelling.rs`): `1` puts "Helo, I will teleport to the sandbox with
+  my frends" in the chat bar and "Teh avatar is waiting at the landng
+  point" in the Conversations input (opened): red squiggles under Helo,
+  frends, Teh and landng only (the default English dictionary and the
+  Second Life glossary, so "sandbox" and "teleport" pass; the
+  glossary's words have no affixes, so "teleporting" is marked as in the
+  Legacy Viewer). `menu`: the
+  chat bar takes the keyboard at frame 700, its caret at the end, and the
+  text menu opens on "frends" at frame 706 (capture at frame 780 with
+  `AURORA_FPS_LIMIT=60`): up to five suggestions ("friends" among them),
+  Add to Dictionary, Add to Ignore, then Cut… Select All. `replace`:
+  auto-replace on for the run (not saved), the bar takes the keyboard at
+  frame 700 and gets "brb " at 703, "ty " at 705: it shows "be right back
+  thank you ". The tab of the settings: `AURORA_DEMO_OPTIONS=chat:spelling`
+  (or `chat:auto-replace`). By hand: the word being typed gets its squiggle
+  half a second after the last key; a suggestion replaces its word; Add to
+  Dictionary (`user_custom.dic`) and Add to Ignore (`user_ignore.dic`, in
+  `<config>/dictionaries`) take the squiggles off every field; another main
+  dictionary or an extra one checks again at once; Import… takes a
+  Hunspell `.dic` (and its `.aff`). Web and e-mail addresses, and words with
+  a digit or `_`, are never marked.
 - **`AURORA_DEMO_EMOJI_PICKER=1|<text>`**: the Conversations window open on
   local chat with its emoji picker shown (first tab, smileys); any value
   other than `1` is put in the input field, as if picked. With

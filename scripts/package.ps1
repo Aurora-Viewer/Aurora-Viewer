@@ -22,6 +22,19 @@ Copy-Item -LiteralPath $Exe -Destination $Out -ErrorAction Stop
 # The emoji font is inside the exe; its licence ships, and the assets folder
 # stays: the updater of the published versions refuses a package without it.
 Copy-Item -LiteralPath (Join-Path $Source 'assets/emoji/LICENSE-OFL.txt') -Destination (Join-Path $Out 'assets/emoji') -ErrorAction Stop
+# The spelling dictionaries are inside the exe too: their licences ship
+# (GPL, LGPL and MPL ask for the text), one per dictionary, with the list of
+# their sources.
+$dictionaries = Join-Path $Source 'crates/aurora-viewer/assets/dictionaries'
+$dictionariesOut = Join-Path $Out 'assets/dictionaries'
+New-Item -ItemType Directory -Force -Path $dictionariesOut -ErrorAction Stop | Out-Null
+Copy-Item -LiteralPath (Join-Path $dictionaries 'README.md') -Destination $dictionariesOut -ErrorAction Stop
+Get-ChildItem -LiteralPath $dictionaries -Directory -ErrorAction Stop | ForEach-Object {
+    $license = Join-Path $_.FullName 'LICENSE.txt'
+    if (Test-Path -LiteralPath $license) {
+        Copy-Item -LiteralPath $license -Destination (Join-Path $dictionariesOut "$($_.Name)-LICENSE.txt") -ErrorAction Stop
+    }
+}
 $docs = 'LICENSE', 'NOTICE.md', 'README.md' | ForEach-Object { Join-Path $Source $_ }
 Copy-Item -LiteralPath $docs -Destination $Out -ErrorAction Stop
 $taskExePath = (Resolve-Path -LiteralPath $Exe).Path

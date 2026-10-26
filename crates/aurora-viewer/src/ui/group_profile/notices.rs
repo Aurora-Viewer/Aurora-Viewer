@@ -435,13 +435,14 @@ fn compose(st: &mut GroupProfileUi, ui: &mut egui::Ui, c: &mut Ctx, v: &View, ac
                     .char_limit(63)
                     .desired_width(f32::INFINITY),
             );
-            ui.add(
-                egui::TextEdit::multiline(&mut draft.message)
-                    .hint_text(aurora_i18n::tr!("ui-group-notices-message"))
-                    .char_limit(511)
-                    .desired_rows(4)
-                    .desired_width(f32::INFINITY),
-            );
+            let mut message = egui::TextEdit::multiline(&mut draft.message)
+                .hint_text(aurora_i18n::tr!("ui-group-notices-message"))
+                .char_limit(511)
+                .desired_rows(4)
+                .desired_width(f32::INFINITY)
+                .show(ui);
+            // spell checked, as panel_group_notices.xml
+            crate::ui::spelling::field(ui, p, &mut message, &mut draft.message, false);
             // the attachment: dropped from the inventory
             let (zone, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
             let hovered = resp.dnd_hover_payload::<InvDrag>().map(|d| d.0);

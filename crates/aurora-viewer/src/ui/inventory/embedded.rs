@@ -193,7 +193,7 @@ pub(super) fn editor(
             .layouter(&mut layouter)
             .show(ui)
     };
-    let output = if editable {
+    let mut output = if editable {
         if matches!(appearance, Appearance::CodeSource(..)) {
             let (mut output, changed) = super::super::scripts::edit_code(ui, id, text, &super::markdown::code::scope, show);
             if changed {
@@ -206,6 +206,11 @@ pub(super) fn editor(
     } else {
         show(ui, &mut markdown.map_or(text.as_str(), |rendered| rendered.text.as_str()))
     };
+    // the Legacy notecard editor is spell checked and auto-replaced; not
+    // the code view
+    if editable && matches!(appearance, Appearance::Classic | Appearance::Source) {
+        super::super::spelling::field(ui, p, &mut output, text, true);
+    }
     ui.ctx()
         .data_mut(|data| data.insert_temp(id.with("demo_rect"), output.response.rect));
     if let (Some(rendered), Some(slot)) = (markdown, code_background) {

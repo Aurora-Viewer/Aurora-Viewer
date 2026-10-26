@@ -3048,6 +3048,7 @@ fn classic_pane(
                 output.response.mark_changed();
             }
             super::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
+            super::spelling::field(ui, p, &mut output, &mut draft, true);
             let (w, selected): (&World, _) = (world, st.selected);
             let people = move || selected.map_or_else(Vec::new, |id| suggest::members(w, id));
             let scope = match selected {
@@ -3686,6 +3687,7 @@ pub(crate) fn bar_input(
         output.response.mark_changed();
     }
     super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
+    super::spelling::field(ui, p, &mut output, &mut st.input, true);
     suggest::after(
         ui,
         p,

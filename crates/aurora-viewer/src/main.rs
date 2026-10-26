@@ -9,6 +9,7 @@ mod ao;
 mod app;
 mod atomic_file;
 mod autopilot;
+mod autoreplace;
 mod blender_live;
 // Bug report form, disabled for now: "Report a bug" (login screen, top bar,
 // crash window) opens GitHub's issue chooser in the browser instead
@@ -74,6 +75,7 @@ mod slapp;
 mod slurl;
 mod slurl_handoff;
 mod snapshot;
+mod spelling;
 mod sys_probe;
 mod system_notify;
 mod theme;
