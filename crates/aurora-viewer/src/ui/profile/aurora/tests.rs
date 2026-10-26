@@ -4,6 +4,11 @@ use aurora_net::profile::flags;
 /// The texts of one frame of the window's body `width` wide, top to bottom
 /// then left to right.
 fn body_texts(world: &World, w: &mut Window, width: f32) -> Vec<String> {
+    body_texts_with(world, w, width, true)
+}
+
+/// `body_texts`, with the friendship rights bar shown or hidden.
+fn body_texts_with(world: &World, w: &mut Window, width: f32, rights_bar: bool) -> Vec<String> {
     let p = crate::theme::Theme::default().palette();
     let ctx = egui::Context::default();
     let mut emoji = Emoji::load();
@@ -40,6 +45,7 @@ fn body_texts(world: &World, w: &mut Window, width: f32) -> Vec<String> {
             wanted_images: &mut wanted_images,
             actions: &mut actions,
             pick_picture: &mut pick_picture,
+            rights_bar,
         };
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -127,7 +133,7 @@ fn a_friends_profile_reads_in_the_order_of_the_mockup() {
             tr("ui-profile-aurora-view-in-people"),
             tr("ui-profile-aurora-i-grant"),
             tr("ui-profile-aurora-i-receive"),
-            tr("ui-profile-aurora-remove-friend"),
+            tr("ui-profile-aurora-click-to-change"),
             tr("ui-profile-aurora-tab-profile"),
             tr("ui-profile-aurora-tab-picks"),
             tr("ui-profile-aurora-tab-classifieds"),
@@ -149,12 +155,32 @@ fn a_friends_profile_reads_in_the_order_of_the_mockup() {
             tr("ui-profile-aurora-key"),
             &aurora_i18n::tr!("ui-profile-aurora-groups", count = 1).to_uppercase(),
             "Aurora Builders",
-            tr("ui-profile-aurora-give"),
             &tr("ui-profile-aurora-private-notes").to_uppercase(),
             "Rencontrée à la plage",
         ],
     );
     assert!(texts.iter().all(|t| !t.contains(tr("ui-profile-aurora-add-friend"))));
+    // ending the friendship is in the "…" menu, giving a drop anywhere on
+    // the window (#1089)
+    assert!(texts.iter().all(|t| !t.contains(tr("ui-profile-aurora-remove-friend"))));
+}
+
+#[test]
+fn the_rights_bar_can_be_hidden() {
+    let (world, id) = friend_world();
+    let tr = aurora_i18n::text;
+    for width in [960.0, 380.0] {
+        let mut w = Window::new(id);
+        let texts = body_texts_with(&world, &mut w, width, false);
+        assert!(texts.iter().all(|t| t != tr("ui-profile-aurora-i-grant") && t != tr("ui-profile-aurora-i-receive")));
+        assert!(texts.iter().any(|t| t.contains("Musicienne du dimanche")), "{width}: the cards stay");
+    }
+    // a stranger's "Add as friend" is not the rights bar: it stays
+    let mut stranger = world;
+    stranger.social.friends.clear();
+    let mut w = Window::new(id);
+    let texts = body_texts_with(&stranger, &mut w, 960.0, false);
+    assert!(texts.iter().any(|t| t == tr("ui-profile-aurora-add-friend")));
 }
 
 #[test]
@@ -432,6 +458,7 @@ impl PhotoFixture {
                     &mut HashSet::new(),
                     &web,
                     self.classic,
+                    true,
                 );
                 assert!(actions.is_empty(), "previewing a picture never changes the profile");
             },

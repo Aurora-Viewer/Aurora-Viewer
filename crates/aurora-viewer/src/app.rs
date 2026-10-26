@@ -13860,6 +13860,7 @@ impl App {
                     &mut self.chat_ui.wanted_names,
                     &web,
                     self.settings.classic_profiles,
+                    self.settings.profile_rights_bar,
                 );
                 for pa in acts {
                     match pa {

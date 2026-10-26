@@ -63,6 +63,8 @@ pub(super) struct Env<'a, 'w> {
     pub wanted_images: &'a mut HashSet<Uuid>,
     pub actions: &'a mut Vec<ProfileAction>,
     pub pick_picture: &'a mut Option<(PictureSlot, Uuid)>,
+    /// `Settings::profile_rights_bar`.
+    pub rights_bar: bool,
 }
 
 pub(super) fn window_id(id: Uuid) -> String {
@@ -405,11 +407,17 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
     let f = facts(world, &w.id, own, profile);
     header(ui, env, w, compact, &f);
     let friend = world.social.friends.iter().find(|fr| fr.id == w.id);
-    if !own && (friend.is_some() || !compact) {
+    // a friend's rights bar can be hidden (Preferences › Aurora › Profiles):
+    // the rights stay in Contacts, "Remove from friends" in the "…" menu
+    let bar = match friend {
+        Some(_) => env.rights_bar,
+        None => !compact,
+    };
+    if !own && bar {
         ui.add_space(10.0);
         match friend {
             Some(fr) => rights_bar(ui, env, w.id, fr, compact),
-            None if !compact => {
+            None => {
                 ui.horizontal(|ui| {
                     ui.add_space(INSET);
                     if widgets::action_button(
@@ -426,7 +434,6 @@ fn body(ui: &mut egui::Ui, env: &mut Env, w: &mut Window) {
                     }
                 });
             }
-            None => {}
         }
     }
     let before = w.tab;
@@ -514,17 +521,16 @@ fn header(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool, f: &F
     let mark = crate::world::staff::mark(world, &id);
     crate::ui::staff::banner_light(ui, p, banner, mark);
     let pic = env.pics.get(&id);
-    // the chip at the top right: the picture in large, or in edit mode
-    // where the banner comes from
-    if !compact {
-        let (icon, text) = if w.editing {
-            ("info-circle-filled", aurora_i18n::tr!("ui-profile-aurora-banner-follows"))
-        } else {
-            ("maximize", aurora_i18n::tr!("ui-profile-aurora-big-photo"))
-        };
-        if (w.editing || pic.is_some()) && banner_chip(ui, p, banner, icon, text).clicked() && !w.editing {
-            w.open_photo(PictureSlot::SecondLife, profile.map_or(Uuid::nil(), |pr| pr.sl_image));
-        }
+    // in edit mode, where the banner comes from; the picture in large is a
+    // click on the round picture, with no second button for it
+    if !compact && w.editing {
+        banner_chip(
+            ui,
+            p,
+            banner,
+            "info-circle-filled",
+            aurora_i18n::tr!("ui-profile-aurora-banner-follows"),
+        );
     }
     let name = display_name(world, &id);
     let photo_rect = Rect::from_min_size(banner.min + photo_at, Vec2::splat(photo));
@@ -717,23 +723,17 @@ fn paint_banner(ui: &egui::Ui, p: &Palette, rect: Rect, tex: Option<&egui::Textu
     ui.painter().add(egui::Shape::mesh(m));
 }
 
-/// The chip at the top right of the banner.
-fn banner_chip(ui: &mut egui::Ui, p: &Palette, banner: Rect, icon: &str, text: &str) -> Response {
+/// The note at the top right of the banner (a label, not a button).
+fn banner_chip(ui: &egui::Ui, p: &Palette, banner: Rect, icon: &str, text: &str) {
     let font = FontId::proportional(11.0);
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, p.ink);
     let size = Vec2::new(8.0 + 12.0 + 4.0 + galley.size().x + 8.0, 20.0);
     let rect = Rect::from_min_size(pos2(banner.right() - 10.0 - size.x, banner.top() + 10.0), size);
-    let resp = ui.interact(rect, ui.scope_id().with(("banner-chip", icon)), Sense::click());
-    let fill = if resp.hovered() {
-        p.navy.gamma_multiply(0.7)
-    } else {
-        p.navy.gamma_multiply(0.45)
-    };
-    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
+    ui.painter()
+        .rect_filled(rect, ui.visuals().window_corner_radius, p.navy.gamma_multiply(0.45));
     let ink = p.ink.gamma_multiply(0.85);
     paint_icon(ui, icon, pos2(rect.left() + 14.0, rect.center().y), 12.0, ink);
     widgets::paint_ink_left(ui.painter(), galley, pos2(rect.left() + 24.0, rect.center().y), ink);
-    resp
 }
 
 /// The round picture in its ring, with the status dot at its bottom right
@@ -917,7 +917,7 @@ fn act_button(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, act: Act, f: &Fa
 
 /// "…": the actions that have no button (menu_fs_profile_overflow.xml and
 /// the name field's copy menu).
-fn more_menu(resp: &Response, env: &mut Env, w: &Window, f: &Facts, compact: bool) {
+fn more_menu(resp: &Response, env: &Env, w: &Window, f: &Facts, compact: bool) {
     let (p, world) = (env.p, env.world);
     let id = w.id;
     let names = &world.social.avatar_names;
@@ -930,19 +930,16 @@ fn more_menu(resp: &Response, env: &mut Env, w: &Window, f: &Facts, compact: boo
         if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             act(CtxAction::ShowOnMap(id));
         }
-        if menu::item(ui, p, "share", aurora_i18n::tr!("common-share")) {
-            env.actions.push(ProfileAction::Share(id));
-        }
+        // no Share: it only brought the inventory forward, and an item
+        // dropped anywhere on the window is given (`super::give_drop`)
         if menu::item(ui, p, "plane-arrival-filled", aurora_i18n::tr!("ui-profile-aurora-request-tp")) {
             act(CtxAction::RequestTeleport(id));
         }
-        if compact {
-            if menu::item(ui, p, "users", aurora_i18n::tr!("ui-profile-aurora-view-in-people")) {
-                act(CtxAction::OpenPeople(people_tab(f)));
-            }
-            if f.friend && menu::item(ui, p, "user-minus", aurora_i18n::tr!("ui-profile-aurora-remove-friend")) {
-                act(CtxAction::RemoveFriend(id));
-            }
+        if compact && menu::item(ui, p, "users", aurora_i18n::tr!("ui-profile-aurora-view-in-people")) {
+            act(CtxAction::OpenPeople(people_tab(f)));
+        }
+        if f.friend && menu::item(ui, p, "user-minus", aurora_i18n::tr!("ui-profile-aurora-remove-friend")) {
+            act(CtxAction::RemoveFriend(id));
         }
         menu::separator(ui, p);
         if menu::item_if(
@@ -1151,8 +1148,8 @@ fn badge_widget(ui: &mut egui::Ui, env: &Env, id: Uuid, b: &Badge, is_friend: bo
     }
 }
 
-/// The rights of a friendship: the ones we grant (a click changes one), the
-/// ones we receive, and the way to end it.
+/// The rights of a friendship: the ones we grant (a click changes one) and
+/// the ones we receive. Ending it is in the "…" menu.
 fn rights_bar(ui: &mut egui::Ui, env: &mut Env, id: Uuid, f: &Friend, compact: bool) {
     let p = env.p;
     let full = ui.max_rect();
@@ -1216,22 +1213,8 @@ fn rights_bar(ui: &mut egui::Ui, env: &mut Env, id: Uuid, f: &Friend, compact: b
                 }
                 if !compact {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        let link = ui
-                            .add(
-                                egui::Label::new(
-                                    RichText::new(aurora_i18n::tr!("ui-profile-aurora-remove-friend"))
-                                        .font(semibold(ui, 12.0))
-                                        .color(p.violet_light),
-                                )
-                                .sense(Sense::click()),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::PointingHand);
-                        if link.clicked() {
-                            context::request(ui.ctx(), CtxAction::RemoveFriend(id));
-                        }
                         ui.label(
-                            RichText::new(format!("{} ·", aurora_i18n::tr!("ui-profile-aurora-click-to-change")))
+                            RichText::new(aurora_i18n::tr!("ui-profile-aurora-click-to-change"))
                                 .size(12.0)
                                 .color(p.muted),
                         );
@@ -1515,8 +1498,8 @@ fn card(
 }
 
 /// The Profile tab: About and the favorite places on the left, Info,
-/// Groups, Give and the private notes on the right; one column when
-/// compact.
+/// Groups and the private notes on the right; one column when compact. An
+/// item is given by dropping it anywhere on the window (`super::give_drop`).
 fn profile_tab(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool) {
     let width = ui.available_width() - 2.0 * INSET;
     ui.horizontal_top(|ui| {
@@ -1529,7 +1512,6 @@ fn profile_tab(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool) 
                 info_card(ui, env, w, true);
                 picks_card(ui, env, w);
                 groups_card(ui, env, w);
-                give_zone(ui, env, w);
                 notes_card(ui, env, w);
             });
         } else {
@@ -1549,7 +1531,6 @@ fn profile_tab(ui: &mut egui::Ui, env: &mut Env, w: &mut Window, compact: bool) 
                 }
                 info_card(ui, env, w, false);
                 groups_card(ui, env, w);
-                give_zone(ui, env, w);
                 notes_card(ui, env, w);
             });
         }
@@ -1939,28 +1920,6 @@ fn groups_card(ui: &mut egui::Ui, env: &mut Env, w: &Window) {
             }
         }
     });
-}
-
-/// "Drop an item here to give it": the whole window takes the drop
-/// (`super::give_drop`), this zone says so before any drag.
-fn give_zone(ui: &mut egui::Ui, env: &Env, w: &Window) {
-    if w.id == env.world.agent_id {
-        return;
-    }
-    let p = env.p;
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
-    let stroke = egui::Stroke::new(1.5, p.ink.gamma_multiply(0.14));
-    let r = rect.shrink(0.75);
-    let path = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
-    ui.painter().extend(egui::Shape::dashed_line(&path, stroke, 5.0, 4.0));
-    let text = aurora_i18n::tr!("ui-profile-aurora-give");
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text.to_owned(), FontId::proportional(12.0), p.muted_dim);
-    let total = 14.0 + 6.0 + galley.size().x;
-    let left = rect.center().x - total / 2.0;
-    paint_icon(ui, "gift-filled", pos2(left + 7.0, rect.center().y), 14.0, p.muted_dim);
-    widgets::paint_ink_left(ui.painter(), galley, pos2(left + 20.0, rect.center().y), p.muted_dim);
 }
 
 /// Our private notes on someone, a click away from the Notes tab.
