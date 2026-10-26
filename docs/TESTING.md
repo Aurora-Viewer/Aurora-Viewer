@@ -3558,7 +3558,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude\|join-map\|join-contact\|join-fly\|join-fly-blocked\|join-fly-late\|join-fly-custom` | Remote friend's received map rights in contact, conversation and profile actions |
 | `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out` | Detached conversations, or nearby chat alone before any IM (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
+| `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: drop feedback, give confirmation, or give and its notice (all conversation styles) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
@@ -4425,7 +4425,7 @@ failure. Grid validation and any paid upload are performed by the human.
   reopening a conversation appends it again. No grid is needed.
 
 - **`AURORA_DEMO_CONV_GIVE=away|over|many|drop|give`**: with `AURORA_DEMO_CONV=aurora`
-  (also `aurora:compact` or `aurora:narrow`), an inventory drag starts at
+  (also `aurora:compact`, `aurora:narrow`, `bubbles` or `bubbles:legacy`), an inventory drag starts at
   frame 700 and is never released. `away` leaves the pointer outside the
   window: the friend's messages fade behind the gift and "Drop here to
   give to <name>" in the muted ink. `over` brings the pointer onto the
@@ -4440,6 +4440,9 @@ failure. Grid validation and any paid upload are performed by the human.
   with Enter at frame 740: the conversation then shows one muted notice
   per given root, "Inventory item « … » offered" (or "Inventory folder"),
   without counting as unread (#736). The field has no attach button.
+  Bubbles and Legacy use the same drop and confirmation path, including
+  detached conversations; their feedback is the violet outline and copy
+  cursor, without the workspace's fading hint.
   Manually: drag an item from the inventory onto a private conversation
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
