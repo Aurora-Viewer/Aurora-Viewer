@@ -202,6 +202,7 @@ pub struct ChatUi {
     new_lines: workspace::NewLines,
     /// The search field of the column.
     side_filter: String,
+    focus_side_filter: bool,
     /// The nearby chat's volume: whisper, say or shout.
     volume: compose::Volume,
     /// Our typing notices, and what the field did this frame.
@@ -2500,6 +2501,7 @@ pub fn show(
     let mut actions = Vec::new();
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
+    let opening_conversation = world.social.focus_im.is_some();
     if let Some(f) = world.social.focus_im.take() {
         let conversation = (!f.is_nil()).then_some(f);
         if popout::opens_in_own_window(&st.popped, conversation, st.own_windows) {
@@ -2542,6 +2544,12 @@ pub fn show(
         }
     };
     select_main(st, open);
+    // Opening a specific session keeps its existing composer/call focus rules.
+    st.focus_side_filter = *open
+        && style.workspace()
+        && !opening_conversation
+        && !st.conv_focus_request
+        && (st.focus_side_filter || !st.main_open || super::widgets::floater_minimized(ctx, "conversations"));
     // Alt + the arrows and Ctrl+W, before the field reads them (`keys.rs`),
     // over the entries without a window of their own
     if *open && !enlarged {
@@ -4215,6 +4223,73 @@ mod tests {
     }
 
     use crate::ui::widgets::elide_tests::{Frames, LONG, SHORT, WIDE, painted, tooltip_shown};
+
+    #[test]
+    fn opening_conversations_focuses_search_without_taking_it_back() {
+        for style in [crate::settings::ChatStyle::Aurora, crate::settings::ChatStyle::Compact] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = crate::ui::icons::Icons::load(&ctx, None);
+            let mut emoji = crate::ui::emoji::Emoji::load();
+            let pics = HashMap::new();
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let gestures = crate::gestures::Manager::default();
+            let mut st = ChatUi {
+                style,
+                ..Default::default()
+            };
+            let mut contacts = super::super::contacts::ContactsUi::default();
+            let mut contacts_settings = super::super::contacts::ContactsSettings::default();
+            let mut frame = |st: &mut ChatUi, mut open, events| {
+                frames.run(events, |ui| {
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut emoji,
+                        &pics,
+                        &pics,
+                        &mut world,
+                        &gestures,
+                        st,
+                        &mut contacts,
+                        &mut contacts_settings,
+                        false,
+                        None,
+                        &mut open,
+                    );
+                });
+            };
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            assert!(ctx.memory(|m| m.has_focus(sidebar::search_id())));
+            frame(&mut st, true, vec![egui::Event::Text("Nova".into())]);
+            assert_eq!(st.side_filter, "Nova");
+            st.select_tab(None);
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, vec![egui::Event::Text("hello".into())]);
+            assert_eq!(st.draft_mut(None), "hello");
+            assert_eq!(st.side_filter, "Nova");
+            frame(&mut st, false, Vec::new());
+            frame(&mut st, true, Vec::new());
+            assert!(ctx.memory(|m| m.has_focus(sidebar::search_id())));
+            frame(&mut st, true, vec![egui::Event::Text("!".into())]);
+            assert_eq!(st.side_filter, "Nova!");
+            assert_eq!(st.draft_mut(None), "hello");
+            super::super::widgets::minimize_floater(&ctx, "conversations");
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, Vec::new());
+            super::super::widgets::expand_floater(&ctx, "conversations");
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            assert!(ctx.memory(|m| m.has_focus(sidebar::search_id())), "expanding restores search focus");
+        }
+    }
 
     /// A tab chosen in the list gives its field the keyboard; what is typed
     /// stays with its conversation when another tab is shown, and goes when

@@ -86,7 +86,7 @@ pub(super) fn search_id() -> egui::Id {
 
 /// The search field of the column (the mockup's `.search`): a filled
 /// box with its magnifier, no outline.
-fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
+fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, SEARCH_H), egui::Sense::hover());
     ui.painter().rect_filled(rect, ui.visuals().widgets.inactive.corner_radius, p.field);
     let glass = egui::Rect::from_center_size(egui::pos2(rect.left() + 15.0, rect.center().y), egui::Vec2::splat(13.0));
@@ -111,7 +111,7 @@ fn search_box(ui: &mut egui::Ui, p: &Palette, text: &mut String, width: f32) {
             .font(egui::FontId::proportional(12.0))
             .frame(egui::Frame::NONE.inner_margin(crate::ui::widgets::field_text_margin(ui.ctx(), &egui::FontId::proportional(12.0))))
             .desired_width(field.width()),
-    );
+    )
 }
 
 /// Height of the search field, and the side of the button beside it.
@@ -265,10 +265,16 @@ pub(super) fn show(
         ui.allocate_ui_with_layout(row, egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             let width = (ui.available_width() - SEARCH_H - 4.0).max(40.0);
-            search_box(ui, p, &mut st.side_filter, width);
+            let field = search_box(ui, p, &mut st.side_filter, width);
+            if st.focus_side_filter && !ui.is_sizing_pass() && ui.is_enabled() {
+                st.focus_side_filter = false;
+                field.request_focus();
+            }
             new_conversation(ui, p, world, st, actions);
         });
         ui.add_space(4.0);
+    } else if !ui.is_sizing_pass() {
+        st.focus_side_filter = false;
     }
     let filter = st.side_filter.trim().to_lowercase();
     let matches = |name: &str| filter.is_empty() || name.to_lowercase().contains(&filter);
