@@ -108,6 +108,9 @@ struct Job {
     /// The photo's size, before its supersampling or the preview's
     /// reduction: the look's pixels.
     photo: (u32, u32),
+    /// Drawn in several parts: the instant of the first, which the others
+    /// show (`snapshot::Hold`).
+    hold: Option<snapshot::Hold>,
 }
 
 /// A held photo (freeze frame) and what shows it.
@@ -340,6 +343,20 @@ impl Default for Snapshots {
 }
 
 impl App {
+    /// At the start of a frame: the instant the world shows while a photo
+    /// is drawn in several parts, the first part's from its frame to the
+    /// last part's (`snapshot::Hold`); None otherwise.
+    pub(super) fn photo_hold(&mut self, now: Instant) -> Option<snapshot::Hold> {
+        let clock = self.start.elapsed().as_secs_f32();
+        let job = self.snapshots.job.as_mut()?;
+        let now = snapshot::Hold {
+            at: now,
+            clock,
+            later: false,
+        };
+        snapshot::Hold::for_part(job.tiles.len(), job.next, &mut job.hold, now)
+    }
+
     /// Before a frame is laid out: the photo frame it carries, if any.
     pub(super) fn photo_frame(&mut self, renderer: &mut Renderer) -> Option<PhotoFrame> {
         let s = &mut self.snapshots;
@@ -766,6 +783,7 @@ impl App {
             looks: Vec::new(),
             focus: self.snapshots.look_focus,
             photo: full,
+            hold: None,
         });
         let stack = self.settings.snapshot.looks.clone();
         let settings = self.settings.snapshot.look_settings.clone();

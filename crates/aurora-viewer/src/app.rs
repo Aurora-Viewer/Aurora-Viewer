@@ -2704,7 +2704,10 @@ impl App {
             if let Some(menus) = self.context_customization.notecards.loaded(item, &result) {
                 self.context_customization
                     .close(&self.egui_ctx, &mut self.settings.world_context_menus);
-                self.context_menu = None;
+                if self.context_menu.take().is_some() {
+                    self.build.release_menu_selection(&self.world);
+                    self.flush_build();
+                }
                 self.settings.world_context_menus = menus;
                 self.settings.save();
             }
@@ -7140,7 +7143,21 @@ impl App {
         if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_hold.held() {
             self.set_mouselook_grab(true);
         }
-        let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.1);
+        // a photo drawn in several frames: from its second part on, the
+        // world keeps the instant of the first, time does not step and the
+        // network's events wait (snapshot::Hold, rawSnapshot's single call)
+        let hold = self.photo_hold(now);
+        let still = hold.is_some_and(|h| h.later);
+        let world_now = move || hold.map_or_else(Instant::now, |h| h.at);
+        // (the frame's own instant, for what reads it outside a photo)
+        let world_frame = hold.map_or(now, |h| h.at);
+        let start = self.start;
+        let world_clock = move || hold.map_or_else(|| start.elapsed().as_secs_f32(), |h| h.clock);
+        let dt = if still {
+            0.0
+        } else {
+            now.duration_since(self.last_frame).as_secs_f32().min(0.1)
+        };
         self.last_frame = now;
         if let Some(t) = self.quit_at
             && now >= t
@@ -7183,7 +7200,7 @@ impl App {
             self.inventory_ui.expand_all = Some(true);
         }
         self.sync_chat_log();
-        while let Ok((sent, ev)) = self.net.events.try_recv() {
+        while !still && let Ok((sent, ev)) = self.net.events.try_recv() {
             // (`sent`: when the session read the datagram, the time its
             // motion starts from)
             if let Some(app_ev) = self.bridge_runtime.receive(&mut self.world, ev, Instant::now(), sent) {
@@ -7436,7 +7453,7 @@ impl App {
             let ml = self.camera.mouselook();
             // the clocks the other avatars and the objects move along
             // (world/motion.rs); offline there is no simulator to slow them
-            self.world.advance_motion(Instant::now(), &self.net.stats.simulators.lock());
+            self.world.advance_motion(world_now(), &self.net.stats.simulators.lock());
             if self.demo && self.demo_link_cfg.is_some() {
                 // offline through a simulated link, as on a grid
                 self.drive_demo_link(ml, dt);
@@ -7455,7 +7472,7 @@ impl App {
                     let p = self.world.agent.predicted_position() + crate::demo::agent_jitter_offset(self.frame_count, mm);
                     self.world.agent.constrain_prediction(p, false);
                 }
-            } else {
+            } else if !still {
                 let motion = *self.net.stats.simulator_motion.lock();
                 if motion.handle == self.world.main_region {
                     self.world.predict_agent(motion.time_dilation, motion.packet_age());
@@ -7472,7 +7489,7 @@ impl App {
             // seated, the agent's position is the one its seat gives it: the
             // map, the radar, the location bar and the voice read it
             if self.world.agent.seated
-                && let Some(p) = crate::scene::Scene::seated_agent_position(&self.world, Instant::now())
+                && let Some(p) = crate::scene::Scene::seated_agent_position(&self.world, world_now())
             {
                 self.world.agent.follow_seat(p);
             }
@@ -7484,7 +7501,7 @@ impl App {
             let frame = crate::camera::FrameInput {
                 dt,
                 aspect: self.camera_aspect(),
-                now: Instant::now(),
+                now: world_now(),
                 steering: self.mouse_mode == MouseMode::Steer,
                 build_mode: self.build.open,
                 edit_tracking: self
@@ -7504,7 +7521,7 @@ impl App {
             }
             let at = self.camera.forward();
             let step_back = self.settings.walk_backwards_without_turning;
-            self.world.agent.body_turn = self.world.update_bodies(Instant::now(), dt, at, ml, step_back);
+            self.world.agent.body_turn = self.world.update_bodies(world_now(), dt, at, ml, step_back);
             self.trace_own_motion();
             self.update_pointing();
             self.update_look_at(w as f32, h as f32);
@@ -7867,7 +7884,7 @@ impl App {
                 log::info!("demo animation edit: {} frozen skeletons", self.scene.paused_skeletons.len());
             }
             // poses first: attachments follow their bone in the same frame
-            let completed = self.scene.update_poses(&mut self.world, self.camera.position, now);
+            let completed = self.scene.update_poses(&mut self.world, self.camera.position, world_frame);
             self.scene.set_auto_hover_second_life(matches!(
                 self.settings.grid,
                 crate::settings::GridChoice::SecondLife | crate::settings::GridChoice::SecondLifeBeta
@@ -7877,7 +7894,7 @@ impl App {
                 self.settings.auto_hover_height,
                 self.settings.auto_hover_offset,
                 !self.hover_height_ui.previewing_offset(),
-                now,
+                world_frame,
             );
             for anim in completed {
                 self.ao_runtime.finished(anim);
@@ -8039,6 +8056,7 @@ impl App {
                 );
             }
             self.scene.update_beacons(&mut self.world, &self.settings.beacons, &cull);
+            self.scene.held_at = hold.map(|h| h.at);
             self.scene.sync(&mut gfx.renderer, &mut self.world, &cull);
             self.frame_profile.lap(Lap::Sync);
             {
@@ -8107,7 +8125,7 @@ impl App {
             }
             self.frame_profile.lap(Lap::Media);
             // avatars still loading: clouds (Firestorm) and progress bars
-            self.scene.update_loading(&self.world, Instant::now());
+            self.scene.update_loading(&self.world, world_now());
             // the rez effect of what appears (Preferences › Aurora;
             // AURORA_REZ_EFFECT=0|1 overrides it): its grid stands for the
             // clouds of the avatars it draws
@@ -8116,8 +8134,7 @@ impl App {
             self.scene.rez.enabled = rez_env.unwrap_or(!self.settings.classic_rez_effect && !self.settings.reduce_motion);
             self.scene.rez.log = self.demo;
             let covered = matches!(self.screen, Screen::Loading { .. }) || self.tp_overlay.as_ref().is_some_and(|o| o.end.is_none());
-            self.scene
-                .update_rez(&mut gfx.renderer, &self.world, &cull, covered, Instant::now());
+            self.scene.update_rez(&mut gfx.renderer, &self.world, &cull, covered, world_now());
             // the demo avatars have no real bakes: no clouds offline unless
             // AURORA_DEMO_CLOUD is set
             static DEMO_CLOUD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -8150,7 +8167,7 @@ impl App {
                 &self.world,
                 self.camera.position,
                 &self.palette,
-                self.start.elapsed().as_secs_f32(),
+                world_clock(),
                 !self.settings.reduce_motion,
             );
             self.frame_profile.lap(Lap::Extras);
@@ -8466,7 +8483,7 @@ impl App {
             self.scene.update_water_effects(
                 &self.world,
                 self.camera.position,
-                self.start.elapsed().as_secs_f32(),
+                world_clock(),
                 self.settings.water_effects.render(),
             );
         }
@@ -8515,7 +8532,7 @@ impl App {
                 self.probes.reset();
             }
             self.probes
-                .update(&self.scene, &self.world, self.camera.position, env.probe_ambiance, Instant::now())
+                .update(&self.scene, &self.world, self.camera.position, env.probe_ambiance, world_now())
         } else {
             aurora_render::ProbeFrame::default()
         };
@@ -8563,9 +8580,9 @@ impl App {
             far: self.settings.draw_distance,
             fov_y: self.camera.fov_y,
             time: if self.demo {
-                crate::demo::water::inspection_time(self.start.elapsed().as_secs_f32())
+                crate::demo::water::inspection_time(world_clock())
             } else {
-                self.start.elapsed().as_secs_f32()
+                world_clock()
             },
             sun_dir: env.sun_dir,
             sun_visible: env.sun_visible,

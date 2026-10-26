@@ -234,6 +234,36 @@ fn tiles_stitch_into_the_photo_without_their_guard_band() {
 }
 
 #[test]
+fn every_tile_of_a_photo_shows_the_instant_of_its_first() {
+    let t0 = std::time::Instant::now();
+    let at = |ms: u64, clock: f32| Hold {
+        at: t0 + std::time::Duration::from_millis(ms),
+        clock,
+        later: false,
+    };
+    let mut kept = None;
+    assert_eq!(Hold::for_part(1, 0, &mut kept, at(0, 1.0)), None, "one pass: the live world");
+    assert_eq!(kept, None);
+    // the first part is drawn from the live world, its instant kept
+    let first = Hold::for_part(4, 0, &mut kept, at(16, 2.0));
+    assert_eq!(first, Some(at(16, 2.0)));
+    // the later parts show it, still
+    for (next, ms) in [(1, 33), (2, 50), (3, 66)] {
+        let hold = Hold::for_part(4, next, &mut kept, at(ms, 9.0));
+        assert_eq!(
+            hold,
+            Some(Hold {
+                later: true,
+                ..at(16, 2.0)
+            }),
+            "part {next}"
+        );
+    }
+    // a first part drawn again (its frame lost) takes its own instant
+    assert_eq!(Hold::for_part(4, 0, &mut kept, at(80, 3.0)), Some(at(80, 3.0)));
+}
+
+#[test]
 fn focal_length_and_field_of_view_agree() {
     // 50 mm on full frame: 27 degrees vertically
     assert!((fov_of_focal(50.0).to_degrees() - 26.99).abs() < 0.05);

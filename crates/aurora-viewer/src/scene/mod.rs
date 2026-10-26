@@ -769,6 +769,10 @@ pub struct Scene {
     pub too_complex: std::collections::HashSet<usize>,
     parcel_visibility_version: u64,
     photo_isolation_version: u64,
+    /// The instant a photo drawn in several frames shows
+    /// (`snapshot::Hold`): the sync places and moves what it visits at it,
+    /// not at the clock's.
+    pub held_at: Option<Instant>,
     /// The avatars and linksets chosen for the photo, every prim and
     /// attachment, outlined while choosing (`snapshot::isolate`).
     pub photo_marks: std::collections::HashSet<usize>,
@@ -1385,6 +1389,7 @@ impl Scene {
             too_complex: Default::default(),
             parcel_visibility_version: 0,
             photo_isolation_version: 0,
+            held_at: None,
             photo_marks: Default::default(),
             give_marks: Default::default(),
             rlva_silhouettes: Default::default(),
@@ -2519,7 +2524,7 @@ impl Scene {
         // the GPU object table covers every slot (an attachment's avatar
         // index is always in it, as in the CPU lists)
         renderer.cull.objects.ensure_len(self.gpu.len());
-        let now = Instant::now();
+        let now = self.held_at.unwrap_or_else(Instant::now);
         let n = world.objects.slots.len();
         let agent = world.agent_id;
         // objects changed since the last frame
