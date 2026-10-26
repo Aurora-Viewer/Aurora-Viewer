@@ -311,8 +311,8 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
     if let Some(mode) = view.strip_prefix("aurora-menu-") {
         return target(
             match mode {
-                "folder" | "all-folder" => "folder",
-                "texture" | "all-texture" => return Some(Uuid::from_u128(8104)),
+                "folder" | "all-folder" | "folder-uuid" | "folder-uuid-restored" => "folder",
+                "texture" | "all-texture" | "textures-export" => return Some(Uuid::from_u128(8104)),
                 "trash" | "all-trash" => {
                     return inv.folders.values().find(|f| f.info.type_default == 14).map(|f| f.info.id);
                 }

@@ -345,6 +345,7 @@ mod tests {
             active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
+            ..Default::default()
         }
     }
 

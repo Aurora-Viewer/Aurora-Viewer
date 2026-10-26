@@ -1,5 +1,32 @@
 # Aurora Viewer architecture
 
+The application constructor returns its runtime state on the heap, avoiding
+large return-value temporaries on the Windows startup stack as editors grow.
+
+`ui/inventory/context_catalog/extra.rs` adds inventory commands to the shared
+customization catalogue without changing existing identities or placements.
+Folder UUID copying starts in the recoverable hidden area. Native document,
+contact, appearance, environment, texture export and Marketplace paths execute
+the commands after the menu returns; Marketplace menus share their eligibility
+and dispatch with `ui/marketplace_listings/commands.rs`.
+
+`wearable_editor.rs`, `wearable_editor/catalog.rs`, `ui/wearable.rs` and
+`app/wearable_editor.rs` edit the remaining body parts and system clothing.
+They retain complete wearable assets, texture slots and tint parameters,
+validate permissions and stale replies, share the appearance preview and
+save acknowledgement path, and preserve other clothing layers when replacing
+the saved item. The existing shape and physics editors remain separate.
+`wearable_editor/bake.rs` compiles avatar layer definitions and composites
+skin, clothing, tints and visibility masks on background workers.
+`wearable_editor/preview.rs` loads worn assets in bounded batches, requests
+only the affected regions' full-resolution source images, debounces edits,
+uploads through the renderer's staging pool and publishes a complete local
+generation. It pins the server bakes for cancellation and releases retired
+GPU slots. `wearable_editor/masks.rs` embeds the original character masks;
+preview textures never enter the inventory or replace server appearance.
+`aurora-assets/src/wearable.rs` preserves original texture text when unchanged
+and preserves metadata and future sections when textures are edited.
+
 Ready chat media replace raw URL text through `ui/chat/previews.rs` in every
 conversation style, while the stored message stays intact for history, search
 and copying. Preview hover actions expose Copy link and Open in browser with

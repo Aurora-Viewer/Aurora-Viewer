@@ -87,6 +87,7 @@ mod ui_sound;
 mod updater;
 mod url_scheme;
 mod voice;
+mod wearable_editor;
 mod window_hold;
 mod window_show;
 mod world;
@@ -199,7 +200,7 @@ fn run_viewer() -> anyhow::Result<()> {
         .name("aurora-web-profile".into())
         .spawn(move || media::private_profile::sweep(&private_profiles));
     let mut app = app::App::new()?;
-    let result = event_loop.run_app(&mut app);
+    let result = event_loop.run_app(app.as_mut());
     // the browsers stop with the app; their private profiles are removed
     // while the plugins let go of their files
     drop(app);

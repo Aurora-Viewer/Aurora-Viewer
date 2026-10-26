@@ -66,6 +66,9 @@ impl App {
         }
     }
     pub(super) fn open_shape_editor(&mut self, item: uuid::Uuid) {
+        if !self.close_wearable_editor() {
+            return;
+        }
         if !self.close_physics_editor_for_shape() {
             self.appearance_ui.message = aurora_i18n::tr!("physics-other-editor").into();
             return;

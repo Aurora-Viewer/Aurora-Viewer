@@ -9,6 +9,48 @@ use ui::inventory::InvAction;
 use ui::marketplace_listings::Action;
 
 impl App {
+    pub(super) fn prepare_inventory_marketplace_commands(&mut self) {
+        self.inventory_ui.marketplace_commands.clear();
+        let Some(root) = mp::root(&self.world.inventory) else { return };
+        let ids: std::collections::HashSet<_> = self
+            .inventory_ui
+            .selected
+            .into_iter()
+            .chain(self.inventory_ui.windows.iter().filter_map(|window| window.state.selected))
+            .collect();
+        if ids.iter().any(|id| mp::depth(&self.world.inventory, root, *id) > 0) {
+            if self.listings_ui.data.initialize() {
+                self.send(NetCommand::RequestMerchantStatus);
+            }
+            if self.listings_ui.data.is_merchant() {
+                self.listings_ui.data.fetch_contents(root);
+            }
+        }
+        for id in ids {
+            let options = self.listings_ui.inventory_commands(&self.world.inventory, root, id);
+            if !options.is_empty() {
+                self.inventory_ui.marketplace_commands.insert(id, options);
+            }
+        }
+    }
+
+    pub(super) fn inventory_marketplace_command(&mut self, item: uuid::Uuid, command: ui::marketplace_listings::Command) {
+        let Some(root) = mp::root(&self.world.inventory) else { return };
+        let worn = self.worn_items();
+        let mut actions = Vec::new();
+        self.listings_ui.open = true;
+        self.listings_ui
+            .inventory_command(&self.world.inventory, &worn, root, item, command, &mut actions);
+        for action in actions {
+            match action {
+                Action::Edit(change) => self.apply_inventory_action(InvAction::Edit(change)),
+                Action::OpenMarketplace(url) => self.marketplace_ui.open(Some(url)),
+                Action::OpenExternal(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
+                Action::Notify { text, url } => self.marketplace_alert(text, url),
+                Action::CreateRoot => self.open_marketplace_listings(),
+            }
+        }
+    }
     /// Me › Marketplace listings (LLFloaterMarketplaceListings::onOpen).
     pub(super) fn open_marketplace_listings(&mut self) {
         if self.listings_ui.open() {

@@ -127,6 +127,7 @@ pub enum Action {
         item: Uuid,
         png: bool,
     },
+    ExportResult(String),
     Profile(Uuid),
     Discard(Uuid),
     MaterialMapFile {
@@ -136,6 +137,11 @@ pub enum Action {
 }
 #[derive(Default)]
 pub struct LibraryUi {
+    export_folder: Option<crossbeam_channel::Receiver<Option<std::path::PathBuf>>>,
+    export_items: Vec<(Uuid, bool)>,
+    export_queue: std::collections::VecDeque<(Uuid, std::path::PathBuf, bool)>,
+    export_jobs: Vec<windows::BatchExport>,
+    export_error: Option<String>,
     catalogue: Catalogue,
     search: String,
     folder: Option<Uuid>,

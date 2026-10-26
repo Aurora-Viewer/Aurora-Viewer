@@ -327,6 +327,16 @@ impl ShapeParams {
         self.effective(self.weights(values))
     }
 
+    /// Local wearable compositing also uses non-transmitted layer controls.
+    /// Apply their drivers without quantizing the edited values to bytes.
+    pub fn edited_weights(&self, base: &[u8], changed: &BTreeMap<i32, f32>) -> HashMap<i32, f32> {
+        let mut weights = self.weights(base);
+        for (&id, &weight) in changed {
+            self.set_weight(&mut weights, id, weight, 0);
+        }
+        self.effective(weights)
+    }
+
     /// AvatarAppearance values of the default shape with these parameters
     /// (id, weight) changed, as a simulator would send them (demo shapes).
     pub fn values_with(&self, changed: &[(i32, f32)]) -> Vec<u8> {

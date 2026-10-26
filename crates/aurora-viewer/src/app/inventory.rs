@@ -455,6 +455,25 @@ impl App {
                     self.world.eep.request_local(asset, kind);
                 }
             }
+            InvAction::EnvironmentParcel(item) => self.inventory_environment_parcel(item),
+            InvAction::Marketplace(item, command) => self.inventory_marketplace_command(item, command),
+            InvAction::ShowMain(item) => {
+                self.inventory_ui.show_original(&self.world.inventory, item);
+                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+            }
+            InvAction::ExportTextures { items, png } => self.texture_library.begin_exports(&self.egui_ctx, &self.world, items, png),
+            InvAction::WearLibrary { item, replace, point } => self.wear_copy_at(item, replace, point),
+            InvAction::WearSelection { items, replace, point } => self.wear_selection(items, replace, point),
+            InvAction::RefreshAttachment(item) => {
+                if let Some(id) = self
+                    .world
+                    .worn_attachment(&item)
+                    .and_then(|index| self.world.objects.get(index))
+                    .map(|object| object.full_id)
+                {
+                    self.refresh_object_textures(id);
+                }
+            }
             InvAction::Restore(id) => {
                 if let Some(it) = self.world.inventory.items.get(&id).cloned() {
                     self.send(NetCommand::RestoreInventoryObject(it));
@@ -660,36 +679,90 @@ impl App {
     /// copies it into the inventory (copy_inventory_item, the server's default
     /// folder of its type) and wears the copy once it arrives (wear_on_avatar_cb).
     fn wear_copy(&mut self, item: Uuid, replace: bool) {
-        let Some(owner) = self.world.inventory.items.get(&item).map(|it| it.owner) else {
-            return;
+        self.wear_copy_at(item, replace, 0);
+    }
+
+    fn wear_copy_at(&mut self, item: Uuid, replace: bool, point: u8) {
+        self.wear_selection(vec![item], replace, point);
+    }
+
+    fn wear_selection(&mut self, items: Vec<Uuid>, replace: bool, point: u8) {
+        let group_id = Uuid::new_v4();
+        let mut group = ui::inventory::WearCopyGroup {
+            replace,
+            point,
+            items: vec![None; items.len()],
+            pending: 0,
+            failed: false,
         };
-        let request = Uuid::new_v4();
-        self.inventory_ui.wear_copies.insert(request, replace);
-        self.send(NetCommand::CopyInventoryItem {
-            request,
-            copy: aurora_net::inventory::operations::CopyItem {
-                item,
-                owner,
-                parent: Uuid::nil(),
-                name: String::new(),
-            },
-        });
+        let mut copies = Vec::new();
+        for (index, item) in items.into_iter().enumerate() {
+            let Some(info) = self.world.inventory.items.get(&item) else {
+                return;
+            };
+            if crate::world::inventory::actions::library(&self.world.inventory, item) {
+                let request = Uuid::new_v4();
+                copies.push((
+                    request,
+                    index,
+                    aurora_net::inventory::operations::CopyItem {
+                        item,
+                        owner: info.owner,
+                        parent: Uuid::nil(),
+                        name: String::new(),
+                    },
+                ));
+                group.pending += 1;
+            } else {
+                group.items[index] = Some(item);
+            }
+        }
+        if group.pending == 0 {
+            self.apply_appearance_action(crate::world::appearance::Action::WearItems {
+                items: group.items.into_iter().flatten().collect(),
+                replace,
+                point,
+            });
+            return;
+        }
+        self.inventory_ui.wear_copy_groups.insert(group_id, group);
+        for (request, index, copy) in copies {
+            self.inventory_ui.wear_copies.insert(request, (group_id, index));
+            self.send(NetCommand::CopyInventoryItem { request, copy });
+        }
     }
 
     /// wear_on_avatar_cb: the copy arrived, it is worn like any inventory item.
     pub(super) fn wear_copied(&mut self, request: Uuid, result: Result<aurora_net::inventory::InvItem, String>) {
-        let Some(replace) = self.inventory_ui.wear_copies.remove(&request) else {
+        let Some((group_id, index)) = self.inventory_ui.wear_copies.remove(&request) else {
             return;
         };
+        let Some(group) = self.inventory_ui.wear_copy_groups.get_mut(&group_id) else {
+            return;
+        };
+        group.pending = group.pending.saturating_sub(1);
         match result {
             Ok(it) => {
                 let item = it.id;
                 log::info!("library copy arrived, wearing it: {item} in {}", it.parent);
                 // the server's inventory update may follow this callback
                 self.world.inventory.add_items(vec![it]);
-                self.apply_appearance_action(crate::world::appearance::Action::WearItem { item, replace, point: 0 });
+                group.items[index] = Some(item);
             }
-            Err(reason) => self.inventory_ui.message = reason,
+            Err(reason) => {
+                self.inventory_ui.message = reason;
+                group.failed = true;
+            }
+        }
+        if group.pending == 0 {
+            let group = self.inventory_ui.wear_copy_groups.remove(&group_id).expect("pending group");
+            if !group.failed {
+                self.apply_appearance_action(crate::world::appearance::Action::WearItems {
+                    items: group.items.into_iter().flatten().collect(),
+                    replace: group.replace,
+                    point: group.point,
+                });
+            }
         }
     }
 

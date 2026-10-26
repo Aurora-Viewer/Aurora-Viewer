@@ -27,6 +27,8 @@ its authors:
 The Second Life message template (`crates/aurora-msg/message_template.msg`) and
 the avatar definition files (`crates/aurora-viewer/assets/character/`) come from
 the Second Life viewer sources (originally LGPL 2.1).
+The `character/bake/` subdirectory contains the same sources' TGA skin,
+clothing and visibility masks, used by the local wearable preview.
 The Blender extension bundles the same `avatar_skeleton.xml` and retains its
 provenance in `blender/aurora_live/SKELETON-NOTICE.txt`.
 

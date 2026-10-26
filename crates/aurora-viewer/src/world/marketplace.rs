@@ -423,6 +423,14 @@ impl MarketplaceData {
         self.outbox.push(SlmRequest::Listing { id });
     }
 
+    pub fn refresh_listing(&mut self, inv: &Inventory, root: Uuid, folder: Uuid) {
+        let listing = nested_parent(inv, folder, depth(inv, root, folder));
+        let id = self.listing_id(listing);
+        if id > 0 && !self.is_updating(inv, root, folder) {
+            self.get_slm_listing(id);
+        }
+    }
+
     /// activateListing: list or unlist.
     pub fn activate_listing(&mut self, inv: &Inventory, root: Uuid, folder: Uuid, activate: bool) -> bool {
         let listing = nested_parent(inv, folder, depth(inv, root, folder));

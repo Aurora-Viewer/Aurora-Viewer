@@ -8,6 +8,14 @@ use aurora_net::inventory::operations::{Mutation, NewItem};
 use egui::{RichText, Vec2};
 use std::collections::HashSet;
 use uuid::Uuid;
+
+pub struct WearCopyGroup {
+    pub replace: bool,
+    pub point: u8,
+    pub items: Vec<Option<Uuid>>,
+    pub pending: usize,
+    pub failed: bool,
+}
 mod aurora;
 mod bulk_permissions;
 pub use bulk_permissions::demo_menu as bulk_permissions_demo;
@@ -84,6 +92,7 @@ pub fn show_document(
         appearance_busy: false,
         touchable: Default::default(),
         names: Default::default(),
+        ..Default::default()
     };
     dialogs::preview(ctx, p, icons, inv, drag_inventory, st, images, prefs, script_settings, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
@@ -147,6 +156,24 @@ pub enum InvAction {
         close: bool,
     },
     Environment(Uuid, u32),
+    EnvironmentParcel(Uuid),
+    ExportTextures {
+        items: Vec<Uuid>,
+        png: bool,
+    },
+    WearLibrary {
+        item: Uuid,
+        replace: bool,
+        point: u8,
+    },
+    WearSelection {
+        items: Vec<Uuid>,
+        replace: bool,
+        point: u8,
+    },
+    RefreshAttachment(Uuid),
+    ShowMain(Uuid),
+    Marketplace(Uuid, crate::ui::marketplace_listings::Command),
     Profile(Uuid),
     ThumbnailCopied(Uuid),
     Thumbnail {
@@ -170,6 +197,8 @@ pub struct Facts {
     /// Worn objects that handle touches (enable_attachment_touch).
     pub touchable: HashSet<Uuid>,
     pub names: std::collections::HashMap<Uuid, String>,
+    pub online: HashSet<Uuid>,
+    pub parcel_environment: bool,
 }
 
 impl Facts {
@@ -209,6 +238,32 @@ impl Facts {
             appearance_busy,
             touchable: world.touchable_attachment_items(),
             names: Default::default(),
+            online: world
+                .social
+                .friends
+                .iter()
+                .filter(|friend| friend.online)
+                .map(|friend| friend.id)
+                .collect(),
+            parcel_environment: world
+                .land
+                .sel
+                .as_ref()
+                .and_then(|selection| selection.parcel.as_deref())
+                .or(world.parcel.as_deref())
+                .is_some_and(|parcel| {
+                    crate::world::env_apply::can_update_parcel(
+                        parcel,
+                        &crate::world::land::AgentRights {
+                            id: world.agent_id,
+                            groups: &world.groups.groups,
+                        },
+                        world
+                            .main_region
+                            .and_then(|handle| world.regions.get(&handle))
+                            .is_some_and(|region| region.caps.contains_key("ExtEnvironment")),
+                    )
+                }),
         }
     }
 
@@ -325,6 +380,8 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    context_folders: std::cell::RefCell<context_catalog::FolderCache>,
+    pub marketplace_commands: std::collections::HashMap<Uuid, Vec<crate::ui::marketplace_listings::OptionState>>,
     /// Save live splitter changes once the pointer is released.
     pub preferences_dirty: bool,
     was_open: bool,
@@ -333,7 +390,8 @@ pub struct InventoryUi {
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
     /// Library wearables being copied to be worn: copy request → replace.
-    pub wear_copies: std::collections::HashMap<Uuid, bool>,
+    pub wear_copies: std::collections::HashMap<Uuid, (Uuid, usize)>,
+    pub wear_copy_groups: std::collections::HashMap<Uuid, WearCopyGroup>,
     pub filters_open: bool,
     pub preferences_open: bool,
     /// Display owner rights plus next-owner rights in this window only.
@@ -432,6 +490,9 @@ pub struct InventoryUi {
     /// The folder a folder window shows (nil: the whole inventory). Its
     /// lists, searches, column and breadcrumb stay under it.
     scope: Uuid,
+    navigate_to: Option<Uuid>,
+    pending_cleanup: Option<Uuid>,
+    cleanup_generation: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -1677,6 +1738,7 @@ pub fn show(
         }
     }
     let inv = &mut world.inventory;
+    context_catalog::process_deferred(inv, st, prefs, &facts);
     bulk_permissions::show(ctx, p, inv, st, prefs, world.agent_id, &mut actions);
     st.visible.clear();
     fetch_whole_inventory(inv, st);
@@ -1769,6 +1831,7 @@ pub fn show(
         w.state.copy_jobs.clone_from(&st.copy_jobs);
         w.state.notice.clone_from(&st.notice);
         w.state.merchant = st.merchant;
+        w.state.marketplace_commands.clone_from(&st.marketplace_commands);
         w.state.playing = st.playing;
         let before = (w.state.clipboard.clone(), w.state.cut);
         let window_id = floater_id(w.id);
@@ -1843,9 +1906,15 @@ pub fn show(
             }
         }
         w.state.was_open = w.open && !super::widgets::floater_minimized(ctx, &window_id);
+        if let Some(root) = w.state.navigate_to.take() {
+            w.root = root;
+            w.state.scope = root;
+            w.state.view = Default::default();
+        }
         bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, prefs, world.agent_id, &mut actions);
         finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
         controls::dialogs(ctx, p, &mut w.state, prefs);
+        context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
         move_to::show(ctx, p, icons, &mut world.inventory, &mut w.state, prefs, &facts, &mut actions);
         dialogs::preview(
@@ -2389,6 +2458,7 @@ mod tests {
                 active_gestures: Default::default(),
                 touchable: Default::default(),
                 names: Default::default(),
+                ..Default::default()
             };
             let palette = crate::theme::Theme::default().palette();
             let mut prefs = InventoryPreferences::default();
@@ -2497,6 +2567,7 @@ mod tests {
             active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
+            ..Default::default()
         };
         let mut prefs = InventoryPreferences::default();
         let mut st = InventoryUi {
@@ -2563,6 +2634,7 @@ mod tests {
             active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
+            ..Default::default()
         };
         let mut prefs = InventoryPreferences::default();
         let mut st = InventoryUi::default();
@@ -2626,6 +2698,7 @@ mod tests {
                 active_gestures: Default::default(),
                 touchable: Default::default(),
                 names: Default::default(),
+                ..Default::default()
             };
             let palette = crate::theme::Theme::default().palette();
             let mut prefs = InventoryPreferences::default();
@@ -3164,6 +3237,7 @@ mod tests {
             active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
+            ..Default::default()
         };
         let mut prefs = InventoryPreferences::default();
         let mut st = InventoryUi {
@@ -3236,6 +3310,7 @@ mod tests {
             active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
+            ..Default::default()
         };
         let mut prefs = InventoryPreferences::default();
         let mut st = InventoryUi {
@@ -3312,6 +3387,7 @@ mod tests {
             active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
+            ..Default::default()
         };
         let mut prefs = InventoryPreferences::default();
         let mut st = InventoryUi {
@@ -3555,6 +3631,7 @@ mod tests {
                         active_gestures: Default::default(),
                         touchable: Default::default(),
                         names: Default::default(),
+                        ..Default::default()
                     },
                     &mut Vec::new(),
                 );
@@ -3668,6 +3745,7 @@ mod tests {
                         active_gestures: Default::default(),
                         touchable: Default::default(),
                         names: Default::default(),
+                        ..Default::default()
                     },
                     &mut actions,
                 );
@@ -3778,6 +3856,7 @@ mod tests {
                         active_gestures: Default::default(),
                         touchable: Default::default(),
                         names: Default::default(),
+                        ..Default::default()
                     },
                     &mut Vec::new(),
                 );
@@ -3842,6 +3921,7 @@ mod tests {
                             active_gestures: Default::default(),
                             touchable: Default::default(),
                             names: Default::default(),
+                            ..Default::default()
                         },
                         &mut Vec::new(),
                         500.0,

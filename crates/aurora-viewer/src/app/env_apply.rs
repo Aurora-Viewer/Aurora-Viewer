@@ -65,6 +65,32 @@ fn percent(pos: f32) -> String {
 }
 
 impl App {
+    /// LLSettingsBridge::performAction(apply_settings_parcel): apply the
+    /// inventory asset directly, retaining the ordinary access/ack path.
+    pub(super) fn inventory_environment_parcel(&mut self, item: uuid::Uuid) {
+        let Some(item) = self
+            .world
+            .inventory
+            .items
+            .get(&item)
+            .filter(|item| item.asset_type == 56 && !item.asset_id.is_nil())
+            .cloned()
+        else {
+            return;
+        };
+        let title = aurora_i18n::tr!("ui-env-editor-apply-parcel");
+        let Some(target) = self.apply_target(false, title) else { return };
+        let command = LandCommand::EnvironmentApply {
+            local_id: target.local_id(),
+            track: None,
+            asset: item.asset_id,
+            name: item.name,
+            flags: env_apply::apply_flags(Some(item.owner_mask), item.flags),
+            day_length: -1,
+            day_offset: -1,
+        };
+        self.send_env_apply(target, command, Sender::Commit);
+    }
     /// LLEnvironment::isExtendedEnvironmentEnabled: the agent's region has
     /// ExtEnvironment (always in the offline demo).
     pub(super) fn extended_environment(&self) -> bool {

@@ -66,7 +66,7 @@ pub(super) fn context_menu(
     menu::context_menu(response, p, |ui| {
         let worn = worn_items(world).contains(&it.id);
         let wearable = matches!(it.asset_type, 5 | 6 | 13);
-        let editable = (it.asset_type == 13 && it.flags & 0xff == 0) || crate::physics_editor::is_physics(it);
+        let editable = matches!(it.asset_type, 5 | 13);
         if worn && editable && menu::item(ui, p, "pencil-filled", aurora_i18n::tr!("common-edit")) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::EditWorn(it.id));
         }

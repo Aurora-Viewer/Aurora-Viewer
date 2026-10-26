@@ -287,6 +287,7 @@ pub struct World {
     /// Bakes the scene swapped in, by avatar (`refresh_bakes`).
     bake_refreshes: HashMap<Uuid, u64>,
     shape_preview: Option<Vec<u8>>,
+    preview_bakes: HashMap<usize, Uuid>,
     shape_preview_generation: u64,
     pub alerts: VecDeque<String>,
     /// The announced restart of the agent's region (region_restart.rs).
@@ -617,6 +618,7 @@ impl World {
             appearance_counter: 1,
             bake_refreshes: HashMap::new(),
             shape_preview: None,
+            preview_bakes: HashMap::new(),
             shape_preview_generation: 0,
             alerts: VecDeque::new(),
             region_restart: Default::default(),
@@ -1750,8 +1752,28 @@ impl World {
         }
     }
 
+    /// Publish one complete local editor generation without changing the
+    /// authoritative appearance received from the server.
+    pub fn preview_bakes(&mut self, bakes: HashMap<usize, Uuid>) {
+        if self.preview_bakes != bakes {
+            self.preview_bakes = bakes;
+            let agent = self.agent_id;
+            self.refresh_bakes(&agent);
+        }
+    }
+
     /// Baked texture id for an avatar (by object index) and TE slot.
     pub fn bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
+        let o = self.objects.get(avatar_idx)?;
+        if o.full_id == self.agent_id
+            && let Some(id) = self.preview_bakes.get(&te_index)
+        {
+            return Some(*id);
+        }
+        self.server_bake_texture(avatar_idx, te_index)
+    }
+
+    pub fn server_bake_texture(&self, avatar_idx: usize, te_index: usize) -> Option<Uuid> {
         let o = self.objects.get(avatar_idx)?;
         if let Some((a, _)) = self.appearances.get(&o.full_id)
             && let Some(te) = &a.texture_entry

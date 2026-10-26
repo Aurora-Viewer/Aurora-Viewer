@@ -114,6 +114,7 @@ mod texture_library;
 mod texture_refresh;
 mod viewer_stats;
 mod viewfinder;
+mod wearable_editor;
 mod world_click_demo;
 mod worn_demo;
 
@@ -769,6 +770,7 @@ pub struct App {
     shape_ui: crate::shape_editor::State,
     shape_camera: Option<Camera>,
     physics_ui: crate::physics_editor::State,
+    wearable_ui: crate::wearable_editor::State,
     /// Me › Avatar health and the customise animation.
     avatar_health: avatar_health::AvatarHealth,
     last_social_poll: Instant,
@@ -909,7 +911,9 @@ fn apply_test_overrides(settings: &mut Settings) {
 }
 
 impl App {
-    pub fn new() -> anyhow::Result<App> {
+    // Growing editor state must not accumulate large return-value temporaries
+    // on the Windows main stack while the avatar library is being loaded.
+    pub fn new() -> anyhow::Result<Box<App>> {
         // found on a background thread while the rest starts
         ui::fonts::fallback::start();
         // the regional 12 / 24 hours and time zone of the bars' clock, read once
@@ -996,7 +1000,7 @@ impl App {
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
-        Ok(App {
+        Ok(Box::new(App {
             settings,
             disk_cache,
             skin,
@@ -1347,6 +1351,7 @@ impl App {
             shape_ui: Default::default(),
             shape_camera: None,
             physics_ui: Default::default(),
+            wearable_ui: Default::default(),
             avatar_health: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
@@ -1362,7 +1367,7 @@ impl App {
                     std::env::var_os("AURORA_CAPTURE_EXIT").is_some(),
                 )
             }),
-        })
+        }))
     }
 
     /// What the experience demo's simulator answers or does on its own.
@@ -2405,6 +2410,7 @@ impl App {
         self.shape_ui = Default::default();
         self.shape_camera = None;
         self.physics_ui = Default::default();
+        self.wearable_ui = Default::default();
         self.reset_avatar_health();
         self.interactions = Default::default();
         self.screen = Screen::Login;
@@ -2693,6 +2699,9 @@ impl App {
                 self.settings.save();
             }
             let blender_shape = self.blender_shape_loaded(item, asset, &result);
+            if self.wearable_ui.loaded(&mut self.world, item, asset, &result) {
+                return;
+            }
             if self.physics_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
@@ -2714,6 +2723,9 @@ impl App {
             return;
         }
         if let NetEvent::WearableSaved { request, result } = ev {
+            if self.wearable_saved(request, &result) {
+                return;
+            }
             if self.physics_saved(request, &result) {
                 return;
             }
@@ -4910,7 +4922,8 @@ impl App {
     }
 
     fn confirm_exit(&mut self, action: ui::exit::Action) {
-        if action != ui::exit::Action::Cancel && (!self.script_editors.prepare_exit() || !self.texture_library.prepare_exit(&self.egui_ctx))
+        if action != ui::exit::Action::Cancel
+            && (!self.close_wearable_editor() || !self.script_editors.prepare_exit() || !self.texture_library.prepare_exit(&self.egui_ctx))
         {
             self.exit_prompt.open = false;
             return;
@@ -6669,6 +6682,7 @@ impl App {
         images.extend(self.texture_library.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
+        images.extend(self.wearable_ui.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
         images.extend(self.favorite_images.drain());
         let overlays = self.world.rlva_overlay_frames(Instant::now());
@@ -7395,6 +7409,7 @@ impl App {
             return;
         };
         self.apply_local_imports(&mut gfx.renderer);
+        self.wearable_ui.preview.apply(&mut self.world, &mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
@@ -13544,6 +13559,7 @@ impl App {
                     self.inventory_ui.merchant_requested = true;
                     self.send(NetCommand::RequestInventoryMerchant);
                 }
+                self.prepare_inventory_marketplace_commands();
                 for ia in ui::inventory::show(
                     &ctx,
                     &p,
@@ -13622,11 +13638,13 @@ impl App {
                     self.shape_action(action);
                 }
                 if !self.shape_ui.open
+                    && !self.wearable_ui.open
                     && let Some(camera) = self.shape_camera.take()
                 {
                     self.camera = camera;
                 }
                 self.physics_window(&ctx, &p);
+                self.wearable_window(&ctx, &p);
                 self.ao_window(&ctx, &p);
                 t = self.ui_parts.lap(Part::UiInventory, t);
                 let facts = self.context_facts();
@@ -15992,6 +16010,7 @@ impl ApplicationHandler for App {
                 }
             }
             self.demo_shape_editor();
+            self.demo_wearable_editor();
             if let Some(mode) = ui::widgets::demo::rez_mode() {
                 if mode != "1" && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                     self.camera.demo_orbit(0.0, 0.6, Some(9.0), &self.settings.camera);
@@ -16260,6 +16279,15 @@ impl ApplicationHandler for App {
                 if !view.starts_with("offer") {
                     self.world.notifications = Default::default();
                 }
+                if view == "aurora-menu-textures-export"
+                    && let Some(mut snapshot) = self.world.inventory.items.get(&uuid::Uuid::from_u128(8104)).cloned()
+                {
+                    snapshot.id = uuid::Uuid::from_u128(8180);
+                    snapshot.asset_type = 15;
+                    snapshot.inv_type = 15;
+                    snapshot.name = format!("{} 2", snapshot.name);
+                    self.world.inventory.add_items(vec![snapshot]);
+                }
                 if let Some(id) = crate::world::inventory::demo::target(&view, &self.world.inventory) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
                     if let Some(item) = self.world.inventory.items.get_mut(&id) {
@@ -16271,6 +16299,9 @@ impl ApplicationHandler for App {
                     }
                     if view == "uuid-multi" {
                         self.inventory_ui.selection.insert(uuid::Uuid::from_u128(8105));
+                    }
+                    if view == "aurora-menu-textures-export" {
+                        self.inventory_ui.selection.insert(uuid::Uuid::from_u128(8180));
                     }
                     if view.starts_with("aurora-menu-") {
                         self.inventory_ui
