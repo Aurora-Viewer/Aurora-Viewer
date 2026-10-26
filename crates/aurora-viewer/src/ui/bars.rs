@@ -26,6 +26,9 @@ pub enum BarAction {
     Poser,
     CheckUpdates,
     ReportBug,
+    /// The bug button's right click: the viewer's version to the clipboard,
+    /// silently, for a report or a chat.
+    CopyVersion,
     /// Help › Report Abuse (LLFloaterReporter::showFromMenu).
     ReportAbuse,
     /// Help › Server release notes (LLFloaterAbout's release notes link).
@@ -269,10 +272,6 @@ fn bar_frame(p: &Palette) -> egui::Frame {
 /// a regular pitch whatever they draw.
 const TOP_SLOT: Vec2 = Vec2::new(22.0, 20.0);
 const TOP_ICON: f32 = 16.0;
-
-fn icon_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> bool {
-    icon_button_response(ui, p, icons, icon, tip, size).clicked()
-}
 
 fn icon_button_response(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
@@ -1485,8 +1484,13 @@ pub fn top_bars(
                     }
                 }
                 // online status (away, do not disturb, automatic responses)
-                if st.show_bug_report && icon_button(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON) {
-                    action = BarAction::ReportBug;
+                if st.show_bug_report {
+                    let resp = icon_button_response(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON);
+                    if resp.clicked() {
+                        action = BarAction::ReportBug;
+                    } else if resp.secondary_clicked() {
+                        action = BarAction::CopyVersion;
+                    }
                 }
                 status_dot(ui, p, st.status, &mut action);
                 // back / forward through the teleport history, home (Firestorm navigation bar)

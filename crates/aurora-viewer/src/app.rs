@@ -10536,6 +10536,13 @@ impl App {
         self.egui_ctx.open_url(egui::OpenUrl::new_tab(crate::links::NEW_ISSUE));
     }
 
+    /// The bug button's right click (login screen, top bar): the version a
+    /// report asks for, to the clipboard with no notice.
+    fn copy_version(&self) {
+        log::info!("bug report: version copied to the clipboard");
+        self.egui_ctx.copy_text(aurora_version::version().to_owned());
+    }
+
     fn handle_actions(&mut self, a: UiActions, event_loop: &ActiveEventLoop) {
         if let Some(action) = a.exit {
             self.confirm_exit(action);
@@ -10549,6 +10556,7 @@ impl App {
             LoginAction::Login if !self.updater.blocks_login() && aurora_updater::test_environment().is_none() => self.start_login(),
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             LoginAction::ReportBug => self.open_issue_chooser(),
+            LoginAction::CopyVersion => self.copy_version(),
             LoginAction::SafeGraphics(choice) => self.safe_graphics_choice(choice),
             LoginAction::DismissDriverNotice => {
                 if let Some(notice) = self.login_form.driver_notice.take() {
@@ -10654,6 +10662,7 @@ impl App {
         match a.bar {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
+            BarAction::CopyVersion => self.copy_version(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
             BarAction::ServerReleaseNotes => self.send(NetCommand::ServerReleaseNotes),
             BarAction::Import => {

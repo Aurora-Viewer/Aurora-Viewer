@@ -86,6 +86,8 @@ pub struct LoginForm {
 #[derive(Default)]
 pub enum LoginAction {
     ReportBug,
+    /// The bug button's right click, as in the top bar.
+    CopyVersion,
     /// "Ignore for this driver" on the out of date driver warning.
     DismissDriverNotice,
     /// A button of the safe graphics card.
