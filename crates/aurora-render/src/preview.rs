@@ -722,6 +722,21 @@ fn effective_material(source: &Part, view: &View) -> Material {
     }
 }
 
+/// Longest side of a preview target, in physical pixels.
+const MAX_TARGET: f32 = 2048.0;
+
+/// The render target of a preview of `size` points. A large preview is
+/// scaled down as a whole: clamping each side alone gave the target another
+/// shape than its rectangle, and egui stretched the picture to fill it.
+fn target_size(size: egui::Vec2, scale: f32) -> [u32; 2] {
+    let pixels = size * scale;
+    let fit = (MAX_TARGET / pixels.max_elem()).min(1.0);
+    [
+        (pixels.x * fit).ceil().clamp(1.0, MAX_TARGET) as u32,
+        (pixels.y * fit).ceil().clamp(1.0, MAX_TARGET) as u32,
+    ]
+}
+
 impl Cache {
     pub fn render(
         &mut self,
@@ -749,10 +764,7 @@ impl Cache {
                 primitive.clip_rect = egui::Rect::NOTHING;
                 continue;
             }
-            let size = [
-                (rect.width() * scale).ceil().clamp(1.0, 1024.0) as u32,
-                (rect.height() * scale).ceil().clamp(1.0, 1024.0) as u32,
-            ];
+            let size = target_size(rect.size(), scale);
             let pipeline = self.pipeline.get_or_insert_with(|| Pipelines::new(device));
             let changed = self
                 .targets
@@ -795,6 +807,22 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_preview_targets_keep_the_shape_of_their_rectangle() {
+        // small previews keep one texel per pixel, as before
+        assert_eq!(target_size(egui::vec2(230.0, 170.0), 1.0), [230, 170]);
+        assert_eq!(target_size(egui::vec2(230.0, 170.0), 1.5), [345, 255]);
+        // a wide window past the limit: both sides shrink together
+        let [w, h] = target_size(egui::vec2(1760.0, 740.0), 1.5);
+        assert_eq!(w, 2048);
+        assert!(((w as f32 / h as f32) - 1760.0 / 740.0).abs() < 0.01, "{w}×{h}");
+        let [w, h] = target_size(egui::vec2(700.0, 2400.0), 1.0);
+        assert_eq!(h, 2048);
+        assert!(((w as f32 / h as f32) - 700.0 / 2400.0).abs() < 0.01, "{w}×{h}");
+        // an empty rectangle still gets a valid texture
+        assert_eq!(target_size(egui::Vec2::ZERO, 1.0), [1, 1]);
+    }
 
     #[test]
     fn transparent_mesh_layers_never_hide_the_textured_skin_behind_them() {
