@@ -54,6 +54,7 @@ mod describe;
 mod dev_toolbox;
 mod folders;
 use folders::chat_log_root;
+mod contents_drop_demo;
 mod dof;
 mod double_click;
 mod driver_check;
@@ -8738,6 +8739,7 @@ impl App {
             self.texture_library_demo_input(&mut raw);
             self.portal_drop_demo_input(&mut raw);
             self.give_demo_input(&mut raw, vp, (w, h));
+            self.contents_drop_demo_input(&mut raw, vp, (w, h));
             ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
             self.suggest_demo_input(&mut raw);
@@ -8855,7 +8857,7 @@ impl App {
             || egui_state.clipboard_text(),
             self.demo.then_some(self.frame_count),
         );
-        let mut inventory_drop = None;
+        let mut inventory_drop = Vec::new();
         let mut library_drop = None;
         let t_pass = Instant::now();
         let mut windows_ms = 0.0;
@@ -8867,7 +8869,7 @@ impl App {
             let projector = ui::hud::Projector::for_ui(ui.ctx(), vp, [w as f32, h as f32]);
             actions = self.draw_ui(ui, &projector, &gfx.renderer);
             actions.ui_scale_changed |= ui::options::scale_keyboard(ui.ctx(), &mut self.settings.ui_scale);
-            if inventory_drop.is_none() {
+            if inventory_drop.is_empty() {
                 inventory_drop = self.inventory_drag_input(ui.ctx(), &gfx.renderer);
                 if library_drop.is_none() {
                     library_drop = self.texture_library_drag_input(ui.ctx(), &gfx.renderer);
@@ -8918,7 +8920,7 @@ impl App {
         // Native bitmap cursors, including the original Firestorm hotspot.
         // Set this every frame because egui's custom cursor output is sticky.
         full.platform_output.cursor_image = None;
-        if let Some(drop) = inventory_drop {
+        for drop in inventory_drop {
             self.apply_inventory_drop(drop);
         }
         if let Some(drop) = library_drop {

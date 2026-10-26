@@ -319,45 +319,18 @@ impl BuildTool {
         self.contents.running.insert((object_id, item_id), (running, None));
     }
 
-    /// An item of the agent's inventory dropped on the object (LLToolDragAndDrop:
-    /// scripts with RezScript, running unless Ctrl; the rest with
-    /// UpdateTaskInventory).
-    pub fn drop_inventory_item(&mut self, world: &World, idx: usize, item: &aurora_net::inventory::InvItem, ctrl: bool) {
-        let Some(o) = world.objects.get(idx) else { return };
-        let (handle, local_id, object_id) = (o.key.region, o.key.local_id, o.full_id);
-        let ti = TaskItem {
-            item_id: item.id,
-            parent_id: object_id,
-            creator_id: item.creator,
-            owner_id: item.owner,
-            base_mask: PERM_ALL,
-            owner_mask: PERM_ALL,
-            group_mask: item.group_mask,
-            everyone_mask: item.everyone_mask,
-            next_owner_mask: item.next_owner_mask,
-            asset_id: item.asset_id,
-            asset_type: item.asset_type as i8,
-            inv_type: item.inv_type as i8,
-            flags: item.flags,
-            name: item.name.clone(),
-            description: item.desc.clone(),
-            creation_date: now_unix() as i32,
-            ..Default::default()
+    /// Inventory dropped on the Contents tab, every item already accepted
+    /// (`contents_drop::plan`): sent in order, no-copy items leaving the
+    /// inventory (LLToolDragAndDrop::dropInventory / dropScript).
+    pub fn drop_inventory(&mut self, world: &mut World, idx: usize, drops: Vec<super::contents_drop::ContentsDrop>) {
+        let Some(object_id) = world.objects.get(idx).map(|o| o.full_id) else {
+            return;
         };
-        if ti.asset_type == AT_LSL_TEXT {
-            self.send(BuildCmd::RezScript {
-                handle,
-                local_id,
-                enabled: !ctrl,
-                group_id: Uuid::nil(),
-                item: Box::new(ti),
-            });
-        } else {
-            self.send(BuildCmd::UpdateTaskInventory {
-                handle,
-                local_id,
-                item: Box::new(ti),
-            });
+        for drop in drops {
+            self.send(drop.command);
+            if let Some(id) = drop.consume {
+                world.inventory.consume_item(id);
+            }
         }
         self.contents_changed(object_id);
     }
