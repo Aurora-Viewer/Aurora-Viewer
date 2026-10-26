@@ -51,7 +51,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
         .list()
         .iter()
         .map(|m| (m.clone(), rows::display_name(world, &m.id)))
-        .filter(|(_, name)| filter.is_empty() || name.to_lowercase().contains(&filter))
+        .filter(|(met, name)| super::matches_name(world, &met.id, name, &filter))
         .collect();
     let order: Vec<Uuid> = people.iter().map(|(m, _)| m.id).collect();
     st.sel.retain(|id| order.contains(id));

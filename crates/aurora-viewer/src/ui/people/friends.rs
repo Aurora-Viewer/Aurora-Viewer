@@ -123,7 +123,7 @@ fn lines(c: &Ctx, filter: &str, set: Option<&str>) -> Vec<Line> {
                 set,
             }
         })
-        .filter(|l| filter.is_empty() || [&l.name, &l.full, &l.username].iter().any(|t| t.to_lowercase().contains(filter)))
+        .filter(|l| super::matches_name(world, &l.friend.id, &l.full, filter))
         .collect();
     let sort = c.friends.sort;
     let mut friends: Vec<Friend> = out.iter().map(|l| l.friend.clone()).collect();

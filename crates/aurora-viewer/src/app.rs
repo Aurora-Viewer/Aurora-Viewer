@@ -14664,6 +14664,9 @@ impl ApplicationHandler for App {
                 // the density is the list's own toggle; the look is forced
                 // for the run only (`demo::people::legacy`), not saved
                 self.settings.radar.compact = crate::demo::people::compact();
+                if let Ok(filter) = std::env::var("AURORA_DEMO_PEOPLE_FILTER") {
+                    self.people_ui.filter = filter;
+                }
                 // the friends tab opens sorted as the mock-up's (online first)
                 self.settings.friends_list.sort = ui::people::FriendsSettings::default().sort;
                 if let Some(id) = crate::demo::people::sheet() {

@@ -46,6 +46,27 @@ pub(crate) const TAB_BLOCKED: u8 = 4;
 pub(crate) const TAB_SETS: u8 = 5;
 const AURORA_TABS: [u8; 6] = [TAB_NEARBY, TAB_FRIENDS, TAB_GROUPS, TAB_SETS, TAB_RECENT, TAB_BLOCKED];
 
+/// Search every name with a trimmed, lowercase filter, independently of the
+/// row's display preferences. Unlike
+/// LLAvatarList::getNameForDisplay (indra/newview/llavatarlist.cpp), People
+/// deliberately also finds hidden username/legacy forms (#1003). `get` keeps
+/// contact aliases and RLVa anonymity; never search the unfiltered cache.
+pub(super) fn matches_name(world: &World, id: &Uuid, shown: &str, filter: &str) -> bool {
+    filter.is_empty()
+        || shown.to_lowercase().contains(filter)
+        || world.social.avatar_names.get(id).is_some_and(|name| {
+            name.display_name.to_lowercase().contains(filter)
+                || name.username.to_lowercase().contains(filter)
+                || name
+                    .user_name_for_display(&crate::world::names::NameOptions {
+                        trim_resident: false,
+                        ..world.social.avatar_names.options
+                    })
+                    .to_lowercase()
+                    .contains(filter)
+        })
+}
+
 /// Id of the window.
 pub(crate) const WINDOW: &str = "people";
 
@@ -693,7 +714,7 @@ fn friends_tab(
         let mut shown = 0;
         for f in friends.iter().filter(|f| all || f.online) {
             let name = world.social.name_of(&f.id);
-            if !filter.is_empty() && !name.to_lowercase().contains(&filter) {
+            if !matches_name(world, &f.id, &name, &filter) {
                 continue;
             }
             shown += 1;
