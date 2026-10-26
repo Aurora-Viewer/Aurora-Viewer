@@ -221,6 +221,13 @@ impl State {
         self.entries.iter().find(|entry| entry.owner == self.agent)
     }
 
+    /// Photo isolation leaves world portal surfaces and their labels out.
+    /// The invitation, crossing guards and posed body cuts remain live.
+    pub fn visible<'a>(&'a self, world: &'a World) -> impl Iterator<Item = &'a Entry> {
+        let shown = !world.photo_isolation.applied();
+        self.entries.iter().filter(move |_| shown)
+    }
+
     /// One fresh server-backed member list per group portal, shared by all
     /// requesters. Never authorize using a claim made by the requesting viewer.
     pub fn take_group_refresh(&mut self) -> Option<Uuid> {

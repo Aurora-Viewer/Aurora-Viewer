@@ -152,7 +152,7 @@ fn label_text(world: &World, entry: &portals::Entry) -> String {
 
 pub fn labels(ctx: &egui::Context, p: &Palette, world: &World, projector: &Projector) {
     let painter = super::hud::world_painter(ctx);
-    for entry in &world.portals.entries {
+    for entry in world.portals.visible(world) {
         let center = Vec3::from(entry.portal.center);
         if center.distance(world.agent.position) > 40.0 {
             continue;

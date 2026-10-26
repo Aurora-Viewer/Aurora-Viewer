@@ -40,6 +40,40 @@ pub(super) fn fixture() -> (World, State) {
 }
 
 #[test]
+fn photo_isolation_hides_portal_surfaces_without_retiring_invitations_or_clearance() {
+    use crate::snapshot::isolate::Mode;
+    let (mut world, mut state) = fixture();
+    world.agent.position = point(0.0);
+    assert!(state.create(portal(), world.agent.position, Instant::now(), 1000));
+    assert!(state.own().unwrap().waiting_for_clearance());
+    assert_eq!(state.visible(&world).count(), 1);
+    world.photo_isolation.open = true;
+    for mode in [Mode::Own, Mode::Chosen] {
+        world.photo_isolation.mode = mode;
+        for transparent in [false, true] {
+            world.photo_isolation.transparent = transparent;
+            assert_eq!(state.visible(&world).count(), 0);
+            // Clipping still has the same aperture, even in an isolated photo.
+            assert_eq!(state.entries[0].portal.id, portal().id);
+            assert!(state.own().unwrap().allowed(&world));
+            assert!(state.own().unwrap().waiting_for_clearance());
+        }
+        world.photo_isolation.picking = true;
+        assert_eq!(state.visible(&world).count(), 1, "choosing shows the world");
+        world.photo_isolation.picking = false;
+    }
+    world.photo_isolation.mode = Mode::Off;
+    assert_eq!(state.visible(&world).count(), 1);
+    world.photo_isolation.mode = Mode::Own;
+    world.photo_isolation.open = false;
+    assert_eq!(state.visible(&world).count(), 1, "closing photo mode restores the surface");
+    world.photo_isolation.open = true;
+    state.close(1000);
+    world.photo_isolation.open = false;
+    assert_eq!(state.visible(&world).count(), 0, "closing an invitation while hidden is final");
+}
+
+#[test]
 fn portal_dropped_on_someone_requires_leaving_then_a_voluntary_plane_crossing() {
     let p = portal();
     let now = Instant::now();

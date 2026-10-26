@@ -91,6 +91,9 @@ particle uploads; unchanged portal records are not rewritten. `ui/portals.rs` pr
 World > Portals and depth-occluded destination/creator/access labels. This is
 an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation
 and teleportRequest (`indra/newview/llagent.cpp`).
+Photo isolation hides portal surfaces and their world labels while preserving
+invitations, clearance guards and the posed body cut; choosing subjects or leaving
+photo mode restores live surfaces without replaying invitations.
 
 Portal wire v2 separates a public `Announcement` from targeted `Details`.
 Restricted announcements contain no destination, landmark asset/title or group

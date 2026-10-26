@@ -45,7 +45,7 @@ impl Portals {
 
     pub fn update(&mut self, renderer: &mut Renderer, world: &World, eye: Vec3, palette: &Palette, _time: f32, animate: bool) {
         self.cmds.clear();
-        if !world.portals.entries.is_empty() && self.quad.is_none() {
+        if world.portals.visible(world).next().is_some() && self.quad.is_none() {
             let vertices = [
                 Vertex::new([-1.0, 0.0, -1.0], [0.0, -1.0, 0.0], [0.0, 1.0]),
                 Vertex::new([1.0, 0.0, -1.0], [0.0, -1.0, 0.0], [1.0, 1.0]),
@@ -62,7 +62,7 @@ impl Portals {
             return;
         };
         let mut used = 0;
-        for entry in &world.portals.entries {
+        for entry in world.portals.visible(world) {
             let portal = &entry.portal;
             let center = Vec3::from(portal.center);
             let allowed = entry.allowed(world);
