@@ -51,6 +51,9 @@ pub fn default_chat_width(screen: Rect) -> f32 {
 pub struct Geometry {
     pub chat: Rect,
     pub dock: Rect,
+    /// The conversations' thumbnails between them (#1134), none wide when
+    /// there are none or no room.
+    pub thumbs: Rect,
     pub button: f32,
     pub height: f32,
     pub widths: Vec<f32>,
@@ -77,9 +80,13 @@ fn row_width(widths: &[f32], button: f32) -> f32 {
 /// fixed buttons: the layout before PR 6, for the tests.
 #[cfg(test)]
 pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geometry {
-    geometry_styled(screen, chat_width, Style::default(), |square| {
-        (0..buttons).map(|i| if mic && i == 0 { DOCK_MIC_W } else { square }).collect()
-    })
+    geometry_styled(
+        screen,
+        chat_width,
+        Style::default(),
+        |square| (0..buttons).map(|i| if mic && i == 0 { DOCK_MIC_W } else { square }).collect(),
+        |_, _, _| 0.0,
+    )
 }
 
 /// The bottom islands' layout: the chat island on the left, `chat_width`
@@ -90,8 +97,17 @@ pub fn geometry(screen: Rect, chat_width: f32, buttons: usize, mic: bool) -> Geo
 /// out (`Fill`: the whole room). When they do not fit, they all take the
 /// reduced size (`MIN_BUTTON`) and their labels are cut, and a chat island
 /// that would still push the dock out shrinks. Both islands are as high as
-/// the buttons and their margins.
-pub fn geometry_styled(screen: Rect, chat_width: f32, style: Style, natural: impl Fn(f32) -> Vec<f32>) -> Geometry {
+/// the buttons and their margins. The conversations' thumbnails take
+/// `thumbs(room, button, height)` after the chat island, within the room
+/// the dock leaves at its size: the dock keeps its place unless it would
+/// cover them, then stands right after them.
+pub fn geometry_styled(
+    screen: Rect,
+    chat_width: f32,
+    style: Style,
+    natural: impl Fn(f32) -> Vec<f32>,
+    thumbs: impl Fn(f32, f32, f32) -> f32,
+) -> Geometry {
     let bottom = screen.bottom() - MARGIN;
     let left = screen.left() + MARGIN;
     let right = screen.right() - MARGIN;
@@ -112,17 +128,20 @@ pub fn geometry_styled(screen: Rect, chat_width: f32, style: Style, natural: imp
         widths = row(button);
     }
     let width = row_width(&widths, button);
+    let height = button + V_PAD * 2.0;
+    let thumbs_w = thumbs(right - start - width - AFTER_CHAT, button, height).max(0.0);
+    let dock_start = if thumbs_w > 0.0 { start + thumbs_w + AFTER_CHAT } else { start };
     let x = match style.align {
         // centred on the screen, as the mockup's dock
-        Align::Center => (left + ((right - left - width) / 2.0).round()).max(start),
-        align => sizing::place(align, start, right, width),
+        Align::Center => (left + ((right - left - width) / 2.0).round()).max(dock_start),
+        align => sizing::place(align, dock_start, right, width),
     };
-    let height = button + V_PAD * 2.0;
     let chat = Rect::from_min_max(Pos2::new(left, bottom - height), Pos2::new(chat_right, bottom));
     let dock = Rect::from_min_max(Pos2::new(x, bottom - height), Pos2::new(x + width, bottom));
     Geometry {
         chat,
         dock,
+        thumbs: Rect::from_min_size(Pos2::new(start, bottom - height), Vec2::new(thumbs_w, height)),
         button,
         height,
         widths,
@@ -153,14 +172,26 @@ pub fn bottom(
     let screen = ui.max_rect();
     let buttons = toolbar_settings.buttons(layout);
     let style = row.style;
-    let geo = geometry_styled(screen, *chat_width, style, |square| {
-        buttons
-            .iter()
-            .map(|b| natural_width(&ctx, b, style.mode, square, BUTTON_ICON.min(square - 6.0), DOCK_MIC_W))
-            .collect()
-    });
+    // the conversations' thumbnails as high as the chat island's button
+    let thumb = |button: f32| button - 4.0;
+    let geo = geometry_styled(
+        screen,
+        *chat_width,
+        style,
+        |square| {
+            buttons
+                .iter()
+                .map(|b| natural_width(&ctx, b, style.mode, square, BUTTON_ICON.min(square - 6.0), DOCK_MIC_W))
+                .collect()
+        },
+        |room, button, height| chat.thumbnails.bar_width(thumb(button), (height - thumb(button)) / 2.0, room),
+    );
     let mut action = BarAction::None;
     let mut committed = false;
+
+    // the conversations' thumbnails between the chat island and the dock
+    // (#1134), drawn after the bars (none here: at the top right)
+    chat.thumbnails.reserve(geo.thumbs, thumb(geo.button), true);
 
     // Autohidden (#1009), the island shows while the chat is used, without
     // its button when the dock holds Conversations; out of use it goes
@@ -238,6 +269,10 @@ pub fn bottom(
         // A wider toolbar must not cover the chat's resize handle with a
         // hover-only drop target on the dock's higher layer.
         drop_rect.min.x = drop_rect.min.x.max(geo.chat.right() + AFTER_CHAT);
+        // nor the conversations' thumbnails
+        if geo.thumbs.width() > 0.0 {
+            drop_rect.min.x = drop_rect.min.x.max(geo.thumbs.right());
+        }
         let drop = ui.interact(drop_rect, Id::unique("dock_drop"), Sense::hover());
         toolbar.drop_bar(&drop, row.bar, &rects, p, row.locked);
     });

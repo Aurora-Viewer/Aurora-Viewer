@@ -12413,6 +12413,16 @@ impl App {
                     .and_then(|r| r.info.as_ref())
                     .map(|i| ui::bars::maturity_name(i.sim_access))
                     .unwrap_or("");
+                // the conversations' thumbnails (#1134): the bars reserve
+                // their room, `thumbnails::show` draws them below
+                let thumbnails = if self.demo { ui::chat::thumbnails::demo_place() } else { None };
+                ui::chat::thumbnails::prepare(
+                    &mut self.chat_ui,
+                    &self.world,
+                    thumbnails.unwrap_or(self.settings.chat_thumbnails),
+                    self.settings.chat_thumbnails_flash,
+                    self.settings.reduce_motion,
+                );
                 let status = ui::bars::StatusInfo {
                     location_hidden: self.world.rlva.has("showloc"),
                     show_bug_report: if self.demo {
@@ -12425,6 +12435,7 @@ impl App {
                     ban_lines: self.settings.maps.ban_lines,
                     world_overlays: self.settings.world_overlays,
                     show_transparency: self.settings.debug.show_alpha,
+                    conversation_thumbnails: self.chat_ui.thumbnails.top_count(),
                     region: if self.world.rlva.has("showloc") {
                         aurora_i18n::tr!("rlva-hidden-region")
                     } else {
@@ -12769,6 +12780,17 @@ impl App {
                     area = room;
                 }
                 ui::layout::set_work_area(ui.ctx(), area);
+                ui::chat::thumbnails::show(
+                    ui,
+                    &p,
+                    &mut self.world,
+                    &mut self.chat_ui,
+                    &mut self.panels,
+                    &self.avatar_pics,
+                    &self.ui_images,
+                    area,
+                    chrome.top,
+                );
                 // the islands leave room between them, above and below: the
                 // windows move over the whole screen; the Legacy Viewer's
                 // bars are full width, the windows stay between them

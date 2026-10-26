@@ -29,6 +29,18 @@ impl ChatStyle {
     }
 }
 
+/// Where the thumbnails of the open conversations stand (Preferences ›
+/// Chat, `ui/chat/thumbnails.rs`): the Legacy Viewer's IM chiclets, shown
+/// unless `FSDisableIMChiclets`. Beside the chat bar by default (the human's
+/// choice of 2026-10-26; the Legacy Viewer keeps them at the top right).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatThumbnails {
+    Off,
+    #[default]
+    ChatBar,
+    TopRight,
+}
+
 /// Where the islands show the favourites (Preferences › Interface,
 /// "Favourites access"): a button of the place island and its menu (the
 /// default), a row of pills under the islands, or a button of the dock and
@@ -668,6 +680,12 @@ pub struct Settings {
     /// closed (FSNotifyNearbyChatFlash, on); the button's right-click menu
     /// turns it off, IMs and group chats keep flashing.
     pub flash_conversations_nearby: bool,
+    /// The thumbnails of the open conversations, with their unread count
+    /// (the Legacy Viewer's IM chiclets, #1134): where, or none.
+    pub chat_thumbnails: ChatThumbnails,
+    /// A thumbnail flashes when its conversation receives a message, then
+    /// keeps a mark until it is read (on).
+    pub chat_thumbnails_flash: bool,
     /// Flash the taskbar button when a message, an offer or a mention
     /// arrives while the window is not in front (FSFlashOnMessage; on here,
     /// off in the Legacy Viewer: the point of #680 is not to miss them).
@@ -1589,6 +1607,8 @@ impl Default for Settings {
             flash_unread_conversations: true,
             flash_conversations_button: true,
             flash_conversations_nearby: true,
+            chat_thumbnails: ChatThumbnails::ChatBar,
+            chat_thumbnails_flash: true,
             flash_on_message: true,
             flash_on_object_im: true,
             flash_on_script_dialog: false,
