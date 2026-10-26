@@ -1,4 +1,4 @@
-﻿# Aurora Viewer — task tracking
+# Aurora Viewer — task tracking
 
 - 🟡 Freeze and Eject a resident from our land ([#1108](https://github.com/Aurora-Viewer/Aurora-Viewer/issues/1108); task `freeze-eject`, 2026-10-26; grid test handed to QA by the human): the avatar and attachment menus' Disturbance submenu shows "Freeze" and "Eject" only when we may (region owner, estate manager, our parcel by the ParcelOverlay, or group land with the "Eject and freeze" power; the group's parcel is asked for when unknown), like the Legacy Viewer's `Avatar.EnableFreezeEject`. Each asks first (Freeze / Unfreeze / Cancel; Eject / Eject and ban / Cancel, the ban only when we hold the parcel's ban list), then sends FreezeUser or EjectUser to the resident's region (`LLAvatarActions::landFreeze` / `landEject`, `callbackLandFreeze` / `callbackLandEject`). Demo: `AURORA_DEMO_LAND_MODERATION`.
   - Full `scripts/check.ps1` green; four unit tests cover the rights (region owner, estate manager, our parcel, group land with and without the power, the ban). Demo captures of the menu with and without rights and of the three questions inspected.
