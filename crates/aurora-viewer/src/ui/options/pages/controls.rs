@@ -52,12 +52,13 @@ pub fn page(cx: &mut Cx) {
             tr!("ui-options-walk-backwards-without-turning-help"),
             &field!(walk_backwards_without_turning),
         );
-        // FSCrouchToggle, FSFlyAfterTeleport
+        // FSCrouchToggle, FSIgnoreFinishAnimation, FSFlyAfterTeleport
         cx.toggle(
             tr!("ui-options-crouch-toggle"),
             tr!("ui-options-crouch-toggle-help"),
             &field!(crouch_toggle),
         );
+        cx.toggle(tr!("ui-options-quickjump"), tr!("ui-options-quickjump-help"), &field!(quickjump));
         cx.toggle(
             tr!("ui-options-fly-after-teleport"),
             tr!("ui-options-fly-after-teleport-help"),

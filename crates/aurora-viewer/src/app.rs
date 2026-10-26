@@ -7499,6 +7499,7 @@ impl App {
             if self.world.status.away {
                 c.control_flags |= control::AWAY;
             }
+            c.control_flags = crate::agent::AgentState::quickjump_flags(c.control_flags, self.settings.quickjump);
             // send_agent_update: Alt or Ctrl turns script clicks into releases
             c.alt_or_ctrl = self.alt || self.ctrl;
             if self.chat_ui.local_typing() && self.world.rlva.can_send_typing_start() {
@@ -11126,6 +11127,11 @@ impl App {
             }
             BarAction::CameraControls => self.panels.camera_controls = true,
             BarAction::ToggleMoveLock => self.toggle_move_lock(),
+            BarAction::ToggleQuickjump => {
+                self.settings.quickjump = !self.settings.quickjump;
+                self.settings.save();
+                log::info!("quickjump: {}", self.settings.quickjump);
+            }
             BarAction::ToggleWaterWalk => self.toggle_water_walk(),
             BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
@@ -12433,6 +12439,7 @@ impl App {
                     status: self.world.status.modes(),
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
+                    quickjump: self.settings.quickjump,
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
