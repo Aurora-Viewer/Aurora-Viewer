@@ -6747,6 +6747,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MEDIA_PACK=downloading`, `installing` or `failed` | Fixed state of the media plugins download |
 | `AURORA_MEDIA_PACK_FEED=http://127.0.0.1:<port>/` | Media plugins pack taken from a local test server |
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
+| `AURORA_DEMO_STREAM_TITLE=[window\|history\|text][,stop]` | Stream title window with changing titles and their history |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
 | `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
@@ -7041,6 +7042,16 @@ What the inventory must show with these scenarios:
   separate blacklist rows and persistence after relog. Sound filtering is local
   and does not use the Bridge; blocking an object does not inherit to rez descendants.
 
+- **`AURORA_DEMO_STREAM_TITLE=[window|history|text][,stop]`**: the demo
+  parcel's radio changes title every 6 seconds, one title too long for the
+  window (it slides to show its end, waits, comes back), after five titles
+  played during the loading, so the history is filled. At frame 600
+  World › Stream title opens: the window (`window`, the default), the
+  window and its history (`history`: newest first, Ctrl / Shift to choose,
+  Clear, Max. entries, Copy to clipboard), or the title alone over the
+  world (`text`: drag it anywhere, right click for the history, the copy
+  and the window). `stop` ends the stream after the last title: "No
+  stream playing", the history kept. No sound is played.
 - **`AURORA_DEMO_SOUND=1|hud`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends
