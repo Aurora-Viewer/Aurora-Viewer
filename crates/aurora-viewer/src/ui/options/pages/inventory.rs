@@ -62,6 +62,11 @@ pub fn page(cx: &mut Cx) {
         cx.toggle(tr!("ui-inventory-controls-outfit-folders"), "", &field!(inventory.search_outfits));
     });
     cx.group(tr!("received-filing-title"), |cx| {
+        cx.toggle(
+            tr!("received-delivery-notify"),
+            tr!("received-delivery-notify-help"),
+            &field!(notify_deliveries),
+        );
         let changed = cx.experimental().toggle(
             tr!("received-filing-enabled"),
             tr!("received-filing-help"),

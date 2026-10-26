@@ -33,6 +33,12 @@ pub(super) struct Badge {
     dirty: bool,
     written: Option<Instant>,
     fetched: Option<(u64, Instant, bool)>,
+    /// New Marketplace deliveries not yet announced (`take_fresh`, #752).
+    fresh: Vec<Uuid>,
+    /// Discoveries are announced: a saved baseline is authoritative, while
+    /// the unbound demo/test badge only announces after its first enumeration
+    /// (its seeded inbox is not news).
+    primed: bool,
 }
 
 impl Badge {
@@ -51,6 +57,8 @@ impl Badge {
             dirty: false,
             written: None,
             fetched: None,
+            fresh: Vec::new(),
+            primed: true,
         }
     }
 
@@ -151,15 +159,25 @@ impl Badge {
                 initialized: true,
                 ..Default::default()
             };
+            self.primed = false;
         }
         self.key = Some(key);
         self.deliveries = received_items::deliveries(inv).collect();
+        let marketplace: HashSet<Uuid> = if self.primed {
+            received_items::marketplace_deliveries(inv).collect()
+        } else {
+            HashSet::new()
+        };
         for id in &self.deliveries {
             if self.saved.known.insert(*id) {
                 self.saved.unread.insert(*id);
                 self.dirty = true;
+                if marketplace.contains(id) && self.fresh.len() < 256 {
+                    self.fresh.push(*id);
+                }
             }
         }
+        self.primed = true;
         for id in self.shown.drain() {
             if self.deliveries.contains(&id) {
                 self.dirty |= self.saved.unread.remove(&id);
@@ -167,6 +185,12 @@ impl Badge {
         }
         self.unread = self.deliveries.intersection(&self.saved.unread).count();
         self.persist(false);
+    }
+
+    /// The Marketplace deliveries discovered since the last call, offline
+    /// arrivals included, never the history of the first baseline.
+    pub(super) fn take_fresh(&mut self) -> Vec<Uuid> {
+        std::mem::take(&mut self.fresh)
     }
 
     pub(super) fn unseen(&mut self, inv: &Inventory) -> usize {
@@ -361,6 +385,24 @@ mod tests {
         assert_eq!(badge.unseen(&inv), 1, "a delivery moved out no longer waits in Received");
     }
 
+    #[test]
+    fn received_badge_announces_new_marketplace_deliveries_once_without_seeded_history() {
+        let mut inv = inventory();
+        let mut badge = Badge::default();
+        badge.update(&mut inv);
+        assert!(badge.take_fresh().is_empty(), "the unbound badge's seeded inbox is not news");
+        add_item(&mut inv, 13, 5);
+        add_item(&mut inv, 14, 2);
+        badge.update(&mut inv);
+        assert_eq!(
+            badge.take_fresh(),
+            vec![Uuid::from_u128(14)],
+            "a sender folder's delivery came with its offer's card"
+        );
+        badge.update(&mut inv);
+        assert!(badge.take_fresh().is_empty(), "announced once");
+    }
+
     struct Files(PathBuf);
 
     impl Files {
@@ -436,6 +478,22 @@ mod tests {
         badge.acknowledge(&reconnected, &[Uuid::from_u128(14), Uuid::from_u128(15)]);
         drop(badge);
         assert_eq!(loaded(files.path("account.json"), &mut reconnected).unseen(&reconnected), 0);
+    }
+
+    #[test]
+    fn received_badge_announces_offline_marketplace_deliveries_but_not_the_first_baseline() {
+        let files = Files::new();
+        let mut inv = inventory();
+        let mut badge = loaded(files.path("account.json"), &mut inv);
+        assert!(badge.take_fresh().is_empty(), "the first baseline is history");
+        drop(badge);
+        let mut reconnected = inventory();
+        add_item(&mut reconnected, 14, 2);
+        let mut badge = loaded(files.path("account.json"), &mut reconnected);
+        assert_eq!(badge.take_fresh(), vec![Uuid::from_u128(14)], "delivered while offline");
+        drop(badge);
+        let mut again = loaded(files.path("account.json"), &mut reconnected);
+        assert!(again.take_fresh().is_empty(), "never announced twice across logins");
     }
 
     #[test]

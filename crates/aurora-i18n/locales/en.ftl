@@ -10962,6 +10962,14 @@ ao-category-water = Swimming
 received-filing-title = Received items
 received-filing-enabled = Sort new deliveries by sender
 received-filing-help = File new items and folders in #Aurora/Received items/<legacy name>, overriding the usual destinations by type. Scripted deliveries use the object's owner. Offline deliveries are filed after login. Empty sender folders move to Trash. Existing items stay where they are.
+received-delivery-notify = Notify Marketplace deliveries
+received-delivery-notify-help = Show a notification for each Marketplace purchase or gift that arrives in Received items, and keep it in the notification history.
+received-delivery-title = Marketplace delivery
+received-delivery-several = { $count ->
+    [one] { $count } Marketplace delivery
+   *[other] { $count } Marketplace deliveries
+    }
+received-delivery-demo = Example Marketplace purchase
 received-marketplace-folder = MarketPlace
 received-filing-demo-gift = Example gift
 received-filing-demo-photo = Example photo

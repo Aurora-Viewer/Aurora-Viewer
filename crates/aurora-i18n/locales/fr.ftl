@@ -10958,6 +10958,14 @@ ao-category-water = Nage
 received-filing-title = Éléments reçus
 received-filing-enabled = Classer les nouveaux envois par expéditeur
 received-filing-help = Range les nouveaux éléments et dossiers dans #Aurora/Received items/<legacy name>, en remplaçant les destinations habituelles par type. Les envois par un objet utilisent le nom de son propriétaire. Les envois hors ligne sont rangés à la connexion. Les dossiers d’expéditeurs vides vont à la corbeille. Les éléments existants restent à leur place.
+received-delivery-notify = Signaler les livraisons Marketplace
+received-delivery-notify-help = Affiche une notification pour chaque achat ou cadeau Marketplace qui arrive dans Éléments reçus, et la garde dans l’historique des notifications.
+received-delivery-title = Livraison Marketplace
+received-delivery-several = { $count ->
+    [one] { $count } livraison Marketplace
+   *[other] { $count } livraisons Marketplace
+    }
+received-delivery-demo = Achat Marketplace de démonstration
 received-marketplace-folder = MarketPlace
 received-filing-demo-gift = Cadeau de démonstration
 received-filing-demo-photo = Photo de démonstration

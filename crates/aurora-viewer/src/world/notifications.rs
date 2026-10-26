@@ -183,6 +183,13 @@ pub enum Data {
     Call {
         invite: Box<aurora_net::VoiceInvite>,
     },
+    /// What Direct Delivery put in the Marketplace inbox (Received items):
+    /// the item or folder, or the inbox itself for several at once. Aurora
+    /// only: the Legacy Viewer just marks the inbox new, and a gift bought
+    /// for us on the Marketplace arrived unnoticed (#752).
+    Delivery {
+        object: Uuid,
+    },
     /// The restart of the agent's region (RegionRestartMinutes /
     /// RegionRestartSeconds, show_toast="false"): pinned at the top of "To
     /// do" with the live count while the alert counts (`region_restart.rs`).
@@ -276,6 +283,7 @@ impl Notification {
             Data::Call { invite } if invite.p2p => Follow::Conversation(invite.from),
             Data::Call { invite } => Follow::Conversation(invite.session),
             Data::Inventory { object, .. } if !object.is_nil() && outcome == Outcome::Kept => Follow::Inventory(*object),
+            Data::Delivery { object } => Follow::Inventory(*object),
             _ => Follow::None,
         };
         Entry {
@@ -291,7 +299,10 @@ impl Notification {
 
     /// Needs an answer (stays until answered).
     pub fn interactive(&self) -> bool {
-        !matches!(self.data, Data::None | Data::Presence { .. } | Data::Message { .. })
+        !matches!(
+            self.data,
+            Data::None | Data::Presence { .. } | Data::Message { .. } | Data::Delivery { .. }
+        )
     }
 
     /// Clicking the card itself acts (opens the conversation): a friend
@@ -306,9 +317,13 @@ impl Notification {
     /// (callingcard_offer_callback: "close button probably").
     pub fn close_declines(&self) -> bool {
         match &self.data {
-            Data::None | Data::Url(_) | Data::Presence { .. } | Data::Message { .. } | Data::RegionRestart | Data::CallingCard { .. } => {
-                false
-            }
+            Data::None
+            | Data::Url(_)
+            | Data::Presence { .. }
+            | Data::Message { .. }
+            | Data::RegionRestart
+            | Data::CallingCard { .. }
+            | Data::Delivery { .. } => false,
             Data::Inventory { object, .. } => object.is_nil(),
             _ => true,
         }
@@ -523,6 +538,28 @@ impl Notifications {
         self.outcomes.insert(id, outcome);
     }
 
+    /// Announce the Marketplace deliveries found in one pass (#752): one
+    /// card with the delivery's name, or for several (an offline backlog at
+    /// login) one card counting them, their names, and the inbox to show.
+    pub fn push_deliveries(&mut self, named: &[(Uuid, String)], inbox: Uuid) -> Option<u64> {
+        const NAMES: usize = 5;
+        let (title, object) = match named {
+            [] => return None,
+            [(id, _)] => (aurora_i18n::tr!("received-delivery-title").to_owned(), *id),
+            _ => (aurora_i18n::tr!("received-delivery-several", count = named.len()), inbox),
+        };
+        let mut body = named
+            .iter()
+            .take(NAMES)
+            .map(|(_, name)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if named.len() > NAMES {
+            body.push_str(", …");
+        }
+        Some(self.push(Kind::Inventory, title, body, Data::Delivery { object }))
+    }
+
     /// Put an entry of the history back in the list ("Put back in To do").
     pub fn restore(&mut self, e: &Entry) -> u64 {
         let id = self.push(Kind::of_look(e.look), e.title.clone(), e.body.clone(), Data::None);
@@ -548,7 +585,9 @@ impl Notifications {
             if let Some(o) = self.outcomes.remove(&id) {
                 entry.outcome = o;
             }
-            if entry.outcome != Outcome::Kept && matches!(entry.follow, Follow::Inventory(_)) {
+            // an offer gone unkept left nothing to show; a delivery read is
+            // still there
+            if !matches!(entry.outcome, Outcome::Kept | Outcome::Read) && matches!(entry.follow, Follow::Inventory(_)) {
                 entry.follow = Follow::None;
             }
             // a message read is in its conversation and its transcript: the
@@ -722,6 +761,8 @@ impl Notifications {
 /// What an answer did, for the history.
 pub(super) fn outcome_of(n: &Notification, r: &Response) -> Outcome {
     match r {
+        // it is in the inventory whatever the click: shown or closed, read
+        _ if matches!(n.data, Data::Delivery { .. }) => Outcome::Read,
         Response::Accept if matches!(n.data, Data::Inventory { .. }) => Outcome::Kept,
         Response::Accept | Response::Button(_) | Response::SendText | Response::OpenUrl | Response::Open => Outcome::Answered,
         Response::Decline | Response::Block | Response::BlockExperience => Outcome::Declined,
@@ -951,6 +992,36 @@ mod tests {
         let gone = n.take_departures();
         assert_eq!(gone[0].outcome, Outcome::Declined);
         assert_eq!(gone[0].follow, Follow::Place("secondlife:///app/teleport/Aurora/128/130/25".into()));
+    }
+
+    /// A Marketplace delivery is information with a way to the inventory:
+    /// one card names it, several share one card and point to the inbox, and
+    /// the history keeps "Show in inventory" however the card was closed.
+    #[test]
+    fn marketplace_deliveries_reach_the_bell_and_keep_their_way_to_the_inventory() {
+        let mut n = Notifications::default();
+        let inbox = Uuid::from_u128(50);
+        assert_eq!(n.push_deliveries(&[], inbox), None);
+        let one = Uuid::from_u128(1);
+        let single = n.push_deliveries(&[(one, "Lantern".into())], inbox).expect("card");
+        let card = n.list.iter().find(|x| x.id == single).expect("listed");
+        assert_eq!(card.body, "Lantern");
+        assert!(matches!(card.data, Data::Delivery { object } if object == one));
+        assert!(!card.interactive() && !card.close_declines() && !card.transient && !card.quiet);
+        let named: Vec<(Uuid, String)> = (2..9).map(|i| (Uuid::from_u128(i), format!("Gift {i}"))).collect();
+        let several = n.push_deliveries(&named, inbox).expect("card");
+        let card = n.list.iter().find(|x| x.id == several).expect("listed");
+        assert!(matches!(card.data, Data::Delivery { object } if object == inbox));
+        assert_eq!(card.body, "Gift 2, Gift 3, Gift 4, Gift 5, Gift 6, …");
+        assert_ne!(card.title, n.list[0].title, "several deliveries are counted");
+        assert!(n.take_departures().is_empty());
+        n.respond(single, Response::Open, |_| Uuid::nil(), Uuid::nil());
+        n.respond(several, Response::Dismiss, |_| Uuid::nil(), Uuid::nil());
+        let gone = n.take_departures();
+        assert_eq!(gone.len(), 2);
+        for (entry, object) in gone.iter().zip([one, inbox]) {
+            assert_eq!((entry.outcome, &entry.follow), (Outcome::Read, &Follow::Inventory(object)));
+        }
     }
 
     #[test]

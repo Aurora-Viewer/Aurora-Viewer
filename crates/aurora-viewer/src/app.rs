@@ -4294,12 +4294,21 @@ impl App {
                     }
                 }
                 Follow::Inventory(item) => {
-                    self.inventory_ui.show_original(&self.world.inventory, item);
+                    self.inventory_ui.show_notified(&self.world.inventory, item);
                     self.panels.inventory = true;
                     self.notif_ui.open = false;
                 }
             },
         }
+    }
+
+    /// A Marketplace delivery's "Show in inventory" (#752): the card is
+    /// read, the delivery selected in the inventory.
+    fn show_delivery(&mut self, id: u64, object: uuid::Uuid) {
+        let _ = self.world.respond_notification(id, crate::world::notifications::Response::Open);
+        self.inventory_ui.show_notified(&self.world.inventory, object);
+        self.panels.inventory = true;
+        self.notif_ui.open = false;
     }
 
     fn update_sounds(&mut self) {
@@ -7037,7 +7046,11 @@ impl App {
         }
         self.world.poll_inventory_cache();
         let receipts = std::mem::take(&mut self.world.received_items.receipts);
-        self.inventory_ui.update_received(&mut self.world.inventory, receipts);
+        let deliveries = self.inventory_ui.update_received(&mut self.world.inventory, receipts);
+        // the demo's seeded inboxes are not news unless its scenario asks
+        if !deliveries.is_empty() && self.settings.notify_deliveries && (!self.demo || crate::demo::delivery::mode().is_some()) {
+            self.world.notify_deliveries(&deliveries);
+        }
         self.world.poll_transcripts();
         self.update_hover_height();
         self.update_avatar_health();
@@ -9351,6 +9364,42 @@ impl App {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::delivery::mode()
+        {
+            use crate::demo::delivery::{ARRIVE_AT, READ_AT, SEED_AT};
+            let agent = self.world.agent_id;
+            if self.frame_count == SEED_AT {
+                crate::world::inventory::demo::seed_received(&mut self.world.inventory, agent);
+                // the inbox already held its purchase: the badge's baseline, not news
+                let _ = self.inventory_ui.update_received(&mut self.world.inventory, Vec::new());
+            }
+            if self.frame_count == ARRIVE_AT
+                && let Some(event) = crate::demo::delivery::arrival(&self.world.inventory, agent)
+                && let Some(e) = self.world.apply(event)
+            {
+                self.on_app_event(e);
+            }
+            let card = (self.frame_count == READ_AT)
+                .then(|| {
+                    self.world.notifications.list.iter().find_map(|n| match n.data {
+                        crate::world::notifications::Data::Delivery { object } => Some((n.id, object)),
+                        _ => None,
+                    })
+                })
+                .flatten();
+            match (mode.as_str(), card) {
+                ("open", Some((id, object))) => self.show_delivery(id, object),
+                ("history", card) if self.frame_count == READ_AT => {
+                    if let Some((id, _)) = card {
+                        let _ = self.world.respond_notification(id, crate::world::notifications::Response::Dismiss);
+                    }
+                    self.notif_ui.open = true;
+                    self.notif_ui.center.tab = ui::notification_center::Tab::History;
+                }
+                _ => {}
             }
         }
         if self.demo
@@ -13411,6 +13460,15 @@ impl App {
                 }
                 for (id, r) in answers {
                     if self.region_restart_bell_answer(id, &r) {
+                        continue;
+                    }
+                    if matches!(r, crate::world::notifications::Response::Open)
+                        && let Some(object) = self.world.notifications.list.iter().find_map(|n| match n.data {
+                            crate::world::notifications::Data::Delivery { object } if n.id == id => Some(object),
+                            _ => None,
+                        })
+                    {
+                        self.show_delivery(id, object);
                         continue;
                     }
                     if matches!(r, crate::world::notifications::Response::Open) {

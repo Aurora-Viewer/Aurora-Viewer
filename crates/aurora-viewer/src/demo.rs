@@ -69,6 +69,9 @@ pub mod conv_button;
 /// A deformed avatar to reset (AURORA_DEMO_DEFORM).
 #[path = "demo_deform.rs"]
 pub mod deform;
+/// A Marketplace delivery's notification (AURORA_DEMO_DELIVERY).
+#[path = "demo_delivery.rs"]
+pub mod delivery;
 #[path = "demo_eep.rs"]
 pub mod eep;
 /// A facial expression and a hand pose (AURORA_DEMO_EMOTE).

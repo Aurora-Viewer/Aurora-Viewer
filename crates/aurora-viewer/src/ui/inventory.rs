@@ -453,9 +453,11 @@ impl InventoryUi {
         self.received_badge = received::Badge::load(path, root);
     }
 
-    pub(crate) fn update_received(&mut self, inv: &mut Inventory, receipts: Vec<crate::world::received_items::Receipt>) {
+    /// Returns the Marketplace deliveries discovered this frame (#752).
+    pub(crate) fn update_received(&mut self, inv: &mut Inventory, receipts: Vec<crate::world::received_items::Receipt>) -> Vec<Uuid> {
         self.received_badge.receive(receipts);
         self.received_badge.update(inv);
+        self.received_badge.take_fresh()
     }
 
     pub fn begin_move_to(&mut self, id: Uuid) {
@@ -507,6 +509,16 @@ impl InventoryUi {
         self.selection.clear();
         self.selection.insert(id);
         self.reveal_item(inv, id);
+    }
+
+    /// "Show in inventory" from a notification: like `show_original`, on the
+    /// Received tab for what sits in the Marketplace inbox, which the main
+    /// tab leaves out (#752).
+    pub fn show_notified(&mut self, inv: &Inventory, id: Uuid) {
+        self.show_original(inv, id);
+        if crate::world::inventory::actions::system(inv, 50).is_some_and(|inbox| crate::world::inventory::actions::under(inv, id, inbox)) {
+            self.tab = RECEIVED_TAB;
+        }
     }
 
     /// LLPanelMainInventory::onClearSearch / LLOpenFoldersWithSelection
