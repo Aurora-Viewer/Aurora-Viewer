@@ -8,7 +8,7 @@
 
 use crate::world::inventory::Inventory;
 use aurora_net::NetEvent;
-use aurora_net::inventory::{InvFolder, InvItem};
+use aurora_net::inventory::InvItem;
 use uuid::Uuid;
 
 /// The scenario, if asked: `1`, `several`, `open` or `history`.
@@ -24,35 +24,28 @@ pub const ARRIVE_AT: u64 = 700;
 /// then the list opens on History.
 pub const READ_AT: u64 = 900;
 
-/// The deliveries of `ARRIVE_AT`: a folder each with its object inside,
-/// under the seeded inbox, as one unsolicited inventory update.
+/// The deliveries of `ARRIVE_AT`: objects in the seeded inbox, as one
+/// unsolicited inventory update. Objects, not folders: the demo would fill
+/// a folder it has never seen with its own made-up contents when fetched.
 pub fn arrival(inv: &Inventory, agent: Uuid) -> Option<NetEvent> {
     let inbox = crate::world::inventory::actions::system(inv, 50)?;
     let count = if mode().as_deref() == Some("several") { 3 } else { 1 };
     let name = aurora_i18n::tr!("received-delivery-demo");
-    let mut folders = Vec::new();
-    let mut items = Vec::new();
-    for n in 0..count {
-        let folder = Uuid::from_u128(8_310_000 + n);
-        folders.push(InvFolder {
-            id: folder,
+    let items = (0..count)
+        .map(|n| InvItem {
+            id: Uuid::from_u128(8_310_000 + n),
             parent: inbox,
+            asset_id: Uuid::from_u128(8_310_100 + n),
             name: if n == 0 { name.to_owned() } else { format!("{name} {}", n + 1) },
-            type_default: -1,
-            version: 1,
-            ..Default::default()
-        });
-        items.push(InvItem {
-            id: Uuid::from_u128(8_310_100 + n),
-            parent: folder,
-            asset_id: Uuid::from_u128(8_310_200 + n),
-            name: aurora_i18n::tr!("common-demo-object").into(),
             asset_type: 6,
             inv_type: 6,
             owner: agent,
             creator: agent,
             ..Default::default()
-        });
-    }
-    Some(NetEvent::InventoryUpdated { folders, items })
+        })
+        .collect();
+    Some(NetEvent::InventoryUpdated {
+        folders: Vec::new(),
+        items,
+    })
 }
