@@ -40,6 +40,7 @@ impl Editor {
         self.set_rotation(rotation);
     }
     pub(in crate::ik_edit) fn show_poser(&mut self, ctx: &egui::Context, p: &Palette, world: &World, proj: &Projector) {
+        self.poser.pointer_owned = false;
         if !ctx.input(|i| i.pointer.primary_down()) {
             self.drag = None;
             if !ctx.input(|i| i.pointer.primary_released()) {
@@ -122,6 +123,7 @@ impl Editor {
                     response
                 })
                 .inner;
+            self.poser.pointer_owned |= response.contains_pointer();
             if response.clicked() || response.drag_started() {
                 self.select_pose_bone(joint, rig, frame);
             }
@@ -138,6 +140,7 @@ impl Editor {
             response.on_hover_text(name);
         }
         if gizmo_owns || self.drag.is_some() || self.gizmo.dragging() || self.poser.scale_gizmo.dragging() {
+            self.poser.pointer_owned = true;
             return;
         }
         let Some(pointer) = ctx.input(|i| i.pointer.interact_pos()) else {
@@ -150,6 +153,8 @@ impl Editor {
             return;
         };
         let Source::Bone(bone) = segment.source else { return };
+        // From the geometry: the shaft's area only exists once hovered.
+        self.poser.pointer_owned = true;
         let (_, t) = crate::build::geom::seg_distance(pointer, segment.a.0, segment.b.0);
         let at = segment.a.0.lerp(segment.b.0, t);
         let response = egui::Area::new(egui::Id::unique(("poser-segment", bone)))

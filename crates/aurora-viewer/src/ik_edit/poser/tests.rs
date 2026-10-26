@@ -858,3 +858,33 @@ fn poser_library_saves_bvh_confirms_overwrite_and_correlates_loads_to_the_origin
     assert!(root.file_name().is_some_and(|n| n == owner.to_string().as_str()));
     std::fs::remove_dir_all(root).unwrap();
 }
+#[test]
+fn poser_handles_own_the_pointer_and_leave_the_rest_of_the_scene_to_huds() {
+    use crate::ui::widgets::elide_tests::Frames;
+    let (world, mut editor) = selected_fixture();
+    let rig = &world.avatar_lib.rig;
+    let frame = editor.editor_frame(&world).unwrap();
+    let proj = projector(frame.joints[rig.pelvis].w_axis.truncate());
+    let at = |name: &str| proj.project(frame.joints[rig.names[name]].w_axis.truncate()).unwrap().0;
+    let mut frames = Frames::new();
+    crate::ui::widgets::minimize_floater(&frames.ctx, "poser");
+    let p = crate::theme::Theme::default().palette();
+    let mut hover = |editor: &mut Editor, pointer: egui::Pos2| {
+        for _ in 0..3 {
+            frames.run(vec![egui::Event::PointerMoved(pointer)], |ui| {
+                editor.show(ui.ctx(), &p, &world, &proj)
+            });
+        }
+        editor.poser_owns_pointer()
+    };
+    // mHead is selected: its gizmo is away from the leg.
+    assert!(hover(&mut editor, at("mKneeLeft")), "a joint marker takes the press");
+    let shaft = at("mKneeLeft").lerp(at("mAnkleLeft"), 0.5);
+    assert!(hover(&mut editor, shaft), "a bone shaft takes the press");
+    assert!(
+        !hover(&mut editor, egui::pos2(790.0, 890.0)),
+        "empty scene: a HUD there gets the press"
+    );
+    editor.poser.markers = false;
+    assert!(!hover(&mut editor, at("mKneeLeft")), "hidden markers own nothing");
+}

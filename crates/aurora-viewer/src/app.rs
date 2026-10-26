@@ -5504,7 +5504,15 @@ impl App {
                 return true;
             }
             if !self.build.open {
-                return true;
+                // A worn HUD takes the press, unless a poser handle drawn over
+                // it does: the Legacy Viewer's poser window leaves HUDs to the
+                // pie tool, and only its visual manipulators take scene clicks
+                // (FSFloaterPoser::enableVisualManipulators, FSToolCompPose).
+                // World presses stay the editor's.
+                return !(self.ik_editor.posing()
+                    && !self.ik_editor.poser_owns_pointer()
+                    && self.huds_shown()
+                    && self.scene.hud_pick(&self.world, self.cursor_pos, false).is_some());
             }
         }
         // Report Abuse's object picker takes the click (LLToolObjPicker)

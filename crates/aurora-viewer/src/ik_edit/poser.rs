@@ -97,6 +97,9 @@ pub(super) struct State {
     /// The consent requests travel through the worn bridge's query service
     /// (query.lsl): Ask waits for `Ready`, and the menu says why it waits.
     bridge: crate::world::bridge::QueryState,
+    /// A joint, shaft or gizmo handle was under the pointer, or dragged, in
+    /// the last frame: the next press is the poser's, not a HUD's.
+    pointer_owned: bool,
 }
 impl Deref for State {
     type Target = Config;
@@ -139,6 +142,12 @@ impl Editor {
     }
     pub fn posing(&self) -> bool {
         self.poser.active
+    }
+    /// A press on the scene now goes to a poser handle. The handles are
+    /// painted in egui's Background layer, which the app does not count as
+    /// UI, so the app asks before giving the press to a worn HUD.
+    pub fn poser_owns_pointer(&self) -> bool {
+        self.poser.active && self.poser.pointer_owned
     }
     /// The consent and Preferences actions chosen in the window since the
     /// last call.
