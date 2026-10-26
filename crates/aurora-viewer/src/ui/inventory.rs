@@ -288,6 +288,7 @@ pub(crate) struct WorldDrag {
     pub position: egui::Pos2,
     pub released: bool,
     pub ctrl: bool,
+    pub shift: bool,
 }
 
 /// Read before egui's end-pass clears released cargo. A dragging widget keeps
@@ -303,6 +304,7 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
             position: i.pointer.interact_pos()?,
             released: i.pointer.button_released(egui::PointerButton::Primary),
             ctrl: i.modifiers.ctrl,
+            shift: i.modifiers.shift,
         })
     })
 }
@@ -429,6 +431,20 @@ pub struct AnimationStats {
 }
 
 impl InventoryUi {
+    /// A successful scene drop gives movement keys back to the world while
+    /// keeping inventory windows and their selections open.
+    pub fn release_world_drag_focus(&mut self, ctx: &egui::Context) {
+        self.list_focus_frame = None;
+        ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+        for window in &mut self.windows {
+            window.state.release_world_drag_focus(ctx);
+        }
+    }
+
     pub(crate) fn open_bulk_permissions(&mut self, roots: Vec<Uuid>) {
         self.bulk_permissions.open(roots);
     }

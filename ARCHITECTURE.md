@@ -73,6 +73,77 @@ name or UUID, and copies unique selected keys from the row menu. Its Blocked
 shortcut opens the separate People mute list; Ignore never derenders an object
 or adds a sound asset to the blacklist.
 
+`world/portals.rs` owns bounded, immutable two-minute portal invitations and
+per-observer crossing gates. `aurora-net/src/bridge/portal.rs` validates their
+bounded base64/JSON wire format. Bridge 1.37 uses an owner-authenticated,
+region-local relay to the independent query script; late arrivals discover
+existing portals once, with targeted replies and bounded traffic. The bridge
+never teleports anyone. Each recipient checks friendship or their own group
+membership at crossing, then `app/portals.rs` uses the ordinary user location
+teleport boundary, retaining RLVa and simulator destination access checks.
+Near-spawn observers must first leave a 3.5 m clearance; standing inside,
+involuntary motion, position jumps and replayed announcements never trigger.
+`scene/portals.rs` shares one GPU quad with an analytic Aurora surface,
+depth-tested and sorted with world transparency/glow. Theme violet, indigo,
+teal and navy drive its flowing depth, fine rim and soft corona; the GPU
+animation clock runs it, with a static reduced-motion variant. No texture or
+particle uploads; unchanged portal records are not rewritten. `ui/portals.rs` provides
+World > Portals and depth-occluded destination/creator/access labels. This is
+an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation
+and teleportRequest (`indra/newview/llagent.cpp`).
+Photo isolation hides portal surfaces and their world labels while preserving
+invitations, clearance guards and the posed body cut; choosing subjects or leaving
+photo mode restores live surfaces without replaying invitations.
+
+Portal wire v2 separates a public `Announcement` from targeted `Details`.
+Restricted announcements contain no destination, landmark asset/title or group
+identity. An observer makes one nonce-bound request with at most one retry;
+the creator checks their own friends or a fresh, complete server member list
+shared through `world/group_data.rs` before sending any details. Unsent grants
+are checked again at the bounded send cadence; unknown/denied requests remain
+silent. Responses cannot use regional broadcast, in both Rust and the bridge.
+Private details remain in session memory, bound to creator, portal and request;
+discovery is redacted and close/expiry/session changes retire pending exchanges.
+HTTP-in renewal within the same region preserves invitations and clearance gates.
+The query endpoint is invalidated on region changes or a dead-URL response;
+announcement/close delivery retries the same immutable action at most twice,
+with one- and two-second backoff. Only exhausted failures remove the
+local aperture. Replacement, expiry and region/session changes retire retries.
+
+`app/portals/landmark.rs` resolves inventory landmark drops asynchronously through
+the ordinary landmark and map caches, including variable regions. A scene drop
+opens a Friends portal at the selected support; Shift at release makes it public.
+The shared overlay previews the selected access. Inventory items are never consumed;
+Ctrl insertion retains its existing behavior. Pending drops expire and cancel on
+region/session change, teleport or item replacement. `app/portals/demo.rs` drives
+actual world-drop input and authenticated in-memory peers for offline coverage.
+Successful landmark scene drops release inventory keyboard focus, including its
+short-lived list-focus restoration, while keeping inventory windows open.
+
+Remote `TeleportFinished` events carry the simulator's flight flag. The ordinary
+arrival path applies both flying and grounded states with the explicit fly-after-
+teleport preference. Only the current agent circuit may update our avatar's
+animations; late packets from a previous region cannot restore stale flight.
+
+`scene/portals/clipping.rs` assigns a stable entry side from the posed
+body and worn-object bounds, independently of locomotion or teleport gates.
+Every system-body, skinned-mesh and rigid world-attachment face receives the
+same finite elliptical opening. Fragment clipping uses world positions after deformation;
+stationary roots, moving limbs, large attachments and animated attachment
+points are included; fragments beyond the plane but outside the oval remain
+visible, including its rectangular corners. The decorative corona never
+enlarges the cut. Active subjects stay fully animated instead of using an
+impostor. Color, alpha, depth/Hi-Z/contact shadows, picking, glow and reflection
+passes agree, including GTAO mesh-normal and blended-contact depth. Its opaque
+normal pass uses a clipped variant only during an intersection; the ordinary
+compact normal vertex path is retained otherwise. MSAA depth uses the same cut.
+Opaque depth and shadow fast paths remain unchanged when no
+cut is active. The existing one-vector draw-record field holds the center and
+a compact horizontal entry direction, with no record-stride growth. CPU picking
+uses the same opening; `aurora-render/src/portal_tests.rs` renders the production
+fragment cut against rotated/transformed samples. HUDs and unrelated geometry
+are excluded.
+
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer
 helper preserves rejection of malformed and null UUIDs in both HTTP requests

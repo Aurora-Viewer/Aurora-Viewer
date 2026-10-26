@@ -757,6 +757,27 @@ mod tests {
     }
 
     #[test]
+    fn inventory_world_drop_releases_keyboard_without_closing_or_restoring_list_focus() {
+        for classic in [false, true] {
+            let mut h = Harness::new();
+            h.classic = classic;
+            for _ in 0..4 {
+                h.frame(Vec::new());
+            }
+            h.select(id(8100), false);
+            assert!(h.ctx.egui_wants_keyboard_input());
+            let selection = h.st.selection.clone();
+            h.st.release_world_drag_focus(&h.ctx);
+            for _ in 0..4 {
+                h.frame(Vec::new());
+                assert!(!h.ctx.egui_wants_keyboard_input(), "movement keys belong to the scene");
+                assert_eq!(h.st.selection, selection);
+            }
+            assert!(h.ctx.memory(|m| m.area_rect(egui::Id::unique("inventory"))).is_some());
+        }
+    }
+
+    #[test]
     fn inventory_keyboard_uses_only_the_focused_folder_window() {
         let mut h = Harness::new();
         h.st.open_folder_window(id(8000));

@@ -30,6 +30,7 @@ mod area_search;
 mod attention;
 mod bridge;
 mod movelock;
+mod portals;
 mod poser;
 mod sound_explorer;
 // Bug report form (disabled, see main.rs):
@@ -346,6 +347,10 @@ pub struct App {
     double_press: bool,
     autopilot: Option<crate::autopilot::AutoPilot>,
     follow_ui: ui::follow::FollowUi,
+    portal_ui: ui::portals::PortalUi,
+    portal_drop: Option<portals::landmark::Pending>,
+    /// A peer contains a full World; keep it off the Windows startup stack.
+    portal_demo_peer: Option<Box<portals::demo::Peer>>,
     follow_recovery: Option<follow::Recovery>,
     /// The control flags the walk asks for this frame.
     autopilot_flags: u32,
@@ -1148,6 +1153,9 @@ impl App {
             landmark_folders_checked: u64::MAX,
             hover_height_ui: Default::default(),
             follow_ui: Default::default(),
+            portal_ui: Default::default(),
+            portal_drop: None,
+            portal_demo_peer: None,
             follow_recovery: None,
             report_abuse: Default::default(),
             dof_focus: Default::default(),
@@ -2275,6 +2283,9 @@ impl App {
         }
         self.hover_height_ui = Default::default();
         self.follow_ui = Default::default();
+        self.portal_ui = Default::default();
+        self.portal_drop = None;
+        self.portal_demo_peer = None;
         self.follow_recovery = None;
         self.inventory_ui = Default::default();
         self.texture_library.reset();
@@ -2386,10 +2397,12 @@ impl App {
             return;
         }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
-            if self.bridge_services.owns(request) {
+            let _ = self.sync_bridge_queries();
+            if self.bridge_services.owns(request) || self.world.portals.owns(request) {
                 let error = result.as_ref().err().map(String::as_str);
                 self.bridge_runtime.query_reply(&self.world, error, Instant::now());
             }
+            self.world.portals.reply(request, &result, Instant::now());
             if let Some(message) = self.bridge_services.reply(request, result, Instant::now()) {
                 self.world.system_message(message);
             }
@@ -7649,6 +7662,7 @@ impl App {
                 self.poser_demo(&mode);
             }
             self.tick_poser_consent();
+            self.tick_portals();
             // Persist a sensitivity drag once it rests, like the other sliders.
             if !self.egui_ctx.input(|i| i.pointer.any_down()) && self.ik_editor.sync_poser_settings(&mut self.settings.poser) {
                 self.settings.save();
@@ -7940,6 +7954,14 @@ impl App {
             self.scene
                 .banlines
                 .update(&mut gfx.renderer, &self.world, self.settings.maps.ban_lines, self.camera.position);
+            self.scene.portals.update(
+                &mut gfx.renderer,
+                &self.world,
+                self.camera.position,
+                &self.palette,
+                self.start.elapsed().as_secs_f32(),
+                !self.settings.reduce_motion,
+            );
             self.frame_profile.lap(Lap::Extras);
             let overlays = self.settings.world_overlays;
             self.scene
@@ -7949,6 +7971,7 @@ impl App {
                     .first_person_view()
                     .then_some(self.settings.camera.show_avatar_in_mouselook),
             );
+            self.scene.update_portal_clipping(&mut gfx.renderer, &self.world);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
             let preview = if (self.focused || self.demo && self.capture.is_some())
                 && !covered
@@ -8548,6 +8571,7 @@ impl App {
         let ctx = self.egui_ctx.clone();
         if self.demo {
             self.texture_library_demo_input(&mut raw);
+            self.portal_drop_demo_input(&mut raw);
             ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
@@ -10715,6 +10739,9 @@ impl App {
                 self.ik_editor.open_poser();
                 ui::widgets::open_floater(&self.egui_ctx, "poser", &mut self.ik_editor.open);
             }
+            BarAction::Portals => {
+                ui::widgets::open_floater(&self.egui_ctx, "portals", &mut self.portal_ui.open);
+            }
             BarAction::Build(t) => {
                 match t {
                     1 => self.build.open_build(crate::build::Tool::Edit),
@@ -12067,6 +12094,7 @@ impl App {
                     [self.settings.sun_beacon, self.settings.moon_beacon],
                 );
                 ui::beacons::draw(&ctx, &p, projector, &self.scene.beacon_markers, &self.settings.beacons);
+                ui::portals::labels(&ctx, &p, &self.world, projector);
                 aurora_render::end_world_labels(&ctx);
                 ui::hud::draw_attachments(&ctx, &self.world, &self.scene);
                 t = self.ui_parts.lap(Part::UiTags, t);
@@ -13496,6 +13524,7 @@ impl App {
                 self.controls_window(&ctx, &p);
                 self.movelock_window(&ctx, &p);
                 self.follow_window(&ctx, &p);
+                self.portals_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 let automatic_base = self.scene.automatic_hover_base(&self.world);

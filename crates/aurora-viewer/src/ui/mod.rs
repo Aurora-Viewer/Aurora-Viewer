@@ -82,6 +82,7 @@ pub mod physics;
 pub mod place_card;
 pub mod place_details;
 pub mod places;
+pub mod portals;
 pub mod presence;
 pub mod profile;
 pub mod region;

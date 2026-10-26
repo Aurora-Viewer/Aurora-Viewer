@@ -42,6 +42,7 @@ pub mod particles;
 mod pick_accel;
 pub mod picking;
 mod plants;
+pub mod portals;
 pub mod probes;
 pub mod rez;
 mod sculpt_watch;
@@ -743,6 +744,7 @@ pub struct Scene {
     water_effects: water_effects::Effects,
     /// Ban lines of the parcel we may not enter.
     pub banlines: banlines::BanLines,
+    pub portals: portals::Portals,
     pub particles: particles::ParticleManager,
     /// Bundled swimming fallback for our own rendering only. Its private ID
     /// is never sent in AgentAnimation; remote viewers receive a real asset.
@@ -1363,6 +1365,7 @@ impl Scene {
             water: water::WaterGpu::default(),
             water_effects: Default::default(),
             banlines: banlines::BanLines::default(),
+            portals: portals::Portals::default(),
             particles: particles::ParticleManager::default(),
             movement_preview: None,
             paused_skeletons: HashSet::new(),
@@ -2000,6 +2003,7 @@ impl Scene {
         }
         self.water.clear(renderer);
         self.banlines.clear(renderer);
+        self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
@@ -4071,6 +4075,7 @@ impl Scene {
     pub fn build_lists(&mut self, renderer: &mut Renderer, view: &CullView, shadows: bool) {
         let t0 = Instant::now();
         self.lists.clear();
+        self.lists.portal_clipping = !self.portals.planes.is_empty();
         self.last_cull = Some(*view);
         let gpu_mode = renderer.gpu_culling();
         let debug_alpha = self.debug_alpha;
@@ -4149,11 +4154,15 @@ impl Scene {
         for (_, i) in avatars.iter().take(self.max_avatars.max(1)) {
             avatar_ok[*i] = true;
         }
+        for &index in self.portals.planes.keys() {
+            avatar_ok[index] = true;
+        }
         // (as when drawn in full, one still loading is a cloud until it is
         // complete, and one over the complexity limit is its silhouette)
         let imp_avatars: Vec<impostors::Far> = avatars
             .iter()
             .skip(self.max_avatars.max(1))
+            .filter(|(_, index)| !self.portals.planes.contains_key(index))
             .filter_map(|&(d, i)| {
                 let g = self.gpu.get(i)?;
                 let loading = self.hide_loading && self.loading.indices.contains(&i);
@@ -4569,16 +4578,21 @@ impl Scene {
         self.lists.mask = result.mask;
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
-        self.blend_tmp
-            .extend(self.banlines.cmds.iter().map(|(d, c)| blend_order::BlendEntry {
-                distance: *d,
-                cmd: *c,
-                glow: false,
-                rigged: false,
-                object: u32::MAX,
-                face: 0,
-                rig: None,
-            }));
+        self.blend_tmp.extend(
+            [(self.banlines.cmds.as_slice(), false), (self.portals.cmds.as_slice(), true)]
+                .into_iter()
+                .flat_map(|(cmds, glow)| {
+                    cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
+                        distance: *d,
+                        cmd: *c,
+                        glow,
+                        rigged: false,
+                        object: u32::MAX,
+                        face: 0,
+                        rig: None,
+                    })
+                }),
+        );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
         if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Split {
@@ -4967,6 +4981,7 @@ impl Scene {
             // on time
             if !every_frame
                 && motions.poser.is_none()
+                && !self.portals.planes.contains_key(&idx)
                 && owner != world.agent_id
                 && world.avatar_poses.contains_key(&owner)
                 && let Some(a) = self.far_avatars.get(&idx)

@@ -4,6 +4,7 @@
 use std::{fmt, sync::OnceLock, time::Duration};
 use uuid::Uuid;
 
+pub mod portal;
 pub mod query;
 
 #[derive(Clone)]
