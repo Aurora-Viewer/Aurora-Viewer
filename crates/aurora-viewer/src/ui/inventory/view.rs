@@ -277,6 +277,7 @@ impl Filters {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InventoryPreferences {
+    pub explorer: ExplorerPreferences,
     /// One menu arrangement is shared by all inventory types and accounts.
     pub context_menus: super::menu_layout::Preferences,
     pub notecard_view: super::markdown::View,
@@ -305,6 +306,7 @@ pub struct InventoryPreferences {
 impl Default for InventoryPreferences {
     fn default() -> Self {
         Self {
+            explorer: ExplorerPreferences::default(),
             context_menus: Default::default(),
             notecard_view: Default::default(),
             protected: HashSet::new(),
@@ -330,6 +332,34 @@ impl Default for InventoryPreferences {
             warn_task_move: true,
             warn_scripted_task_move: true,
             rights: Default::default(),
+        }
+    }
+}
+
+/// Expanded inventory geometry in logical points. Zero widths inherit the
+/// layout's defaults; resizing a small window never overwrites saved widths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExplorerPreferences {
+    pub sidebar_width: u16,
+    pub kind_width: u16,
+    pub rights_width: u16,
+    pub date_width: u16,
+    pub show_kind: bool,
+    pub show_rights: bool,
+    pub show_date: bool,
+}
+
+impl Default for ExplorerPreferences {
+    fn default() -> Self {
+        Self {
+            sidebar_width: 0,
+            kind_width: 0,
+            rights_width: 0,
+            date_width: 0,
+            show_kind: true,
+            show_rights: true,
+            show_date: true,
         }
     }
 }

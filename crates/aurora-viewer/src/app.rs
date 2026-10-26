@@ -13163,7 +13163,9 @@ impl App {
                 ui::inventory::view::set_picker_sort(&ctx, self.settings.inventory.sort);
                 self.show_gestures(&ctx, &p);
                 self.show_texture_library(&ctx, &p);
-                if self.settings.inventory != inventory_preferences {
+                self.inventory_ui.preferences_dirty |= self.settings.inventory != inventory_preferences;
+                if self.inventory_ui.preferences_dirty && !ctx.input(|input| input.pointer.any_down()) {
+                    self.inventory_ui.preferences_dirty = false;
                     self.settings.save();
                 }
                 if self.panels.appearance {
@@ -15602,6 +15604,8 @@ impl ApplicationHandler for App {
                         | "aurora-medium"
                         | "aurora-landmark"
                         | "aurora-wide"
+                        | "aurora-columns"
+                        | "aurora-columns-hidden"
                         | "aurora-sidebar-medium"
                         | "aurora-sidebar-wide"
                         | "aurora-rights"
@@ -15656,6 +15660,15 @@ impl ApplicationHandler for App {
                         }
                         if view == "aurora-rights" {
                             self.settings.inventory.rights = ui::inventory::permissions::Rights::Both;
+                        }
+                        if view.starts_with("aurora-columns") {
+                            let columns = &mut self.settings.inventory.explorer;
+                            columns.sidebar_width = 280;
+                            columns.kind_width = 176;
+                            columns.rights_width = 80;
+                            columns.date_width = 110;
+                            columns.show_kind = view != "aurora-columns-hidden";
+                            columns.show_date = view != "aurora-columns-hidden";
                         }
                         if view.starts_with("aurora-folder-window") {
                             // the right-click tests in a window of their own

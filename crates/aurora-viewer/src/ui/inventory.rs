@@ -311,6 +311,8 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    /// Save live splitter changes once the pointer is released.
+    pub preferences_dirty: bool,
     was_open: bool,
     focus_search: bool,
     bulk_permissions: bulk_permissions::State,

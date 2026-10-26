@@ -10,6 +10,7 @@
 //! (`details`). The tree, the search, the drag and drop, the menus and the
 //! dialogs are the inventory's own, shared with the Legacy window.
 
+mod columns;
 mod details;
 mod rights;
 pub(super) mod rows;
@@ -64,6 +65,7 @@ impl Layout {
 pub struct Frame {
     pub layout: Layout,
     pub rights: Rights,
+    pub columns: view::ExplorerPreferences,
     /// The explorer's list is drawn: its folders go in rather than open.
     pub explorer: bool,
 }
@@ -109,6 +111,8 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
             | "aurora-sidebar-wide"
             | "aurora-keyboard-wide"
             | "aurora-rights"
+            | "aurora-columns"
+            | "aurora-columns-hidden"
             | "aurora-received-filing"
             | "aurora-received-unread"
             | "aurora-received-sort"
@@ -233,6 +237,7 @@ pub(super) fn contents(
     st.aurora = Some(Frame {
         layout,
         rights: prefs.rights,
+        columns: prefs.explorer,
         explorer: false,
     });
     controls::init_filters(st, prefs);
@@ -378,9 +383,9 @@ fn explorer(
     toolbar::explorer_row(ui, p, inv, st, prefs, layout, actions);
     ui.add_space(8.0);
     let area = ui.available_rect_before_wrap();
-    let side_w = if layout == Layout::Wide { 220.0 } else { 196.0 };
     let pane_w = if layout == Layout::Wide && !st.hide_details { 300.0 } else { 0.0 };
     const GAP: f32 = 8.0;
+    let side_w = columns::sidebar(ui, p, area, pane_w, layout, &mut prefs.explorer);
     let side = Rect::from_min_size(area.min, egui::vec2(side_w, area.height()));
     let pane = Rect::from_min_max(egui::pos2(area.right() - pane_w, area.top()), area.max);
     let content = Rect::from_min_max(
@@ -431,8 +436,12 @@ fn explorer_list(
         _ => toolbar::breadcrumb_row(ui, p, inv, st),
     }
     let list_id = ui.scope_id().with("aurora_inventory_list");
-    let Some(frame) = st.aurora else { return };
-    rows::header(ui, p, frame, list_id);
+    let Some(mut frame) = st.aurora else { return };
+    frame.rights = prefs.rights;
+    frame.columns = prefs.explorer;
+    rows::header(ui, p, frame, list_id, &mut prefs.explorer);
+    frame.columns = prefs.explorer;
+    st.aurora = Some(frame);
     ui.add_space(2.0);
     let (root, filtered) = list_scope(inv, st, prefs, facts);
     let message = toolbar::message(p, st);
@@ -505,6 +514,78 @@ mod tests {
         assert_eq!(Layout::for_width(700.0), Layout::Medium);
         assert_eq!(Layout::for_width(1019.0), Layout::Medium);
         assert_eq!(Layout::for_width(WIDE_SIZE - 20.0), Layout::Wide);
+    }
+
+    #[test]
+    fn expanded_inventory_splitters_resize_without_selection_or_drag_actions() {
+        for (width, scale) in [(800.0, 1.0), (WIDE_SIZE, 1.0), (800.0, 1.5), (WIDE_SIZE, 1.5)] {
+            let mut h = Harness::new(width);
+            h.ctx.set_pixels_per_point(scale);
+            h.st.show_original(&h.inv, Uuid::from_u128(8100));
+            h.frames(8);
+            h.actions.clear();
+            let selection = h.st.selection.clone();
+            for key in [
+                egui::Id::unique("inventory_sidebar_handle"),
+                egui::Id::unique(("inventory_column_handle", 0_usize)),
+                egui::Id::unique(("inventory_column_handle", 1_usize)),
+                egui::Id::unique(("inventory_column_handle", 2_usize)),
+            ] {
+                let hit = h.ctx.data(|data| data.get_temp::<Rect>(key)).expect("splitter drawn");
+                let start = hit.center();
+                h.run(vec![egui::Event::PointerMoved(start)]);
+                h.run(vec![egui::Event::PointerButton {
+                    pos: start,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Default::default(),
+                }]);
+                h.run(vec![egui::Event::PointerMoved(start + egui::vec2(-24.0, 0.0))]);
+                h.run(vec![egui::Event::PointerMoved(start + egui::vec2(-48.0, 0.0))]);
+                let changed = h.prefs.explorer;
+                h.frames(3);
+                assert_eq!(h.prefs.explorer, changed, "holding the pointer stationary cannot keep resizing");
+                h.run(vec![egui::Event::PointerButton {
+                    pos: start + egui::vec2(-48.0, 0.0),
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Default::default(),
+                }]);
+                h.frames(3);
+            }
+            assert!(h.prefs.explorer.sidebar_width > 0);
+            assert!(h.prefs.explorer.kind_width > 0);
+            assert!(h.prefs.explorer.date_width > 0);
+            assert_eq!(h.st.selection, selection);
+            assert!(h.actions.is_empty(), "splitters cannot perform inventory operations");
+            let saved = h.prefs.explorer;
+            widgets::size_floater(&h.ctx, "aurora_inventory_test", egui::vec2(740.0, 560.0));
+            h.frames(8);
+            assert_eq!(h.prefs.explorer, saved, "fitting a smaller window preserves the requested widths");
+            let header = h
+                .ctx
+                .data(|data| data.get_temp::<columns::Columns>(egui::Id::unique("inventory_header_columns")))
+                .unwrap();
+            let row = h
+                .ctx
+                .data(|data| data.get_temp::<columns::Columns>(egui::Id::unique(("inventory_row_columns", Uuid::from_u128(8101)))))
+                .unwrap();
+            assert!(
+                (header.name_end - row.name_end).abs() < 0.5,
+                "headers stay aligned with scrolled rows"
+            );
+            for (header, row) in [(header.kind, row.kind), (header.rights, row.rights), (header.date, row.date)] {
+                assert!((header.unwrap().min - row.unwrap().min).abs() < 0.5);
+            }
+            let hit = h
+                .ctx
+                .data(|data| data.get_temp::<Rect>(egui::Id::unique("inventory_sidebar_handle")))
+                .unwrap();
+            h.double_click(hit.center());
+            assert_eq!(h.prefs.explorer.sidebar_width, 0, "double click restores the responsive default");
+            h.click(h.row(8101).center(), Default::default());
+            assert_eq!(h.st.selected, Some(Uuid::from_u128(8101)), "ordinary row selection still works");
+        }
     }
 
     /// Aurora's window `width` wide in a headless context.

@@ -9,6 +9,7 @@
 
 use super::super::permissions::{Permissions, Rights};
 use super::super::*;
+use super::columns::{Columns, PAD};
 use super::{Frame, Layout, rights};
 use crate::ui::{sheet, widgets};
 use egui::{Color32, Pos2, Rangef, Rect, Sense, Vec2};
@@ -18,63 +19,14 @@ pub const HEIGHT: f32 = 24.0;
 /// Where a placeholder's text starts ("Empty" under an open folder): past
 /// the caret and the icon.
 pub const LEAD: f32 = 34.0;
-const GAP: f32 = 12.0;
-const PAD: f32 = 8.0;
 const ICON: f32 = 16.0;
 const CARET: f32 = 14.0;
 const NAME: f32 = 13.0;
 const SMALL: f32 = 12.0;
 
-/// Where the parts of a row go: the name up to `name_end`, then the
-/// columns of the medium and wide widths.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Columns {
-    pub name_end: f32,
-    pub kind: Option<Rangef>,
-    pub rights: Option<Rangef>,
-    pub date: Option<Rangef>,
-}
-
-impl Columns {
-    /// The columns of a row (or of the header) ending at `right`.
-    pub fn new(frame: Frame, right: f32) -> Self {
-        let right = right - PAD;
-        let col = |end: f32, width: f32| Rangef::new(end - width, end);
-        match frame.layout {
-            Layout::Compact => Self {
-                name_end: right,
-                kind: None,
-                rights: None,
-                date: None,
-            },
-            Layout::Medium => {
-                let date = col(right, 72.0);
-                let kind = col(date.min - GAP, 112.0);
-                Self {
-                    name_end: kind.min - GAP,
-                    kind: Some(kind),
-                    rights: None,
-                    date: Some(date),
-                }
-            }
-            Layout::Wide => {
-                let date = col(right, 92.0);
-                let rights = (frame.rights != Rights::Hidden).then(|| col(date.min - GAP, rights::width(frame.rights).max(56.0)));
-                let kind = col(rights.map_or(date.min, |r| r.min) - GAP, 128.0);
-                Self {
-                    name_end: kind.min - GAP,
-                    kind: Some(kind),
-                    rights,
-                    date: Some(date),
-                }
-            }
-        }
-    }
-}
-
-/// Whether the rights end the name rather than have a column of their own.
+/// The compact tree retains its inline rights; expanded views use a column.
 fn rights_in_name(frame: Frame) -> bool {
-    frame.layout != Layout::Wide && frame.rights != Rights::Hidden
+    frame.layout == Layout::Compact && frame.rights != Rights::Hidden
 }
 
 /// The rect of the row about to be drawn, and the same across the whole
@@ -378,13 +330,17 @@ pub(in super::super) fn item(
     st.visible.push(id);
     let (rect, full) = row_rects(ui);
     let selected = st.selection.contains(&id);
-    let cols = Columns::new(frame, rect.right());
+    let cols = Columns::new(frame, full);
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique(("inventory_row_columns", id)), cols));
     let icon_center = Pos2::new(rect.left() + 4.0 + ICON / 2.0, rect.center().y);
     let name_left = icon_center.x + ICON / 2.0 + 8.0;
     let tint = item_icon_color(it.asset_type, it.inv_type, p);
     // Renaming: the field in place of the name.
     let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(2.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(name_rect).id_salt(("inventory_rename_row", id)));
+    field.set_clip_rect(Rect::from_x_y_ranges(name_rect.x_range(), rect.y_range()).intersect(ui.clip_rect()));
     if rename_row(&mut field, p, inv, id, st, prefs, actions) {
         background(ui, p, full, selected);
         paint_icon(ui, icons, item_icon(it.asset_type, it.inv_type, it.flags), icon_center, tint);
@@ -429,6 +385,8 @@ pub(in super::super) fn item(
     }
     let galley = ui.painter().layout_job(name);
     let mut x = name_left + galley.size().x;
+    let clip = ui.clip_rect();
+    ui.set_clip_rect(clip.intersect(Rect::from_min_max(full.min, Pos2::new(cols.name_end, full.bottom()))));
     widgets::paint_row_text(ui.painter(), galley, name_left, rect.center().y, p.ink);
     for (text, tone) in &pills {
         x += 6.0;
@@ -456,11 +414,14 @@ pub(in super::super) fn item(
             selected,
         );
     }
+    ui.set_clip_rect(clip);
     paint_columns(ui, p, inv, &st.view, id, cols, frame, permissions, rect.center().y, selected);
     item_response(ui, p, inv, it, r, permissions, st, prefs, facts, actions);
     if !quick.is_empty() {
         let right = cols.name_end - trailing - if trailing > 0.0 { 8.0 } else { 0.0 };
+        ui.set_clip_rect(clip.intersect(Rect::from_x_y_ranges(name_rect.x_range(), rect.y_range())));
         show_quick(ui, p, inv, id, &quick, right, rect.center().y, st, prefs, facts, actions);
+        ui.set_clip_rect(clip);
     }
 }
 
@@ -485,7 +446,7 @@ pub(in super::super) fn folder(
     st.visible.push(id);
     let (rect, full) = row_rects(ui);
     let selected = st.selection.contains(&id);
-    let cols = Columns::new(frame, rect.right());
+    let cols = Columns::new(frame, full);
     let caret_center = Pos2::new(rect.left() + 2.0 + CARET / 2.0, rect.center().y);
     let icon_center = if frame.explorer {
         Pos2::new(rect.left() + 4.0 + ICON / 2.0, rect.center().y)
@@ -497,6 +458,7 @@ pub(in super::super) fn folder(
     let icon = folder_icon(folder.info.type_default, *open && !frame.explorer);
     let name_rect = Rect::from_x_y_ranges(name_left..=cols.name_end, rect.y_range().shrink(2.0));
     let mut field = ui.new_child(egui::UiBuilder::new().max_rect(name_rect).id_salt(("inventory_rename_row", id)));
+    field.set_clip_rect(Rect::from_x_y_ranges(name_rect.x_range(), rect.y_range()).intersect(ui.clip_rect()));
     if rename_row(&mut field, p, inv, id, st, prefs, actions) {
         background(ui, p, full, selected);
         paint_icon(ui, icons, icon, icon_center, tint);
@@ -553,6 +515,8 @@ pub(in super::super) fn folder(
     job.wrap = egui::text::TextWrapping::truncate_at_width((cols.name_end - name_left - count_w - star_w).max(24.0));
     let galley = ui.painter().layout_job(job);
     let name_end = name_left + galley.size().x;
+    let clip = ui.clip_rect();
+    ui.set_clip_rect(clip.intersect(Rect::from_min_max(full.min, Pos2::new(cols.name_end, full.bottom()))));
     widgets::paint_row_text(ui.painter(), galley, name_left, rect.center().y, p.ink);
     if folder.info.favorite {
         widgets::paint_glyph(
@@ -578,6 +542,7 @@ pub(in super::super) fn folder(
             if selected { p.violet_pale } else { p.muted },
         );
     }
+    ui.set_clip_rect(clip);
     paint_columns(ui, p, inv, &st.view, id, cols, frame, None, rect.center().y, selected);
     let lead = caret.as_ref().map(|caret| caret.rect);
     let was_open = *open;
@@ -597,25 +562,26 @@ pub(in super::super) fn folder(
 }
 
 /// The titles of the columns above a list whose scroll area is `list`.
-pub fn header(ui: &mut egui::Ui, p: &Palette, frame: Frame, list: egui::Id) {
+pub fn header(ui: &mut egui::Ui, p: &Palette, frame: Frame, list: egui::Id, prefs: &mut view::ExplorerPreferences) {
     let width = widgets::header_width(ui, list);
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), Sense::hover());
-    let cols = Columns::new(frame, rect.left() + width);
-    let title = |text: &str, left: f32| {
-        let galley = ui
-            .painter()
-            .layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.5), p.muted);
-        widgets::paint_row_text(ui.painter(), galley, left, rect.center().y, p.muted);
+    let cols = super::columns::resize(ui, p, frame, Rect::from_min_size(rect.min, Vec2::new(width, rect.height())), prefs);
+    #[cfg(test)]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(egui::Id::unique("inventory_header_columns"), cols));
+    let title = |text: &str, range: Rangef| {
+        let galley = cut(ui, text, 11.5, p.muted, range.span(), false);
+        widgets::paint_row_text(ui.painter(), galley, range.min, rect.center().y, p.muted);
     };
-    title(aurora_i18n::tr!("common-name"), rect.left() + PAD);
+    title(aurora_i18n::tr!("common-name"), Rangef::new(rect.left() + PAD, cols.name_end));
     if let Some(kind) = cols.kind {
-        title(aurora_i18n::tr!("common-type"), kind.min);
+        title(aurora_i18n::tr!("common-type"), kind);
     }
     if let Some(range) = cols.rights {
-        title(rights::heading(frame.rights), range.min);
+        title(rights::heading(frame.rights), range);
     }
     if let Some(date) = cols.date {
-        title(aurora_i18n::tr!("inventory-column-modified"), date.min);
+        title(aurora_i18n::tr!("inventory-column-modified"), date);
     }
     ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, widgets::divider_stroke(p));
 }
@@ -637,33 +603,50 @@ pub(super) mod tests {
         Frame {
             layout,
             rights,
+            columns: Default::default(),
             explorer: false,
         }
     }
 
     #[test]
     fn the_columns_appear_with_the_width_and_never_overlap() {
-        let compact = Columns::new(frame(Layout::Compact, Rights::Mine), 400.0);
+        let compact = Columns::new(
+            frame(Layout::Compact, Rights::Mine),
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, HEIGHT)),
+        );
         assert_eq!(compact.kind, None);
         assert_eq!(compact.date, None);
         assert_eq!(compact.name_end, 400.0 - PAD);
-        let medium = Columns::new(frame(Layout::Medium, Rights::Mine), 600.0);
-        assert!(medium.rights.is_none(), "the rights end the name at the medium width");
+        let medium = Columns::new(
+            frame(Layout::Medium, Rights::Mine),
+            Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, HEIGHT)),
+        );
+        assert!(medium.rights.is_some(), "expanded views have a resizable permissions column");
         let (kind, date) = (medium.kind.unwrap(), medium.date.unwrap());
         assert!(medium.name_end < kind.min && kind.max < date.min && date.max <= 600.0);
         for rights in [Rights::Mine, Rights::Next, Rights::Both] {
-            let wide = Columns::new(frame(Layout::Wide, rights), 900.0);
+            let wide = Columns::new(
+                frame(Layout::Wide, rights),
+                Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, HEIGHT)),
+            );
             let (kind, range, date) = (wide.kind.unwrap(), wide.rights.unwrap(), wide.date.unwrap());
             assert!(wide.name_end < kind.min && kind.max < range.min && range.max < date.min);
             assert!(range.span() >= rights::width(rights));
         }
-        assert!(Columns::new(frame(Layout::Wide, Rights::Hidden), 900.0).rights.is_none());
+        assert!(
+            Columns::new(
+                frame(Layout::Wide, Rights::Hidden),
+                Rect::from_min_size(Pos2::ZERO, Vec2::new(900.0, HEIGHT))
+            )
+            .rights
+            .is_none()
+        );
     }
 
     #[test]
-    fn rights_end_the_name_below_the_wide_width_only() {
+    fn rights_end_the_name_only_in_the_compact_view() {
         assert!(rights_in_name(frame(Layout::Compact, Rights::Mine)));
-        assert!(rights_in_name(frame(Layout::Medium, Rights::Both)));
+        assert!(!rights_in_name(frame(Layout::Medium, Rights::Both)));
         assert!(!rights_in_name(frame(Layout::Medium, Rights::Hidden)));
         assert!(!rights_in_name(frame(Layout::Wide, Rights::Mine)));
     }
