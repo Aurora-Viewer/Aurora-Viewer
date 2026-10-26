@@ -12,8 +12,9 @@
 //!
 //! The navigation bar's star (LLLocationInputCtrl's add landmark button,
 //! LLLandmarkActions::hasParcelLandmark) asks here whether a landmark of the
-//! Favorites or Landmarks folders lies on the agent's parcel: the same
-//! answer greys out World › Landmark this place and the Places entries.
+//! Favorites or Landmarks folders lies on the agent's parcel. Unlike the
+//! Legacy Viewer, World and Places allow repeated creation on that parcel,
+//! as requested by the user; the lookup only controls the star.
 //! Aurora's star adds a quick menu (Favorites / Landmarks / more options) and
 //! opens a found landmark in this window, in its edit form.
 

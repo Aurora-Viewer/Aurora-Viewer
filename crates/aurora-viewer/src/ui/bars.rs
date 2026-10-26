@@ -764,13 +764,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             &mut panels.world_map,
         );
         // menu_viewer.xml: Landmark this Place, after the maps
-        if menu::item_if(
-            ui,
-            p,
-            "map-pin-filled",
-            aurora_i18n::tr!("landmark-create-here"),
-            st.parcel_landmark.is_none(),
-        ) {
+        if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-create-here")) {
             *action = BarAction::CreateLandmark;
         }
         if menu::item(ui, p, "map", aurora_i18n::tr!("owned-land-title")) {
