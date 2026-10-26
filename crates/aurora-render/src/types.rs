@@ -142,6 +142,7 @@ pub mod flags {
     /// System avatar live morphs (lip sync, body physics, facial
     /// expressions, hand poses), evaluated before skinning.
     pub const LIP_SYNC: u32 = 8192;
+    pub const PORTAL_CLIP: u32 = 16384;
 }
 
 /// Layout of a skeleton's palette in the palettes buffer: its joints, then
@@ -189,6 +190,9 @@ pub struct DrawRecord {
     /// its own in the 4 bits above (0: the frame's), z and w the world
     /// height of the object's bottom and its height (f32 bits).
     pub rez: [u32; 4],
+    /// Keep the entry side of a portal: dot(plane, world_position.xyz1) >= 0.
+    /// Zero disables clipping, including for HUDs and unrelated objects.
+    pub portal_clip: [f32; 4],
 }
 
 /// Modes of `DrawRecord::rez` (`rez_apply` in object.wgsl).
@@ -230,6 +234,7 @@ impl Default for DrawRecord {
             anim: [0; 4],
             anim_xf: [0.0; 4],
             rez: [0; 4],
+            portal_clip: [0.0; 4],
         }
     }
 }
@@ -388,6 +393,8 @@ pub enum RiggedBlendDepth {
 /// Visible draws for a frame, built by the world.
 #[derive(Default)]
 pub struct DrawLists {
+    /// Select clipped depth/shadow variants only while an avatar is entering.
+    pub portal_clipping: bool,
     /// Invisible water exclusion surfaces, in the CPU culling fallback.
     pub water_exclusion: Vec<DrawCmd>,
     /// Own HUD attachments, drawn after post-processing with their own depth.
@@ -525,6 +532,7 @@ impl DrawLists {
         self.hud_debug_red.clone_from(&src.hud_debug_red);
         self.hud_debug_blue.clone_from(&src.hud_debug_blue);
         self.terrain.clone_from(&src.terrain);
+        self.portal_clipping = src.portal_clipping;
         self.opaque.clone_from(&src.opaque);
         self.creation_preview.clone_from(&src.creation_preview);
         self.opaque_two_sided.clone_from(&src.opaque_two_sided);
@@ -568,6 +576,7 @@ impl DrawLists {
         self.hud_debug_red.clear();
         self.hud_debug_blue.clear();
         self.terrain.clear();
+        self.portal_clipping = false;
         self.opaque.clear();
         self.creation_preview.clear();
         self.opaque_two_sided.clear();
@@ -1598,10 +1607,11 @@ mod tests {
     /// matrix, then one 16-byte vector per field).
     #[test]
     fn draw_record_layout_matches_wgsl() {
-        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 13 * 16);
+        assert_eq!(std::mem::size_of::<DrawRecord>(), 64 + 14 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim), 64 + 10 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, anim_xf), 64 + 11 * 16);
         assert_eq!(std::mem::offset_of!(DrawRecord, rez), 64 + 12 * 16);
+        assert_eq!(std::mem::offset_of!(DrawRecord, portal_clip), 64 + 13 * 16);
         let wgsl = include_str!("shaders/common.wgsl");
         let start = wgsl.find("struct DrawRecord {").expect("DrawRecord in common.wgsl");
         let body = &wgsl[start..start + wgsl[start..].find("};").expect("end of DrawRecord")];
@@ -1627,9 +1637,27 @@ mod tests {
                 "spec_color",
                 "anim",
                 "anim_xf",
-                "rez"
+                "rez",
+                "portal_clip"
             ]
         );
+    }
+
+    #[test]
+    fn portal_clipping_keeps_the_default_record_disabled_and_survives_frame_handoff() {
+        let record = DrawRecord::default();
+        assert_eq!(record.portal_clip, [0.0; 4]);
+        assert_eq!(record.flags[0] & flags::PORTAL_CLIP, 0);
+        assert!(include_str!("shaders/common.wgsl").contains(&format!("const FLAG_PORTAL_CLIP: u32 = {}u;", flags::PORTAL_CLIP)));
+        let source = DrawLists {
+            portal_clipping: true,
+            ..Default::default()
+        };
+        let mut destination = DrawLists::default();
+        destination.copy_from(&source);
+        assert!(destination.portal_clipping);
+        destination.clear();
+        assert!(!destination.portal_clipping);
     }
 
     #[test]

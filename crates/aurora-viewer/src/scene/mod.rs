@@ -4075,6 +4075,7 @@ impl Scene {
     pub fn build_lists(&mut self, renderer: &mut Renderer, view: &CullView, shadows: bool) {
         let t0 = Instant::now();
         self.lists.clear();
+        self.lists.portal_clipping = !self.portals.planes.is_empty();
         self.last_cull = Some(*view);
         let gpu_mode = renderer.gpu_culling();
         let debug_alpha = self.debug_alpha;
@@ -4153,11 +4154,15 @@ impl Scene {
         for (_, i) in avatars.iter().take(self.max_avatars.max(1)) {
             avatar_ok[*i] = true;
         }
+        for &index in self.portals.planes.keys() {
+            avatar_ok[index] = true;
+        }
         // (as when drawn in full, one still loading is a cloud until it is
         // complete, and one over the complexity limit is its silhouette)
         let imp_avatars: Vec<impostors::Far> = avatars
             .iter()
             .skip(self.max_avatars.max(1))
+            .filter(|(_, index)| !self.portals.planes.contains_key(index))
             .filter_map(|&(d, i)| {
                 let g = self.gpu.get(i)?;
                 let loading = self.hide_loading && self.loading.indices.contains(&i);
@@ -4976,6 +4981,7 @@ impl Scene {
             // on time
             if !every_frame
                 && motions.poser.is_none()
+                && !self.portals.planes.contains_key(&idx)
                 && owner != world.agent_id
                 && world.avatar_poses.contains_key(&owner)
                 && let Some(a) = self.far_avatars.get(&idx)

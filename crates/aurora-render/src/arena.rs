@@ -698,6 +698,19 @@ impl RecordStore {
         }
     }
 
+    /// An avatar reaching a portal and its world attachments share one plane.
+    pub fn set_portal_clip(&mut self, id: u32, plane: [f32; 4]) {
+        if let Some(slot) = self.mirror.get_mut(id as usize) {
+            let flags =
+                (slot.flags[0] & !crate::types::flags::PORTAL_CLIP) | if plane == [0.0; 4] { 0 } else { crate::types::flags::PORTAL_CLIP };
+            if slot.portal_clip != plane || slot.flags[0] != flags {
+                slot.portal_clip = plane;
+                slot.flags[0] = flags;
+                self.mark(id as usize);
+            }
+        }
+    }
+
     /// The face drawn with record `id` (GPU draw lists).
     pub fn set_face(&mut self, id: u32, face: CullFace) {
         if (id as usize) < self.mirror.len() {

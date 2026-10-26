@@ -7964,6 +7964,7 @@ impl App {
                     .first_person_view()
                     .then_some(self.settings.camera.show_avatar_in_mouselook),
             );
+            self.scene.update_portal_clipping(&mut gfx.renderer, &self.world);
             self.scene.build_lists(&mut gfx.renderer, &cull, self.settings.shadows);
             let preview = if (self.focused || self.demo && self.capture.is_some())
                 && !covered

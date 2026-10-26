@@ -405,6 +405,9 @@ pub fn draw(
                 continue;
             }
             let head = scene.name_tag_anchor(&o.full_id, pos);
+            if !scene.portal_keeps_point(idx, head) {
+                continue;
+            }
             let Some(sp) = proj.project_name_tag(pos, head) else {
                 continue;
             };

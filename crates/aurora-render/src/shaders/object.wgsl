@@ -3,6 +3,12 @@
 // Alpha-masked faces use alpha-to-coverage with MSAA, an alpha test otherwise.
 override ALPHA_TO_COVERAGE: bool = true;
 
+// Evaluated after skinning/attachment placement, in every surface/depth pass.
+// A zero plane keeps ordinary geometry on the existing render path.
+fn portal_clip(rec: DrawRecord, position: vec3<f32>) {
+    if ((rec.flags.x & FLAG_PORTAL_CLIP) != 0u && dot(rec.portal_clip, vec4<f32>(position, 1.0)) < -0.0001) { discard; }
+}
+
 struct VsIn {
     @location(0) pos: vec3<f32>,
     @location(1) normal: vec4<f32>,
@@ -482,6 +488,8 @@ fn vs_main(in: VsIn) -> VsOut {
 
 struct DepthOut {
     @invariant @builtin(position) clip: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) @interpolate(flat) record: u32,
 };
 
 // Firestorm fullbrightF / pbropaqueF IS_HUD: base color plus emissive,
@@ -513,13 +521,21 @@ fn vs_depth(in: VsIn) -> DepthOut {
     let ep = model * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: DepthOut;
     out.clip = frame.eye_view_proj * ep;
+    out.world_pos = ep.xyz + frame.eye.xyz;
+    out.record = in.instance;
     return out;
+}
+
+@fragment
+fn fs_depth_portal(in: DepthOut) {
+    portal_clip(records[in.record], in.world_pos);
 }
 
 // Depth prepass for alpha-masked faces: alpha test only.
 @fragment
 fn fs_depth_mask(in: VsOut) {
     let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
     let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
     if (a < max(rec.params.w, 0.01)) {
         discard;
@@ -576,6 +592,7 @@ fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @locat
 @fragment
 fn fs_depth_contact(in: VsOut) {
     let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
     if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.5) {
         discard;
     }
@@ -598,6 +615,7 @@ fn fs_depth_contact_normal(in: VsOut, @builtin(front_facing) front: bool) -> @lo
 @fragment
 fn fs_depth_opaque(in: VsOut) {
     let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
     if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.95) {
         discard;
     }
@@ -640,6 +658,7 @@ fn shadow_normal(m: Material) -> vec3<f32> {
 }
 
 fn eval_material(in: VsOut, front: bool) -> Material {
+    portal_clip(records[in.record], in.world_pos);
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
     var m: Material;
@@ -1350,6 +1369,7 @@ fn fs_blend(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
 fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     rez_fw = fwidth(in.world_pos);
     let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
         discard;
     }
@@ -1380,11 +1400,13 @@ override debug_a: f32 = 0.35;
 
 @fragment
 fn fs_debug_flat(in: VsOut) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
     return vec4<f32>(debug_r, debug_g, debug_b, debug_a);
 }
 
 @fragment
 fn fs_hud_debug(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
     if (!front && (records[in.record].flags.x & FLAG_DOUBLE_SIDED) == 0u) { discard; }
     return vec4<f32>(debug_r, debug_g, debug_b, debug_a);
 }
@@ -1425,6 +1447,7 @@ fn fs_land_overlay(in: VsOut) -> @location(0) vec4<f32> {
 // masked texture holes but retain invisible faces for editing their TE.
 @fragment
 fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
     let rec = records[in.record];
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
         let alpha = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
@@ -1437,6 +1460,7 @@ fn fs_selection_mask(in: VsOut) -> @location(0) vec4<f32> {
 // is scaled by (1 - its alpha) before it adds its own (fs_glow).
 @fragment
 fn fs_glow_suppress(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
     let rec = records[in.record];
     if (!front && (rec.flags.x & FLAG_DOUBLE_SIDED) == 0u) {
         discard;
@@ -1459,6 +1483,7 @@ struct PickOut {
     // surface coordinates before the texture transform (a touch's ST)
     @location(1) st: vec2<f32>,
     @location(2) @interpolate(flat) record: u32,
+    @location(3) world_pos: vec3<f32>,
 };
 
 @vertex
@@ -1472,6 +1497,7 @@ fn vs_pick(in: VsIn) -> PickOut {
     out.st = st;
     out.uv = diffuse_uv(st, rec, frame.anim_clock.xy);
     out.record = in.instance;
+    out.world_pos = ep.xyz + frame.eye.xyz;
     return out;
 }
 
@@ -1480,6 +1506,7 @@ fn vs_pick(in: VsIn) -> PickOut {
 // is shown, so camera focus must stop at that displayed surface too.
 @fragment
 fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
+    portal_clip(records[in.record], in.world_pos);
     return vec4<u32>(in.record + 1u, bitcast<u32>(in.clip.z), bitcast<u32>(in.st.x), bitcast<u32>(in.st.y));
 }
 
@@ -1488,6 +1515,7 @@ fn fs_pick_overlay(in: PickOut) -> @location(0) vec4<u32> {
 @fragment
 fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
     if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u) {
         // (the level the scene samples: each texel of the target is a
         // pixel of the screen)
@@ -1506,6 +1534,7 @@ fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
 @fragment
 fn fs_pick_visible(in: PickOut) -> @location(0) vec4<u32> {
     let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
     // An emissive mask uses texture alpha for lighting, not opacity
     // (eval_material): its visible surface must remain a camera target.
     let hidden_texel = (rec.flags.x & FLAG_EMISSIVE_MASK) == 0u && sample_tex(rec.tex.x, in.uv).a <= 32.0 / 255.0;
@@ -1524,6 +1553,7 @@ struct ShadowOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) record: u32,
+    @location(2) world_pos: vec3<f32>,
 };
 
 struct ShadowParams {
@@ -1541,6 +1571,7 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     out.clip = shadow_params.vp * wp;
     out.uv = diffuse_uv(face_st(in, rec), rec, shadow_params.anim_clock.xy);
     out.record = in.instance;
+    out.world_pos = wp.xyz;
     return out;
 }
 
@@ -1558,6 +1589,7 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
 @fragment
 fn fs_shadow(in: ShadowOut) {
     let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
     let tex_alpha = sample_tex(rec.tex.x, in.uv).a;
     let alpha = tex_alpha * rec.base_color.a;
     if ((rec.flags.x & (FLAG_ALPHA_MASK | FLAG_ALPHA_BLEND)) != 0u) {

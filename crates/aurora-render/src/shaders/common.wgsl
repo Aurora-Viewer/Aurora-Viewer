@@ -114,9 +114,11 @@ struct DrawRecord {
     anim: vec4<u32>,          // texture animation: time origin (ms), start, length, rate (f32 bits)
     anim_xf: vec4<f32>,       // texture animation: texture entry parts it leaves alone (tex_anim.rs)
     rez: vec4<u32>,           // rez effect: x start (anim clock ms), y mode | line's length (ms) << 8 | own look << 20, z bottom, w height (f32 bits)
+    portal_clip: vec4<f32>,   // entry-side world plane; zero disables clipping
 };
 
 const FLAG_FULLBRIGHT: u32 = 1u;
+const FLAG_PORTAL_CLIP: u32 = 16384u;
 const FLAG_ALPHA_MASK: u32 = 2u;
 const FLAG_ALPHA_BLEND: u32 = 4u;
 const FLAG_PBR: u32 = 8u;

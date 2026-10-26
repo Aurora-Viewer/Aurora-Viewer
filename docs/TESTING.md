@@ -82,6 +82,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_PORTALS=1\|near\|friends` | Open the portal creator and a shared-portal preview |
+| `AURORA_PORTAL_CLIP=0` | Disable avatar portal clipping for before/after comparison |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
@@ -116,6 +117,16 @@ Human two-client grid checks: public crossing, friends/non-friends, selected
 group members/non-members, appearing on a stationary or moving avatar,
 leaving and returning, crossing from either side, closing/replacing/expiry,
 late arrival discovery, failed/restricted destinations and teleport cancellation.
+
+`AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse`
+adds an observed avatar with continuous locomotion animation, a skinned mesh
+and a long rigid hand attachment. The camera observes the portal obliquely
+(from the other side with `slice-reverse`). `slice-still` and `slice-large`
+keep the avatar root fixed: animated limbs and worn geometry must still be
+cut at the portal plane. Capture several animation phases; compare the same
+scenario with `AURORA_PORTAL_CLIP=0`. Traversal never pauses or restarts an
+animation. Portal clipping is visual and does not arm a teleport gate.
+Use `AURORA_DEMO_POS=100,100` for a clear patch away from the plaza exhibits.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal

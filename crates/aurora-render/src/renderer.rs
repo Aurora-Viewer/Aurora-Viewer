@@ -790,6 +790,8 @@ struct Pipelines {
     ssr: Option<wgpu::RenderPipeline>,
     pre_opaque: wgpu::RenderPipeline,
     pre_opaque_2s: wgpu::RenderPipeline,
+    pre_portal: wgpu::RenderPipeline,
+    pre_portal_2s: wgpu::RenderPipeline,
     pre_mask: wgpu::RenderPipeline,
     pre_mask_2s: wgpu::RenderPipeline,
     /// The same four writing GTAO's mesh normals as well
@@ -3301,6 +3303,8 @@ impl Backend {
         };
         let pre_opaque = pre("prepass", "vs_depth", None, Some(wgpu::Face::Back));
         let pre_opaque_2s = pre("prepass 2s", "vs_depth", None, None);
+        let pre_portal = pre("prepass portal", "vs_depth", Some("fs_depth_portal"), Some(wgpu::Face::Back));
+        let pre_portal_2s = pre("prepass portal 2s", "vs_depth", Some("fs_depth_portal"), None);
         let pre_mask = pre("prepass mask", "vs_main", Some("fs_depth_mask"), Some(wgpu::Face::Back));
         let pre_mask_2s = pre("prepass mask 2s", "vs_main", Some("fs_depth_mask"), None);
         // both sides: a double-sided blended face casts either way, the
@@ -3482,6 +3486,8 @@ impl Backend {
             ssr: ssr_pipe,
             pre_opaque,
             pre_opaque_2s,
+            pre_portal,
+            pre_portal_2s,
             pre_mask,
             pre_mask_2s,
             pre_normal,
@@ -5389,7 +5395,7 @@ impl Backend {
         } else {
             [crate::shadow_cull::CASTER_PLANES_ALL; CASCADES]
         };
-        let shadow_depth_only = shadow_path & crate::shadow_cull::path::DEPTH_ONLY != 0;
+        let shadow_depth_only = shadow_path & crate::shadow_cull::path::DEPTH_ONLY != 0 && !draw_lists.portal_clipping;
         // Opaque casters that the cascade before holds are left out of a
         // cascade, which takes their depth from that finer map
         // (shadow_merge.rs): both pairs of cascades, or none.
@@ -5890,6 +5896,11 @@ impl Backend {
 
         prof.mark("shadows");
         mark(&mut encoder, MARK_SHADOWS_END);
+        let (pre_opaque, pre_opaque_2s) = if draw_lists.portal_clipping {
+            (&self.pipelines.pre_portal, &self.pipelines.pre_portal_2s)
+        } else {
+            (&self.pipelines.pre_opaque, &self.pipelines.pre_opaque_2s)
+        };
         // GTAO's mesh normals, drawn beside the depth when it reads them;
         // without them the passes keep no colour target at all
         let normals = self.targets.gtao.as_ref().filter(|_| self.gtao_normals_now).map(|g| &g.normals);
@@ -5910,8 +5921,8 @@ impl Backend {
             self.pipelines.pre_normal.each_ref()
         } else {
             [
-                &self.pipelines.pre_opaque,
-                &self.pipelines.pre_opaque_2s,
+                pre_opaque,
+                pre_opaque_2s,
                 &self.pipelines.pre_mask,
                 &self.pipelines.pre_mask_2s,
             ]

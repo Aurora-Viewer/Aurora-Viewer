@@ -88,6 +88,17 @@ World > Portals and depth-occluded destination/creator/access labels. This is
 an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation
 and teleportRequest (`indra/newview/llagent.cpp`).
 
+`scene/portals/clipping.rs` assigns a stable entry-side plane from the posed
+body and worn-object bounds, independently of locomotion or teleport gates.
+Every system-body, skinned-mesh and rigid world-attachment face receives the
+same GPU plane. Fragment clipping uses world positions after deformation;
+stationary roots, moving limbs, large attachments and animated attachment
+points are included. Active subjects stay fully animated instead of using an
+impostor. Color, alpha, depth/Hi-Z/contact shadows, picking, glow and reflection
+passes agree; opaque depth and shadow fast paths remain unchanged when no
+cut is active. The shared draw record adds one plane vector, disabled by
+default. HUDs and unrelated scene geometry are excluded.
+
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer
 helper preserves rejection of malformed and null UUIDs in both HTTP requests
