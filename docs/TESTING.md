@@ -3704,6 +3704,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
+| `AURORA_DEMO_CONTENTS_DROP=world\|panel[:ctrl][:drop]` | A selection of four inventory entries carried over an object or onto its Contents tab, with or without Ctrl |
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
@@ -4622,6 +4623,24 @@ failure. Grid validation and any paid upload are performed by the human.
   Manually: drag an item from the inventory onto a private conversation
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
+
+- **`AURORA_DEMO_CONTENTS_DROP=world|panel[:ctrl][:drop]`**: with
+  `AURORA_DEMO_INVENTORY=1` and `AURORA_DEMO_ACTIONS=1`, a selection of
+  four entries (a notecard, a script, a sound and an object) is carried
+  from frame 700, without a press. `world` puts the pointer on the yellow
+  action object 976 (yours, modifiable): without `:ctrl` the object in the
+  selection needs Ctrl, so nothing is outlined and `:drop` says "Hold Ctrl
+  over an object…"; with `:ctrl` the box gets the violet outline and
+  `:drop` (frame 720) puts the four entries into its contents, the script
+  stopped. `panel` puts the pointer on the Contents tab: add
+  `AURORA_DEMO_BUILD=move,object:976` and `AURORA_DEMO_BUILD_TAB=contents`
+  (also useful with `world` to see the contents arrive); the list gets its
+  violet outline and `:drop` adds the four entries, the script running
+  unless `:ctrl`. Capture at frame 715 (hover) or 800 (drop) with
+  `AURORA_FPS_LIMIT=60`: "Contents (3 items)" becomes "(7 items)".
+  Manually: select several items (Ctrl+click) or a folder and drag them
+  onto an object you own with and without Ctrl, onto someone else's (a
+  no-transfer item refuses the whole drop), and onto the Contents tab.
 
 - **`AURORA_DEMO_GIVE=profile|avatar[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
   its entries are carried from frame 700, without a press. `profile`, with
