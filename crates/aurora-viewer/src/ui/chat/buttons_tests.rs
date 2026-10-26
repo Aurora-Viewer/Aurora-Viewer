@@ -1324,6 +1324,112 @@ fn an_inventory_drag_says_where_to_drop_it() {
     }
 }
 
+/// Exercise the actual pane in every style, including its detached version:
+/// the resident drop handler must preserve all three inventory cargo types.
+#[test]
+fn inventory_drops_give_to_the_resident_in_every_conversation_style() {
+    const ITEM: Uuid = Uuid::from_u128(0x17E);
+    const FOLDER: Uuid = Uuid::from_u128(0xF01D);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for style in ALL {
+        for detached in [false, true] {
+            let mut h = H::new(style);
+            h.open(Some(JANE));
+            if detached {
+                h.st.pop_out(Some(JANE));
+                crate::ui::widgets::place_floater(
+                    &h.frames.ctx,
+                    &super::popout::floater_id(Some(JANE)),
+                    egui::pos2(100.0, 100.0),
+                    egui::vec2(500.0, 500.0),
+                );
+                h.settle();
+            }
+            let draft = "keep this unsent draft";
+            h.st.drafts.insert(Some(JANE), draft.into());
+            for ids in [vec![ITEM], vec![FOLDER], vec![ITEM, FOLDER]] {
+                let over = h.text_rect("hello from Jane").center();
+                let away = egui::pos2(4.0, 4.0);
+                h.take();
+                h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
+                if ids == [FOLDER] {
+                    egui::DragAndDrop::set_payload(&h.frames.ctx, crate::ui::inventory::FolderDrag(FOLDER));
+                } else {
+                    crate::ui::inventory::drag::demo_carry(&h.frames.ctx, ids.clone());
+                }
+                h.frame(vec![egui::Event::PointerMoved(over)]);
+                assert_eq!(
+                    crate::ui::inventory::drag::carried_count(&h.frames.ctx),
+                    Some(ids.len()),
+                    "{style:?}, detached={detached}: hovering keeps the complete cargo"
+                );
+                h.frame(vec![button(over, false)]);
+                h.settle();
+                let actions = h.take();
+                assert_eq!(
+                    actions.iter().filter(|a| matches!(a, ConvAction::GiveItems { .. })).count(),
+                    1,
+                    "{style:?}, detached={detached}: exactly one confirmation"
+                );
+                assert!(
+                    has(
+                        &actions,
+                        |a| matches!(a, ConvAction::GiveItems { to, items } if *to == JANE && *items == ids)
+                    ),
+                    "{style:?}, detached={detached}: the complete cargo goes to Jane"
+                );
+                assert!(!has(&actions, |a| matches!(a, ConvAction::AddPeople(..))));
+                assert!(!egui::DragAndDrop::has_any_payload(&h.frames.ctx));
+                assert_eq!(h.st.drafts[&Some(JANE)], draft);
+            }
+        }
+    }
+}
+
+#[test]
+fn inventory_drops_do_not_give_to_nearby_groups_or_conferences() {
+    const ITEM: Uuid = Uuid::from_u128(0x17E);
+    let button = |pos, pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for style in ALL {
+        let mut h = H::new(style);
+        h.world
+            .chat
+            .push_back(line("Bob", BOB, ChatKind::Local(aurora_net::ChatType::Normal), "hello nearby"));
+        for (conversation, text) in [(None, "hello nearby"), (Some(GROUP), "hi builders"), (Some(MEETING), "hi meeting")] {
+            h.open(conversation);
+            let over = h.text_rect(text).center();
+            let away = egui::pos2(4.0, 4.0);
+            h.frame(vec![egui::Event::PointerMoved(away), button(away, true)]);
+            egui::DragAndDrop::set_payload(&h.frames.ctx, crate::ui::inventory::InvDrag(ITEM));
+            h.frame(vec![egui::Event::PointerMoved(over)]);
+            h.frame(vec![button(over, false)]);
+            assert!(!has(&h.take(), |a| matches!(a, ConvAction::GiveItems { .. })));
+        }
+        // Person cargo still follows the invitation path in classic panes.
+        const NEW: Uuid = Uuid::from_u128(0xD0);
+        h.open(Some(MEETING));
+        let over = h.text_rect("hi meeting").center();
+        h.frame(vec![egui::Event::PointerMoved(over), button(over, true)]);
+        egui::DragAndDrop::set_payload(&h.frames.ctx, crate::ui::call_invite::PersonDrag(NEW));
+        h.frame(Vec::new());
+        h.frame(vec![button(over, false)]);
+        assert!(has(
+            &h.take(),
+            |a| matches!(a, ConvAction::AddPeople(c, people) if *c == MEETING && people[..] == [NEW])
+        ));
+    }
+}
+
 /// A call in progress (Aurora, Compact): its stage, its strip, the column's
 /// panel while another conversation is shown, a participant's menu.
 #[test]

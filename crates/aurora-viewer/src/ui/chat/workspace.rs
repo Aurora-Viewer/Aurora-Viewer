@@ -240,9 +240,6 @@ pub(super) fn pane(
     let width = pane.width();
     let kind = st.selected.map(|id| sidebar::kind(world, &id));
     drops(ui, p, pane, st, kind, actions);
-    if give_demo().is_some() {
-        ui.ctx().data_mut(|d| d.insert_temp(give_demo_id(), pane));
-    }
     let members_room = !rail && members_room_now(st.layout_members_room, width);
     st.layout_members_room = Some(members_room);
     // the panel's width eases to its new one when the room comes or goes
@@ -359,8 +356,20 @@ pub(super) fn pane(
 
 /// Drops on the conversation: a resident joins it (LLFloaterIMSession::
 /// handleDragAndDrop, DAD_PERSON / DAD_CALLINGCARD); inventory is given to
-/// the resident of an IM (DAD_* items → LLGiveInventory).
-fn drops(ui: &mut egui::Ui, p: &Palette, pane: egui::Rect, st: &ChatUi, kind: Option<sidebar::Kind>, actions: &mut Vec<ConvAction>) {
+/// the resident of an IM (DAD_* items → LLGiveInventory,
+/// indra/newview/llfloaterimsession.cpp). Shared by every conversation style
+/// and detached window so resident handling cannot consume inventory cargo.
+pub(super) fn drops(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    pane: egui::Rect,
+    st: &ChatUi,
+    kind: Option<sidebar::Kind>,
+    actions: &mut Vec<ConvAction>,
+) {
+    if kind == Some(sidebar::Kind::Private) && give_demo().is_some() {
+        ui.ctx().data_mut(|d| d.insert_temp(give_demo_id(), pane));
+    }
     let Some(conversation) = st.selected else {
         return;
     };

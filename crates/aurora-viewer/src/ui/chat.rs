@@ -2844,23 +2844,9 @@ fn classic_pane(
     h: f32,
     own_name: &str,
 ) {
-    // a resident dropped on it joins it (LLFloaterIMSession::
-    // handleDragAndDrop, DAD_PERSON / DAD_CALLINGCARD)
-    if let Some(conversation) = st.selected {
-        let pane = ui.available_rect_before_wrap();
-        let zone = ui.interact(pane, ui.scope_id().with("person_drop"), egui::Sense::hover());
-        if zone.dnd_hover_payload::<super::call_invite::PersonDrag>().is_some() {
-            ui.painter().rect_stroke(
-                pane,
-                ui.visuals().window_corner_radius,
-                egui::Stroke::new(1.5, p.violet),
-                egui::StrokeKind::Inside,
-            );
-        }
-        if let Some(person) = zone.dnd_release_payload::<super::call_invite::PersonDrag>() {
-            actions.push(ConvAction::AddPeople(conversation, vec![person.0]));
-        }
-    }
+    let pane = ui.available_rect_before_wrap();
+    let kind = st.selected.map(|id| sidebar::kind(world, &id));
+    workspace::drops(ui, p, pane, st, kind, actions);
     // who the conversation is with, and its actions
     header::show(ui, p, icons, pics, world, st, actions);
     ui.add_space(4.0);
