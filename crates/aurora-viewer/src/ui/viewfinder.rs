@@ -18,7 +18,7 @@ use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, Stroke
 mod controls;
 mod isolate;
 pub use controls::{CamMode, Pad, roll_text};
-pub use isolate::Isolate;
+pub use isolate::{Isolate, IsolateRow};
 #[cfg(test)]
 mod message_tests;
 
@@ -123,8 +123,12 @@ pub struct Frame<'a> {
     pub free_camera: bool,
     /// The keys: menu, AF mode, first person.
     pub keys: Keys<'a>,
-    /// What the photo shows (`snapshot::isolate`).
+    /// What the photo shows (`snapshot::isolate`), the names of what is
+    /// chosen, and of what is under the pointer while choosing (whether it
+    /// is chosen).
     pub isolation: &'a crate::snapshot::isolate::Isolation,
+    pub isolate_rows: &'a [IsolateRow],
+    pub isolate_hover: Option<(String, bool)>,
 }
 
 /// The keys the help and the hints name.
@@ -168,7 +172,7 @@ pub enum Out {
     Roll(f32),
     /// A lens ring passed a mark: its click.
     Detent,
-    /// The isolation panel or its brush.
+    /// The isolation panel, or choosing in the scene.
     Isolate(Isolate),
     /// Out of the photo mode.
     Exit,
@@ -541,7 +545,7 @@ impl Viewfinder {
             self.drawer(ctx, p, screen, s, panel, fov, default_fov, view, &mut out);
         }
         if self.isolate {
-            self.isolate_brush(ctx, p, frame, f, &mut out);
+            self.isolate_picking(ctx, p, frame, f, &mut out);
             self.isolate_panel(ctx, p, screen, f, &mut out);
         }
         // the shutter's blackout: black at once, then gone in 0.18 s
@@ -1398,15 +1402,7 @@ impl Viewfinder {
                         self.drawer = !self.drawer;
                         if self.drawer && self.isolate {
                             self.isolate = false;
-                            out.push(Out::Isolate(Isolate::Brush(None)));
-                        }
-                    }
-                    let isolating = self.isolate || f.isolation.mode != crate::snapshot::isolate::Mode::Off;
-                    if dock_button(ui, p, Face::Icon("user-scan"), aurora_i18n::tr!("photo-isolate-tip"), isolating) {
-                        self.isolate = !self.isolate;
-                        self.drawer &= !self.isolate;
-                        if !self.isolate {
-                            out.push(Out::Isolate(Isolate::Brush(None)));
+                            out.push(Out::Isolate(Isolate::Picking(false)));
                         }
                     }
                     if dock_button(ui, p, Face::Text("DISP"), aurora_i18n::tr!("photo-vf-disp-tip"), false) {
@@ -1421,9 +1417,19 @@ impl Viewfinder {
                     ) {
                         s.viewfinder.pad = !s.viewfinder.pad;
                     }
+                    // four above the shutter, four under it: the shutter in
+                    // the middle of the dock
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
                     ui.add_space(6.0);
+                    let isolating = self.isolate || f.isolation.mode != crate::snapshot::isolate::Mode::Off;
+                    if dock_button(ui, p, Face::Icon("user-scan"), aurora_i18n::tr!("photo-isolate-tip"), isolating) {
+                        self.isolate = !self.isolate;
+                        self.drawer &= !self.isolate;
+                        if !self.isolate {
+                            out.push(Out::Isolate(Isolate::Picking(false)));
+                        }
+                    }
                     let has_photo = f.review.is_some();
                     if dock_button(ui, p, Face::Icon("photo-filled"), aurora_i18n::tr!("photo-vf-last-photo"), false) && has_photo {
                         self.review_until = if f.now < self.review_until { 0.0 } else { f.now + 4.8 };

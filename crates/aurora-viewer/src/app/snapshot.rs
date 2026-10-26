@@ -194,10 +194,12 @@ pub(super) struct Snapshots {
     review: Option<(String, crate::ui::viewfinder::Review)>,
     review_tex: Option<egui::TextureHandle>,
     review_rx: Option<crossbeam_channel::Receiver<(u32, u32, Vec<u8>)>>,
-    /// The isolation brush (`app::photo_isolate`): the points asked of the
-    /// renderer, and this frame's point of the stroke (window pixels).
-    pub(super) isolate_picks: Vec<(u64, snapshot::isolate::Brush)>,
-    pub(super) isolate_point: Option<((f32, f32), snapshot::isolate::Brush)>,
+    /// Choosing for the isolation (`app::photo_isolate`): the points asked
+    /// of the renderer, this frame's point (window pixels), and the avatar
+    /// or linkset under the pointer.
+    pub(super) isolate_picks: Vec<(u64, super::photo_isolate::Pick)>,
+    pub(super) isolate_point: Option<((f32, f32), super::photo_isolate::Pick)>,
+    pub(super) isolate_hover: Option<Uuid>,
 }
 
 struct DemoPhoto {
@@ -309,6 +311,7 @@ impl Default for Snapshots {
             review_rx: None,
             isolate_picks: Vec::new(),
             isolate_point: None,
+            isolate_hover: None,
         }
     }
 }
@@ -708,11 +711,11 @@ impl App {
             1
         };
         let size = (size.0 * supersample, size.1 * supersample);
-        // the isolation brush is put down: what it outlines is not in the
-        // photo, which shows what the marks keep (the scene follows before
-        // the photo's frame is drawn)
+        // the choosing in the scene stops: its outlines are not in the
+        // photo, which shows what is chosen (the scene follows before the
+        // photo's frame is drawn)
         if purpose != Purpose::Preview {
-            self.world.photo_isolation.set_brush(None);
+            self.world.photo_isolation.set_picking(false);
         }
         let tiles = snapshot::plan(size, self.photo_max_side(renderer), self.photo_max_pixels(renderer));
         let interface = s.interface && snapshot::same_proportions(full, window);
@@ -1588,9 +1591,9 @@ impl App {
                 v.countdown = None;
                 let now = self.egui_ctx.input(|i| i.time);
                 self.snapshots.vf.say(aurora_i18n::tr!("photo-vf-timer-cancelled"), false, now);
-            } else if self.world.photo_isolation.brush.is_some() {
-                // the isolation brush put down, its panel left open
-                self.world.photo_isolation.set_brush(None);
+            } else if self.world.photo_isolation.picking {
+                // the choosing in the scene stops, its panel left open
+                self.world.photo_isolation.set_picking(false);
             } else if v.menu || v.help || v.drawer || v.isolate {
                 v.menu = false;
                 v.help = false;

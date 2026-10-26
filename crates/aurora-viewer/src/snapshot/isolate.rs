@@ -1,82 +1,76 @@
 //! Photo isolation (issue #977; an Aurora addition, the Legacy Viewer has
-//! none): the photographer paints over avatars and objects to mark them,
-//! then either hides what is marked or shows nothing else. A mark is a
-//! whole avatar with what it wears, or a whole linkset: what the brush
-//! touches is followed up to its root. With "show only", the sky, the
-//! terrain, the water and the clouds are not drawn either, and the photo
-//! keeps its alpha: a PNG with nothing behind the subject.
+//! none): the photo shows our own avatar alone, or the avatars and objects
+//! the photographer chose, everything else left out. A choice is a whole
+//! avatar with what it wears, or a whole linkset: what is clicked is
+//! followed up to its root. With the transparent background (the default)
+//! the sky, the terrain, the water and the clouds are not drawn either,
+//! and the photo keeps its alpha: a PNG with nothing around the subject.
 //!
-//! The rule is read by `World::parcel_object_visibility`, the one scope
-//! the scene, the lights, the particles and the labels already follow for
-//! the parcel filter. While a brush is in hand everything is drawn, the
-//! marked objects outlined, so that what is hidden can be painted back.
+//! The scene flags what is left out for the GPU lists
+//! (`object_flags::PHOTO_HIDDEN`); the particles, name plates and water
+//! effects read [`object_visible`]. While choosing in the scene everything
+//! is drawn, the chosen ones outlined, so that anything can be clicked.
 
-use std::collections::HashSet;
 use uuid::Uuid;
 
-/// What the marks do.
+/// What the photo shows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Mode {
-    /// Everything drawn, marks kept for later.
+    /// Everything.
     #[default]
     Off,
-    /// The marked avatars and linksets are not drawn.
-    Hide,
-    /// Only the marked ones are drawn.
-    Only,
-}
-
-/// The brush in hand.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Brush {
-    Add,
-    Remove,
+    /// Our own avatar alone.
+    Own,
+    /// The avatars and objects chosen.
+    Chosen,
 }
 
 /// The isolation of the photo session.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Isolation {
     pub mode: Mode,
-    /// The roots marked (an avatar, or the root prim of a linkset).
-    marked: HashSet<Uuid>,
-    /// "Show only" leaves the background empty: no sky, terrain, water or
-    /// clouds, and the photo's alpha is kept.
+    /// The roots chosen (an avatar, or the root prim of a linkset), in the
+    /// order they were chosen.
+    chosen: Vec<Uuid>,
+    /// Our own avatar (`Mode::Own`).
+    own: Uuid,
+    /// The background is left empty: no sky, terrain, water or clouds,
+    /// and the photo's alpha is kept.
     pub transparent: bool,
-    /// A brush in hand: everything drawn, the marks outlined.
-    pub brush: Option<Brush>,
+    /// Choosing in the scene: everything drawn, the chosen outlined, a
+    /// click adds or removes what it lands on.
+    pub picking: bool,
     /// The photo mode is open: outside it everything is drawn, the mode and
-    /// the marks kept for its next opening.
+    /// the choices kept for its next opening.
     pub open: bool,
-    /// Bumped when what is drawn changes: the scene syncs every object
-    /// again (as for the parcel filter).
+    /// Bumped when what is drawn changes: the scene flags every object
+    /// again.
     pub version: u64,
-    /// Bumped when the marks change: their outline only.
-    pub marks_version: u64,
 }
 
 impl Default for Isolation {
     fn default() -> Self {
         Isolation {
             mode: Mode::Off,
-            marked: HashSet::new(),
+            chosen: Vec::new(),
+            own: Uuid::nil(),
             transparent: true,
-            brush: None,
+            picking: false,
             open: false,
             version: 0,
-            marks_version: 0,
         }
     }
 }
 
 impl Isolation {
-    /// The marks decide what is drawn now.
+    /// The choice decides what is drawn now.
     pub fn applied(&self) -> bool {
-        self.open && self.brush.is_none() && self.mode != Mode::Off
+        self.open && !self.picking && self.mode != Mode::Off
     }
 
     /// The background is left empty now (and the photo keeps its alpha).
     pub fn empty_background(&self) -> bool {
-        self.applied() && self.mode == Mode::Only && self.transparent
+        self.applied() && self.transparent
     }
 
     /// Whether the avatar or linkset whose root is `root` is drawn.
@@ -86,44 +80,46 @@ impl Isolation {
         }
         match self.mode {
             Mode::Off => true,
-            Mode::Hide => !self.marked.contains(root),
-            Mode::Only => self.marked.contains(root),
+            Mode::Own => *root == self.own,
+            Mode::Chosen => self.chosen.contains(root),
         }
     }
 
-    pub fn marked(&self) -> impl Iterator<Item = &Uuid> {
-        self.marked.iter()
+    pub fn is_chosen(&self, root: &Uuid) -> bool {
+        self.chosen.contains(root)
     }
 
-    pub fn count(&self) -> usize {
-        self.marked.len()
+    pub fn chosen(&self) -> &[Uuid] {
+        &self.chosen
     }
 
-    /// The brush passed over `root`; true when the marks changed.
-    pub fn paint(&mut self, root: Uuid, brush: Brush) -> bool {
-        let changed = match brush {
-            Brush::Add => self.marked.insert(root),
-            Brush::Remove => self.marked.remove(&root),
+    /// A click on `root` while choosing: added, or removed when it was
+    /// chosen. True when added.
+    pub fn toggle(&mut self, root: Uuid) -> bool {
+        let added = if let Some(i) = self.chosen.iter().position(|id| *id == root) {
+            self.chosen.remove(i);
+            false
+        } else {
+            self.chosen.push(root);
+            true
         };
-        if changed {
-            self.marks_changed();
-        }
-        changed
+        self.choice_changed();
+        added
     }
 
-    pub fn clear(&mut self) {
-        if !self.marked.is_empty() {
-            self.marked.clear();
-            self.marks_changed();
+    pub fn remove(&mut self, root: &Uuid) {
+        if let Some(i) = self.chosen.iter().position(|id| id == root) {
+            self.chosen.remove(i);
+            self.choice_changed();
         }
     }
 
     /// Forget the roots that left the scene (a teleport, an avatar gone).
     pub fn retain(&mut self, mut present: impl FnMut(&Uuid) -> bool) {
-        let before = self.marked.len();
-        self.marked.retain(|id| present(id));
-        if self.marked.len() != before {
-            self.marks_changed();
+        let before = self.chosen.len();
+        self.chosen.retain(|id| present(id));
+        if self.chosen.len() != before {
+            self.choice_changed();
         }
     }
 
@@ -137,36 +133,45 @@ impl Isolation {
         }
     }
 
+    /// Our own avatar, known again at each frame (a relog changes it).
+    pub fn set_own(&mut self, own: Uuid) {
+        if self.own != own {
+            self.own = own;
+            if self.applied() && self.mode == Mode::Own {
+                self.bump();
+            }
+        }
+    }
+
     /// (the renderer's switch alone: no object changes)
     pub fn set_transparent(&mut self, on: bool) {
         self.transparent = on;
     }
 
-    pub fn set_brush(&mut self, brush: Option<Brush>) {
-        if self.brush != brush {
+    pub fn set_picking(&mut self, on: bool) {
+        if self.picking != on {
             let applied = self.applied();
-            self.brush = brush;
+            self.picking = on;
             if applied != self.applied() {
                 self.bump();
             }
         }
     }
 
-    /// The photo mode opens or closes (the brush is put down).
+    /// The photo mode opens or closes (the choosing stops).
     pub fn set_open(&mut self, open: bool) {
         if self.open != open {
             let applied = self.applied();
             self.open = open;
-            self.brush = None;
+            self.picking = false;
             if applied != self.applied() {
                 self.bump();
             }
         }
     }
 
-    fn marks_changed(&mut self) {
-        self.marks_version = self.marks_version.wrapping_add(1);
-        if self.applied() {
+    fn choice_changed(&mut self) {
+        if self.applied() && self.mode == Mode::Chosen {
             self.bump();
         }
     }
@@ -176,7 +181,7 @@ impl Isolation {
     }
 }
 
-/// What a mark is: the avatar of what it wears, a linkset's root prim, the
+/// What a choice is: the avatar of what it wears, a linkset's root prim, the
 /// avatar itself even when seated. None for a HUD (interface, never
 /// isolated) or an object whose parent is not known yet.
 pub fn root_of(world: &crate::world::World, index: usize) -> Option<(usize, Uuid)> {
@@ -215,57 +220,64 @@ mod tests {
         Uuid::from_u128(n)
     }
 
-    #[test]
-    fn hide_and_only_follow_the_marks_and_the_brush_suspends_them() {
+    fn opened() -> Isolation {
         let mut iso = Isolation::default();
         iso.set_open(true);
+        iso.set_own(id(9));
+        iso
+    }
+
+    #[test]
+    fn own_shows_our_avatar_alone_and_chosen_the_choices() {
+        let mut iso = opened();
         assert!(iso.root_visible(&id(1)), "off: everything drawn");
-        assert!(iso.paint(id(1), Brush::Add));
-        assert!(!iso.paint(id(1), Brush::Add), "painting twice changes nothing");
-        iso.set_mode(Mode::Hide);
+        iso.set_mode(Mode::Own);
+        assert!(iso.root_visible(&id(9)));
         assert!(!iso.root_visible(&id(1)));
-        assert!(iso.root_visible(&id(2)));
-        iso.set_mode(Mode::Only);
-        assert!(iso.root_visible(&id(1)));
-        assert!(!iso.root_visible(&id(2)));
         assert!(iso.empty_background());
-        iso.set_brush(Some(Brush::Remove));
-        assert!(iso.root_visible(&id(2)), "a brush in hand shows everything");
+        iso.set_mode(Mode::Chosen);
+        assert!(!iso.root_visible(&id(9)), "chosen, nothing chosen: nothing drawn");
+        assert!(iso.toggle(id(1)));
+        assert!(iso.toggle(id(2)));
+        assert!(iso.root_visible(&id(1)) && iso.root_visible(&id(2)));
+        assert!(!iso.toggle(id(1)), "a second click removes");
+        assert!(!iso.root_visible(&id(1)));
+        assert_eq!(iso.chosen(), &[id(2)]);
+        iso.set_picking(true);
+        assert!(iso.root_visible(&id(1)), "choosing shows everything");
         assert!(!iso.empty_background());
-        assert!(iso.paint(id(1), Brush::Remove));
-        iso.set_brush(None);
-        assert!(!iso.root_visible(&id(1)), "only, nothing marked: nothing drawn");
+        iso.set_transparent(false);
+        iso.set_picking(false);
+        assert!(!iso.empty_background(), "the sky and the ground kept");
     }
 
     #[test]
     fn only_what_changes_the_drawing_bumps_the_version() {
-        let mut iso = Isolation::default();
-        iso.set_open(true);
-        iso.set_mode(Mode::Off);
-        iso.clear();
+        let mut iso = opened();
+        iso.toggle(id(3));
+        iso.remove(&id(4));
         iso.retain(|_| true);
-        assert_eq!((iso.version, iso.marks_version), (0, 0), "no change, no new version");
-        iso.paint(id(3), Brush::Add);
-        assert_eq!((iso.version, iso.marks_version), (0, 1), "off: the marks alone");
-        iso.set_mode(Mode::Hide);
+        assert_eq!(iso.version, 0, "off: the choices alone");
+        iso.set_mode(Mode::Chosen);
         assert_eq!(iso.version, 1);
-        iso.set_brush(Some(Brush::Add));
-        iso.paint(id(4), Brush::Add);
-        iso.set_brush(Some(Brush::Remove));
-        assert_eq!(iso.version, 2, "painting with a brush in hand draws everything");
-        iso.set_brush(None);
+        iso.set_picking(true);
+        iso.toggle(id(4));
+        assert_eq!(iso.version, 2, "choosing draws everything: a click changes nothing drawn");
+        iso.set_picking(false);
         iso.retain(|r| *r != id(3));
         assert_eq!(iso.version, 4);
-        assert_eq!(iso.count(), 1);
+        iso.set_mode(Mode::Own);
+        iso.set_own(id(8));
+        assert_eq!(iso.version, 6);
         iso.set_open(false);
         assert!(
             iso.root_visible(&id(4)) && iso.root_visible(&id(5)),
             "photo mode closed: everything drawn"
         );
         assert_eq!(
-            (iso.version, iso.mode, iso.count()),
-            (5, Mode::Hide, 1),
-            "the mode and the marks kept"
+            (iso.version, iso.mode, iso.chosen()),
+            (7, Mode::Own, &[id(4)][..]),
+            "the mode and the choices kept"
         );
     }
 }

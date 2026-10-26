@@ -767,8 +767,8 @@ pub struct Scene {
     pub too_complex: std::collections::HashSet<usize>,
     parcel_visibility_version: u64,
     photo_isolation_version: u64,
-    /// The photo's marked avatars and linksets, every prim and attachment,
-    /// outlined while a brush is in hand (`snapshot::isolate`).
+    /// The avatars and linksets chosen for the photo, every prim and
+    /// attachment, outlined while choosing (`snapshot::isolate`).
     pub photo_marks: std::collections::HashSet<usize>,
     rlva_silhouettes: std::collections::HashSet<usize>,
     /// Objects the sync visits: moving, changed, pending (sync_sets.rs).
@@ -2309,8 +2309,8 @@ impl Scene {
 
     /// The photo's isolation (`snapshot::isolate`): what it leaves out is
     /// flagged, every object again when it changes, else those synced this
-    /// frame (an object arriving); and while a brush is in hand, what is
-    /// marked is outlined, every prim and attachment of it.
+    /// frame (an object arriving); and while choosing in the scene, what
+    /// is chosen is outlined, every prim and attachment of it.
     fn sync_photo_isolation(&mut self, renderer: &mut Renderer, world: &World, synced: &[usize]) {
         use crate::snapshot::isolate;
         let iso = &world.photo_isolation;
@@ -2333,8 +2333,8 @@ impl Scene {
             }
         }
         self.photo_marks.clear();
-        if iso.brush.is_some() {
-            let mut stack: Vec<usize> = iso.marked().filter_map(|id| world.objects.index_of_uuid(id)).collect();
+        if iso.picking {
+            let mut stack: Vec<usize> = iso.chosen().iter().filter_map(|id| world.objects.index_of_uuid(id)).collect();
             while let Some(idx) = stack.pop() {
                 if self.photo_marks.insert(idx)
                     && let Some(o) = world.objects.get(idx)

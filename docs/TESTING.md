@@ -197,7 +197,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT=<scenario>` | Photo viewfinder, photo window, full-frame view, a photo saved at its size, sent to the inventory, posted to the profile or sent by e-mail |
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
-| `AURORA_DEMO_ISOLATE=only\|hide\|brush[-panel][-opaque]` | The photo's isolation: our avatar alone (on an empty background), hidden, or painted with the brush |
+| `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
@@ -306,17 +306,18 @@ of day 3`); the saved `time_of_day` and `exposure` stay the user's.
 middle, Refresh and the controls on the left, the preview on the right.
 
 `AURORA_DEMO_ISOLATE` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
-mode): at frame 640 `only` marks our avatar and shows it alone, the sky,
+mode): at frame 640 `own` shows our avatar alone (My avatar), the sky,
 terrain and water left out: the window shows a checkerboard around it, and
 a photo saved then (`save:<W>x<H>:png:<folder>`) is an RGBA PNG, empty
 around the avatar, its edges and the blended faces partly transparent
 (`AURORA_DEMO_CLASSIC=1` with `AURORA_DEMO_HAIR_CARDS=24,layered` gives
-strands to look at). `-opaque` keeps the sky and the ground. `hide` leaves
-our avatar out instead. `brush` paints with + from frame 640 to 660 at the
-middle of the window, 70 % down (our avatar in the viewfinder), outlined
-meanwhile, then puts the brush down in "show only": the log gives `photo
-isolation: <id> marked` and `isolation demo: brush put down, 1 marked`.
-`-panel` opens the viewfinder's isolation panel. Use `AURORA_FPS_LIMIT=60`
+strands to look at). `-opaque` keeps the sky and the ground. `pick`
+chooses in the scene instead (My choice): the pointer at the middle of the
+window, 70 % down (our avatar in the viewfinder), from frame 640, its name
+beside it, a click there at 650 (outlined from then on), and the choosing
+stopped at 680, unless `-keep`: the log gives `photo isolation: <id>
+chosen` and `isolation demo: choosing stopped, 1 chosen`. `-panel` opens
+the viewfinder's isolation panel. Use `AURORA_FPS_LIMIT=60`
 and capture from frame 700 (`AURORA_AA=3` and `6` for the two edge paths,
 MSAA and SMAA).
 

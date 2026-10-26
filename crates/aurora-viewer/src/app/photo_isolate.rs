@@ -1,30 +1,46 @@
 //! The photo's isolation on the app's side (issue #977): the isolation
-//! opens and closes with the photo mode, and the brush strokes of the
-//! viewfinder become marks once the renderer tells what it drew under
-//! them (`Renderer::request_drawn`, the pass that lets a click designate a
-//! rigged mesh): one point of the stroke a frame, the front face there,
+//! opens and closes with the photo mode, and while choosing in the scene
+//! the viewfinder's clicks and the pointer become choices once the
+//! renderer tells what it drew under them (`Renderer::request_drawn`, the
+//! pass that lets a click designate a rigged mesh): the front face there,
 //! followed up to its avatar or linkset (`snapshot::isolate::root_of`).
-//! The rule is `snapshot::isolate`, the panel `ui::viewfinder::isolate`.
+//! The names the panel lists come from the avatars' name-values or the
+//! objects' properties, asked as a hover tip asks them. The rule is
+//! `snapshot::isolate`, the panel `ui::viewfinder::isolate`.
 
 use super::App;
-use crate::snapshot::isolate::{self, Brush};
-use crate::ui::viewfinder::Isolate;
+use crate::snapshot::isolate;
+use crate::ui::viewfinder::{Isolate, IsolateRow};
 use aurora_render::{DrawnMode, Renderer};
+use uuid::Uuid;
 
-/// Points of a stroke waiting for their answer: past this, the oldest are
-/// given up (the brush moves faster than the frames answer).
-const PENDING: usize = 8;
+/// What a point asked of the renderer is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Pick {
+    /// A click: what it lands on is added, or removed.
+    Toggle,
+    /// The pointer: what it is over is named beside it.
+    Hover,
+}
+
+/// Points waiting for their answer: past this, the oldest are given up.
+const PENDING: usize = 6;
 
 impl App {
     /// Every frame, before it is laid out.
     pub(super) fn photo_isolate_frame(&mut self, renderer: &mut Renderer) {
         self.photo_isolate_demo(renderer);
         let open = self.panels.snapshot;
-        self.world.photo_isolation.set_open(open);
-        let s = &mut self.snapshots;
+        let agent = self.world.agent_id;
+        let iso = &mut self.world.photo_isolation;
+        iso.set_own(agent);
+        iso.set_open(open);
+        if !iso.picking {
+            self.snapshots.isolate_hover = None;
+        }
         if !open {
-            s.isolate_point = None;
-            for (ticket, _) in s.isolate_picks.drain(..) {
+            self.snapshots.isolate_point = None;
+            for (ticket, _) in self.snapshots.isolate_picks.drain(..) {
                 renderer.forget_drawn(ticket);
             }
             return;
@@ -32,48 +48,120 @@ impl App {
         // the answers of the points asked
         let mut i = 0;
         while i < self.snapshots.isolate_picks.len() {
-            let (ticket, brush) = self.snapshots.isolate_picks[i];
-            match renderer.take_drawn(ticket) {
-                Some(drawn) => {
-                    self.snapshots.isolate_picks.remove(i);
-                    // the face in front: a strand of hair before the head
-                    let face = drawn.blend.or(drawn.opaque);
-                    let root = face
-                        .and_then(|f| self.scene.record_object(f.record))
-                        .and_then(|(idx, _)| isolate::root_of(&self.world, idx));
-                    if let Some((_, id)) = root
-                        && self.world.photo_isolation.paint(id, brush)
-                    {
-                        log::info!("photo isolation: {id} {}", if brush == Brush::Add { "marked" } else { "unmarked" });
+            let (ticket, pick) = self.snapshots.isolate_picks[i];
+            let Some(drawn) = renderer.take_drawn(ticket) else {
+                i += 1;
+                continue;
+            };
+            self.snapshots.isolate_picks.remove(i);
+            // the face in front: a strand of hair before the head
+            let root = drawn
+                .blend
+                .or(drawn.opaque)
+                .and_then(|f| self.scene.record_object(f.record))
+                .and_then(|(idx, _)| isolate::root_of(&self.world, idx))
+                .map(|(_, id)| id);
+            match pick {
+                Pick::Hover => self.snapshots.isolate_hover = root,
+                Pick::Toggle => {
+                    if let Some(id) = root {
+                        let added = self.world.photo_isolation.toggle(id);
+                        log::info!("photo isolation: {id} {}", if added { "chosen" } else { "removed" });
                     }
                 }
-                None => i += 1,
             }
         }
-        // this frame's point of the stroke
-        if let Some(((x, y), brush)) = self.snapshots.isolate_point.take() {
+        // this frame's point (a click before the pointer's hover)
+        if let Some(((x, y), pick)) = self.snapshots.isolate_point.take()
+            && (pick == Pick::Toggle || !self.snapshots.isolate_picks.iter().any(|(_, p)| *p == Pick::Hover))
+        {
             let picks = &mut self.snapshots.isolate_picks;
             if picks.len() >= PENDING {
                 let (ticket, _) = picks.remove(0);
                 renderer.forget_drawn(ticket);
             }
-            picks.push((renderer.request_drawn(x, y, DrawnMode::Visible), brush));
+            picks.push((renderer.request_drawn(x, y, DrawnMode::Visible), pick));
         }
-        // marks of what left the scene (a teleport, an avatar gone)
+        // the names of the objects listed or under the pointer
+        let wanted: Vec<Uuid> = self
+            .world
+            .photo_isolation
+            .chosen()
+            .iter()
+            .copied()
+            .chain(self.snapshots.isolate_hover)
+            .collect();
+        for id in wanted {
+            let Some(o) = self.world.objects.index_of_uuid(&id).and_then(|i| self.world.objects.get(i)) else {
+                continue;
+            };
+            let region = o.key.region;
+            if !o.is_avatar()
+                && !self.interactions.props.contains_key(&id)
+                && let Some(command) = self.interactions.tip_request(region, id)
+            {
+                self.send(command);
+            }
+        }
+        // choices that left the scene (a teleport, an avatar gone)
         if self.frame_count.is_multiple_of(120) {
             let objects = &self.world.objects;
             self.world.photo_isolation.retain(|id| objects.index_of_uuid(id).is_some());
         }
     }
 
-    /// AURORA_DEMO_ISOLATE=<only|hide|brush>[-panel][-opaque], with the
-    /// photo mode open (AURORA_DEMO_SNAPSHOT): at frame 640 the own avatar
-    /// is marked and the mode set (`only`: shown alone on an empty
-    /// background, `-opaque` keeping the sky and the ground; `hide`: left
-    /// out); `brush` paints instead, frames 640 to 660 with + at the middle
-    /// of the window, 70 % down (the own avatar the viewfinder's camera
-    /// frames there), then puts the brush down in "show only"; `panel`
-    /// opens the panel.
+    /// The name the panel gives an avatar or a linkset, and whether it is
+    /// an avatar.
+    fn photo_isolate_name(&self, id: &Uuid) -> (String, bool) {
+        let object = self.world.objects.index_of_uuid(id).and_then(|i| self.world.objects.get(i));
+        if object.is_some_and(|o| o.is_avatar()) {
+            let name = self
+                .world
+                .avatar_name(id)
+                .unwrap_or_else(|| aurora_i18n::tr!("photo-isolate-avatar").to_owned());
+            return (name, true);
+        }
+        let name = self
+            .interactions
+            .props
+            .get(id)
+            .map(|p| p.name.clone())
+            .filter(|n| !n.is_empty())
+            .or_else(|| {
+                object
+                    .map(|o| o.text.lines().next().unwrap_or("").to_owned())
+                    .filter(|n| !n.is_empty())
+            })
+            .unwrap_or_else(|| aurora_i18n::tr!("photo-isolate-object").to_owned());
+        (name, false)
+    }
+
+    /// The panel's rows (what is chosen) and the name under the pointer
+    /// (with whether it is chosen).
+    pub(super) fn photo_isolate_rows(&self) -> (Vec<IsolateRow>, Option<(String, bool)>) {
+        let iso = &self.world.photo_isolation;
+        let rows = iso
+            .chosen()
+            .iter()
+            .map(|id| {
+                let (name, avatar) = self.photo_isolate_name(id);
+                IsolateRow { id: *id, name, avatar }
+            })
+            .collect();
+        let hover = self
+            .snapshots
+            .isolate_hover
+            .map(|id| (self.photo_isolate_name(&id).0, iso.is_chosen(&id)));
+        (rows, hover)
+    }
+
+    /// AURORA_DEMO_ISOLATE=<own|pick>[-panel][-opaque], with the photo mode
+    /// open (AURORA_DEMO_SNAPSHOT): at frame 640 `own` shows our avatar
+    /// alone on an empty background (`-opaque` keeping the sky and the
+    /// ground); `pick` chooses in the scene instead, the pointer at the
+    /// middle of the window, 70 % down (our avatar in the viewfinder) from
+    /// frame 640 and a click there at 650, then stops choosing at 680;
+    /// `panel` opens the panel.
     fn photo_isolate_demo(&mut self, renderer: &Renderer) {
         if !self.demo || !(640..=680).contains(&self.frame_count) {
             return;
@@ -82,45 +170,49 @@ impl App {
             return;
         };
         let words: Vec<&str> = mode.split('-').collect();
-        let iso = &mut self.world.photo_isolation;
         let frame = self.frame_count;
+        let (w, h) = renderer.size();
+        let at = (w as f32 / 2.0, h as f32 * 0.7);
+        let iso = &mut self.world.photo_isolation;
         if frame == 640 {
             self.snapshots.vf.isolate = words.contains(&"panel");
             iso.set_transparent(!words.contains(&"opaque"));
-            match words[0] {
-                "brush" => iso.set_brush(Some(Brush::Add)),
-                kind => {
-                    iso.paint(self.world.agent_id, Brush::Add);
-                    let mode = if kind == "hide" { isolate::Mode::Hide } else { isolate::Mode::Only };
-                    iso.set_mode(mode);
-                    log::info!("isolation demo: own avatar marked, {mode:?}");
-                }
+            if words[0] == "pick" {
+                iso.set_mode(isolate::Mode::Chosen);
+                iso.set_picking(true);
+            } else {
+                iso.set_mode(isolate::Mode::Own);
+                log::info!("isolation demo: our avatar alone");
             }
         }
-        if words[0] == "brush" {
-            let (w, h) = renderer.size();
-            if frame <= 660 {
-                self.snapshots.isolate_point = Some(((w as f32 / 2.0, h as f32 * 0.7), Brush::Add));
-            } else if frame == 680 {
-                let iso = &mut self.world.photo_isolation;
-                iso.set_brush(None);
-                iso.set_mode(isolate::Mode::Only);
-                log::info!("isolation demo: brush put down, {} marked, show only", iso.count());
+        if words[0] == "pick" {
+            if frame == 650 {
+                self.snapshots.isolate_point = Some((at, Pick::Toggle));
+            } else if frame < 670 {
+                self.snapshots.isolate_point = Some((at, Pick::Hover));
+            } else if frame == 680 && !words.contains(&"keep") {
+                iso.set_picking(false);
+                log::info!("isolation demo: choosing stopped, {} chosen", iso.chosen().len());
             }
         }
     }
 
-    /// What the viewfinder's panel or brush asks (`ppp`: pixels per point).
+    /// What the viewfinder's panel asks (`ppp`: pixels per point).
     pub(super) fn photo_isolate_out(&mut self, o: Isolate, ppp: f32) {
         let iso = &mut self.world.photo_isolation;
         match o {
-            Isolate::Mode(mode) => iso.set_mode(mode),
-            Isolate::Brush(brush) => iso.set_brush(brush),
-            Isolate::Clear => iso.clear(),
+            Isolate::Mode(mode) => {
+                iso.set_mode(mode);
+                // nothing chosen yet: straight to choosing
+                iso.set_picking(mode == isolate::Mode::Chosen && iso.chosen().is_empty());
+            }
+            Isolate::Picking(on) => iso.set_picking(on),
+            Isolate::Remove(id) => iso.remove(&id),
             Isolate::Transparent(on) => iso.set_transparent(on),
-            Isolate::Point(at) => {
-                if let Some(brush) = iso.brush {
-                    self.snapshots.isolate_point = Some(((at.x * ppp, at.y * ppp), brush));
+            Isolate::Click(at) => self.snapshots.isolate_point = Some(((at.x * ppp, at.y * ppp), Pick::Toggle)),
+            Isolate::Hover(at) => {
+                if self.snapshots.isolate_point.is_none() {
+                    self.snapshots.isolate_point = Some(((at.x * ppp, at.y * ppp), Pick::Hover));
                 }
             }
         }

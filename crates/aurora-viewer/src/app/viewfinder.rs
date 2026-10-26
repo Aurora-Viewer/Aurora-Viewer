@@ -808,6 +808,7 @@ impl App {
         let pitch = dir.z.clamp(-1.0, 1.0).asin().to_degrees();
         let review = self.photo_review();
         let (af_key, menu_key, first_key) = self.vf_keys();
+        let (isolate_rows, isolate_hover) = self.photo_isolate_rows();
         let first_allowed = self.settings.camera.enable_mouselook;
         let frame = Frame {
             now,
@@ -833,6 +834,8 @@ impl App {
                 first_person: first_key.as_deref().filter(|_| first_allowed),
             },
             isolation: &self.world.photo_isolation,
+            isolate_rows: &isolate_rows,
+            isolate_hover,
         };
         // the demo aims at the own avatar's face, then shoots
         let (aim, shoot) = self.photo_demo_viewfinder();
