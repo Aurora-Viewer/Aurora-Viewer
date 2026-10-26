@@ -3080,6 +3080,7 @@ both open states and the selection count. Capture at frame 620.
 | `AURORA_DEMO_LASHES=1` | With `AURORA_DEMO_HAIR`: a red ball worn inside our hair, as eyelashes behind a fringe |
 | `AURORA_DEMO_HAIR_CARDS=<n>[,layered[,outer]]` | Our avatar wears one face of `n` soft strand cards, overlapping in a shuffled order, or layered as a hair is made (#935) |
 | `AURORA_DEMO_BUMP=tall`, `wide` or `sphere` | The normal-mapped test panel stretched 4:1, its normal map denser across or along it; or a low-poly ball with a baked normal map (tangent frame) |
+| `AURORA_DEMO_MASK_ZERO=1` | The holed test panel with a Mask legacy material whose cutoff is 0: drawn whole |
 | `AURORA_DEMO_RIGGED_PROP=1` | A rigged mesh chain rezzed on a cube ahead of the start position, and the same chain worn by our avatar |
 | `AURORA_DEMO_FOLIAGE=1` | The same cut-out foliage panel at 5, 10, 20, 35 and 60 m along the start view (alpha coverage of the mips) |
 | `AURORA_DEMO_PLANTS=1`, `far` or `dense` | Linden trees and grass: every species near or far along the start view, or a forest |
@@ -3180,6 +3181,13 @@ both open states and the selection count. Capture at frame 620.
     (`AURORA_BLEND_EARLY_DISCARD`): it only pays off where empty
     areas are in one piece on screen. `32,24,90,256` (large empty
     stretches) shows it, `32,24,60,16` (fine strands) gains nothing.
+- **`AURORA_DEMO_MASK_ZERO=1`**: the "Auto: mask" panel of the plaza (round
+  holes of alpha 0) gets a Mask legacy material with a cutoff of 0 and the
+  hover text "Mask (cutoff 0)". The Legacy Viewer keeps every texel at or
+  above the cutoff (`alpha < minimum_alpha` in materialF.glsl and
+  pbropaqueF.glsl), so the panel is drawn whole, its holes in the teal of
+  the texture: creators use it to show opaque a texture whose alpha channel
+  holds something else. Before the fix the holes stayed cut out.
 - **`AURORA_DEMO_BUMP=tall|wide`**: the "Normal + specular" panel of the
   plaza becomes 0.45 × 1.8 m (`tall`) or 1.8 × 0.45 m (`wide`): its texture
   coordinates are four times denser one way. With `AURORA_TANGENTS=alt`, the
