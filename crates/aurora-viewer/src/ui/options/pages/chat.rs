@@ -297,8 +297,81 @@ fn link_previews(cx: &mut Cx) {
         } else {
             cx.track(&field!(link_previews.hidden_sites));
         }
+        let sites = cx.s.link_previews.picture_sites.join(" ");
+        cx.wide().below().keywords(&sites).row_with(
+            tr!("ui-options-link-previews-picture-sites"),
+            tr!("ui-options-link-previews-picture-sites-hint"),
+            &field!(link_previews.picture_sites),
+            |ui, s, st, _| picture_sites(ui, &p, &mut s.link_previews.picture_sites, &mut st.picture_site_typed),
+        );
     });
     videos(cx);
+}
+
+/// The user's picture sites (#1063): each removable, then a field to add
+/// one, normalized as a trusted site is. True on a change.
+fn picture_sites(ui: &mut egui::Ui, p: &crate::theme::Palette, sites: &mut Vec<String>, typed: &mut String) -> bool {
+    use crate::ui::widgets;
+    use aurora_i18n::tr;
+    let mut changed = false;
+    ui.vertical(|ui| {
+        if sites.is_empty() {
+            ui.label(
+                RichText::new(tr!("ui-options-link-previews-picture-sites-none"))
+                    .size(12.0)
+                    .color(p.muted),
+            );
+        }
+        let mut removed = None;
+        for (i, site) in sites.iter().enumerate() {
+            ui.horizontal(|ui| {
+                if widgets::icon_button(ui, p, "trash-filled", tr!("ui-options-link-previews-picture-sites-remove"), true) {
+                    removed = Some(i);
+                }
+                ui.label(RichText::new(site).size(12.5).color(p.ink));
+            });
+        }
+        if let Some(i) = removed {
+            sites.remove(i);
+            changed = true;
+        }
+        ui.add_space(4.0);
+        let domain = crate::link_trust::normalize(typed);
+        ui.horizontal(|ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(typed)
+                    .desired_width(260.0)
+                    .hint_text(tr!("ui-options-link-previews-picture-sites-add-hint")),
+            );
+            let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let add = ui
+                .add_enabled_ui(domain.is_some(), |ui| {
+                    widgets::action_button(
+                        ui,
+                        p,
+                        "circle-plus-filled",
+                        tr!("ui-options-trusted-sites-add"),
+                        widgets::ActionKind::Flat,
+                        Vec2::new(90.0, 26.0),
+                    )
+                })
+                .inner
+                .clicked();
+            if let Some(domain) = domain
+                && (add || entered)
+            {
+                if !sites.contains(&domain) {
+                    sites.push(domain);
+                    changed = true;
+                }
+                typed.clear();
+            }
+        });
+        if crate::link_trust::normalize(typed).is_none() && !typed.trim().is_empty() {
+            ui.label(RichText::new(tr!("ui-options-trusted-sites-invalid")).size(12.0).color(p.muted));
+        }
+    });
+    changed
 }
 
 /// The YouTube player of the previews (#848): where it plays, its volume

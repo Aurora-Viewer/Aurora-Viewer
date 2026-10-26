@@ -18,10 +18,18 @@
 //!   and its API needs a paid key. Undocumented, so it may stop answering:
 //!   the link then stays a link.
 //!
+//! * the user's own picture sites (#1063, Preferences › Chat): a
+//!   self-hosted cloud or gallery (Nextcloud, Immich, Pixelfed…) whose
+//!   share pages name their picture in `og:image`, as Nextcloud's do
+//!   (`/s/<token>` names `/s/<token>/preview`, DefaultPublicShareTemplateProvider
+//!   of its files_sharing app). Listing a site does not trust it: its links
+//!   still load on a click unless it is a trusted site too.
+//!
 //! The picture found must be on the service's own image servers
-//! (`picture_host_ok`): a page cannot send the viewer anywhere else. A post
-//! its network marks sensitive (X's `possibly_sensitive`, Bluesky's adult
-//! and graphic labels) is blurred until clicked.
+//! (`picture_host_ok`), or on the listed site: a page cannot send the viewer
+//! anywhere else. A post its network marks sensitive (X's
+//! `possibly_sensitive`, Bluesky's adult and graphic labels) is blurred
+//! until clicked.
 
 use reqwest::Url;
 
@@ -35,6 +43,40 @@ pub enum Service {
     Reddit,
     Bluesky,
     X,
+    /// A site of the user's list of picture sites (`set_sites`).
+    Site,
+}
+
+/// The user's picture sites, normalized domains (`set_sites`); read by
+/// every link judged, from any thread.
+static SITES: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// At start and after each change of Preferences.
+pub(super) fn set_sites(sites: Vec<String>) {
+    if let Ok(mut list) = SITES.write() {
+        *list = sites;
+    }
+}
+
+/// `host` is one of the user's picture sites or one of their subdomains.
+fn on_site(host: &str) -> bool {
+    SITES.read().is_ok_and(|sites| {
+        sites
+            .iter()
+            .any(|d| host == d || host.strip_suffix(d.as_str()).is_some_and(|sub| sub.ends_with('.')))
+    })
+}
+
+/// A page of one of the user's picture sites: https, not the site's root,
+/// read for its `og:image`.
+fn site_page(parsed: &Url) -> Option<(Service, Step)> {
+    let host = parsed.host_str()?.trim_end_matches('.').to_lowercase();
+    if parsed.scheme() != "https" || !parsed.username().is_empty() || segments(parsed).is_empty() || !on_site(&host) {
+        return None;
+    }
+    let mut page = parsed.clone();
+    page.set_fragment(None);
+    Some((Service::Site, Step::Head(page.into())))
 }
 
 /// How a page leads to its picture.
@@ -277,7 +319,7 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
                 )),
             ))
         }
-        _ => None,
+        _ => site_page(&parsed),
     }
 }
 
@@ -293,10 +335,14 @@ fn picture_hosts(service: Service) -> &'static [&'static str] {
         // pictures and video thumbnails
         Service::Bluesky => &["cdn.bsky.app", "video.bsky.app"],
         Service::X => &["pbs.twimg.com"],
+        // the listed sites themselves (`on_site`)
+        Service::Site => &[],
     }
 }
 
-/// `url` is an https picture on `service`'s own servers.
+/// `url` is an https picture on `service`'s own servers, or on one of the
+/// user's picture sites, where a port is allowed (a self-hosted server may
+/// answer on another one).
 pub(super) fn picture_host_ok(service: Service, url: &str) -> bool {
     let Ok(parsed) = Url::parse(url) else {
         return false;
@@ -304,12 +350,27 @@ pub(super) fn picture_host_ok(service: Service, url: &str) -> bool {
     let Some(host) = parsed.host_str().map(|h| h.trim_end_matches('.').to_lowercase()) else {
         return false;
     };
-    parsed.scheme() == "https"
-        && parsed.username().is_empty()
-        && parsed.port().is_none()
+    if parsed.scheme() != "https" || !parsed.username().is_empty() {
+        return false;
+    }
+    if service == Service::Site {
+        return on_site(&host);
+    }
+    parsed.port().is_none()
         && picture_hosts(service)
             .iter()
             .any(|d| host == *d || host.strip_suffix(d).is_some_and(|sub| sub.ends_with('.')))
+}
+
+/// The site's own icon a page names when it has no picture: Nextcloud's
+/// share of a folder or of a file it makes no preview of names
+/// `core/img/favicon-fb.png` (or its theming app's `favicon`).
+fn site_icon(url: &str) -> bool {
+    Url::parse(url).ok().is_some_and(|u| {
+        segments(&u)
+            .last()
+            .is_some_and(|name| name.to_ascii_lowercase().starts_with("favicon"))
+    })
 }
 
 /// Imgur's `og:image` asks for a copy padded for social cards (`?fb`); the
@@ -383,7 +444,7 @@ pub(super) fn from_head(service: Service, html: &str) -> Option<String> {
             continue;
         };
         let url = cleaned(service, unescape(content));
-        if !picture_host_ok(service, &url) {
+        if !picture_host_ok(service, &url) || (service == Service::Site && site_icon(&url)) {
             continue;
         }
         if key.eq_ignore_ascii_case("og:image") || key.eq_ignore_ascii_case("og:image:url") {
@@ -488,12 +549,15 @@ const REDDIT_TEXT: &str = include_str!("fixtures/reddit_text.rss");
 const BLUESKY_POST: &str = include_str!("fixtures/bluesky_post.json");
 const BLUESKY_LABELLED: &str = include_str!("fixtures/bluesky_labelled.json");
 const X_POST: &str = include_str!("fixtures/x_post.json");
+const NEXTCLOUD_PICTURE: &str = include_str!("fixtures/nextcloud_picture.html");
+const NEXTCLOUD_FOLDER: &str = include_str!("fixtures/nextcloud_folder.html");
 
 /// Demo mode: the picture a service's link leads to, from the saved
 /// answers, and whether it is marked sensitive. A Lightshot link whose id
 /// starts with `removed` is a removed screenshot, the Reddit post `demo02` a
 /// text post: no picture for either. A Bluesky post whose key holds
-/// `labelled` is labelled `nudity`.
+/// `labelled` is labelled `nudity`. A picture site's page is a Nextcloud
+/// share, of a folder (no picture) when its link holds `Folder`.
 pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
     let (service, step) = recognize(url)?;
     let plain = |source: Option<String>| source.map(|s| (s, false));
@@ -506,6 +570,14 @@ pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
         Step::Head(_) if service == Service::Lightshot => plain(from_head(
             service,
             if url.contains("/removed") { LIGHTSHOT_REMOVED } else { LIGHTSHOT },
+        )),
+        Step::Head(_) if service == Service::Site => plain(from_head(
+            service,
+            if url.contains("Folder") {
+                NEXTCLOUD_FOLDER
+            } else {
+                NEXTCLOUD_PICTURE
+            },
         )),
         Step::Head(_) => plain(from_head(service, IMGUR_ALBUM)),
         Step::Feed(_) => plain(from_feed(if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST })),

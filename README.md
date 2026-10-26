@@ -283,7 +283,8 @@ are planned or in progress: they are not in the viewer yet.
   Conversations button flashes when something new arrives, and a right click
   keeps it quiet for nearby chat.
 - **Links that show what they point to**: pictures from Gyazo, Flickr,
-  Imgur, Lightshot and Reddit pages, a YouTube player that keeps each video's
+  Imgur, Lightshot and Reddit pages, and from your own cloud or gallery
+  (Nextcloud, Immich…) once listed in Preferences › Chat, a YouTube player that keeps each video's
   shape and your volume, and `secondlife:///` links shown as names and places
   in chat, dialogs and notifications.
 - **GIFs in the conversation**: a GIF picker next to the emoji button, with

@@ -4838,9 +4838,14 @@ failure. Grid validation and any paid upload are performed by the human.
   Gyazo page, a Flickr short link, an Imgur album, a Lightshot screenshot,
   a Reddit post, a Bluesky post, an X post and a Bluesky post labelled
   `nudity` (#1051), each with its picture (the demo draws it); the Reddit
-  one and the labelled one blurred until clicked. `services:gyazo,flickr`
+  one and the labelled one blurred until clicked; last, two shares of a
+  made-up Nextcloud, `cloud.example.org`, that the demo adds to the picture
+  sites (#1063, not to the settings): a folder (its card asks to show, then
+  finds no picture) and a picture (its card asks to show, as the site is
+  not trusted, then shows it). `services:gyazo,flickr`
   keeps the listed services only (`gyazo`, `flickr`, `imgur`, `lightshot`,
-  `reddit`, `bluesky`, `x`, `none` for the two links without a card). The Legacy lines (`bubbles:legacy`)
+  `reddit`, `bluesky`, `x`, `nextcloud`, `none` for the two links without a
+  card). The Legacy lines (`bubbles:legacy`)
   show the same cards, including animated GIFs and consent prompts (#976);
   combine with `AURORA_DEMO_CONV_POPOUT=1` to check independent windows.
   Transcript history and the chat lines at the bottom stay text-only. Capture at frame 900

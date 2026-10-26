@@ -395,6 +395,8 @@ pub struct OptionsUi {
     media_filter_typed: String,
     /// The site being typed in Preferences › Protections › Trusted sites.
     trusted_site_typed: String,
+    /// The site being typed in Preferences › Chat › Picture sites.
+    picture_site_typed: String,
     /// Preferences › Chat › Spelling: the auto-replace list shown, the
     /// keyword being typed, the file dialogs.
     spelling_page: pages::spelling::SpellingPage,
@@ -510,6 +512,7 @@ impl OptionsUi {
         self.keyword_sound_text = None;
         self.ui_sound_text.clear();
         self.trusted_site_typed.clear();
+        self.picture_site_typed.clear();
     }
 
     /// Announces a reset whose undo went away.

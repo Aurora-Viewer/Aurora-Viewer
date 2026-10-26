@@ -20,7 +20,8 @@
 //!
 //! The page of an image service (Gyazo, Flickr, Imgur, Lightshot, Reddit) or
 //! a Bluesky or X post leads to its picture first (`services.rs`, #923,
-//! #1051), within the same rules.
+//! #1051), within the same rules; so does a page of the user's own picture
+//! sites (#1063).
 
 use crate::link_trust::Trust;
 use serde::{Deserialize, Serialize};
@@ -104,6 +105,9 @@ pub struct Settings {
     pub size: Size,
     /// Sites whose links get no preview (a link's menu adds them).
     pub hidden_sites: Vec<String>,
+    /// Sites whose pages show the picture they name (`og:image`): the
+    /// user's self-hosted cloud or gallery (#1063). Not trusted for that.
+    pub picture_sites: Vec<String>,
     /// The level of the player's own volume, 0 to 1, kept from one video
     /// to the next (#848): set by the player's slider or Preferences, and
     /// still scaled by the master and media volumes.
@@ -125,6 +129,7 @@ impl Default for Settings {
             player: Player::default(),
             size: Size::default(),
             hidden_sites: Vec::new(),
+            picture_sites: Vec::new(),
             video_volume: 1.0,
             subtitles: false,
             subtitle_language: String::new(),
@@ -438,6 +443,22 @@ pub fn target(url: &str) -> Option<Target> {
         return Some(Target::Picture);
     }
     services::recognize(url).map(|(service, _)| Target::Page(service))
+}
+
+/// The picture sites `target` recognizes: the user's (`picture_sites`),
+/// then `extra` (the demo's). Each is normalized as a trusted site is; one
+/// that is not a plain domain name is left out. At start and after each
+/// change of Preferences.
+pub fn configure_sites(user: &[String], extra: &[&str]) {
+    let mut sites: Vec<String> = Vec::new();
+    for site in user.iter().map(String::as_str).chain(extra.iter().copied()) {
+        if let Some(domain) = crate::link_trust::normalize(site)
+            && !sites.contains(&domain)
+        {
+            sites.push(domain);
+        }
+    }
+    services::set_sites(sites);
 }
 
 /// The preview a link of a message gets in a conversation: none, or what it
@@ -869,7 +890,7 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
                 Service::Gyazo | Service::Bluesky => demo_still(640, 360, 0),
                 Service::Imgur => demo_still(480, 600, 1),
                 Service::Lightshot | Service::X => demo_still(640, 400, 1),
-                Service::Flickr | Service::Reddit => demo_still(640, 480, 0),
+                Service::Flickr | Service::Reddit | Service::Site => demo_still(640, 480, 0),
             };
             Ok(Content::Page {
                 picture,
@@ -1111,6 +1132,23 @@ mod tests {
         };
         assert_eq!(decide(&hidden, Place::Im, trusted), None);
         assert!(decide(&hidden, Place::Im, "https://notimgur.com/a.png").is_some());
+    }
+
+    /// A picture site's page gets a card (#1063), which waits for a click
+    /// like any site not trusted; the list is normalized.
+    #[test]
+    fn a_picture_site_s_page_is_not_trusted_for_being_listed() {
+        // the same list as the tests of `services.rs`, which share it
+        configure_sites(
+            &["https://www.Cloud.Example.org/s/x".into(), "not a site".into()],
+            &["cloud.example.org"],
+        );
+        let page = "https://cloud.example.org/s/DemoShare7xKq2";
+        let s = Settings::default();
+        assert_eq!(decide(&s, Place::Im, page), Some((Target::Page(Service::Site), Start::Ask)));
+        let all = Settings { load: Load::All, ..s };
+        assert_eq!(decide(&all, Place::Im, page), Some((Target::Page(Service::Site), Start::Load)));
+        assert_eq!(target("https://other.example.net/s/DemoShare7xKq2"), None);
     }
 
     #[test]
