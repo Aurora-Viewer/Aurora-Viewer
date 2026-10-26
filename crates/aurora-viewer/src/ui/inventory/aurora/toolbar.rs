@@ -338,7 +338,7 @@ pub(super) fn explorer_row(
             let new_label = aurora_i18n::tr!("inventory-new");
             let new_w = widgets::action_button_fit(ui, "plus", new_label);
             let filters_w = 150.0;
-            let width = (ui.available_width() - filters_w - (BAR + 8.0) - cmt - 8.0 - new_w - 8.0 - 8.0).max(120.0);
+            let width = (ui.available_width() - (BAR + 8.0) - filters_w - (BAR + 8.0) - cmt - 8.0 - new_w - 8.0 - 8.0).max(120.0);
             search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
@@ -364,12 +364,16 @@ pub(super) fn explorer_row(
                 st.hide_details = !st.hide_details;
             }
             rights::button(ui, p, &mut prefs.rights, BAR);
+            let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
+            menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
+            });
             let new = widgets::action_button(ui, p, "plus", new_label, widgets::ActionKind::Primary, Vec2::new(new_w, BAR));
             menu::dropdown(&new, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                 new_menu(ui, p, inv, st, prefs, layout, actions);
             });
         } else {
-            let width = (ui.available_width() - 2.0 * (BAR + 8.0) - 112.0 - cmt - 8.0).max(120.0);
+            let width = (ui.available_width() - (BAR + 8.0) - 2.0 * (BAR + 8.0) - 112.0 - cmt - 8.0).max(120.0);
             search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
@@ -387,6 +391,10 @@ pub(super) fn explorer_row(
                 st.filters_open = !st.filters_open;
             }
             rights::button(ui, p, &mut prefs.rights, BAR);
+            let columns = tool_button(ui, p, "layout-columns", aurora_i18n::tr!("inventory-columns"), false);
+            menu::dropdown(&columns, p, egui::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+                super::columns::options(ui, p, &mut prefs.explorer, &mut prefs.rights);
+            });
             let sort = tool_button(ui, p, "arrows-sort", aurora_i18n::tr!("inventory-sort-menu"), false);
             menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                 sort_menu(ui, p, st, prefs, layout)
