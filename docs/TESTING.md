@@ -80,6 +80,7 @@ viewer's process closes. For a test with human intervention, keep the title
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
+| `AURORA_DEMO_AVATAR_RENDER_SETTINGS=1\|empty` | Open the avatar display-exceptions editor |
 | `AURORA_DEMO_POS="x,y"` | Start position |
 | `AURORA_DEMO_PORTALS=1\|near\|friends` | Open the portal creator and a shared-portal preview |
 | `AURORA_PORTAL_CLIP=0` | Disable avatar portal clipping for before/after comparison |
@@ -93,6 +94,12 @@ viewer's process closes. For a test with human intervention, keep the title
 | `AURORA_EMOJI_FONT=<path>` | Uses another emoji font than the built-in one (PNG bitmaps: CBDT or sbix) |
 | `AURORA_MAX_AVATARS`, `AURORA_MAX_COMPLEXITY`, `AURORA_AA`, `AURORA_SHADOWS`, `AURORA_PROJECTOR_SHADOWS` | Override these settings |
 | `AURORA_GRAPHICS_PRESET=potato\|low\|medium\|high\|deluxe` | Applies a graphics level before the overrides above |
+
+`AURORA_DEMO_AVATAR_RENDER_SETTINGS=1` opens World > Avatar render settings
+with one nearby Always entry and two distant Never / Always entries.
+Check live silhouette changes, filtering, Ctrl/Shift selection, changing full
+detail, removing exceptions and adding residents from the shared picker.
+`empty` starts with no exceptions. Both scenarios use only demo settings.
 
 `AURORA_DEMO_SUN=<azimuth>,<elevation>`: the direction towards the sun for
 the lighting and the shadows (azimuth 0 east, 90 north), the sky keeping

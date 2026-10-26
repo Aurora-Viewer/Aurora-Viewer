@@ -6,6 +6,7 @@ pub mod area_search;
 pub mod audio;
 pub mod aurora_bg;
 pub mod avatar_picker;
+pub mod avatar_render_settings;
 pub mod backdrop;
 pub mod bars;
 pub mod blacklist;
@@ -165,6 +166,7 @@ pub struct Panels {
     pub search: bool,
     pub area_search: bool,
     pub sound_explorer: bool,
+    pub avatar_render_settings: bool,
     /// "Asset blacklist" (World menu): the derendered objects and residents.
     pub asset_blacklist: bool,
     /// "Money tracker" (Me menu): the L$ received and paid.
@@ -216,6 +218,7 @@ impl Panels {
             search: false,
             area_search: false,
             sound_explorer: false,
+            avatar_render_settings: false,
             asset_blacklist: false,
             money_tracker: false,
             bumps: false,

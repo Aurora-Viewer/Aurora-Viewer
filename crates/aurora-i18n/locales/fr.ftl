@@ -11736,3 +11736,10 @@ ui-options-auto-replace-keyword-hint = Mot-clé
 ui-options-auto-replace-replacement-hint = Remplacement
 ui-options-auto-replace-add-keyword = Ajouter
 ui-options-auto-replace-save-keyword = Enregistrer
+
+avatar-render-title = Réglages de rendu des avatars
+avatar-render-filter = Filtrer les résidents par nom ou UUID
+avatar-render-detail = Affichage complet
+avatar-render-empty = Aucune exception d’affichage correspondante
+avatar-render-always = Toujours
+avatar-render-never = Jamais
