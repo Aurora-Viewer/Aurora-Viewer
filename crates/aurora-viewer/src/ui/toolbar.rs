@@ -208,6 +208,9 @@ pub struct ToolbarUi {
     pub movement_active: bool,
     pub water_walk_active: bool,
     pub movelock_status: String,
+    /// The violet of the Grid status button's flash (0: none), given by
+    /// the app on a new entry of the grid's status feed.
+    pub grid_status_flash: f32,
     /// Where the favourites live (given by the app), for the Favorites
     /// button's menu, and the choice made there (taken by the app).
     pub favorites_access: crate::settings::FavoritesAccess,

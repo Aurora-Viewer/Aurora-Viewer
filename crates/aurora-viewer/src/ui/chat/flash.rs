@@ -104,7 +104,8 @@ fn hold(start: Option<f64>, now: f64) -> (f32, bool) {
 /// shown (setVisible clears the flashing sessions). There a minimized window
 /// is still visible and nothing flashes; here its bar flashes instead, the
 /// same eight rises, then keeps the button's tint while unread messages
-/// wait inside: a cue that is hard to miss.
+/// wait inside: a cue that is hard to miss. The Grid status button flashes
+/// the same way on a new entry of the feed (`grid_status.rs`).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ButtonFlash {
     /// When the latest message that flashes arrived.

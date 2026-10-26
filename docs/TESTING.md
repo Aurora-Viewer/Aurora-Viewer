@@ -3749,6 +3749,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RESTRICTED=1` | Parcel that forbids everything |
 | `AURORA_DEMO_FREEZE=1` or `<seconds>` | The avatar frozen by an estate manager, then released |
 | `AURORA_DEMO_SIM_CONSOLE=1` or `open` | The region console of estate managers (Advanced › Region console) |
+| `AURORA_DEMO_GRID_STATUS=open\|new\|none\|error` | Help › Grid status: the grid's incidents, and its toolbar button's flash |
 
 ### Details
 
@@ -6132,6 +6133,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   command gets "Unknown command"; the arrow keys walk the typed commands.
   `open` opens it at frame 600 with `help` and `stats` typed (capture at
   frame 640).
+- **`AURORA_DEMO_GRID_STATUS=open|new|none|error`** (`1` is `open`): the
+  Grid status button at the end of the bottom toolbar, for this run only,
+  and a feed served from memory, shaped like the status page's: an incident
+  in progress (amber), a maintenance scheduled (violet) and two incidents
+  resolved (green), dated from now, each with its newest update and the
+  earlier ones folded. `open` opens the window at frame 600 (capture at
+  frame 640): "Ongoing incident on the grid" at the top, Refresh and
+  "Open the status page" on the right. `new`: at frame 700 a new incident
+  ("Group chat messages delayed") comes in the feed; the button flashes
+  eight times (about 4 s), then stays tinted until the window is opened,
+  where the incident is first and marked "New". `none`: a grid without a
+  feed ("This grid does not publish its status."); `error`: a feed that
+  cannot be read ("The grid status could not be loaded." and the reason).
 
 **`AURORA_DEMO_PHYSICS_EDIT=1|new|drag`** (with `AURORA_DEMO_PHYSICS=1` for
 the balls and the hops): `1` wears a physics layer with the lively values of

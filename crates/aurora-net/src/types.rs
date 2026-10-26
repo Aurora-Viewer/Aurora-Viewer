@@ -547,6 +547,11 @@ pub enum NetEvent {
         /// "LSLSyntaxId": the LSL keywords in use (lsl_syntax.rs); nil
         /// when the region names none.
         lsl_syntax_id: Uuid,
+        /// "OpenSimExtras" "GridStatusRSS" and "GridStatus": an OpenSim
+        /// grid's status feed and page (Help › Grid status); empty when
+        /// not given, always on Second Life.
+        grid_status_feed: String,
+        grid_status_page: String,
     },
     HoverHeightUpdated {
         region: RegionHandle,

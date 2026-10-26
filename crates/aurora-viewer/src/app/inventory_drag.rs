@@ -776,6 +776,7 @@ mod tests {
                 lsl_syntax_id: None,
                 materials_limits: Default::default(),
                 max_tasks: 0,
+                grid_status: Default::default(),
             },
         );
         let r = rez(prepare(

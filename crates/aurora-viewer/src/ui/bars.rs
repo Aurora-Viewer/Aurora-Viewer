@@ -1035,7 +1035,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         menu::todo(ui, p, "article-filled", aurora_i18n::tr!("ui-bars-knowledge-base"));
         menu::separator(ui, p);
         let grid_status = aurora_i18n::tr!("toolbar-command-grid-status");
-        menu::todo(ui, p, "building-broadcast-tower-filled", grid_status);
+        let tower = "building-broadcast-tower-filled";
+        flip_window(ui, p, tower, grid_status, super::grid_status::WINDOW, &mut panels.grid_status);
         if crate::updater::checks_enabled() && menu::item(ui, p, "download-filled", aurora_i18n::tr!("update-check")) {
             *action = BarAction::CheckUpdates;
         }
@@ -1755,6 +1756,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "areasearch" => toggle(super::area_search::WINDOW, &mut panels.area_search),
         "soundexplorer" => toggle(super::sound_explorer::WINDOW, &mut panels.sound_explorer),
         "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
+        "gridstatus" => toggle(super::grid_status::WINDOW, &mut panels.grid_status),
         "performance" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
         "preferences" => toggle("options", &mut panels.settings),
@@ -1822,6 +1824,7 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "areasearch" => panels.area_search,
         "soundexplorer" => panels.sound_explorer,
         "assetblacklist" => panels.asset_blacklist,
+        "gridstatus" => panels.grid_status,
         "performance" => panels.perf,
         "snapshot" => panels.snapshot,
         "preferences" => panels.settings,
@@ -2549,7 +2552,13 @@ pub(crate) fn toolbar_row(
             active,
             look(b),
             count,
-            if b.command == "conversations" { row.flash } else { 0.0 },
+            // the Grid status button flashes on a new entry of the feed
+            // (LLFloaterGridStatus::getGridStatusRSSCoro, flashCommand)
+            match b.command.as_str() {
+                "conversations" => row.flash,
+                "gridstatus" => toolbar.grid_status_flash,
+                _ => 0.0,
+            },
         );
         rects.push(response.rect);
         toolbar.button(&response, row.bar, row.style, b, p, row.locked);
@@ -3082,6 +3091,7 @@ mod tests {
             ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
             ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
             ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
+            ("gridstatus", super::super::grid_status::WINDOW, |p| p.grid_status),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {

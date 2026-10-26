@@ -42,6 +42,7 @@ pub mod fonts;
 pub mod friend_prompt;
 pub mod gestures;
 pub(crate) mod give_drop;
+pub mod grid_status;
 pub mod grids;
 pub mod group_profile;
 pub mod hover_height;
@@ -173,6 +174,8 @@ pub struct Panels {
     pub money_tracker: bool,
     /// "Bumps, pushes & hits" (Help menu): who bumped, pushed or hit us.
     pub bumps: bool,
+    /// "Grid status" (Help menu, toolbar): the grid's incidents.
+    pub grid_status: bool,
     /// The Controls window on its Camera tab (Firestorm's camera window
     /// with Preferences › Aurora), and on its Movement tab (the movement
     /// window).
@@ -222,6 +225,7 @@ impl Panels {
             asset_blacklist: false,
             money_tracker: false,
             bumps: false,
+            grid_status: false,
             camera_controls: false,
             movement_controls: false,
             nav_edit: None,
