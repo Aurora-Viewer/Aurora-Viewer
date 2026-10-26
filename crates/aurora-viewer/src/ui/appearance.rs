@@ -360,8 +360,8 @@ fn icon_menu(ui: &mut egui::Ui, p: &Palette, name: &str, tip: &str, body: impl F
 }
 
 /// Pulls what follows a row (an item, a closed outfit header) up to the
-/// inventory's row pitch. The
-/// list's spacing itself stays: the rows' context menus inherit it.
+/// inventory's row pitch. The list's spacing itself stays: the rows'
+/// context menus inherit it.
 fn row_gap(ui: &mut egui::Ui) {
     ui.add_space(1.0 - ui.spacing().item_spacing.y);
 }
