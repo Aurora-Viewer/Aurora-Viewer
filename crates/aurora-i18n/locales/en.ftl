@@ -3618,6 +3618,7 @@ ui-minimap-markers = Markers
 build-ui-texture-masking = Masking
 build-ui-texture-alpha-masking = Alpha masking
 demo-mask-50-cutoff = Mask (50% cutoff)
+demo-mask-zero-cutoff = Mask (cutoff 0)
 common-emissive-mask = Emissive mask
 ui-login-hide = Hide
 ui-notifications-hide-keep-in-bell = Hide (keep in bell)
