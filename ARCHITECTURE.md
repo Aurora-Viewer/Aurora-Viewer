@@ -1,32 +1,5 @@
 # Aurora Viewer architecture
 
-Mesh import acceptance follows `LLDAELoader` / `LLGLTFLoader`: file size and
-retained mesh drafts have no additional fixed byte budget. Allocations and
-source bounds are checked; mesh LLSD section sizes retain their signed 32-bit
-wire limits. `import_mesh/gltf_skin.rs` caches complete node rest transforms,
-adapts bind matrices and missing skeletal intermediates to the SL skeleton,
-and applies the reference two-shoulder XY orientation detection. Rigged DAE
-bind frames remain authored; object-axis conversion is separate.
-Scenes retain source material symbols for authored LOD reordering and missing
-`NoGeometry` surfaces, and glTF node identities allow independent authored LODs
-for nodes sharing source geometry. Source palettes use 16-bit joint indices before glTF
-usage pruning; encoded weights retain the protocol's one-byte joint indices.
-The import defaults expose the generated-model allowance (768, divided across
-source meshes) and mesh transfer timeout (600 seconds). Geometry and timeout
-are frozen in the same quoted request. Quote confirmation time starts on receipt,
-independently of a long fee transfer. Texture payloads follow used instances.
-Flat axes retain the reference unit normalization scale; worker-cached actual
-normalized extents keep preview dimensions and scene-span checks accurate.
-After supported-joint filtering, unweighted source vertices inherit nearby
-valid influences in normalized space before model splitting. High and lower
-LODs consequently share the reference weight fallback in previews and uploads.
-`imports/mesh/preview.rs` owns an independent standard-standing animation
-controller per import. The shared animation streamer loads the reference
-asset; normal and enlarged canvases receive only updated joint palettes.
-Imported-position preview and joint-marker visibility are independent.
-Markers use the same animated pose, are deduplicated, and retain the reference
-1 mm radius (16 mm selected). Offline mesh demos seed the existing synthetic idle.
-
 The application constructor returns its runtime state on the heap, avoiding
 large return-value temporaries on the Windows startup stack as editors grow.
 
@@ -53,6 +26,33 @@ GPU slots. `wearable_editor/masks.rs` embeds the original character masks;
 preview textures never enter the inventory or replace server appearance.
 `aurora-assets/src/wearable.rs` preserves original texture text when unchanged
 and preserves metadata and future sections when textures are edited.
+
+Mesh import acceptance follows `LLDAELoader` / `LLGLTFLoader`: file size and
+retained mesh drafts have no additional fixed byte budget. Allocations and
+source bounds are checked; mesh LLSD section sizes retain their signed 32-bit
+wire limits. `import_mesh/gltf_skin.rs` caches complete node rest transforms,
+adapts bind matrices and missing skeletal intermediates to the SL skeleton,
+and applies the reference two-shoulder XY orientation detection. Rigged DAE
+bind frames remain authored; object-axis conversion is separate.
+Scenes retain source material symbols for authored LOD reordering and missing
+`NoGeometry` surfaces, and glTF node identities allow independent authored LODs
+for nodes sharing source geometry. Source palettes use 16-bit joint indices before glTF
+usage pruning; encoded weights retain the protocol's one-byte joint indices.
+The import defaults expose the generated-model allowance (768, divided across
+source meshes) and mesh transfer timeout (600 seconds). Geometry and timeout
+are frozen in the same quoted request. Quote confirmation time starts on receipt,
+independently of a long fee transfer. Texture payloads follow used instances.
+Flat axes retain the reference unit normalization scale; worker-cached actual
+normalized extents keep preview dimensions and scene-span checks accurate.
+After supported-joint filtering, unweighted source vertices inherit nearby
+valid influences in normalized space before model splitting. High and lower
+LODs consequently share the reference weight fallback in previews and uploads.
+`imports/mesh/preview.rs` owns an independent standard-standing animation
+controller per import. The shared animation streamer loads the reference
+asset; normal and enlarged canvases receive only updated joint palettes.
+Imported-position preview and joint-marker visibility are independent.
+Markers use the same animated pose, are deduplicated, and retain the reference
+1 mm radius (16 mm selected). Offline mesh demos seed the existing synthetic idle.
 
 Ready chat media replace raw URL text through `ui/chat/previews.rs` in every
 conversation style, while the stored message stays intact for history, search
