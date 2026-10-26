@@ -182,6 +182,33 @@ impl Manager {
         common.map(|rest| prefix.chars().chain(rest).collect())
     }
 
+    /// The active triggers [`Manager::complete`] matches for `prefix`, each
+    /// once and in alphabetical order, with the text they say instead: the
+    /// list of the chat field under its inline completion.
+    pub fn matching(&self, prefix: &str) -> Vec<(String, String)> {
+        if !self.enabled || prefix.is_empty() {
+            return Vec::new();
+        }
+        let count = prefix.chars().count();
+        let mut found: Vec<(String, String)> = self
+            .active
+            .iter()
+            .filter_map(|id| self.entries.get(id))
+            .filter(|e| {
+                let trigger = &e.definition.trigger;
+                trigger.chars().count() >= count
+                    && trigger
+                        .chars()
+                        .zip(prefix.chars())
+                        .all(|(a, b)| a.to_lowercase().eq(b.to_lowercase()))
+            })
+            .map(|e| (e.definition.trigger.clone(), e.definition.replacement.clone()))
+            .collect();
+        found.sort_by_cached_key(|(t, _)| (t.to_lowercase(), t.clone()));
+        found.dedup_by(|a, b| a.0.to_lowercase() == b.0.to_lowercase());
+        found
+    }
+
     /// Firestorm matches space-delimited words, case-insensitively, and
     /// replaces only the first matching trigger in a chat line.
     pub fn revise(&mut self, text: &str) -> (String, Option<Uuid>) {

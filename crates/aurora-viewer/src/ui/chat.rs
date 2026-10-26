@@ -33,6 +33,7 @@ pub(crate) mod select;
 mod sidebar;
 pub mod snooze;
 mod stage;
+pub mod suggest;
 mod thread;
 mod typing;
 mod view;
@@ -80,6 +81,9 @@ pub struct ChatUi {
     drafts: HashMap<Option<uuid::Uuid>, String>,
     /// Sent text per conversation; both nearby chat fields share None.
     input_history: HashMap<Option<uuid::Uuid>, input_history::History>,
+    /// The fields' mentions, gestures and names (#980): options given every
+    /// frame by the app, residents around, `@Name` written.
+    pub suggest: suggest::Shared,
     /// The field of the conversation shown takes the keyboard (its tab was
     /// clicked, a letter key started the nearby chat).
     pub conv_focus_request: bool,
@@ -3014,6 +3018,7 @@ fn classic_pane(
             let field_w = (ui.available_width() - SEND_BTN_W - ui.spacing().item_spacing.x).floor().max(40.0);
             let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
             let nav = super::emoji::codes::keys(ui, conv_input);
+            let suggest_nav = if nav.is_none() { suggest::keys(ui, conv_input) } else { None };
             let mut output = emoji.text_field(ui, &mut draft, |edit| {
                 edit.id(conv_input)
                     .hint_text(hint)
@@ -3025,9 +3030,13 @@ fn classic_pane(
                 output.response.mark_changed();
             }
             super::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
-            if st.selected.is_none() {
-                completion::complete(ui, &mut output, &mut draft, gestures);
-            }
+            let (w, selected): (&World, _) = (world, st.selected);
+            let people = move || selected.map_or_else(Vec::new, |id| suggest::members(w, id));
+            let scope = match selected {
+                None => suggest::Scope::Nearby(gestures),
+                Some(id) => suggest::Scope::Session(id, &people),
+            };
+            suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
             let has_text = !draft.trim().is_empty();
             send_clicked = send_button(ui, p, icons, has_text).clicked() && has_text;
             output.response
@@ -3078,7 +3087,7 @@ fn classic_pane(
     }
     let mut sent = false;
     if send_clicked || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt)) {
-        let text = draft.trim().to_owned();
+        let text = st.suggest.expand(st.selected, draft.trim());
         if !text.is_empty() {
             sent = true;
             st.input_history.entry(st.selected).or_default().record(conv_input, &draft);
@@ -3649,6 +3658,7 @@ pub(crate) fn bar_input(
     let build = identified(build);
     let recalled = st.input_history.entry(None).or_default().recall(ui, bar_input_id(), &mut st.input);
     let nav = super::emoji::codes::keys(ui, bar_input_id());
+    let suggest_nav = if nav.is_none() { suggest::keys(ui, bar_input_id()) } else { None };
     let mut emoji = emoji;
     let mut output = match emoji.as_deref_mut() {
         Some(emoji) => emoji.text_field(ui, &mut st.input, build),
@@ -3658,7 +3668,15 @@ pub(crate) fn bar_input(
         output.response.mark_changed();
     }
     super::emoji::codes::after(ui, p, emoji, &mut output, &mut st.input, nav);
-    completion::complete(ui, &mut output, &mut st.input, gestures);
+    suggest::after(
+        ui,
+        p,
+        &mut output,
+        &mut st.input,
+        suggest_nav,
+        &mut st.suggest,
+        suggest::Scope::Nearby(gestures),
+    );
     let resp = output
         .response
         .response
@@ -3687,7 +3705,7 @@ pub(crate) fn bar_input(
     if enter && !st.input.trim().is_empty() {
         st.input_history.entry(None).or_default().record(bar_input_id(), &st.input);
         let (shout, whisper) = ui.input(|i| (i.modifiers.ctrl, i.modifiers.shift));
-        let (channel, message) = parse_channel(st.input.trim());
+        let (channel, message) = parse_channel(&st.suggest.expand(None, st.input.trim()));
         out = Some(OutgoingChat {
             message,
             channel,

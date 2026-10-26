@@ -3609,6 +3609,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
+| `AURORA_DEMO_MENTION=list\|names` | The chat bar's `@` list of residents to mention, or the prediction of a nearby resident's name |
 | `AURORA_DEMO_KEYWORDS=1\|prefs` | Keyword alerts on for the run: nearby chat, IM, group chat and object lines holding a keyword, coloured and with their sound; or the preferences' settings, the lines sent again and again |
 | `AURORA_DEMO_NOTIFS=1\|dnd\|list\|history\|legacy\|legacy-history\|object\|object-own\|object-group\|object-history\|legacy-object` | Notification center: cards, burst, paused bell, history, Legacy toasts and object inventory offers |
 | `AURORA_DEMO_DELIVERY=1\|several\|open\|history` | A Marketplace delivery arriving in Received items: its card under the bell, several at once, "Show in inventory", its history entry |
@@ -3663,7 +3664,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, layout notecards, filters, drag feedback, windows, keyboard and search selection; `aurora…` modes show Aurora's window at each width |
-| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion and menu access |
+| `AURORA_DEMO_GESTURES=manager\|editor\|numpad\|play\|replay\|channel\|completion\|completion-send\|list\|communicate\|communicate-open` | Gesture manager, editor, numeric shortcuts, playback, back-to-back replays, commands to worn scripts, completion, the chat bar's list of gestures and menu access |
 | `AURORA_DEMO_IMPORTS=<mode>` | Import window and synthetic assets; `launcher` / `settings` open the compact chooser / import defaults |
 | `AURORA_DEMO_IMPORT_FILE=<path>` | Local asset to open in the demo flow |
 | `AURORA_DEMO_IMPORT_REGISTRY=<file>` | Isolated persistent library for the import tests |
@@ -4333,6 +4334,17 @@ failure. Grid validation and any paid upload are performed by the human.
   Capture with `AURORA_FPS_LIMIT=60` at `760` for `1` and `several`, `960`
   for `open` and `history`. Turning off Preferences › Inventory › Received
   items › "Notify Marketplace deliveries" leaves only the Received badge.
+- **`AURORA_DEMO_MENTION=list|names`** (#980): the nearby chat bar gets the
+  keyboard at frame 540. `list` types `Hi @` at frame 550: the residents
+  within chat range (20 m) are listed above the bar, nearest first, the
+  first highlighted; capture frame 620. The arrows choose, Tab or Enter
+  write `@Name ` (the display name), Escape closes until the letters change;
+  sent, the name becomes `secondlife:///app/agent/<id>/mention`, drawn as
+  the resident's name in the line. `names` turns the name prediction on for
+  the run (never saved), types `Hi ` then, at frame 560, the first three
+  letters of the nearest resident's user name (the log's `demo mention:`
+  line): the rest of their first name and a space follow, selected; capture
+  frame 620.
 - **`AURORA_DEMO_KEYWORDS=1|prefs`**: keyword alerts on for the run, never saved
   (the two keywords of `demo-keywords-words`, "party, builders" in English,
   "fête, constructeurs" in French; colour change and sound on), with the
@@ -6131,7 +6143,7 @@ and that Esc creates nothing. Online, validate real objects, forbidden land,
 the Trash / Library, neighbouring regions, the group of the land and
 objects already worn; the human logs in and carries out these tests.
 
-**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|channel|completion|completion-send|communicate|communicate-open`** — three synthetic gestures:
+**`AURORA_DEMO_GESTURES=manager|editor|numpad|play|replay|channel|completion|completion-send|list|communicate|communicate-open`** — three synthetic gestures:
 chat with a replacement and F8 shortcut, an animated pose on F9, and an
 inactive chime on F10. `manager` opens the list; `editor` also opens the
 chat gesture's editor; `play` starts the chat and animation at frame 650.
@@ -6166,6 +6178,14 @@ it without immediately completing it again. Only active, enabled gestures
 participate; ambiguous prefixes extend only to their common suffix. The
 same completion is available in the conversations window's local chat,
 with instant messages and numeric channel prefixes keeping their input.
+`list` (#980) adds an active `/hug` gesture, leaves the manager closed,
+focuses nearby chat at frame 540 and types `/h` at frame 550: the list
+above the bar shows `/hello` (with what it says) and `/hug`, none
+highlighted since they share no further letter; Down at frame 600 writes
+`/hello` with `ello` selected and highlights it. Capture frames 580 and
+650. Tab keeps the trigger and closes the list, Enter says it, Escape
+closes the list; Preferences › Chat › "Complete gestures in nearby chat"
+turns both the list and the inline completion off.
 `communicate` starts with the gesture manager closed, clicks the wolf menu
 at frame 540 and hovers Communicate at frame 560: capture frame 620 to see
 the Gestures entry below Conversations, with Ctrl+G in the shortcut column.

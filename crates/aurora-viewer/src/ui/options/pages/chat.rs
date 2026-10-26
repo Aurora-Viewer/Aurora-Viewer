@@ -43,6 +43,25 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-chat-keep-focus-hint"),
                     &field!(chat_keep_focus),
                 );
+                // #980: FSChatbarGestureAutoCompleteEnable (on),
+                // FSChatbarNamePrediction (on, the human's choice; off in the Legacy
+                // Viewer), FSUseChatMentionAutoComplete
+                // (on, every chat field)
+                cx.toggle(
+                    tr!("ui-options-gesture-autocomplete"),
+                    tr!("ui-options-gesture-autocomplete-hint"),
+                    &field!(chat_gesture_autocomplete),
+                );
+                cx.toggle(
+                    tr!("ui-options-name-prediction"),
+                    tr!("ui-options-name-prediction-hint"),
+                    &field!(chat_name_prediction),
+                );
+                cx.toggle(
+                    tr!("ui-options-mention-autocomplete"),
+                    tr!("ui-options-mention-autocomplete-hint"),
+                    &field!(chat_mention_autocomplete),
+                );
                 cx.slider(
                     tr!("ui-options-chat-bubble-duration"),
                     tr!("ui-options-0-no-chat-bubbles-above-the-chat-bar"),
