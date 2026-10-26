@@ -126,6 +126,10 @@ impl BackgroundFetch {
                 FetchState::Fetching if self.pending.contains(&id) => {}
                 // asked for by the user: walked once it has arrived
                 FetchState::Fetching => self.waiting.push((id, kind)),
+                // the folder alone is already there (the login's own read of
+                // the root, or the cache): its folders by batches, as after
+                // that read in onAISFolderCalback, not one read each
+                FetchState::Fetched if kind == Kind::FolderAndContent => self.queue.push_front((id, Kind::ContentRecursive)),
                 // already fetched: check what is inside
                 FetchState::Fetched => {
                     let children = folder.children.clone();

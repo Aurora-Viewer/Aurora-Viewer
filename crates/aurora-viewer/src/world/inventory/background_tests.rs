@@ -300,3 +300,29 @@ fn a_folder_the_user_opened_is_not_read_twice() {
     assert!(unfetched(&inv).is_empty());
     assert!(fetch.is_idle());
 }
+
+#[test]
+fn a_root_already_read_at_login_still_loads_by_batches() {
+    let tree = wide_tree();
+    let mut inv = skeleton(&tree);
+    // the login's own read of the root (Inventory::request) arrived first
+    let server = Server {
+        tree: &tree,
+        cap: MAX_FOLDER_DEPTH,
+        fails: &|_| false,
+    };
+    inv.apply(
+        server
+            .answer(&Read {
+                parent: id(1),
+                children: Vec::new(),
+                depth: 0,
+            })
+            .unwrap_or_default(),
+    );
+    let reads = run(&mut inv, &server);
+    assert!(unfetched(&inv).is_empty());
+    let batches: Vec<usize> = reads.iter().filter(|r| r.parent == id(1)).map(|r| r.children.len()).collect();
+    assert_eq!(batches, [20, 20, 5]);
+    assert_eq!(reads.len(), 4);
+}
