@@ -13100,6 +13100,7 @@ impl App {
                 }
                 let complexity = self.scene.avatar_complexity.get(&self.world.agent_id).copied().unwrap_or_default();
                 let mut open = self.panels.appearance;
+                self.appearance_ui.fill_previews = self.settings.appearance_fill_previews;
                 for action in ui::appearance::show(
                     &ctx,
                     &p,
@@ -13110,6 +13111,10 @@ impl App {
                     &self.ui_images,
                 ) {
                     self.apply_appearance_action(action);
+                }
+                if self.settings.appearance_fill_previews != self.appearance_ui.fill_previews {
+                    self.settings.appearance_fill_previews = self.appearance_ui.fill_previews;
+                    self.settings.save();
                 }
                 self.panels.appearance = open;
                 self.update_demo_shape_mesh();
@@ -15404,6 +15409,10 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
+                    ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
+                    self.settings.appearance_fill_previews = view == "gallery-fill";
+                }
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);

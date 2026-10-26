@@ -653,6 +653,12 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+The Appearance gallery keeps whole-image previews by default. Its options menu
+can enable saved `Settings::appearance_fill_previews`: `ui/appearance.rs` crops
+centred UVs to fill the existing frame without stretching the image, changing
+the gallery layout or adding texture work. The `gallery-fit` / `gallery-fill`
+offline scenarios supply local cards with three aspect ratios.
+
 `World::can_locate_avatar` and `locate_avatar` share nearby positions and
 received map rights across contact, conversation and profile actions.
 Remote friends use the existing `world/worldmap.rs` TrackAgent/FindAgent
