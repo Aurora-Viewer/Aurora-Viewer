@@ -144,7 +144,7 @@ fn preview_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, point: Vec3,
     );
     ui.item("zoom-scan-filled", aurora_i18n::tr!("ui-context-inspect-2"), CtxAction::Inspect(id));
     if f.object.local_hud_scale.is_none() {
-        ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+        ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point, None));
     }
     if worn {
         ui.item("paperclip", aurora_i18n::tr!("common-detach"), CtxAction::Detach(key));
@@ -236,7 +236,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             ui.item_if(icon, label, o.scripts, CtxAction::Scripts { id, action });
         }
     });
-    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point, None));
     // Pathfinding.Linksets.Select / Characters.Select: the pathfinding
     // windows are not in Aurora yet
     ui.todo("list-details-filled", aurora_i18n::tr!("ui-context-show-in-region-objects"));
@@ -616,7 +616,11 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
         );
         moderation_items(ui, f, id);
     });
-    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    ui.item(
+        "zoom-in-filled",
+        aurora_i18n::tr!("common-zoom-2"),
+        CtxAction::Zoom(point, Some(id)),
+    );
     ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
     ui.separator();
     // Firestorm "Always Display Full Detail / Never Display Full Detail / Remove From Display Exceptions"
@@ -728,7 +732,11 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
         );
         moderation_items(ui, f, id);
     });
-    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    ui.item(
+        "zoom-in-filled",
+        aurora_i18n::tr!("common-zoom-2"),
+        CtxAction::Zoom(point, Some(id)),
+    );
     // Avatar.Pay: the wearer is paid
     ui.item("coin-filled", aurora_i18n::tr!("common-pay"), CtxAction::PayResident(id));
     ui.separator();
@@ -948,7 +956,7 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
     if f.seated {
         ui.item("man-filled", aurora_i18n::tr!("common-stand-up"), CtxAction::StandUp);
     }
-    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point));
+    ui.item("zoom-in-filled", aurora_i18n::tr!("common-zoom-2"), CtxAction::Zoom(point, None));
     ui.separator();
     // Firestorm greys it out when the parcel is not for sale to us; the
     // menu does not know the parcel before it is selected, so the window

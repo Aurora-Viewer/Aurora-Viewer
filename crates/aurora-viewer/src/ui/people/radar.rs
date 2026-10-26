@@ -269,7 +269,6 @@ pub(super) struct Row {
     pub seen: f64,
     pub range: Option<f32>,
     pub loaded: bool,
-    pub position: glam::Vec3,
     /// In a region a teleport left behind: faded until it leaves the list.
     pub left_behind: bool,
 }
@@ -338,7 +337,6 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
                 seen: (data.now - e.first_seen).max(0.0),
                 range: e.range,
                 loaded: e.loaded,
-                position: e.position,
                 left_behind: e.left_behind,
             })
         })
@@ -851,11 +849,11 @@ pub fn tab(
                 st.radar_selected = vec![row.id];
                 st.radar_anchor = Some(row.id);
             }
-            // double click: the camera goes to the avatar, when it is drawn
+            // double click: the camera goes to the avatar and follows it, when it is drawn
             // (LLAvatarActions::zoomIn)
             if resp.double_clicked() {
                 if row.loaded {
-                    context::request(ui.ctx(), CtxAction::Zoom(row.position + glam::Vec3::Z * 0.6));
+                    context::request(ui.ctx(), CtxAction::ZoomAvatar(row.id));
                 } else {
                     actions.push(PeopleAction::TooFarToZoom);
                 }
