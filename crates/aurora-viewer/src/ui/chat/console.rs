@@ -228,7 +228,7 @@ fn card<'a>(
                     first.source
                 };
                 if !matches!(first.kind, ChatKind::Object(_) | ChatKind::ObjectIm) {
-                    crate::ui::staff::after_name(ui, p, &author, 9.5);
+                    crate::ui::staff::after_name(ui, p, crate::world::staff::mark(world, &author), 9.5);
                 }
                 tags(ui, p, first);
                 if times {

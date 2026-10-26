@@ -162,9 +162,9 @@ pub(super) fn names(
     person_names(ui, p, rect, left, right, first, color, second, dot, tag, None)
 }
 
-/// `names` for a resident `id`: a member of the Aurora team gets the
-/// "Aurora Staff" tag right after the name, which is cut before the tag
-/// is (the tag is how the team is recognized).
+/// `names` for a resident: a member of the Aurora team or of Linden Lab
+/// (`mark`) gets its tag right after the name, which is cut before the
+/// tag is (the tag is how the staff is recognized).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn person_names(
     ui: &egui::Ui,
@@ -177,10 +177,10 @@ pub(super) fn person_names(
     second: &str,
     dot: Option<Color32>,
     tag: Option<(&str, Color32, Color32)>,
-    id: Option<&Uuid>,
+    mark: Option<crate::world::staff::Mark>,
 ) -> bool {
     let width = (right - left).max(0.0);
-    let staff = id.map_or(0.0, |id| crate::ui::staff::width(ui, p, id, 13.0));
+    let staff = crate::ui::staff::width(ui, p, mark, 13.0);
     // the tag keeps its place as long as some of the name still shows
     let staff = if staff > 0.0 && width - staff - 6.0 >= 40.0 { staff } else { 0.0 };
     let mut job = egui::text::LayoutJob::single_section(first.to_owned(), semibold(ui, 13.0, color));
@@ -201,8 +201,7 @@ pub(super) fn person_names(
     let mut x = left + name_w + 6.0;
     let y = top + name_h / 2.0;
     if staff > 0.0
-        && let Some(id) = id
-        && let Some(r) = crate::ui::staff::paint_at(ui, ui.painter(), p, id, Pos2::new(x, y), 13.0)
+        && let Some(r) = crate::ui::staff::paint_at(ui, ui.painter(), p, mark, Pos2::new(x, y), 13.0)
     {
         x = r.right() + 6.0;
     }

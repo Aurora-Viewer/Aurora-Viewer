@@ -400,7 +400,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
             &line.status,
             line.set,
             None,
-            Some(&f.id),
+            crate::world::staff::mark(c.world, &f.id),
         )
     } else {
         true

@@ -169,6 +169,8 @@ struct Who {
     avatar: uuid::Uuid,
     object: bool,
     logged: bool,
+    /// A member of the Aurora team or of Linden Lab (`world::staff`).
+    mark: Option<crate::world::staff::Mark>,
 }
 
 impl Who {
@@ -182,7 +184,13 @@ impl Who {
         } else {
             line.source
         };
-        Who { avatar, object, logged }
+        let mark = (!object).then(|| crate::world::staff::mark(env.world, &avatar)).flatten();
+        Who {
+            avatar,
+            object,
+            logged,
+            mark,
+        }
     }
 }
 
@@ -245,7 +253,7 @@ fn body(env: &LineEnv, line: &ChatLine, name: &str) -> (String, Color32, bool) {
 fn tags(ui: &mut egui::Ui, p: &Palette, th: &Thread, line: &ChatLine, who: &Who) {
     if !who.object {
         // the size of the pills below
-        crate::ui::staff::after_name(ui, p, &who.avatar, 9.5);
+        crate::ui::staff::after_name(ui, p, who.mark, 9.5);
     }
     if who.object {
         tag(ui, aurora_i18n::tr!("ui-chat-tag-object"), Some(p.raised), p.muted);

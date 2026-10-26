@@ -15,7 +15,7 @@ fn content() -> Content {
         friend: false,
         too_complex: false,
         blocked: false,
-        staff: false,
+        mark: None,
     }
 }
 

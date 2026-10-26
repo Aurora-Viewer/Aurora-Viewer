@@ -17,6 +17,8 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub(crate) mod aurora;
+mod linden;
+pub(crate) mod mark;
 mod mesh;
 mod paint;
 #[cfg(test)]
@@ -288,9 +290,9 @@ pub struct Content {
     pub friend: bool,
     pub too_complex: bool,
     pub blocked: bool,
-    /// A member of the Aurora team (`world::staff`): the plate has its
-    /// northern light and the "Aurora Staff" tag (`aurora.rs`).
-    pub staff: bool,
+    /// A member of the Aurora team or a Linden Lab employee
+    /// (`world::staff`): the plate has its light and its tag (`mark.rs`).
+    pub mark: Option<crate::world::staff::Mark>,
 }
 
 /// A live editor preview shares the live geometry, contrast and badge code.
@@ -314,7 +316,7 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, appearance: std::sync::Arc<crate:
         friend: true,
         too_complex: false,
         blocked: false,
-        staff: false,
+        mark: None,
     };
     let tag = Tag {
         id: Uuid::nil(),

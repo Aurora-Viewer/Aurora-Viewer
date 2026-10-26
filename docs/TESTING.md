@@ -6384,7 +6384,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
-| `AURORA_DEMO_STAFF=1` | A few demo residents count as Aurora team members: their plate's northern light and the "Aurora Staff" tag |
+| `AURORA_DEMO_STAFF=1` | A few demo residents count as Aurora team members or Linden Lab employees: their plate's light and their tag |
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
 | `AURORA_DEMO_VOICE_MODERATION=1` or `self` | Nearby voice moderation: the estate manager's entries, or a moderator muting us |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
@@ -6454,7 +6454,14 @@ What the inventory must show with these scenarios:
   the resident who speaks in nearby chat (`AURORA_DEMO_CONV=bubbles:local`
   and the chat console), and with `AURORA_DEMO_TAGS=voice`
   Orion (full plate, speaking: the voice ring over the light), Sol (compact
-  pill) and Vega (far pill).
+  pill) and Vega (far pill). Linden Lab's employees (on the grid: the last
+  name Linden) get their own mark in the Linden colour of Preferences ›
+  Colors: four-pointed stars rising and twinkling above the plate, a shine
+  running around the border, the "Linden Lab" tag with the verified
+  rosette, and stars twinkling over the profile's banner. The demo's
+  Lindens: the wolf (nearby chat, `AURORA_DEMO_PROFILE=wolf`), Lune of
+  People › Near you, and with `AURORA_DEMO_TAGS=voice` Lune (full plate,
+  typing) and Iris (compact pill).
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

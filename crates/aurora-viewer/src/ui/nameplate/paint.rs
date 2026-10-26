@@ -4,6 +4,7 @@
 //! draw of its own.
 
 use super::aurora;
+use super::mark::Look;
 use super::mesh::{self, Border, Glow, Outline, Ring};
 use super::{Badge, Badges, Content, Halo, Layout, Level, Metrics, Picture, Presence, Role, SCALE, SubLine, Tag, TextSize};
 use crate::theme::Palette;
@@ -179,7 +180,7 @@ struct Face {
     badges: Badges,
     dot: Option<Presence>,
     /// A team member's "Aurora Staff" tag, and the time of its light.
-    staff: Option<(Arc<Galley>, f32)>,
+    staff: Option<(Arc<Galley>, Look, f32)>,
 }
 
 fn lerp(range: (f32, f32), t: f32) -> f32 {
@@ -238,22 +239,22 @@ fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {
         subs: [subs[0].as_ref().map(size), subs[1].as_ref().map(size)],
     };
     let badges = super::badges(level, c);
-    // the team's tag, its letters along the borealis; not on the far pill
-    let staff = (c.staff && level != Level::Far).then(|| {
-        let label = aurora_i18n::tr!("nameplate-aurora-staff").to_owned();
+    // the staff's tag, its letters in the mark's colors; not on the far pill
+    let staff = c.mark.filter(|_| level != Level::Far).map(|mark| {
+        let look = Look::new(mark);
+        let label = look.label();
         let n = label.chars().count();
         let mut job = LayoutJob {
             break_on_newline: false,
             ..Default::default()
         };
         for (i, ch) in label.chars().enumerate() {
-            let color = aurora::letter_color(p, i, n, t);
-            let format = crate::ui::fonts::semibold_format(&env.semibold, aurora::TAG_TEXT * m.scale, color);
+            let format = crate::ui::fonts::semibold_format(&env.semibold, aurora::TAG_TEXT * m.scale, look.letter(p, i, n, t));
             job.append(ch.encode_utf8(&mut [0; 4]), 0.0, format);
         }
-        (env.painter.layout_job(job), t)
+        (env.painter.layout_job(job), look, t)
     });
-    let lead = staff.as_ref().map_or(0.0, |(g, _)| aurora::tag_width(g.size().x, m.scale));
+    let lead = staff.as_ref().map_or(0.0, |(g, ..)| aurora::tag_width(g.size().x, m.scale));
     Face {
         metrics: m,
         layout: super::layout_with(level, &m, &text, badges.len(), lead),
@@ -326,19 +327,20 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
     // the bounce moves the surface alone, on whole pixels too; the plate
     // keeps its rectangle for the pointer, which does not chase the bounce
     let grow = (st.grow * ppp).round() / ppp;
-    // a team member's curtains rise from behind the plate, its border over it
+    // a staff member's light rises from behind the plate, its border over it
+    let look = c.mark.map(Look::new);
     let light = |build: &dyn Fn(&mut Mesh)| {
         let mut mesh = Mesh::default();
         build(&mut mesh);
         env.painter.add(Shape::mesh(mesh));
     };
-    if c.staff {
-        light(&|mesh| aurora::curtains(mesh, env.p, rect.expand(grow), ppp, t, alpha));
+    if let Some(look) = look {
+        light(&|mesh| look.above(mesh, env.p, rect.expand(grow), ppp, t, alpha));
     }
     background(env, rect.expand(grow), st, alpha, farness, c, &mut cache.surface);
-    if c.staff {
+    if let Some(look) = look {
         let width = (2.0 * SCALE).max(1.0 / ppp);
-        light(&|mesh| aurora::border(mesh, env.p, rect.expand(grow), ppp, t, alpha, width, SCALE));
+        light(&|mesh| look.border(mesh, env.p, rect.expand(grow), ppp, t, alpha, width, SCALE));
     }
     match from {
         None => contents(env, env.painter, rect, &to, tag, alpha, &mut cache.marks),
@@ -675,29 +677,24 @@ fn contents(
         }
     }
 
-    // the team's tag over the top edge, from the name's left
-    if let Some((label, t)) = &face.staff {
+    // the staff's tag over the top edge, from the name's left
+    if let Some((label, look, t)) = &face.staff {
         let size = Vec2::new(aurora::tag_width(label.size().x, s), aurora::TAG_HEIGHT * s);
         let at = Pos2::new(origin.x + l.text_x.0 - 2.0 * s, rect.top() - aurora::TAG_RISE * s - size.y * 0.5);
         let pill = Rect::from_min_size(Pos2::new((at.x * ppp).round() / ppp, (at.y * ppp).round() / ppp), size);
         let mut mesh = Mesh::default();
         let fill = env.tint.gamma_multiply(BADGE_OPACITY);
-        aurora::tag(&mut mesh, p, pill, pill.height() * 0.5, ppp, *t, fill, alpha, 1.2 * s);
+        look.tag(&mut mesh, p, pill, pill.height() * 0.5, ppp, *t, fill, alpha, 1.2 * s);
         painter.add(Shape::mesh(mesh));
         let icon_at = Pos2::new(pill.left() + aurora::TAG_PAD * s + aurora::TAG_ICON * s * 0.5, pill.center().y);
         if let Some(icon) = env
             .icons
-            .get("sparkles-filled")
+            .get(look.icon())
             .cloned()
-            .or_else(|| crate::ui::icons::global("sparkles-filled"))
+            .or_else(|| crate::ui::icons::global(look.icon()))
         {
             let size = Vec2::splat(aurora::TAG_ICON * s);
-            painter.image(
-                icon.id(),
-                Rect::from_center_size(icon_at, size),
-                WHOLE,
-                ink(aurora::letter_color(p, 0, 2, *t)),
-            );
+            painter.image(icon.id(), Rect::from_center_size(icon_at, size), WHOLE, ink(look.icon_color(p, *t)));
         }
         let x = pill.left() + (aurora::TAG_PAD + aurora::TAG_ICON + aurora::TAG_GAP) * s;
         let mut shape = TextShape::new(Pos2::new(x, pill.center().y - label.size().y * 0.5), label.clone(), p.ink);

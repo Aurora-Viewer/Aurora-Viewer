@@ -533,7 +533,8 @@ fn paint_row(
                 let mut job = egui::text::LayoutJob::single_section(row.name.clone(), format);
                 let room = (cell.width() - 12.0).max(0.0);
                 // a member of the Aurora team's tag after the name, cut before it
-                let staff = crate::ui::staff::width(ui, p, &row.id, 13.0);
+                let mark = crate::world::staff::mark(world, &row.id);
+                let staff = crate::ui::staff::width(ui, p, mark, 13.0);
                 let staff = if staff > 0.0 && room - staff - 6.0 >= 40.0 {
                     staff + 6.0
                 } else {
@@ -547,7 +548,7 @@ fn paint_row(
                 let left = egui::pos2(cell.left() + 8.0, cell.center().y);
                 if staff > 0.0 {
                     let at = left + Vec2::new(galley.size().x + 6.0, 0.0);
-                    crate::ui::staff::paint_at(ui, ui.painter(), p, &row.id, at, 13.0);
+                    crate::ui::staff::paint_at(ui, ui.painter(), p, mark, at, 13.0);
                 }
                 if row.friend
                     && let Some(offset) = widgets::faux_bold_offset(ui)

@@ -44,7 +44,7 @@ pub fn time(now: f64, still: bool) -> f32 {
 }
 
 /// A light of `color` at `i` (0..1): mostly added to what is behind it.
-fn light(color: Color32, i: f32, cover: f32) -> Color32 {
+pub(super) fn light(color: Color32, i: f32, cover: f32) -> Color32 {
     let i = i.clamp(0.0, 1.0);
     let [r, g, b, _] = color.to_opaque().to_array();
     let k = |c: u8| (c as f32 * i).round() as u8;
@@ -200,14 +200,14 @@ impl Perimeter {
     }
 }
 
-/// The flowing border of a plate, `width` points along the inside of its
-/// edge, over a halo `scale` mockup pixels to points.
-#[allow(clippy::too_many_arguments)]
-pub fn border(mesh: &mut Mesh, p: &Palette, rect: Rect, ppp: f32, t: f32, alpha: f32, width: f32, scale: f32) {
+/// A plate's border, `width` points along the inside of its edge, in the
+/// color `edge` gives for each point around it (0..1), over a halo of the
+/// same colors `scale` mockup pixels to points.
+pub(super) fn border(mesh: &mut Mesh, rect: Rect, ppp: f32, alpha: f32, width: f32, scale: f32, edge: impl Fn(f32) -> Color32) {
     let o = Perimeter::of(rect, ppp);
     let f = 0.5 / ppp;
-    let color = |s: f32| border_color(p, s, t).gamma_multiply(alpha);
-    let halo = |s: f32| light(border_color(p, s, t), HALO_LIGHT * alpha, 0.5);
+    let color = |s: f32| edge(s).gamma_multiply(alpha);
+    let halo = |s: f32| light(edge(s), HALO_LIGHT * alpha, 0.5);
     let a = o.ring(mesh, -width - f, |_| Color32::TRANSPARENT);
     let b = o.ring(mesh, -width + f, color);
     let c = o.ring(mesh, -f, color);
@@ -220,13 +220,23 @@ pub fn border(mesh: &mut Mesh, p: &Palette, rect: Rect, ppp: f32, t: f32, alpha:
 }
 
 /// The tag at `rect`, with corners of `radius` (half its height on a
-/// plate): `fill` inside a flowing border `width` wide.
+/// plate): `fill` inside a border `width` wide, in the color `color` gives
+/// for each point around it (0..1).
 #[allow(clippy::too_many_arguments)]
-pub fn tag(mesh: &mut Mesh, p: &Palette, rect: Rect, radius: f32, ppp: f32, t: f32, fill: Color32, alpha: f32, width: f32) {
+pub(super) fn tag(
+    mesh: &mut Mesh,
+    rect: Rect,
+    radius: f32,
+    ppp: f32,
+    fill: Color32,
+    alpha: f32,
+    width: f32,
+    color: impl Fn(f32) -> Color32,
+) {
     let o = Perimeter::rounded(rect, radius, ppp);
     let f = 0.5 / ppp;
     let fill = fill.gamma_multiply(alpha);
-    let edge = |s: f32| super::mesh::over(border_color(p, s + 0.25, t).gamma_multiply(alpha), fill);
+    let edge = |s: f32| super::mesh::over(color(s).gamma_multiply(alpha), fill);
     let inner = o.ring(mesh, -width - f, |_| fill);
     o.fill(mesh, inner, fill);
     let b = o.ring(mesh, -width + f, edge);
@@ -285,9 +295,10 @@ mod tests {
         // the tops are dark, the feet lit somewhere
         assert!(mesh.vertices.iter().any(|v| v.color.g() > 40));
         let mut ring = Mesh::default();
-        border(&mut ring, &p, pill(), 1.0, 3.0, 1.0, 1.5, 0.76);
-        tag(&mut ring, &p, pill(), 25.0, 2.0, 3.0, p.navy, 0.9, 1.0);
-        tag(&mut ring, &p, pill(), 3.0, 1.5, 3.0, p.navy, 1.0, 1.0);
+        let edge = |s: f32| border_color(&p, s, 3.0);
+        border(&mut ring, pill(), 1.0, 1.0, 1.5, 0.76, edge);
+        tag(&mut ring, pill(), 25.0, 2.0, p.navy, 0.9, 1.0, edge);
+        tag(&mut ring, pill(), 3.0, 1.5, p.navy, 1.0, 1.0, edge);
         assert!(ring.is_valid());
         // the theme's small corners: every point within the rectangle's edge
         let o = Perimeter::rounded(pill(), 3.0, 1.0);
