@@ -72,10 +72,14 @@ impl App {
                         _ => {}
                     }
                 }
-                if matches!(mode, "auto-ik" | "auto-ik-moving") {
+                if matches!(mode, "auto-ik" | "auto-ik-moving" | "auto-ik-others") {
                     if self.frame_count == 600 {
                         self.settings.ground_avatar_feet = true;
                         self.settings.ground_feet_while_moving = mode == "auto-ik-moving";
+                        if mode == "auto-ik-others" {
+                            self.hover_height_ui.open = false;
+                            self.camera.demo_orbit(0.0, 0.25, Some(7.5), &self.settings.camera);
+                        }
                     }
                     match self.frame_count {
                         720 => self.settings.auto_hover_height = false,

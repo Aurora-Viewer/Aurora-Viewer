@@ -250,7 +250,15 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
     if frame == 620 {
         let objects = if matches!(
             mode,
-            "auto-rigged" | "auto-contact" | "auto-offset" | "auto-state" | "auto-pelvis" | "auto-stilt" | "auto-ik" | "auto-ik-moving"
+            "auto-rigged"
+                | "auto-contact"
+                | "auto-offset"
+                | "auto-state"
+                | "auto-pelvis"
+                | "auto-stilt"
+                | "auto-ik"
+                | "auto-ik-moving"
+                | "auto-ik-others"
         ) {
             if let Err(error) = install_mesh(&world.avatar_lib, scene) {
                 log::warn!("demo auto hover: {error}");
@@ -261,6 +269,26 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
             rigid_objects()
         };
         world.apply(NetEvent::ObjectUpdates { handle: HANDLE, objects });
+        if mode == "auto-ik-others" {
+            let mut resident = super::action_avatar(false);
+            resident.local_id = 9001;
+            resident.full_id = super::DEMO_LOUP;
+            resident.name_values.clear();
+            let position = world.agent.position + Vec3::Y * 1.2;
+            let height = scene.automatic_hover_box_height(world).unwrap_or(1.9);
+            resident.position = position.with_z(super::floor_at(position.x, position.y) + height * 0.5);
+            resident.rotation = Quat::IDENTITY;
+            resident.velocity = Vec3::ZERO;
+            resident.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, super::floor_at(position.x, position.y) + 0.05));
+            let mut shoes = rigged_object();
+            shoes.local_id = LEFT + 20;
+            shoes.full_id = u(u128::from(LEFT + 20));
+            shoes.parent_id = resident.local_id;
+            world.apply(NetEvent::ObjectUpdates {
+                handle: HANDLE,
+                objects: vec![resident, shoes],
+            });
+        }
         if matches!(mode, "auto-pelvis" | "auto-stilt") {
             hold_pelvis(world, scene);
         }

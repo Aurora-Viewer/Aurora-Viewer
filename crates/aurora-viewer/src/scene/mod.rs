@@ -721,6 +721,7 @@ pub struct AvatarSample {
 
 pub struct Scene {
     auto_hover: auto_hover::AutoHover,
+    remote_soles: auto_hover::RemoteSoles,
     sculpt_watch: Option<sculpt_watch::SculptWatch>,
     /// Optional local-only diagnostic toggle, exposed in Hover Height by
     /// AURORA_TEST_NEUTRAL_POSE, initially off. Keep evaluating the real motion controller
@@ -1504,6 +1505,7 @@ impl Scene {
             pose_owners: Vec::new(),
             skin_binds: Default::default(),
             auto_hover: Default::default(),
+            remote_soles: Default::default(),
             neutral_pose_test: (std::env::var("AURORA_TEST_NEUTRAL_POSE").as_deref() == Ok("1")).then_some(false),
         }
     }
@@ -1987,6 +1989,7 @@ impl Scene {
 
     /// Release everything (logout / teleport cleanup).
     pub fn clear(&mut self, renderer: &mut Renderer) {
+        self.remote_soles = Default::default();
         self.flexibles.clear();
         let mut gpus = std::mem::take(&mut self.gpu);
         for (idx, g) in gpus.iter_mut().enumerate() {

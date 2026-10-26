@@ -1123,7 +1123,14 @@ its planted ankle so that the knee hinge cannot turn backward.
 
 Four shaped sole probes use the existing neutral shoe calibration.
 The local avatar's sole geometry is measured whenever automatic height or
-Aurora foot placement needs it. With automatic height disabled, calibration
+Aurora foot placement needs it. Each other posed avatar has its own neutral
+shoe measurement, outfit signature and result channel in `RemoteSoles`.
+Remote inspections rotate through at most four avatars per frame, no more
+than once per 200 ms per avatar; decoding and vertex work stay on the job
+pool. Departed/unposed avatars, disabled placement and scene cleanup retire
+their caches. Animesh is excluded. Remote measurements never change hover
+settings and do not depend on our account's automatic-height capability.
+With automatic height disabled, calibration
 updates only the cached sole reference; it never previews or commits hover
 height. Toggling automatic height preserves that reference while foot
 placement remains enabled, so manual height and movement scope cannot make
