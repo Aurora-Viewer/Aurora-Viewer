@@ -53,6 +53,8 @@ pub enum BarAction {
     SetHome,
     ToggleFly,
     ToggleMoveLock,
+    /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
+    ToggleQuickjump,
     ToggleWaterWalk,
     ToggleSwimming,
     MoveLockOptions,
@@ -178,6 +180,8 @@ pub struct StatusInfo<'a> {
     pub local_env: bool,
     /// What a double click on the ground does (Me › Double-click on the ground).
     pub double_click: crate::autopilot::DoubleClick,
+    /// Quickjump is on (Me › Quickjump).
+    pub quickjump: bool,
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
@@ -625,7 +629,10 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             *action = BarAction::MoveLockOptions;
         }
         // menu_viewer.xml: Avatar › Movement › Quickjump, after Movelock
-        menu::todo(ui, p, "arrow-big-up-lines-filled", aurora_i18n::tr!("ui-bars-quickjump"));
+        let quickjump = aurora_i18n::tr!("ui-bars-quickjump");
+        if menu::check(ui, p, "arrow-big-up-lines-filled", quickjump, st.quickjump, true) {
+            *action = BarAction::ToggleQuickjump;
+        }
         if menu::item(ui, p, "swimming", aurora_i18n::tr!("movement-title")) {
             *action = BarAction::MovementEnhancer;
         }
