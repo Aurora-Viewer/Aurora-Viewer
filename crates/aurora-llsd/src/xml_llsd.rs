@@ -202,6 +202,60 @@ pub fn to_xml(v: &Llsd) -> Vec<u8> {
     to_xml_string(v).into_bytes()
 }
 
+/// The indented form people read and keep in files: one element per line,
+/// four spaces per level below `<llsd>`. Port of LLSDXMLFormatter::format
+/// with OPTIONS_PRETTY (indra/llcommon/llsdserialize_xml.cpp, originally
+/// LGPL 2.1), byte for byte, so that files written here and by the Legacy
+/// Viewer look the same.
+pub fn to_pretty_xml_string(v: &Llsd) -> String {
+    let mut s = String::from("<?xml version=\"1.0\" ?>\n<llsd>\n");
+    write_pretty(v, 1, &mut s);
+    s.push_str("</llsd>\n");
+    s
+}
+
+fn write_pretty(v: &Llsd, level: usize, out: &mut String) {
+    let pre = "    ".repeat(level);
+    match v {
+        Llsd::Map(m) if !m.is_empty() => {
+            out.push_str(&pre);
+            out.push_str("<map>\n");
+            for (k, e) in m {
+                out.push_str(&pre);
+                out.push_str("<key>");
+                xml::escape(k, out);
+                out.push_str("</key>\n");
+                write_pretty(e, level + 1, out);
+            }
+            out.push_str(&pre);
+            out.push_str("</map>\n");
+        }
+        Llsd::Array(a) if !a.is_empty() => {
+            out.push_str(&pre);
+            out.push_str("<array>\n");
+            for e in a {
+                write_pretty(e, level + 1, out);
+            }
+            out.push_str(&pre);
+            out.push_str("</array>\n");
+        }
+        // LL writes these empty values as empty elements
+        Llsd::String(s) if s.is_empty() => {
+            out.push_str(&pre);
+            out.push_str("<string />\n");
+        }
+        Llsd::Uuid(u) if u.is_nil() => {
+            out.push_str(&pre);
+            out.push_str("<uuid />\n");
+        }
+        _ => {
+            out.push_str(&pre);
+            write_value(v, out);
+            out.push('\n');
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,6 +271,16 @@ mod tests {
         let xml = to_xml(&v);
         let back = from_xml(&xml).unwrap();
         assert_eq!(v, back);
+    }
+
+    #[test]
+    fn pretty_matches_ll_and_reads_back() {
+        let mut v = llsd_map! { "version" => 1, "name" => "" };
+        v.insert("list", Llsd::Array(vec![Llsd::from("a&b"), Llsd::new_map()]));
+        let xml = to_pretty_xml_string(&v);
+        let expected = "<?xml version=\"1.0\" ?>\n<llsd>\n    <map>\n    <key>list</key>\n        <array>\n            <string>a&amp;b</string>\n            <map />\n        </array>\n    <key>name</key>\n        <string />\n    <key>version</key>\n        <integer>1</integer>\n    </map>\n</llsd>\n";
+        assert_eq!(xml, expected);
+        assert_eq!(from_xml(xml.as_bytes()).unwrap(), v);
     }
 
     #[test]

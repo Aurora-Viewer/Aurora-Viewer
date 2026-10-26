@@ -5031,6 +5031,15 @@ ui-bars-edit-particles = Edit particles
 ui-bars-media-streams-backup = Media streams backup
 ui-bars-import-stream-list = Import the stream list…
 ui-bars-export-stream-list = Export the stream list…
+stream-list-file-type = Stream list
+stream-list-exported = Stream list exported to { $file }.
+stream-list-imported = { $count ->
+    [0] Stream list imported: it is empty.
+    [one] Stream list imported: { $count } stream.
+   *[other] Stream list imported: { $count } streams.
+    }
+stream-list-not-a-list = This file is not a stream list: the saved streams are unchanged.
+stream-list-failed = The stream list file could not be written or read.
 ui-bars-market-data = L$ market data
 ui-bars-script-library = Script library
 ui-bars-message-of-the-day = Message of the day

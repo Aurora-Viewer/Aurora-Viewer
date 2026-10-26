@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub mod backup;
 mod hover_height;
+pub mod stream_list;
 
 /// How the Conversations window looks (Preferences › Aurora): Aurora's
 /// workspace (the default: a column of conversations, messages grouped by
