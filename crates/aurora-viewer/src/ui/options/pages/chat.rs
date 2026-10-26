@@ -44,7 +44,8 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(chat_keep_focus),
                 );
                 // #980: FSChatbarGestureAutoCompleteEnable (on),
-                // FSChatbarNamePrediction (off), FSUseChatMentionAutoComplete
+                // FSChatbarNamePrediction (on, the human's choice; off in the Legacy
+                // Viewer), FSUseChatMentionAutoComplete
                 // (on, every chat field)
                 cx.toggle(
                     tr!("ui-options-gesture-autocomplete"),

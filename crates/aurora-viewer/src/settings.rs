@@ -608,7 +608,8 @@ pub struct Settings {
     /// the list of the matching ones (FSChatbarGestureAutoCompleteEnable, on).
     pub chat_gesture_autocomplete: bool,
     /// The nearby chat fields complete the name of a resident around after
-    /// three letters (FSChatbarNamePrediction, off as in the Legacy Viewer).
+    /// three letters (FSChatbarNamePrediction; on, the human's choice of
+    /// 2026-10-26, where the Legacy Viewer leaves it off).
     pub chat_name_prediction: bool,
     /// `@` in a chat field lists the residents of the conversation to mention
     /// (FSUseChatMentionAutoComplete, on).
@@ -1534,7 +1535,7 @@ impl Default for Settings {
             compact_im_system_lines: false,
             chat_keep_focus: true,
             chat_gesture_autocomplete: true,
-            chat_name_prediction: false,
+            chat_name_prediction: true,
             chat_mention_autocomplete: true,
             show_contacts_tab: true,
             conversations_own_windows: false,

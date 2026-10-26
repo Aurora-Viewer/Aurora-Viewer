@@ -16,7 +16,8 @@
 //!   that the gestures can be found: the arrows write the chosen trigger in
 //!   the field (Enter sends it, as the inline completion), Tab keeps it,
 //!   Escape closes the list.
-//! - With the option (off, FSChatbarNamePrediction), the nearby chat
+//! - With the option (FSChatbarNamePrediction; on, the human's choice of
+//!   2026-10-26, where the Legacy Viewer leaves it off), the nearby chat
 //!   completes the user name of a resident around after three letters
 //!   (FSNearbyChat::handleChatBarKeystroke, FIRE-3192,
 //!   indra/newview/fsnearbychathub.cpp, originally LGPL 2.1).
@@ -57,7 +58,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             gestures: true,
-            names: false,
+            names: true,
             mentions: true,
         }
     }

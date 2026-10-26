@@ -296,12 +296,13 @@ fn tab_keeps_the_gesture_and_closes_the_list() {
 }
 
 #[test]
-fn names_around_are_predicted_only_with_the_option() {
+fn names_around_are_predicted_unless_the_option_is_off() {
     let mut f = Fixture::new();
+    f.chat.suggest.options.names = false;
     f.type_text("hi jan");
     assert_eq!(f.chat.input, "hi jan");
+    // on by default
     let mut f = Fixture::new();
-    f.chat.suggest.options.names = true;
     f.type_text("hi jan");
     assert_eq!(f.chat.input, "hi jane ");
     // the next letter replaces the prediction
