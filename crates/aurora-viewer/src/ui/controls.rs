@@ -319,27 +319,9 @@ impl ControlsUi {
                 out.actions.push(ControlAction::ResetCamera);
             }
         });
+        // no list of the Alt-camera's keys below: they move the camera
+        // without this window (#1035), and floater_camera.xml has none
         self.shots(ui, p, view, out, &grid);
-        // the alt-camera (LLToolCamera): Alt, Ctrl+Alt, Ctrl+Alt+Shift with a drag
-        let alt = |ctrl: bool, shift: bool| Binding {
-            input: crate::keybinds::Input::key(winit::keyboard::KeyCode::AltLeft),
-            ctrl,
-            shift,
-            alt: false,
-        };
-        caps_rows(
-            ui,
-            p,
-            &[
-                (vec![alt(false, false)], aurora_i18n::tr!("controls-drag-zoom")),
-                (vec![alt(true, false)], aurora_i18n::tr!("controls-drag-orbit")),
-                (vec![alt(true, true)], aurora_i18n::tr!("controls-drag-pan")),
-                (
-                    pad_binding(view.keys, Action::ResetCamera).into_iter().collect(),
-                    aurora_i18n::tr!("keybinds-return-to-avatar"),
-                ),
-            ],
-        );
     }
 
     /// The saved camera positions (Firestorm's camera presets): a field as

@@ -660,14 +660,16 @@ impl<'a> Floater<'a> {
                         if title_button(ui, p, "x").on_hover_text(aurora_i18n::tr!("common-close")).clicked() {
                             close = true;
                         }
-                        if title_button(ui, p, "minus")
-                            .on_hover_text(if minimized {
-                                aurora_i18n::tr!("common-expand")
-                            } else {
-                                aurora_i18n::tr!("common-collapse")
-                            })
-                            .clicked()
-                        {
+                        // a window with a compact body when minimized says
+                        // so with the Performance window's compact / full
+                        // icons rather than a collapse (#1035)
+                        let (icon, tip) = match (self.compact_minimized.is_some(), minimized) {
+                            (true, true) => ("arrows-maximize", aurora_i18n::tr!("common-full-view")),
+                            (true, false) => ("arrows-minimize", aurora_i18n::tr!("common-compact-view")),
+                            (false, true) => ("minus", aurora_i18n::tr!("common-expand")),
+                            (false, false) => ("minus", aurora_i18n::tr!("common-collapse")),
+                        };
+                        if title_button(ui, p, icon).on_hover_text(tip).clicked() {
                             toggle_min = true;
                         }
                         for (icon, tip, clicked) in &mut self.actions {

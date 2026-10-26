@@ -374,9 +374,9 @@ MSAA and SMAA).
 
 `AURORA_DEMO_CONTROLS` opens the Controls window at frame 600: `camera` on
 its Camera tab (joysticks, zoom, the four views, object view, mouselook,
-reset, saved positions, the alt-camera keys), `movement` on its Movement tab
+reset, saved positions), `movement` on its Movement tab
 (the eight buttons with the keys of the keyboard's layout, walk / run / fly),
-`compact` the window minimized (its joysticks and zoom only),
+`compact` the window in its compact view (its joysticks and zoom only),
 `classic` Firestorm's camera and movement windows (Preferences › Aurora,
 not saved). `free` opens the photo window with its "Free camera" switch on:
 the Controls window opens by itself on its camera tab, which drives the free
