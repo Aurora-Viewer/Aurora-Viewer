@@ -614,8 +614,16 @@ when unfocused") is ignored during a screenshot.
   release must not reset that transition. Automated cases exercise 30/60/144
   FPS, live animation, final contact, and the real budget/camera/calibration
   path. For a native sequence, use `auto-ik-budget` with 60 crowd avatars and
-  capture 1100/1124/1132/1144/1160 without the options panel; twelve residents
+  capture 1100/1124/1132/1144/1160/1200 without the options panel; twelve residents
   become eligible at 1100 and acquire their correction after calibration.
+  Acquisition validation (source `f36039b8`): full workspace check passes
+  5,544 tests, zero failures, 30 ignored; scripts, formatting and Clippy clean.
+  Default dev build `0.7.8-beta.20261026.1+43.gf36039b8d` succeeds. The native
+  60-resident sequence exits zero; all six captures were inspected, and logs
+  confirm 5/0/12 remote calibrations and 6/1/13 support frames without runtime
+  errors or panics. This fixture shows the demo crowd geometry; continuity,
+  segment lengths and rendered sole contact are measured by the automated
+  cases. Real outfits and perceived smoothness still require the human grid test.
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
