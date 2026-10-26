@@ -710,11 +710,11 @@ impl Scene {
                     let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
                     // LLToolPie::handleMouseDown prioritizes transparent
                     // attachments. HUD buttons own the whole Blend triangle,
-                    // and a fully invisible face is a button whatever its
+                    // and a face that draws nothing is a button whatever its
                     // material mode: hit zones are often alpha-0 prims with a
-                    // Mask or Opaque material, and have no draw record.
-                    // Visible Mask faces keep their cutouts and move gestures
-                    // keep holes.
+                    // Mask or Opaque material (no draw record), or faces with
+                    // the library's transparent texture. Visible Mask faces
+                    // keep their cutouts and move gestures keep holes.
                     if g.hud && mode == FacePick::Surface && (tf.color[3] < 0.004 || self.blend_face(world, o, g, hit.face)) {
                         return Some(hit);
                     }
@@ -724,7 +724,7 @@ impl Scene {
                         .and_then(Option::as_ref)
                         .and_then(|a| g.faces.iter().find(|f| f.cmd.first_index == a.index_offset))?;
                     if g.hud && (draw.pass == Pass::Hidden || draw.te_alpha < 0.004) {
-                        return None;
+                        return (mode == FacePick::Surface).then_some(hit);
                     }
                     let ignore_alpha = draw.pbr_alpha == Some(0)
                         || matches!(
@@ -2184,9 +2184,24 @@ pub(super) mod tests {
         scene.debug_alpha = None;
         scene.build_huds(&world, [1280, 720], true);
         assert!(scene.lists.hud_debug_blue.is_empty());
+        // Faces that draw nothing still take ordinary clicks: a zero alpha,
+        // or the library's transparent texture behind a Mask-classed slot.
         scene.gpu[front].faces[0].te_alpha = 0.0;
         scene.textures.pick_masks.remove(&texture);
-        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+        scene.gpu[front].faces[0].te_alpha = 1.0;
+        scene.gpu[front].faces[0].pbr_alpha = None;
+        scene.gpu[front].faces[0].pass = Pass::Hidden;
+        scene.textures.alpha_by_slot[0] = AlphaKind::Mask;
+        scene
+            .textures
+            .pick_masks
+            .insert(texture, super::super::textures::PickMask::from_rgba(2, 2, &[0; 16]).unwrap());
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        assert_eq!(scene.hover_hud(&world, cursor), Some(front));
+        assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
+        scene.textures.pick_masks.remove(&texture);
 
         // A Blend material can be drawn in the opaque pool when its texture
         // is opaque. The material mode still determines button interaction.
