@@ -702,12 +702,15 @@ impl ObjectStore {
             return;
         };
         let clock = self.report_clock(region, received);
+        let hud = self.worn_on_hud(idx);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        let drawn = o.predicted(now, clock);
+        // A HUD shows a report at once: pages on the faces of a turning
+        // cube flip instantly in the Legacy Viewer, with no fade.
+        let drawn = (!hud).then(|| o.predicted(now, clock));
         o.apply_terse(t);
-        if o.stamp_motion(clock, now, Some(drawn)) && !self.correcting.contains(&idx) {
+        if o.stamp_motion(clock, now, drawn) && !self.correcting.contains(&idx) {
             self.correcting.push(idx);
         }
     }
@@ -717,10 +720,11 @@ impl ObjectStore {
     fn apply_full(&mut self, idx: usize, region: RegionHandle, u: ObjectUpdate, moved_frame: bool, received: Option<Instant>) {
         let now = received.unwrap_or_else(Instant::now);
         let clock = self.report_clock(region, received);
+        let hud = self.worn_on_hud(idx);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
-        let drawn = (!moved_frame).then(|| o.predicted(now, clock));
+        let drawn = (!moved_frame && !hud).then(|| o.predicted(now, clock));
         o.apply_full(u);
         o.parent_region = region;
         if o.stamp_motion(clock, now, drawn) && !self.correcting.contains(&idx) {
@@ -1286,6 +1290,24 @@ impl ObjectStore {
     pub fn parent_of(&self, o: &Object) -> Option<usize> {
         self.index_of(&o.parent_key()?)
     }
+
+    /// A prim of a linkset worn on a HUD point (31–38). The simulator only
+    /// sends the HUDs of our own avatar.
+    fn worn_on_hud(&self, mut idx: usize) -> bool {
+        for _ in 0..16 {
+            let Some(o) = self.get(idx) else {
+                return false;
+            };
+            let Some(parent) = self.parent_of(o) else {
+                return false;
+            };
+            if self.get(parent).is_some_and(Object::is_avatar) {
+                return (31..=38).contains(&o.attachment_point());
+            }
+            idx = parent;
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -1719,6 +1741,47 @@ mod tests {
         // a move of more than 10 m is a move, not a correction
         s.apply_terse(seat, &terse(5, Vec3::X * 40.0, Vec3::ZERO));
         assert!(!s.get(seat).expect("seat").has_motion());
+    }
+
+    #[test]
+    fn a_hud_page_turns_at_once_while_a_worn_object_fades() {
+        let mut s = ObjectStore::default();
+        s.upsert(1, update(10, AVATAR, ""));
+        let now = Instant::now();
+        let quarter = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        for (point, root_id, fades) in [(31u8, 20, false), (2u8, 40, true)] {
+            let mut root = update(root_id, PRIM, "");
+            root.parent_id = 10;
+            root.state = point.rotate_left(4);
+            s.upsert(1, root);
+            let mut cube = update(root_id + 1, PRIM, "");
+            cube.parent_id = root_id;
+            let cube_idx = s.upsert(1, cube.clone());
+            // the page cube turns a quarter (llSetLinkPrimitiveParamsFast)
+            cube.rotation = quarter;
+            s.upsert(1, cube);
+            let o = s.get(cube_idx).expect("cube");
+            let drawn = s.predicted(o, now).1;
+            assert_eq!(o.correction.is_some(), fades, "point {point}");
+            assert_eq!(drawn.abs_diff_eq(quarter, 1e-4), !fades, "point {point}: {drawn:?}");
+            // the HUD root itself turns at once too
+            let root_idx = s
+                .index_of(&ObjKey {
+                    region: 1,
+                    local_id: root_id,
+                })
+                .expect("root");
+            s.apply_terse(
+                root_idx,
+                &TerseUpdate {
+                    rotation: quarter,
+                    is_avatar: false,
+                    ..terse(root_id, Vec3::ZERO, Vec3::ZERO)
+                },
+            );
+            let root = s.get(root_idx).expect("root");
+            assert_eq!(root.correction.is_some(), fades, "root at point {point}");
+        }
     }
 
     /// A report describes the object when the datagram was read: the wait
