@@ -504,7 +504,7 @@ impl App {
                     .filter_map(|&i| self.world.objects.get(i).map(|o| o.update_flags))
                     .collect();
                 match ui::context::delete_warning(&prim_flags) {
-                    Some(text) => self.delete_confirm = Some((id, text)),
+                    Some(text) => self.delete_confirm = Some((vec![id], text)),
                     None => self.on_ctx_action(CtxAction::DeleteConfirmed(id)),
                 }
             }

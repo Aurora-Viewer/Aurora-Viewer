@@ -174,7 +174,9 @@ Escape, Stop or closing the controller. A recovered pilot requires at least
 one metre of actual travel before another automatic recovery can be requested.
 
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
-window and cache its filtered, sorted, virtualized object rows. `app/area_search.rs`
+window and cache its filtered, sorted, virtualized object rows;
+`ui/area_search/selection.rs` keeps its multiple row selection, which the
+right-click menu acts on through the object menus' actions. `app/area_search.rs`
 prepares live rezzed-object snapshots in parallel, resolves distinct owners,
 creators and groups, and reads full metadata using bounded select/deselect
 packets while preserving Build and Inspect selections. Metadata has a separate

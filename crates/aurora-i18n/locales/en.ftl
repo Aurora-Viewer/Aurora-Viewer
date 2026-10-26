@@ -157,6 +157,9 @@ area-search-copy = Copy UUID
 area-search-neighbors = Include neighboring regions
 area-search-demo-description = Offline object for testing search and filters
 area-search-empty = No objects match these filters.
+area-search-sit = Sit
+area-search-filter-mine = Filter my objects
+area-search-clear-selection = Clear selection
 
 toolbar-command-debug-settings = Debug settings
 toolbar-command-statistics = Statistics

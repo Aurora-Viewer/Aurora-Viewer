@@ -13,15 +13,32 @@ impl App {
     /// "Inspect" of a right-click menu on object `id`: its whole
     /// linkset, as the menu's selection in Firestorm.
     pub(super) fn inspect_object(&mut self, id: Uuid) {
-        let Some(idx) = self.world.objects.index_of_uuid(&id) else {
+        self.inspect_objects(&[id]);
+    }
+
+    /// "Inspect" of the Area Search menu: the linksets of every selected
+    /// row, each once (selectObjectAndFamily, then Floater "inspect").
+    pub(super) fn inspect_objects(&mut self, ids: &[Uuid]) {
+        let mut roots = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            if let Some(root) = self
+                .world
+                .objects
+                .index_of_uuid(id)
+                .map(|idx| crate::build::root_of(&self.world, idx))
+                .and_then(|root| self.world.objects.get(root))
+                .map(|o| o.full_id)
+                && seen.insert(root)
+            {
+                roots.push(root);
+            }
+        }
+        if roots.is_empty() {
             return;
-        };
-        let root = crate::build::root_of(&self.world, idx);
-        let Some(root_id) = self.world.objects.get(root).map(|o| o.full_id) else {
-            return;
-        };
+        }
         self.inspect_wire(false);
-        self.inspect_ui.inspect(vec![root_id]);
+        self.inspect_ui.inspect(roots);
         // names, owners and dates come with the selection of each prim
         self.inspect_wire(true);
     }

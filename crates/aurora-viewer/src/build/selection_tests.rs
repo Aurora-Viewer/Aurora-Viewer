@@ -547,3 +547,38 @@ fn primitive_placement_and_deletion_round_trip_through_the_demo_simulator() {
     }
     assert!(world.objects.index_of(&key).is_none());
 }
+
+#[test]
+fn select_many_takes_each_linkset_once_in_one_message_and_leaves_attachments_out() {
+    let (mut world, mut tool, settings) = seated_fixture(false);
+    let root = world.objects.iter().find(|(_, o)| o.key.local_id == 950).unwrap().0;
+    let child = world.objects.index_of_uuid(&Uuid::from_u128(951)).unwrap();
+    let other = object(&world, 99614);
+    let attachment = world
+        .objects
+        .iter()
+        .find(|(i, _)| select_type(&world, *i) == SelectType::Attachment)
+        .unwrap()
+        .0;
+    tool.click_select(&mut world, &settings, Some(other), false);
+    tool.out.clear();
+    tool.select_many(&mut world, &settings, &[child, other, root, attachment]);
+    let keys = |idxs: &[usize]| idxs.iter().map(|&i| world.objects.get(i).unwrap().key).collect::<Vec<_>>();
+    assert_eq!(
+        tool.selection,
+        keys(&[root, other]),
+        "the first row is primary, a linkset counts once"
+    );
+    let selects: Vec<_> = tool
+        .out
+        .iter()
+        .filter_map(|c| match c {
+            NetCommand::Build(BuildCmd::Select { local_ids, .. }) => Some(local_ids.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(selects.len(), 1, "one ObjectSelect for the region: {selects:?}");
+    let mut sent = selects[0].clone();
+    sent.sort_unstable();
+    assert_eq!(sent, [950, 951, 99614]);
+}

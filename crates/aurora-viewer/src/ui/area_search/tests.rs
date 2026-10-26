@@ -14,6 +14,7 @@ struct Harness {
     ui: AreaSearchUi,
     time: f64,
     size: Vec2,
+    draw_distance: f32,
 }
 impl Harness {
     fn frame(&mut self, events: Vec<egui::Event>) -> (egui::FullOutput, Option<Action>) {
@@ -27,7 +28,7 @@ impl Harness {
                 ..Default::default()
             },
             |_| {
-                action = self.ui.show(&self.ctx, &self.p, &mut true, true);
+                action = self.ui.show(&self.ctx, &self.p, &mut true, true, self.draw_distance);
             },
         );
         (crate::ui::login::test_output(output), action)
@@ -44,19 +45,30 @@ impl Harness {
         self.click_at(pos)
     }
     fn click_at(&mut self, pos: egui::Pos2) -> (egui::FullOutput, Option<Action>) {
+        self.press(pos, egui::PointerButton::Primary, Default::default())
+    }
+    fn press(&mut self, pos: egui::Pos2, button: egui::PointerButton, modifiers: egui::Modifiers) -> (egui::FullOutput, Option<Action>) {
         let mut result = None;
         for pressed in [true, false] {
             result = Some(self.frame(vec![
+                egui::Event::ModifiersChanged(modifiers),
                 egui::Event::PointerMoved(pos),
                 egui::Event::PointerButton {
                     pos,
-                    button: egui::PointerButton::Primary,
+                    button,
                     pressed,
-                    modifiers: Default::default(),
+                    modifiers,
                 },
             ]));
         }
+        self.frame(vec![egui::Event::ModifiersChanged(Default::default())]);
         result.unwrap()
+    }
+    /// A right click on the row of `label`, then a click on the menu's `entry`.
+    fn menu(&mut self, label: &str, entry: &str) -> Option<Action> {
+        let pos = self.find(label).center();
+        self.press(pos, egui::PointerButton::Secondary, Default::default());
+        self.click(entry).1
     }
     fn new(scale: f32, size: Vec2, count: usize) -> Self {
         let ctx = egui::Context::default();
@@ -82,6 +94,7 @@ impl Harness {
             ui,
             time: 0.0,
             size,
+            draw_distance: 64.0,
         };
         for _ in 0..6 {
             h.frame(Vec::new());
@@ -94,8 +107,8 @@ impl Harness {
 fn area_search_native_rows_select_and_dispatch_inspect_zoom_and_copy() {
     let mut h = Harness::new(1.0, Vec2::new(1280.0, 800.0), 2000);
     h.click("Object 1");
-    assert_eq!(h.ui.selected, Some(Uuid::from_u128(1)));
-    assert!(matches!(h.click(aurora_i18n::tr!("area-search-inspect")).1, Some(Action::Inspect(id)) if id == Uuid::from_u128(1)));
+    assert_eq!(h.ui.selection.single(), Some(Uuid::from_u128(1)));
+    assert!(matches!(h.click(aurora_i18n::tr!("area-search-inspect")).1, Some(Action::Inspect(ids)) if ids == [Uuid::from_u128(1)]));
     assert!(matches!(h.click(aurora_i18n::tr!("area-search-zoom")).1, Some(Action::Zoom(id)) if id == Uuid::from_u128(1)));
     let (out, _) = h.click(aurora_i18n::tr!("area-search-copy"));
     assert!(
@@ -106,7 +119,7 @@ fn area_search_native_rows_select_and_dispatch_inspect_zoom_and_copy() {
     );
     h.ui.table.filters.query = "does not match".into();
     h.frame(Vec::new());
-    assert!(h.ui.selected.is_none(), "a filtered-out selection cannot trigger an action");
+    assert!(h.ui.selection.is_empty(), "a filtered-out selection cannot trigger an action");
     h.click(aurora_i18n::tr!("area-search-refresh"));
     assert!(h.ui.refresh);
     assert_eq!(h.ui.table.filters.query, "does not match");
@@ -120,6 +133,115 @@ fn area_search_native_rows_select_and_dispatch_inspect_zoom_and_copy() {
     h.frame(Vec::new());
     h.frame(Vec::new());
     assert!(h.ctx.read_response(query_id.with("clear")).is_none());
+}
+
+#[test]
+fn area_search_menu_acts_on_the_selected_rows_like_the_legacy_viewer() {
+    let id = |n| Uuid::from_u128(n);
+    let mut h = Harness::new(1.0, Vec2::new(1280.0, 800.0), 40);
+    h.click("Object 1");
+    let third = h.find("Object 3").center();
+    h.press(third, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
+    assert_eq!(h.ui.selection.ids, [id(1), id(3)]);
+    let fifth = h.find("Object 5").center();
+    h.press(fifth, egui::PointerButton::Primary, egui::Modifiers::SHIFT);
+    assert_eq!(h.ui.selection.ids, [id(3), id(4), id(5)], "Shift selects from the last clicked row");
+    h.press(fifth, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
+    h.press(third, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
+    h.click("Object 1");
+    h.press(third, egui::PointerButton::Primary, egui::Modifiers::COMMAND);
+
+    // several rows: every one, and the single-object entries greyed
+    let edit = h.menu("Object 3", aurora_i18n::tr!("common-edit"));
+    assert!(
+        matches!(edit, Some(Action::Edit(ids)) if ids == [id(1), id(3)]),
+        "a right click in the selection keeps it"
+    );
+    assert!(h.ui.menu_at.is_none(), "the menu closes on its entry");
+    for (entry, check) in [
+        (
+            aurora_i18n::tr!("ui-context-touch"),
+            (|a: &Action| matches!(a, Action::Touch(ids) if ids.len() == 2)) as fn(&Action) -> bool,
+        ),
+        (
+            aurora_i18n::tr!("common-delete"),
+            |a| matches!(a, Action::Delete(ids) if ids.len() == 2),
+        ),
+        (
+            aurora_i18n::tr!("ui-context-return"),
+            |a| matches!(a, Action::Return(ids) if ids.len() == 2),
+        ),
+        (
+            aurora_i18n::tr!("ui-context-derender-blacklist"),
+            |a| matches!(a, Action::Blacklist(ids) if ids.len() == 2),
+        ),
+        (
+            aurora_i18n::tr!("ui-context-script-information"),
+            |a| matches!(a, Action::ScriptInfo(ids) if ids.len() == 2),
+        ),
+        (aurora_i18n::tr!("area-search-filter-mine"), |a| matches!(a, Action::FilterMine)),
+    ] {
+        let action = h.menu("Object 1", entry);
+        assert!(action.as_ref().is_some_and(check), "{entry}");
+    }
+    for entry in [aurora_i18n::tr!("area-search-sit"), aurora_i18n::tr!("common-teleport-to")] {
+        assert!(h.menu("Object 1", entry).is_none(), "{entry} needs one row");
+        egui::Popup::close_all(&h.ctx);
+        h.frame(Vec::new());
+    }
+
+    assert!(h.menu("Object 5", aurora_i18n::tr!("common-teleport-to")).is_none());
+    assert_eq!(h.ui.selection.ids, [id(1), id(3)], "a right click keeps several selected rows");
+    egui::Popup::close_all(&h.ctx);
+    h.frame(Vec::new());
+
+    // one selected row: a right click on another selects it instead
+    h.click("Object 2");
+    let teleport = h.menu("Object 5", aurora_i18n::tr!("common-teleport-to"));
+    assert!(matches!(teleport, Some(Action::Teleport(i)) if i == id(5)));
+    assert_eq!(h.ui.selection.ids, [id(5)]);
+    assert!(matches!(h.menu("Object 5", aurora_i18n::tr!("area-search-sit")), Some(Action::Sit(i)) if i == id(5)));
+    assert!(h.menu("Object 5", aurora_i18n::tr!("common-buy-object")).is_none(), "not for sale");
+    egui::Popup::close_all(&h.ctx);
+    h.ui.table.rows[4].price = Some(10);
+    h.ui.table.dirty = true;
+    assert!(matches!(h.menu("Object 5", aurora_i18n::tr!("common-buy-object")), Some(Action::Buy(i)) if i == id(5)));
+
+    assert!(h.menu("Object 2", aurora_i18n::tr!("common-select-all")).is_none());
+    assert_eq!(h.ui.selection.ids.len(), 40);
+    assert!(h.menu("Object 2", aurora_i18n::tr!("area-search-clear-selection")).is_none());
+    assert!(h.ui.selection.is_empty());
+}
+
+#[test]
+fn area_search_menu_zoom_needs_the_object_within_draw_distance() {
+    let mut h = Harness::new(1.0, Vec2::new(1280.0, 800.0), 40);
+    let pos = h.find("Object 5").center();
+    // the menu's Zoom, below its Teleport entry, does nothing past the draw distance
+    let menu_zoom = |h: &mut Harness| {
+        h.press(pos, egui::PointerButton::Secondary, Default::default());
+        let (out, _) = h.frame(Vec::new());
+        let teleport = out
+            .shapes
+            .iter()
+            .find_map(|s| text_rect(&s.shape, aurora_i18n::tr!("common-teleport-to")))
+            .expect("menu shown");
+        let zoom = out
+            .shapes
+            .iter()
+            .filter_map(|s| text_rect(&s.shape, aurora_i18n::tr!("common-zoom-2")))
+            .filter(|r| r.top() > teleport.top())
+            .min_by(|a, b| a.top().total_cmp(&b.top()))
+            .expect("menu Zoom entry");
+        let action = h.click_at(zoom.center()).1;
+        egui::Popup::close_all(&h.ctx);
+        h.frame(Vec::new());
+        action
+    };
+    h.draw_distance = 4.0;
+    assert!(menu_zoom(&mut h).is_none());
+    h.draw_distance = 64.0;
+    assert!(matches!(menu_zoom(&mut h), Some(Action::Zoom(id)) if id == Uuid::from_u128(5)));
 }
 
 #[test]

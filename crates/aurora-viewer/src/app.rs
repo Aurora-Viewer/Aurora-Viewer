@@ -443,7 +443,9 @@ pub struct App {
     mic_was: bool,
     context_menu_was: bool,
     /// "Delete" waiting for a yes: (object, why it asks).
-    delete_confirm: Option<(uuid::Uuid, String)>,
+    /// The objects to delete once confirmed: one from a world menu, the
+    /// selected rows of the Area Search menu.
+    delete_confirm: Option<(Vec<uuid::Uuid>, String)>,
     /// "Freeze" / "Eject" waiting for an answer (app/land_moderation.rs).
     moderation_ask: Option<land_moderation::Ask>,
     /// The object menus' questions and script queue (app/object_menu.rs).
@@ -13580,12 +13582,14 @@ impl App {
                 }
                 self.object_menu_ui(&ctx, &p);
                 self.land_moderation_ui(&ctx, &p);
-                if let Some((id, text)) = self.delete_confirm.clone()
+                if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
                     self.delete_confirm = None;
-                    if yes {
-                        ui::context::request(&ctx, ui::context::CtxAction::DeleteConfirmed(id));
+                    match ids.as_slice() {
+                        [id] if yes => ui::context::request(&ctx, ui::context::CtxAction::DeleteConfirmed(*id)),
+                        _ if yes => self.delete_objects(&ids),
+                        _ => {}
                     }
                 }
                 if let Some((region, _, dont_ask)) = self.place_confirm.as_mut()
