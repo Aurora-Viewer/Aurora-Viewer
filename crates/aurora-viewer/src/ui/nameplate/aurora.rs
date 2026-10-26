@@ -70,13 +70,17 @@ pub fn border_color(p: &Palette, s: f32, t: f32) -> Color32 {
 /// higher up turning violet, slower, like the top of a real aurora.
 pub fn curtains(mesh: &mut Mesh, p: &Palette, rect: Rect, ppp: f32, t: f32, alpha: f32) {
     let r = rect.height() * 0.5;
-    // over the straight top edge, fading out over the round ends
-    let (left, right) = (rect.left() + r * 0.35, rect.right() - r * 0.35);
+    // the whole width of the plate, the foot following its round ends
+    let (left, right) = (rect.left(), rect.right());
     let w = (right - left).max(1.0);
-    let base = rect.top() + 1.0;
+    let foot_y = |x: f32| {
+        let off = (rect.left() + r - x).max(x - (rect.right() - r)).max(0.0);
+        rect.center().y - (r * r - off * off).max(0.0).sqrt() + 1.0
+    };
     let full = rect.height() * CURTAIN_HEIGHT;
     let columns = ((w * ppp / 3.0).ceil() as usize).clamp(8, 180);
-    let end = (r / w).clamp(0.08, 0.3);
+    // only the very tips fade out
+    let end = (0.25 * r / w).clamp(0.03, 0.12);
     // (phase, speed, height, brightness, colors of the foot, middle and top)
     let layers = [(0.0, 1.0, 1.0, 1.0, [0.0, 0.22, 0.5]), (2.1, 0.68, 1.3, 0.65, [0.35, 0.68, 1.0])];
     for (phase, speed, high, bright, colors) in layers {
@@ -95,6 +99,7 @@ pub fn curtains(mesh: &mut Mesh, p: &Palette, rect: Rect, ppp: f32, t: f32, alph
             let h = full * high * (0.55 + 0.45 * (0.5 + 0.5 * (u * 4.1 - 0.5 * ts + phase).sin())) * (0.7 + 0.3 * band);
             // the rays lean a little as the curtain sways
             let lean = 0.12 * h * (u * 3.0 + 0.3 * ts + phase).sin();
+            let base = foot_y(x);
             mesh.colored_vertex(Pos2::new(x, base), light(foot, i, CURTAIN_COVER));
             mesh.colored_vertex(Pos2::new(x + lean * 0.3, base - 0.32 * h), light(middle, i * 0.8, CURTAIN_COVER));
             mesh.colored_vertex(Pos2::new(x + lean, base - h), light(top, 0.0, CURTAIN_COVER));
@@ -290,8 +295,16 @@ mod tests {
         assert!(
             mesh.vertices
                 .iter()
-                .all(|v| v.pos.y <= 51.0 && v.pos.y >= 50.0 - 50.0 * CURTAIN_HEIGHT * 1.31)
+                .all(|v| v.pos.y <= 76.0 && v.pos.y >= 50.0 - 50.0 * CURTAIN_HEIGHT * 1.31)
         );
+        // over the whole width, the feet on the plate's outline (its round
+        // ends included), never under it
+        let feet: Vec<_> = mesh.vertices.iter().step_by(3).map(|v| v.pos).collect();
+        assert!(feet.iter().any(|f| f.x < 101.0) && feet.iter().any(|f| f.x > 259.0));
+        for f in &feet {
+            let cx = f.x.clamp(125.0, 235.0);
+            assert!(((f.x - cx).hypot(f.y - 1.0 - 75.0) - 25.0).abs() < 0.05, "{f:?}");
+        }
         // the tops are dark, the feet lit somewhere
         assert!(mesh.vertices.iter().any(|v| v.color.g() > 40));
         let mut ring = Mesh::default();
