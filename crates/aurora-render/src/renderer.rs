@@ -797,14 +797,17 @@ struct Pipelines {
     /// The same four writing GTAO's mesh normals as well
     /// (`gtao::NORMAL_FORMAT`), in the order of the main bins.
     pre_normal: [wgpu::RenderPipeline; MAIN_BINS],
+    /// Opaque normal passes with the finite portal cut; ordinary normals
+    /// retain their lean vertex path while no avatar intersects a portal.
+    pre_normal_portal: [wgpu::RenderPipeline; 2],
     /// Blended faces opaque enough to cast contact shadows, into their
     /// depth (contact_shadows.rs).
     pre_contact: wgpu::RenderPipeline,
     /// `pre_contact` with GTAO's mesh normals, into the occlusion's depth.
     pre_contact_normal: wgpu::RenderPipeline,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
-    /// only): one-sided and two-sided opaque faces.
-    pre_msaa: Option<[wgpu::RenderPipeline; 2]>,
+    /// only): ordinary / portal-clipped, each one-sided and two-sided.
+    pre_msaa: Option<[[wgpu::RenderPipeline; 2]; 2]>,
     refl_sky: wgpu::RenderPipeline,
     refl_terrain: wgpu::RenderPipeline,
     refl_obj: wgpu::RenderPipeline,
@@ -3327,18 +3330,36 @@ impl Backend {
             pre_n("prepass mask normals", "vs_main", "fs_depth_mask_normal", Some(wgpu::Face::Back)),
             pre_n("prepass mask normals 2s", "vs_main", "fs_depth_mask_normal", None),
         ];
+        let pre_normal_portal = [
+            pre_n(
+                "prepass portal normals",
+                "vs_main",
+                "fs_depth_portal_normal",
+                Some(wgpu::Face::Back),
+            ),
+            pre_n("prepass portal normals 2s", "vs_main", "fs_depth_portal_normal", None),
+        ];
         let pre_contact_normal = pre_n("prepass contact normals", "vs_main", "fs_depth_contact_normal", None);
         let pre_msaa = (samples > 1).then(|| {
-            let msaa = |label: &'static str, cull: Option<wgpu::Face>| {
+            let msaa = |label: &'static str, cull: Option<wgpu::Face>, clipped: bool| {
                 pipe(PipeDesc {
-                    fs: None,
+                    fs: clipped.then_some("fs_depth_portal"),
                     cull,
                     format: None,
                     depth_compare: wgpu::CompareFunction::Greater,
                     ..base(label, "vs_depth", "fs_opaque")
                 })
             };
-            [msaa("prepass msaa", Some(wgpu::Face::Back)), msaa("prepass msaa 2s", None)]
+            [
+                [
+                    msaa("prepass msaa", Some(wgpu::Face::Back), false),
+                    msaa("prepass msaa 2s", None, false),
+                ],
+                [
+                    msaa("prepass msaa portal", Some(wgpu::Face::Back), true),
+                    msaa("prepass msaa portal 2s", None, true),
+                ],
+            ]
         });
         // planar reflections (single sample; mirrored winding: no culling
         // here, fs_reflect keeps the side facing the mirrored camera)
@@ -3491,6 +3512,7 @@ impl Backend {
             pre_mask,
             pre_mask_2s,
             pre_normal,
+            pre_normal_portal,
             pre_contact,
             pre_contact_normal,
             pre_msaa,
@@ -5918,14 +5940,13 @@ impl Backend {
             })
         };
         let pre_pipes: [&wgpu::RenderPipeline; MAIN_BINS] = if normals.is_some() {
-            self.pipelines.pre_normal.each_ref()
+            let mut pipes = self.pipelines.pre_normal.each_ref();
+            if draw_lists.portal_clipping {
+                pipes[..2].copy_from_slice(&self.pipelines.pre_normal_portal.each_ref());
+            }
+            pipes
         } else {
-            [
-                pre_opaque,
-                pre_opaque_2s,
-                &self.pipelines.pre_mask,
-                &self.pipelines.pre_mask_2s,
-            ]
+            [pre_opaque, pre_opaque_2s, &self.pipelines.pre_mask, &self.pipelines.pre_mask_2s]
         };
         // ---- depth prepass (single sample); with occlusion, phase 1 draws
         // what was visible last frame
@@ -6398,7 +6419,8 @@ impl Backend {
         // cannot reproduce sample for sample; they are drawn after the
         // opaque faces and were already tested against them.
         let msaa_pre = match (&self.pipelines.pre_msaa, &self.targets.depth_msaa) {
-            (Some(pipes), Some(depth)) if prepass_wanted => {
+            (Some(variants), Some(depth)) if prepass_wanted => {
+                let pipes = &variants[usize::from(draw_lists.portal_clipping)];
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("depth prepass msaa"),
                     color_attachments: &[],

@@ -645,10 +645,19 @@ fn fs_depth_normal(in: DepthNormalOut, @builtin(front_facing) front: bool) -> @l
     return depth_normal(in.normal, front);
 }
 
+// Only selected while an avatar intersects a portal. The ordinary normal
+// prepass keeps its compact vertex output without a record/position fetch.
+@fragment
+fn fs_depth_portal_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    portal_clip(records[in.record], in.world_pos);
+    return depth_normal(in.normal, front);
+}
+
 // fs_depth_mask with the normal.
 @fragment
 fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
+    portal_clip(rec, in.world_pos);
     let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
     if (a < max(rec.params.w, 0.01)) {
         discard;
@@ -659,8 +668,7 @@ fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @locat
 // Depth of the blended faces opaque enough to cast contact shadows (half
 // covered, as the impostor pictures keep them), drawn over a copy of the
 // prepass (contact_shadows.rs).
-@fragment
-fn fs_depth_contact(in: VsOut) {
+fn depth_contact(in: VsOut) {
     let rec = records[in.record];
     if ((rec.flags.x & FLAG_PORTAL_EFFECT) != 0u) {
         // Its solid core occludes through the same opening; the decorative
@@ -674,13 +682,15 @@ fn fs_depth_contact(in: VsOut) {
     }
 }
 
+@fragment
+fn fs_depth_contact(in: VsOut) {
+    depth_contact(in);
+}
+
 // fs_depth_contact with the normal, into the occlusion's depth.
 @fragment
 fn fs_depth_contact_normal(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let rec = records[in.record];
-    if (sample_tex(rec.tex.x, in.uv).a * rec.base_color.a < 0.5) {
-        discard;
-    }
+    depth_contact(in);
     return depth_normal(in.normal, front);
 }
 

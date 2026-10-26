@@ -72,6 +72,7 @@ The blacklist shows each unmasked UUID in a fixed-width column, searches by
 name or UUID, and copies unique selected keys from the row menu. Its Blocked
 shortcut opens the separate People mute list; Ignore never derenders an object
 or adds a sound asset to the blacklist.
+
 `world/portals.rs` owns bounded, immutable two-minute portal invitations and
 per-observer crossing gates. `aurora-net/src/bridge/portal.rs` validates their
 bounded base64/JSON wire format. Bridge 1.37 uses an owner-authenticated,
@@ -130,7 +131,10 @@ points are included; fragments beyond the plane but outside the oval remain
 visible, including its rectangular corners. The decorative corona never
 enlarges the cut. Active subjects stay fully animated instead of using an
 impostor. Color, alpha, depth/Hi-Z/contact shadows, picking, glow and reflection
-passes agree; opaque depth and shadow fast paths remain unchanged when no
+passes agree, including GTAO mesh-normal and blended-contact depth. Its opaque
+normal pass uses a clipped variant only during an intersection; the ordinary
+compact normal vertex path is retained otherwise. MSAA depth uses the same cut.
+Opaque depth and shadow fast paths remain unchanged when no
 cut is active. The existing one-vector draw-record field holds the center and
 a compact horizontal entry direction, with no record-stride growth. CPU picking
 uses the same opening; `aurora-render/src/portal_tests.rs` renders the production

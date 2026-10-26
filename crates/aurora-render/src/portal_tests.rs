@@ -16,6 +16,24 @@ struct Case {
 fn portal_aperture_on_gpu_keeps_side_and_corner_geometry_and_matches_picking() {
     let object = include_str!("shaders/object.wgsl").replace("\r\n", "\n");
     let cut = &object[object.find("fn portal_clip(").unwrap()..object.find("// One analytically bounded Aurora surface").unwrap()];
+    // Exercise the actual GTAO entry points too: a colour-only cut leaves
+    // invisible limbs in occlusion if a new depth/normal pass omits it.
+    let mut normal_passes = String::new();
+    for name in [
+        "fs_depth_portal_normal",
+        "fs_depth_mask_normal",
+        "depth_contact",
+        "fs_depth_contact_normal",
+    ] {
+        let start = object.find(&format!("fn {name}(")).unwrap();
+        let end = start + object[start..].find("\n}").unwrap() + 2;
+        normal_passes.push_str(
+            &object[start..end]
+                .replace("@builtin(front_facing) ", "")
+                .replace("@location(0) ", ""),
+        );
+        normal_passes.push('\n');
+    }
     let _gpu = crate::test_gpu::lock();
     let instance = wgpu::Instance::default();
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
@@ -56,6 +74,27 @@ fn portal_aperture_on_gpu_keeps_side_and_corner_geometry_and_matches_picking() {
             }
         }
     }
+    let aperture_cases = cases.clone();
+    let aperture_expected = expected.clone();
+    for pass in 1..=3 {
+        cases.extend(aperture_cases.iter().map(|case| Case {
+            flags: [flags::PORTAL_CLIP, pass, 0, 0],
+            ..*case
+        }));
+        expected.extend_from_slice(&aperture_expected);
+    }
+    // The normal contact pass must share the analytic portal core rather
+    // than treating the decorative quad's corners as solid depth.
+    for x in [-1.1_f32, -0.8, 0.0, 0.8, 1.1] {
+        for y in [-1.1_f32, -0.8, 0.0, 0.8, 1.1] {
+            cases.push(Case {
+                clip: [0.0; 4],
+                point: [x, y, 0.0, 1.0],
+                flags: [flags::PORTAL_EFFECT, 3, 0, 0],
+            });
+            expected.push(x * x + y * y <= 1.0);
+        }
+    }
     let width = 64;
     let height = (cases.len() as u32).div_ceil(width);
     cases.resize((width * height) as usize, cases[0]);
@@ -67,19 +106,32 @@ fn portal_aperture_on_gpu_keeps_side_and_corner_geometry_and_matches_picking() {
     let source = format!(
         r#"
 const FLAG_PORTAL_CLIP:u32=16384u;
+const FLAG_PORTAL_EFFECT:u32=32768u;
 const PORTAL_HALF_WIDTH:f32={PORTAL_HALF_WIDTH:.1};
 const PORTAL_HALF_HEIGHT:f32={PORTAL_HALF_HEIGHT:.1};
-struct DrawRecord {{portal_clip:vec4<f32>,flags:vec4<u32>}};
+const PORTAL_SURFACE_SCALE:f32=1.16;
+struct DrawRecord {{portal_clip:vec4<f32>,flags:vec4<u32>,tex:vec4<u32>,base_color:vec4<f32>,params:vec4<f32>}};
+struct VsOut {{world_pos:vec3<f32>,record:u32,uv:vec2<f32>,normal:vec3<f32>}};
 struct Case {{clip:vec4<f32>,point:vec4<f32>,flags:vec4<u32>}};
 @group(0) @binding(0) var<storage,read> cases:array<Case>;
+@group(0) @binding(1) var<storage,read> records:array<DrawRecord>;
+fn sample_tex(i:u32,uv:vec2<f32>)->vec4<f32>{{return vec4<f32>(1.0);}}
+fn depth_normal(n:vec3<f32>,front:bool)->vec4<f32>{{return vec4<f32>(1.0);}}
 {cut}
+{normal_passes}
 @vertex fn vs(@builtin(vertex_index) i:u32)->@builtin(position) vec4<f32>{{
     let p=array<vec2<f32>,3>(vec2<f32>(-1.0,-1.0),vec2<f32>(3.0,-1.0),vec2<f32>(-1.0,3.0));
     return vec4<f32>(p[i],0.0,1.0);
 }}
 @fragment fn fs(@builtin(position) p:vec4<f32>)->@location(0) vec4<f32>{{
     let c=cases[u32(p.x)+64u*u32(p.y)];
-    portal_clip(DrawRecord(c.clip,c.flags),c.point.xyz);
+    let rec=DrawRecord(c.clip,c.flags,vec4<u32>(0u),vec4<f32>(1.0),vec4<f32>(0.5));
+    let index=u32(p.x)+64u*u32(p.y);
+    let v=VsOut(c.point.xyz,index,(c.point.xy/PORTAL_SURFACE_SCALE+vec2<f32>(1.0))*0.5,vec3<f32>(0.0,0.0,1.0));
+    if(c.flags.y==1u){{return fs_depth_portal_normal(v,true);}}
+    if(c.flags.y==2u){{return fs_depth_mask_normal(v,true);}}
+    if(c.flags.y==3u){{return fs_depth_contact_normal(v,true);}}
+    portal_clip(rec,c.point.xyz);
     return vec4<f32>(1.0);
 }}
 "#
@@ -112,13 +164,46 @@ struct Case {{clip:vec4<f32>,point:vec4<f32>,flags:vec4<u32>}};
         multiview_mask: None,
         cache: None,
     });
+    let records: Vec<DrawRecord> = cases
+        .iter()
+        .map(|case| DrawRecord {
+            portal_clip: case.clip,
+            flags: case.flags,
+            base_color: [1.0; 4],
+            params: [0.5; 4],
+            ..Default::default()
+        })
+        .collect();
+    // The reduced WGSL record above includes only fields these passes read.
+    let compact: Vec<f32> = records
+        .iter()
+        .flat_map(|rec| {
+            rec.portal_clip
+                .into_iter()
+                .chain(rec.flags.map(f32::from_bits))
+                .chain([0.0; 4])
+                .chain(rec.base_color)
+                .chain(rec.params)
+        })
+        .collect();
+    let normal_records = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("portal normal pass records"),
+        contents: bytemuck::cast_slice(&compact),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: None,
         layout: &pipeline.get_bind_group_layout(0),
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: input.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: input.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: normal_records.as_entire_binding(),
+            },
+        ],
     });
     let (texture, view) = crate::renderer::make_view(
         &device,
