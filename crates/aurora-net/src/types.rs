@@ -1145,6 +1145,12 @@ pub enum NetEvent {
         item: Uuid,
         result: Result<crate::inventory::InvItem, String>,
     },
+    /// Reply to `NetCommand::FetchInventoryTree`: the folder snapshots it
+    /// brought, parents first, or why the read failed.
+    InventoryTreeFetched {
+        request: u64,
+        result: Result<Vec<crate::inventory::FolderContents>, String>,
+    },
     InventoryFetchFailed {
         folders: Vec<Uuid>,
     },
@@ -1863,6 +1869,17 @@ pub enum NetCommand {
     /// Ask where a friend is (FindAgent, LLAvatarTracker::findAgent);
     /// answered with `NetEvent::AgentFound` when they let us map them.
     FindAgent(Uuid),
+    /// The background inventory fetch (LLInventoryModelBackgroundFetch):
+    /// `parent` with its whole subtree, or with `children` only those of its
+    /// folders, `depth` levels down (AIS). Without AIS, the folders alone.
+    FetchInventoryTree {
+        request: u64,
+        parent: Uuid,
+        children: Vec<Uuid>,
+        depth: i32,
+        owner: Uuid,
+        library: bool,
+    },
     FetchInventory {
         folders: Vec<Uuid>,
         owner: Uuid,

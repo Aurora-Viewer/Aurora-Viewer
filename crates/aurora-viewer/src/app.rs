@@ -650,6 +650,8 @@ pub struct App {
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
+    /// AURORA_DEMO_TP_AWAY: the demo region's coarse locations while away.
+    away_coarse: Vec<(uuid::Uuid, Vec3)>,
     /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
     geometry_demo: Option<crate::demo::geometry::GeometryDemo>,
     /// Geometry each region needed at its last visit: the arena grows to
@@ -1234,6 +1236,7 @@ impl App {
             tex_refresh_demo: None,
             sculpt_missing_demo: None,
             experience_demo: None,
+            away_coarse: Vec::new(),
             geometry_demo: None,
             geometry_needs,
             turn_demo: None,
@@ -2035,7 +2038,7 @@ impl App {
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
                 }
-                if let NetEvent::InventoryContents(contents) = &mut ev {
+                if let NetEvent::InventoryContents(contents) | NetEvent::InventoryTreeFetched { result: Ok(contents), .. } = &mut ev {
                     for c in contents {
                         // the synthetic listing of its folder keeps the offered item
                         if let Some(offer) = self.world.inventory.items.get(&crate::demo::DEMO_OFFER)
@@ -7124,6 +7127,9 @@ impl App {
                     name = name.to_string()
                 ));
             }
+            for cmd in self.world.pump_inventory_background() {
+                self.send(cmd);
+            }
             let queue: Vec<(uuid::Uuid, bool)> = std::mem::take(&mut self.world.inventory.queue);
             let (mine, lib): (Vec<_>, Vec<_>) = queue.into_iter().partition(|(_, l)| !l);
             if !mine.is_empty() {
@@ -9748,7 +9754,7 @@ impl App {
         }
         // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
         if self.demo
-            && let Some(events) = crate::demo::away_teleport(self.frame_count, self.world.agent.position, self.world.agent.forward())
+            && let Some(events) = crate::demo::away_teleport(self.frame_count, &self.world, &mut self.away_coarse)
         {
             for ev in events {
                 self.world.apply(ev);

@@ -307,6 +307,8 @@ pub(crate) fn world_drag(ctx: &egui::Context) -> Option<WorldDrag> {
 
 #[derive(Default)]
 pub struct InventoryUi {
+    was_open: bool,
+    focus_search: bool,
     bulk_permissions: bulk_permissions::State,
     menu_editor: context_customize::State,
     menu_notecards: context_notecards::State,
@@ -1460,6 +1462,7 @@ pub fn show(
     classic: bool,
 ) -> Vec<InvAction> {
     let mut actions = Vec::new();
+    st.focus_search = *open && (st.focus_search || !st.was_open);
     // What is worn, the attachment points and the names are read for the
     // windows and dialogs that show them, not every frame while closed.
     let shown = *open || st.dialog.is_some() || st.move_to.is_some() || !st.windows.is_empty() || st.demo_menu.is_some();
@@ -1582,6 +1585,7 @@ pub fn show(
             aurora::widen(ctx, "inventory");
         }
     }
+    st.was_open = *open && !super::widgets::floater_minimized(ctx, "inventory");
     controls::dialogs(ctx, p, st, prefs);
     finish_hidden_rename(inv, st, prefs, &mut actions);
     dialogs::show(ctx, p, icons, inv, st, prefs, &facts, images, &mut actions);
@@ -1613,6 +1617,7 @@ pub fn show(
             continue;
         }
         w.state.ui_id = w.id;
+        w.state.focus_search = w.open && (w.state.focus_search || !w.state.was_open);
         w.state.visible.clear();
         w.state.clipboard.clone_from(&st.clipboard);
         w.state.cut = st.cut;
@@ -1674,6 +1679,7 @@ pub fn show(
                 aurora::widen(ctx, &window_id);
             }
         }
+        w.state.was_open = w.open && !super::widgets::floater_minimized(ctx, &window_id);
         bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, prefs, world.agent_id, &mut actions);
         finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
         controls::dialogs(ctx, p, &mut w.state, prefs);
@@ -1764,6 +1770,72 @@ fn headless_output(mut output: egui::FullOutput) -> egui::FullOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opening_inventory_focuses_search_without_taking_it_back() {
+        use crate::ui::widgets::elide_tests::Frames;
+        for classic in [false, true] {
+            let mut frames = Frames::new();
+            let ctx = frames.ctx.clone();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::load(&ctx, None);
+            let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            crate::world::appearance::seed_demo(&mut world.inventory, crate::demo::DEMO_AGENT);
+            let mut st = InventoryUi::default();
+            let mut prefs = InventoryPreferences::default();
+            let images = Default::default();
+            let scripts = Default::default();
+            let other_id = egui::Id::unique("other_inventory_field");
+            let mut other = String::new();
+            let mut frame = |st: &mut InventoryUi, mut open, events| {
+                frames.run(events, |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut other).id(other_id));
+                    show(
+                        ui.ctx(),
+                        &p,
+                        &icons,
+                        &mut world,
+                        st,
+                        &mut prefs,
+                        &mut open,
+                        false,
+                        &images,
+                        &scripts,
+                        classic,
+                    );
+                });
+            };
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            frame(&mut st, true, vec![egui::Event::Text("instructions".into())]);
+            assert_eq!(st.search, "instructions", "classic={classic}");
+            let search = ctx.memory(|m| m.focused()).expect("search focused");
+            assert_ne!(search, other_id);
+            ctx.memory_mut(|m| m.request_focus(other_id));
+            frame(&mut st, true, Vec::new());
+            frame(&mut st, true, vec![egui::Event::Text("elsewhere".into())]);
+            assert!(ctx.memory(|m| m.has_focus(other_id)));
+            assert_eq!(st.search, "instructions");
+            frame(&mut st, false, Vec::new());
+            frame(&mut st, true, Vec::new());
+            assert!(ctx.memory(|m| m.has_focus(search)), "reopening restores search focus");
+            frame(&mut st, true, vec![egui::Event::Text("!".into())]);
+            assert_eq!(st.search, "instructions!");
+            super::super::widgets::minimize_floater(&ctx, "inventory");
+            frame(&mut st, true, Vec::new());
+            ctx.memory_mut(|m| m.request_focus(other_id));
+            frame(&mut st, true, Vec::new());
+            super::super::widgets::expand_floater(&ctx, "inventory");
+            for _ in 0..3 {
+                frame(&mut st, true, Vec::new());
+            }
+            assert!(ctx.memory(|m| m.has_focus(search)), "expanding restores search focus");
+            assert_eq!(other, "elsewhere");
+        }
+    }
 
     #[test]
     fn outfit_menu_loads_missing_links_without_opening_appearance() {

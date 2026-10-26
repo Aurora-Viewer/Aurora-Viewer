@@ -589,6 +589,12 @@ when unfocused") is ignored during a screenshot.
   above the water, then the same plaza (objects, floating texts, other
   avatar, particle fountain). In `perf summary`, `objects=` goes from 57 to
   1 then back to 57, with the same `visible=` and `draws=` as before.
+  The arrival away also forgets the demo region's coarse locations, and
+  the list it still sends at frame 800 waits with its objects (#1000;
+  log: `still sends its coarse locations`): with
+  `AURORA_DEMO_CONV=aurora:friend-away` and `AURORA_DEMO_CONV_MENU=im`,
+  Nova's Zoom is enabled at frame 740, disabled at frame 900 (Teleport To
+  stays, through her map rights), and enabled again at frame 1000.
 - **`AURORA_DEMO_AGENT_JITTER=<mm>`**: our avatar receives five times a
   second (at 60 fps) a position correction of at most this size, like those
   a simulator sends to an avatar standing at altitude. With
@@ -4045,6 +4051,12 @@ failure. Grid validation and any paid upload are performed by the human.
   Wolf in the offer's entry): "gives you « Aurora lantern »", "Object",
   Keep / Reject, and no toast. `offer-card-keep` keeps it from the card at
   frame 700: the card greys with "Kept" and the entry leaves the list.
+  The kept card offers "Show in inventory"; clicking it opens Inventory on
+  the received object, clearing filters and expanding its parent path.
+  A confirmation with the linked item name is also saved in the giver's
+  transcript so it remains available after reopening the conversation.
+  `offer-card-legacy-keep` exercises the same links in the Legacy lines.
+  Pending, rejected and unidentified offers show no inventory shortcut.
   `offer-card-legacy` shows the card as one line of the legacy lines;
   `offer-card-legacy-reject` rejects it from its notification at frame 700:
   the line ends with "· Rejected". Capture at frame 900, with

@@ -271,6 +271,8 @@ pub struct World {
     /// button's clicks (app/script_clicks.rs).
     pub script_controls: aurora_net::script_controls::ScriptControls,
     pub coarse: HashMap<RegionHandle, Vec<(Uuid, Vec3)>>,
+    /// The agent's region before its last change, until the arrival.
+    region_left: Option<RegionHandle>,
     /// Objects of the regions out of reach, until their simulator closes
     /// them or they are in reach again (parked.rs).
     parked: HashMap<RegionHandle, parked::Parked>,
@@ -377,6 +379,8 @@ pub struct World {
     /// The inventory cache being read by its thread since the login reply
     /// (`poll_inventory_cache`), and when the read started.
     inventory_cache: Option<(crossbeam_channel::Receiver<Option<inventory::CachedInventory>>, Instant)>,
+    /// The whole inventory, fetched in the background from login on.
+    inventory_background: inventory::background::BackgroundFetch,
     /// Inventory changes outside the inventory window (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
     pub received_items: received_items::ReceivedItems,
@@ -587,6 +591,7 @@ impl World {
             following_avatar: None,
             script_controls: Default::default(),
             coarse: HashMap::new(),
+            region_left: None,
             parked: HashMap::new(),
             appearances: HashMap::new(),
             avatar_poses: HashMap::new(),
@@ -642,6 +647,7 @@ impl World {
             inventory: inventory::Inventory::default(),
             active_gestures: Default::default(),
             inventory_cache: None,
+            inventory_background: Default::default(),
             inventory_edits: Vec::new(),
             received_items: Default::default(),
             animations: HashMap::new(),
@@ -892,6 +898,7 @@ impl World {
         if old == Some(handle) {
             return false;
         }
+        self.region_left = old;
         self.objects.clear_material_previews();
         self.inventory_retried.clear();
         if let Some(old) = old {
@@ -1086,6 +1093,17 @@ impl World {
         );
         self.inventory_cache = None;
         self.inventory.release_requests();
+    }
+
+    /// The background inventory fetch's reads for this frame. It starts once
+    /// the cache is applied (the folders it restored need no fetch) and the
+    /// agent's region has its capabilities.
+    pub fn pump_inventory_background(&mut self) -> Vec<aurora_net::NetCommand> {
+        if self.inventory_cache.is_some() || self.inventory.root.is_nil() || self.main().is_none_or(|r| r.caps.is_empty()) {
+            return Vec::new();
+        }
+        self.inventory_background.start(&self.inventory);
+        self.inventory_background.pump(&mut self.inventory, self.agent_id)
     }
 
     /// Persist the fetched inventory (next login skips unchanged folders).
@@ -1796,6 +1814,7 @@ impl World {
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
+                self.inventory_background = Default::default();
                 // read off the main thread; until `poll_inventory_cache`
                 // applies it, folder requests wait (the root's included)
                 self.inventory_cache = self.inventory_cache_path().map(|path| {
@@ -1831,6 +1850,7 @@ impl World {
                 // teleport) are asked again on the agent's new region
                 if Some(handle) == self.main_region {
                     self.inventory.retry_failed();
+                    self.inventory_background.resume(&self.inventory);
                 }
                 None
             }
@@ -1919,6 +1939,17 @@ impl World {
                     self.agent.position = position;
                     self.agent.set_look_at(look_at);
                     self.agent.reset_motion();
+                }
+                // The coarse locations were sent around where the agent was.
+                // The region left keeps its last list until its simulator
+                // closes it (about 50 s), and the Legacy Viewer keeps showing
+                // those avatars as present (LLWorld::getAvatars): zoom and
+                // teleport aimed regions away (issue #1000). After a teleport
+                // to another region (MainRegionChanged comes first) only the
+                // arrival's list stays; the simulators still connected send
+                // theirs again.
+                if self.region_left.take().is_some_and(|left| left != handle) && !self.arrived_by_crossing {
+                    self.coarse.retain(|h, _| *h == handle);
                 }
                 self.movement_complete = true;
                 if self.teleporting || !self.arrived_once {
@@ -3027,6 +3058,13 @@ impl World {
             }
             NetEvent::InventoryContents(c) => {
                 self.inventory.apply(c);
+                None
+            }
+            NetEvent::InventoryTreeFetched { request, result } => {
+                if let Ok(contents) = result {
+                    self.inventory.apply(contents);
+                }
+                self.inventory_background.on_reply(&mut self.inventory, request);
                 None
             }
             NetEvent::InventoryFetchFailed { folders } => {
@@ -6273,6 +6311,55 @@ mod motion_tests {
         teleport_to(&mut world, here);
         assert!(world.objects.index_of_uuid(&p.full_id).is_none());
         assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
+    }
+
+    #[test]
+    fn a_teleport_elsewhere_forgets_the_coarse_locations_of_the_regions_left() {
+        let (mut world, _, _, here, there) = worn_fixture();
+        let friend = Uuid::from_u128(0xF00D);
+        let stranger = Uuid::from_u128(0xF00E);
+        let seen = |world: &mut World, handle, id| {
+            world.apply(NetEvent::CoarseLocations {
+                handle,
+                positions: vec![(id, Vec3::new(40.0, 50.0, 20.0))],
+            });
+        };
+        world.arrived_once = true;
+        seen(&mut world, here, friend);
+        seen(&mut world, there, stranger);
+        // walking into the neighbour: both simulators still send their lists
+        let position = world.agent.position - Vec3::new(256.0, 0.0, 0.0);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: there,
+            position,
+            look_at: Vec3::X,
+        });
+        assert!(world.arrived_by_crossing);
+        assert!(world.avatar_map_position(friend).is_some());
+        assert!(world.avatar_map_position(stranger).is_some());
+
+        // a teleport far away: the list of the arrival region stays, the
+        // friend left behind is no longer around (issue #1000)
+        let far = far_from(there);
+        world.begin_teleport(false);
+        seen(&mut world, far, stranger);
+        teleport_to(&mut world, far);
+        assert_eq!(world.coarse.keys().copied().collect::<Vec<_>>(), vec![far]);
+        assert!(world.avatar_map_position(friend).is_none());
+        assert!(!world.can_locate_avatar(friend));
+        assert!(world.avatar_map_position(stranger).is_some());
+        // the simulator left still sends its list while we are its child:
+        // it waits with the region's objects
+        assert!(world.parked.contains_key(&there));
+        seen(&mut world, there, friend);
+        assert!(world.avatar_map_position(friend).is_none());
+        assert!(!world.can_locate_avatar(friend));
+        // back there before it closed, its last list is the current one
+        world.begin_teleport(false);
+        teleport_to(&mut world, there);
+        assert!(!world.parked.contains_key(&there));
+        assert_eq!(world.coarse.keys().copied().collect::<Vec<_>>(), vec![there]);
+        assert!(world.avatar_map_position(friend).is_some());
     }
 
     #[test]

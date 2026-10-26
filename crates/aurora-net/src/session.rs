@@ -1994,6 +1994,14 @@ impl Session<'_> {
                 );
             }
             NetCommand::FetchInventory { folders, owner, library } => self.fetch_inventory(folders, owner, library),
+            NetCommand::FetchInventoryTree {
+                request,
+                parent,
+                children,
+                depth,
+                owner,
+                library,
+            } => self.fetch_inventory_tree(request, parent, children, depth, owner, library),
             NetCommand::FetchItems { items, owner } => self.fetch_items(items, owner),
             NetCommand::EditInventory { request, change } => {
                 if change.operations.is_empty() && !change.copies.is_empty() && change.copies.len() <= 2048 && !change.refresh.is_empty() {
@@ -2871,6 +2879,49 @@ impl Session<'_> {
                     }
                 }
             }
+        });
+    }
+
+    /// LLInventoryModelBackgroundFetch::bulkFetchViaAis: AIS reads whole
+    /// subtrees (the library through LibraryAPIv3). Without AIS, bulkFetch
+    /// asks for the folders alone and the walk goes down one level at a time.
+    fn fetch_inventory_tree(
+        &mut self,
+        request: u64,
+        parent: uuid::Uuid,
+        children: Vec<uuid::Uuid>,
+        depth: i32,
+        owner: uuid::Uuid,
+        library: bool,
+    ) {
+        let ais = self.main_cap(if library { "LibraryAPIv3" } else { "InventoryAPIv3" });
+        let legacy = self.main_cap(if library {
+            "FetchLibDescendents2"
+        } else {
+            "FetchInventoryDescendents2"
+        });
+        let http = self.sh.caps_http.clone();
+        let events = self.sh.events.clone();
+        tokio::spawn(async move {
+            let result = if let Some(cap) = ais {
+                crate::inventory::ais::fetch_tree(&http, &cap, owner, parent, &children, depth).await
+            } else if let Some(url) = legacy {
+                let folders = if children.is_empty() { vec![parent] } else { children };
+                let body = crate::inventory::fetch_request_body(&folders, owner);
+                caps::post_llsd_as(&http, &url, &body, crate::probe::HttpKind::Inventory)
+                    .await
+                    .map(|v| crate::inventory::parse_fetch_response(&v))
+                    .map_err(|_| "inventory read failed")
+            } else {
+                Err("no inventory capability")
+            };
+            if let Err(error) = result {
+                log::debug!("background inventory fetch of {parent} failed: {error}");
+            }
+            let _ = events.send(NetEvent::InventoryTreeFetched {
+                request,
+                result: result.map_err(str::to_owned),
+            });
         });
     }
 
