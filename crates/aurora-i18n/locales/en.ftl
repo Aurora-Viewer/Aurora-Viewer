@@ -1397,7 +1397,7 @@ ui-context-at-least-one-object-is-not-yours = At least one object is not yours.
 ui-options-commands-on-the-ground = On the ground
 ui-options-above-this-limit-the-avatar-also-appears-as-a = Above this limit, the avatar also appears as a silhouette (1000 m² as in the Legacy Viewer; 0 = unlimited; ignored when complexity is unlimited)
 ui-options-objects-beyond-this-distance-are-not-drawn-96-m = Objects beyond this distance are not drawn (96 m by default)
-ui-options-textures-beyond-this-distance-use-a-lower-resolution = Textures beyond this distance use a lower resolution
+ui-options-video-memory-the-textures-may-use = Video memory the textures may use; above it, their resolution is lowered, those out of view first
 ui-options-above-this-limit-the-avatar-appears-as-a-gray = Above this limit, the avatar appears as a gray silhouette without attachments (as in the Legacy Viewer; far right: unlimited)
 common-none = None
 ui-land-access-no-valid-uuid-found-in-the-file = No valid UUID found in the file.
