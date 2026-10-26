@@ -15736,6 +15736,9 @@ impl ApplicationHandler for App {
                         | "aurora-sidebar-medium"
                         | "aurora-sidebar-wide"
                         | "aurora-rights"
+                        | "aurora-no-details"
+                        | "aurora-medium-no-details"
+                        | "aurora-wide-no-details"
                         | "favorites"
                         | "favorites-multi"
                         | "aurora-favorites"
@@ -15801,6 +15804,9 @@ impl ApplicationHandler for App {
                             columns.date_width = 110;
                             columns.show_kind = view != "aurora-columns-hidden";
                             columns.show_date = view != "aurora-columns-hidden";
+                        }
+                        if view.ends_with("-no-details") {
+                            self.settings.inventory.show_details = false;
                         }
                         if view.starts_with("aurora-folder-window") {
                             // the right-click tests in a window of their own

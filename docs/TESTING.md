@@ -6246,6 +6246,13 @@ offline; the files and snapshots uploaded in demo stay offline.
   next owner switches) and the status bar. Hover an object or clothing row
   for Wear / Take off (and More at the wide width); widen the narrow
   window with the title bar button.
+- `aurora-no-details`, `aurora-medium-no-details`,
+  `aurora-wide-no-details`: the same three widths with the selection's
+  details hidden (the bottom-bar button of the toolbar at the narrow and
+  medium widths, the right-pane button at the wide one, unlit): the list
+  takes the room of the card or of the pane. Click the button to show them
+  again; the choice is kept with the inventory preferences, so a later
+  normal launch keeps it.
 - `aurora-folder-window`, `aurora-folder-window-wide`: the same, with the
   right-click tests opened in a folder window ("Show in a new window") beside
   the narrow main window, narrow (420 px) or wide (1180 px). No tabs; the

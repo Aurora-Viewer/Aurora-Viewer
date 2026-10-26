@@ -413,8 +413,6 @@ pub struct InventoryUi {
     flat: rows::PlainTree,
     side: aurora::Sidebar,
     counts: aurora::Counts,
-    /// The wide window's details pane was closed.
-    hide_details: bool,
     /// A row's "more actions" menu, opened by its button: the row, where.
     row_menu: Option<(Uuid, egui::Pos2)>,
     /// The folder a folder window shows (nil: the whole inventory). Its
