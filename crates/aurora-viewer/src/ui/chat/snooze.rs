@@ -1,9 +1,10 @@
 //! The duration asked before a group chat's snooze, when Preferences ›
 //! Chat say so (FSEnablePerGroupSnoozeDuration): the Legacy Viewer's
 //! SnoozeDuration notification (FSFloaterIM::confirmSnooze and
-//! snoozeDurationCallback), a whole number of seconds proposed from the
-//! setting (GroupSnoozeTime). Instead of its SnoozeDurationInvalidInput
-//! alert after the fact, OK waits for a valid number.
+//! snoozeDurationCallback), a whole number proposed from the setting
+//! (GroupSnoozeTime). In minutes rather than its seconds, like the setting
+//! (#945). Instead of its SnoozeDurationInvalidInput alert after the fact,
+//! OK waits for a valid number.
 
 use super::ChatUi;
 use crate::theme::Palette;
@@ -21,23 +22,23 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    pub fn new(group: Uuid, seconds: u32) -> Self {
+    pub fn new(group: Uuid, minutes: u32) -> Self {
         Self {
             group,
-            text: seconds.to_string(),
+            text: minutes.to_string(),
             focus: true,
         }
     }
 }
 
 /// A duration as the Legacy Viewer reads it (a whole number, at least 0),
-/// spaces around it allowed.
-fn seconds(text: &str) -> Option<u32> {
-    text.trim().parse().ok()
+/// spaces around it allowed, in minutes up to the setting's longest.
+fn minutes(text: &str) -> Option<u32> {
+    text.trim().parse().ok().filter(|m| *m <= crate::settings::GROUP_SNOOZE_MAX_MINUTES)
 }
 
 /// The dialog while a snooze waits for its duration: the group chat and
-/// the seconds once confirmed.
+/// the minutes once confirmed.
 pub fn dialog(ctx: &egui::Context, p: &Palette, world: &World, st: &mut ChatUi) -> Option<(Uuid, u32)> {
     let prompt = st.snooze.as_mut()?;
     let mut done = None;
@@ -65,7 +66,7 @@ pub fn dialog(ctx: &egui::Context, p: &Palette, world: &World, st: &mut ChatUi) 
             }
             prompt.focus = false;
         }
-        let valid = seconds(&prompt.text);
+        let valid = minutes(&prompt.text);
         if valid.is_none() {
             ui.add_space(4.0);
             ui.label(RichText::new(aurora_i18n::tr!("ui-chat-snooze-invalid")).size(12.0).color(p.muted));
@@ -104,14 +105,15 @@ pub fn dialog(ctx: &egui::Context, p: &Palette, world: &World, st: &mut ChatUi) 
 mod tests {
     use super::*;
 
-    /// FSFloaterIM::snoozeDurationCallback: a whole number of at least 0.
+    /// FSFloaterIM::snoozeDurationCallback: a whole number of at least 0,
+    /// here of minutes.
     #[test]
-    fn the_duration_is_a_whole_number_of_seconds() {
-        assert_eq!(seconds("900"), Some(900));
-        assert_eq!(seconds(" 0 "), Some(0));
-        assert_eq!(seconds("3600"), Some(3600));
-        for bad in ["", "-5", "1.5", "ten", "15m"] {
-            assert_eq!(seconds(bad), None, "{bad:?}");
+    fn the_duration_is_a_whole_number_of_minutes() {
+        assert_eq!(minutes("15"), Some(15));
+        assert_eq!(minutes(" 0 "), Some(0));
+        assert_eq!(minutes("1440"), Some(1440));
+        for bad in ["", "-5", "1.5", "ten", "15m", "99999999"] {
+            assert_eq!(minutes(bad), None, "{bad:?}");
         }
     }
 
@@ -124,7 +126,7 @@ mod tests {
             aurora_i18n::tr!("common-cancel"),
             || {
                 let mut st = ChatUi::default();
-                st.ask_snooze(Uuid::from_u128(1), 900);
+                st.ask_snooze(Uuid::from_u128(1), 15);
                 (st, World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load())))
             },
             |(st, world), ctx, p| {

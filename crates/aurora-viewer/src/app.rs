@@ -6063,9 +6063,11 @@ impl App {
         let seconds = demo
             .then(crate::demo::snooze_seconds)
             .flatten()
-            .unwrap_or(settings.group_snooze_seconds);
+            .unwrap_or(settings.group_snooze_minutes.saturating_mul(60));
         if settings.group_snooze_ask || (demo && crate::demo::snooze_ask()) {
-            chat_ui.ask_snooze(group, seconds);
+            // the dialog counts whole minutes, like the setting: a demo's
+            // seconds are rounded up
+            chat_ui.ask_snooze(group, seconds.div_ceil(60));
         } else {
             Self::snooze_group_chat(world, chat_ui, group, seconds);
         }
@@ -13212,8 +13214,8 @@ impl App {
                 for group in snoozes {
                     Self::ask_or_snooze(&self.settings, self.demo, &mut self.world, &mut self.chat_ui, group);
                 }
-                if let Some((group, seconds)) = ui::chat::snooze::dialog(&ctx, &p, &self.world, &mut self.chat_ui) {
-                    Self::snooze_group_chat(&mut self.world, &mut self.chat_ui, group, seconds);
+                if let Some((group, minutes)) = ui::chat::snooze::dialog(&ctx, &p, &self.world, &mut self.chat_ui) {
+                    Self::snooze_group_chat(&mut self.world, &mut self.chat_ui, group, minutes.saturating_mul(60));
                 }
                 // a link's menu hid the previews of its site
                 if let Some(site) = self.chat_ui.previews.hide_site.take()

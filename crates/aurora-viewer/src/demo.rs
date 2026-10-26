@@ -865,8 +865,9 @@ pub fn flash_message(agent: Uuid, secs: f64) -> Option<NetEvent> {
 /// AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]: a group chat's snooze
 /// (`world/groups.rs`). Tess writes in the Aurora Builders chat every 6
 /// seconds from the 10th in world; a snooze lasts `<seconds>` instead of
-/// the setting's; `auto` snoozes that chat by itself at the 14th second;
-/// `ask` asks the duration first, as the setting would.
+/// the setting's minutes, to watch it end; `auto` snoozes that chat by
+/// itself at the 14th second; `ask` asks the duration first, as the setting
+/// would, in minutes (`<seconds>` rounded up).
 #[derive(Clone, Copy)]
 struct SnoozeScene {
     seconds: u32,

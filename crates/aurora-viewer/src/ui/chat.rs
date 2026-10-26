@@ -324,10 +324,10 @@ impl ChatUi {
         self.contacts = false;
     }
 
-    /// Ask how long to snooze a group chat, `seconds` proposed (the
+    /// Ask how long to snooze a group chat, `minutes` proposed (the
     /// SnoozeDuration notification).
-    pub fn ask_snooze(&mut self, group: uuid::Uuid, seconds: u32) {
-        self.snooze = Some(snooze::Prompt::new(group, seconds));
+    pub fn ask_snooze(&mut self, group: uuid::Uuid, minutes: u32) {
+        self.snooze = Some(snooze::Prompt::new(group, minutes));
     }
 
     /// A conversation closed: its filter, find bar, rows, draft and recall go with it.

@@ -4610,10 +4610,12 @@ failure. Grid validation and any paid upload are performed by the human.
   world, Tess writes in the Aurora Builders group chat every 6 seconds
   ("Group update number n"). The Snooze of a group chat (its head's button
   beside the close one, or its entry's right-click menu) lasts `<seconds>`
-  instead of Preferences › Chat › Group chat snooze; `auto` snoozes that
-  chat by itself at the 14th second; `ask` asks the duration first, as
-  "Ask the duration at each snooze" does, without changing the saved
-  setting. The conversation leaves the list, its
+  instead of the minutes of Preferences › Chat › Group chat snooze, so
+  that its end can be watched; `auto` snoozes that chat by itself at the
+  14th second; `ask` asks the duration first, as "Ask the duration at each
+  snooze" does, without changing the saved setting: the dialog counts
+  minutes and proposes `<seconds>` rounded up (1 for 20). The
+  conversation leaves the list, its
   messages are dropped (`snoozed group chat …: message dropped` in the
   log), and the first one after the snooze opens it again with the
   new-session sound (`group chat snooze over, reopening`). With
