@@ -3707,7 +3707,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
-| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]` | A large wardrobe in the Appearance demo: generated outfits, the window closed or scrolled |
+| `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
@@ -6213,13 +6213,16 @@ opens its submenu.
 These operations stay offline; creating new clothing and
 new body parts is not available yet.
 
-**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]`** — with
+**`AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]`** — with
 `AURORA_DEMO_APPEARANCE`, adds `<count>` generated outfits (names like
 "Beach Day 0012") with 20 to 60 links each to a pool of 480 generated
 clothes, objects and body parts, a thumbnail id (never loaded offline) on
 one in four. `closed` leaves the window closed; `scroll` turns the wheel
 over the list or gallery of the default window from frame 700, down then up
-every 300 frames. With `AURORA_PROFILE=1`, read `ui` of `perf summary`
+every 300 frames; `locate` presses the locate button of the current outfit
+banner at start: the gallery or list scrolls to the worn outfit, selects
+it and flashes it for 1.6 s (the flash is gone by frame 620, the selection
+stays). With `AURORA_PROFILE=1`, read `ui` of `perf summary`
 (and `u_inventory` in `max:`): with 3,000 outfits it is 0.5 to 0.8 ms with
 the window open or scrolled and 0.4 ms closed; it was 31 to 37 ms open and
 2.5 ms closed before the wardrobe's links were walked only on inventory

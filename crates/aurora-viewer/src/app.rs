@@ -15817,6 +15817,9 @@ impl ApplicationHandler for App {
                 if matches!(view.as_str(), "menu" | "duplicates") {
                     self.appearance_ui.open_outfit(uuid::Uuid::from_u128(704));
                 }
+                if crate::world::appearance::demo_outfit_mode("locate") {
+                    self.appearance_ui.locate_current(&self.world.inventory);
+                }
             }
             self.demo_shape_editor();
             if let Some(mode) = ui::widgets::demo::rez_mode() {
