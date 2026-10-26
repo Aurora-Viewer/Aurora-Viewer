@@ -2088,7 +2088,10 @@ mod tests {
             };
             assert!(texts.iter().any(|t| t.source == all), "classic={classic}: its tabs");
             assert!(!texts.iter().any(|t| t.source == received), "classic={classic}: no Received tab");
-            assert!(ctx.data(|d| d.get_temp::<egui::Rect>(button_id)).is_none(), "classic={classic}: no button");
+            assert!(
+                ctx.data(|d| d.get_temp::<egui::Rect>(button_id)).is_none(),
+                "classic={classic}: no button"
+            );
 
             // The lit button closes it; once reopened it starts afresh.
             st.windows[0].state.search = "shirt".into();

@@ -383,8 +383,9 @@ pub(super) fn explorer_row(
             let new_label = aurora_i18n::tr!("inventory-new");
             let new_w = widgets::action_button_fit(ui, "plus", new_label);
             let filters_w = 150.0;
-            let width = (ui.available_width() - (BAR + 8.0) - filters_w - (BAR + 8.0) - additional_width(st, 8.0) - cmt - 8.0 - new_w - 8.0 - 8.0)
-                .max(120.0);
+            let width =
+                (ui.available_width() - (BAR + 8.0) - filters_w - (BAR + 8.0) - additional_width(st, 8.0) - cmt - 8.0 - new_w - 8.0 - 8.0)
+                    .max(120.0);
             search(ui, p, inv, st, prefs, width, layout);
             let count = chip_list(st).len();
             let lit = st.filters_open || count > 0;
