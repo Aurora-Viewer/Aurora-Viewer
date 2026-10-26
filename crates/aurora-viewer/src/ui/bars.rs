@@ -2594,6 +2594,9 @@ pub fn bottom_bar(
     let mut action = BarAction::None;
     let mut width_committed = false;
     let mut glass = None;
+    // autohidden (#1009), the toolbar takes the whole bar
+    let chat_shown = chat.bar_shown();
+    chat.bar_hovered = false;
     let resp = egui::Panel::bottom("bottom_bar")
         .frame(bar_frame(p).inner_margin(egui::Margin::symmetric(8, 3)))
         .exact_size(layout.bottom_bar_height)
@@ -2606,39 +2609,43 @@ pub fn bottom_bar(
                 let n = buttons.len().max(1) as f32;
                 // the toolbar keeps at least a narrow button per command
                 const MIN_BTN: f32 = 22.0;
-                let label_w = 70.0;
-                let max_chat = (total - label_w - 16.0 - n * (MIN_BTN + 2.0)).max(120.0);
-                let wanted = if *chat_width > 0.0 {
-                    *chat_width
-                } else {
-                    total * layout.chat_bar_fraction
-                };
-                let chat_w = wanted.clamp(120.0, max_chat);
-                out = super::chat::bar(ui, p, chat, gestures, chat_w);
+                if chat_shown {
+                    let start = ui.cursor().min;
+                    let label_w = 70.0;
+                    let max_chat = (total - label_w - 16.0 - n * (MIN_BTN + 2.0)).max(120.0);
+                    let wanted = if *chat_width > 0.0 {
+                        *chat_width
+                    } else {
+                        total * layout.chat_bar_fraction
+                    };
+                    let chat_w = wanted.clamp(120.0, max_chat);
+                    out = super::chat::bar(ui, p, chat, gestures, chat_w);
 
-                // draggable separator (dotted, like Firestorm's) between chat and toolbar
-                let (handle, hresp) = ui.allocate_exact_size(Vec2::new(10.0, 22.0), egui::Sense::drag());
-                let hot = hresp.hovered() || hresp.dragged();
-                if hot {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                }
-                let col = if hot { p.violet_light } else { p.muted_dim };
-                let x = handle.center().x;
-                let mut y = handle.top() + 3.0;
-                while y < handle.bottom() - 2.0 {
-                    ui.painter().circle_filled(egui::pos2(x, y), 0.9, col);
-                    y += 3.0;
-                }
-                if hresp.dragged() {
-                    *chat_width = (chat_w + hresp.drag_delta().x).clamp(120.0, max_chat);
-                }
-                if hresp.drag_stopped() {
-                    width_committed = true;
-                }
-                if hresp.double_clicked() {
-                    // back to the skin's default proportion
-                    *chat_width = 0.0;
-                    width_committed = true;
+                    // draggable separator (dotted, like Firestorm's) between chat and toolbar
+                    let (handle, hresp) = ui.allocate_exact_size(Vec2::new(10.0, 22.0), egui::Sense::drag());
+                    let hot = hresp.hovered() || hresp.dragged();
+                    if hot {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                    }
+                    let col = if hot { p.violet_light } else { p.muted_dim };
+                    let x = handle.center().x;
+                    let mut y = handle.top() + 3.0;
+                    while y < handle.bottom() - 2.0 {
+                        ui.painter().circle_filled(egui::pos2(x, y), 0.9, col);
+                        y += 3.0;
+                    }
+                    if hresp.dragged() {
+                        *chat_width = (chat_w + hresp.drag_delta().x).clamp(120.0, max_chat);
+                    }
+                    if hresp.drag_stopped() {
+                        width_committed = true;
+                    }
+                    if hresp.double_clicked() {
+                        // back to the skin's default proportion
+                        *chat_width = 0.0;
+                        width_committed = true;
+                    }
+                    chat.bar_hovered = ui.rect_contains_pointer(egui::Rect::from_min_max(start, handle.max));
                 }
 
                 // by default the buttons stretch over the whole remaining

@@ -614,6 +614,11 @@ pub struct Settings {
     /// `@` in a chat field lists the residents of the conversation to mention
     /// (FSUseChatMentionAutoComplete, on).
     pub chat_mention_autocomplete: bool,
+    /// The local chat bar (the chat island) shows only while it is used:
+    /// Enter or a letter key brings it (#1009). The Legacy Viewer's
+    /// `AutohideChatBar`, off by default; with the islands the default dock
+    /// then keeps the Conversations button.
+    pub autohide_chat_bar: bool,
     /// Show Contacts in Conversations (Preferences > Chat, on by default as
     /// the Legacy Viewer's always-present entry; it can be hidden there).
     pub show_contacts_tab: bool,
@@ -1544,6 +1549,7 @@ impl Default for Settings {
             chat_gesture_autocomplete: true,
             chat_name_prediction: true,
             chat_mention_autocomplete: true,
+            autohide_chat_bar: false,
             show_contacts_tab: true,
             conversations_own_windows: false,
             send_typing_state: true,

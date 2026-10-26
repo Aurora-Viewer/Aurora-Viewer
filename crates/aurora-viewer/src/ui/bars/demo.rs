@@ -23,7 +23,9 @@
 //! (hidden at frame 600, its hint shown), `peek` (hidden, the pointer held at
 //! the top edge: the top islands back), `peekleft` (hidden, the pointer held
 //! at the left edge: the left toolbar back); with `legacy`, Firestorm's
-//! question.
+//! question. The chat bar: `autohide` (shown only while it is used, with
+//! either bars), `chatstart` (autohidden, Enter pressed at frame 300 on a
+//! draft: the bar back).
 //! `normal` or nothing
 //! else: the
 //! islands as set. With any word the voice light is the mockup's
@@ -80,6 +82,10 @@ pub struct DemoBars {
     pub hidden: Option<bool>,
     /// Hidden, the pointer held at the left edge: the left toolbar back.
     pub peek_left: bool,
+    /// The chat bar autohidden (#1009), whatever is saved.
+    pub autohide: bool,
+    /// Autohidden, Enter pressed at frame 300 on a draft: the bar back.
+    pub chat_start: bool,
 }
 
 /// How the demo opens Performance from the system island.
@@ -157,6 +163,11 @@ pub fn parse(value: &str) -> DemoBars {
             "rowdrag" => {
                 d.access = Some(crate::settings::FavoritesAccess::Row);
                 d.row_drag = true;
+            }
+            "autohide" => d.autohide = true,
+            "chatstart" => {
+                d.autohide = true;
+                d.chat_start = true;
             }
             _ => {}
         }
