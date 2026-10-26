@@ -793,7 +793,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         );
         // menu_viewer.xml: Stream Title (its window keeps the history of
         // the titles), then Landmark this Place, after the maps
-        menu::todo(ui, p, "playlist-filled", aurora_i18n::tr!("ui-bars-stream-title"));
+        flip_window(
+            ui,
+            p,
+            "playlist-filled",
+            aurora_i18n::tr!("ui-bars-stream-title"),
+            super::stream_title::WINDOW,
+            &mut panels.stream_title,
+        );
         if menu::item(ui, p, "map-pin-filled", aurora_i18n::tr!("landmark-create-here")) {
             *action = BarAction::CreateLandmark;
         }

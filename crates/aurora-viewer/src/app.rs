@@ -549,6 +549,9 @@ pub struct App {
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
     about: about::About,
+    /// The parcel radio's title and the ones before (World › Stream title).
+    stream_titles: crate::stream_title::StreamTitles,
+    stream_title_ui: ui::stream_title::StreamTitleUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
@@ -1203,6 +1206,8 @@ impl App {
             blacklist_ui: Default::default(),
             bumps_ui: Default::default(),
             about: Default::default(),
+            stream_titles: Default::default(),
+            stream_title_ui: Default::default(),
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
             money_tracker_ui: Default::default(),
@@ -4801,6 +4806,16 @@ impl App {
             aurora_audio::StreamStatus::Playing { title } if !self.stream_url.is_empty() => title,
             _ => None,
         };
+        // the stream title window's (FSStreamTitleManager): the title now,
+        // empty once the stream stops; the demo's titles take its place
+        if !(self.demo && crate::demo::stream_title::scenario().is_some()) {
+            let now = if self.stream_url.is_empty() {
+                ""
+            } else {
+                title.as_deref().unwrap_or("")
+            };
+            self.stream_titles.update(now, self.settings.audio.stream_title_history as usize);
+        }
         if self.stream_url.is_empty() {
             self.stream_title_said = None;
         } else if let Some(title) = title.filter(|t| self.stream_title_said.as_ref() != Some(t)) {
@@ -9491,6 +9506,19 @@ impl App {
             // until the computer is read and the cards have their height
             self.about.ui.scroll_to_end = end && self.frame_count.saturating_sub(crate::demo::about::OPEN) < 60;
         }
+        if self.demo
+            && let Some(scenario) = crate::demo::stream_title::scenario()
+        {
+            let title = crate::demo::stream_title::title(self.frame_count, scenario);
+            self.stream_titles.update(title, self.settings.audio.stream_title_history as usize);
+            if self.frame_count == crate::demo::stream_title::OPEN {
+                self.settings.audio.stream_title_text_only = scenario.text_only;
+                ui::widgets::open_floater(&self.egui_ctx, ui::stream_title::WINDOW, &mut self.panels.stream_title);
+                if scenario.history {
+                    ui::widgets::open_floater(&self.egui_ctx, ui::stream_title::HISTORY, &mut self.panels.stream_title_history);
+                }
+            }
+        }
         if self.demo && crate::demo::collisions::mode().is_some() {
             for event in crate::demo::collisions::events(self.frame_count) {
                 self.world.apply(event);
@@ -13959,6 +13987,17 @@ impl App {
                 self.sound_explorer_window(&ctx, &p);
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
+                let shown = self.stream_title_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.stream_titles,
+                    &mut self.settings.audio,
+                    &mut self.panels.stream_title,
+                    &mut self.panels.stream_title_history,
+                );
+                if shown.settings {
+                    self.settings.save();
+                }
                 ui::beacons::show(&ctx, &p, &mut self.panels.beacons, &mut self.settings);
                 if ui::owned_land::show(&ctx, &p, &mut self.world, &mut self.panels.owned_land) {
                     ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map);
@@ -14340,6 +14379,7 @@ impl App {
                 self.draw_options(&ctx, &p, &mut a);
                 self.settings.show_chat = self.panels.chat;
                 self.settings.show_minimap = self.panels.minimap;
+                self.settings.audio.stream_title_window = self.panels.stream_title;
                 self.settings.show_people = self.panels.people;
                 self.settings.people_tab = self.panels.people_tab;
                 self.settings.show_inventory = self.panels.inventory;

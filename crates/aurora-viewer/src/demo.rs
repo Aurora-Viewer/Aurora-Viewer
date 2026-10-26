@@ -188,6 +188,10 @@ pub mod staff;
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
 pub mod stream;
+/// The parcel radio's titles and the stream title window
+/// (AURORA_DEMO_STREAM_TITLE).
+#[path = "demo_stream_title.rs"]
+pub mod stream_title;
 /// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
 #[path = "demo_tags.rs"]
 pub mod tags;

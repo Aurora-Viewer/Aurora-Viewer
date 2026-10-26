@@ -1379,6 +1379,14 @@ pub struct AudioSettings {
     /// StreamMetadataAnnounceChannel, 362394).
     pub stream_title_announce: bool,
     pub stream_title_channel: i32,
+    /// World › Stream title shown, kept between sessions (the Legacy
+    /// Viewer's fs_streamtitle saves its visibility; off).
+    pub stream_title_window: bool,
+    /// Aurora: the stream title as its text alone, laid over the world and
+    /// moved anywhere, instead of the window (off).
+    pub stream_title_text_only: bool,
+    /// Titles kept in its history (FSStreamtitleHistoryLength, 10).
+    pub stream_title_history: u32,
     /// Cut every sound while the window is minimised (MuteWhenMinimized, off).
     pub mute_when_minimized: bool,
     /// Output device name (empty = system default).
@@ -1434,6 +1442,9 @@ impl Default for AudioSettings {
             stream_title: StreamTitleShow::Chat,
             stream_title_announce: false,
             stream_title_channel: 362394,
+            stream_title_window: false,
+            stream_title_text_only: false,
+            stream_title_history: 10,
             mute_when_minimized: false,
             output_device: String::new(),
             input_device: String::new(),
