@@ -8,7 +8,7 @@
 //! Each conversation keeps its draft, and its field takes the keyboard as
 //! in the other styles (#422, #425).
 
-use super::{ChatUi, ConvAction, OutgoingChat, completion, parse_channel, sidebar, typing};
+use super::{ChatUi, ConvAction, OutgoingChat, parse_channel, sidebar, suggest, typing};
 use crate::theme::Palette;
 use crate::ui::menu;
 use crate::world::World;
@@ -156,6 +156,7 @@ pub(super) fn show(
                         };
                         let recalled = st.input_history.entry(st.selected).or_default().recall(ui, conv_input, &mut draft);
                         let nav = crate::ui::emoji::codes::keys(ui, conv_input);
+                        let suggest_nav = if nav.is_none() { suggest::keys(ui, conv_input) } else { None };
                         let mut output = emoji.text_field(ui, &mut draft, |edit| {
                             edit.id(conv_input)
                                 .hint_text(hint)
@@ -168,11 +169,16 @@ pub(super) fn show(
                             output.response.mark_changed();
                         }
                         crate::ui::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
-                        if local {
-                            completion::complete(ui, &mut output, &mut draft, gestures);
-                            if chip {
-                                channel_chip(ui, p, &mut draft, channel);
-                            }
+                        let selected = st.selected;
+                        let people = move || selected.map_or_else(Vec::new, |id| suggest::members(world, id));
+                        let scope = match selected {
+                            None => suggest::Scope::Nearby(gestures),
+                            Some(id) => suggest::Scope::Session(id, &people),
+                        };
+                        suggest::after(ui, p, &mut output, &mut draft, suggest_nav, &mut st.suggest, scope);
+                        // `chip` is only for the nearby chat
+                        if chip {
+                            channel_chip(ui, p, &mut draft, channel);
                         }
                         let has_text = !draft.trim().is_empty();
                         send_clicked = send_button(ui, p, has_text).clicked() && has_text;
@@ -218,7 +224,7 @@ pub(super) fn show(
             if send_clicked
                 || ((resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt))
             {
-                let text = draft.trim().to_owned();
+                let text = st.suggest.expand(st.selected, draft.trim());
                 if !text.is_empty() {
                     sent = true;
                     st.input_history.entry(st.selected).or_default().record(conv_input, &draft);

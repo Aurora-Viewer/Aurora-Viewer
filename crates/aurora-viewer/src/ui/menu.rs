@@ -352,6 +352,11 @@ pub fn picture_row(
     row_lead(ui, p, Lead::Picture(picture, fallback), label, true, End::Keys(detail), selected)
 }
 
+/// [`picture_row`] with a Tabler icon: a resident to mention, a gesture.
+pub fn suggestion_row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, detail: &str, selected: bool) -> egui::Response {
+    row_lead(ui, p, Lead::Icon(icon), label, true, End::Keys(detail), selected)
+}
+
 /// One row: icon, label, right end. Hover highlight like a menu item.
 fn row(ui: &mut Ui, p: &Palette, icon: &str, label: &str, enabled: bool, end: End, open: bool) -> egui::Response {
     row_lead(ui, p, Lead::Icon(icon), label, enabled, end, open)

@@ -802,14 +802,25 @@ impl App {
             }
             return;
         }
-        if !matches!(mode.as_str(), "completion" | "completion-send") {
+        if !matches!(mode.as_str(), "completion" | "completion-send" | "list") {
             return;
         }
         // The synthetic keystrokes own egui focus even when the automated
         // demo window is behind the user's current desktop window.
         raw.focused = true;
+        let key = |key| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        };
         match self.frame_count {
             540 => self.chat_ui.focus_request = true,
+            // `list` (#980): `/h` lists `/hello` and `/hug`, the arrow
+            // writes the first
+            550 if mode == "list" => raw.events.push(egui::Event::Text("/h".into())),
+            600 if mode == "list" => raw.events.push(key(egui::Key::ArrowDown)),
             550 => raw.events.push(egui::Event::Text("/ej".into())),
             650 if mode == "completion-send" => raw.events.push(egui::Event::Key {
                 key: egui::Key::Enter,
@@ -937,8 +948,20 @@ impl App {
                     true,
                 );
             }
+            if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v == "list") {
+                let hug = Gesture {
+                    trigger: "/hug".into(),
+                    steps: vec![Step::Chat {
+                        text: aurora_i18n::tr!("gesture-demo-chat").into(),
+                        flags: 0,
+                    }],
+                    ..Default::default()
+                };
+                self.seed_demo_gesture(&template, 951007, aurora_i18n::tr!("gesture-demo-hug-name"), hug, true);
+            }
         }
-        self.panels.gestures = !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate"));
+        // the list of the chat bar is shown alone
+        self.panels.gestures = !std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| v.starts_with("communicate") || v == "list");
         if std::env::var("AURORA_DEMO_GESTURES").is_ok_and(|v| matches!(v.as_str(), "editor" | "numpad")) {
             self.gesture_action(Action::Open(item));
         }

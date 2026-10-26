@@ -604,6 +604,15 @@ pub struct Settings {
     /// CloseChatOnReturn off). On by default (human choice of 2026-10-16);
     /// off, the bar lets go after sending.
     pub chat_keep_focus: bool,
+    /// The nearby chat fields complete a gesture's trigger after `/`, with
+    /// the list of the matching ones (FSChatbarGestureAutoCompleteEnable, on).
+    pub chat_gesture_autocomplete: bool,
+    /// The nearby chat fields complete the name of a resident around after
+    /// three letters (FSChatbarNamePrediction, off as in the Legacy Viewer).
+    pub chat_name_prediction: bool,
+    /// `@` in a chat field lists the residents of the conversation to mention
+    /// (FSUseChatMentionAutoComplete, on).
+    pub chat_mention_autocomplete: bool,
     /// Show Contacts in Conversations (Preferences > Chat, on by default as
     /// the Legacy Viewer's always-present entry; it can be hidden there).
     pub show_contacts_tab: bool,
@@ -1524,6 +1533,9 @@ impl Default for Settings {
             compact_automated_chat: false,
             compact_im_system_lines: false,
             chat_keep_focus: true,
+            chat_gesture_autocomplete: true,
+            chat_name_prediction: false,
+            chat_mention_autocomplete: true,
             show_contacts_tab: true,
             conversations_own_windows: false,
             send_typing_state: true,

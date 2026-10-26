@@ -100,6 +100,7 @@ mod settings_backup;
 mod shape_editor;
 mod snapshot;
 mod social_menu_demo;
+mod suggest_demo;
 mod task_notecards;
 mod teleport_lookup;
 mod teleport_screen;
@@ -8598,6 +8599,7 @@ impl App {
             self.give_demo_input(&mut raw, vp, (w, h));
             ui::inventory::drag::demo::input(&ctx, self.frame_count, &self.world.inventory, &self.inventory_ui, &mut raw);
             self.gesture_demo_input(&mut raw);
+            self.suggest_demo_input(&mut raw);
             self.double_click_menu_demo_input(&mut raw);
             raw.events.extend(ui::widgets::demo::events(&ctx, self.frame_count));
             raw.events.extend(ui::widgets::demo::worn_events(&ctx, self.frame_count));
@@ -12430,6 +12432,19 @@ impl App {
                 let bar_layout = if classic_bars { layout } else { self.dock_layout.of(layout) };
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
+                // the chat fields' suggestions (#980); the residents around
+                // only while a nearby field lists or predicts them
+                let suggest = &mut self.chat_ui.suggest;
+                suggest.options = ui::chat::suggest::Options {
+                    gestures: self.settings.chat_gesture_autocomplete,
+                    // the demo's prediction leaves the saved settings alone
+                    names: self.settings.chat_name_prediction || (self.demo && suggest_demo::mode() == "names"),
+                    mentions: self.settings.chat_mention_autocomplete,
+                };
+                let now = ui.input(|i| i.time);
+                if suggest.wants_nearby(now) {
+                    suggest.set_nearby(ui::chat::suggest::nearby(&self.world), now);
+                }
                 let ao_active = self.settings.ao.accounts.get(&self.world.agent_id).is_some_and(|a| a.enabled) && !self.ao_runtime.paused;
                 let (chat, bar2, bottom_top, chat_width_set) = if !chrome.bottom {
                     // hidden: the chat lines go down to the screen's bottom
