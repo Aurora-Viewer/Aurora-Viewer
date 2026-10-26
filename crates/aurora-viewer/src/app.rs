@@ -7465,7 +7465,7 @@ impl App {
                 c.flags |= crate::autopilot::AU_FLAGS_CLIENT_AUTOPILOT;
             }
             // RenderHideGroupTitle (send_agent_update)
-            if self.settings.hide_own_group_title {
+            if self.settings.group_titles == crate::world::names::GroupTitles::AllExceptMine {
                 c.flags |= crate::autopilot::AU_FLAGS_HIDETITLE;
             }
             let moving = control::AT_POS | control::AT_NEG | control::LEFT_POS | control::LEFT_NEG | control::UP_POS | control::UP_NEG;
@@ -14593,6 +14593,9 @@ impl ApplicationHandler for App {
                 }
                 if value.split(':').nth(1) == Some("animations-sync") {
                     self.settings.synchronize_animations = true;
+                }
+                if value == "avatars/1:group-titles" {
+                    self.settings.group_titles = crate::world::names::GroupTitles::AllExceptMine;
                 }
                 // the confirmation of a restore, for a backup of the demo's
                 // own profile

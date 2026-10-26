@@ -1076,8 +1076,9 @@ pub struct Settings {
     pub show_usernames: bool,
     /// Which group titles the name tags show (GroupTitlesTagMode, all).
     pub group_titles: crate::world::names::GroupTitles,
-    /// Hide our own group title from everyone (RenderHideGroupTitle, off).
-    pub hide_own_group_title: bool,
+    /// Read the former separate switch once; the dropdown now owns this choice (#803).
+    #[serde(rename = "hide_own_group_title", skip_serializing)]
+    pub(crate) former_hide_own_group_title: bool,
     pub legacy_username_format: bool,
     pub trim_resident: bool,
     pub display_name_notices: bool,
@@ -1730,7 +1731,7 @@ impl Default for Settings {
             use_display_names: true,
             show_usernames: true,
             group_titles: Default::default(),
-            hide_own_group_title: false,
+            former_hide_own_group_title: false,
             legacy_username_format: true,
             trim_resident: true,
             display_name_notices: true,
@@ -2008,6 +2009,9 @@ impl Settings {
 
     fn sanitized(mut self) -> Settings {
         self.grids.retain_mut(|grid| grid.validate().is_ok());
+        if std::mem::take(&mut self.former_hide_own_group_title) {
+            self.group_titles = crate::world::names::GroupTitles::AllExceptMine;
+        }
         if self.settings_version < 2 {
             // new defaults: 96 m draw distance, LOD factor 2
             self.draw_distance = 96.0;
@@ -2634,6 +2638,30 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(read(&serde_json::to_string(&local).expect("json")), local);
+    }
+
+    #[test]
+    fn group_title_choices_migrate_the_former_switch_and_survive_reload() {
+        use crate::world::names::GroupTitles;
+
+        let old: super::Settings = serde_json::from_str("{}").expect("old settings");
+        assert_eq!(old.sanitized().group_titles, GroupTitles::All);
+        for mode in GroupTitles::ALL {
+            for hide in [false, true] {
+                let old: super::Settings = serde_json::from_value(serde_json::json!({
+                    "group_titles": mode,
+                    "hide_own_group_title": hide,
+                }))
+                .expect("former title preferences");
+                let migrated = old.sanitized();
+                let expected = if hide { GroupTitles::AllExceptMine } else { mode };
+                assert_eq!(migrated.group_titles, expected);
+                let saved = serde_json::to_value(&migrated).expect("save title choice");
+                assert!(saved.get("hide_own_group_title").is_none(), "only the combined choice is saved");
+                let reloaded: super::Settings = serde_json::from_value(saved).expect("reload title choice");
+                assert_eq!(reloaded.sanitized().group_titles, expected);
+            }
+        }
     }
 
     #[test]

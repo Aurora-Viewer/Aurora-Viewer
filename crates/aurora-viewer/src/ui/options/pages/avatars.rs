@@ -183,11 +183,6 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     &field!(group_titles),
                     &choices,
                 );
-                cx.toggle(
-                    tr!("ui-options-hide-own-group-title"),
-                    tr!("ui-options-hide-own-group-title-help"),
-                    &field!(hide_own_group_title),
-                );
             });
             // FSShowTypingStateInNameTag and FSTypingChevronPrefix
             cx.group(tr!("ui-options-typing"), |cx| {
