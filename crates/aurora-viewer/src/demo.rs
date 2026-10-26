@@ -97,6 +97,9 @@ pub mod geometry;
 /// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).
 #[path = "demo_glyphs.rs"]
 pub mod glyphs;
+/// The grid status feed and its button (AURORA_DEMO_GRID_STATUS).
+#[path = "demo_grid_status.rs"]
+pub mod grid_status;
 #[path = "demo_grounding.rs"]
 pub mod grounding;
 /// The demo group server (AURORA_DEMO_GROUP_PROFILE).

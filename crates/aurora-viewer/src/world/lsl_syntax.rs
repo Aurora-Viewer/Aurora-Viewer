@@ -76,6 +76,8 @@ mod tests {
             materials_rate: None,
             materials_max: None,
             lsl_syntax_id: id,
+            grid_status_feed: String::new(),
+            grid_status_page: String::new(),
         });
         w
     }

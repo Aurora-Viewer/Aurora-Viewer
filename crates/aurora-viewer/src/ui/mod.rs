@@ -43,6 +43,7 @@ pub mod fonts;
 pub mod friend_prompt;
 pub mod gestures;
 pub(crate) mod give_drop;
+pub mod grid_status;
 pub mod grids;
 pub mod group_profile;
 pub mod hover_height;
@@ -176,6 +177,8 @@ pub struct Panels {
     pub money_tracker: bool,
     /// "Bumps, pushes & hits" (Help menu): who bumped, pushed or hit us.
     pub bumps: bool,
+    /// "Grid status" (Help menu, toolbar): the grid's incidents.
+    pub grid_status: bool,
     /// "About Aurora Viewer" (Help menu): the version, the system
     /// information and the licences.
     pub about: bool,
@@ -232,6 +235,7 @@ impl Panels {
             asset_blacklist: false,
             money_tracker: false,
             bumps: false,
+            grid_status: false,
             about: false,
             stream_title: settings.audio.stream_title_window,
             stream_title_history: false,

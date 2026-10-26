@@ -12,7 +12,7 @@ mod conv_menu;
 pub(crate) mod docking;
 mod find;
 mod flash;
-pub use flash::{ButtonMenu, button_menu, nearby_flashes, nearby_out_of_sight};
+pub use flash::{ButtonFlash, ButtonMenu, button_menu, nearby_flashes, nearby_out_of_sight};
 mod gif_picker;
 mod head;
 mod header;

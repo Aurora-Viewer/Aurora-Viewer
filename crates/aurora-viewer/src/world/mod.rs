@@ -130,6 +130,9 @@ pub struct Region {
     /// Object capacity (SimStats ObjectCapacity, LLViewerRegion::getMaxTasks);
     /// 0 until known.
     pub max_tasks: u32,
+    /// An OpenSim grid's status feed and page (SimulatorFeatures'
+    /// OpenSimExtras GridStatusRSS, GridStatus); empty when not given.
+    pub grid_status: (String, String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1555,6 +1558,7 @@ impl World {
             lsl_syntax_id: None,
             materials_limits: Default::default(),
             max_tasks: 0,
+            grid_status: Default::default(),
         })
     }
 
@@ -1896,9 +1900,12 @@ impl World {
                 materials_rate,
                 materials_max,
                 lsl_syntax_id,
+                grid_status_feed,
+                grid_status_page,
             } => {
                 let r = self.ensure_region(handle, (256, 256));
                 r.lsl_syntax_id = Some(lsl_syntax_id);
+                r.grid_status = (grid_status_feed, grid_status_page);
                 r.voice_server = voice_server_type;
                 r.avatar_hover_height = avatar_hover_height;
                 r.materials_limits = crate::scene::legacy_mat::RegionLimits::from_features(materials_rate, materials_max);
@@ -4201,6 +4208,12 @@ impl World {
     /// (LLViewerRegion::isCapabilityAvailable).
     pub fn main_has_cap(&self, name: &str) -> bool {
         self.main().is_some_and(|r| r.caps.contains_key(name))
+    }
+
+    /// The status feed and page the agent's region names for its OpenSim
+    /// grid (LFSimFeatureHandler::gridStatusRSS, gridStatusURL).
+    pub fn grid_status_extras(&self) -> Option<(&str, &str)> {
+        self.main().map(|r| (r.grid_status.0.as_str(), r.grid_status.1.as_str()))
     }
 
     /// `id` talked with us now (LLRecentPeople::add), here.
@@ -6942,6 +6955,8 @@ mod motion_tests {
                 materials_rate: None,
                 materials_max: None,
                 lsl_syntax_id: Uuid::nil(),
+                grid_status_feed: String::new(),
+                grid_status_page: String::new(),
             };
             world.apply(features(true));
             assert!(world.hover_height_available());

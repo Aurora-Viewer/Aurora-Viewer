@@ -41,6 +41,7 @@ mod gestures;
 mod gif_search;
 mod gpu_driver;
 mod graphics_presets;
+mod grid_status;
 mod grids;
 mod high_contrast;
 mod hover_tips;

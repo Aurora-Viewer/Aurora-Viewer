@@ -68,6 +68,7 @@ mod gestures;
 mod give_demo;
 mod gpu_stall;
 mod graphics_start;
+mod grid_status;
 mod hover_height;
 mod hover_tips;
 mod hud_drag;
@@ -549,6 +550,12 @@ pub struct App {
     blacklist_ui: ui::blacklist::BlacklistUi,
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
+    /// Help › Grid status: the grid's feed (`app/grid_status.rs`), whether
+    /// its button stands on a toolbar, and whether the window was open
+    /// last frame.
+    grid_status: crate::grid_status::GridStatus,
+    grid_status_listed: bool,
+    grid_status_was_open: bool,
     about: about::About,
     /// The parcel radio's title and the ones before (World › Stream title).
     stream_titles: crate::stream_title::StreamTitles,
@@ -1209,6 +1216,9 @@ impl App {
             area_search_feed: Default::default(),
             blacklist_ui: Default::default(),
             bumps_ui: Default::default(),
+            grid_status: Default::default(),
+            grid_status_listed: false,
+            grid_status_was_open: false,
             about: Default::default(),
             stream_titles: Default::default(),
             stream_title_ui: Default::default(),
@@ -12722,6 +12732,30 @@ impl App {
                     t.buttons = Some(buttons);
                     demo_toolbar = Some(t);
                 }
+                // AURORA_DEMO_GRID_STATUS: the Grid status button at the end
+                // of the bottom bar, for this run only
+                if self.demo && crate::demo::grid_status::mode().is_some() {
+                    let layout = if classic_bars {
+                        layout.clone()
+                    } else {
+                        self.dock_layout.of(layout, autohide_chat_bar).clone()
+                    };
+                    let mut t = demo_toolbar
+                        .take()
+                        .unwrap_or_else(|| self.settings.toolbar.clone().unwrap_or_default());
+                    let mut buttons = t.buttons(&layout).to_vec();
+                    if let Some(c) = ui::toolbar::COMMANDS.iter().find(|c| c.id == "gridstatus")
+                        && !buttons.iter().any(|b| b.command == c.id)
+                    {
+                        buttons.push(ui::skin::ToolButton {
+                            icon: c.icon.into(),
+                            command: c.id.into(),
+                            tooltip: String::new(),
+                        });
+                    }
+                    t.buttons = Some(buttons);
+                    demo_toolbar = Some(t);
+                }
                 let toolbar_settings = match demo_toolbar.as_mut() {
                     Some(t) => t,
                     None => self.settings.toolbar.get_or_insert_default(),
@@ -12732,6 +12766,9 @@ impl App {
                 } else {
                     self.dock_layout.of(layout, autohide_chat_bar)
                 };
+                // the feed is polled while its button stands on a toolbar
+                // (LLFloaterGridStatus::checkGridStatusRSS, hasCommand)
+                self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
                 // the chat fields' suggestions (#980); the residents around
@@ -14005,6 +14042,7 @@ impl App {
                 self.sound_explorer_window(&ctx, &p);
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
+                self.grid_status_window(&ctx, &p);
                 let shown = self.stream_title_ui.show(
                     &ctx,
                     &p,
