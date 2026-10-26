@@ -11187,7 +11187,7 @@ impl App {
     }
 
     /// hasParcelLandmark: the landmark lying on the agent's parcel (the lit
-    /// star; the "add landmark" entries are greyed out meanwhile).
+    /// star). Existing landmarks never prevent creating another one.
     fn parcel_landmark(&mut self) -> Option<ui::landmark_create::ParcelLandmark> {
         // the Favorites and Landmarks folders are fetched for it, as
         // Firestorm has them after its background inventory fetch
@@ -13603,9 +13603,6 @@ impl App {
                     }
                 }
                 // place profiles: standalone windows and "Places"
-                if self.panels.places {
-                    self.places_ui.landmark_here = self.parcel_landmark().is_some();
-                }
                 let favorites_order = if self.panels.places && !self.settings.classic_places {
                     self.world.favorites.list(&self.world.inventory).to_vec()
                 } else {

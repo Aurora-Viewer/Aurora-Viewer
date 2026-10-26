@@ -936,12 +936,10 @@ impl PlacesUi {
         let bw = widgets::action_button_fit(ui, "plus", label);
         let button = Rect::from_min_size(Pos2::new(rect.right() - 12.0 - bw, rect.center().y - 13.0), Vec2::new(bw, 26.0));
         let mut b = ui.new_child(egui::UiBuilder::new().max_rect(button));
-        let enabled = !self.landmark_here && world.parcel.is_some();
-        let resp = b.add_enabled_ui(enabled, |ui| {
+        let resp = b.add_enabled_ui(world.parcel.is_some(), |ui| {
             widgets::action_button(ui, p, "plus", label, widgets::ActionKind::Flat, Vec2::new(bw, 26.0))
         });
-        let resp = resp.inner.on_disabled_hover_text(aurora_i18n::tr!("ui-places-landmark-exists"));
-        if resp.clicked() {
+        if resp.inner.clicked() {
             let dest = match self.aurora.source {
                 Source::Folder(f) => Some(f),
                 _ => None,
@@ -1303,11 +1301,10 @@ impl PlacesUi {
                 .zip(world.main_origin())
                 .is_some_and(|(parcel, origin)| crate::world::landmarks::in_parcel(&parcel.bitmap, origin, g))
         });
-        let enabled = there && !self.landmark_here;
         let label = aurora_i18n::tr!("ui-places-create-landmark");
         let w = widgets::action_button_fit(ui, "plus", label);
         let button = |ui: &mut egui::Ui| {
-            ui.add_enabled_ui(enabled, |ui| {
+            ui.add_enabled_ui(there, |ui| {
                 widgets::action_button(ui, p, "plus", label, widgets::ActionKind::Flat, Vec2::new(w, 26.0))
             })
             .inner

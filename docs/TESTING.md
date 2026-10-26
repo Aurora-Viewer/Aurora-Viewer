@@ -5784,9 +5784,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   `favorite` / `landmark` make a landmark of the plaza in Favorites /
   Landmarks, as the star's menu does: the star at the right end of the
   location field turns amber (its tooltip names the folder and the
-  landmark), a click on it edits that landmark, and World › Landmark this
-  place is greyed out. Without the variable the star is an outline and
-  opens its menu. The demo parcel is the 128 m square around the plaza
+  landmark), and a click on it edits that landmark. World › Landmark this
+  place and the Places creation entries stay available: save several
+  landmarks without moving, including from a Places folder, and check that
+  each creates a separate inventory item. Without the variable the star is
+  an outline and opens its menu. The demo parcel is the 128 m square around the plaza
   (x and y 64..192): a landmark made there lights the star, wherever in it
   the avatar stands. With `AURORA_DEMO_PLACES` the folder list shows the
   demo's subfolder.
