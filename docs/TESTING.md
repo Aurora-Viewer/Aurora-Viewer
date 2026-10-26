@@ -1794,8 +1794,9 @@ grid.
 - `faces-alpha` uses a texture with holes in those panels. Normal touches
   and hover reach transparent Blend texels; quick movement and local resizing
   pass through them. Masked cutouts still let normal touches through, and
-  opaque PBR ignores texture alpha. Editing and right-click selection retain
-  access to invisible faces.
+  opaque PBR ignores texture alpha. A fully invisible face (texture-entry
+  alpha 0) takes normal touches and hover whatever its material mode.
+  Editing and right-click selection retain access to invisible faces.
   With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
   and material masks blue; their highlighted surfaces become pickable.
 - `blend-opacity`: three rows of panels, Legacy Blend, PBR Blend and Mask, at 0%, 50% and

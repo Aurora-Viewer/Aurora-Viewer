@@ -685,11 +685,7 @@ impl Scene {
             if only_hidden && !hidden {
                 return None;
             }
-            if !include_hidden
-                && super::plants::plant_face(o).is_none()
-                && hidden
-                && !(g.hud && mode == FacePick::Surface && self.blend_face(world, o, g, face))
-            {
+            if !include_hidden && super::plants::plant_face(o).is_none() && hidden && !(g.hud && mode == FacePick::Surface) {
                 return None;
             }
             let f = f.as_ref()?;
@@ -714,10 +710,12 @@ impl Scene {
                     let tf = o.te.as_ref().map(|te| *te.face(hit.face)).unwrap_or_default();
                     // LLToolPie::handleMouseDown prioritizes transparent
                     // attachments. HUD buttons own the whole Blend triangle,
-                    // including fully invisible faces without a draw record.
-                    // Resolve the material before visibility or texture masks;
-                    // Mask faces keep their cutouts and move gestures keep holes.
-                    if g.hud && mode == FacePick::Surface && self.blend_face(world, o, g, hit.face) {
+                    // and a fully invisible face is a button whatever its
+                    // material mode: hit zones are often alpha-0 prims with a
+                    // Mask or Opaque material, and have no draw record.
+                    // Visible Mask faces keep their cutouts and move gestures
+                    // keep holes.
+                    if g.hud && mode == FacePick::Surface && (tf.color[3] < 0.004 || self.blend_face(world, o, g, hit.face)) {
                         return Some(hit);
                     }
                     let draw = geom
@@ -2200,7 +2198,7 @@ pub(super) mod tests {
         assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
 
         // Zero TE alpha omits all the draw records. Keep the CPU triangles
-        // for ordinary clicks and hover, without admitting a Mask override.
+        // for ordinary clicks and hover, whatever the material mode.
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].color[3] = 0.0;
         scene.gpu[front].faces.clear();
         scene.build_huds(&world, [1280, 720], true);
@@ -2220,12 +2218,12 @@ pub(super) mod tests {
                     ..Default::default()
                 },
             );
-            let expected = if mode == legacy_mat::alpha_mode::BLEND { front } else { back };
             assert_eq!(
                 scene.hud_pick(&world, cursor, false).unwrap().0,
-                expected,
+                front,
                 "omitted legacy face: {mode}"
             );
+            assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         }
         Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces[0].material_id = Uuid::nil();
         let material = Uuid::from_u128(8890);
@@ -2249,9 +2247,9 @@ pub(super) mod tests {
                 )]
                 .into(),
             );
-            let expected = if mode == aurora_assets::AlphaMode::Blend { front } else { back };
-            assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, expected, "omitted face: {mode:?}");
-            assert_eq!(scene.hover_hud(&world, cursor), Some(expected));
+            assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front, "omitted face: {mode:?}");
+            assert_eq!(scene.hover_hud(&world, cursor), Some(front));
+            assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         }
     }
 
@@ -2487,12 +2485,14 @@ pub(super) mod tests {
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, back);
         world.objects.get_mut(front).unwrap().click_action = crate::interaction::code::DISABLED;
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
-        // Invisible touch panels are picked on click, but not on hover.
+        // Invisible touch panels take clicks and hover, whatever their
+        // material, but quick movement passes through them.
         for f in &mut Arc::make_mut(world.objects.get_mut(front).unwrap().te.as_mut().unwrap()).faces {
             f.color[3] = 0.0;
         }
         assert_eq!(scene.hud_pick(&world, cursor, true).unwrap().0, front);
-        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, back);
+        assert_eq!(scene.hud_pick(&world, cursor, false).unwrap().0, front);
+        assert_eq!(scene.hover_hud(&world, cursor), Some(front));
         assert_eq!(scene.hud_move_pick(&world, cursor), Some(back));
         scene.gpu[front].owner_avatar = None;
         scene.build_huds(&world, [1280, 720], true);
