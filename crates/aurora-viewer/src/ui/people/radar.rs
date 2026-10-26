@@ -307,7 +307,7 @@ pub(super) fn rows(world: &World, data: &RadarData, filter: &str) -> Vec<Row> {
                 return None;
             }
             let name = radar_name(world, &e.id, settings.name_format);
-            if !filter.is_empty() && !name.to_lowercase().contains(filter) {
+            if !super::matches_name(world, &e.id, &name, filter) {
                 return None;
             }
             let profile = world.profiles.get(&e.id);
@@ -881,6 +881,137 @@ pub fn tab(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn name_filter_world() -> (World, Radar) {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        world.social.avatar_names.on_display_names(
+            &[
+                aurora_net::AvatarNameData {
+                    id: Uuid::from_u128(1),
+                    username: "jane.doe".into(),
+                    display_name: "Étoile ✧".into(),
+                    legacy_first: "Jane".into(),
+                    legacy_last: "Doe".into(),
+                    ..Default::default()
+                },
+                aurora_net::AvatarNameData {
+                    id: Uuid::from_u128(2),
+                    username: "exampleuser".into(),
+                    display_name: "Another Name".into(),
+                    legacy_first: "exampleuser".into(),
+                    legacy_last: "Resident".into(),
+                    ..Default::default()
+                },
+            ],
+            &[],
+            Some(3600),
+        );
+        let mut radar = Radar::default();
+        radar.sweep(
+            (1..=3)
+                .map(|n| crate::world::radar::Sighting {
+                    id: Uuid::from_u128(n),
+                    region: 1,
+                    position: glam::Vec3::new(n as f32, 0.0, 0.0),
+                    altitude_known: true,
+                    loaded: true,
+                    sitting: false,
+                    typing: false,
+                })
+                .collect(),
+            glam::Vec3::ZERO,
+            Some(1),
+            &HashMap::new(),
+            96.0,
+            0.0,
+        );
+        (world, radar)
+    }
+
+    fn filtered_ids(world: &World, radar: &Radar, format: u8, query: &str) -> Vec<Uuid> {
+        let mut settings = RadarSettings {
+            name_format: format,
+            ..Default::default()
+        };
+        let data = RadarData {
+            radar,
+            settings: &mut settings,
+            voice: &HashMap::new(),
+            draw_distance: 96.0,
+            now: 0.0,
+            pics: &HashMap::new(),
+        };
+        let filter = query.trim().to_lowercase();
+        let result = rows(world, &data, &filter);
+        for row in &result {
+            assert_eq!(row.name, radar_name(world, &row.id, format), "search keeps the chosen name format");
+        }
+        result.into_iter().map(|row| row.id).collect()
+    }
+
+    #[test]
+    fn people_name_filter_matches_all_names_in_every_radar_format() {
+        let (mut world, radar) = name_filter_world();
+        for format in 0..=3 {
+            for query in ["  JANE DOE  ", "JaNe.DoE", "doe", "ÉTOILE", "✧"] {
+                assert_eq!(
+                    filtered_ids(&world, &radar, format, query),
+                    vec![Uuid::from_u128(1)],
+                    "{format}: {query}"
+                );
+            }
+            for query in ["EXAMPLEUSER RESIDENT", "exampleuser", "ANOTHER NAME"] {
+                assert_eq!(
+                    filtered_ids(&world, &radar, format, query),
+                    vec![Uuid::from_u128(2)],
+                    "{format}: {query}"
+                );
+            }
+            assert_eq!(filtered_ids(&world, &radar, format, "  ").len(), 3);
+            assert!(filtered_ids(&world, &radar, format, "no such person").is_empty());
+        }
+        // A legacy-only reply becomes searchable without restarting the filter.
+        assert!(filtered_ids(&world, &radar, 0, "fallback").is_empty());
+        for last in ["Resident", ""] {
+            world.social.avatar_names.on_legacy(Uuid::from_u128(3), "Fallback", last);
+            assert_eq!(filtered_ids(&world, &radar, 0, "fallback resident"), vec![Uuid::from_u128(3)]);
+        }
+    }
+
+    #[test]
+    fn people_name_filter_keeps_aliases_and_account_identity() {
+        let (mut world, radar) = name_filter_world();
+        let id = Uuid::from_u128(1);
+        world.social.avatar_names.set_aliases(HashMap::from([(id, "Best friend".into())]));
+        for query in ["best friend", "jane doe", "jane.doe"] {
+            assert_eq!(filtered_ids(&world, &radar, 0, query), vec![id]);
+        }
+        assert!(
+            filtered_ids(&world, &radar, 0, "étoile").is_empty(),
+            "an alias still replaces the chosen display name"
+        );
+    }
+
+    #[test]
+    fn people_name_filter_does_not_reveal_rlva_hidden_names() {
+        let (mut world, radar) = name_filter_world();
+        let id = Uuid::from_u128(1);
+        world.social.avatar_names.set_aliases(HashMap::from([(id, "Best friend".into())]));
+        world.social.avatar_names.set_rlva_privacy(true, Default::default());
+        for format in 0..=3 {
+            for query in ["jane doe", "jane.doe", "étoile", "best friend"] {
+                assert!(filtered_ids(&world, &radar, format, query).is_empty());
+            }
+            let anonymous = radar_name(&world, &id, format);
+            assert!(filtered_ids(&world, &radar, format, &anonymous).contains(&id));
+        }
+        world
+            .social
+            .avatar_names
+            .set_rlva_privacy(true, std::collections::HashSet::from([id]));
+        assert_eq!(filtered_ids(&world, &radar, 0, "jane.doe"), vec![id]);
+        assert!(filtered_ids(&world, &radar, 0, "exampleuser").is_empty());
+    }
 
     #[test]
     fn column_bits_follow_firestorm_and_the_default_shows_them_all() {

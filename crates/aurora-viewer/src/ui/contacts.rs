@@ -756,7 +756,7 @@ fn friend_rows(world: &World, settings: &ContactsSettings, filter: &str) -> Vec<
                 color,
             }
         })
-        .filter(|r| filter.is_empty() || r.full.to_lowercase().contains(filter))
+        .filter(|r| super::people::matches_name(world, &r.id, &r.full, filter))
         .collect();
     // sortFriendList: by username or display name, then online first
     rows.sort_by_cached_key(|r| {
@@ -1581,7 +1581,7 @@ fn sets_tab(
     let online = |id: &Uuid| social.friends.iter().any(|f| f.id == *id && f.online);
     let count = members.len();
     let filter = st.set_filter.trim().to_lowercase();
-    members.retain(|id| filter.is_empty() || name_of(id).to_lowercase().contains(&filter));
+    members.retain(|id| super::people::matches_name(world, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&choice) {
         members.sort_by_cached_key(|id| (!online(id), name_of(id).to_lowercase()));

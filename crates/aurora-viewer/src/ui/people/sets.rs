@@ -79,7 +79,7 @@ fn list(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut People
     let online = |id: &Uuid| world.social.friends.iter().any(|f| f.id == *id && f.online);
     let filter = st.filter.trim().to_lowercase();
     let mut members = world.contact_sets.members(&set, &friends, is_friend);
-    members.retain(|id| filter.is_empty() || name_of(id).to_lowercase().contains(&filter));
+    members.retain(|id| super::matches_name(world, id, &name_of(id), &filter));
     // FSPanelContactSets::updateAvatarListSorting
     if world.contact_sets.sorts_by_online(&set) {
         members.sort_by_cached_key(|id| (!online(id), name_of(id).to_lowercase()));
