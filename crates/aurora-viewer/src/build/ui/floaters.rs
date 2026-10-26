@@ -47,7 +47,7 @@ impl MediaSettingsState {
 pub fn secondary(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, _s: &mut BuildSettings, env: &mut Env) {
     weights(ctx, p, tool, world);
     media_settings(ctx, p, tool, world, env);
-    group_picker(ctx, p, tool, world);
+    group_picker(ctx, p, tool, world, "group_picker");
     super::contents_permissions::show(ctx, p, tool, world);
     super::item_properties::show(ctx, p, tool, world, env);
     confirm(ctx, p, tool, world, env);
@@ -470,7 +470,7 @@ fn media_settings(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world:
 }
 
 /// LLFloaterGroupPicker: the agent's groups and "none".
-fn group_picker(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World) {
+pub(super) fn group_picker(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, window: &'static str) {
     if !tool.ui.group_picker_open {
         return;
     }
@@ -478,7 +478,7 @@ fn group_picker(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &
     let mut chosen = None;
     let pos = ctx.content_rect().center() - Vec2::new(130.0, 150.0);
     Floater::new(
-        "group_picker",
+        window,
         aurora_i18n::tr!("build-ui-floaters-choose-a-group"),
         pos,
         Vec2::new(260.0, 300.0),
@@ -502,16 +502,16 @@ fn group_picker(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &
         small(ui, p, aurora_i18n::tr!("build-ui-floaters-double-click-a-group"));
     });
     if let Some(g) = chosen {
-        tool.set_group(world, g);
+        if super::general::can_set_group(tool, world) {
+            tool.set_group(world, g);
+        }
         open = false;
     }
     tool.ui.group_picker_open = open;
 }
 
-/// The confirmations, as modal dialogs.
-fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, env: &mut Env) {
-    let Some(c) = tool.ui.confirm.clone() else { return };
-    let (title, body, yes) = match &c {
+pub(super) fn confirm_answer(ctx: &egui::Context, p: &Palette, c: &Confirm, id: egui::Id) -> Option<bool> {
+    let (title, body, yes) = match c {
         Confirm::Deed(_) => (
             aurora_i18n::tr!("build-ui-floaters-deed-object"),
             aurora_i18n::tr!("build-ui-floaters-if-you-deed-this-object-the-group-will-receive"),
@@ -549,7 +549,7 @@ fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut W
         ),
     };
     let mut answer = None;
-    crate::ui::widgets::Modal::new(egui::Id::unique("build_confirm")).show(ctx, |ui| {
+    crate::ui::widgets::Modal::new(id).show(ctx, |ui| {
         ui.set_max_width(320.0);
         ui.label(RichText::new(title).size(14.0).strong().color(p.ink));
         ui.add_space(4.0);
@@ -566,13 +566,25 @@ fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut W
             }
         });
     });
-    let Some(ok) = answer else { return };
+    answer
+}
+
+/// The confirmations, as modal dialogs.
+fn confirm(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World, env: &mut Env) {
+    let Some(c) = tool.ui.confirm.clone() else { return };
+    let Some(ok) = confirm_answer(ctx, p, &c, egui::Id::unique("build_confirm")) else {
+        return;
+    };
     tool.ui.confirm = None;
     if !ok {
         return;
     }
     match c {
-        Confirm::Deed(group) => tool.deed(world, group),
+        Confirm::Deed(group) => {
+            if super::general::can_deed(tool, world, group) {
+                tool.deed(world, group);
+            }
+        }
         Confirm::Divide | Confirm::Join => {
             if let Some((handle, west, south, east, north)) = tool.land.selection_local(world) {
                 tool.send(if c == Confirm::Divide {

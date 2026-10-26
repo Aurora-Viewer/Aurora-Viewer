@@ -1381,6 +1381,9 @@ impl App {
     }
 
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
+        if !self.object_profile.retain_selection(&self.world, &mut cmd) {
+            return;
+        }
         if self.blender_live.local_command(&cmd, &self.world) {
             return;
         }
@@ -2860,6 +2863,7 @@ impl App {
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
                 self.interactions.on_properties(&props);
+                self.object_profile.on_properties(&props);
                 let props = self.area_search_build_properties(props, &area_reads);
                 self.build.on_properties(props);
             }
@@ -13633,17 +13637,7 @@ impl App {
                 }
                 self.object_menu_ui(&ctx, &p);
                 self.avatar_textures.show(&ctx, &p, &self.world, &self.ui_images);
-                let properties = self.object_profile.object.and_then(|id| {
-                    self.interactions
-                        .props
-                        .get(&id)
-                        .filter(|props| props.full)
-                        .or_else(|| self.build.props.get(&id))
-                });
-                if let Some(id) = self.object_profile.show(&ctx, &p, &mut self.world, properties) {
-                    self.on_ctx_action(ui::context::CtxAction::Edit(id));
-                    self.build.tab = 6;
-                }
+                self.object_profile_window(&ctx, &p);
 
                 if let Some(command) = self.pathfinding_ui.show(&ctx, &p, &mut self.world) {
                     if self.demo {

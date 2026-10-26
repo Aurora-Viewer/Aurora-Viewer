@@ -42,6 +42,16 @@ impl App {
             }
             700 => {
                 let now = Instant::now();
+                if matches!(mode, "profile-no-mod" | "profile-other")
+                    && let Some(index) = self.world.objects.index_of(&key(BELL))
+                    && let Some(object) = self.world.objects.get_mut(index)
+                {
+                    object.update_flags &= !ui::context::flags::OBJECT_MODIFY;
+                    if mode == "profile-other" {
+                        object.owner_id = crate::demo::DEMO_NOVA;
+                        object.update_flags &= !ui::context::flags::OBJECT_YOU_OWNER;
+                    }
+                }
                 // the particle cloud above its emitter, or the bell / the backpack
                 let (local, lift) = match mode {
                     "particle" | "particle-block" => (SPARKLES, 0.45),
@@ -96,7 +106,8 @@ impl App {
                 let action = match mode {
                     mode if mode.starts_with("customize") => self.context_menu.clone().map(|m| CtxAction::CustomizeMenu(Box::new(m))),
                     "pbr" => bell.map(CtxAction::EditPbr),
-                    "profile" => bell.map(CtxAction::ObjectProfile),
+                    "profile-hud" => id_of(self, crate::demo::hud::FIRST).map(CtxAction::ObjectProfile),
+                    mode if mode.starts_with("profile") => bell.map(CtxAction::ObjectProfile),
                     "region-objects" | "characters" => bell.map(|id| CtxAction::Pathfinding {
                         id,
                         characters: mode == "characters",
@@ -117,6 +128,14 @@ impl App {
                     log::info!("demo object menu: {action:?}");
                     self.context_menu = None;
                     self.on_ctx_action(action);
+                }
+                if mode == "profile-sale" {
+                    self.send(aurora_net::NetCommand::Build(aurora_net::build::BuildCmd::SetSaleInfo {
+                        handle: region,
+                        local_ids: vec![BELL],
+                        sale_type: 2,
+                        price: 25,
+                    }));
                 }
                 if matches!(mode, "menu-export" | "menu-load") {
                     self.context_menu = None;

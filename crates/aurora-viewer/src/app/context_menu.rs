@@ -287,19 +287,61 @@ impl App {
         let root = linkset_root(&self.world, index);
         let Some(object) = self.world.objects.get(root) else { return };
         let (id, key, local) = (object.full_id, object.key, object.is_client_preview());
-        self.object_profile.object = Some(id);
+        if self.object_profile.object != Some(id)
+            && let Some(previous) = self.object_profile.object.take()
+        {
+            self.release_object_profile_selection(previous);
+        }
+        let props = self
+            .interactions
+            .props
+            .get(&id)
+            .filter(|props| props.full)
+            .or_else(|| self.build.props.get(&id))
+            .cloned();
+        self.object_profile.open(id, key, props);
         if !local {
-            let selected = self.build.highlighted(&self.world).iter().any(|(index, _)| *index == root);
             self.send(NetCommand::Build(aurora_net::build::BuildCmd::Select {
                 handle: key.region,
                 local_ids: vec![key.local_id],
             }));
-            if !selected {
-                self.send(NetCommand::Build(aurora_net::build::BuildCmd::Deselect {
-                    handle: key.region,
-                    local_ids: vec![key.local_id],
-                }));
-            }
+        }
+    }
+
+    fn release_object_profile_selection(&mut self, id: Uuid) {
+        if let Some(index) = self.world.objects.index_of_uuid(&id)
+            && let Some(object) = self.world.objects.get(index)
+            && !object.is_client_preview()
+            && !self.build.highlighted(&self.world).iter().any(|(selected, _)| *selected == index)
+        {
+            self.send(NetCommand::Build(aurora_net::build::BuildCmd::Deselect {
+                handle: object.key.region,
+                local_ids: vec![object.key.local_id],
+            }));
+        }
+    }
+
+    pub(super) fn object_profile_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        let Some(id) = self.object_profile.object else { return };
+        let facts = self
+            .world
+            .objects
+            .index_of_uuid(&id)
+            .map_or_else(Default::default, |index| self.object_facts(index));
+        self.object_profile.show(ctx, p, &mut self.world, &facts);
+        if self.object_profile.object.is_none() {
+            self.release_object_profile_selection(id);
+        }
+        let (commands, requests, properties) = self.object_profile.take_output();
+        if !commands.is_empty() {
+            self.interactions.on_properties(&properties);
+            self.build.on_properties(properties);
+        }
+        for command in commands {
+            self.send(command);
+        }
+        for request in requests {
+            self.on_build_request(request);
         }
     }
 

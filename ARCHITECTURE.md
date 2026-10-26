@@ -12,8 +12,17 @@ Scene reset clears only the current profile. `context/notecards.rs` validates
 bounded versioned snapshots of all seven scene profiles, reuses the inventory's
 COPY-aware picker and native transfers, and applies only correlated successful
 imports, relocked. Inventory and scene documents have separate formats.
-`context/object_profile.rs` reads the selected root's actual ObjectProperties
-and routes editing through the General build inspector. `context/pathfinding.rs`
+`context/object_profile.rs` renders the shared `build/ui/general.rs` editor
+directly, with a private BuildTool holding only the requested root and its
+drafts. Native properties update both editors; outgoing changes use the existing
+build commands and the normal permission/RLVa checks. The profile holds a live
+simulator selection until closed; unrelated deselections preserve that root,
+and closing releases it unless the build tools still select it. Group selection
+and deed confirmation reuse `build/ui/floaters.rs` with separate widget IDs.
+`context/object_profile_tests.rs` exercises actual pointer/keyboard editing,
+sale and permission messages, target changes, HUD roots and selection lifetime.
+Group names use the existing cached GroupNames request and pathfinding attributes
+come from object flags. `context/pathfinding.rs`
 shows searchable, virtualized RegionObjects / CharacterProperties lists from
 `aurora-net/src/pathfinding.rs`, with correlated asynchronous requests scoped to
 the clicked object's region; this reader does not edit navmesh or terrain.

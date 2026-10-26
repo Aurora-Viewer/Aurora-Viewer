@@ -73,12 +73,124 @@ fn name_link(ui: &mut egui::Ui, p: &Palette, name: &str) -> bool {
         .clicked()
 }
 
+fn person_link(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid) -> bool {
+    if !world.rlva_can_name(id) {
+        text(ui, p, aurora_i18n::tr!("scene-object-hidden-person"));
+        false
+    } else {
+        name_link(ui, p, &world.social.name_of(&id))
+    }
+}
+
+fn group_name(world: &mut World, id: Uuid) -> String {
+    world
+        .land
+        .group_name(&id, &world.groups.groups)
+        .unwrap_or_else(|| aurora_i18n::tr!("common-loading").into())
+}
+
+/// The shared General editor and its detached property dialogs must use
+/// current objects and full properties. LLViewerObject::isPermanentEnforced
+/// prevents editing permanent objects in a neighbouring region.
+fn property_policy(tool: &BuildTool, world: &World, targets: &[usize]) -> bool {
+    !targets.is_empty()
+        && targets.iter().all(|&index| {
+            world.objects.get(index).is_some_and(|object| {
+                !object.is_avatar()
+                    && !object.is_client_preview()
+                    && world.rlva_can_edit(index)
+                    && (object.update_flags & crate::ui::context::flags::AFFECTS_NAVMESH == 0
+                        || world.main_region == Some(object.key.region))
+                    && tool.props.get(&object.full_id).is_some_and(|props| props.full)
+            })
+        })
+}
+
+pub(super) fn can_set_group(tool: &BuildTool, world: &World) -> bool {
+    can_set_group_targets(tool, world, &tool.prop_targets(world))
+}
+
+fn can_set_group_targets(tool: &BuildTool, world: &World, targets: &[usize]) -> bool {
+    property_policy(tool, world, targets)
+        && targets.iter().all(|&index| {
+            crate::build::root_of(world, index) == index
+                && world
+                    .objects
+                    .get(index)
+                    .and_then(|object| tool.props.get(&object.full_id))
+                    .is_some_and(|props| props.owner_id == world.agent_id)
+        })
+}
+
+pub(super) fn can_deed(tool: &BuildTool, world: &World, group: Uuid) -> bool {
+    can_deed_targets(tool, world, &tool.prop_targets(world), group)
+}
+
+fn can_deed_targets(tool: &BuildTool, world: &World, targets: &[usize], group: Uuid) -> bool {
+    can_set_group_targets(tool, world, targets)
+        && !group.is_nil()
+        && !tool.attachment_selected(world)
+        && world
+            .groups
+            .group(&group)
+            .is_some_and(|membership| membership.powers & GP_OBJECT_DEED != 0)
+        && targets.iter().all(|&index| {
+            world
+                .objects
+                .get(index)
+                .and_then(|object| tool.props.get(&object.full_id))
+                .is_some_and(|props| {
+                    props.group_id == group && props.owner_mask & perm::TRANSFER != 0 && props.group_mask & perm::MOVE != 0
+                })
+        })
+}
+
+fn valid_sale(for_sale: bool, sale_type: u8, owner_mask: u32) -> bool {
+    !for_sale || owner_mask & perm::TRANSFER != 0 && (sale_type != SALE_COPY || owner_mask & perm::COPY != 0)
+}
+
+fn pathfinding_attributes(world: &World, targets: &[usize]) -> &'static str {
+    let all = |mask: u32, set: bool| {
+        targets.iter().all(|&index| {
+            world
+                .objects
+                .get(index)
+                .is_some_and(|object| (object.update_flags & mask != 0) == set)
+        })
+    };
+    let permanent = crate::ui::context::flags::AFFECTS_NAVMESH;
+    let character = 1 << 13; // FLAGS_CHARACTER (llprimitive/object_flags.h).
+    if all(permanent | character, false) {
+        aurora_i18n::tr!("common-none")
+    } else if all(permanent, true) {
+        aurora_i18n::tr!("scene-object-pathfinding-permanent")
+    } else if all(character, true) {
+        aurora_i18n::tr!("scene-object-pathfinding-character")
+    } else {
+        aurora_i18n::tr!("status-multiple")
+    }
+}
+
+/// Standalone Object > Profile uses the same group picker and deed question
+/// as General, with its own IDs and a pinned object selection.
+pub(crate) fn property_dialogs(ctx: &egui::Context, p: &Palette, tool: &mut BuildTool, world: &mut World) {
+    super::floaters::group_picker(ctx, p, tool, world, "object_profile_group_picker");
+    if let Some(Confirm::Deed(group)) = tool.ui.confirm.clone()
+        && let Some(yes) = super::floaters::confirm_answer(ctx, p, &Confirm::Deed(group), egui::Id::unique("object_profile_deed"))
+    {
+        tool.ui.confirm = None;
+        if yes && can_deed(tool, world, group) {
+            tool.deed(world, group);
+        }
+    }
+}
+
 pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, permissions: bool) {
     // the roots, or the selected prims when no root is (LLPanelPermissions::refresh)
     let mut targets: Vec<usize> = tool
         .sel_prims(world)
         .into_iter()
-        .filter(|&i| world.objects.get(i).is_some_and(|o| o.parent_id == 0))
+        .filter(|&i| crate::build::root_of(world, i) == i)
         .collect();
     let root_selected = !targets.is_empty();
     if !root_selected {
@@ -97,7 +209,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         small(ui, p, aurora_i18n::tr!("blender-live-local-only"));
         return;
     }
-    if props.len() != ids.len() || props.is_empty() {
+    if props.len() != ids.len() || props.is_empty() || props.iter().any(|p| !p.full) {
         small(ui, p, aurora_i18n::tr!("build-ui-general-waiting-for-simulator-properties"));
         return;
     }
@@ -107,14 +219,21 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
     let me = world.agent_id;
     let same = |f: &dyn Fn(&ObjectProps) -> Uuid| props.iter().all(|x| f(x) == f(first));
     let owners_identical = same(&|x| x.owner_id);
-    let group_owned = first.owner_id == first.group_id && !first.group_id.is_nil();
+    let group_owned = same(&|x| x.group_id) && !first.group_id.is_nil() && (first.owner_id.is_nil() || first.owner_id == first.group_id);
     let group_power = |power: u64| world.groups.group(&first.group_id).is_some_and(|g| g.powers & power != 0);
     let self_owned = owners_identical && first.owner_id == me;
-    let can_manipulate = self_owned || (owners_identical && group_owned && group_power(GP_OBJECT_MANIPULATE));
-    let can_sell = self_owned || (owners_identical && group_owned && group_power(GP_OBJECT_SET_SALE));
+    let allowed = property_policy(tool, world, &targets);
+    let can_manipulate = allowed && (self_owned || (owners_identical && group_owned && group_power(GP_OBJECT_MANIPULATE)));
+    let can_sell = allowed && (self_owned || (owners_identical && group_owned && group_power(GP_OBJECT_SET_SALE)));
     // Editing and changing ownership permissions are separate rights
     // (LLPanelPermissions::refresh / LLViewerObject::permModify).
-    let modify = targets.iter().all(|&idx| tool.can_modify(world, idx));
+    let modify = allowed && targets.iter().all(|&idx| tool.can_modify(world, idx));
+    let all_volume = targets.iter().all(|&index| {
+        world
+            .objects
+            .get(index)
+            .is_some_and(|object| object.pcode == aurora_prim::params::LL_PCODE_VOLUME)
+    });
 
     let group = perm_state(&refs, |x| x.group_mask);
     let owner = perm_state(&refs, |x| x.owner_mask);
@@ -168,7 +287,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 }
                 if r.lost_focus() {
                     tool.ui.edits.remove(field);
-                    if v != current && (description || !v.trim().is_empty()) {
+                    if modify && v != current && (description || !v.trim().is_empty()) {
                         tool.set_name(world, &v, description);
                     }
                 }
@@ -178,7 +297,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
 
         // ---- creator, owner, previous owner, group
         for id in [first.creator_id, first.owner_id, first.last_owner_id] {
-            if !id.is_nil() {
+            if !id.is_nil() && id != first.group_id && world.rlva_can_name(id) {
                 world.social.want_name(id);
             }
         }
@@ -187,39 +306,37 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 text(ui, p, aurora_i18n::tr!("status-multiple"));
             } else if first.creator_id.is_nil() {
                 text(ui, p, aurora_i18n::tr!("status-nobody"));
-            } else if name_link(ui, p, &world.social.name_of(&first.creator_id)) {
+            } else if person_link(ui, p, world, first.creator_id) {
                 tool.ui.requests.push(Request::Profile(first.creator_id));
             }
         });
         row(ui, p, aurora_i18n::tr!("common-owner-2"), LABEL_W, |ui| {
             if !owners_identical {
-                text(ui, p, "(multiple)");
+                text(ui, p, aurora_i18n::tr!("status-multiple"));
             } else if group_owned {
-                let name = world
-                    .groups
-                    .group(&first.group_id)
-                    .map(|g| g.name.clone())
-                    .unwrap_or_else(|| aurora_i18n::tr!("common-group").into());
+                let name = group_name(world, first.group_id);
                 if name_link(ui, p, &name) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
-            } else if name_link(ui, p, &world.social.name_of(&first.owner_id)) {
+            } else if person_link(ui, p, world, first.owner_id) {
                 tool.ui.requests.push(Request::Profile(first.owner_id));
             }
         });
         row(ui, p, aurora_i18n::tr!("build-ui-general-previous-owner"), LABEL_W, |ui| {
-            if same(&|x| x.last_owner_id) && !first.last_owner_id.is_nil() && name_link(ui, p, &world.social.name_of(&first.last_owner_id))
-            {
+            if !same(&|x| x.last_owner_id) || first.last_owner_id.is_nil() {
+                return;
+            }
+            if first.last_owner_id == first.group_id {
+                if name_link(ui, p, &group_name(world, first.group_id)) {
+                    tool.ui.requests.push(Request::GroupProfile(first.group_id));
+                }
+            } else if person_link(ui, p, world, first.last_owner_id) {
                 tool.ui.requests.push(Request::Profile(first.last_owner_id));
             }
         });
         row(ui, p, aurora_i18n::tr!("common-group-2"), LABEL_W, |ui| {
             if same(&|x| x.group_id) && !first.group_id.is_nil() {
-                let name = world
-                    .groups
-                    .group(&first.group_id)
-                    .map(|g| g.name.clone())
-                    .unwrap_or_else(|| first.group_id.to_string()[..8].to_owned());
+                let name = group_name(world, first.group_id);
                 if name_link(ui, p, &name) {
                     tool.ui.requests.push(Request::GroupProfile(first.group_id));
                 }
@@ -227,8 +344,13 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 text(ui, p, "");
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let can_set_group = root_selected && owners_identical && first.owner_id == me;
-                if super::common::icon_button(ui, p, "users-group", aurora_i18n::tr!("build-ui-general-set-group"), can_set_group) {
+                if super::common::icon_button(
+                    ui,
+                    p,
+                    "users-group",
+                    aurora_i18n::tr!("build-ui-general-set-group"),
+                    can_set_group_targets(tool, world, &targets),
+                ) {
                     tool.ui.group_picker_open = true;
                 }
             });
@@ -240,11 +362,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             if let Some(v) = check(ui, p, share, share_tentative, aurora_i18n::tr!("common-share"), can_manipulate) {
                 tool.set_perm(world, perm_field::GROUP, v, share_bits);
             }
-            let deed_ok = !first.group_id.is_nil()
-                && group_power(GP_OBJECT_DEED)
-                && can_transfer
-                && !group_owned
-                && (share && !share_tentative || group.0 & perm::MOVE != 0);
+            let deed_ok = can_deed_targets(tool, world, &targets, first.group_id);
             if ui
                 .add_enabled(
                     deed_ok,
@@ -257,6 +375,15 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             }
         });
 
+        small(
+            ui,
+            p,
+            if modify {
+                aurora_i18n::tr!("build-ui-general-you-can-edit-this-object")
+            } else {
+                aurora_i18n::tr!("build-ui-general-you-cannot-edit-this-object")
+            },
+        );
         ownership_permissions(ui, p, tool, world, &props, can_manipulate, can_sell);
         crate::ui::widgets::divider(ui, p);
 
@@ -266,7 +393,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         // PLAY / OPEN_MEDIA show as "Touch"
         let click = click.map(|c| if click_actions().iter().any(|(_, v)| *v == c) { c } else { 0 });
         row(ui, p, aurora_i18n::tr!("build-ui-general-click-to"), LABEL_W, |ui| {
-            if let Some(a) = combo(ui, "click_action", click, &click_actions(), 150.0, modify) {
+            if let Some(a) = combo(ui, "click_action", click, &click_actions(), 150.0, modify && all_volume) {
                 if a == CLICK_ACTION_BUY && !props.iter().all(|x| x.sale_type != 0) {
                     // CantSetBuyObject
                     tool.status = aurora_i18n::tr!("build-ui-general-this-object-is-not-for-sale-buy-object-cannot").into();
@@ -281,7 +408,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         let sale_mixed = for_sale_n != 0 && for_sale_n != count;
         let price_mixed = !props.iter().all(|x| x.sale_price == first.sale_price);
         let sale_type_now = props.iter().find(|x| x.sale_type != 0).map(|x| x.sale_type).unwrap_or(SALE_COPY);
-        let sale_ok = !tool.attachment_selected(world) && can_sell && owner.0 & perm::TRANSFER != 0;
+        let sale_ok = !tool.attachment_selected(world) && can_sell;
         let (mut for_sale, mut sale_type, mut price) =
             tool.ui
                 .sale_draft
@@ -316,7 +443,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                         Some(sale_type),
                         &sale_types(),
                         110.0,
-                        sale_ok && for_sale && !price_mixed,
+                        sale_ok && can_transfer && for_sale && !price_mixed,
                     ) {
                         sale_type = t;
                         draft_changed = true;
@@ -324,7 +451,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 });
                 ui.horizontal(|ui| {
                     label(ui, p, "L$");
-                    ui.add_enabled_ui(sale_ok && for_sale && !sale_mixed, |ui| {
+                    ui.add_enabled_ui(sale_ok && can_transfer && for_sale && !sale_mixed, |ui| {
                         let e = spin_i(ui, &mut price, 0..=999_999_999, 100.0);
                         if e.changed {
                             draft_changed = true;
@@ -336,7 +463,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                     });
                     if ui
                         .add_enabled(
-                            tool.ui.sale_draft.is_some() || draft_changed,
+                            sale_ok && valid_sale(for_sale, sale_type, owner.0) && (tool.ui.sale_draft.is_some() || draft_changed),
                             egui::Button::new(RichText::new(aurora_i18n::tr!("common-apply")).size(12.0)),
                         )
                         .clicked()
@@ -348,7 +475,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         if draft_changed {
             tool.ui.sale_draft = Some((for_sale, sale_type, price));
         }
-        if commit_now {
+        if commit_now && sale_ok && valid_sale(for_sale, sale_type, owner.0) {
             // LLPanelPermissions::setAllSaleInfo
             let st = if for_sale && price >= 0 { sale_type } else { 0 };
             let was_for_sale = for_sale_n > 0;
@@ -380,7 +507,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
                 search.unwrap_or(false),
                 search_mixed,
                 aurora_i18n::tr!("common-show-in-search"),
-                can_sell,
+                can_sell && all_volume,
             ) {
                 tool.set_include_in_search(world, v);
             }
@@ -408,7 +535,7 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
             aurora_i18n::tr!("build-ui-general-pathfinding-attributes"),
             LABEL_W + 30.0,
             |ui| {
-                text(ui, p, aurora_i18n::tr!("common-none"));
+                text(ui, p, pathfinding_attributes(world, &targets));
             },
         );
     }
@@ -508,5 +635,70 @@ mod tests {
         assert_eq!(bit(st, perm::COPY), (false, false));
         let st = perm_state(&[&a, &a], |x| x.everyone_mask);
         assert_eq!(bit(st, perm::MOVE), (true, false));
+    }
+
+    #[test]
+    fn detached_property_dialogs_require_current_full_owner_permissions_and_group_powers() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        for event in crate::demo::events() {
+            world.apply(event);
+        }
+        let (index, object) = world
+            .objects
+            .iter()
+            .find(|(_, object)| !object.is_avatar() && object.parent_id == 0)
+            .unwrap();
+        let (id, key) = (object.full_id, object.key);
+        let group = Uuid::from_u128(0xfeed_0101);
+        world.agent_id = Uuid::from_u128(700);
+        world.main_region = Some(key.region);
+        world.groups.groups.push(aurora_net::GroupMembership {
+            id: group,
+            name: "Property group".into(),
+            insignia: Uuid::nil(),
+            powers: GP_OBJECT_DEED,
+            accept_notices: true,
+            list_in_profile: true,
+            contribution: 0,
+        });
+        let mut tool = BuildTool {
+            selection: vec![key],
+            ..Default::default()
+        };
+        tool.props.insert(
+            id,
+            ObjectProps {
+                object_id: id,
+                full: true,
+                owner_id: world.agent_id,
+                group_id: group,
+                owner_mask: perm::TRANSFER,
+                group_mask: perm::MOVE,
+                ..Default::default()
+            },
+        );
+        assert!(can_set_group(&tool, &world));
+        assert!(can_deed(&tool, &world, group));
+        world.groups.groups.last_mut().unwrap().powers = 0;
+        assert!(!can_deed(&tool, &world, group));
+        tool.props.get_mut(&id).unwrap().owner_id = Uuid::from_u128(701);
+        assert!(!can_set_group(&tool, &world));
+        assert!(!can_deed(&tool, &world, group));
+        tool.props.get_mut(&id).unwrap().owner_id = world.agent_id;
+        tool.props.get_mut(&id).unwrap().full = false;
+        assert!(!can_set_group(&tool, &world));
+        tool.props.get_mut(&id).unwrap().full = true;
+        world.objects.get_mut(index).unwrap().update_flags |= crate::ui::context::flags::AFFECTS_NAVMESH;
+        world.main_region = Some(key.region.wrapping_add(1));
+        assert!(!property_policy(&tool, &world, &tool.prop_targets(&world)));
+        assert_eq!(
+            pathfinding_attributes(&world, &[index]),
+            aurora_i18n::tr!("scene-object-pathfinding-permanent")
+        );
+        world.objects.get_mut(index).unwrap().update_flags = 1 << 13;
+        assert_eq!(
+            pathfinding_attributes(&world, &[index]),
+            aurora_i18n::tr!("scene-object-pathfinding-character")
+        );
     }
 }

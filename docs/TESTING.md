@@ -1851,9 +1851,19 @@ object receives commands, and list/radial menus share visibility and ordering.
 Show Textures on an avatar or attachment opens the same grid;
 changing avatars replaces the inspected bakes without exposing full asset UUIDs.
 
-**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop|customize|customize-land|customize-self|customize-avatar|customize-hud|pbr|textures|profile|reset-lod|menu-export|menu-load|region-objects|characters`**
-`profile` opens the bell's actual demo ObjectProperties; Edit properties opens
-General. `region-objects` and `characters` pass synthetic LLSD through the same
+**`AURORA_DEMO_OBJECT_MENU=list|particle|scripts|scripts-run|return|return-yes|wear|particle-block|link|drop|customize|customize-land|customize-self|customize-avatar|customize-hud|pbr|textures|profile|profile-no-mod|profile-other|profile-sale|profile-hud|reset-lod|menu-export|menu-load|region-objects|characters`**
+`profile` opens the bell's actual demo ObjectProperties in the directly editable
+General form: name/description, group and share/deed, everyone/next-owner rights,
+click action, sale type/price and search inclusion, plus actual pathfinding flags.
+`profile-no-mod` revokes the effective Modify flag while retaining owner metadata
+rights; `profile-other` shows another resident's object; `profile-sale` starts
+with a copy for sale at L$25; `profile-hud`, with `AURORA_DEMO_HUDS=1`, opens the
+HUD root without waiting for its children's properties. Names commit on Enter
+or focus loss; sale drafts use Apply. Check both Profile and General remain
+consistent, group names resolve, permissions disable controls as appropriate,
+and selecting another object does not redirect profile edits. Open/Pay/Buy use
+the explicit native object interactions; Details opens Inspect Objects.
+`region-objects` and `characters` pass synthetic LLSD through the same
 parser and reply correlation as the live capabilities, reveal the bell and show
 its selected details. Search, select, refresh, Profile, Inspect, Zoom and Copy UUID
 are available; these lists are read-only. `menu-export` opens the seven-profile

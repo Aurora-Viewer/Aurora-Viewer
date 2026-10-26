@@ -15,7 +15,7 @@ pub(crate) mod contents_permissions;
 mod contents_selection;
 mod features;
 mod floaters;
-mod general;
+pub(crate) mod general;
 mod item_properties;
 mod keyboard;
 mod layout;
