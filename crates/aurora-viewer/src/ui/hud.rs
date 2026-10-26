@@ -408,12 +408,8 @@ pub fn draw(
             // a resident with a bubble shows it under their name whatever
             // the name tags' settings, their distance and their timer
             // (LLVOAvatar::idleUpdateNameTag: visible_chat)
-            let chatting = bubbles
-                .as_ref()
-                .is_some_and(|b| super::chat_bubbles::shows(world, b, o.full_id, d));
-            if !chatting
-                && (!name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) || d > settings.name_tag_distance)
-            {
+            let chatting = bubbles.as_ref().is_some_and(|b| super::chat_bubbles::shows(world, b, o.full_id, d));
+            if !chatting && (!name_tag_enabled(settings, own, world.social.is_friend(&o.full_id)) || d > settings.name_tag_distance) {
                 continue;
             }
             let head = scene.name_tag_anchor(&o.full_id, pos);

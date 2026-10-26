@@ -104,14 +104,7 @@ pub fn shows(world: &World, frame: &Frame<'_>, id: Uuid, distance: f32) -> bool 
 
 /// The bubble of the avatar `id`, `distance` metres from the camera; None
 /// when it has nothing to show (then its name tag follows its own rules).
-pub fn layout(
-    painter: &egui::Painter,
-    p: &Palette,
-    world: &World,
-    frame: &Frame<'_>,
-    id: Uuid,
-    distance: f32,
-) -> Option<Bubble> {
+pub fn layout(painter: &egui::Painter, p: &Palette, world: &World, frame: &Frame<'_>, id: Uuid, distance: f32) -> Option<Bubble> {
     let alpha = distance_alpha(distance);
     if alpha <= 0.0 {
         return None;
