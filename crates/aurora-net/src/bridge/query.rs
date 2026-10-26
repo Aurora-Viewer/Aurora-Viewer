@@ -9,14 +9,12 @@ use std::{collections::HashSet, time::Duration};
 use uuid::Uuid;
 
 pub const MAX_AVATARS: usize = 16;
-pub const MAX_REZZERS: usize = 16;
 const MAX_REPLY: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Query {
     Pose { request: Uuid, kind: PoseKind, target: Uuid },
     Altitudes(Vec<Uuid>),
-    Rezzers(Vec<Uuid>),
     ScriptInfo(Uuid),
     ObjectInfo(Uuid),
 }
@@ -55,13 +53,6 @@ impl PoseKind {
 pub struct Altitude {
     pub avatar: Uuid,
     pub z: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Rezzer {
-    pub object: Uuid,
-    pub root: Uuid,
-    pub rezzer: Uuid,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,7 +98,6 @@ pub struct ObjectInfo {
 pub enum Reply {
     Pose,
     Altitudes(Vec<Altitude>),
-    Rezzers(Vec<Rezzer>),
     ScriptInfo(ScriptInfo),
     ObjectInfo(Box<ObjectInfo>),
 }
@@ -116,7 +106,7 @@ impl Query {
     pub fn valid(&self) -> bool {
         match self {
             Self::Pose { request, target, .. } => !request.is_nil() && !target.is_nil(),
-            Self::Altitudes(ids) | Self::Rezzers(ids) => {
+            Self::Altitudes(ids) => {
                 !ids.is_empty()
                     && ids.len() <= MAX_AVATARS
                     && ids.iter().all(|id| !id.is_nil())
@@ -132,10 +122,6 @@ impl Query {
                 "query|{token}|altitudes|{}",
                 ids.iter().map(Uuid::to_string).collect::<Vec<_>>().join(",")
             ),
-            Self::Rezzers(ids) => format!(
-                "query|{token}|rezzers|{}",
-                ids.iter().map(Uuid::to_string).collect::<Vec<_>>().join(",")
-            ),
             Self::ScriptInfo(id) => format!("query|{token}|scripts|{id}"),
             Self::ObjectInfo(id) => format!("query|{token}|object|{id}"),
         }
@@ -148,23 +134,6 @@ impl Query {
         let values = value.as_array()?;
         match self {
             Self::Pose { .. } => values.is_empty().then_some(Reply::Pose),
-            Self::Rezzers(requested) => {
-                if values.len() > requested.len() * 3 || values.len() % 3 != 0 {
-                    return None;
-                }
-                let mut seen = HashSet::new();
-                let mut out = Vec::new();
-                for triple in values.as_chunks::<3>().0 {
-                    let object = Uuid::parse_str(triple[0].as_str()?).ok()?;
-                    let root = Uuid::parse_str(triple[1].as_str()?).ok()?;
-                    let rezzer = Uuid::parse_str(triple[2].as_str()?).ok()?;
-                    if !requested.contains(&object) || !seen.insert(object) || root.is_nil() {
-                        return None;
-                    }
-                    out.push(Rezzer { object, root, rezzer });
-                }
-                Some(Reply::Rezzers(out))
-            }
             Self::Altitudes(requested) => {
                 if values.len() > requested.len() * 2 || values.len() % 2 != 0 {
                     return None;
@@ -351,42 +320,6 @@ mod tests {
             assert!(decode(value).is_none());
         }
         assert!(query.decode(&vec![b' '; MAX_REPLY + 1]).is_none());
-    }
-
-    #[test]
-    fn rezzer_queries_and_replies_are_bounded_and_tied_to_requested_objects() {
-        let query = Query::Rezzers(vec![id(1), id(2)]);
-        assert!(query.valid());
-        let decode = |value: Value| query.decode(value.to_string().as_bytes());
-        assert_eq!(
-            decode(json!([id(1).to_string(), id(10).to_string(), id(20).to_string()])),
-            Some(Reply::Rezzers(vec![Rezzer {
-                object: id(1),
-                root: id(10),
-                rezzer: id(20)
-            }]))
-        );
-        assert_eq!(decode(json!([])), Some(Reply::Rezzers(vec![])));
-        for value in [
-            json!([id(3).to_string(), id(10).to_string(), id(20).to_string()]),
-            json!([id(1).to_string(), Uuid::nil().to_string(), id(20).to_string()]),
-            json!([id(1).to_string(), id(10).to_string()]),
-            json!([id(1).to_string(), id(10).to_string(), "invalid"]),
-            json!([
-                id(1).to_string(),
-                id(10).to_string(),
-                id(20).to_string(),
-                id(1).to_string(),
-                id(10).to_string(),
-                id(20).to_string()
-            ]),
-        ] {
-            assert!(decode(value).is_none());
-        }
-        for ids in [vec![], vec![Uuid::nil()], vec![id(1), id(1)], (1..=17).map(id).collect()] {
-            assert!(!Query::Rezzers(ids).valid());
-        }
-        assert!(Query::Rezzers((1..=16).map(id).collect()).body(id(100)).len() <= 768);
     }
     #[test]
     fn script_info_handles_json_shaped_names_without_changing_metric_types_or_units() {

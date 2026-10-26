@@ -46,18 +46,6 @@ Hidden linksets release their draw records and visual asset references before
 geometry preparation. Lights, particles, world labels and beacons share the
 visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.
 
-`world/rez_sound_blocks.rs` implements the opt-in sound-mute inheritance graph.
-`app/rez_sound_blocks.rs` reads only the nearest active/pending sound sources
-and necessary ancestors through Bridge 1.36's batched `OBJECT_ROOT` /
-`OBJECT_REZZER_KEY` query. Metadata and requests are scoped to account, region
-and bridge endpoint; late/relinked replies are rejected. Batches hold at most
-16 UUIDs, with one in flight and 250 ms spacing; cache and traversal are bounded.
-New world sources may wait up to three seconds for verified provenance; failed
-or unavailable lookups never create a guessed permanent block. The mixer holds
-pending voices and stops confirmed descendants, while unrelated objects of the
-same owner and UI/gesture previews retain their normal behavior. This Aurora
-option defaults off and requires an active Bridge in the current region.
-
 `scene/sounds/history.rs` records actual world playback with stable voice IDs,
 owner/source identity and global positions, retaining up to 256 rows. UI sounds
 and independent local previews never enter the log. `ui/sound_explorer.rs` owns
@@ -69,6 +57,9 @@ without derendering their owners. The blacklist projects each owner's flags
 into separate rows keyed by UUID and category, and removes only the selected
 bits in one atomic save. Removing the final category removes the stored entry;
 object/resident entries still restore their hidden objects as before.
+The avatar/attachment Disturbance submenu controls the three owner sound
+categories with independent ON/OFF actions, sharing the local persisted mask
+with Sound Explorer. Sound filtering does not use the Bridge.
 The blacklist shows each unmasked UUID in a fixed-width column, searches by
 name or UUID, and copies unique selected keys from the row menu. Its Blocked
 shortcut opens the separate People mute list; Ignore never derenders an object

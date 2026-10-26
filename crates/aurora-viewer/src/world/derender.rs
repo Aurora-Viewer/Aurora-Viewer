@@ -268,6 +268,31 @@ impl Derender {
                     .is_some_and(|e| matches!(e.kind, Kind::Sound(flags) if flags & flag != 0)))
     }
 
+    pub fn owner_sound_flags(&self, owner: Uuid) -> u8 {
+        match self.entries.get(&owner).map(|e| e.kind) {
+            Some(Kind::Sound(flags)) => flags & 7,
+            _ => 0,
+        }
+    }
+
+    /// Set one category without changing the other two, using the same saved
+    /// mask as Sound Explorer. OFF removes only that category's row.
+    pub fn set_sound_category(&mut self, owner: Uuid, flag: u8, blocked: bool, mut entry: Entry) {
+        if owner.is_nil()
+            || !matches!(flag, 1 | 2 | 4)
+            || self.entries.get(&owner).is_some_and(|e| !matches!(e.kind, Kind::Sound(_)))
+            || (self.owner_sound_flags(owner) & flag != 0) == blocked
+        {
+            return;
+        }
+        if blocked {
+            entry.kind = Kind::Sound(flag);
+            self.add_sounds([(owner, entry)]);
+        } else {
+            self.remove_rows(&[RowId { id: owner, flag }]);
+        }
+    }
+
     #[cfg(test)]
     pub fn add_sound(&mut self, id: Uuid, entry: Entry) {
         self.add_sounds(std::iter::once((id, entry)));
@@ -664,6 +689,44 @@ mod tests {
         assert!(list.remove(&[owner, asset]).updates.is_empty());
         assert!(list.is_empty());
         assert!(Derender::load(dir.join(FILE)).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn avatar_sound_category_switches_set_and_clear_independent_persistent_bits() {
+        let dir = std::env::temp_dir().join(format!("aurora-avatar-sound-categories-{}", Uuid::new_v4()));
+        let path = dir.join(FILE);
+        let owner = Uuid::from_u128(101);
+        let asset = Uuid::from_u128(202);
+        let mut list = Derender::load(path.clone());
+        list.add_sound(asset, entry(Kind::Sound(0), true));
+        for flag in [1, 2, 4] {
+            list.set_sound_category(owner, flag, true, entry(Kind::Sound(flag), true));
+        }
+        assert_eq!(list.owner_sound_flags(owner), 7);
+        let generation = list.generation;
+        list.set_sound_category(owner, 1, true, entry(Kind::Sound(1), true));
+        assert_eq!(list.generation, generation, "setting an existing state is idempotent");
+        list.set_sound_category(owner, 2, false, entry(Kind::Sound(2), true));
+        let mut list = Derender::load(path.clone());
+        assert_eq!(list.owner_sound_flags(owner), 5);
+        assert!(!list.sound_blocked(Uuid::nil(), owner, 2));
+        assert!(list.sound_blocked(Uuid::nil(), owner, 1) && list.sound_blocked(Uuid::nil(), owner, 4));
+        assert!(!list.contains(&owner), "muting categories never hides the avatar");
+        for flag in [1, 4] {
+            list.set_sound_category(owner, flag, false, entry(Kind::Sound(flag), true));
+        }
+        let mut list = Derender::load(path);
+        assert_eq!(list.owner_sound_flags(owner), 0);
+        assert!(list.entries().all(|(id, _)| *id == asset), "only the unrelated sound asset remains");
+        for (owner, flag) in [(owner, 0), (owner, 3), (Uuid::nil(), 1)] {
+            list.set_sound_category(owner, flag, true, entry(Kind::Sound(flag), true));
+        }
+        assert_eq!(list.entries().count(), 1);
+        let hidden = Uuid::from_u128(303);
+        list.add(hidden, entry(Kind::Resident, false));
+        list.set_sound_category(hidden, 1, true, entry(Kind::Sound(1), true));
+        assert!(list.contains(&hidden), "sound switches cannot replace a derender entry");
         let _ = std::fs::remove_dir_all(dir);
     }
 

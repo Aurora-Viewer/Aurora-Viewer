@@ -200,11 +200,6 @@ fn volumes(cx: &mut Cx) {
             tr!("ui-options-sounds-played-by-other-avatars-gestures"),
             &field!(audio.gesture_sounds),
         );
-        cx.toggle(
-            tr!("sound-mute-rez-descendants"),
-            tr!("sound-mute-rez-descendants-help"),
-            &field!(audio.mute_rez_descendants),
-        );
         // Legacy Viewer › Sound & Media (MuteWhenMinimized)
         cx.toggle(
             tr!("ui-options-mute-when-minimized"),

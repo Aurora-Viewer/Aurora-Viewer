@@ -5,7 +5,7 @@
 //! RemoveMuteListEntry) and the `<agent>.cached_mute` cache file.
 
 use aurora_net::NetCommand;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use uuid::Uuid;
@@ -283,14 +283,6 @@ impl MuteList {
 
     pub fn get(&self, id: &Uuid) -> Option<&Mute> {
         self.mutes.get(id)
-    }
-
-    pub fn sound_blocked_objects(&self) -> HashSet<Uuid> {
-        self.mutes
-            .values()
-            .filter(|m| m.kind == MuteType::Object && self.sounds_muted(&m.id))
-            .map(|m| m.id)
-            .collect()
     }
 
     pub fn len(&self) -> usize {

@@ -37,11 +37,6 @@ impl App {
             row.owner = sound_owner_name(&self.world, row.entry.owner);
         }
         let before = self.settings.audio.explorer;
-        self.sound_explorer_ui.rez_block_status = self
-            .settings
-            .audio
-            .mute_rez_descendants
-            .then_some(self.world.rez_sound_blocks.available());
         let action = self.sound_explorer_ui.show(
             ctx,
             p,
@@ -117,6 +112,28 @@ impl App {
         }
     }
 
+    pub(super) fn set_owner_sound_block(&mut self, owner: Uuid, flag: u8, blocked: bool) {
+        let name = sound_owner_name(&self.world, owner);
+        let region = self
+            .world
+            .main_region
+            .and_then(|h| self.world.regions.get(&h))
+            .map(|r| r.name.clone())
+            .unwrap_or_default();
+        self.world.derender.set_sound_category(
+            owner,
+            flag,
+            blocked,
+            Entry {
+                name,
+                region,
+                kind: Kind::Sound(flag),
+                date: crate::world::derender::now_secs(),
+                permanent: true,
+            },
+        );
+    }
+
     pub(super) fn demo_sound_explorer(&mut self, mode: &str) {
         self.panels.sound_explorer = true;
         self.panels.chat = false;
@@ -184,11 +201,7 @@ impl App {
             self.world.agent.position,
             None,
             0.5,
-            crate::scene::sounds::Origin {
-                object: owner,
-                owner,
-                region: None,
-            },
+            crate::scene::sounds::Origin { object: owner, owner },
         );
         self.scene.sounds.trigger_owned(
             collision,
@@ -198,35 +211,31 @@ impl App {
             crate::scene::sounds::Origin {
                 object: Uuid::from_u128(42),
                 owner,
-                region: None,
             },
         );
         self.settings.audio.explorer.repeats = mode == "all";
         self.settings.audio.explorer.avatars = mode == "all";
         self.settings.audio.explorer.collisions = mode == "all";
-        if mode.starts_with("rez-blocks") {
-            self.settings.audio.mute_rez_descendants = mode != "rez-blocks-off";
-            self.settings.audio.explorer.repeats = true;
-            let ids: Vec<_> = (101..=104)
-                .filter_map(|local| {
-                    self.world
-                        .objects
-                        .iter()
-                        .find(|(_, o)| o.key.local_id == local)
-                        .map(|(_, o)| o.full_id)
-                })
-                .collect();
-            if let Some(rezzer) = ids.first() {
-                let _ = self.world.block(
-                    *rezzer,
-                    aurora_i18n::tr!("sound-demo-rezzer"),
-                    crate::world::mutes::MuteType::Object,
-                );
+        if mode.starts_with("avatar-menu") {
+            self.panels.sound_explorer = false;
+            self.panels.inventory = false;
+            self.world.derender = Default::default();
+            if mode.ends_with("-mixed") {
+                self.set_owner_sound_block(owner, 1, true);
+                self.set_owner_sound_block(owner, 4, true);
             }
-            for object in ids.into_iter().skip(1) {
-                self.scene.sounds.set_attached(self.audio_engine.as_ref(), object, asset, 0.2, 1);
-                self.scene.sounds.set_owner(object, owner);
-            }
+            self.settings.use_pie_menu = mode.ends_with("-pie");
+            self.context_menu = Some(ui::context::ContextMenu {
+                pos: egui::pos2(40.0, 60.0),
+                point: self.world.agent.position,
+                target: ui::context::Target::Avatar {
+                    id: owner,
+                    own: false,
+                    attachment: None,
+                },
+                pie_path: Vec::new(),
+                pie_input_frame: None,
+            });
         }
     }
 }

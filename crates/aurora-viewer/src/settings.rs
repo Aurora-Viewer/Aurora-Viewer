@@ -1263,8 +1263,6 @@ pub enum StreamTitleShow {
 #[serde(default)]
 pub struct AudioSettings {
     pub explorer: crate::ui::sound_explorer::Filters,
-    /// Aurora: verified rez descendants of sound-blocked objects (Bridge).
-    pub mute_rez_descendants: bool,
     /// VoiceEarLocation, VoiceAutomaticGainControl, VoiceEchoCancellation and
     /// VoiceNoiseSuppressionLevel (panel_preferences_sound.xml).
     pub voice_ear: VoiceEar,
@@ -1334,7 +1332,6 @@ impl Default for AudioSettings {
     fn default() -> Self {
         AudioSettings {
             explorer: Default::default(),
-            mute_rez_descendants: false,
             voice_ear: VoiceEar::Camera,
             voice_automatic_gain: true,
             voice_echo_cancellation: true,

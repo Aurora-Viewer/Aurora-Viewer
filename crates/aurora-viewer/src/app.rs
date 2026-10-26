@@ -31,7 +31,6 @@ mod attention;
 mod bridge;
 mod movelock;
 mod poser;
-mod rez_sound_blocks;
 mod sound_explorer;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
@@ -2380,16 +2379,6 @@ impl App {
             return;
         }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
-            let endpoint = self.sync_bridge_queries();
-            if self.world.rez_sound_blocks.owns(request) {
-                self.bridge_runtime
-                    .query_reply(&self.world, result.as_ref().err().map(String::as_str), Instant::now());
-                let scope = self.rez_sound_scope(endpoint.as_ref());
-                self.world
-                    .rez_sound_blocks
-                    .reply(request, result, self.settings.audio.mute_rez_descendants, scope, Instant::now());
-                return;
-            }
             if self.bridge_services.owns(request) {
                 let error = result.as_ref().err().map(String::as_str);
                 self.bridge_runtime.query_reply(&self.world, error, Instant::now());
@@ -3058,17 +3047,9 @@ impl App {
                     return;
                 }
                 if let Some(off) = self.world.region_offset(handle) {
-                    self.scene.sounds.trigger_owned(
-                        sound,
-                        off + position,
-                        None,
-                        gain,
-                        crate::scene::sounds::Origin {
-                            object,
-                            owner,
-                            region: Some(handle),
-                        },
-                    );
+                    self.scene
+                        .sounds
+                        .trigger_owned(sound, off + position, None, gain, crate::scene::sounds::Origin { object, owner });
                 }
             }
             NetEvent::AttachedSound {
@@ -4172,8 +4153,7 @@ impl App {
             .mutes
             .version
             .wrapping_add(self.world.anti_spam.version)
-            .wrapping_add(self.world.derender.generation)
-            .wrapping_add(self.world.rez_sound_blocks.generation);
+            .wrapping_add(self.world.derender.generation);
         let recheck = self.sound_blocks.0 != version;
         self.sound_blocks.0 = version;
         let blocked = |world: &World, o: &crate::world::objects::Object| {
@@ -4302,7 +4282,6 @@ impl App {
     }
 
     fn update_sounds(&mut self) {
-        self.update_rez_sound_blocks();
         self.flush_object_sounds();
         let ui = &self.settings.audio.ui;
         let w = &mut self.world;

@@ -1,4 +1,4 @@
-//! Shared world menu entries and permissions, following Firestorm menu_*.xml.
+//! Shared world menu entries and permissions, following Legacy Viewer menu_*.xml.
 
 use super::{CtxAction, Facts, Target};
 use crate::build::script_queue::QueueKind;
@@ -161,6 +161,10 @@ pub(super) fn draw_list(ui: &mut egui::Ui, p: &crate::theme::Palette, entries: &
         match &entry.kind {
             Kind::Action(action) => {
                 let clicked = match entry.checked {
+                    Some(checked) if entry.enabled && matches!(action, CtxAction::SetOwnerSoundBlock { .. }) => {
+                        let mut on = checked;
+                        menu::toggle(ui, p, entry.icon, &entry.label, &mut on)
+                    }
                     Some(checked) => menu::check(ui, p, entry.icon, &entry.label, checked, entry.enabled),
                     None => menu::item_if(ui, p, entry.icon, &entry.label, entry.enabled),
                 };
@@ -534,6 +538,30 @@ fn avatar_navigation(ui: &mut Builder, f: &Facts, id: Uuid) {
     ui.item_if("current-location-filled", label, f.avatar_travel || f.following, action);
 }
 
+fn sound_block_items(ui: &mut Builder, f: &Facts, owner: Uuid) {
+    let state = |flag| {
+        if f.sound_blocks & flag != 0 {
+            aurora_i18n::tr!("sound-block-state-on")
+        } else {
+            aurora_i18n::tr!("sound-block-state-off")
+        }
+    };
+    for (flag, label) in [
+        (1, aurora_i18n::tr!("ui-context-block-worn-sounds", state = state(1))),
+        (2, aurora_i18n::tr!("ui-context-block-rezzed-sounds", state = state(2))),
+        (4, aurora_i18n::tr!("ui-context-block-gesture-sounds", state = state(4))),
+    ] {
+        let on = f.sound_blocks & flag != 0;
+        ui.check(
+            "volume-off",
+            &label,
+            on,
+            true,
+            CtxAction::SetOwnerSoundBlock { owner, flag, blocked: !on },
+        );
+    }
+}
+
 /// menu_avatar_other.xml
 fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
     ui.item("user-filled", aurora_i18n::tr!("common-view-profile"), CtxAction::Profile(id));
@@ -577,6 +605,9 @@ fn avatar_menu(ui: &mut Builder, f: &Facts, id: Uuid, point: Vec3) {
             ("ban", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlock(id));
+        ui.separator();
+        sound_block_items(ui, f, id);
+        ui.separator();
         // Avatar.ReportAbuse: showFromObject on the avatar
         ui.item(
             "flag-filled",
@@ -679,6 +710,9 @@ fn attachment_other_menu(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Uuid
             ("ban", aurora_i18n::tr!("common-ignore"))
         };
         ui.item(icon, label, CtxAction::ToggleBlock(id));
+        ui.separator();
+        sound_block_items(ui, f, id);
+        ui.separator();
         ui.item(
             "flag-filled",
             aurora_i18n::tr!("common-report"),

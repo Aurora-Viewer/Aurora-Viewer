@@ -66,7 +66,6 @@ pub mod received_items;
 pub mod recent;
 pub mod region_alerts;
 pub mod region_restart;
-pub mod rez_sound_blocks;
 pub mod rig_graph;
 pub mod rig_targets;
 pub mod rlva;
@@ -304,7 +303,6 @@ pub struct World {
     /// Object messages from elsewhere (Preferences › Privacy, issue #623).
     pub object_im_filter: object_im_filter::Settings,
     pub anti_spam: anti_spam::Registry,
-    pub rez_sound_blocks: rez_sound_blocks::Tracker,
     pub teleporting: bool,
     /// Only a teleport to another region needs a loading screen. Unknown
     /// destinations wait for TeleportFinish to identify the destination.
@@ -600,7 +598,6 @@ impl World {
             point_at: pointat::PointAts::default(),
             object_im_filter: object_im_filter::Settings::default(),
             anti_spam: Default::default(),
-            rez_sound_blocks: Default::default(),
             appearance_counter: 1,
             bake_refreshes: HashMap::new(),
             shape_preview: None,

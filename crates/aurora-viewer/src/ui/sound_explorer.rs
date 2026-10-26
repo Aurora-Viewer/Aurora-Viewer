@@ -55,7 +55,6 @@ pub struct SoundExplorer {
     anchor: Option<u64>,
     sort: Option<(usize, bool)>,
     pub next_refresh: Option<Instant>,
-    pub rez_block_status: Option<bool>,
 }
 
 impl SoundExplorer {
@@ -155,14 +154,6 @@ impl SoundExplorer {
         );
         floater.min_size = Vec2::new(580.0, 320.0);
         floater.show(ctx, p, open, |ui| {
-            if let Some(available) = self.rez_block_status {
-                let text = if available {
-                    aurora_i18n::tr!("sound-rez-blocking-active")
-                } else {
-                    aurora_i18n::tr!("sound-rez-blocking-unavailable")
-                };
-                ui.label(RichText::new(text).size(12.0).color(if available { p.muted } else { p.warn }));
-            }
             ui.horizontal_wrapped(|ui| {
                 widgets::checkbox(ui, p, &mut filters.avatars, aurora_i18n::tr!("sound-explorer-avatars"));
                 widgets::checkbox(ui, p, &mut filters.objects, aurora_i18n::tr!("sound-explorer-objects"));

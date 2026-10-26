@@ -128,7 +128,6 @@ struct Playing {
 /// Sound of an object (LLAudioSourceVO).
 struct Source {
     owner: Uuid,
-    first_seen: Instant,
     sound: Uuid,
     gain: f32,
     flags: u8,
@@ -143,7 +142,6 @@ struct Source {
 struct Triggered {
     source: Uuid,
     owner: Uuid,
-    region: Option<aurora_net::RegionHandle>,
     sound: Uuid,
     /// Render-space position, or an object to follow.
     pos: Vec3,
@@ -164,7 +162,6 @@ pub struct Listener {
 pub struct Origin {
     pub object: Uuid,
     pub owner: Uuid,
-    pub region: Option<aurora_net::RegionHandle>,
 }
 
 pub struct SoundManager {
@@ -293,7 +290,6 @@ impl SoundManager {
         self.want(sound);
         let s = self.sources.entry(object).or_insert(Source {
             owner: Uuid::nil(),
-            first_seen: Instant::now(),
             sound,
             gain,
             flags,
@@ -346,7 +342,6 @@ impl SoundManager {
             Origin {
                 object: source,
                 owner: source,
-                region: None,
             },
         );
     }
@@ -360,7 +355,6 @@ impl SoundManager {
         self.triggered.push(Triggered {
             source: origin.object,
             owner: origin.owner,
-            region: origin.region,
             sound,
             pos,
             follow,
@@ -631,38 +625,6 @@ impl SoundManager {
         active.sort_by(|a, b| a.0.total_cmp(&b.0));
         let mut voices = 0usize;
         for (_, kind, key, pos, within_radius) in active {
-            let waiting = if kind == 0 {
-                world
-                    .objects
-                    .index_of_uuid(&key)
-                    .and_then(|i| world.objects.get(i))
-                    .is_some_and(|o| {
-                        !o.is_avatar()
-                            && self
-                                .sources
-                                .get(&key)
-                                .is_some_and(|s| world.rez_sound_blocks.waiting(key, o.key.region, s.first_seen, now))
-                    })
-            } else {
-                self.triggered.get(key.as_u128() as usize).is_some_and(|t| {
-                    t.source != t.owner
-                        && t.region
-                            .or(world.main_region)
-                            .is_some_and(|region| world.rez_sound_blocks.waiting(t.source, region, t.asked, now))
-                })
-            };
-            if waiting {
-                let p = if kind == 0 {
-                    self.sources.get(&key).and_then(|s| s.playing)
-                } else {
-                    self.triggered.get(key.as_u128() as usize).and_then(|t| t.playing)
-                };
-                if let (Some(p), Some(e)) = (p, engine) {
-                    e.stop_world(p.voice);
-                }
-                self.set_playing(kind, key, None, true);
-                continue;
-            }
             let (sound, gain, looped, playing) = if kind == 0 {
                 let Some(s) = self.sources.get(&key) else {
                     continue;
@@ -773,36 +735,6 @@ impl SoundManager {
         if let Some(s) = self.sources.get_mut(&object) {
             s.owner = owner;
         }
-    }
-
-    /// A bounded set of nearest world sources; never scan the entire scene
-    /// for bridge metadata. Invisible triggers retain their event region.
-    pub fn object_sources(&self, world: &World, listener: Vec3) -> Vec<(Uuid, aurora_net::RegionHandle)> {
-        let now = Instant::now();
-        let attached = self
-            .sources
-            .iter()
-            .filter(|(_, s)| s.playing.is_some() || s.pending.is_some())
-            .filter_map(|(id, _)| {
-                let idx = world.objects.index_of_uuid(id)?;
-                let o = world.objects.get(idx)?;
-                if o.is_avatar() {
-                    return None;
-                }
-                let pos = Scene::object_transform(world, idx, now, 0).map_or(o.position, |t| if t.2 { listener } else { t.0 });
-                Some((pos.distance_squared(listener), *id, o.key.region))
-            });
-        let triggered = self
-            .triggered
-            .iter()
-            .filter(|t| !t.source.is_nil() && t.source != t.owner)
-            .filter_map(|t| Some((t.pos.distance_squared(listener), t.source, t.region.or(world.main_region)?)));
-        let mut sources: Vec<_> = attached.chain(triggered).collect();
-        sources.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-        let mut seen = std::collections::HashSet::new();
-        sources.retain(|(_, id, _)| seen.insert(*id));
-        sources.truncate(192);
-        sources.into_iter().map(|(_, id, region)| (id, region)).collect()
     }
 
     /// Stop the selected playback, never a newer sound from the same source.
@@ -989,7 +921,6 @@ mod tests {
             Origin {
                 object: world.agent_id,
                 owner: world.agent_id,
-                region: None,
             },
         );
         sounds.update(None, &world, &l, now);
@@ -1018,86 +949,42 @@ mod tests {
     }
 
     #[test]
-    fn rez_sound_blocks_hold_new_audio_then_mute_only_confirmed_descendants() {
+    fn directly_muted_object_stops_without_muting_unrelated_objects_of_the_same_owner() {
         use crate::world::mutes::{Mute, MuteType};
-        use crate::world::rez_sound_blocks::Scope;
-        use aurora_net::bridge::query::{Reply, Rezzer};
         let mut world = hud_world();
         let child = object_id(&world, crate::demo::hud::CHILD);
-        let other = Uuid::from_u128(555);
-        let blocked = Uuid::from_u128(888);
         let owner = world.agent_id;
+        let other = Uuid::from_u128(555);
+        let asset = Uuid::from_u128(21);
         world.mutes.reset(owner);
+        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-direct-sound-tests"));
+        sounds.insert(asset, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
+        sounds.set_attached(None, child, asset, 1.0, FLAG_LOOP);
+        sounds.set_owner(child, owner);
+        sounds.trigger_owned(asset, Vec3::ZERO, None, 1.0, Origin { object: other, owner });
+        let listener = Listener {
+            pos: Vec3::ZERO,
+            right: Vec3::X,
+            underwater: false,
+        };
+        let now = Instant::now();
+        sounds.update(None, &world, &listener, now);
+        assert_eq!(sounds.voices(), 2);
         world
             .mutes
             .add(
                 Mute {
-                    id: blocked,
-                    name: "Rezzer".into(),
+                    id: child,
+                    name: "Object".into(),
                     kind: MuteType::Object,
                     flags: 0,
                 },
                 0,
             )
             .unwrap();
-        let scope = Scope {
-            agent: owner,
-            region: world.main_region,
-            session: Some(Uuid::from_u128(99)),
-        };
-        world.rez_sound_blocks.configure(true, scope, &world.mutes);
-        let now = Instant::now();
-        world.rez_sound_blocks.set_live(&[child, other], now);
-        let (request, _) = world.rez_sound_blocks.request(now).unwrap();
-        let asset = Uuid::from_u128(21);
-        let mut sounds = SoundManager::new(std::env::temp_dir().join("aurora-rez-sound-tests"));
-        sounds.insert(asset, SoundClip::from_pcm(&[0.0; 4800], 1, 48_000));
-        sounds.set_attached(None, child, asset, 1.0, FLAG_LOOP);
-        sounds.set_owner(child, owner);
-        sounds.trigger_owned(
-            asset,
-            Vec3::ZERO,
-            None,
-            1.0,
-            Origin {
-                object: other,
-                owner,
-                region: world.main_region,
-            },
-        );
-        let listener = Listener {
-            pos: Vec3::ZERO,
-            right: Vec3::X,
-            underwater: false,
-        };
-        sounds.update(None, &world, &listener, now);
-        assert_eq!(sounds.voices(), 0, "no first sound leaks while provenance is pending");
-        world.rez_sound_blocks.reply(
-            request,
-            Ok(Reply::Rezzers(vec![
-                Rezzer {
-                    object: child,
-                    root: child,
-                    rezzer: blocked,
-                },
-                Rezzer {
-                    object: other,
-                    root: other,
-                    rezzer: Uuid::nil(),
-                },
-            ])),
-            true,
-            scope,
-            now,
-        );
         sounds.update(None, &world, &listener, now + Duration::from_millis(10));
-        assert_eq!(sounds.voices(), 1, "unrelated source with the same owner is audible");
-        assert!(sounds.history.entries().all(|e| e.source == other));
-        world.mutes.remove(&blocked, "", 0);
-        world.rez_sound_blocks.configure(true, scope, &world.mutes);
-        sounds.set_attached(None, child, asset, 1.0, FLAG_LOOP);
-        sounds.update(None, &world, &listener, now + Duration::from_millis(20));
-        assert_eq!(sounds.voices(), 2);
+        assert_eq!(sounds.voices(), 1);
+        assert!(sounds.history.entries().filter(|e| e.stopped.is_none()).all(|e| e.source == other));
     }
 
     fn hud_world() -> World {

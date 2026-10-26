@@ -199,7 +199,6 @@ impl World {
     /// process_attached_sound).
     pub fn sound_blocked(&self, object: &Uuid, owner: &Uuid) -> bool {
         self.mutes.is_muted_id(object)
-            || self.rez_sound_blocks.blocked(*object)
             || (!owner.is_nil() && self.mutes.sounds_muted(owner))
             || self.anti_spam.is_blocked(super::anti_spam::Queue::Sound, *object)
             || self.anti_spam.is_blocked(super::anti_spam::Queue::Sound, *owner)
