@@ -118,8 +118,10 @@ fn sky_full(dir: vec3<f32>) -> vec3<f32> {
 }
 
 fn sky_pixel(in: SkyOut) -> vec4<f32> {
-    let w = frame.inv_view_proj * vec4<f32>(in.ndc, 0.5, 1.0);
-    let dir = normalize(w.xyz / w.w - frame.camera_pos.xyz);
+    // from the camera, not region positions minus the camera: those rounded
+    // differently each frame and the sky shook as it moved (#1059)
+    let w = frame.inv_view_proj_rot * vec4<f32>(in.ndc, 0.5, 1.0);
+    let dir = normalize(w.xyz / w.w);
     var col = sky_full(dir);
     if (camera_underwater()) {
         let wf = water_fog_view(dir * 512.0, frame.water_normal.w);

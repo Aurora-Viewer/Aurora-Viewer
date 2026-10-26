@@ -29,6 +29,9 @@ struct Frame {
     inv_view_proj: mat4x4<f32>,
     // view-projection for positions relative to `eye` (object vertices)
     eye_view_proj: mat4x4<f32>,
+    // inverse of the projection by the view's rotation alone: directions
+    // from the camera, with no region position to round (sky)
+    inv_view_proj_rot: mat4x4<f32>,
     eye: vec4<f32>,             // xyz: at or near the camera
     camera_pos: vec4<f32>,      // xyz, w = time (s)
     sun_dir: vec4<f32>,         // xyz towards the light, w = sun visible (0..1)
