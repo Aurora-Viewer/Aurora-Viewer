@@ -114,8 +114,11 @@ the creator checks their own friends or a fresh, complete server member list
 shared through `world/group_data.rs` before sending any details. Unsent grants
 are checked again at the bounded send cadence; unknown/denied requests remain
 silent. Responses cannot use regional broadcast, in both Rust and the bridge.
+Unauthorized labels omit creator names as well as destination/access details.
 Private details remain in session memory, bound to creator, portal and request;
 discovery is redacted and close/expiry/session changes retire pending exchanges.
+Locally created portals and personal returns use a 1 m clearance without startup suppression; other observers retain the 3.5 m anti-drop guard and 600 ms appearance delay.
+`app/portals.rs::Journey` carries a single, expiring return intent across the ordinary teleport boundary. Only AgentMovementComplete enables publication; failure, logout, expiry and a different arrival region discard it. Portals request arrival facing away from the return aperture four metres behind the avatar, so held forward movement cannot bounce the traveler back. The return derives a paired UUID from the source (reversing twice restores it), preserving the creator and expiry. Each regional entry merges bounded authenticated relay identities, preserving its first geometry and crossing gate; discovery includes locally shared returns. A traveler retains a local return grant. Friends grants require the original creator to be present; a relay never substitutes its own friends. Group relays verify a fresh complete server roster. Restricted announcements remain redacted.
 HTTP-in renewal within the same region preserves invitations and clearance gates.
 The query endpoint is invalidated on region changes or a dead-URL response;
 announcement/close delivery retries the same immutable action at most twice,

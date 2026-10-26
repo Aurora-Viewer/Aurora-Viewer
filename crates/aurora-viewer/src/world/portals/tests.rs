@@ -40,6 +40,172 @@ pub(super) fn fixture() -> (World, State) {
 }
 
 #[test]
+fn portal_can_be_entered_immediately_from_nearby_and_after_a_distant_stall() {
+    let p = portal().announcement();
+    let now = Instant::now();
+    for stalled in [false, true] {
+        let mut gate = Gate::new(Vec3::from(p.center), point(1.8), now);
+        let at = now + Duration::from_millis(if stalled { 2000 } else { 100 });
+        if stalled {
+            assert!(!gate.sample(&p, point(1.8), true, at));
+            assert!(gate.armed);
+        }
+        assert!(!gate.sample(&p, point(0.4), true, at));
+        assert!(gate.sample(&p, point(-0.4), true, at + Duration::from_millis(100)));
+    }
+}
+
+#[test]
+fn portal_return_arrivals_share_one_aperture_and_preserve_the_observers_gate() {
+    let (mut observer, mut state) = fixture();
+    let now = Instant::now();
+    let creator = Uuid::from_u128(20);
+    let mut announcement = portal().announcement();
+    announcement.creator = Some(creator);
+    observer.agent.position = point(0.0);
+    for peer in [2, 3, 4] {
+        state.receive(
+            &observer,
+            &wire(Uuid::from_u128(peer), Message::Open(announcement.clone())),
+            now,
+            1000,
+        );
+    }
+    assert_eq!(state.entries.len(), 1);
+    assert_eq!(state.entries[0].owner, creator);
+    assert_eq!(state.entries[0].relays.len(), 3);
+    assert!(state.entries[0].waiting_for_clearance());
+    state.receive(
+        &observer,
+        &wire(
+            Uuid::from_u128(2),
+            Message::Close {
+                region: 256,
+                id: announcement.id,
+            },
+        ),
+        now,
+        1000,
+    );
+    assert_eq!(state.entries.len(), 1, "one departing relay does not close the shared return");
+    assert!(state.share_return(portal(), creator, observer.agent.position, now, 1000));
+    assert_eq!(state.entries.len(), 1);
+    assert!(
+        state.entries[0].waiting_for_clearance(),
+        "a new arrival does not rearm the observer"
+    );
+    state.receive(&observer, &wire(Uuid::from_u128(5), Message::Discover { region: 256 }), now, 1000);
+    assert!(
+        state
+            .out
+            .iter()
+            .any(|(peer, m)| *peer == Uuid::from_u128(5) && matches!(m, Message::Open(_)))
+    );
+}
+
+#[test]
+fn private_return_preserves_travelers_rights_without_granting_the_relays_friends() {
+    let (mut traveler, mut state) = fixture();
+    let now = Instant::now();
+    let creator = Uuid::from_u128(20);
+    let stranger = Uuid::from_u128(3);
+    traveler.social.form_friendship(stranger);
+    let p = Portal {
+        access: Access::Friends,
+        ..portal()
+    };
+    assert!(state.share_return(p.clone(), creator, traveler.agent.position, now, 1000));
+    assert!(state.entries[0].allowed(&traveler), "the traveler retains a personal return");
+    assert!(state.entries[0].portal.destination.is_none());
+    for peer in [creator, stranger] {
+        state.receive(
+            &traveler,
+            &wire(
+                peer,
+                Message::Request {
+                    region: 256,
+                    id: p.id,
+                    nonce: peer,
+                },
+            ),
+            now,
+            1000,
+        );
+    }
+    state.update(&traveler, Vec3::ZERO, now);
+    let grants: Vec<_> = state
+        .out
+        .iter()
+        .filter_map(|(peer, m)| matches!(m, Message::Details { .. }).then_some(*peer))
+        .collect();
+    assert_eq!(grants, [creator]);
+    assert!(
+        state
+            .out
+            .iter()
+            .all(|(peer, m)| !peer.is_nil() || !matches!(m, Message::Details { .. }))
+    );
+}
+
+#[test]
+fn private_return_details_require_the_original_creator_and_can_arrive_after_other_travelers() {
+    let (mut observer, mut state) = fixture();
+    let now = Instant::now();
+    let creator = Uuid::from_u128(20);
+    let relay = Uuid::from_u128(2);
+    observer.social.form_friendship(creator);
+    let p = Portal {
+        access: Access::Friends,
+        ..portal()
+    };
+    let mut announcement = p.announcement();
+    announcement.creator = Some(creator);
+    state.receive(&observer, &wire(relay, Message::Open(announcement.clone())), now, 1000);
+    assert_eq!(state.entries[0].label_owner(), relay, "a creator claim cannot impersonate its name");
+    state.update(&observer, Vec3::ZERO, now);
+    let nonce = state.fetches[&(relay, p.id)].nonce;
+    state.receive(
+        &observer,
+        &wire(
+            relay,
+            Message::Details {
+                region: 256,
+                id: p.id,
+                nonce,
+                details: p.details(),
+            },
+        ),
+        now,
+        1000,
+    );
+    assert!(
+        state.entries[0].details.is_none(),
+        "a relayed creator claim does not prove friendship"
+    );
+    state.receive(&observer, &wire(creator, Message::Open(announcement)), now, 1000);
+    assert_eq!(state.entries[0].label_owner(), creator);
+    state.update(&observer, Vec3::ZERO, now + Duration::from_millis(250));
+    let nonce = state.fetches[&(creator, p.id)].nonce;
+    state.receive(
+        &observer,
+        &wire(
+            creator,
+            Message::Details {
+                region: 256,
+                id: p.id,
+                nonce,
+                details: p.details(),
+            },
+        ),
+        now,
+        1000,
+    );
+    assert_eq!(state.entries.len(), 1);
+    assert!(state.entries[0].allowed(&observer));
+    assert_eq!(state.entries[0].resolved(), Some(p));
+}
+
+#[test]
 fn photo_isolation_hides_portal_surfaces_without_retiring_invitations_or_clearance() {
     use crate::snapshot::isolate::Mode;
     let (mut world, mut state) = fixture();
@@ -77,7 +243,7 @@ fn photo_isolation_hides_portal_surfaces_without_retiring_invitations_or_clearan
 fn portal_dropped_on_someone_requires_leaving_then_a_voluntary_plane_crossing() {
     let p = portal();
     let now = Instant::now();
-    let mut gate = Gate::new(Vec3::from(p.center), point(0.0), now);
+    let mut gate = Gate::observer(Vec3::from(p.center), point(0.0), now);
     let later = now + Duration::from_secs(1);
     assert!(!gate.sample(&p.announcement(), point(0.0), true, later));
     for x in [0.5, -0.5, 1.0, 2.0, 3.0] {
@@ -103,7 +269,7 @@ fn portal_pushes_corrections_standing_inside_and_walking_around_do_not_teleport(
     assert!(!gate.sample(&p.announcement(), point(-0.5), true, later));
     assert!(!gate.armed);
     let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
-    assert!(!gate.sample(&p.announcement(), point(-1.0), true, later));
+    assert!(!gate.sample(&p.announcement(), point(-0.5), true, later));
     assert!(!gate.armed);
     let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
     for x in [2.0, 0.5, -0.5] {
@@ -111,7 +277,7 @@ fn portal_pushes_corrections_standing_inside_and_walking_around_do_not_teleport(
     }
     let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
     assert!(!gate.sample(&p.announcement(), point(1.0), true, now));
-    assert!(!gate.sample(&p.announcement(), point(-0.5), true, now));
+    assert!(gate.sample(&p.announcement(), point(-0.5), true, now));
 }
 
 #[test]

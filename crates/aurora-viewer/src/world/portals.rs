@@ -19,7 +19,7 @@ use uuid::Uuid;
 pub const WIDTH: f32 = aurora_render::PORTAL_HALF_WIDTH;
 pub const HEIGHT: f32 = aurora_render::PORTAL_HALF_HEIGHT;
 const LIMIT: usize = 64;
-const CLEARANCE: f32 = 3.5;
+const CLEARANCE: f32 = 1.0;
 const SEND_INTERVAL: Duration = Duration::from_millis(250);
 
 pub fn fits_region(center: Vec3, size: [u32; 2]) -> bool {
@@ -46,13 +46,27 @@ pub struct Entry {
     pub details: Option<Details>,
     gate: Gate,
     expires_at: Instant,
+    relays: Vec<Uuid>,
+    shared: bool,
+    created: bool,
+    return_pass: bool,
 }
 
 impl Entry {
+    pub fn label_owner(&self) -> Uuid {
+        // A relay's creator field is a routing hint, not authenticated identity.
+        // Name the original only when seen directly or retained by our journey.
+        if self.return_pass || self.created || self.relays.contains(&self.owner) {
+            self.owner
+        } else {
+            self.relays.first().copied().unwrap_or(self.owner)
+        }
+    }
+
     pub fn allowed(&self, world: &World) -> bool {
-        self.details
-            .as_ref()
-            .is_some_and(|details| allowed(world, self.owner, details.access))
+        self.details.as_ref().is_some_and(|details| {
+            !world.mutes.is_muted_id(&self.owner) && (self.return_pass || allowed(world, self.owner, details.access))
+        })
     }
 
     fn resolved(&self) -> Option<Portal> {
@@ -77,17 +91,28 @@ impl Entry {
 struct Gate {
     previous: Vec3,
     armed: bool,
-    appeared: Instant,
     last_sample: Instant,
+    clearance: f32,
+    ready_at: Instant,
 }
 
 impl Gate {
     fn new(center: Vec3, position: Vec3, now: Instant) -> Self {
         Self {
             previous: position,
-            armed: position.distance(center) > 3.0,
-            appeared: now,
+            armed: position.distance(center) >= CLEARANCE,
             last_sample: now,
+            clearance: CLEARANCE,
+            ready_at: now,
+        }
+    }
+
+    fn observer(center: Vec3, position: Vec3, now: Instant) -> Self {
+        Self {
+            armed: position.distance(center) > 3.0,
+            clearance: 3.5,
+            ready_at: now + Duration::from_millis(600),
+            ..Self::new(center, position, now)
         }
     }
 
@@ -99,16 +124,18 @@ impl Gate {
         let center = Vec3::from(portal.center);
         // Arrival, simulator corrections and stale frame gaps cannot be entry.
         if !position.is_finite() || !previous.is_finite() || previous.distance(position) > 3.0 || gap > Duration::from_secs(1) {
-            self.armed = false;
+            // Reject this segment, but do not make an already distant observer
+            // walk farther away after a frame stall or a server correction.
+            self.armed = position.is_finite() && position.distance(center) >= self.clearance;
             return false;
         }
         if !self.armed {
-            if position.distance(center) >= CLEARANCE {
+            if position.distance(center) >= self.clearance {
                 self.armed = true;
             }
             return false;
         }
-        if now.saturating_duration_since(self.appeared) < Duration::from_millis(600) {
+        if now < self.ready_at {
             return false;
         }
         let normal = Vec3::new(portal.yaw.cos(), portal.yaw.sin(), 0.0);
@@ -135,7 +162,6 @@ struct Fetch {
 }
 
 struct Inquiry {
-    id: Uuid,
     nonce: Uuid,
     received: Instant,
     replied: bool,
@@ -168,8 +194,8 @@ pub struct State {
     pending: HashMap<Uuid, Delivery>,
     retries: VecDeque<Retry>,
     fetches: HashMap<(Uuid, Uuid), Fetch>,
-    inquiries: HashMap<Uuid, Inquiry>,
-    group_refresh: Option<Uuid>,
+    inquiries: HashMap<(Uuid, Uuid), Inquiry>,
+    group_refresh: VecDeque<Uuid>,
     pub failed: bool,
 }
 
@@ -196,29 +222,31 @@ impl State {
         self.fetches.retain(|(owner, id), _| {
             self.entries
                 .iter()
-                .any(|e| e.owner == *owner && e.portal.id == *id && e.details.is_none())
+                .any(|e| e.portal.id == *id && e.details.is_none() && e.relays.contains(owner))
         });
         self.inquiries
             .retain(|_, inquiry| inquiry.received.elapsed() < Duration::from_secs(30));
         self.out.retain(|(target, message)| match message {
             Message::Open(portal) => portal.live(now),
-            Message::Details { id, .. } => self.entries.iter().any(|entry| entry.owner == self.agent && entry.portal.id == *id),
+            Message::Details { id, .. } => self.entries.iter().any(|entry| entry.shared && entry.portal.id == *id),
             Message::Request { id, .. } => self
                 .entries
                 .iter()
-                .any(|entry| entry.owner == *target && entry.portal.id == *id && entry.details.is_none()),
+                .any(|entry| entry.portal.id == *id && entry.details.is_none() && entry.relays.contains(target)),
             _ => true,
         });
-        let own = self.own().map(|entry| entry.portal.id);
         self.retries.retain(|retry| match &retry.action {
-            Message::Open(portal) => Some(portal.id) == own && portal.live(now),
+            Message::Open(portal) => self.entries.iter().any(|e| e.shared && e.portal.id == portal.id) && portal.live(now),
             Message::Close { id, .. } => self.ended.contains_key(&(self.agent, *id)),
             _ => false,
         });
     }
 
     pub fn own(&self) -> Option<&Entry> {
-        self.entries.iter().find(|entry| entry.owner == self.agent)
+        self.entries
+            .iter()
+            .find(|entry| entry.created)
+            .or_else(|| self.entries.iter().find(|entry| entry.shared && entry.owner == self.agent))
     }
 
     /// Photo isolation leaves world portal surfaces and their labels out.
@@ -231,7 +259,7 @@ impl State {
     /// One fresh server-backed member list per group portal, shared by all
     /// requesters. Never authorize using a claim made by the requesting viewer.
     pub fn take_group_refresh(&mut self) -> Option<Uuid> {
-        self.group_refresh.take()
+        self.group_refresh.pop_front()
     }
 
     pub fn create(&mut self, portal: Portal, position: Vec3, now: Instant, unix: u64) -> bool {
@@ -258,7 +286,11 @@ impl State {
         if self.entries.len() >= LIMIT {
             return false;
         }
-        self.group_refresh = if let Access::Group(id) = portal.access { Some(id) } else { None };
+        if let Access::Group(id) = portal.access
+            && !self.group_refresh.contains(&id)
+        {
+            self.group_refresh.push_back(id);
+        }
         let announcement = portal.announcement();
         self.queue(Uuid::nil(), Message::Open(announcement.clone()));
         self.entries.push(Entry {
@@ -267,6 +299,10 @@ impl State {
             expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
             details: Some(portal.details()),
             portal: announcement,
+            relays: Vec::new(),
+            shared: true,
+            created: true,
+            return_pass: false,
         });
         true
     }
@@ -281,14 +317,67 @@ impl State {
             });
             self.retries
                 .retain(|retry| !matches!(&retry.action, Message::Open(portal) if portal.id == id));
-            self.inquiries.clear();
-            self.group_refresh = None;
+            self.inquiries.retain(|(_, portal), _| *portal != id);
             self.remember(self.agent, id, unix);
-            self.entries.retain(|entry| entry.owner != self.agent);
+            self.entries.retain(|entry| entry.owner != self.agent || entry.portal.id != id);
             if !self.queue(Uuid::nil(), Message::Close { region, id }) {
                 self.failed = true;
             }
         }
+    }
+
+    /// A crossing grants this traveler a return, without making their friends
+    /// friends of the original creator. Only the creator can grant Friends.
+    pub fn share_return(&mut self, portal: Portal, creator: Uuid, position: Vec3, now: Instant, unix: u64) -> bool {
+        let mut announcement = portal.announcement();
+        announcement.creator = Some(creator);
+        if creator.is_nil()
+            || Some(portal.region) != self.region
+            || !portal.live(unix)
+            || Message::Open(announcement.clone()).encode().is_none()
+            || (portal.access != Access::Everyone
+                && Message::Details {
+                    region: portal.region,
+                    id: portal.id,
+                    nonce: portal.id,
+                    details: portal.details(),
+                }
+                .encode()
+                .is_none())
+        {
+            return false;
+        }
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.owner == creator && e.portal.id == portal.id) {
+            // Keep the first aperture and gate; arrivals never move or rearm it.
+            entry.details = Some(portal.details());
+            entry.return_pass = true;
+            entry.gate.clearance = CLEARANCE;
+            entry.gate.ready_at = now;
+            entry.shared = true;
+            entry.portal.creator = Some(creator);
+            announcement = entry.portal.clone();
+        } else {
+            if self.entries.len() >= LIMIT {
+                return false;
+            }
+            self.entries.push(Entry {
+                owner: creator,
+                portal: announcement.clone(),
+                details: Some(portal.details()),
+                gate: Gate::new(Vec3::from(portal.center), position, now),
+                expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
+                relays: Vec::new(),
+                shared: true,
+                created: false,
+                return_pass: true,
+            });
+        }
+        if let Access::Group(group) = portal.access
+            && !self.group_refresh.contains(&group)
+        {
+            self.group_refresh.push_back(group);
+        }
+        self.queue(Uuid::nil(), Message::Open(announcement))
     }
 
     fn remember(&mut self, owner: Uuid, id: Uuid, unix: u64) {
@@ -332,30 +421,59 @@ impl State {
         }
         match message {
             Message::Open(portal) => {
+                let creator = portal.creator.unwrap_or(owner);
                 if !portal.live(unix)
+                    || world.mutes.is_muted_id(&creator)
                     || world
                         .main()
                         .is_some_and(|region| !fits_region(Vec3::from(portal.center), [region.heightmap.size_x, region.heightmap.size_y]))
                     || self.ended.contains_key(&(owner, portal.id))
-                    || self.entries.iter().any(|entry| entry.owner == owner)
-                    || self.entries.len() >= LIMIT
+                {
+                    return;
+                }
+                if let Some(entry) = self.entries.iter_mut().find(|e| e.owner == creator && e.portal.id == portal.id) {
+                    // Multiple travelers may relay one immutable return. Its
+                    // geometry, permission gate and lifetime belong to the link.
+                    if entry.portal.center == portal.center
+                        && entry.portal.yaw == portal.yaw
+                        && entry.portal.expires == portal.expires
+                        && entry.portal.destination == portal.destination
+                        && !entry.relays.contains(&owner)
+                        && entry.relays.len() < LIMIT
+                    {
+                        entry.relays.push(owner);
+                    }
+                    return;
+                }
+                if self.entries.len() >= LIMIT
+                    || (portal.creator.is_none() && self.entries.iter().any(|e| e.owner == owner && e.portal.creator.is_none()))
                 {
                     return;
                 }
                 self.entries.push(Entry {
-                    owner,
-                    gate: Gate::new(Vec3::from(portal.center), world.agent.position, now),
+                    owner: creator,
+                    gate: Gate::observer(Vec3::from(portal.center), world.agent.position, now),
                     expires_at: now + Duration::from_secs(portal.expires.saturating_sub(unix).min(LIFETIME)),
                     details: portal.destination.clone().map(|destination| Details {
                         destination,
                         access: Access::Everyone,
                     }),
                     portal,
+                    relays: vec![owner],
+                    shared: false,
+                    created: false,
+                    return_pass: false,
                 });
             }
             Message::Close { id, .. } => {
                 self.remember(owner, id, unix);
-                self.entries.retain(|entry| entry.owner != owner || entry.portal.id != id);
+                for entry in &mut self.entries {
+                    if entry.portal.id == id {
+                        entry.relays.retain(|relay| *relay != owner);
+                    }
+                }
+                self.entries
+                    .retain(|entry| entry.portal.id != id || entry.shared || !entry.relays.is_empty());
                 self.fetches.remove(&(owner, id));
                 self.out
                     .retain(|(target, message)| !(*target == owner && matches!(message, Message::Request { id: old, .. } if *old == id)));
@@ -372,20 +490,23 @@ impl State {
                     return;
                 }
                 self.discoveries.insert(owner, now);
-                if let Some(own) = self.own() {
-                    self.queue(owner, Message::Open(own.portal.clone()));
+                let shared: Vec<_> = self.entries.iter().filter(|e| e.shared).map(|e| e.portal.clone()).collect();
+                for portal in shared {
+                    self.queue(owner, Message::Open(portal));
                 }
             }
             Message::Request { id, nonce, .. } => {
                 if !self
-                    .own()
+                    .entries
+                    .iter()
+                    .find(|entry| entry.shared && entry.portal.id == id)
                     .is_some_and(|entry| entry.portal.id == id && entry.portal.live(unix) && entry.portal.destination.is_none())
                 {
                     return;
                 }
                 if self
                     .inquiries
-                    .get(&owner)
+                    .get(&(owner, id))
                     .is_some_and(|inquiry| now.saturating_duration_since(inquiry.received) < Duration::from_secs(1))
                 {
                     return;
@@ -400,9 +521,8 @@ impl State {
                     self.inquiries.remove(&oldest);
                 }
                 self.inquiries.insert(
-                    owner,
+                    (owner, id),
                     Inquiry {
-                        id,
                         nonce,
                         received: now,
                         replied: false,
@@ -420,9 +540,14 @@ impl State {
                 if let Some(entry) = self
                     .entries
                     .iter_mut()
-                    .find(|entry| entry.owner == owner && entry.portal.id == id && entry.portal.live(unix))
+                    .find(|entry| entry.portal.id == id && entry.portal.live(unix) && entry.relays.contains(&owner))
                     && entry.details.is_none()
                 {
+                    if details.access == Access::Friends && owner != entry.owner && world.agent_id != entry.owner {
+                        // Only the original creator can prove friendship. A
+                        // return relay cannot grant access on their behalf.
+                        return;
+                    }
                     entry.details = Some(details);
                     self.fetches.remove(&(owner, id));
                     self.out.retain(|(target, message)| {
@@ -434,60 +559,60 @@ impl State {
     }
 
     fn exchange_details(&mut self, world: &World, now: Instant) {
-        if let Some(own) = self.own()
-            && let Some(details) = &own.details
-            && details.access != Access::Everyone
-        {
-            let id = own.portal.id;
-            let region = own.portal.region;
-            let access = details.access;
-            let group_ready = self.group_refresh.is_none();
-            let authorized = |peer| {
-                !world.mutes.is_muted_id(&peer)
-                    && match access {
-                        Access::Friends => world.social.friends.iter().any(|friend| friend.id == peer),
-                        Access::Group(group) => {
-                            group_ready
-                                && world.groups.groups.iter().any(|membership| membership.id == group)
-                                && world
-                                    .group_data
-                                    .get(&group)
-                                    .is_some_and(|data| data.members_complete && data.members.contains_key(&peer))
+        let authorized = |entry: &Entry, peer: Uuid| {
+            entry.shared
+                && !world.mutes.is_muted_id(&peer)
+                && entry.details.as_ref().is_some_and(|details| {
+                    peer == entry.owner
+                        || match details.access {
+                            // A return relay must never substitute its own friends.
+                            Access::Friends => entry.owner == self.agent && world.social.friends.iter().any(|f| f.id == peer),
+                            Access::Group(group) => {
+                                !self.group_refresh.contains(&group)
+                                    && world.groups.groups.iter().any(|m| m.id == group)
+                                    && world
+                                        .group_data
+                                        .get(&group)
+                                        .is_some_and(|data| data.members_complete && data.members.contains_key(&peer))
+                            }
+                            Access::Everyone => false,
                         }
-                        Access::Everyone => false,
-                    }
-            };
-            // Permissions can change while the bounded send queue drains.
-            // Remove unsent grants before selecting this frame's command.
-            self.out
-                .retain(|(peer, message)| !matches!(message, Message::Details { .. }) || authorized(*peer));
-            for (peer, inquiry) in &mut self.inquiries {
-                if !authorized(*peer) {
-                    inquiry.replied = false;
-                }
+                })
+        };
+        self.out.retain(|(peer, message)| match message {
+            Message::Details { id, .. } => self.entries.iter().any(|e| e.portal.id == *id && authorized(e, *peer)),
+            _ => true,
+        });
+        for ((peer, id), inquiry) in &mut self.inquiries {
+            if !self.entries.iter().any(|e| e.portal.id == *id && authorized(e, *peer)) {
+                inquiry.replied = false;
             }
-            let replies: Vec<_> = self
-                .inquiries
-                .iter()
-                .filter(|(peer, inquiry)| inquiry.id == id && !inquiry.replied && authorized(**peer))
-                .map(|(peer, inquiry)| (*peer, inquiry.nonce))
-                .collect();
-            for (peer, nonce) in replies {
-                let Some(details) = self.own().and_then(|entry| entry.details.clone()) else {
-                    continue;
-                };
-                if self.queue(
-                    peer,
+        }
+        let replies: Vec<_> = self
+            .inquiries
+            .iter()
+            .filter(|(_, inquiry)| !inquiry.replied)
+            .filter_map(|((peer, id), inquiry)| {
+                let entry = self.entries.iter().find(|e| e.portal.id == *id && authorized(e, *peer))?;
+                let details = entry.details.clone()?;
+                Some((
+                    *peer,
                     Message::Details {
-                        region,
-                        id,
-                        nonce,
+                        region: entry.portal.region,
+                        id: *id,
+                        nonce: inquiry.nonce,
                         details,
                     },
-                ) && let Some(inquiry) = self.inquiries.get_mut(&peer)
-                {
-                    inquiry.replied = true;
-                }
+                ))
+            })
+            .collect();
+        for (peer, message) in replies {
+            let Message::Details { id, .. } = &message else { continue };
+            let id = *id;
+            if self.queue(peer, message)
+                && let Some(inquiry) = self.inquiries.get_mut(&(peer, id))
+            {
+                inquiry.replied = true;
             }
         }
         // A logical request has at most one retry. Its nonce remains valid
@@ -495,8 +620,8 @@ impl State {
         let requests: Vec<_> = self
             .entries
             .iter()
-            .filter(|entry| entry.owner != self.agent && entry.details.is_none())
-            .map(|entry| (entry.owner, entry.portal.id, entry.portal.region))
+            .filter(|entry| entry.details.is_none())
+            .flat_map(|entry| entry.relays.iter().map(|relay| (*relay, entry.portal.id, entry.portal.region)))
             .collect();
         for (owner, id, region) in requests {
             let fetch = self.fetches.entry((owner, id)).or_insert_with(|| Fetch {
@@ -516,7 +641,7 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, world: &World, intent: Vec3, now: Instant) -> Option<Portal> {
+    pub fn update(&mut self, world: &World, intent: Vec3, now: Instant) -> Option<(Uuid, Portal)> {
         // Authorization is refreshed immediately before a command can leave,
         // at the transport cadence rather than every rendered frame.
         let due = self
@@ -543,7 +668,7 @@ impl State {
             let travel = world.agent.position - entry.gate.previous;
             let can_enter = intent.is_finite() && travel.dot(intent) > 1e-5 && entry.allowed(world);
             if entry.gate.sample(&entry.portal, world.agent.position, can_enter, now) && crossed.is_none() {
-                crossed = entry.resolved();
+                crossed = entry.resolved().map(|portal| (entry.owner, portal));
             }
         }
         crossed
@@ -610,8 +735,9 @@ impl State {
             // immutable announcement/close, never a new portal or private grant.
             let current = match &action {
                 Message::Open(portal) => self
-                    .own()
-                    .is_some_and(|entry| entry.portal.id == portal.id && entry.expires_at > now),
+                    .entries
+                    .iter()
+                    .any(|entry| entry.shared && entry.portal.id == portal.id && entry.expires_at > now),
                 Message::Close { id, .. } => self.ended.contains_key(&(self.agent, *id)),
                 _ => false,
             };
@@ -628,7 +754,7 @@ impl State {
             }
             if let Message::Open(portal) = action {
                 self.entries
-                    .retain(|entry| entry.owner != self.agent || entry.portal.id != portal.id);
+                    .retain(|entry| !entry.shared || entry.portal.id != portal.id || entry.return_pass);
             }
             self.failed = true;
         }

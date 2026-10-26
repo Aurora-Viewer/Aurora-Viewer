@@ -118,6 +118,9 @@ impl PortalUi {
 
 fn label_text(world: &World, entry: &portals::Entry) -> String {
     let authorized = entry.allowed(world);
+    if !authorized {
+        return format!("{}\n{}", aurora_i18n::tr!("portal-private"), aurora_i18n::tr!("portal-restricted"));
+    }
     let details = entry.details.as_ref().filter(|_| authorized);
     let destination = match details {
         None => aurora_i18n::tr!("portal-private").to_string(),
@@ -136,15 +139,13 @@ fn label_text(world: &World, entry: &portals::Entry) -> String {
         Some(Access::Group(_)) => aurora_i18n::tr!("portal-group"),
         None => aurora_i18n::tr!("portal-private"),
     };
-    let status = if !authorized {
-        aurora_i18n::tr!("portal-restricted")
-    } else if entry.waiting_for_clearance() {
+    let status = if entry.waiting_for_clearance() {
         aurora_i18n::tr!("portal-step-away")
     } else {
         aurora_i18n::tr!("portal-walk-through")
     };
     let name = world
-        .person_name(&entry.owner)
+        .person_name(&entry.label_owner())
         .unwrap_or_else(|| aurora_i18n::tr!("poser-resident").into());
     let name = world.rlva_hover_privacy.apply(&name);
     format!("{destination}\n{name} · {access}\n{status}")
