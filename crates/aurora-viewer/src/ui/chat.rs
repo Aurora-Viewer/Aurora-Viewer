@@ -2265,6 +2265,7 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
         ui.add_space(2.0);
     }
     let (text, italics) = line_body(line, &name);
+    let visible = previews::text(env.previews.as_deref(), line, &text, ui.available_width() - 8.0);
     egui::Frame::new()
         .inner_margin(egui::Margin {
             left: 6,
@@ -2273,18 +2274,20 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
             bottom: 0,
         })
         .show(ui, |ui| {
-            chat_text_marked(
-                ui,
-                p,
-                env.emoji,
-                world,
-                env.want_names,
-                &text,
-                13.5,
-                tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
-                italics,
-                mark,
-            );
+            if !visible.is_empty() {
+                chat_text_marked(
+                    ui,
+                    p,
+                    env.emoji,
+                    world,
+                    env.want_names,
+                    &visible,
+                    13.5,
+                    tone.unwrap_or_else(|| super::colors::chat_color(line, world)),
+                    italics,
+                    mark,
+                );
+            }
             // Aurora also offers its previews in Lines (#976), extending
             // LLChatHistory::appendMessage (indra/newview/llchathistory.cpp).
             previews::cards(ui, env, line, &text);

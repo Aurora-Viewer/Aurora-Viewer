@@ -163,11 +163,14 @@ impl Lightbox {
                                 self.view = View::fitted();
                             }
                             ui.label(format!("{:.0}%", self.view.zoom * 100.0));
-                            if widgets::icon_button(ui, p, "external-link-filled", aurora_i18n::tr!("ui-chat-preview-open"), true) {
+                            if widgets::icon_button(ui, p, "external-link-filled", &super::link_tip(&self.url, false), true) {
                                 super::super::open_web_link(&ctx, &self.url);
                             }
                             if widgets::icon_button(ui, p, "copy-filled", super::clipboard::tip(&ctx, &self.shown.copy), true) {
                                 super::clipboard::request(&ctx, &self.shown.copy);
+                            }
+                            if widgets::icon_button(ui, p, "link-filled", &super::link_tip(&self.url, true), true) {
+                                ctx.copy_text(self.url.clone());
                             }
                             close = dim && widgets::icon_button(ui, p, "x", aurora_i18n::tr!("common-close"), true);
                             if self.pending.is_some() {

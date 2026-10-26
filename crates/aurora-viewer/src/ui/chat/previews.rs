@@ -534,13 +534,14 @@ impl Previews {
             v.title.clone()
         };
         let mut open = true;
-        let (mut browser, mut settings) = (false, false);
+        let (mut browser, mut copy_link, mut settings) = (false, false, false);
         let work = crate::ui::layout::work_area(ctx);
         let default = window_size(WINDOW_WIDTH, v.chrome, v.aspect, work.height() * 0.8);
         let pos = work.center() - default * 0.5;
         let body = crate::ui::widgets::Floater::new(PLAYER_WINDOW, title, pos, default)
             .action("settings-filled", aurora_i18n::tr!("ui-chat-preview-settings"), &mut settings)
-            .action("external-link-filled", aurora_i18n::tr!("ui-chat-preview-open"), &mut browser)
+            .action("external-link-filled", &link_tip(&v.link, false), &mut browser)
+            .action("link-filled", &link_tip(&v.link, true), &mut copy_link)
             .flush_body()
             .keep_aspect(v.aspect, v.chrome)
             .show(ctx, p, &mut open, |ui| {
@@ -577,6 +578,9 @@ impl Previews {
         }
         if browser {
             super::open_web_link(ctx, &v.link);
+        }
+        if copy_link {
+            ctx.copy_text(v.link.clone());
         }
         if settings {
             self.open_settings = true;
@@ -624,6 +628,52 @@ fn thumbnail_uv(size: [u32; 2], aspect: f32) -> egui::Rect {
         let w = aspect / thumb;
         egui::Rect::from_min_max(egui::pos2((1.0 - w) * 0.5, 0.0), egui::pos2((1.0 + w) * 0.5, 1.0))
     }
+}
+
+/// Only a ready card replaces its raw URL. Keep labelled links as authored,
+/// and retain the original message for history, search and message copying.
+pub(super) fn text<'a>(pv: Option<&Previews>, line: &ChatLine, text: &'a str, width: f32) -> std::borrow::Cow<'a, str> {
+    let Some(pv) = pv.filter(|_| line.origin == Origin::Live) else {
+        return text.into();
+    };
+    let ready: Vec<String> = links(text)
+        .into_iter()
+        .filter(|url| {
+            let Some((_, start)) = lp::decide(&pv.settings, pv.place, url) else {
+                return false;
+            };
+            let k = key(line, url);
+            if pv.hidden.contains(&k) || (start == Start::Ask && !pv.asked.contains(&k)) {
+                return false;
+            }
+            match pv.cache.get(url).map(|c| &c.entry) {
+                Some(Entry::Picture(shown)) => {
+                    let blurred =
+                        (pv.place == Place::Group && pv.settings.blur_groups) || lp::blurred_until_clicked(url) || shown.sensitive;
+                    let size = shown.fit(pv.settings.size.width().min(width.max(80.0)));
+                    // Leave tiny images' links in the text: their hover toolbar
+                    // cannot fit all actions without covering the image.
+                    size.x >= 122.0 && size.y >= BUTTON + 16.0 && (!blurred || pv.revealed.contains(&k))
+                }
+                Some(Entry::Video { .. }) => true,
+                _ => false,
+            }
+        })
+        .collect();
+    if ready.is_empty() {
+        return text.into();
+    }
+    let mut rest = text;
+    let mut out = String::with_capacity(text.len());
+    while let Some((at, len, seg)) = super::next_link(rest) {
+        out.push_str(&rest[..at]);
+        if !matches!(seg, Seg::Url(url) if ready.iter().any(|u| u == web_target(url).as_ref())) {
+            out.push_str(&rest[at..at + len]);
+        }
+        rest = &rest[at + len..];
+    }
+    out.push_str(rest);
+    out.trim().to_owned().into()
 }
 
 /// The cards of a message, under its text: one per link that gets one.
@@ -680,7 +730,18 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
             placeholder(ui, p, Vec2::new(w, (w * 9.0 / 16.0).round()))
         }
         (Entry::Picture(shown), _) => {
-            let out = picture(ui, p, shown, width, blur);
+            let out = picture(ui, p, shown, url, width, blur);
+            if !blur && pv.demo && pv.demo_zoom.as_deref() == Some("links") {
+                let button = BUTTON.min((out.resp.rect.width() - 32.0) / 5.0);
+                note_link_hover(
+                    ui,
+                    out.resp.rect,
+                    egui::pos2(
+                        out.resp.rect.right() - 8.0 - button * 0.5 - 4.0 * (button + 4.0),
+                        out.resp.rect.top() + 8.0 + button * 0.5,
+                    ),
+                );
+            }
             if !blur && pv.demo && pv.demo_zoom.as_deref() == Some("copy") {
                 let visible = out.resp.rect.intersect(ui.clip_rect());
                 if visible.is_positive() {
@@ -696,6 +757,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
                     pv.hidden.insert(k);
                 }
                 Some(Action::Copy) => clipboard::request(ui.ctx(), &shown.copy),
+                Some(Action::CopyLink) => ui.ctx().copy_text(url.to_owned()),
                 Some(Action::Open) => super::open_web_link(ui.ctx(), url),
                 Some(Action::Enlarge) => enlarge = true,
                 Some(Action::Window) => window = true,
@@ -706,7 +768,7 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
                 && pv
                     .demo_zoom
                     .as_ref()
-                    .is_some_and(|mode| mode != "copy" && (mode == "gif") == shown.animated())
+                    .is_some_and(|mode| !matches!(mode.as_str(), "copy" | "links") && (mode == "gif") == shown.animated())
             {
                 window |= pv.demo_zoom.as_deref() == Some("window");
                 enlarge |= !window;
@@ -734,6 +796,14 @@ fn card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &str, ta
 
 /// Exercise the actual hovered Copy button, including platform clipboard delivery.
 pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    static LINKS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *LINKS.get_or_init(|| std::env::var("AURORA_DEMO_PREVIEW_ZOOM").is_ok_and(|mode| mode == "links")) && frame >= 620 {
+        return ctx
+            .data(|d| d.get_temp::<egui::Pos2>(egui::Id::unique("preview_links_demo")))
+            .filter(|at| ctx.input(|i| i.pointer.hover_pos()) != Some(*at))
+            .map(|at| vec![egui::Event::PointerMoved(at)])
+            .unwrap_or_default();
+    }
     static COPY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if !*COPY.get_or_init(|| std::env::var("AURORA_DEMO_PREVIEW_ZOOM").is_ok_and(|mode| mode == "copy")) || !(620..=760).contains(&frame) {
         return Vec::new();
@@ -783,6 +853,12 @@ pub(super) fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
     events
 }
 
+fn note_link_hover(ui: &egui::Ui, rect: egui::Rect, at: egui::Pos2) {
+    if rect.intersect(ui.clip_rect()).contains(at) {
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::unique("preview_links_demo"), at));
+    }
+}
+
 /// What the resident did on a picture.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
@@ -790,6 +866,7 @@ enum Action {
     Window,
     Open,
     Copy,
+    CopyLink,
     Hide,
     Reveal,
 }
@@ -837,7 +914,7 @@ fn overlay_button(ui: &mut egui::Ui, p: &Palette, rect: egui::Rect, icon: &str, 
 
 /// A picture's card: the picture (or its blur), the GIF mark, and the
 /// buttons while hovered.
-fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, width: f32, blur: bool) -> PictureOut {
+fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, url: &str, width: f32, blur: bool) -> PictureOut {
     let size = shown.fit(width);
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     let radius = ui.visuals().window_corner_radius;
@@ -887,18 +964,23 @@ fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, width: f32, blur: bool
     }
     // the buttons over the picture while the pointer is on it
     let hovered = ui.rect_contains_pointer(rect);
-    let button = BUTTON.min((rect.width() - 28.0) / 4.0);
+    let button = BUTTON.min((rect.width() - 32.0) / 5.0);
     if hovered && button >= 18.0 {
         let mut x = rect.right() - 8.0 - button;
         let y = rect.top() + 8.0;
         for (icon, tip, act) in [
-            ("eye-off", aurora_i18n::tr!("ui-chat-preview-hide"), Action::Hide),
-            ("copy-filled", clipboard::tip(ui.ctx(), &shown.copy), Action::Copy),
-            ("external-link-filled", aurora_i18n::tr!("ui-chat-preview-open"), Action::Open),
-            ("photo-filled", aurora_i18n::tr!("ui-chat-preview-detach-image"), Action::Window),
+            ("eye-off", aurora_i18n::tr!("ui-chat-preview-hide").to_owned(), Action::Hide),
+            ("copy-filled", clipboard::tip(ui.ctx(), &shown.copy).to_owned(), Action::Copy),
+            (
+                "photo-filled",
+                aurora_i18n::tr!("ui-chat-preview-detach-image").to_owned(),
+                Action::Window,
+            ),
+            ("external-link-filled", link_tip(url, false), Action::Open),
+            ("link-filled", link_tip(url, true), Action::CopyLink),
         ] {
             let b = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::splat(button));
-            if overlay_button(ui, p, b, icon, tip) {
+            if overlay_button(ui, p, b, icon, &tip) {
                 action = Some(act);
             }
             x -= button + 4.0;
@@ -911,6 +993,15 @@ fn picture(ui: &mut egui::Ui, p: &Palette, shown: &Shown, width: f32, blur: bool
         .on_hover_cursor(egui::CursorIcon::ZoomIn)
         .on_hover_text(aurora_i18n::tr!("ui-chat-preview-enlarge"));
     PictureOut { resp, action }
+}
+
+fn link_tip(url: &str, copy: bool) -> String {
+    let action = if copy {
+        aurora_i18n::tr!("ui-chat-preview-copy-link")
+    } else {
+        aurora_i18n::tr!("ui-chat-preview-open")
+    };
+    format!("{action}\n{url}")
 }
 
 /// "Preview hidden · Show".
@@ -1154,16 +1245,25 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
                     ui.horizontal(|ui| {
                         // room kept for the buttons while it plays here, so
                         // the title does not move when they appear
-                        let buttons = if here == Some(false) { 3.0 * (20.0 + 6.0) } else { 0.0 };
+                        let buttons = if here == Some(false) { 5.0 } else { 2.0 } * (20.0 + 6.0);
                         ui.vertical(|ui| {
                             ui.set_width((ui.available_width() - buttons).max(60.0));
                             ui.spacing_mut().item_spacing.y = 2.0;
                             ui.add(egui::Label::new(RichText::new(&title).size(13.5).strong().color(p.ink)).truncate());
                             ui.add(egui::Label::new(RichText::new(&channel).size(11.5).color(p.muted)).truncate());
                         });
-                        if here == Some(false) && shown > 0.01 {
+                        if shown > 0.01 {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.multiply_opacity(shown);
+                                if crate::ui::widgets::icon_button(ui, p, "external-link-filled", &link_tip(url, false), true) {
+                                    super::open_web_link(ui.ctx(), url);
+                                }
+                                if crate::ui::widgets::icon_button(ui, p, "link-filled", &link_tip(url, true), true) {
+                                    ui.ctx().copy_text(url.to_owned());
+                                }
+                                if here != Some(false) {
+                                    return;
+                                }
                                 stop = crate::ui::widgets::icon_button(
                                     ui,
                                     p,
@@ -1192,6 +1292,9 @@ fn video_card(ui: &mut egui::Ui, p: &Palette, pv: &mut Previews, k: u64, url: &s
         })
         .response;
     ui.ctx().data_mut(|d| d.insert_temp(hover_id, resp.rect));
+    if pv.demo && pv.demo_zoom.as_deref() == Some("links") {
+        note_link_hover(ui, resp.rect, egui::pos2(resp.rect.right() - 18.0, resp.rect.bottom() - 26.0));
+    }
     let demo = pv.playing.is_none().then(|| pv.demo_play.take()).flatten();
     if play || demo.is_some() {
         let mut options = pv.settings.player_options(aurora_i18n::language());
@@ -1273,6 +1376,115 @@ fn card_menu(resp: &egui::Response, p: &Palette, pv: &mut Previews, k: u64, url:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ready_media_replace_only_their_raw_links_and_restore_them_when_unavailable() {
+        let ctx = egui::Context::default();
+        let url = "https://i.imgur.com/demo.gif";
+        let mut line = ChatLine {
+            time: std::time::SystemTime::UNIX_EPOCH,
+            from: "Demo".into(),
+            text: url.into(),
+            kind: crate::world::ChatKind::Im,
+            source: uuid::Uuid::nil(),
+            origin: Origin::Live,
+        };
+        let mut pv = Previews::default();
+        let visible = |pv: &Previews, line: &ChatLine| text(Some(pv), line, &line.text, 320.0).into_owned();
+        assert_eq!(visible(&pv, &line), url, "not requested");
+        pv.cache.insert(
+            url.into(),
+            Cached {
+                entry: Entry::Loading,
+                used: 0,
+            },
+        );
+        assert_eq!(visible(&pv, &line), url, "loading");
+        let shown = Shown::new(
+            &ctx,
+            url,
+            lp::Picture {
+                frames: vec![(egui::ColorImage::filled([1, 1], Color32::GRAY), Duration::ZERO)],
+                size: [640, 480],
+                blurred: egui::ColorImage::filled([1, 1], Color32::GRAY),
+            },
+        );
+        pv.cache.get_mut(url).unwrap().entry = Entry::Picture(shown);
+        assert_eq!(visible(&pv, &line), "", "ready URL-only messages have no text row");
+        assert_eq!(
+            text(Some(&pv), &line, url, 100.0),
+            url,
+            "a narrow card keeps its accessible text link"
+        );
+        let authored = format!("Look: {url}! [https://example.org More] [https://i.imgur.com/demo.gif My caption]");
+        assert_eq!(
+            text(Some(&pv), &line, &authored, 320.0),
+            "Look: ! [https://example.org More] [https://i.imgur.com/demo.gif My caption]"
+        );
+        assert_eq!(line.text, url, "the stored message is unchanged");
+        pv.hidden.insert(key(&line, url));
+        assert_eq!(visible(&pv, &line), url, "hidden preview");
+        pv.hidden.clear();
+        pv.settings.ims = false;
+        assert_eq!(visible(&pv, &line), url, "disabled previews");
+        pv.settings.ims = true;
+        pv.settings.load = lp::Load::Never;
+        assert_eq!(visible(&pv, &line), url, "cached media still requires consent");
+        pv.asked.insert(key(&line, url));
+        assert_eq!(visible(&pv, &line), "");
+        pv.settings.load = lp::Load::Trusted;
+        pv.place = Place::Group;
+        assert_eq!(visible(&pv, &line), url, "blurred picture");
+        pv.revealed.insert(key(&line, url));
+        assert_eq!(visible(&pv, &line), "");
+        pv.place = Place::Im;
+        for origin in [Origin::Log, Origin::ServerLog] {
+            line.origin = origin;
+            assert_eq!(visible(&pv, &line), url, "history stays text");
+        }
+        line.origin = Origin::Live;
+        for failure in [Failure::Unavailable, Failure::TooLarge(Some(99_000_000))] {
+            pv.cache.get_mut(url).unwrap().entry = Entry::Failed(failure);
+            assert_eq!(visible(&pv, &line), url);
+        }
+    }
+
+    #[test]
+    fn media_beyond_the_card_limit_keep_their_links() {
+        let mut pv = Previews::default();
+        let urls: Vec<_> = (0..4).map(|i| format!("https://youtu.be/DemoVideo{i:02}")).collect();
+        for url in &urls {
+            pv.cache.insert(
+                url.clone(),
+                Cached {
+                    entry: Entry::Video {
+                        title: String::new(),
+                        channel: String::new(),
+                        thumbnail: None,
+                        aspect: DEFAULT_ASPECT,
+                    },
+                    used: 0,
+                },
+            );
+        }
+        let line = ChatLine {
+            time: std::time::SystemTime::UNIX_EPOCH,
+            from: "Demo".into(),
+            text: urls.join("\n"),
+            kind: crate::world::ChatKind::Im,
+            source: uuid::Uuid::nil(),
+            origin: Origin::Live,
+        };
+        assert_eq!(text(Some(&pv), &line, &line.text, 340.0), urls[3]);
+        assert_eq!(
+            link_tip(&urls[0], true),
+            format!("{}\n{}", aurora_i18n::tr!("ui-chat-preview-copy-link"), urls[0])
+        );
+        assert_eq!(
+            link_tip(&urls[0], false),
+            format!("{}\n{}", aurora_i18n::tr!("ui-chat-preview-open"), urls[0])
+        );
+    }
 
     #[test]
     fn a_message_gets_a_card_per_link_once_and_three_at_most() {

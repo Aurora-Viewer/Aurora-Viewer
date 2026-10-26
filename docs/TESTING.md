@@ -3639,11 +3639,11 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services and Bluesky / X posts; `net` from the real sites |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|links\|net` | Picture, GIF and YouTube cards; `links[:gif\|image\|video]` isolates URL actions; `services[:gyazo,…]` shows service pages and social posts; `net` uses real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
 | `AURORA_DEMO_GIFS=1\|klipy\|sent\|menu\|nokey\|net` | Conversations open on the GIF picker of the field, its results made here; `sent` sends the first GIF; `menu` the button's right-click menu; `nokey` no button; `net` the real services |
-| `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
+| `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy\|links` | Enlarge a picture, open its independent window, click Copy image or hover its URL actions |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude\|join-map\|join-contact\|join-fly\|join-fly-blocked\|join-fly-late\|join-fly-custom` | Remote friend's received map rights in contact, conversation and profile actions |
@@ -4795,7 +4795,14 @@ failure. Grid validation and any paid upload are performed by the human.
   combine with `AURORA_DEMO_CONV_POPOUT=1` to check independent windows.
   Transcript history and the chat lines at the bottom stay text-only. Capture at frame 900
   (1500 with `net`).
-- **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy`**: with `AURORA_DEMO_CONV`
+  Ready pictures, GIFs and videos replace their raw URL in all four conversation
+  styles (#933). Hover a card: Copy link copies its original URL, Open in browser
+  uses the ordinary link-opening path; both tooltips show the URL. Copy image,
+  enlargement and detaching remain separate. Captions and labelled links remain
+  visible. Hidden, blurred, loading, failed and disabled previews keep their link.
+  `AURORA_DEMO_CONV_PREVIEWS=links` shows URL-only GIF/video messages and an image
+  with a caption; `links:gif`, `links:image` or `links:video` keeps one of them.
+- **`AURORA_DEMO_PREVIEW_ZOOM=1|gif|zoom|pan|window|copy|links`**: with `AURORA_DEMO_CONV`
   and `AURORA_DEMO_CONV_PREVIEWS=1`, enlarge the first loaded still picture
   (`1`), or animated picture (`gif`); `zoom` starts at twice its fitted size,
   `pan` also moves it. The chat body dims, leaving its title bar reachable.
@@ -4810,9 +4817,12 @@ failure. Grid validation and any paid upload are performed by the human.
   detail up to 2048 pixels on opening, with the existing 8 MB download limit;
   on failure their cached preview remains available. GIFs keep their card's
   frame resolution and memory budget.
+  `links` hovers the URL actions of a visible card after frame 620, without
+  clicking or starting playback; capture at frame 900 to see the URL tooltip.
   `window` opens the independent Image preview floater: move/resize it,
   zoom/drag/reset, then close or minimize the chat; the image stays usable.
-  The new photo icon is first on the thumbnail, before browser, Copy and Hide.
+  The thumbnail's hover actions are Copy link, Open in browser, detach image,
+  Copy image and Hide; enlargement and detached previews also expose both URL actions.
   `copy` scrolls to a loaded thumbnail as needed and clicks its actual Copy
   button after frame 620; it does not open either enlargement. On Windows,
   paste into an Explorer folder: a PNG is copied there, with transparency;

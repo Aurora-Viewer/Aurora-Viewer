@@ -100,7 +100,7 @@ fn card_click_enlarges_locally_and_group_reveal_stays_a_separate_click() {
     assert!(pv.enlarged());
     assert!(crate::ui::context::take_requests(&ctx).is_empty());
     pv.close_lightbox(&ctx);
-    let browser_at = Pos2::new(239.0, 21.0);
+    let browser_at = Pos2::new(209.0, 21.0);
     let mut frame = |events| {
         run_ui(&ctx, input(events), |ui| {
             card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load);
@@ -242,6 +242,98 @@ fn close_accelerator_dismisses_the_image_before_its_conversation() {
 }
 
 #[test]
+fn video_hover_actions_copy_the_original_url_and_use_the_browser_confirmation_path() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let url = "https://youtu.be/jNQXAC9IVRw?t=5";
+    let (target, _) = lp::decide(&lp::Settings::default(), lp::Place::Im, url).expect("a supported video");
+    let mut pv = Previews {
+        demo_zoom: None,
+        ..Default::default()
+    };
+    pv.cache.insert(
+        url.into(),
+        crate::ui::chat::previews::Cached {
+            entry: Entry::Video {
+                title: "Demo video".into(),
+                channel: "Demo channel".into(),
+                thumbnail: None,
+                aspect: 16.0 / 9.0,
+            },
+            used: 0,
+        },
+    );
+    let mut rect = Rect::NOTHING;
+    let _ = run_ui(&ctx, input(vec![]), |ui| {
+        card(ui, &p, &mut pv, 7, url, &target, lp::Start::Load);
+        rect = ui.min_rect();
+    });
+    let mut frame = |events| {
+        run_ui(&ctx, input(events), |ui| {
+            card(ui, &p, &mut pv, 7, url, &target, lp::Start::Load);
+        })
+    };
+    let open = Pos2::new(rect.right() - 18.0, rect.bottom() - 26.0);
+    let copy = open - Vec2::new(28.0, 0.0);
+    for _ in 0..20 {
+        let _ = frame(vec![egui::Event::PointerMoved(copy)]);
+    }
+    let _ = frame(vec![pointer(copy, true)]);
+    let output = frame(vec![pointer(copy, false)]);
+    assert!(
+        output
+            .platform_output
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text == url))
+    );
+    let _ = frame(vec![egui::Event::PointerMoved(open), pointer(open, true)]);
+    let _ = frame(vec![pointer(open, false)]);
+    assert!(
+        crate::ui::context::take_requests(&ctx)
+            .iter()
+            .any(|action| matches!(action, crate::ui::context::CtxAction::OpenUrl(link) if link == url))
+    );
+    assert!(pv.playing.is_none(), "URL actions do not start a video");
+}
+
+#[test]
+fn hover_link_action_copies_the_url_without_enlarging_or_copying_pixels() {
+    let ctx = Context::default();
+    let p = crate::theme::Theme::default().palette();
+    let url = "https://i.imgur.com/test.png";
+    let mut pv = Previews {
+        demo_zoom: None,
+        ..Default::default()
+    };
+    pv.cache.insert(
+        url.into(),
+        crate::ui::chat::previews::Cached {
+            entry: Entry::Picture(shown(&ctx)),
+            used: 0,
+        },
+    );
+    let mut frame = |events| {
+        run_ui(&ctx, input(events), |ui| {
+            card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load);
+        })
+    };
+    let at = Pos2::new(179.0, 21.0);
+    let _ = frame(vec![egui::Event::PointerMoved(at)]);
+    let _ = frame(vec![pointer(at, true)]);
+    let out = frame(vec![pointer(at, false)]);
+    assert!(
+        out.platform_output
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text == url))
+    );
+    assert!(crate::ui::chat::previews::clipboard::take(&ctx).is_none());
+    assert!(crate::ui::context::take_requests(&ctx).is_empty());
+    assert!(!pv.enlarged() && !pv.image_window_open());
+}
+
+#[test]
 fn hover_actions_copy_pixels_and_open_an_independent_image_window() {
     let ctx = Context::default();
     let p = crate::theme::Theme::default().palette();
@@ -275,7 +367,7 @@ fn hover_actions_copy_pixels_and_open_an_independent_image_window() {
     assert_eq!(copied.pixels, expected.pixels);
     assert!(!pv.enlarged());
     assert!(!pv.image_window_open());
-    let window = Pos2::new(209.0, 21.0);
+    let window = Pos2::new(239.0, 21.0);
     let mut frame = |events| {
         let _ = run_ui(&ctx, input(events), |ui| {
             card(ui, &p, &mut pv, 7, url, &lp::Target::Picture, lp::Start::Load)

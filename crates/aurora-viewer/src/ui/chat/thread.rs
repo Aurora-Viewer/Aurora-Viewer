@@ -364,8 +364,11 @@ fn roomy_row(
                 });
             }
             let (text, color, italics) = body(env, line, name);
-            let size = env.emoji.message_size(&text, TEXT);
-            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, size, color, italics, mark);
+            let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width());
+            if !visible.is_empty() {
+                let size = env.emoji.message_size(&visible, TEXT);
+                chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, italics, mark);
+            }
             super::previews::cards(ui, env, line, &text);
         });
     });
@@ -410,11 +413,14 @@ fn compact_row(
             });
         }
         let (text, color, italics) = body(env, line, name);
+        let visible = super::previews::text(env.previews.as_deref(), line, &text, ui.available_width() - RIGHT);
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - RIGHT).max(40.0));
             ui.add_space(1.0);
-            let size = env.emoji.message_size(&text, TEXT);
-            chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &text, size, color, italics, mark);
+            if !visible.is_empty() {
+                let size = env.emoji.message_size(&visible, TEXT);
+                chat_text_marked(ui, p, env.emoji, env.world, env.want_names, &visible, size, color, italics, mark);
+            }
             super::previews::cards(ui, env, line, &text);
         });
     });
