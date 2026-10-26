@@ -9,6 +9,7 @@ mod completion;
 mod compose;
 mod console;
 mod conv_menu;
+pub(crate) mod docking;
 mod find;
 mod flash;
 pub use flash::{ButtonMenu, button_menu, nearby_flashes, nearby_out_of_sight};
@@ -967,8 +968,6 @@ pub enum ConvAction {
     Contacts(super::contacts::ContactsAction),
     /// From the "Contacts" tab in Aurora's look: People's friends tab.
     People(super::people::PeopleAction),
-    /// Show the torn-off Contacts window (its entry in the list).
-    OpenContacts,
     /// Block / unblock the avatar of a 1:1 conversation.
     ToggleBlock(uuid::Uuid),
     /// Close a conversation (the X of its tab in FSFloaterIMContainer): a
@@ -2668,10 +2667,9 @@ pub fn show(
                 ui.set_width(LIST_W);
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let top = ui.cursor().top();
-                // Contacts first (addFloater at START); once torn off the
-                // entry brings its own window up (Firestorm has the toolbar
-                // button for that)
+                // Detached tabs leave their host (LLMultiFloater::removeFloater).
                 if show_contacts_tab
+                    && docked
                     && list_entry(
                         ui,
                         p,
@@ -2687,39 +2685,34 @@ pub fn show(
                     .resp
                     .clicked()
                 {
-                    if docked {
-                        st.contacts = true;
-                    } else {
-                        actions.push(ConvAction::OpenContacts);
+                    st.contacts = true;
+                }
+                if !st.popped.contains(None) {
+                    let local_shown = st.selected.is_none() && !st.contacts;
+                    let local = list_entry(
+                        ui,
+                        p,
+                        aurora_i18n::tr!("common-nearby-chat"),
+                        None,
+                        None,
+                        local_shown,
+                        if local_shown { 0 } else { world.chat_badge },
+                        None,
+                        0.0,
+                        true,
+                    )
+                    .resp;
+                    conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
+                    conv_menu::attach(&local, p, world, &mut actions, None);
+                    st.reorder.local_row(&local);
+                    if st.reorder.dragging(None)
+                        && let Some(g) = st.reorder.ghost(ui.ctx())
+                    {
+                        list_ghost(ui.ctx(), p, g, aurora_i18n::tr!("common-nearby-chat"), None, None);
                     }
-                }
-                let local_shown = st.selected.is_none() && !st.contacts;
-                let local = list_entry(
-                    ui,
-                    p,
-                    aurora_i18n::tr!("common-nearby-chat"),
-                    None,
-                    None,
-                    local_shown,
-                    if local_shown { 0 } else { world.chat_badge },
-                    None,
-                    0.0,
-                    true,
-                )
-                .resp;
-                if st.popped.contains(None) && !local_shown && world.chat_badge == 0 && !ui.rect_contains_pointer(local.rect) {
-                    popout::paint_mark(ui, p, trailing_slot(local.rect));
-                }
-                conv_menu::demo_mark(ui.ctx(), world, st, None, local.rect);
-                conv_menu::attach(&local, p, world, &mut actions, None);
-                st.reorder.local_row(&local);
-                if st.reorder.dragging(None)
-                    && let Some(g) = st.reorder.ghost(ui.ctx())
-                {
-                    list_ghost(ui.ctx(), p, g, aurora_i18n::tr!("common-nearby-chat"), None, None);
-                }
-                if local.clicked() {
-                    st.select_tab(None);
+                    if local.clicked() {
+                        st.select_tab(None);
+                    }
                 }
                 let sessions = st.reorder.sessions(world);
                 // The conversations scroll under the pinned entries above, which
@@ -2733,6 +2726,9 @@ pub fn show(
                 st.flashes.begin(now);
                 scrolling_list(ui, left, |ui| {
                     for (other, unread) in sessions {
+                        if st.popped.contains(Some(other)) {
+                            continue;
+                        }
                         let shown = st.selected == Some(other) && !st.contacts;
                         let (flash, moving) = st.flashes.wash(other, if shown { 0 } else { unread }, now, st.flash_unread);
                         if moving {
@@ -2767,9 +2763,6 @@ pub fn show(
                         if reveal == Some(other) {
                             entry.resp.scroll_to_me(None);
                             st.reveal = None;
-                        }
-                        if st.popped.contains(Some(other)) && unread == 0 && !ui.rect_contains_pointer(entry.resp.rect) {
-                            popout::paint_mark(ui, p, trailing_slot(entry.resp.rect));
                         }
                         conv_menu::demo_mark(ui.ctx(), world, st, Some(other), entry.resp.rect);
                         conv_menu::attach(&entry.resp, p, world, &mut actions, Some(other));
@@ -2807,6 +2800,7 @@ pub fn show(
         });
         bounds
     });
+    docking::target(ctx, *open && !minimized && image_bounds.is_some());
     st.previews.lightbox(ctx, p, image_bounds.filter(|_| *open));
     if tear_off {
         actions.push(ConvAction::Contacts(super::contacts::ContactsAction::ToggleTornOff));
@@ -3415,6 +3409,10 @@ fn line_extras(
 /// inventory carried to an IM (`workspace`); `AURORA_DEMO_GIFS=menu`'s
 /// right click on the GIF button (`gif_picker`).
 pub fn demo_events(ctx: &egui::Context, frame: u64) -> Vec<egui::Event> {
+    let docking = docking::demo_events(ctx, frame);
+    if !docking.is_empty() {
+        return docking;
+    }
     let line_menu = line_menu::demo_events(ctx, frame);
     if !line_menu.is_empty() {
         return line_menu;

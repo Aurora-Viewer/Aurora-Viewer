@@ -5,8 +5,8 @@
 //! that opens the conversations asked for in their own window, its separate
 //! IM windows (FSChatWindow 0, the tabbed window its default).
 //!
-//! - Popped out, a conversation stays in the column with a mark; its entry
-//!   raises its window. The Conversations window shows another one.
+//! - Popped out, a conversation leaves the column. The Conversations window
+//!   shows another one, as LLMultiFloater::removeFloater does.
 //! - The window's cross closes the conversation, as the cross of a torn-off
 //!   IM window does; its title button docks it back.
 //! - A popped-out window is a conversation in sight like a shown tab
@@ -390,7 +390,7 @@ pub(super) fn show(ctx: &egui::Context, env: Env, world: &mut World, st: &mut Ch
             Some(id) => (world.session_title(&id), sessions.get(&id).copied().unwrap_or(0)),
         };
         let mut open = true;
-        let mut dock = false;
+        let mut dock = super::docking::title_drop(ctx, p, &w.floater);
         let mut floater = crate::ui::widgets::Floater::new(&w.floater, title, default.min, default.size())
             .action("login-2", aurora_i18n::tr!("ui-chat-attach-to-conversations"), &mut dock)
             .attention(unread > 0)
@@ -481,6 +481,7 @@ mod tests {
         /// The Conversations window is open.
         main_open: bool,
         show_contacts_tab: bool,
+        contacts_open: bool,
     }
 
     impl Kit {
@@ -515,6 +516,7 @@ mod tests {
                 actions: Vec::new(),
                 main_open: false,
                 show_contacts_tab: false,
+                contacts_open: false,
             }
         }
 
@@ -540,6 +542,300 @@ mod tests {
                 &mut open,
             ));
             self.main_open = open;
+            if self.contacts_settings.torn_off {
+                let (actions, _) = crate::ui::contacts::window(
+                    ctx,
+                    p,
+                    &mut self.world,
+                    &mut self.contacts,
+                    &mut self.contacts_settings,
+                    &crate::ui::contacts::Pics {
+                        avatars: &pics,
+                        images: &pics,
+                    },
+                    None,
+                    &mut self.contacts_open,
+                );
+                if actions
+                    .iter()
+                    .any(|a| matches!(a, crate::ui::contacts::ContactsAction::ToggleTornOff))
+                {
+                    self.contacts_settings.torn_off = false;
+                    self.contacts_open = false;
+                    self.st.contacts = true;
+                    self.main_open = true;
+                }
+            }
+        }
+    }
+
+    fn docking_fixture(style: ChatStyle, scale: f32) -> (Kit, crate::ui::widgets::elide_tests::Frames) {
+        let mut kit = Kit::new(style);
+        kit.main_open = true;
+        kit.show_contacts_tab = true;
+        let mut frames = crate::ui::widgets::elide_tests::Frames::new();
+        frames.ctx.set_pixels_per_point(scale);
+        crate::ui::widgets::place_floater(&frames.ctx, "conversations", egui::pos2(520.0, 40.0), egui::vec2(700.0, 650.0));
+        crate::ui::widgets::place_floater(&frames.ctx, &floater_id(Some(JANE)), egui::pos2(40.0, 60.0), DEFAULT_SIZE);
+        for _ in 0..4 {
+            frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &crate::theme::Theme::default().palette()));
+        }
+        (kit, frames)
+    }
+
+    fn pointer_drag(frames: &mut crate::ui::widgets::elide_tests::Frames, kit: &mut Kit, from: egui::Pos2, to: egui::Pos2) {
+        let p = crate::theme::Theme::default().palette();
+        frames.run(vec![egui::Event::PointerMoved(from)], |ui| kit.show(ui.ctx(), &p));
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frames.run(vec![button(from, true)], |ui| kit.show(ui.ctx(), &p));
+        frames.run(vec![egui::Event::PointerMoved(to)], |ui| kit.show(ui.ctx(), &p));
+        frames.run(vec![button(to, false)], |ui| kit.show(ui.ctx(), &p));
+        for _ in 0..4 {
+            frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+        }
+    }
+
+    #[test]
+    fn detached_entries_leave_every_chat_style_and_return_when_docked() {
+        let p = crate::theme::Theme::default().palette();
+        for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+            let (mut kit, mut frames) = docking_fixture(style, 1.0);
+            for (id, name, group) in [
+                (Uuid::from_u128(0xB), "Group dock test", true),
+                (Uuid::from_u128(0xC), "Conference dock test", false),
+            ] {
+                let mut session = crate::world::groups::SessionInfo::default();
+                session.name = name.into();
+                session.group = group;
+                kit.world.groups.sessions.insert(id, session);
+                kit.world.conversation_line(
+                    id,
+                    crate::world::ChatLine {
+                        time: std::time::SystemTime::now(),
+                        from: name.into(),
+                        text: "hello".into(),
+                        kind: crate::world::ChatKind::Im,
+                        source: id,
+                        origin: crate::world::Origin::Live,
+                    },
+                );
+                kit.st.popped.pop_out(Some(id), false, false, false);
+                kit.st.popped.set_hidden(Some(id), true);
+            }
+            // The names must be absent specifically from the host's column,
+            // even while the detached conversation still renders its name.
+            let host = frames.ctx.memory(|m| m.area_rect(egui::Id::unique("conversations"))).unwrap();
+            let name = kit.world.session_title(&JANE);
+            let in_column = |texts: &[crate::ui::widgets::elide_tests::Text], name: &str| {
+                texts
+                    .iter()
+                    .any(|t| t.source == name && host.contains(t.rect.center()) && t.rect.right() < host.left() + 250.0)
+            };
+            let texts = frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            assert!(!in_column(&texts, &name), "{style:?}: detached IM is absent");
+            assert!(!in_column(&texts, "Group dock test"), "{style:?}: detached group is absent");
+            assert!(
+                !in_column(&texts, "Conference dock test"),
+                "{style:?}: detached conference is absent"
+            );
+            kit.st.dock_back(&frames.ctx, Some(JANE), &mut kit.main_open);
+            let mut texts = Vec::new();
+            for _ in 0..4 {
+                texts = frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            }
+            assert!(in_column(&texts, &name), "{style:?}: docked IM returns");
+            kit.st.popped.pop_out(None, false, false, false);
+            crate::ui::widgets::place_floater(&frames.ctx, &floater_id(None), egui::pos2(40.0, 450.0), DEFAULT_SIZE);
+            kit.contacts_settings.torn_off = true;
+            for _ in 0..4 {
+                texts = frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+            }
+            assert!(
+                !in_column(&texts, aurora_i18n::tr!("common-nearby-chat")),
+                "{style:?}: detached nearby chat"
+            );
+            assert!(
+                !in_column(&texts, aurora_i18n::tr!("common-contacts")),
+                "{style:?}: detached Contacts"
+            );
+        }
+    }
+
+    #[test]
+    fn title_drops_dock_conversations_and_contacts_in_every_style() {
+        for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+            for scale in [1.0, 1.5] {
+                for source in [Some(JANE), None] {
+                    let (mut kit, mut frames) = docking_fixture(style, scale);
+                    if source.is_none() {
+                        kit.st.popped.pop_out(None, false, false, false);
+                        crate::ui::widgets::place_floater(&frames.ctx, &floater_id(None), egui::pos2(40.0, 450.0), DEFAULT_SIZE);
+                    }
+                    kit.st.drafts.insert(source, "Keep my draft".into());
+                    let p = crate::theme::Theme::default().palette();
+                    for _ in 0..4 {
+                        frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+                    }
+                    let title = frames
+                        .ctx
+                        .read_response(egui::Id::unique(floater_id(source)).with("title_double_click"))
+                        .unwrap()
+                        .rect;
+                    let target = frames
+                        .ctx
+                        .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+                        .unwrap()
+                        .center();
+                    pointer_drag(&mut frames, &mut kit, title.center(), target);
+                    assert!(
+                        !kit.st.popped.contains(source),
+                        "{style:?} at {scale}: {source:?} docks on title release"
+                    );
+                    assert!(kit.main_open && !kit.st.contacts && kit.st.selected == source);
+                    assert_eq!(kit.st.drafts.get(&source).map(String::as_str), Some("Keep my draft"));
+                    assert!(!kit.actions.iter().any(|a| matches!(a, ConvAction::Close(_))));
+                }
+                let (mut kit, mut frames) = docking_fixture(style, scale);
+                kit.contacts_settings.torn_off = true;
+                kit.contacts_open = true;
+                crate::ui::widgets::place_floater(&frames.ctx, "contacts", egui::pos2(40.0, 450.0), egui::vec2(430.0, 390.0));
+                for _ in 0..4 {
+                    frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &crate::theme::Theme::default().palette()));
+                }
+                let title = frames
+                    .ctx
+                    .read_response(egui::Id::unique("contacts").with("title_double_click"))
+                    .unwrap()
+                    .rect;
+                let target = frames
+                    .ctx
+                    .memory(|m| m.area_rect(egui::Id::unique("conversations")))
+                    .unwrap()
+                    .center();
+                pointer_drag(&mut frames, &mut kit, title.center(), target);
+                assert!(
+                    !kit.contacts_settings.torn_off && kit.st.contacts,
+                    "{style:?} at {scale}: Contacts docks"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn docking_requires_a_title_drag_and_an_expanded_visible_host() {
+        for mode in ["outside", "body", "resize", "closed", "minimized", "click"] {
+            let (mut kit, mut frames) = docking_fixture(ChatStyle::Aurora, 1.0);
+            let source = egui::Id::unique(floater_id(Some(JANE)));
+            let title = frames.ctx.read_response(source.with("title_double_click")).unwrap().rect;
+            let source_rect = frames.ctx.memory(|m| m.area_rect(source)).unwrap();
+            if mode == "closed" {
+                kit.main_open = false;
+            }
+            if mode == "minimized" {
+                frames
+                    .ctx
+                    .data_mut(|d| d.insert_persisted(egui::Id::unique(("conversations", "minimized")), true));
+            }
+            let from = match mode {
+                "body" => source_rect.center(),
+                "resize" => source_rect.max - egui::vec2(1.0, 1.0),
+                _ => title.center(),
+            };
+            let to = match mode {
+                "outside" => egui::pos2(450.0, 300.0),
+                "click" => from + egui::vec2(2.0, 1.0),
+                _ => egui::pos2(900.0, 300.0),
+            };
+            pointer_drag(&mut frames, &mut kit, from, to);
+            assert!(kit.st.popped.contains(Some(JANE)), "{mode} must leave the conversation detached");
+        }
+    }
+
+    #[test]
+    fn closing_detached_pinned_windows_restores_their_entries_without_opening_the_host() {
+        for style in [ChatStyle::Aurora, ChatStyle::Compact, ChatStyle::Bubbles, ChatStyle::Legacy] {
+            for contacts in [false, true] {
+                let (mut kit, mut frames) = docking_fixture(style, 1.0);
+                let source = if contacts {
+                    kit.contacts_settings.torn_off = true;
+                    kit.contacts_open = true;
+                    "contacts".to_owned()
+                } else {
+                    kit.st.popped.pop_out(None, false, false, false);
+                    floater_id(None)
+                };
+                let p = crate::theme::Theme::default().palette();
+                for _ in 0..4 {
+                    frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+                }
+                kit.main_open = false;
+                frames
+                    .ctx
+                    .move_to_top(egui::LayerId::new(egui::Order::Middle, egui::Id::unique(&source)));
+                frames.run(Vec::new(), |ui| kit.show(ui.ctx(), &p));
+                frames.run(
+                    vec![egui::Event::Key {
+                        key: egui::Key::W,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::COMMAND,
+                    }],
+                    |ui| kit.show(ui.ctx(), &p),
+                );
+                assert!(!kit.main_open, "{style:?}: closing {source} leaves host closed");
+                if contacts {
+                    assert!(!kit.contacts_settings.torn_off);
+                } else {
+                    assert!(!kit.st.popped.contains(None));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn title_docking_handles_coalesced_motion_and_escape_cancels_the_drop() {
+        let p = crate::theme::Theme::default().palette();
+        for cancel in [false, true] {
+            let (mut kit, mut frames) = docking_fixture(ChatStyle::Aurora, 1.0);
+            let title = frames
+                .ctx
+                .read_response(egui::Id::unique(floater_id(Some(JANE))).with("title_double_click"))
+                .unwrap()
+                .rect;
+            let from = title.center();
+            let to = egui::pos2(900.0, 300.0);
+            let button = |pos, pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            frames.run(vec![egui::Event::PointerMoved(from)], |ui| kit.show(ui.ctx(), &p));
+            frames.run(
+                vec![button(from, true), egui::Event::PointerMoved(from + egui::vec2(2.0, 1.0))],
+                |ui| kit.show(ui.ctx(), &p),
+            );
+            frames.run(vec![egui::Event::PointerMoved(to)], |ui| kit.show(ui.ctx(), &p));
+            if cancel {
+                frames.run(
+                    vec![egui::Event::Key {
+                        key: egui::Key::Escape,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: Default::default(),
+                    }],
+                    |ui| kit.show(ui.ctx(), &p),
+                );
+            }
+            frames.run(vec![button(to, false)], |ui| kit.show(ui.ctx(), &p));
+            assert_eq!(kit.st.popped.contains(Some(JANE)), cancel, "Escape cancellation: {cancel}");
         }
     }
 

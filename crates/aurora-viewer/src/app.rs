@@ -13002,7 +13002,6 @@ impl App {
                         ui::chat::ConvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
                         ui::chat::ConvAction::Contacts(c) => contact_actions.push(c),
                         ui::chat::ConvAction::People(pa) => contacts_people.push(pa),
-                        ui::chat::ConvAction::OpenContacts => self.panels.contacts = true,
                         ui::chat::ConvAction::OpenIm(id) => self.world.start_text_conference(vec![id]),
                         ui::chat::ConvAction::StartGroupChat(group) => self.world.start_group_chat(group),
                         // LLIMModel::sendTypingState: to the resident, in
