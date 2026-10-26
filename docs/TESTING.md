@@ -596,6 +596,12 @@ when unfocused") is ignored during a screenshot.
   above the water, then the same plaza (objects, floating texts, other
   avatar, particle fountain). In `perf summary`, `objects=` goes from 57 to
   1 then back to 57, with the same `visible=` and `draws=` as before.
+  The arrival away also forgets the demo region's coarse locations, and
+  the list it still sends at frame 800 waits with its objects (#1000;
+  log: `still sends its coarse locations`): with
+  `AURORA_DEMO_CONV=aurora:friend-away` and `AURORA_DEMO_CONV_MENU=im`,
+  Nova's Zoom is enabled at frame 740, disabled at frame 900 (Teleport To
+  stays, through her map rights), and enabled again at frame 1000.
 - **`AURORA_DEMO_AGENT_JITTER=<mm>`**: our avatar receives five times a
   second (at 60 fps) a position correction of at most this size, like those
   a simulator sends to an avatar standing at altitude. With
@@ -3149,10 +3155,15 @@ both open states and the selection count. Capture at frame 620.
   head height, spaced 1.6 m apart on the crowd's plaza and beyond,
   with a 3 m radius (4.5 m once extended like Firestorm's deferred
   lights): the "face lights" of a crowd and the lamps of a club. The
-  renderer takes the 64 nearest (`lights=` in `perf summary`). With
+  renderer takes 64 (`lights=` in `perf summary`): those that reach the
+  view first, nearest first, then the nearest of the others. With
   `AURORA_DEMO_POS="129,134"` they are in front of the camera, 9 m away and
   more; with `"140,134"`, the camera is in the middle of them. Used to measure
-  `AURORA_LIGHT_TILES`.
+  `AURORA_LIGHT_TILES`. With 150 and `"147,144"` (at night,
+  `AURORA_DEMO_TOD=4`), the camera stands in the grid and about 100 of them
+  reach the view: the list holds 64 of those (#1032: the 64 nearest all
+  around the camera held only 50, and the pools of light halfway across
+  the ground went out).
 - **Probe selection (#446):** combine `AURORA_DEMO_PROBES=1` with
   `AURORA_DEMO_BUILD=move,0,0` and capture after frame 650. With no object
   selected, every inspector section must show "Select reflection probes"
@@ -3544,6 +3555,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PREVIEW_ZOOM=1\|gif\|zoom\|pan\|window\|copy` | Enlarge a picture, open its independent window or click its Copy button |
 | `AURORA_DEMO_CONV_SELECT=all\|part` | Conversations open with its lines selected (Ctrl+A, or across three lines) |
 | `AURORA_DEMO_CONV_MENU=local\|im\|group\|conference` | Right-click menu of a conversation of the list open (with `AURORA_DEMO_CONV`) |
+| `AURORA_DEMO_FRIEND_LOCATION=allowed\|denied\|offline\|altitude\|join-map\|join-contact\|join-fly\|join-fly-blocked\|join-fly-late\|join-fly-custom` | Remote friend's received map rights in contact, conversation and profile actions |
 | `AURORA_DEMO_CONV_POPOUT=1\|option\|nearby\|nearby-out` | Detached conversations, or nearby chat alone before any IM (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: its drop hint, the give confirmation, or the give and its notice (with `AURORA_DEMO_CONV=aurora`) |
@@ -4486,6 +4498,72 @@ failure. Grid validation and any paid upload are performed by the human.
   the lines following the end again. Scrolling back down by hand also hides
   it once the end is less than half the height in sight away (with nothing
   new).
+
+- **`AURORA_DEMO_FRIEND_LOCATION=allowed|denied|offline|altitude|join-map|join-contact|join-fly|join-fly-blocked|join-fly-late|join-fly-custom`** (#999): removes
+  Nova's nearby object and coarse location at frame 60. The online friend
+  grants us map rights in `allowed`, withholds them in `denied` (we still
+  grant ours), and is offline in `offline`. Combine with
+  `AURORA_DEMO_CONV=aurora`, `AURORA_DEMO_CONV_MENU=im` and a frame-780
+  capture: Teleport To and Show on map are enabled only in `allowed`,
+  while Zoom/Go to/Follow stay disabled. Clicking Show on map resolves
+  the friend in Boreal Lagoon through TrackAgent/FindAgent; Teleport To
+  uses the same lookup once, then the normal teleport path. Also inspect
+  `AURORA_DEMO_PROFILE=friend` (the overflow Map action) and the friend
+  sheet opened from the Contacts tab. On the grid, the human checks an
+  online friend in a distant region, grant/revocation in both directions,
+  map opening from the menu/profile/sheet, and one actual teleport.
+  FindAgent supplies only global X/Y: the target's matching local height
+  is used when available; otherwise Z defaults to 0 m (ground), never our
+  current height. Both map layouts explain unavailable friend altitude;
+  coarse updates refine a local target's height in 4 m steps. Set Z for a
+  remote sky platform; the full-frame map retains an explicit height while
+  following the same friend. When a map/contact teleport starts without a
+  chosen Z or known friend height, arrival in the destination region arms
+  one local TP To using new target data. Old cache and coarse unknown Z
+  values (0/1,020 m) cannot trigger it. Movement, Stop/Escape, a new teleport,
+  map/height edits, revoked rights, failure or timeout cancel it; accepted
+  teleport invitations do not arm it. The wait is bounded to 90 seconds
+  before arrival and 30 seconds for target data after arrival.
+  `altitude` is the allowed remote scenario with
+  our avatar at 3,000 m: opening the friend's map must show Z=0 and the
+  unavailable-altitude note. On the grid, the human checks a departure from
+  a high skybox to a friend near ground level and a manually chosen Z.
+  `join-map` and `join-contact` start a map/contact teleport at frame 700/720,
+  arrive in another region, then deliver the friend's object at 2,400 m
+  after a 700 ms delay. Capture at frame 1,450: the second local teleport
+  must put us at 2,400 m and update the map height, without a third teleport.
+  On the grid, test friends near ground and on a skybox, delayed appearance,
+  movement/cancellation and permission revocation. Accepting a teleport
+  offer or choosing Z explicitly must keep the supplied landing point.
+  `join-fly` starts grounded with Fly After Teleport ignored for this demo,
+  then supplies a hovering friend at 2,400 m and a flying local-reply flag:
+  the local jump must complete
+  before flight turns on and holds that height. The scoped log must show
+  arrival at 2,400 m before `friend join: flight enabled after local arrival`.
+  `join-fly-blocked` supplies a no-fly region:
+  takeoff is not enabled, but the second jump must still happen.
+  Check that an already flying user remains flying, a standing skybox friend
+  does not enable flight, and accepting a later invitation keeps its own flags.
+  `join-fly-late` supplies Standing first and a local reply without the flying
+  flag, then a hover signal 400 ms after the jump and the allowed landing
+  parcel another 400 ms later. The cached parcel's bitmap covers a different
+  position and must neither approve nor reject flight. Scoped logs must show
+  arrival, the delayed hover, waiting for the landing parcel, then flight
+  activation. Some height is lost before the delayed replies; flight must
+  then hold altitude. A join observes new flight/parcel data for at most five
+  seconds after arrival; standing/unknown signals alone never enable flight.
+  `join-fly-custom` supplies no native locomotion signal (Typing represents
+  an unclassified AO motion), but fresh physics with no vertical movement
+  and a nonzero plane at 20 m while the target hovers at 2,400 m. That plane
+  must not be confused with actual support beneath the avatar's feet.
+  Flight must start after a sustained 300 ms
+  hover observation following arrival. The log identifies the inferred hover.
+  A standing skybox target with a contact plane, a seated avatar, missing
+  physical data, a jump or a fall must never trigger this fallback.
+  Also test a friend whose height is already known, through Contacts and
+  the map: the direct teleport must retain the friend for arrival flight,
+  without adding another hop. A matching AgentMovementComplete is enough
+  to confirm arrival; flight must not depend on a separate TeleportLocal.
 
 - **`AURORA_DEMO_CONV_MENU=local|im|group|conference`**: with an
   `AURORA_DEMO_CONV` scenario (`aurora`, `bubbles`, `legacy`…), a right click
@@ -6584,6 +6662,7 @@ What the inventory must show with these scenarios:
 | `AURORA_AO=legacy`, `gtao` or `alt` (`:<0-3>`) | Ambient occlusion method (and GTAO quality) for this launch |
 | `AURORA_GTAO_SPECULAR=0` or `alt` | GTAO without its specular occlusion (reflections in creases), as before |
 | `AURORA_GTAO_TEMPORAL=0` or `alt` | GTAO without its accumulation over the frames (fixed noise, finer grain), as before |
+| `AURORA_GTAO_NORMALS=depth` or `alt` | GTAO with the normal rebuilt from the depth (facets on low-poly meshes), as before |
 | `AURORA_SSIL=1`, `0` or `alt` | GTAO's screen-space indirect light forced on or off for this launch |
 | `AURORA_SSIL_INTENSITY=<0-8>` | Strength of GTAO's indirect light for this launch |
 | `AURORA_CONTACT_SHADOWS=0`, `1`, `alt`, `prepass` or `shell` | Sun contact shadows off, on, by turns, cast by the depth prepass alone, or by thin shells |
@@ -6807,6 +6886,25 @@ What the inventory must show with these scenarios:
   it); `AURORA_DEMO_CAMERA=close,800,600,1` with
   `AURORA_DEMO_DOUBLECLICK=walk,1100,640` (the avatar walks before a
   camera that stays): no ring of occlusion lags behind its feet.
+- **`AURORA_GTAO_NORMALS=depth|alt`**: GTAO starts from the surface normal
+  of each pixel. The depth prepass draws the mesh's smooth normal beside
+  the depth (`vs_depth_normal`, the shading's normal without its normal
+  map) whenever GTAO is shown, and GTAO and its indirect light read it
+  (`surface_normal` in gtao.wgsl), as XeGTAO takes a G-buffer's normals.
+  Rebuilt from the depth around the pixel, as before, the normal was the
+  flat triangle's: the occlusion changed from one triangle to the next and
+  low-poly meshes showed their facets, more or less visible with the sky's
+  ambient light (#993). Under the smooth normal, a triangle rises above the
+  smooth tangent plane on one side, and its own samples occluded it there
+  (a ring along the silhouette of the torus, a band at the avatar's neck):
+  on each slice the horizons on that side go down by the angle between the
+  two planes (`facet_lift`, at most 45°), so only what stands above the
+  triangle occludes. `depth` goes back to the depth's normal (the prepass
+  then draws the depth alone, the image as before), `alt` every other
+  second. The Legacy method does not change. To compare,
+  `AURORA_DEMO_DEBUG=ao` with `AURORA_AO=gtao:2` and
+  `AURORA_DEMO_CAMERA=close,800,620,40`: the back and the skirt of our
+  avatar, faceted before, and the torus behind the plaza.
 - **`AURORA_SSIL=1|0|alt`**: Preferences › Graphics › Indirect light
   (GTAO) for this launch, without changing the saved setting; it needs the
   GTAO method. A pass after GTAO's gathers the light on a visibility

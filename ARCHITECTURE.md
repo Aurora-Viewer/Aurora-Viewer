@@ -653,6 +653,57 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 
 ## `aurora-viewer` in detail
 
+`World::can_locate_avatar` and `locate_avatar` share nearby positions and
+received map rights across contact, conversation and profile actions.
+Remote friends use the existing `world/worldmap.rs` TrackAgent/FindAgent
+tracking; an explicit remote teleport consumes one matching reply within a
+lookup interval, then uses the ordinary map teleport/RLVa path. Before
+dispatch, `take_map_commands` cancels tracking and queued teleports if the
+friend went offline, revoked map rights or ended the friendship. Camera zoom
+and nearby navigation still require local geometry/positions. This extends
+the Legacy Viewer's nearby-only radar Teleport To to authorized remote friends.
+FindAgent has no altitude: use the target's matching local position when
+available, otherwise ground level (0 m), never the observer's altitude.
+Coarse updates refine the followed friend's position at their 4 m height
+resolution. Both map layouts identify unavailable altitude and allow an
+explicit teleport height; a height-only edit in the full-frame map survives
+tracking replies but is cleared for another friend or a direct Teleport To.
+`world/friend_join.rs` scopes a two-stage join to accepted map/contact
+teleports with unknown height. After the expected region arrival, new target
+object/terse or usable coarse reports drive one ordinary local teleport;
+cached positions and unknown coarse heights (0/1,020 m) cannot trigger it.
+Loaded positions use the navigation resolver, including seated parent chains.
+The intent expires after 90 seconds before arrival or 30 seconds waiting for
+position, and cancels on movement, Stop/Escape, another teleport, permission
+loss, map selection/height edits or failure. Lures, explicit Z and local
+teleports never arm this continuation; both legs pass normal RLVa preflight.
+The local hop does not wait for flight signals: animation packets may only
+arrive once we are beside the target. Native hover/flight motions request
+takeoff; unknown signals remain unknown and height alone does not. Known
+region/parcel/RLVa restrictions prevent takeoff but never cancel the local
+jump. Missing policy packets do not delay it either. After teleport preflight,
+the application arms flight without taking off. Friend teleports with an
+already known height arm the same observation for their direct arrival;
+Contacts preserves the friend identity when tracking that position. The
+applied arrival in the expected region allows the application to enable flight
+and send FLY controls, without requiring a separate TeleportLocal message.
+A local reply's flying flag also waits for the position while this intent is
+active. Policy is rechecked at arrival.
+An early standing or unknown animation does not consume the observation:
+for up to five seconds after arrival, new target animation and landing-parcel
+packets can still enable flight. A parcel bitmap must cover the landing point
+before its allow/deny policy is used. Failure, another teleport, manual
+movement/flight changes, Stop, map edits, loss of rights or timeout discard
+the intent.
+When an AO hides the native motion, fresh target physics can establish a
+hover after 300 ms: finite contact data, negligible vertical velocity/
+acceleration and no support at the avatar's feet. The navigation resolver
+compares terrain and the reported plane with foot height: a nonzero plane
+far below the avatar is compatible with flight. Sitting, ground motions,
+jumping/falling, missing/invalid contact data or old objects veto this fallback.
+Existing flight survives the local reply. This does not change Fly After
+Teleport or the flags of later teleports/invitations.
+
 `world/hand_ik.rs` negotiates contacts with seated linksets or owned worn
 roots. `world/bridge/ik.rs` provisions/authenticates the third bridge script,
 `world/bridge/ik.lsl`, with independent Mono memory and no movement, HTTP or
@@ -1468,7 +1519,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `updater.rs`, `ui/update.rs` | Asynchronous controller and update window: notes, progress, restart and errors; manual check in Help / login, ignored tag, Ask / Automatic / Required only choice and Stable / Beta channel (a change checks again). Isolated synthetic demo through `AURORA_DEMO_UPDATE`. |
 | `ui/news.rs`, `ui/news/markdown.rs`, `links.rs` | News of the login screen: Markdown files `news/<language>.md` of the repository, one per interface language (fallback to the base language, then English). At startup, the last download kept in the cache (`news-<language>.json`) or, failing that, the files compiled into the viewer; then the file from `main`, downloaded in the background (bounded size, 20 news items, texts cut, `https://` links only), replaces them. Reloaded when the interface language changes; a failure leaves the panel as it is. No download in demo nor in the test installation of updates; `AURORA_NEWS_URL` reads a local server or another branch, without cache. `markdown.rs`: tolerant reading of the format (`## date — title`, text, link), HTML comments ignored |
 | `ui/inventory.rs`, `ui/inventory/view.rs`, `ui/inventory/controls.rs`, `ui/inventory/context.rs`, `ui/inventory/clipboard.rs`, `ui/inventory/delete.rs`, `ui/inventory/dialogs.rs`, `ui/inventory/properties.rs`, `ui/inventory/thumbnail.rs`, `app/inventory.rs`, `app/inventory_thumbnail.rs` | Inventory: pure sorting / filters and per-generation view cache in `view.rs` (index, sorting and filtering in parallel with rayon), persistent commands and preferences in `controls.rs`, filtered tree including the parent folders, expansion states per tab, results drawn according to the visible area without a limit of 500 and status area of fixed height; scrolling on both axes, width of the names measured in the visible area then kept for the virtual results, commands adapted to small widths; menus per type (`inventory/context_catalog.rs` builds native commands with live permissions and caches a complete locale-specific, command-free catalogue for customization regardless of the clicked type; `inventory/menu_layout.rs` resolves stable identities, eight-cell icon bars, a recoverable hidden zone, independent dividers and named groups; locked presentation hides recursively empty groups without changing the saved arrangement; the movable layout lock and its containing groups/bars cannot be hidden, and legacy fixed Delete-footer placements migrate to the bottom icon bar; `inventory/context_customize.rs` handles layout editing in an adjacent settings companion, locking and bounded undo without executing commands; one common arrangement, group filters, expansion and lock state are stored globally across inventory types in `InventoryPreferences::context_menus`; `inventory/context_notecards.rs` validates a bounded, versioned presentation-only snapshot and uses native notecard upload/download callbacks before replacing settings; `inventory/context_notecards/picker.rs` uses shared inventory view/tree caches for the searchable notecard hierarchy, virtual rows and bounded descendant loading; initial/reset menu defaults preserve the supplied shared arrangement and open groups without replacing saved customizations; save/restore confirmations use the same five-second success notice as inventory mutations, shared by both window presentations), multiple selection with grouped add / detach, renaming in the row after creation or on request, folder windows limited to their descendants with a filter of their own, clipboard shared between windows and native Ctrl+C / Ctrl+X / Ctrl+V shortcuts according to the focus of the list in `clipboard.rs`, Delete and bottom-of-window trash through the shared deletion in `delete.rs`, properties and confirmations, previews / editing of notecards and scripts, reading of the animation statistics; image editor with six actions, tree picker and screenshot of the scene without the interface; decoding / resizing / encoding off the render thread and execution of the actions after the interface is drawn |
-| `world/inventory/actions.rs`, `world/inventory/wearable.rs`, `world/inventory/demo.rs`, `world/inventory/preview.rs`, `world/inventory/tests.rs` | Permission rules, moves / copies / links and offers, preparation of the Marketplace listings, default clothing assets and synthetic scenario; v3 inventory cache with full permissions and AIS favorite metadata |
+| `world/inventory/actions.rs`, `world/inventory/wearable.rs`, `world/inventory/demo.rs`, `world/inventory/preview.rs`, `world/inventory/tests.rs`, `world/inventory/background.rs` | Permission rules, moves / copies / links and offers, preparation of the Marketplace listings, default clothing assets and synthetic scenario; v3 inventory cache with full permissions and AIS favorite metadata; the whole inventory fetched in the background from login on (port of LLInventoryModelBackgroundFetch: batched recursive AIS reads, at most 19 in flight) |
 | `aurora-net/src/inventory/operations.rs`, `aurora-net/src/inventory/thumbnail.rs`, `aurora-net/src/session/inventory_upload.rs` | AIS mutations with read-back, remapping of the UUIDs assigned by the server, UDP creations / copies and acknowledgements with expiry, saving of the documents through capabilities; AssetUpload / Xfer upload of clothing before the item is created; free thumbnails through InventoryThumbnailUpload, JPEG2000 POST then AIS and read-back |
 | `aurora-assets/src/j2k/encode.rs` | Memory-bounded OpenJPEG encoder, square RGB / RGBA thumbnails of 64 to 256 pixels and alpha preserved |
 | `logging.rs`, `cache.rs`, `credentials.rs` | Logs (the capture of the lines one thread logs, and in memory the last warnings and the recent output of the diagnostics, for the Dev Toolbox), disk cache, remembered password (OS vault) |

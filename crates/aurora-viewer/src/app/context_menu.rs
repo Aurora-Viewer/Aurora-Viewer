@@ -595,14 +595,9 @@ impl App {
                 }
             }
             CtxAction::TeleportToAvatar(id) | CtxAction::ShowOnMap(id) => {
-                let Some(p) = ui::context::avatar_position(&self.world, &id) else {
-                    return;
-                };
-                let (x, y) = ui::minimap::to_global(&self.world, p);
                 let teleport = matches!(act, CtxAction::TeleportToAvatar(_));
-                self.world.map.track_location(x, y, p.z, teleport);
-                if !teleport {
-                    self.panels.world_map = true;
+                if self.world.locate_avatar(id, teleport) && !teleport {
+                    ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
                 }
             }
             CtxAction::ShowPlaceInfo(region, pos) => {

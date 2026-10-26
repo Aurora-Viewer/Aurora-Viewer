@@ -473,6 +473,11 @@ pub struct App {
     demo_mmo_start: Option<u64>,
     /// Where the offline demo teleport lands (the asked position).
     demo_tp_dest: Option<Vec3>,
+    /// Only the friend-join demo changes regions and delays target data.
+    demo_tp_region: Option<aurora_net::RegionHandle>,
+    demo_friend_join_target: Option<(Instant, Vec3)>,
+    /// Delayed flight signal, then the landing parcel for join-fly-late.
+    demo_friend_join_flight: Option<(Instant, bool)>,
     /// AURORA_DEMO_RADAR=tp: the radar starts in another region.
     demo_radar_tp: bool,
     /// Destination of the teleport being started (teleport screen).
@@ -645,6 +650,8 @@ pub struct App {
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
+    /// AURORA_DEMO_TP_AWAY: the demo region's coarse locations while away.
+    away_coarse: Vec<(uuid::Uuid, Vec3)>,
     /// AURORA_DEMO_GEOMETRY: meshes filling the geometry arena.
     geometry_demo: Option<crate::demo::geometry::GeometryDemo>,
     /// Geometry each region needed at its last visit: the arena grows to
@@ -1116,6 +1123,9 @@ impl App {
             demo_tp_triggered: false,
             demo_mmo_start: None,
             demo_tp_dest: None,
+            demo_tp_region: None,
+            demo_friend_join_target: None,
+            demo_friend_join_flight: None,
             demo_radar_tp: false,
             tp_dest: None,
             geom_changed: None,
@@ -1226,6 +1236,7 @@ impl App {
             tex_refresh_demo: None,
             sculpt_missing_demo: None,
             experience_demo: None,
+            away_coarse: Vec::new(),
             geometry_demo: None,
             geometry_needs,
             turn_demo: None,
@@ -1504,7 +1515,10 @@ impl App {
                     if Some(*handle) == self.world.main_region {
                         self.demo_unseat_on_teleport();
                         self.world.apply(NetEvent::TeleportLocal {
-                            flying: self.world.agent.flying,
+                            flying: self.world.agent.flying
+                                || (crate::demo::friend_join_flight_scenario()
+                                    && !crate::demo::friend_join_late_flight_scenario()
+                                    && !crate::demo::friend_join_custom_flight_scenario()),
                         });
                         if let Some(ev) = self.world.apply(NetEvent::AgentMovementComplete {
                             handle: *handle,
@@ -1521,6 +1535,7 @@ impl App {
                         );
                         self.demo_tp_start = Some(Instant::now());
                         self.demo_tp_dest = Some(*position);
+                        self.demo_tp_region = crate::demo::friend_join_scenario().then_some(*handle);
                     }
                 }
                 NetCommand::ObjectGrab { local_id, surface, .. } => {
@@ -2023,7 +2038,7 @@ impl App {
                 if matches!(cmd, NetCommand::ObjectRelease { .. }) {
                     crate::demo::hud::preserve_touch_transform(&self.world, &mut ev);
                 }
-                if let NetEvent::InventoryContents(contents) = &mut ev {
+                if let NetEvent::InventoryContents(contents) | NetEvent::InventoryTreeFetched { result: Ok(contents), .. } = &mut ev {
                     for c in contents {
                         // the synthetic listing of its folder keeps the offered item
                         if let Some(offer) = self.world.inventory.items.get(&crate::demo::DEMO_OFFER)
@@ -2994,6 +3009,7 @@ impl App {
                 }
                 self.scene.textures.mark_arrival();
                 self.loading_stage = aurora_i18n::tr!("app-loading-scene").into();
+                self.start_friend_join_flight();
             }
             NetEvent::SitResponse {
                 object,
@@ -5708,6 +5724,43 @@ impl App {
         }
     }
 
+    fn request_friend_join_teleport(&mut self, command: NetCommand, avatar: uuid::Uuid, fly_on_arrival: bool, fresh_physics: bool) -> bool {
+        let NetCommand::TeleportTo { handle, .. } = &command else {
+            return false;
+        };
+        let handle = *handle;
+        let remote = Some(handle) != self.world.main_region;
+        let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
+        if self.user_teleport_allowed(&command) {
+            self.begin_teleport(dest, remote);
+            if remote {
+                self.world
+                    .defer_friend_join_flight_at(avatar, fly_on_arrival, fresh_physics, handle);
+            } else {
+                self.world.defer_friend_join_flight(avatar, fly_on_arrival, fresh_physics);
+            }
+            self.send(command);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn start_friend_join_flight(&mut self) {
+        if self.world.take_friend_join_flight() {
+            if !self.world.agent.flying {
+                self.toggle_fly();
+            }
+            let mut controls = *self.net.controls.lock();
+            controls.control_flags |= control::FLY;
+            self.net.set_controls(controls);
+            log::info!(
+                "friend join: flight enabled after local arrival at {:.1?}",
+                self.world.agent.position
+            );
+        }
+    }
+
     /// A named lookup or maturity response can arrive after a new lock.
     /// Finish the matching user's progress/history through the normal failure
     /// path when that delayed action is refused; scripts retain their actor.
@@ -5822,6 +5875,7 @@ impl App {
         if !self.world.agent.flying && self.world.rlva.has("fly") {
             return;
         }
+        self.world.cancel_friend_join_flight();
         self.stop_autopilot(true);
         self.release_native_movelock();
         self.movement_runtime.cancel_water_exit();
@@ -6718,15 +6772,45 @@ impl App {
                 self.send(c);
             }
         }
-        for c in self.world.map.take_commands() {
+        for c in self.world.take_map_commands() {
             if let NetCommand::TeleportTo { handle, .. } = &c {
+                let join = self.world.prepare_friend_join(&c);
+                let flight_target = self.world.friend_teleport_avatar(&c);
                 let dest = self.world.map.track.as_ref().map(|t| t.label.clone()).unwrap_or_default();
                 let show = Some(*handle) != self.world.main_region;
-                self.request_user_teleport(c, dest, show);
+                let accepted = if join.is_none()
+                    && let Some(avatar) = flight_target
+                {
+                    self.request_friend_join_teleport(c, avatar, self.world.agent.flying, false)
+                } else {
+                    self.request_user_teleport(c, dest, show)
+                };
+                if accepted && let Some(join) = join {
+                    self.world.arm_friend_join(join);
+                }
             } else {
                 self.send(c);
             }
         }
+        let i = &self.input;
+        let moved = i.forward
+            || i.back
+            || i.turn_left
+            || i.turn_right
+            || i.strafe_left
+            || i.strafe_right
+            || i.up
+            || i.down
+            || i.joystick_yaw.abs() > 0.001
+            || i.joystick_pitch.abs() > 0.001
+            || self.mouse_mode == MouseMode::Steer;
+        if let Some(join) = self.world.finish_friend_join(Instant::now(), moved) {
+            self.request_friend_join_teleport(join.command, join.avatar, join.fly_on_arrival, join.fresh_physics);
+        }
+        if moved {
+            self.world.cancel_friend_join_flight();
+        }
+        self.start_friend_join_flight();
         self.minimap_ui.prune(&self.world);
         // parcel overlays of regions we left (their lines would be stale on return)
         let regions = &self.world.regions;
@@ -6951,7 +7035,7 @@ impl App {
             self.world.groups.report_blocks = self.settings.report_blocks;
             self.world.groups.show_joined_invitations = self.settings.show_joined_group_invitations;
             self.world.group_titles = self.settings.group_titles;
-            self.world.fly_after_teleport = self.settings.fly_after_teleport;
+            self.world.fly_after_teleport = self.settings.fly_after_teleport && !(self.demo && crate::demo::friend_join_flight_scenario());
             self.world.region_alerts.cfg = crate::world::region_alerts::Config {
                 script_count: self.settings.script_count_alert,
                 script_threshold: self.settings.script_count_threshold,
@@ -7042,6 +7126,9 @@ impl App {
                     "app-could-not-load-settings-from-the-database",
                     name = name.to_string()
                 ));
+            }
+            for cmd in self.world.pump_inventory_background() {
+                self.send(cmd);
             }
             let queue: Vec<(uuid::Uuid, bool)> = std::mem::take(&mut self.world.inventory.queue);
             let (mine, lib): (Vec<_>, Vec<_>) = queue.into_iter().partition(|(_, l)| !l);
@@ -7976,7 +8063,14 @@ impl App {
                 self.demo_tp_start = None;
                 w.tp_progress = 0.6;
                 w.tp_status = aurora_i18n::tr!("common-loading-region").into();
-                if let (Some(position), Some(handle)) = (self.demo_tp_dest.take(), w.main_region) {
+                let region = self.demo_tp_region.take().or(w.main_region);
+                if let (Some(position), Some(handle)) = (self.demo_tp_dest.take(), region) {
+                    if crate::demo::friend_join_scenario() {
+                        self.demo_friend_join_target = Some((
+                            Instant::now() + Duration::from_millis(700),
+                            Vec3::new(position.x, position.y, 2400.0),
+                        ));
+                    }
                     self.demo_unseat_on_teleport();
                     aurora_net::transition::step(|| "AgentMovementComplete (demo)".to_string());
                     aurora_net::transition::arrived(Duration::from_secs(20));
@@ -8158,6 +8252,9 @@ impl App {
             let view = crate::scene::lights::LightView {
                 eye: self.camera.position,
                 forward: self.camera.forward(),
+                // the frame's own view, even when the culling is frozen
+                frustum: CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y),
+                range: self.settings.draw_distance,
                 dt,
                 projector_shadows: self.settings.projector_shadows && self.settings.shadow_quality > 0,
             };
@@ -9509,6 +9606,96 @@ impl App {
         // AURORA_DEMO_PEOPLE's tabs: the mock-up's sets, pins and recent people
         if self.demo && self.frame_count == 60 {
             crate::demo::people::seed(&mut self.world);
+            crate::demo::friend_location(&mut self.world);
+        }
+        if self.demo && matches!(self.frame_count, 700 | 720) && crate::demo::friend_join_scenario() {
+            if self.frame_count == 700 {
+                let contact = std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() != Ok("join-map");
+                self.world.locate_avatar(crate::demo::DEMO_FRIEND, contact);
+                self.panels.world_map = true;
+            } else if std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-map")
+                && let Some(t) = &self.world.map.track
+                && !t.pending
+                && !t.invalid
+            {
+                self.world.map.push(crate::world::worldmap::teleport_command(t.x, t.y, t.z));
+            }
+        }
+        if self.demo
+            && self.demo_friend_join_target.as_ref().is_some_and(|(at, _)| Instant::now() >= *at)
+            && let Some((_, position)) = self.demo_friend_join_target.take()
+            && let Some(handle) = self.world.main_region
+        {
+            if crate::demo::friend_join_flight_scenario()
+                && let Some(info) = self.world.regions.values().find_map(|r| r.info.as_ref()).cloned()
+            {
+                let mut info = (*info).clone();
+                info.handle = handle;
+                info.is_main = true;
+                let (x, y) = aurora_net::handle_to_origin(handle);
+                if let Some(sim) = self.world.map.sims.get(&(x / 256, y / 256)) {
+                    info.name.clone_from(&sim.name);
+                }
+                info.region_flags &= !aurora_net::region_flags::BLOCK_FLY;
+                if std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-fly-blocked") {
+                    info.region_flags |= aurora_net::region_flags::BLOCK_FLY;
+                }
+                self.world.apply(NetEvent::RegionHandshake(Arc::new(info)));
+                let late = crate::demo::friend_join_late_flight_scenario();
+                let parcel_position = if late { Vec3::new(100.0, 100.0, 0.0) } else { position };
+                self.world.apply(NetEvent::AgentParcel(Arc::new(crate::demo::friend_join_parcel(
+                    parcel_position,
+                    !late,
+                ))));
+            }
+            let mut target = crate::demo::action_avatar(false);
+            target.full_id = crate::demo::DEMO_FRIEND;
+            target.position = position;
+            if crate::demo::friend_join_custom_flight_scenario() {
+                target.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, 20.0));
+                target.velocity = Vec3::ZERO;
+                target.acceleration = Vec3::ZERO;
+            }
+            self.world.apply(NetEvent::ObjectUpdates {
+                handle,
+                objects: vec![target],
+            });
+            let state = if crate::demo::friend_join_custom_flight_scenario() {
+                crate::ao::State::Typing
+            } else if crate::demo::friend_join_flight_scenario() && !crate::demo::friend_join_late_flight_scenario() {
+                crate::ao::State::Hovering
+            } else {
+                crate::ao::State::Standing
+            };
+            self.world.apply(NetEvent::AvatarAnimations {
+                avatar: crate::demo::DEMO_FRIEND,
+                anims: vec![(state.motion(), 1)],
+                sources: vec![],
+            });
+            log::info!("demo friend join: fresh target position at {:.0} m", position.z);
+            if crate::demo::friend_join_late_flight_scenario() {
+                self.demo_friend_join_flight = Some((Instant::now() + Duration::from_millis(400), false));
+            }
+        }
+        if self.demo
+            && self.demo_friend_join_flight.as_ref().is_some_and(|(at, _)| Instant::now() >= *at)
+            && let Some((_, parcel)) = self.demo_friend_join_flight.take()
+        {
+            if parcel {
+                self.world.apply(NetEvent::AgentParcel(Arc::new(crate::demo::friend_join_parcel(
+                    Vec3::new(60.0, 200.0, 2400.0),
+                    true,
+                ))));
+                log::info!("demo friend join: delayed landing parcel allows flight");
+            } else {
+                self.world.apply(NetEvent::AvatarAnimations {
+                    avatar: crate::demo::DEMO_FRIEND,
+                    anims: vec![(crate::ao::State::Hovering.motion(), 1)],
+                    sources: vec![],
+                });
+                log::info!("demo friend join: delayed hover signal");
+                self.demo_friend_join_flight = Some((Instant::now() + Duration::from_millis(400), true));
+            }
         }
         // AURORA_DEMO_NAVEDIT=1: click in the location field at frame 230
         if self.demo && self.frame_count == 230 && std::env::var_os("AURORA_DEMO_NAVEDIT").is_some() {
@@ -9570,7 +9757,7 @@ impl App {
         }
         // AURORA_DEMO_TP_AWAY=1: out of reach of the demo region, then back
         if self.demo
-            && let Some(events) = crate::demo::away_teleport(self.frame_count, self.world.agent.position, self.world.agent.forward())
+            && let Some(events) = crate::demo::away_teleport(self.frame_count, &self.world, &mut self.away_coarse)
         {
             for ev in events {
                 self.world.apply(ev);

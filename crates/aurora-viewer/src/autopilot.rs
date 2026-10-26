@@ -682,7 +682,7 @@ pub fn avatar_position(world: &crate::world::World, id: uuid::Uuid) -> Option<Ve
 /// Flight signals are the simulator's locomotion states from
 /// llanimationstates.cpp / LLVOAvatar::processAnimationStateChanges. Read
 /// the received signals, independently of local AO animation substitution.
-fn flight_from_signals(seated: bool, signals: impl Iterator<Item = uuid::Uuid>) -> Option<bool> {
+pub(crate) fn flight_from_signals(seated: bool, signals: impl Iterator<Item = uuid::Uuid>) -> Option<bool> {
     use crate::ao::State;
     if seated {
         return Some(false);
@@ -760,6 +760,26 @@ pub fn flight_response(calibration: &crate::own_motion::Calibration, rtt: f32, r
 }
 
 pub fn can_takeoff(world: &crate::world::World) -> bool {
+    can_takeoff_with_unknown_policy(world, false)
+}
+
+/// Try a requested join without waiting on policy packets. Known restrictions
+/// still apply, and an existing flight may cross a no-takeoff parcel.
+pub(crate) fn can_fly_for_join(world: &crate::world::World) -> bool {
+    if world.agent.flying {
+        !world.agent.is_sitting()
+            && !world.rlva.has("fly")
+            && world.main_region.is_some()
+            && world
+                .main()
+                .and_then(|r| r.info.as_ref())
+                .is_none_or(|r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
+    } else {
+        world.main_region.is_some() && can_takeoff_with_unknown_policy(world, true)
+    }
+}
+
+fn can_takeoff_with_unknown_policy(world: &crate::world::World, allow_unknown: bool) -> bool {
     use crate::world::land::{AgentRights, owned_by_agent, powers};
     // LLAgent::canFly: parcel owners and the owning group's flight managers
     // may fly despite ALLOW_FLY, but region and restraint rules still apply.
@@ -772,8 +792,8 @@ pub fn can_takeoff(world: &crate::world::World) -> bool {
         && world
             .main()
             .and_then(|r| r.info.as_ref())
-            .is_some_and(|r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
-        && world.parcel.as_ref().is_some_and(|p| {
+            .map_or(allow_unknown, |r| r.region_flags & aurora_net::region_flags::BLOCK_FLY == 0)
+        && world.parcel.as_ref().map_or(allow_unknown, |p| {
             p.flags & aurora_net::parcel_flags::ALLOW_FLY != 0
                 || (!world.agent_id.is_nil() && owned_by_agent(p, &rights, powers::LAND_ALLOW_FLY))
         })

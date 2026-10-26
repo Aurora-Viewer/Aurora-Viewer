@@ -36,7 +36,8 @@
 // 3. `main`: per pixel, a few slices of the hemisphere around the view
 //    vector; along each, the highest horizon on both sides gives the
 //    cosine-weighted visible arc (the paper's lines 5 to 27), averaged over
-//    the slices; plus the depth edges with the four neighbours;
+//    the slices; plus the depth edges with the four neighbours; the surface
+//    normal is the mesh's, drawn by the depth prepass (`surface_normal`);
 //    With the screen-space indirect light on, `main_bitmask` runs after it:
 //    one bounce of the previous frame's lit colour gathered on a visibility
 //    bitmask (Therrien et al. 2023), into `il_out` alone, blurred by
@@ -80,7 +81,8 @@ struct GtaoParams {
     quality: vec4<f32>,
     // denoise blur beta, full-resolution pixels per occlusion pixel (1 or
     // 2), slices of `main` (`quality.z`, or more where the accumulation has
-    // no history), unused
+    // no history), 1 when the surface normal is the mesh's (`normal_tex`)
+    // rather than the depth's
     misc: vec4<f32>,
     // screen-space indirect light (main_bitmask): this frame's view space
     // (z in front) to the clip space of the previous frame, whose lit
@@ -94,6 +96,8 @@ struct GtaoParams {
     // frame without GTAO before), the current frame's least weight, the
     // half width of the neighbourhood clip in standard deviations
     temporal: vec4<f32>,
+    // world directions to this view space, for the mesh normals
+    normal_view: mat3x3<f32>,
 };
 
 @group(0) @binding(0) var<uniform> g: GtaoParams;
@@ -107,6 +111,9 @@ struct GtaoParams {
 @group(0) @binding(8) var edges_in: texture_2d<f32>;
 @group(0) @binding(9) var final_out: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(10) var il_in: texture_2d<f32>;
+// the mesh normals the depth prepass draws at the window's resolution
+// (world, octahedral 0..1, as in the G-buffer), with `misc.w`
+@group(0) @binding(11) var normal_tex: texture_2d<f32>;
 @group(0) @binding(12) var il_final: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(13) var scene_tex: texture_2d<f32>;
 @group(0) @binding(14) var il_out: texture_storage_2d<rgba16float, write>;
@@ -281,6 +288,69 @@ fn calculate_normal(edges: vec4<f32>, c: vec3<f32>, l: vec3<f32>, r: vec3<f32>, 
     return normalize(n);
 }
 
+// The octahedral normal of the G-buffer (ssr.wgsl).
+fn oct_decode(e_in: vec2<f32>) -> vec3<f32> {
+    let e = e_in * 2.0 - vec2<f32>(1.0);
+    var n = vec3<f32>(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) {
+        let s = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
+        n = vec3<f32>((vec2<f32>(1.0) - abs(n.yx)) * s, n.z);
+    }
+    return normalize(n);
+}
+
+// The surface normals (view space) at occlusion pixel `px`, whose point is
+// `centre`, in this order: the one the occlusion is computed around, and
+// the flat triangle's, XeGTAO_CalculateNormal from the depths around it
+// (`z`: left, right, top, bottom) turned towards the camera. With
+// `misc.w`, the first is the mesh's smooth normal, from the full-resolution
+// pixel the depth of `prefilter_depth0` came from, as XeGTAO takes the
+// normals of a G-buffer when there is one; it stays as it is (near a
+// silhouette it may face slightly away, and the slices clamp its angle).
+// Without, both are the triangle's, as before.
+fn surface_normals(px: vec2<i32>, uv: vec2<f32>, pixel: vec2<f32>, centre: vec3<f32>, edges: vec4<f32>, z: vec4<f32>) -> mat2x3<f32> {
+    var n = calculate_normal(
+        edges,
+        centre,
+        view_position(uv + vec2<f32>(-pixel.x, 0.0), z.x),
+        view_position(uv + vec2<f32>(pixel.x, 0.0), z.y),
+        view_position(uv + vec2<f32>(0.0, -pixel.y), z.z),
+        view_position(uv + vec2<f32>(0.0, pixel.y), z.w),
+    );
+    if (dot(n, -centre) < 0.0) {
+        n = -n;
+    }
+    if (g.misc.w > 0.5) {
+        let full = vec2<i32>(textureDimensions(normal_tex));
+        let src = min(px * i32(g.misc.y), full - vec2<i32>(1));
+        return mat2x3<f32>(normalize(g.normal_view * oct_decode(textureLoad(normal_tex, src, 0).xy)), n);
+    }
+    return mat2x3<f32>(n, n);
+}
+
+// The angle of normal `n` in a slice (lines 11 to 15 of the paper): from
+// the view vector, positive towards the slice's direction.
+fn slice_normal_angle(n: vec3<f32>, axis: vec3<f32>, ortho_direction: vec3<f32>, view_vec: vec3<f32>) -> f32 {
+    let projected = n - axis * dot(n, axis);
+    let cos_n = saturate(dot(projected, view_vec) / max(length(projected), 1e-6));
+    return sign(dot(ortho_direction, projected)) * fast_acos(cos_n);
+}
+
+// Under the smooth normal of a low-poly mesh, the flat triangle rises above
+// the smooth tangent plane on one side of a slice, and its own samples
+// occluded it there: a ring along the silhouette of round prims, a band at
+// the avatar's neck. The angle the horizons of side `sgn` (1: the slice's
+// direction, -1 against it) go down by: how far the triangle's plane
+// (normal angle `ng`) is above the smooth one (`nn`) on that side, at most
+// FACET_LIFT_MAX, beyond which the triangle's normal is the depth's noise
+// at an edge rather than a facet. Real occluders lose as much, a few
+// degrees on a fine mesh.
+const FACET_LIFT_MAX: f32 = 0.7853981633974483;
+
+fn facet_lift(nn: f32, ng: f32, sgn: f32) -> f32 {
+    return clamp(sgn * (nn - ng), 0.0, FACET_LIFT_MAX);
+}
+
 // XeGTAO_FastACos
 fn fast_acos(x_in: f32) -> f32 {
     let x = abs(x_in);
@@ -353,18 +423,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // buffer's imprecision (XeGTAO's value for 32-bit depths)
     let z = zc * 0.99999;
     let centre = view_position(uv, z);
-    var n = calculate_normal(
-        edges,
-        centre,
-        view_position(uv + vec2<f32>(-pixel.x, 0.0), zl),
-        view_position(uv + vec2<f32>(pixel.x, 0.0), zr),
-        view_position(uv + vec2<f32>(0.0, -pixel.y), zt),
-        view_position(uv + vec2<f32>(0.0, pixel.y), zb),
-    );
+    let normals = surface_normals(px, uv, pixel, centre, edges, vec4<f32>(zl, zr, zt, zb));
+    let n = normals[0];
     let view_vec = normalize(-centre);
-    if (dot(n, view_vec) < 0.0) {
-        n = -n;
-    }
 
     let effect_radius = g.radius.x;
     let sample_distribution_power = g.radius.z;
@@ -457,8 +518,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         // slopes
         projected_length = mix(projected_length, 1.0, 0.05);
         // line 27: the visible arc between the two horizons, cosine weighted
-        let h0 = -fast_acos(horizon1);
-        let h1 = fast_acos(horizon0);
+        var h0 = -fast_acos(horizon1);
+        var h1 = fast_acos(horizon0);
+        if (g.misc.w > 0.5) {
+            // (the mesh normal: without the triangle's own samples)
+            let ng = slice_normal_angle(normals[1], axis, ortho_direction, view_vec);
+            h1 = min(h1 + facet_lift(nn, ng, 1.0), nn + PI_HALF);
+            h0 = max(h0 - facet_lift(nn, ng, -1.0), nn - PI_HALF);
+        }
         let iarc0 = (cos_norm + 2.0 * h0 * sin(nn) - cos(2.0 * h0 - nn)) / 4.0;
         let iarc1 = (cos_norm + 2.0 * h1 * sin(nn) - cos(2.0 * h1 - nn)) / 4.0;
         visibility += projected_length * (iarc0 + iarc1);
@@ -550,18 +617,9 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let z = zc * 0.99999;
     let centre = view_position(uv, z);
-    var n = calculate_normal(
-        edges,
-        centre,
-        view_position(uv + vec2<f32>(-pixel.x, 0.0), zl),
-        view_position(uv + vec2<f32>(pixel.x, 0.0), zr),
-        view_position(uv + vec2<f32>(0.0, -pixel.y), zt),
-        view_position(uv + vec2<f32>(0.0, pixel.y), zb),
-    );
+    let normals = surface_normals(px, uv, pixel, centre, edges, vec4<f32>(zl, zr, zt, zb));
+    let n = normals[0];
     let view_vec = normalize(-centre);
-    if (dot(n, view_vec) < 0.0) {
-        n = -n;
-    }
 
     let thickness = g.il.x;
     let radius = g.il.y;
@@ -590,6 +648,13 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
         let projected_length = length(projected_normal);
         let cos_norm = saturate(dot(projected_normal, view_vec) / max(projected_length, 1e-6));
         let nn = sign_norm * fast_acos(cos_norm);
+        // the triangle's own samples lowered under the smooth normal, as
+        // in `main`: they would light it with its own colour
+        var lift = vec2<f32>(0.0);
+        if (g.misc.w > 0.5) {
+            let ng = slice_normal_angle(normals[1], axis, ortho_direction, view_vec);
+            lift = vec2<f32>(facet_lift(nn, ng, 1.0), facet_lift(nn, ng, -1.0));
+        }
         var occluded = 0u;
         var slice_light = vec3<f32>(0.0);
 
@@ -614,14 +679,15 @@ fn main_bitmask(@builtin(global_invocation_id) id: vec3<u32>) {
                     continue;
                 }
                 let back = front + normalize(front) * thickness;
-                let af = sgn * fast_acos(clamp(dot(normalize(front - centre), view_vec), -1.0, 1.0));
+                let side_lift = sgn * lift[side];
+                let af = sgn * fast_acos(clamp(dot(normalize(front - centre), view_vec), -1.0, 1.0)) + side_lift;
                 // a sample on the pixel's own plane (or below it) hides
                 // nothing: without this margin a flat floor occluded itself
                 // by a sector on each side
                 if (sgn * (af - nn) > PI_HALF - 0.1) {
                     continue;
                 }
-                let ab = sgn * fast_acos(clamp(dot(normalize(back - centre), view_vec), -1.0, 1.0));
+                let ab = sgn * fast_acos(clamp(dot(normalize(back - centre), view_vec), -1.0, 1.0)) + side_lift;
                 let mask = sectors_between(sector(af, nn), sector(ab, nn));
                 let fresh = mask & ~occluded;
                 if (fresh != 0u) {

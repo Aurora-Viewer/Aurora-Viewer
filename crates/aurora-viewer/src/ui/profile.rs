@@ -1331,11 +1331,15 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 2.0);
         ui.vertical(|ui| {
-            ui.add_enabled(
-                false,
-                egui::Button::new(aurora_i18n::tr!("ui-profile-show-on-map-2")).min_size(size),
-            )
-            .on_disabled_hover_text(aurora_i18n::tr!("ui-profile-coming-soon"));
+            if ui
+                .add_enabled(
+                    world.can_locate_avatar(id),
+                    egui::Button::new(aurora_i18n::tr!("ui-profile-show-on-map-2")).min_size(size),
+                )
+                .clicked()
+            {
+                super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
+            }
             if ui.add(egui::Button::new(aurora_i18n::tr!("common-pay")).min_size(size)).clicked() {
                 crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
             }
@@ -1388,7 +1392,9 @@ fn action_buttons(ui: &mut egui::Ui, p: &Palette, world: &World, w: &Window, is_
 fn overflow_menu(ui: &mut egui::Ui, p: &Palette, world: &World, id: Uuid, blocked: bool, actions: &mut Vec<ProfileAction>) {
     widgets::icon_menu(ui, p, "menu-2-filled", aurora_i18n::tr!("ui-profile-more"), |ui| {
         let soon = aurora_i18n::tr!("ui-profile-coming-soon");
-        menu::item_tip(ui, p, "map", aurora_i18n::tr!("common-map"), false, soon);
+        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), world.can_locate_avatar(id)) {
+            super::context::request(ui.ctx(), super::context::CtxAction::ShowOnMap(id));
+        }
         if menu::item(ui, p, "coin-filled", aurora_i18n::tr!("common-pay")) {
             crate::ui::context::request(ui.ctx(), crate::ui::context::CtxAction::PayResident(id));
         }
@@ -2207,6 +2213,51 @@ fn notes_tab(ui: &mut egui::Ui, c: &TabCtx, w: &mut Window, profile: Option<&Ava
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classic_profile_map_button_honors_remote_friends_received_rights() {
+        use crate::ui::context::{CtxAction, take_requests};
+        use crate::ui::widgets::elide_tests::{Frames, painted};
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let id = Uuid::from_u128(7);
+        world.social.friends.push(super::super::super::world::social::Friend {
+            id,
+            online: true,
+            rights_given: 3,
+            rights_has: 0,
+        });
+        let p = crate::theme::Theme::default().palette();
+        let w = Window::new(id);
+        let mut actions = Vec::new();
+        let mut frames = Frames::new();
+        for (received, online) in [(0, true), (3, true), (0, true), (3, false)] {
+            world.social.friends[0].rights_has = received;
+            world.social.friends[0].online = online;
+            let mut point = egui::Pos2::ZERO;
+            for _ in 0..2 {
+                let texts = frames.run(Vec::new(), |ui| action_buttons(ui, &p, &world, &w, true, &mut actions));
+                point = painted(&texts, aurora_i18n::tr!("ui-profile-show-on-map-2")).rect.center();
+            }
+            for pressed in [true, false] {
+                frames.run(
+                    vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: Default::default(),
+                        },
+                    ],
+                    |ui| action_buttons(ui, &p, &world, &w, true, &mut actions),
+                );
+            }
+            let requests = take_requests(&frames.ctx);
+            assert_eq!(requests.len(), usize::from(received != 0 && online));
+            assert!(requests.iter().all(|a| matches!(a, CtxAction::ShowOnMap(target) if *target == id)));
+            assert!(actions.is_empty());
+        }
+    }
 
     #[test]
     fn edit_follows_the_server_until_changed() {

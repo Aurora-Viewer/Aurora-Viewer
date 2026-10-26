@@ -25,6 +25,7 @@ pub mod estate;
 pub mod experiences;
 pub mod favorites;
 pub mod flying_at_exit;
+mod friend_join;
 pub mod group_data;
 pub mod group_money;
 pub mod groups;
@@ -270,6 +271,8 @@ pub struct World {
     /// button's clicks (app/script_clicks.rs).
     pub script_controls: aurora_net::script_controls::ScriptControls,
     pub coarse: HashMap<RegionHandle, Vec<(Uuid, Vec3)>>,
+    /// The agent's region before its last change, until the arrival.
+    region_left: Option<RegionHandle>,
     /// Objects of the regions out of reach, until their simulator closes
     /// them or they are in reach again (parked.rs).
     parked: HashMap<RegionHandle, parked::Parked>,
@@ -376,6 +379,8 @@ pub struct World {
     /// The inventory cache being read by its thread since the login reply
     /// (`poll_inventory_cache`), and when the read started.
     inventory_cache: Option<(crossbeam_channel::Receiver<Option<inventory::CachedInventory>>, Instant)>,
+    /// The whole inventory, fetched in the background from login on.
+    inventory_background: inventory::background::BackgroundFetch,
     /// Inventory changes outside the inventory window (`take_inventory_edits`).
     inventory_edits: Vec<aurora_net::inventory::operations::Mutation>,
     pub received_items: received_items::ReceivedItems,
@@ -586,6 +591,7 @@ impl World {
             following_avatar: None,
             script_controls: Default::default(),
             coarse: HashMap::new(),
+            region_left: None,
             parked: HashMap::new(),
             appearances: HashMap::new(),
             avatar_poses: HashMap::new(),
@@ -641,6 +647,7 @@ impl World {
             inventory: inventory::Inventory::default(),
             active_gestures: Default::default(),
             inventory_cache: None,
+            inventory_background: Default::default(),
             inventory_edits: Vec::new(),
             received_items: Default::default(),
             animations: HashMap::new(),
@@ -891,6 +898,7 @@ impl World {
         if old == Some(handle) {
             return false;
         }
+        self.region_left = old;
         self.objects.clear_material_previews();
         self.inventory_retried.clear();
         if let Some(old) = old {
@@ -923,6 +931,9 @@ impl World {
     /// track local teleports without showing progress. Intentional difference
     /// requested for Aurora: local teleports are also silent.
     pub fn begin_teleport(&mut self, show_progress: bool) {
+        self.cancel_friend_join_flight();
+        self.cancel_friend_join();
+        self.map.cancel_avatar_teleport();
         self.teleporting = true;
         self.tp_show_progress = show_progress;
         self.tp_failed = false;
@@ -1082,6 +1093,17 @@ impl World {
         );
         self.inventory_cache = None;
         self.inventory.release_requests();
+    }
+
+    /// The background inventory fetch's reads for this frame. It starts once
+    /// the cache is applied (the folders it restored need no fetch) and the
+    /// agent's region has its capabilities.
+    pub fn pump_inventory_background(&mut self) -> Vec<aurora_net::NetCommand> {
+        if self.inventory_cache.is_some() || self.inventory.root.is_nil() || self.main().is_none_or(|r| r.caps.is_empty()) {
+            return Vec::new();
+        }
+        self.inventory_background.start(&self.inventory);
+        self.inventory_background.pump(&mut self.inventory, self.agent_id)
     }
 
     /// Persist the fetched inventory (next login skips unchanged folders).
@@ -1792,6 +1814,7 @@ impl World {
                 self.aliases_synced = u64::MAX;
                 self.sync_contact_aliases();
                 self.inventory = inventory::Inventory::from_login(&l.raw);
+                self.inventory_background = Default::default();
                 // read off the main thread; until `poll_inventory_cache`
                 // applies it, folder requests wait (the root's included)
                 self.inventory_cache = self.inventory_cache_path().map(|path| {
@@ -1827,6 +1850,7 @@ impl World {
                 // teleport) are asked again on the agent's new region
                 if Some(handle) == self.main_region {
                     self.inventory.retry_failed();
+                    self.inventory_background.resume(&self.inventory);
                 }
                 None
             }
@@ -1916,6 +1940,17 @@ impl World {
                     self.agent.set_look_at(look_at);
                     self.agent.reset_motion();
                 }
+                // The coarse locations were sent around where the agent was.
+                // The region left keeps its last list until its simulator
+                // closes it (about 50 s), and the Legacy Viewer keeps showing
+                // those avatars as present (LLWorld::getAvatars): zoom and
+                // teleport aimed regions away (issue #1000). After a teleport
+                // to another region (MainRegionChanged comes first) only the
+                // arrival's list stays; the simulators still connected send
+                // theirs again.
+                if self.region_left.take().is_some_and(|left| left != handle) && !self.arrived_by_crossing {
+                    self.coarse.retain(|h, _| *h == handle);
+                }
                 self.movement_complete = true;
                 if self.teleporting || !self.arrived_once {
                     let region = if self.rlva.has("showloc") {
@@ -1945,6 +1980,8 @@ impl World {
                 self.teleporting = false;
                 self.park_far_regions();
                 self.land_if_fly_blocked(handle);
+                self.friend_join_flight_arrived(handle);
+                self.friend_join_arrived(handle);
                 Some(NetEvent::AgentMovementComplete { handle, position, look_at })
             }
             NetEvent::ObjectUpdates { handle, objects } => {
@@ -1990,6 +2027,7 @@ impl World {
                         );
                     }
                     let is_me = u.full_id == me;
+                    let avatar_id = u.full_id;
                     let pos = u.position;
                     let velocity = u.velocity;
                     let acceleration = u.acceleration;
@@ -2005,7 +2043,9 @@ impl World {
                         self.unregister_attachment(idx);
                     }
                     self.on_camera_parent_change(handle, &u);
+                    let foot_plane = u.foot_plane;
                     self.objects.upsert_at(handle, u, self.received);
+                    self.note_friend_join_object(handle, avatar_id, foot_plane);
                     if is_me {
                         let at = self.agent_report_time();
                         self.agent
@@ -2033,6 +2073,8 @@ impl World {
                         if let Some(o) = self.objects.get(idx) {
                             mine = o.full_id == me;
                             seated = o.parent_id != 0;
+                            let id = o.full_id;
+                            self.note_friend_join_object(handle, id, t.foot_plane);
                         }
                         if mine {
                             let at = self.agent_report_time();
@@ -2272,6 +2314,24 @@ impl World {
                 None
             }
             NetEvent::CoarseLocations { handle, positions } => {
+                self.note_friend_join_coarse(handle, &positions);
+                // LLViewerRegion::processCoarseUpdate updates the followed
+                // friend's position, including the coarse (4 m) altitude.
+                if let Some(a) = &self.map.avatar
+                    && let Some((_, pos)) = positions.iter().find(|(id, _)| *id == a.id)
+                {
+                    // Full object updates retain exact height above the
+                    // coarse protocol's 1,020 m ceiling.
+                    let pos = self
+                        .objects
+                        .index_of_uuid(&a.id)
+                        .and_then(|i| self.objects.get(i))
+                        .filter(|o| o.key.region == handle)
+                        .map_or(*pos, |o| o.position);
+                    let (ox, oy) = aurora_net::handle_to_origin(handle);
+                    self.map
+                        .agent_found(a.id, ox as f64 + pos.x as f64, oy as f64 + pos.y as f64, Some(pos.z));
+                }
                 self.coarse.insert(handle, positions);
                 None
             }
@@ -2324,16 +2384,27 @@ impl World {
                 Some(NetEvent::TeleportFinished { handle })
             }
             NetEvent::TeleportLocal { flying } => {
+                if !self.teleporting {
+                    self.cancel_friend_join_flight();
+                    self.cancel_friend_join();
+                    self.map.cancel_avatar_teleport();
+                }
                 // process_teleport_local, indra/newview/llviewermessage.cpp.
                 // This also covers server-initiated teleports: the following
                 // AgentMovementComplete must record the arrival in history.
                 self.teleporting = true;
                 self.tp_show_progress = false;
-                self.agent.flying = flying || self.fly_after_teleport;
+                // A friend hop preserves existing flight here, but defers
+                // taking off (even if flagged by the server) until its
+                // arrival position has been applied.
+                self.agent.flying = self.friend_join_local_flight(flying).unwrap_or(flying || self.fly_after_teleport);
                 None
             }
             NetEvent::TeleportStarted => {
                 if !self.teleporting {
+                    self.cancel_friend_join_flight();
+                    self.cancel_friend_join();
+                    self.map.cancel_avatar_teleport();
                     self.tp_show_progress = false;
                     log::info!("TeleportStart (arrived {})", self.arrived_once);
                 }
@@ -2348,6 +2419,8 @@ impl World {
                 None
             }
             NetEvent::TeleportFailed { reason } => {
+                self.cancel_friend_join_flight();
+                self.cancel_friend_join();
                 self.tp_history.failed();
                 self.teleporting = false;
                 self.tp_failed = true;
@@ -2619,6 +2692,7 @@ impl World {
                     list.push(preview);
                 }
                 self.animations.insert(avatar, list);
+                self.note_friend_join_animations(avatar);
                 None
             }
             NetEvent::Environment {
@@ -2986,6 +3060,13 @@ impl World {
                 self.inventory.apply(c);
                 None
             }
+            NetEvent::InventoryTreeFetched { request, result } => {
+                if let Ok(contents) = result {
+                    self.inventory.apply(contents);
+                }
+                self.inventory_background.on_reply(&mut self.inventory, request);
+                None
+            }
             NetEvent::InventoryFetchFailed { folders } => {
                 self.inventory.failed(&folders);
                 // BGFolderHttpHandler::processFailure puts a failed folder
@@ -3060,7 +3141,15 @@ impl World {
                 None
             }
             NetEvent::AgentFound { prey, x, y } => {
-                self.map.agent_found(prey, x, y, self.agent.position.z);
+                // FindAgent only gives global X/Y. A loaded target in the
+                // same spot can supply Z; a distant reply must not reuse our
+                // own altitude (for example, a skybox at 3,000 m).
+                let altitude = self.avatar_map_position(prey).and_then(|pos| {
+                    let (ox, oy) = self.main_origin()?;
+                    let nearby = (ox as f64 + pos.x as f64 - x).hypot(oy as f64 + pos.y as f64 - y) < 8.0;
+                    nearby.then_some(pos.z)
+                });
+                self.map.agent_found(prey, x, y, altitude);
                 None
             }
             NetEvent::ParcelCollision {
@@ -6222,6 +6311,55 @@ mod motion_tests {
         teleport_to(&mut world, here);
         assert!(world.objects.index_of_uuid(&p.full_id).is_none());
         assert!(world.objects.index_of_uuid(&world.agent_id).is_some());
+    }
+
+    #[test]
+    fn a_teleport_elsewhere_forgets_the_coarse_locations_of_the_regions_left() {
+        let (mut world, _, _, here, there) = worn_fixture();
+        let friend = Uuid::from_u128(0xF00D);
+        let stranger = Uuid::from_u128(0xF00E);
+        let seen = |world: &mut World, handle, id| {
+            world.apply(NetEvent::CoarseLocations {
+                handle,
+                positions: vec![(id, Vec3::new(40.0, 50.0, 20.0))],
+            });
+        };
+        world.arrived_once = true;
+        seen(&mut world, here, friend);
+        seen(&mut world, there, stranger);
+        // walking into the neighbour: both simulators still send their lists
+        let position = world.agent.position - Vec3::new(256.0, 0.0, 0.0);
+        world.apply(NetEvent::AgentMovementComplete {
+            handle: there,
+            position,
+            look_at: Vec3::X,
+        });
+        assert!(world.arrived_by_crossing);
+        assert!(world.avatar_map_position(friend).is_some());
+        assert!(world.avatar_map_position(stranger).is_some());
+
+        // a teleport far away: the list of the arrival region stays, the
+        // friend left behind is no longer around (issue #1000)
+        let far = far_from(there);
+        world.begin_teleport(false);
+        seen(&mut world, far, stranger);
+        teleport_to(&mut world, far);
+        assert_eq!(world.coarse.keys().copied().collect::<Vec<_>>(), vec![far]);
+        assert!(world.avatar_map_position(friend).is_none());
+        assert!(!world.can_locate_avatar(friend));
+        assert!(world.avatar_map_position(stranger).is_some());
+        // the simulator left still sends its list while we are its child:
+        // it waits with the region's objects
+        assert!(world.parked.contains_key(&there));
+        seen(&mut world, there, friend);
+        assert!(world.avatar_map_position(friend).is_none());
+        assert!(!world.can_locate_avatar(friend));
+        // back there before it closed, its last list is the current one
+        world.begin_teleport(false);
+        teleport_to(&mut world, there);
+        assert!(!world.parked.contains_key(&there));
+        assert_eq!(world.coarse.keys().copied().collect::<Vec<_>>(), vec![there]);
+        assert!(world.avatar_map_position(friend).is_some());
     }
 
     #[test]

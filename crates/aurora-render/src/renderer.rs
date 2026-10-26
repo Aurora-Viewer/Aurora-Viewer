@@ -790,9 +790,14 @@ struct Pipelines {
     pre_opaque_2s: wgpu::RenderPipeline,
     pre_mask: wgpu::RenderPipeline,
     pre_mask_2s: wgpu::RenderPipeline,
+    /// The same four writing GTAO's mesh normals as well
+    /// (`gtao::NORMAL_FORMAT`), in the order of the main bins.
+    pre_normal: [wgpu::RenderPipeline; MAIN_BINS],
     /// Blended faces opaque enough to cast contact shadows, into their
     /// depth (contact_shadows.rs).
     pre_contact: wgpu::RenderPipeline,
+    /// `pre_contact` with GTAO's mesh normals, into the occlusion's depth.
+    pre_contact_normal: wgpu::RenderPipeline,
     /// Depth prepass into the scene pass's own multisampled depth (MSAA
     /// only): one-sided and two-sided opaque faces.
     pre_msaa: Option<[wgpu::RenderPipeline; 2]>,
@@ -1243,6 +1248,13 @@ fn gtao_temporal_now() -> bool {
     crate::gtao::Temporal::from_env().applied(secs)
 }
 
+/// Whether GTAO reads the mesh normals this frame (AURORA_GTAO_NORMALS).
+fn gtao_mesh_normals_now() -> bool {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let secs = START.get_or_init(Instant::now).elapsed().as_secs();
+    crate::gtao::Normals::from_env().mesh(secs)
+}
+
 /// AURORA_PROFILE: the summary also wants the time each step waited.
 fn profile() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -1365,6 +1377,9 @@ pub(crate) struct Backend {
     /// This frame draws the contact shadows (`AURORA_CONTACT_SHADOWS=alt`
     /// switches them each second).
     contact_now: bool,
+    /// This frame's GTAO reads the mesh normals the depth prepass draws
+    /// (`AURORA_GTAO_NORMALS=alt` switches them each second).
+    gtao_normals_now: bool,
     /// This frame draws the blended faces at least half covered into the
     /// occlusion's depth (`AURORA_BLEND_AO`).
     blend_ao_depth: bool,
@@ -2708,6 +2723,7 @@ impl Backend {
             water_effects,
             contact,
             contact_now: false,
+            gtao_normals_now: false,
             blend_ao_depth: true,
             bloom,
             exposure,
@@ -3285,6 +3301,24 @@ impl Backend {
         // both sides: a double-sided blended face casts either way, the
         // nearer one keeps the depth
         let pre_contact = pre("prepass contact", "vs_main", Some("fs_depth_contact"), None);
+        // the same with GTAO's mesh normals (gtao.rs)
+        let pre_n = |label: &'static str, vs: &'static str, fs: &'static str, cull: Option<wgpu::Face>| {
+            pipe(PipeDesc {
+                cull,
+                samples: 1,
+                format: Some(crate::gtao::NORMAL_FORMAT),
+                write_mask: wgpu::ColorWrites::ALL,
+                depth_compare: wgpu::CompareFunction::Greater,
+                ..base(label, vs, fs)
+            })
+        };
+        let pre_normal = [
+            pre_n("prepass normals", "vs_depth_normal", "fs_depth_normal", Some(wgpu::Face::Back)),
+            pre_n("prepass normals 2s", "vs_depth_normal", "fs_depth_normal", None),
+            pre_n("prepass mask normals", "vs_main", "fs_depth_mask_normal", Some(wgpu::Face::Back)),
+            pre_n("prepass mask normals 2s", "vs_main", "fs_depth_mask_normal", None),
+        ];
+        let pre_contact_normal = pre_n("prepass contact normals", "vs_main", "fs_depth_contact_normal", None);
         let pre_msaa = (samples > 1).then(|| {
             let msaa = |label: &'static str, cull: Option<wgpu::Face>| {
                 pipe(PipeDesc {
@@ -3445,7 +3479,9 @@ impl Backend {
             pre_opaque_2s,
             pre_mask,
             pre_mask_2s,
+            pre_normal,
             pre_contact,
+            pre_contact_normal,
             pre_msaa,
             refl_sky,
             refl_terrain,
@@ -4883,6 +4919,7 @@ impl Backend {
 
         self.show_ao_method();
         self.contact_now = self.contact_on(f.shadows);
+        self.gtao_normals_now = self.targets.gtao_shown && gtao_mesh_normals_now();
         let mut main = self.frame_uniforms(fu, fu.view, Some(fu.camera_pos), &cascades, &splits);
         main.cam_up[3] = camera_water_level;
         if let Some((view, proj)) = air_view {
@@ -5275,8 +5312,9 @@ impl Backend {
                 temporal: gtao_temporal_now(),
                 previous_camera: self.prev_view_proj.is_some(),
             };
-            self.gtao
-                .write(&self.queue, t, f.proj, crate::gtao::reprojection(f.view, prev), intensity, frame);
+            let normals = self.gtao_normals_now.then_some(f.view);
+            let reproj = crate::gtao::reprojection(f.view, prev);
+            self.gtao.write(&self.queue, t, f.proj, reproj, intensity, frame, normals);
         } else if self.targets.ao.is_some() {
             let samples = if self.settings.ssao >= 2 { 16.0 } else { 8.0 };
             let u = SsaoU {
@@ -5836,12 +5874,32 @@ impl Backend {
 
         prof.mark("shadows");
         mark(&mut encoder, MARK_SHADOWS_END);
-        let pre_pipes: [&wgpu::RenderPipeline; MAIN_BINS] = [
-            &self.pipelines.pre_opaque,
-            &self.pipelines.pre_opaque_2s,
-            &self.pipelines.pre_mask,
-            &self.pipelines.pre_mask_2s,
-        ];
+        // GTAO's mesh normals, drawn beside the depth when it reads them;
+        // without them the passes keep no colour target at all
+        let normals = self.targets.gtao.as_ref().filter(|_| self.gtao_normals_now).map(|g| &g.normals);
+        let normal_target = |load| {
+            normals.map(|view| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })
+            })
+        };
+        let pre_pipes: [&wgpu::RenderPipeline; MAIN_BINS] = if normals.is_some() {
+            self.pipelines.pre_normal.each_ref()
+        } else {
+            [
+                &self.pipelines.pre_opaque,
+                &self.pipelines.pre_opaque_2s,
+                &self.pipelines.pre_mask,
+                &self.pipelines.pre_mask_2s,
+            ]
+        };
         // ---- depth prepass (single sample); with occlusion, phase 1 draws
         // what was visible last frame
         if occl {
@@ -5851,7 +5909,7 @@ impl Backend {
             let ts = if take_first() { ts_begin(&self.timer) } else { None };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("depth prepass"),
-                color_attachments: &[],
+                color_attachments: normal_target(wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)).as_slice(),
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.targets.depth_ss,
                     depth_ops: Some(wgpu::Operations {
@@ -5865,12 +5923,12 @@ impl Backend {
                 multiview_mask: None,
             });
             bind_mesh(&mut pass, &self.groups.a);
-            draw(&mut pass, &self.pipelines.pre_opaque, rg.terrain);
+            draw(&mut pass, pre_pipes[0], rg.terrain);
             let pre = if occl { &self.occlusion.pre1 } else { &self.indirect };
-            draw_from(&mut pass, &self.pipelines.pre_opaque, pre, rg.opaque);
-            draw_from(&mut pass, &self.pipelines.pre_opaque_2s, pre, rg.opaque_2s);
-            draw_from(&mut pass, &self.pipelines.pre_mask, pre, rg.mask);
-            draw_from(&mut pass, &self.pipelines.pre_mask_2s, pre, rg.mask_2s);
+            draw_from(&mut pass, pre_pipes[0], pre, rg.opaque);
+            draw_from(&mut pass, pre_pipes[1], pre, rg.opaque_2s);
+            draw_from(&mut pass, pre_pipes[2], pre, rg.mask);
+            draw_from(&mut pass, pre_pipes[3], pre, rg.mask_2s);
             for (b, pipe) in pre_pipes.iter().enumerate() {
                 if occl {
                     draw_bin(&mut pass, Some(pipe), REGION_PRE1 + b, COUNT_PRE1 + b);
@@ -5896,7 +5954,7 @@ impl Backend {
             }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("depth prepass 2"),
-                color_attachments: &[],
+                color_attachments: normal_target(wgpu::LoadOp::Load).as_slice(),
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.targets.depth_ss,
                     depth_ops: Some(wgpu::Operations {
@@ -5911,10 +5969,10 @@ impl Backend {
             });
             bind_mesh(&mut pass, &self.groups.a);
             let pre = &self.occlusion.pre2;
-            draw_from(&mut pass, &self.pipelines.pre_opaque, pre, rg.opaque);
-            draw_from(&mut pass, &self.pipelines.pre_opaque_2s, pre, rg.opaque_2s);
-            draw_from(&mut pass, &self.pipelines.pre_mask, pre, rg.mask);
-            draw_from(&mut pass, &self.pipelines.pre_mask_2s, pre, rg.mask_2s);
+            draw_from(&mut pass, pre_pipes[0], pre, rg.opaque);
+            draw_from(&mut pass, pre_pipes[1], pre, rg.opaque_2s);
+            draw_from(&mut pass, pre_pipes[2], pre, rg.mask);
+            draw_from(&mut pass, pre_pipes[3], pre, rg.mask_2s);
             for (b, pipe) in pre_pipes.iter().enumerate() {
                 draw_bin(&mut pass, Some(pipe), REGION_PRE2 + b, COUNT_PRE2 + b);
             }
@@ -5941,7 +5999,7 @@ impl Backend {
             if blend_in_ao_depth {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("occlusion depth"),
-                    color_attachments: &[],
+                    color_attachments: normal_target(wgpu::LoadOp::Load).as_slice(),
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view,
                         depth_ops: Some(wgpu::Operations {
@@ -5955,7 +6013,12 @@ impl Backend {
                     multiview_mask: None,
                 });
                 bind_mesh(&mut pass, &self.groups.a);
-                draw(&mut pass, &self.pipelines.pre_contact, rg.blend);
+                let pipe = if normals.is_some() {
+                    &self.pipelines.pre_contact_normal
+                } else {
+                    &self.pipelines.pre_contact
+                };
+                draw(&mut pass, pipe, rg.blend);
             }
         }
         // ---- SSAO

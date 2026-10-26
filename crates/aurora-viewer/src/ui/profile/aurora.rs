@@ -915,12 +915,12 @@ fn more_menu(resp: &Response, env: &mut Env, w: &Window, f: &Facts, compact: boo
     let names = &world.social.avatar_names;
     let display = names.get(&id).map(|n| n.display(&names.options));
     let legacy = world.legacy_name(&id);
-    let here = context::avatar_position(world, &id).is_some();
+    let mappable = world.can_locate_avatar(id);
     let soon = aurora_i18n::tr!("ui-profile-coming-soon");
     menu::dropdown(resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
         let ctx = ui.ctx().clone();
         let act = |a: CtxAction| context::request(&ctx, a);
-        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), here) {
+        if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-map"), mappable) {
             act(CtxAction::ShowOnMap(id));
         }
         menu::item_tip(ui, p, "share", aurora_i18n::tr!("common-share"), false, soon);

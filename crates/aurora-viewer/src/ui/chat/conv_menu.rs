@@ -65,13 +65,7 @@ pub(super) fn items(ui: &mut egui::Ui, p: &Palette, world: &World, actions: &mut
             // (buildParticipantMenuOptions)
             menu::separator(ui, p);
             menu::todo(ui, p, "users-plus", aurora_i18n::tr!("ui-context-invite-to-group"));
-            if menu::item_if(
-                ui,
-                p,
-                "map",
-                aurora_i18n::tr!("common-show-on-map-2"),
-                context::avatar_position(world, &id).is_some(),
-            ) {
+            if menu::item_if(ui, p, "map", aurora_i18n::tr!("common-show-on-map-2"), world.can_locate_avatar(id)) {
                 act(CtxAction::ShowOnMap(id));
             }
             menu::todo(ui, p, "share", aurora_i18n::tr!("common-share"));

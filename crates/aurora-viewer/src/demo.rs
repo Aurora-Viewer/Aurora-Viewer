@@ -2372,6 +2372,62 @@ pub fn offered_item(parent: Uuid, owner: Uuid) -> aurora_net::inventory::InvItem
     }
 }
 
+/// The demo's listing of one inventory folder: five demo objects, the
+/// skeleton's folders under the root, or a scenario's own contents.
+fn demo_folder(f: Uuid, owner: Uuid) -> aurora_net::inventory::FolderContents {
+    use aurora_net::inventory::{FolderContents, InvItem};
+    if let Some(c) = env::folder_contents(f, owner).or_else(|| place::folder_contents(f, owner)) {
+        return c;
+    }
+    let items: Vec<InvItem> = (0..5u128)
+        .map(|i| InvItem {
+            id: Uuid::from_u128(f.as_u128() ^ (0xABC0 + i)),
+            parent: f,
+            name: aurora_i18n::tr!("demo-demo-object", value0 = format!("{}", i + 1)),
+            desc: String::new(),
+            asset_type: [6, 3, 7, 0, 10][i as usize],
+            inv_type: [6, 3, 7, 0, 10][i as usize],
+            asset_id: Uuid::nil(),
+            flags: 0,
+            favorite: false,
+            favorite_known: false,
+            creator: Uuid::nil(),
+            created_at: 0,
+            owner,
+            group_mask: 0,
+            everyone_mask: 0,
+            next_owner_mask: 0,
+            thumbnail: Uuid::nil(),
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            last_owner: uuid::Uuid::nil(),
+            group_id: uuid::Uuid::nil(),
+            group_owned: false,
+            sale_type: 0,
+            sale_price: 0,
+        })
+        .collect();
+    let subfolders = if f == u(1) {
+        aurora_net::inventory::parse_skeleton(&demo_raw()["inventory-skeleton"])
+            .into_iter()
+            .filter(|x| x.parent == u(1))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    FolderContents {
+        folder_id: f,
+        owner_id: owner,
+        version: 2,
+        folders: subfolders,
+        items: if f == u(1) || f == u(PHOTO_ALBUM_FOLDER) {
+            Vec::new()
+        } else {
+            items
+        },
+    }
+}
+
 pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     // what scripts would hear of a click (AURORA_DEMO_WORLD_CLICKS)
     use aurora_net::control::{LBUTTON_DOWN, LBUTTON_UP, ML_LBUTTON_DOWN, ML_LBUTTON_UP};
@@ -2394,7 +2450,6 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
     if let Some(events) = social_menu::reply(cmd) {
         return events;
     }
-    use aurora_net::inventory::{FolderContents, InvItem};
     match cmd {
         // a lure accepted offline: the teleport starts, then has nowhere to go
         aurora_net::NetCommand::AcceptLure { .. } => vec![
@@ -2538,61 +2593,35 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
             ]
         }
         aurora_net::NetCommand::FetchInventory { folders, owner, .. } => {
-            let mut out = Vec::new();
-            for f in folders {
-                if let Some(c) = env::folder_contents(*f, *owner).or_else(|| place::folder_contents(*f, *owner)) {
-                    out.push(c);
-                    continue;
-                }
-                let items: Vec<InvItem> = (0..5u128)
-                    .map(|i| InvItem {
-                        id: Uuid::from_u128(f.as_u128() ^ (0xABC0 + i)),
-                        parent: *f,
-                        name: aurora_i18n::tr!("demo-demo-object", value0 = format!("{}", i + 1)),
-                        desc: String::new(),
-                        asset_type: [6, 3, 7, 0, 10][i as usize],
-                        inv_type: [6, 3, 7, 0, 10][i as usize],
-                        asset_id: Uuid::nil(),
-                        flags: 0,
-                        favorite: false,
-                        favorite_known: false,
-                        creator: Uuid::nil(),
-                        created_at: 0,
-                        owner: *owner,
-                        group_mask: 0,
-                        everyone_mask: 0,
-                        next_owner_mask: 0,
-                        thumbnail: Uuid::nil(),
-                        base_mask: 0x7fffffff,
-                        owner_mask: 0x7fffffff,
-                        last_owner: uuid::Uuid::nil(),
-                        group_id: uuid::Uuid::nil(),
-                        group_owned: false,
-                        sale_type: 0,
-                        sale_price: 0,
-                    })
-                    .collect();
-                let subfolders = if *f == u(1) {
-                    aurora_net::inventory::parse_skeleton(&demo_raw()["inventory-skeleton"])
-                        .into_iter()
-                        .filter(|x| x.parent == u(1))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                out.push(FolderContents {
-                    folder_id: *f,
-                    owner_id: *owner,
-                    version: 2,
-                    folders: subfolders,
-                    items: if *f == u(1) || *f == u(PHOTO_ALBUM_FOLDER) {
-                        Vec::new()
-                    } else {
-                        items
-                    },
-                });
-            }
+            let out = folders.iter().map(|f| demo_folder(*f, *owner)).collect();
             vec![NetEvent::InventoryContents(out)]
+        }
+        // no depth limit to reach here: whole subtrees, parents first
+        aurora_net::NetCommand::FetchInventoryTree {
+            request,
+            parent,
+            children,
+            depth,
+            owner,
+            ..
+        } => {
+            let mut todo: Vec<(Uuid, i32)> = if children.is_empty() {
+                vec![(*parent, *depth)]
+            } else {
+                children.iter().rev().map(|c| (*c, depth - 1)).collect()
+            };
+            let mut out = Vec::new();
+            while let Some((f, depth)) = todo.pop() {
+                let c = demo_folder(f, *owner);
+                if depth > 0 {
+                    todo.extend(c.folders.iter().rev().filter(|x| x.parent == f).map(|x| (x.id, depth - 1)));
+                }
+                out.push(c);
+            }
+            vec![NetEvent::InventoryTreeFetched {
+                request: *request,
+                result: Ok(out),
+            }]
         }
         // block list: Violet Wolf, an object, a name and the chat of group 2
         aurora_net::NetCommand::RequestMuteList { .. } => {
@@ -2704,6 +2733,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         method: *method,
                         session: *session,
                         result: Some(aurora_llsd::Llsd::Undef),
+                        not_found: false,
                     }];
                     ev.push(NetEvent::SessionAgents {
                         session: *session,
@@ -2769,6 +2799,7 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
                         method: *method,
                         session: *session,
                         result: Some(history),
+                        not_found: false,
                     }]
                 }
                 aurora_net::SessionMethod::DeclineInvitation => Vec::new(),
@@ -2937,7 +2968,8 @@ pub fn demo_reply(cmd: &aurora_net::NetCommand) -> Vec<NetEvent> {
         // the two online friends who let us map them: one in our region, one
         // in the Boreal Lagoon
         aurora_net::NetCommand::FindAgent(prey) if [u(100), u(102)].contains(prey) => {
-            let (x, y) = if *prey == u(100) {
+            let remote = std::env::var_os("AURORA_DEMO_FRIEND_LOCATION").is_some();
+            let (x, y) = if *prey == u(100) && !remote {
                 (256_020.0, 256_240.0)
             } else {
                 (256_316.0, 256_200.0)
@@ -3628,6 +3660,81 @@ fn map_block(x: u16, y: u16, name: &str, access: u8) -> aurora_net::MapBlock {
         map_image_id: Uuid::nil(),
         size_x: 256,
         size_y: 256,
+    }
+}
+
+pub fn friend_join_scenario() -> bool {
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION").is_ok_and(|m| {
+        matches!(
+            m.as_str(),
+            "join-map" | "join-contact" | "join-fly" | "join-fly-blocked" | "join-fly-late" | "join-fly-custom"
+        )
+    })
+}
+
+pub fn friend_join_flight_scenario() -> bool {
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION")
+        .is_ok_and(|m| matches!(m.as_str(), "join-fly" | "join-fly-blocked" | "join-fly-late" | "join-fly-custom"))
+}
+
+pub fn friend_join_late_flight_scenario() -> bool {
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-fly-late")
+}
+
+pub fn friend_join_custom_flight_scenario() -> bool {
+    std::env::var("AURORA_DEMO_FRIEND_LOCATION").as_deref() == Ok("join-fly-custom")
+}
+
+pub fn friend_join_parcel(position: Vec3, allow_fly: bool) -> aurora_net::ParcelInfo {
+    let mut bitmap = vec![0; 512];
+    let cell = (position.y as usize / 4).min(63) * 64 + (position.x as usize / 4).min(63);
+    bitmap[cell / 8] |= 1 << (cell % 8);
+    aurora_net::ParcelInfo {
+        bitmap,
+        flags: if allow_fly { aurora_net::parcel_flags::ALLOW_FLY } else { 0 },
+        ..Default::default()
+    }
+}
+
+/// Make the conversation's friend remote without keeping a nearby object
+/// or coarse position. Combine with existing contacts/profile/map scenarios.
+pub fn friend_location(world: &mut crate::world::World) {
+    let Ok(mode) = std::env::var("AURORA_DEMO_FRIEND_LOCATION") else {
+        return;
+    };
+    if !matches!(
+        mode.as_str(),
+        "allowed"
+            | "denied"
+            | "offline"
+            | "altitude"
+            | "join-map"
+            | "join-contact"
+            | "join-fly"
+            | "join-fly-blocked"
+            | "join-fly-late"
+            | "join-fly-custom"
+    ) {
+        return;
+    }
+    if let Some(idx) = world.objects.index_of_uuid(&DEMO_FRIEND) {
+        world.objects.remove_idx(idx);
+    }
+    for positions in world.coarse.values_mut() {
+        positions.retain(|(id, _)| *id != DEMO_FRIEND);
+    }
+    if let Some(f) = world.social.friends.iter_mut().find(|f| f.id == DEMO_FRIEND) {
+        f.online = mode != "offline";
+        f.rights_given = 3;
+        f.rights_has = if mode == "denied" { 1 } else { 3 };
+    }
+    if friend_join_flight_scenario() {
+        world.agent.flying = false;
+    } else if mode == "altitude" || friend_join_scenario() {
+        world
+            .agent
+            .get_off(glam::Vec3::new(world.agent.position.x, world.agent.position.y, 3000.0));
+        world.agent.flying = true;
     }
 }
 
@@ -5946,14 +6053,28 @@ pub fn texture_stress_events(n: u32) -> Vec<NetEvent> {
 /// AURORA_DEMO_TP_AWAY=1: the arrival in a region out of reach at frame 760,
 /// then back in the demo region at frame 960, before its simulator would
 /// have closed it: the objects of the demo region are parked, then come
-/// back as they were (world/parked.rs). The events of `frame`, if any.
-pub fn away_teleport(frame: u64, position: Vec3, look_at: Vec3) -> Option<Vec<NetEvent>> {
+/// back as they were (world/parked.rs). The demo region's simulator still
+/// sends its coarse locations at frame 800, as the grid's does while we are
+/// its child (`kept` holds them from the departure): they wait with its
+/// objects (issue #1000). The events of `frame`, if any.
+pub fn away_teleport(frame: u64, world: &crate::world::World, kept: &mut Vec<(Uuid, Vec3)>) -> Option<Vec<NetEvent>> {
     let handle = match frame {
         760 => HANDLE + ((100 * 256u64) << 32),
+        800 => {
+            std::env::var_os("AURORA_DEMO_TP_AWAY")?;
+            return Some(vec![NetEvent::CoarseLocations {
+                handle: HANDLE,
+                positions: std::mem::take(kept),
+            }]);
+        }
         960 => HANDLE,
         _ => return None,
     };
     std::env::var_os("AURORA_DEMO_TP_AWAY")?;
+    if frame == 760 {
+        *kept = world.coarse.get(&HANDLE).cloned().unwrap_or_default();
+    }
+    let (position, look_at) = (world.agent.position, world.agent.forward());
     Some(vec![
         NetEvent::TeleportFinished { handle },
         NetEvent::MainRegionChanged { handle },
@@ -6441,7 +6562,7 @@ pub fn crowd_events(n: u32, rigged: bool) -> Vec<NetEvent> {
 /// AURORA_DEMO_LIGHTS=<n>: `n` small local lights (64 for any value that is
 /// not a number) over the crowd's place and around it, 1.6 m apart at head
 /// height, as the face lights avatars wear and the lamps of a club. The
-/// renderer takes the 64 nearest.
+/// renderer takes 64, those that reach the view first (#1032).
 pub fn lights_count() -> Option<u32> {
     let v = std::env::var("AURORA_DEMO_LIGHTS").ok()?;
     Some(v.trim().parse().unwrap_or(64).min(256))

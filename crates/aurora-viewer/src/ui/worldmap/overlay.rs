@@ -1779,6 +1779,7 @@ impl WorldMapUi {
                 });
             });
         }
+        Self::friend_altitude_hint(ui, p, world);
         ui.add_space(8.0);
         let (mut go, mut copy, mut info, mut show, mut clear) = (false, false, false, false, false);
         ui.horizontal(|ui| {
@@ -1847,8 +1848,8 @@ impl WorldMapUi {
                         label
                     };
                 }
-            } else if let Some(t) = world.map.track.as_mut() {
-                t.z = z;
+            } else {
+                world.map.set_track_altitude(z);
             }
         }
         if go {

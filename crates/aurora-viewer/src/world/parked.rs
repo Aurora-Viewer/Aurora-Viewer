@@ -17,13 +17,16 @@
 //! are parked: taken out of the store, which frees everything the scene
 //! held for them, and kept here with the object events their region still
 //! sends. They return as they were when the region is entered again or back
-//! in reach, and go for good with the region (`RegionRemoved`).
+//! in reach, and go for good with the region (`RegionRemoved`). Its coarse
+//! locations wait with them: the avatars there are not around either.
 
 use super::World;
 use super::objects::{ObjKey, Object};
 use aurora_net::{NetEvent, RegionHandle, handle_to_origin};
+use glam::Vec3;
 use std::collections::HashSet;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// Farther than this from the agent's region, nothing of a region can be
 /// drawn: the draw distance stops at 512 m, and what a region holds stays
@@ -50,6 +53,12 @@ pub struct Parked {
     overrides: Vec<(ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>)>,
     /// Object events of the region received since, in order.
     events: Vec<NetEvent>,
+    /// Its last coarse locations: the simulator left keeps sending them
+    /// while the agent is its child, until it closes the region. Shown,
+    /// they would keep the avatars there "around" (issue #1000).
+    coarse: Option<Vec<(Uuid, Vec3)>>,
+    /// How many lists it sent while parked.
+    coarse_lists: usize,
 }
 
 impl World {
@@ -63,16 +72,27 @@ impl World {
             NetEvent::ObjectUpdates { handle, .. }
             | NetEvent::TerseUpdates { handle, .. }
             | NetEvent::ObjectsKilled { handle, .. }
-            | NetEvent::GltfOverrides { handle, .. } => *handle,
+            | NetEvent::GltfOverrides { handle, .. }
+            | NetEvent::CoarseLocations { handle, .. } => *handle,
             _ => return Some(ev),
         };
-        match self.parked.get_mut(&handle) {
-            Some(p) => {
-                p.events.push(ev);
-                None
+        let Some(p) = self.parked.get_mut(&handle) else {
+            return Some(ev);
+        };
+        match ev {
+            NetEvent::CoarseLocations { positions, .. } => {
+                p.coarse = Some(positions);
+                p.coarse_lists += 1;
+                if p.coarse_lists == 1 {
+                    log::info!(
+                        "region {} still sends its coarse locations: held while out of reach",
+                        self.regions.get(&handle).map_or("", |r| r.name.as_str())
+                    );
+                }
             }
-            None => Some(ev),
+            ev => p.events.push(ev),
         }
+        None
     }
 
     /// The agent has arrived in its region: the regions now out of reach
@@ -132,12 +152,15 @@ impl World {
             objects.len(),
             started.elapsed().as_secs_f64() * 1e3
         );
+        let coarse = self.coarse.remove(&handle);
         self.parked.insert(
             handle,
             Parked {
                 objects,
                 overrides,
                 events: Vec::new(),
+                coarse,
+                coarse_lists: 0,
             },
         );
     }
@@ -168,6 +191,9 @@ impl World {
         let events = p.events.len();
         for ev in p.events {
             self.apply(ev);
+        }
+        if let Some(positions) = p.coarse {
+            self.coarse.insert(handle, positions);
         }
         log::info!(
             "region {} is in reach again: {} objects back in {:.2} ms, {events} events caught up in {:.2} ms",

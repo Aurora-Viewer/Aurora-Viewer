@@ -228,6 +228,7 @@ impl Session<'_> {
                     method,
                     session,
                     result: None,
+                    not_found: false,
                 },
             );
             return;
@@ -236,14 +237,19 @@ impl Session<'_> {
         let events = self.sh.events.clone();
         tokio::spawn(async move {
             let body = llsd_map! { "method" => method.name(), "session-id" => session };
-            let result = match crate::caps::post_llsd(&http, &url, &body).await {
-                Ok(v) => Some(v),
+            let (result, not_found) = match crate::caps::post_llsd(&http, &url, &body).await {
+                Ok(v) => (Some(v), false),
                 Err(e) => {
                     log::warn!("ChatSessionRequest {} for {session}: {e}", method.name());
-                    None
+                    (None, matches!(e, crate::caps::CapsError::Status(404)))
                 }
             };
-            let _ = events.send(NetEvent::ChatSessionReply { method, session, result });
+            let _ = events.send(NetEvent::ChatSessionReply {
+                method,
+                session,
+                result,
+                not_found,
+            });
         });
     }
 
