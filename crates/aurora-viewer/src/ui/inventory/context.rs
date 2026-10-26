@@ -554,6 +554,8 @@ mod tests {
         for label in [
             aurora_i18n::tr!("common-teleport"),
             aurora_i18n::tr!("ui-inventory-context-about-landmark"),
+            aurora_i18n::tr!("common-copy-slurl"),
+            aurora_i18n::tr!("common-show-on-map"),
             aurora_i18n::tr!("common-properties"),
             aurora_i18n::tr!("common-rename"),
         ] {
@@ -562,6 +564,26 @@ mod tests {
                 "missing {label}"
             );
         }
+        let positions: Vec<_> = [
+            aurora_i18n::tr!("ui-inventory-context-about-landmark"),
+            aurora_i18n::tr!("common-copy-slurl"),
+            aurora_i18n::tr!("common-show-on-map"),
+            aurora_i18n::tr!("common-properties"),
+        ]
+        .into_iter()
+        .map(|label| {
+            output
+                .shapes
+                .iter()
+                .find_map(|s| text_position(&s.shape, label))
+                .expect("menu row")
+                .y
+        })
+        .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "destination actions stay together above properties"
+        );
     }
     #[test]
     fn folder_window_menu_targets_the_clicked_folder_including_the_library() {

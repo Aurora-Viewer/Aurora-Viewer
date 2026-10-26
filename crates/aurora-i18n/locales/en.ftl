@@ -2078,6 +2078,7 @@ ui-land-sound-copy-music-stream-url-to-clipboard = Copy music stream URL to clip
 build-ui-general-copy-uuid = Copy UUID
 ui-profile-copy-agent-uuid-key = Copy agent UUID / key
 common-copy-slurl = Copy SLurl
+inventory-landmark-location-unknown = This landmark's location could not be resolved. Please try again later.
 ui-options-commands-copy-camera = Copy camera
 build-ui-general-copy-object-keys-shift-all-parts = Copy object keys (Shift: all parts)
 ui-options-commands-copy-camera-position-to-clipboard = Copy camera position to clipboard

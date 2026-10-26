@@ -101,6 +101,8 @@ pub enum InvAction {
     /// "About Landmark" (LLLandmarkBridge "about"): its profile, as
     /// item and asset.
     AboutLandmark(Uuid, Uuid),
+    CopyLandmarkSlurl(Uuid),
+    ShowLandmarkOnMap(Uuid),
     Edit(Mutation),
     Create {
         parent: Uuid,

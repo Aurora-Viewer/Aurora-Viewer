@@ -341,6 +341,7 @@ pub fn target(view: &str, inv: &Inventory) -> Option<Uuid> {
         | "folder-window-search" => 8000,
         "move-item" | "move-multi" | "move-filter" | "move-window" | "move-menu" => 8100,
         "uuid" | "uuid-restricted" | "uuid-missing" | "uuid-multi" => 8104,
+        "landmark" | "aurora-landmark" => 8120,
         "object"
         | "properties"
         | "properties-no-mod"
