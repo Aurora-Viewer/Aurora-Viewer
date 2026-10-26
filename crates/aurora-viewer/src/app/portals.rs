@@ -112,7 +112,7 @@ impl App {
         let center = Vec3::from(portal.center);
         let phase = (self.frame_count.saturating_sub(420) % 360) as f32 / 60.0;
         let distance = match mode {
-            "slice-still" | "slice-large" => 0.12,
+            "slice-still" | "slice-large" | "slice-wide" | "slice-wide-reverse" => 0.12,
             "slice-run" => 2.0 - phase * 0.9,
             _ => 1.2 - phase * 0.4,
         };
@@ -168,14 +168,28 @@ impl App {
             worn.parent_id = local;
             worn.state = 0x60;
             worn.position = Vec3::ZERO;
-            worn.rotation = glam::Quat::IDENTITY;
-            worn.scale = Vec3::new(if mode == "slice-large" { 3.0 } else { 1.2 }, 0.12, 0.12);
+            worn.rotation = if mode.starts_with("slice-wide") {
+                glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
+            } else {
+                glam::Quat::IDENTITY
+            };
+            worn.scale = Vec3::new(
+                if mode.starts_with("slice-wide") {
+                    4.2
+                } else if mode == "slice-large" {
+                    3.0
+                } else {
+                    1.2
+                },
+                0.12,
+                0.12,
+            );
             self.world.apply(NetEvent::ObjectUpdates {
                 handle,
                 objects: vec![worn],
             });
             self.camera.set_view(
-                center + tangent * 5.0 + normal * if mode == "slice-reverse" { -4.0 } else { 4.0 } + Vec3::Z * 2.2,
+                center + tangent * 5.0 + normal * if mode.ends_with("reverse") { -4.0 } else { 4.0 } + Vec3::Z * 2.2,
                 center,
                 &mut self.world.agent,
                 &self.settings.camera,

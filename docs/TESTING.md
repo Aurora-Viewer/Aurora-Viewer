@@ -137,7 +137,7 @@ requests, revocation before a queued reply, close/expiry and bridge 1.37 upgrade
 Both creation announcements and discovery replies must omit private destinations;
 inspect wire-level tests, not just labels. Old portal-v1 traffic is not accepted.
 
-`AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse`
+`AURORA_DEMO_PORTALS=slice-walk|slice-run|slice-fly|slice-still|slice-large|slice-reverse|slice-wide|slice-wide-reverse`
 adds an observed avatar with continuous locomotion animation, a skinned mesh
 and a long rigid hand attachment. The camera observes the portal obliquely
 (from the other side with `slice-reverse`). `slice-still` and `slice-large`
@@ -146,6 +146,13 @@ cut at the portal plane. Capture several animation phases; compare the same
 scenario with `AURORA_PORTAL_CLIP=0`. Traversal never pauses or restarts an
 animation. Portal clipping is visual and does not arm a teleport gate.
 Use `AURORA_DEMO_POS=100,100` for a clear patch away from the plaza exhibits.
+`slice-wide` and `slice-wide-reverse` keep the root still with a
+4.2 m rigid attachment: only the part inside the oval may disappear, never
+the parts above or beside it. The rim/corona is decorative and must not
+enlarge that mask. Check body, skinned and rigid worn geometry from both
+camera sides. Ordinary portals now show theme-based Aurora currents, a dark
+indigo/navy core and a violet/teal rim with glow; reduced motion freezes their
+animation, and denied/private observers retain muted colors and hidden details.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal

@@ -1,5 +1,5 @@
-//! Shared GPU disc and procedural aperture texture, depth-tested and sorted
-//! with world transparency. No simulator objects, physics or per-frame uploads.
+//! Shared GPU aperture with procedural Aurora flow, depth-tested and sorted
+//! with world transparency/glow. No texture generation or particle uploads.
 use crate::{
     theme::Palette,
     world::{
@@ -7,12 +7,12 @@ use crate::{
         portals::{HEIGHT, WIDTH},
     },
 };
-use aurora_render::{DrawCmd, DrawRecord, MeshAlloc, MipLevel, Renderer, Vertex, build_mips, types::flags};
+use aurora_render::{DrawCmd, DrawRecord, MeshAlloc, PortalClip, Renderer, Vertex, types::flags};
 use glam::{Mat4, Quat, Vec3};
 use std::collections::{HashMap, HashSet};
 mod clipping;
 
-fn object_plane(gpu: &super::ObjGpu, index: usize, planes: &HashMap<usize, [f32; 4]>) -> Option<[f32; 4]> {
+fn object_plane(gpu: &super::ObjGpu, index: usize, planes: &HashMap<usize, PortalClip>) -> Option<PortalClip> {
     if gpu.hud {
         return None;
     }
@@ -21,11 +21,10 @@ fn object_plane(gpu: &super::ObjGpu, index: usize, planes: &HashMap<usize, [f32;
 
 #[derive(Default)]
 pub struct Portals {
-    pub planes: HashMap<usize, [f32; 4]>,
+    pub planes: HashMap<usize, PortalClip>,
     clipped: HashSet<usize>,
     clipping: clipping::Clipping,
     quad: Option<MeshAlloc>,
-    texture: Option<u32>,
     records: Vec<u32>,
     pub cmds: Vec<(f32, DrawCmd)>,
 }
@@ -41,85 +40,60 @@ impl Portals {
         if let Some(mesh) = self.quad.take() {
             renderer.free_mesh(mesh);
         }
-        if let Some(texture) = self.texture.take() {
-            renderer.free_texture(texture);
-        }
         self.cmds.clear();
     }
 
-    pub fn update(&mut self, renderer: &mut Renderer, world: &World, eye: Vec3, palette: &Palette, time: f32, animate: bool) {
+    pub fn update(&mut self, renderer: &mut Renderer, world: &World, eye: Vec3, palette: &Palette, _time: f32, animate: bool) {
         self.cmds.clear();
         if !world.portals.entries.is_empty() && self.quad.is_none() {
-            let mut vertices = vec![Vertex::new([0.0; 3], [0.0, -1.0, 0.0], [0.5, 0.5])];
-            let mut indices = Vec::with_capacity(64 * 6);
-            for i in 0..64u16 {
-                let angle = i as f32 * std::f32::consts::TAU / 64.0;
-                let (z, x) = angle.sin_cos();
-                vertices.push(Vertex::new([x, 0.0, z], [0.0, -1.0, 0.0], [x * 0.5 + 0.5, 0.5 - z * 0.5]));
-                let next = (i + 1) % 64 + 1;
-                indices.extend_from_slice(&[0, i + 1, next, 0, next, i + 1]);
-            }
-            // A disc keeps rotated UVs inside the texture's inscribed circle;
-            // the ordinary repeating world sampler cannot repeat its corners.
+            let vertices = [
+                Vertex::new([-1.0, 0.0, -1.0], [0.0, -1.0, 0.0], [0.0, 1.0]),
+                Vertex::new([1.0, 0.0, -1.0], [0.0, -1.0, 0.0], [1.0, 1.0]),
+                Vertex::new([1.0, 0.0, 1.0], [0.0, -1.0, 0.0], [1.0, 0.0]),
+                Vertex::new([-1.0, 0.0, 1.0], [0.0, -1.0, 0.0], [0.0, 0.0]),
+            ];
+            // Two windings for the ordinary back-face-culled blend/glow passes.
+            // The shader keeps the actual opening at r=1 and fades its corona
+            // outside it; the corona never enlarges avatar clipping.
+            let indices = [0, 1, 2, 0, 2, 3, 2, 1, 0, 3, 2, 0];
             self.quad = renderer.upload_mesh(&vertices, &indices);
         }
-        if !world.portals.entries.is_empty() && self.texture.is_none() {
-            let size = 128;
-            let mut pixels = Vec::with_capacity(size * size * 4);
-            for y in 0..size {
-                for x in 0..size {
-                    let u = (x as f32 + 0.5) / size as f32 * 2.0 - 1.0;
-                    let v = (y as f32 + 0.5) / size as f32 * 2.0 - 1.0;
-                    let radius = u.hypot(v);
-                    let ring = (1.0 - (radius - 0.91).abs() / 0.065).clamp(0.0, 1.0);
-                    let swirl = ((v.atan2(u) * 4.0 + radius * 17.0).sin() * 0.5 + 0.5) * 0.25;
-                    let alpha = if radius < 0.94 { 0.18 + swirl + ring * 0.6 } else { ring * 0.9 };
-                    pixels.extend_from_slice(&[255, 255, 255, (alpha.clamp(0.0, 1.0) * 255.0) as u8]);
-                }
-            }
-            let mips = build_mips(size as u32, size as u32, pixels, 8);
-            let levels: Vec<_> = mips
-                .iter()
-                .map(|(w, h, data)| MipLevel {
-                    width: *w,
-                    height: *h,
-                    data,
-                })
-                .collect();
-            self.texture = renderer.create_texture(&levels);
-        }
-        let (Some(quad), Some(texture)) = (self.quad, self.texture) else {
+        let Some(quad) = self.quad else {
             return;
         };
         let mut used = 0;
         for entry in &world.portals.entries {
             let portal = &entry.portal;
             let center = Vec3::from(portal.center);
-            let color = if entry.allowed(world) {
-                palette.violet_light
-            } else {
-                palette.muted
-            };
+            let allowed = entry.allowed(world);
+            let rgba = |color: egui::Color32| color.to_srgba_unmultiplied().map(|value| value as f32 / 255.0);
+            let accent = |color| rgba(if allowed { color } else { palette.muted });
             let record = DrawRecord {
                 model: Mat4::from_scale_rotation_translation(
-                    Vec3::new(WIDTH, 1.0, HEIGHT),
+                    Vec3::new(
+                        WIDTH * aurora_render::PORTAL_SURFACE_SCALE,
+                        1.0,
+                        HEIGHT * aurora_render::PORTAL_SURFACE_SCALE,
+                    ),
                     Quat::from_rotation_z(portal.yaw - std::f32::consts::FRAC_PI_2),
                     center,
                 )
                 .to_cols_array_2d(),
-                base_color: color.to_srgba_unmultiplied().map(|value| value as f32 / 255.0),
-                params: [if animate { time * 0.15 } else { 0.0 }, 0.0, 0.8, 0.5],
-                tex: [
-                    texture,
-                    aurora_render::textures::FLAT_NORMAL,
-                    aurora_render::textures::WHITE,
-                    aurora_render::textures::WHITE,
+                base_color: accent(palette.violet),
+                emissive: accent(palette.teal),
+                spec_color: accent(palette.indigo_light),
+                legacy: rgba(palette.navy),
+                params: [0.0, if animate { 1.0 } else { 0.0 }, if allowed { 1.0 } else { 0.35 }, 0.5],
+                flags: [
+                    flags::FULLBRIGHT | flags::ALPHA_BLEND | flags::DOUBLE_SIDED | flags::PORTAL_EFFECT,
+                    0,
+                    0,
+                    0,
                 ],
-                flags: [flags::FULLBRIGHT | flags::ALPHA_BLEND, 0, 0, 0],
                 ..Default::default()
             };
             let slot = if let Some(&slot) = self.records.get(used) {
-                renderer.records.set(slot, record);
+                renderer.records.set_if_changed(slot, record);
                 slot
             } else {
                 let slot = renderer.records.alloc(record);
@@ -146,10 +120,7 @@ impl Portals {
 
 impl super::Scene {
     pub fn portal_keeps_point(&self, avatar: usize, point: Vec3) -> bool {
-        self.portals
-            .planes
-            .get(&avatar)
-            .is_none_or(|plane| Vec3::from_slice(&plane[..3]).dot(point) + plane[3] >= -0.0001)
+        self.portals.planes.get(&avatar).is_none_or(|plane| plane.keeps_point(point))
     }
 
     pub fn update_portal_clipping(&mut self, renderer: &mut Renderer, world: &World) {
@@ -206,14 +177,14 @@ impl super::Scene {
                 continue;
             };
             for face in &gpu.faces {
-                renderer.records.set_portal_clip(face.record, plane);
+                renderer.records.set_portal_clip(face.record, Some(plane));
             }
             next.insert(index);
         }
         for index in self.portals.clipped.difference(&next) {
             if let Some(gpu) = self.gpu.get(*index) {
                 for face in &gpu.faces {
-                    renderer.records.set_portal_clip(face.record, [0.0; 4]);
+                    renderer.records.set_portal_clip(face.record, None);
                 }
             }
         }
@@ -226,7 +197,7 @@ mod tests {
     use super::*;
     #[test]
     fn portal_plane_is_shared_by_body_rigid_and_skinned_attachments_but_never_huds_or_world_objects() {
-        let plane = [1.0, 0.0, 0.0, -12.0];
+        let plane = PortalClip::new(Vec3::new(12.0, 0.0, 0.0), Vec3::X).unwrap();
         let planes = HashMap::from([(7, plane)]);
         let body = super::super::ObjGpu {
             is_avatar: true,

@@ -16,8 +16,8 @@ use std::{
 };
 use uuid::Uuid;
 
-pub const WIDTH: f32 = 1.0;
-pub const HEIGHT: f32 = 1.5;
+pub const WIDTH: f32 = aurora_render::PORTAL_HALF_WIDTH;
+pub const HEIGHT: f32 = aurora_render::PORTAL_HALF_HEIGHT;
 const LIMIT: usize = 64;
 const CLEARANCE: f32 = 3.5;
 const SEND_INTERVAL: Duration = Duration::from_millis(250);

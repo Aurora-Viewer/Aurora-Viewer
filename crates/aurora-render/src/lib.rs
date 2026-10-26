@@ -28,6 +28,8 @@ pub mod main_thread;
 mod occlusion;
 mod packet;
 mod pick;
+#[cfg(test)]
+mod portal_tests;
 pub mod present;
 pub mod preview;
 pub mod probes;

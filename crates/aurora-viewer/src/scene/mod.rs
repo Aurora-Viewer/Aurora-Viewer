@@ -4579,18 +4579,18 @@ impl Scene {
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
         self.blend_tmp.extend(
-            self.banlines
-                .cmds
-                .iter()
-                .chain(self.portals.cmds.iter())
-                .map(|(d, c)| blend_order::BlendEntry {
-                    distance: *d,
-                    cmd: *c,
-                    glow: false,
-                    rigged: false,
-                    object: u32::MAX,
-                    face: 0,
-                    rig: None,
+            [(self.banlines.cmds.as_slice(), false), (self.portals.cmds.as_slice(), true)]
+                .into_iter()
+                .flat_map(|(cmds, glow)| {
+                    cmds.iter().map(move |(d, c)| blend_order::BlendEntry {
+                        distance: *d,
+                        cmd: *c,
+                        glow,
+                        rigged: false,
+                        object: u32::MAX,
+                        face: 0,
+                        rig: None,
+                    })
                 }),
         );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());

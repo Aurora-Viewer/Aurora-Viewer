@@ -143,6 +143,58 @@ pub mod flags {
     /// expressions, hand poses), evaluated before skinning.
     pub const LIP_SYNC: u32 = 8192;
     pub const PORTAL_CLIP: u32 = 16384;
+    /// Procedural Aurora portal surface; uses the ordinary sorted blend/glow.
+    pub const PORTAL_EFFECT: u32 = 32768;
+}
+
+pub const PORTAL_HALF_WIDTH: f32 = 1.0;
+pub const PORTAL_HALF_HEIGHT: f32 = 1.5;
+pub const PORTAL_SURFACE_SCALE: f32 = 1.16;
+
+/// One vector keeps the cut local without growing every world-face record:
+/// center.xyz, and the horizontal entry normal on a signed diamond perimeter.
+/// Decoding needs only normalization, no per-fragment trigonometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PortalClip {
+    pub data: [f32; 4],
+}
+
+impl PortalClip {
+    pub fn new(center: Vec3, normal: Vec3) -> Option<Self> {
+        if !center.is_finite() || !normal.is_finite() || normal.z.abs() > 1e-5 {
+            return None;
+        }
+        let normal = normal.try_normalize()?;
+        let mut direction = normal.y / (normal.x.abs() + normal.y.abs());
+        if normal.x < 0.0 {
+            direction = if normal.y < 0.0 { -1.0 } else { 1.0 } * (2.0 - direction.abs());
+        }
+        Some(Self {
+            data: center.extend(direction).to_array(),
+        })
+    }
+
+    pub fn normal(self) -> Vec3 {
+        let code = self.data[3];
+        let y = if code.abs() > 1.0 {
+            code.signum() * (2.0 - code.abs())
+        } else {
+            code
+        };
+        Vec3::new(1.0 - code.abs(), y, 0.0).normalize()
+    }
+
+    /// CPU picking uses the same finite aperture as every GPU surface pass.
+    pub fn keeps_point(self, point: Vec3) -> bool {
+        let local = point - Vec3::from_slice(&self.data[..3]);
+        let normal = self.normal();
+        if local.dot(normal) >= -0.0001 {
+            return true;
+        }
+        let across = local.dot(Vec3::new(-normal.y, normal.x, 0.0)) / PORTAL_HALF_WIDTH;
+        let height = local.z / PORTAL_HALF_HEIGHT;
+        across * across + height * height > 1.0
+    }
 }
 
 /// Layout of a skeleton's palette in the palettes buffer: its joints, then
@@ -190,8 +242,8 @@ pub struct DrawRecord {
     /// its own in the 4 bits above (0: the frame's), z and w the world
     /// height of the object's bottom and its height (f32 bits).
     pub rez: [u32; 4],
-    /// Keep the entry side of a portal: dot(plane, world_position.xyz1) >= 0.
-    /// Zero disables clipping, including for HUDs and unrelated objects.
+    /// Finite portal cut: center.xyz and encoded horizontal entry direction.
+    /// Only active with PORTAL_CLIP; zero is also a valid opening at the origin.
     pub portal_clip: [f32; 4],
 }
 
@@ -1658,6 +1710,40 @@ mod tests {
         assert!(destination.portal_clipping);
         destination.clear();
         assert!(!destination.portal_clipping);
+    }
+
+    #[test]
+    fn portal_aperture_keeps_geometry_outside_the_oval_for_both_sides_and_rotated_centers() {
+        let wgsl = include_str!("shaders/common.wgsl");
+        assert!(wgsl.contains(&format!("const PORTAL_HALF_WIDTH: f32 = {PORTAL_HALF_WIDTH:.1};")));
+        assert!(wgsl.contains(&format!("const PORTAL_HALF_HEIGHT: f32 = {PORTAL_HALF_HEIGHT:.1};")));
+        assert!(wgsl.contains(&format!("const PORTAL_SURFACE_SCALE: f32 = {PORTAL_SURFACE_SCALE:.2};")));
+        assert!(wgsl.contains(&format!("const FLAG_PORTAL_EFFECT: u32 = {}u;", flags::PORTAL_EFFECT)));
+        for center in [Vec3::ZERO, Vec3::new(214.0, 185.0, 60.0)] {
+            for step in 0..32 {
+                let angle = step as f32 * std::f32::consts::TAU / 32.0;
+                let normal = Vec3::new(angle.cos(), angle.sin(), 0.0);
+                let across = Vec3::new(-normal.y, normal.x, 0.0);
+                for side in [-1.0, 1.0] {
+                    let clip = PortalClip::new(center, normal * side).unwrap();
+                    assert!(clip.normal().dot(normal * side) > 0.999999);
+                    let front = center + normal * side * 0.2;
+                    let back = center - normal * side * 0.2;
+                    assert!(clip.keeps_point(front));
+                    assert!(!clip.keeps_point(back));
+                    assert!(!clip.keeps_point(back + across * (PORTAL_HALF_WIDTH * 0.99)));
+                    assert!(clip.keeps_point(back + across * (PORTAL_HALF_WIDTH * 1.01)));
+                    assert!(clip.keeps_point(back + Vec3::Z * (PORTAL_HALF_HEIGHT * 1.01)));
+                    assert!(!clip.keeps_point(back + across * 0.5 + Vec3::Z * 0.5));
+                    // Inside the bounding rectangle, outside the ellipse.
+                    assert!(clip.keeps_point(back + across * 0.8 + Vec3::Z * (PORTAL_HALF_HEIGHT * 0.8)));
+                }
+            }
+        }
+        assert_eq!(PortalClip::new(Vec3::NAN, Vec3::X), None);
+        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::ZERO), None);
+        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::Z), None);
+        assert_eq!(PortalClip::new(Vec3::ZERO, Vec3::X).unwrap().data, [0.0; 4]);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Geometry-driven portal cuts. An avatar root may stay still while its posed
 //! body or a worn object reaches the plane. Entry side is independent of camera.
+use aurora_render::PortalClip;
 use glam::Vec3;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -47,9 +48,8 @@ impl Aperture {
         (delta.dot(tangent) / width).powi(2) + (delta.z / height).powi(2) <= 1.0
     }
 
-    fn plane(&self, side: f32) -> [f32; 4] {
-        let normal = self.normal * side;
-        normal.extend(-normal.dot(self.center)).to_array()
+    fn plane(&self, side: f32) -> Option<PortalClip> {
+        PortalClip::new(self.center, self.normal * side)
     }
 }
 
@@ -58,7 +58,7 @@ impl Clipping {
         self.cuts.clear();
     }
 
-    pub fn update(&mut self, portals: &[Aperture], avatars: &[Avatar]) -> HashMap<usize, [f32; 4]> {
+    pub fn update(&mut self, portals: &[Aperture], avatars: &[Avatar]) -> HashMap<usize, PortalClip> {
         let mut planes = HashMap::new();
         let mut next = HashMap::new();
         for avatar in avatars {
@@ -86,8 +86,10 @@ impl Clipping {
                 },
                 |old| old.side,
             );
-            next.insert(avatar.id, Cut { key: portal.key, side });
-            planes.insert(avatar.index, portal.plane(side));
+            if let Some(clip) = portal.plane(side) {
+                next.insert(avatar.id, Cut { key: portal.key, side });
+                planes.insert(avatar.index, clip);
+            }
         }
         self.cuts = next;
         planes
@@ -113,8 +115,8 @@ mod tests {
             bounds,
         }
     }
-    fn visible(plane: [f32; 4], vertex: Vec3) -> bool {
-        Vec3::from_slice(&plane[..3]).dot(vertex) + plane[3] >= -0.0001
+    fn visible(plane: PortalClip, vertex: Vec3) -> bool {
+        plane.keeps_point(vertex)
     }
 
     #[test]
@@ -129,6 +131,14 @@ mod tests {
         assert!(visible(plane, root));
         assert!(visible(plane, Vec3::new(0.2, 0.0, 0.0)));
         assert!(!visible(plane, Vec3::new(-0.2, 0.0, 0.0)));
+        assert!(
+            visible(plane, Vec3::new(-0.2, 1.1, 0.0)),
+            "a wide attachment beyond the rim remains visible"
+        );
+        assert!(
+            visible(plane, Vec3::new(-0.2, 0.0, 1.6)),
+            "an extended limb above the opening remains visible"
+        );
     }
 
     #[test]

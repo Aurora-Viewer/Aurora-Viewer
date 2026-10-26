@@ -82,8 +82,11 @@ membership at crossing, then `app/portals.rs` uses the ordinary user location
 teleport boundary, retaining RLVa and simulator destination access checks.
 Near-spawn observers must first leave a 3.5 m clearance; standing inside,
 involuntary motion, position jumps and replayed announcements never trigger.
-`scene/portals.rs` shares one procedural aperture texture and one GPU disc,
-depth-tested and sorted with world transparency. `ui/portals.rs` provides
+`scene/portals.rs` shares one GPU quad with an analytic Aurora surface,
+depth-tested and sorted with world transparency/glow. Theme violet, indigo,
+teal and navy drive its flowing depth, fine rim and soft corona; the GPU
+animation clock runs it, with a static reduced-motion variant. No texture or
+particle uploads; unchanged portal records are not rewritten. `ui/portals.rs` provides
 World > Portals and depth-occluded destination/creator/access labels. This is
 an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation
 and teleportRequest (`indra/newview/llagent.cpp`).
@@ -118,16 +121,21 @@ arrival path applies both flying and grounded states with the explicit fly-after
 teleport preference. Only the current agent circuit may update our avatar's
 animations; late packets from a previous region cannot restore stale flight.
 
-`scene/portals/clipping.rs` assigns a stable entry-side plane from the posed
+`scene/portals/clipping.rs` assigns a stable entry side from the posed
 body and worn-object bounds, independently of locomotion or teleport gates.
 Every system-body, skinned-mesh and rigid world-attachment face receives the
-same GPU plane. Fragment clipping uses world positions after deformation;
+same finite elliptical opening. Fragment clipping uses world positions after deformation;
 stationary roots, moving limbs, large attachments and animated attachment
-points are included. Active subjects stay fully animated instead of using an
+points are included; fragments beyond the plane but outside the oval remain
+visible, including its rectangular corners. The decorative corona never
+enlarges the cut. Active subjects stay fully animated instead of using an
 impostor. Color, alpha, depth/Hi-Z/contact shadows, picking, glow and reflection
 passes agree; opaque depth and shadow fast paths remain unchanged when no
-cut is active. The shared draw record adds one plane vector, disabled by
-default. HUDs and unrelated scene geometry are excluded.
+cut is active. The existing one-vector draw-record field holds the center and
+a compact horizontal entry direction, with no record-stride growth. CPU picking
+uses the same opening; `aurora-render/src/portal_tests.rs` renders the production
+fragment cut against rotated/transformed samples. HUDs and unrelated geometry
+are excluded.
 
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer
