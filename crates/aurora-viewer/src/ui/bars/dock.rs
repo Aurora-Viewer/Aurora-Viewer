@@ -765,6 +765,55 @@ mod tests {
         assert!(!bench.chat.has_focus);
     }
 
+    #[test]
+    fn gesture_chat_focuses_the_bar_and_preserves_its_draft() {
+        let slash = winit::keyboard::Key::Character("/".into());
+        let code = winit::keyboard::KeyCode::NumpadDivide;
+        let mods = crate::keybinds::Mods::default();
+        for draft in ["", "a draft with é", "/5 pending", " "] {
+            let mut bench = Bench::shown();
+            bench.chat.input = draft.into();
+            let im = uuid::Uuid::from_u128(100);
+            bench.chat.selected = Some(im);
+            *bench.chat.draft_mut(Some(im)) = "an IM draft".into();
+            *bench.chat.draft_mut(None) = "the nearby conversation draft".into();
+            assert!(bench.chat.gesture_key(&bench.ctx, &slash, code, true, mods));
+            assert!(!bench.chat.focus_request);
+            bench.frame(vec![
+                key(egui::Key::Slash, true, egui::Modifiers::NONE),
+                egui::Event::Text("/".into()),
+            ]);
+            assert_eq!(bench.chat.input, draft);
+            assert!(bench.chat.gesture_key(&bench.ctx, &slash, code, false, mods));
+            // The native action runs on release; the press's text already
+            // passed through egui without the bar owning the keyboard.
+            bench.frame(vec![key(egui::Key::Slash, false, egui::Modifiers::NONE)]);
+            bench.frame(vec![]);
+            assert!(bench.chat.has_focus);
+            let expected = if draft.is_empty() { "/" } else { draft };
+            assert_eq!(bench.chat.input, expected);
+            assert_eq!(bench.chat.selected, Some(im));
+            assert_eq!(bench.chat.draft_mut(Some(im)), "an IM draft");
+            assert_eq!(bench.chat.draft_mut(None), "the nearby conversation draft");
+            // Typing continues at the end, including after an old caret.
+            crate::ui::chat::cursor_to_end(&bench.ctx, crate::ui::chat::bar_input_id(), "");
+            bench.ctx.memory_mut(|m| m.surrender_focus(crate::ui::chat::bar_input_id()));
+            assert!(bench.chat.gesture_key(&bench.ctx, &slash, code, true, mods));
+            assert!(bench.chat.gesture_key(&bench.ctx, &slash, code, false, mods));
+            bench.frame(vec![]);
+            bench.frame(vec![egui::Event::Text("hello".into())]);
+            assert_eq!(bench.chat.input, format!("{expected}hello"));
+            let (sent, _, _) = bench.frame(vec![key(egui::Key::Enter, true, egui::Modifiers::NONE)]);
+            let sent = sent.expect("the command is ready to send");
+            if draft == "/5 pending" {
+                assert_eq!((sent.channel, sent.message.as_str()), (5, "pendinghello"));
+            } else {
+                assert_eq!(sent.channel, 0);
+                assert_eq!(sent.message, format!("{expected}hello").trim());
+            }
+        }
+    }
+
     /// With "keep the chat bar active" (`keep_focus`): a message sent leaves
     /// the field with the keyboard, Enter on the empty field gives it back to
     /// the world, and the next Enter (the viewer's chat shortcut) takes it
