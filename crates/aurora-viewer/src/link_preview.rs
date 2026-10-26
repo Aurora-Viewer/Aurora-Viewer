@@ -16,12 +16,14 @@
 //! * at most `MAX_BYTES`, refused before the body when the server announces
 //!   more; the decoding runs on a blocking thread, within pixel limits;
 //! * pictures are kept at the size they are drawn at, the frames of an
-//!   animated GIF within a memory budget.
+//!   animated GIF or WebP within a memory budget;
+//! * a video file plays only from a trusted site (`Clip`, #983), and nothing
+//!   of it is fetched before its play button is clicked.
 //!
 //! The page of an image service (Gyazo, Flickr, Imgur, Lightshot, Reddit) or
 //! a Bluesky or X post leads to its picture first (`services.rs`, #923,
 //! #1051), within the same rules; so does a page of the user's own picture
-//! sites (#1063).
+//! sites (#1063). A Gyazo video capture leads to its file.
 
 use crate::link_trust::Trust;
 use serde::{Deserialize, Serialize};
@@ -192,8 +194,132 @@ pub enum Place {
 pub enum Target {
     Picture,
     Video(Video),
+    /// A video file on a trusted site.
+    Clip(Clip),
     /// The page of an image service, which leads to its picture.
     Page(Service),
+}
+
+/// A video file the media plugins' browser plays in a video card (#983):
+/// an `.mp4` or `.webm` link, an Imgur `.gifv` (its `.mp4`), a Gyazo video
+/// capture. Only from the trusted sites of `link_trust.rs`: the browser,
+/// unlike the preview downloads, sends a site whatever it sends.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Clip {
+    /// The file's https address.
+    pub file: String,
+}
+
+impl Clip {
+    /// The clip a link names: an https video file on a trusted site, without
+    /// credentials or port; an Imgur `.gifv` page leads to its `.mp4`.
+    pub fn of(url: &str) -> Option<Clip> {
+        let mut parsed = reqwest::Url::parse(url).ok()?;
+        if parsed.scheme() != "https" || !parsed.username().is_empty() || parsed.password().is_some() || parsed.port().is_some() {
+            return None;
+        }
+        let path = parsed.path().to_lowercase();
+        if path.ends_with(".gifv") && host(url).as_deref() == Some("i.imgur.com") {
+            let mp4 = format!("{}.mp4", &parsed.path()[..parsed.path().len() - ".gifv".len()]);
+            parsed.set_path(&mp4);
+            parsed.set_query(None);
+        } else if !(path.ends_with(".mp4") || path.ends_with(".webm")) {
+            return None;
+        }
+        parsed.set_fragment(None);
+        let file = String::from(parsed);
+        (crate::link_trust::classify(&file) == Trust::Trusted).then_some(Clip { file })
+    }
+
+    /// The page the browser opens to play it, a page of our own served on
+    /// this machine (`clip_page`), which reports the clip's shape under
+    /// `key`; the file alone when that page cannot be served.
+    pub fn player_page(&self, options: &PlayerOptions, key: u64) -> String {
+        match player_server() {
+            Some(port) => {
+                let base = format!("http://127.0.0.1:{port}/clip");
+                let volume = options.volume.min(100).to_string();
+                let key = key.to_string();
+                reqwest::Url::parse_with_params(&base, [("k", key.as_str()), ("vol", volume.as_str()), ("src", self.file.as_str())])
+                    .map(String::from)
+                    .unwrap_or_else(|_| self.file.clone())
+            }
+            None => self.file.clone(),
+        }
+    }
+}
+
+/// Text fit for a double-quoted HTML attribute.
+fn attribute_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// The page holding a clip (checked), looping as a GIF does, with the
+/// browser's own controls. It sends no referrer, starts at the volume kept
+/// and reports the changes made with its slider (`/volume`, as YouTube's
+/// player does, #848), and reports the clip's shape once known
+/// (`/aspect`): a link names no size. A browser that refuses to start a
+/// clip with sound starts it muted.
+fn clip_page(clip: &Clip, volume: u8, key: u64) -> String {
+    let src = attribute_text(&clip.file);
+    let volume = volume.min(100);
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\">\
+         <meta name=\"referrer\" content=\"no-referrer\">\
+         <style>html,body{{margin:0;height:100%;background:#000;overflow:hidden}}\
+         video{{display:block;width:100%;height:100%;object-fit:contain}}</style></head><body>\
+         <video src=\"{src}\" autoplay loop controls playsinline></video>\
+         <script>(function(){{var v=document.querySelector('video'),l={volume};v.volume=l/100;\
+         v.addEventListener('loadedmetadata',function(){{if(v.videoWidth&&v.videoHeight)\
+         new Image().src='/aspect?k={key}&w='+v.videoWidth+'&h='+v.videoHeight;}});\
+         v.addEventListener('volumechange',function(){{var n=Math.round(v.volume*100);\
+         if(n!==l){{l=n;new Image().src='/volume?v='+n;}}}});\
+         var p=v.play();if(p&&p.catch)p.catch(function(){{v.muted=true;v.play();}});}})();</script>\
+         </body></html>"
+    )
+}
+
+/// The page of a clip for a request line of the player server
+/// (`GET /clip?k=<key>&vol=<0-100>&src=<file>`): the file must be a clip
+/// as a link would name it.
+fn clip_answer(request: &str) -> Option<String> {
+    let path = request.strip_prefix("GET ")?.split(' ').next()?;
+    if !path.starts_with("/clip?") {
+        return None;
+    }
+    let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{path}")).ok()?;
+    let param = |name: &str| parsed.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned());
+    let src = param("src")?;
+    let clip = Clip::of(&src).filter(|c| c.file == src)?;
+    let key = param("k").and_then(|v| v.parse::<u64>().ok())?;
+    let volume = param("vol").and_then(|v| v.parse::<u8>().ok()).unwrap_or(100);
+    Some(clip_page(&clip, volume, key))
+}
+
+/// A clip's shape its page reports (`GET /aspect?k=<key>&w=<px>&h=<px>`).
+fn aspect_answer(request: &str) -> Option<(u64, f32)> {
+    let query = request.strip_prefix("GET /aspect?")?.split(' ').next()?;
+    let param = |name: &str| {
+        query
+            .split('&')
+            .find_map(|kv| kv.strip_prefix(name).and_then(|v| v.strip_prefix('=')))
+    };
+    let key = param("k")?.parse::<u64>().ok()?;
+    let (w, h) = (param("w")?.parse::<u32>().ok()?, param("h")?.parse::<u32>().ok()?);
+    Some((key, aspect(f64::from(w), f64::from(h))?))
+}
+
+/// The last shape a clip's page reported, with its key, not yet taken.
+static REPORTED_ASPECT: std::sync::Mutex<Option<(u64, f32)>> = std::sync::Mutex::new(None);
+
+/// The shape of the clip playing under `key`, width over height, once its
+/// page knows it: the card and the player window take it.
+pub fn take_clip_aspect() -> Option<(u64, f32)> {
+    REPORTED_ASPECT.lock().ok()?.take()
 }
 
 /// A YouTube video.
@@ -345,7 +471,14 @@ fn player_server() -> Option<u16> {
                     let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
                     continue;
                 }
-                let answer = match player_answer(line, port) {
+                if let Some(reported) = aspect_answer(line) {
+                    if let Ok(mut slot) = REPORTED_ASPECT.lock() {
+                        *slot = Some(reported);
+                    }
+                    let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                    continue;
+                }
+                let answer = match player_answer(line, port).or_else(|| clip_answer(line)) {
                     Some(page) => format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n\
                          Content-Length: {}\r\nConnection: close\r\n\r\n{page}",
@@ -410,9 +543,9 @@ fn start_seconds(v: &str) -> u32 {
     total
 }
 
-/// What a link shows, if anything: a YouTube video, a picture (a file whose
-/// name says so; the answer's type decides in the end), or the page of an
-/// image service.
+/// What a link shows, if anything: a YouTube video, a video file on a
+/// trusted site, a picture (a file whose name says so; the answer's type
+/// decides in the end), or the page of an image service.
 pub fn target(url: &str) -> Option<Target> {
     let parsed = reqwest::Url::parse(url).ok()?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -434,6 +567,9 @@ pub fn target(url: &str) -> Option<Target> {
     };
     if let Some(id) = video {
         return Some(Target::Video(Video { id, start }));
+    }
+    if let Some(clip) = Clip::of(url) {
+        return Some(Target::Clip(clip));
     }
     let path = parsed.path().to_lowercase();
     let picture = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
@@ -506,9 +642,19 @@ pub struct VideoInfo {
     pub aspect: Option<f32>,
 }
 
+/// What a clip's card shows before it plays.
+pub struct ClipInfo {
+    pub clip: Clip,
+    /// The picture its service gives (Gyazo); a file alone has none.
+    pub thumbnail: Option<Picture>,
+    /// Width over height, when known before it plays.
+    pub aspect: Option<f32>,
+}
+
 pub enum Content {
     Picture(Picture),
     Video(VideoInfo),
+    Clip(ClipInfo),
     /// The picture of a service's page, with the address it came from (the
     /// enlargement asks it again in more detail).
     Page {
@@ -663,7 +809,8 @@ async fn text_head(client: &reqwest::Client, url: &str, accept: &str, end: &str)
 }
 
 /// The picture an image service's page leads to: the address of the
-/// picture, judged as a link would be, then the picture (`Content::Page`).
+/// picture, judged as a link would be, then the picture (`Content::Page`);
+/// a Gyazo video capture leads to its file instead (`Content::Clip`).
 /// `trusted_only`: a load allowed by the trust of the site stays on trusted
 /// sites.
 pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool) -> Result<Content, Failure> {
@@ -672,10 +819,17 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
     let mut sensitive = false;
     let source = match step {
         Step::Direct(source) => Some(source),
-        Step::OEmbed(endpoint) => download(client, &endpoint, "application/json", 64 * 1024)
-            .await
-            .ok()
-            .and_then(|(body, _)| services::from_oembed(service, &body)),
+        Step::OEmbed(endpoint) => {
+            let body = download(client, &endpoint, "application/json", 64 * 1024)
+                .await
+                .ok()
+                .map(|(body, _)| body);
+            // a Gyazo video capture plays in a video card (#983)
+            if let Some(found) = body.as_deref().and_then(|body| services::clip_from_oembed(service, url, body)) {
+                return Ok(Content::Clip(fetch_clip(client, found).await));
+            }
+            body.and_then(|body| services::from_oembed(service, &body))
+        }
         Step::Head(page) => text_head(client, &page, "text/html", "</head>")
             .await
             .0
@@ -716,6 +870,28 @@ pub async fn fetch_page(client: &reqwest::Client, url: &str, trusted_only: bool)
         source,
         sensitive,
     })
+}
+
+/// A clip a service's page leads to, with its thumbnail: the first of its
+/// addresses that gives a picture. Its shape comes from the service, else
+/// from the thumbnail.
+async fn fetch_clip(client: &reqwest::Client, found: services::FoundClip) -> ClipInfo {
+    let mut thumbnail = None;
+    for poster in &found.posters {
+        if let Ok(picture) = fetch_picture(client, poster).await {
+            thumbnail = Some(picture);
+            break;
+        }
+    }
+    let aspect = found
+        .size
+        .and_then(|(w, h)| aspect(w, h))
+        .or_else(|| thumbnail.as_ref().and_then(|t| aspect(f64::from(t.size[0]), f64::from(t.size[1]))));
+    ClipInfo {
+        clip: found.clip,
+        thumbnail,
+        aspect,
+    }
 }
 
 /// Title, channel and picture of a video.
@@ -783,6 +959,13 @@ fn decode_sized(bytes: &[u8], side: u32) -> Result<Picture, Failure> {
     if format == image::ImageFormat::Gif {
         return decode_gif(bytes);
     }
+    // an animated WebP (#983) animates as a GIF does
+    if format == image::ImageFormat::WebP
+        && let Ok(decoder) = image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(bytes))
+        && decoder.has_animation()
+    {
+        return animation_frames(decoder, GIF_MAX_SIDE, GIF_MAX_FRAMES, GIF_BUDGET);
+    }
     let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(DECODE_LIMIT);
@@ -821,8 +1004,16 @@ fn decode_gif(bytes: &[u8]) -> Result<Picture, Failure> {
 /// and `budget` bytes of pixels: a card keeps a large animation, a tile of
 /// the GIF picker (`ui/chat/gif_picker.rs`) a small one.
 pub fn decode_animation(bytes: &[u8], side: u32, max_frames: usize, budget: usize) -> Result<Picture, Failure> {
-    use image::{AnimationDecoder, ImageDecoder};
     let decoder = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)).map_err(|_| Failure::NotPicture)?;
+    animation_frames(decoder, side, max_frames, budget)
+}
+
+/// The frames of an animation (GIF or WebP), within the limits of
+/// `decode_animation`.
+fn animation_frames<'a, D>(decoder: D, side: u32, max_frames: usize, budget: usize) -> Result<Picture, Failure>
+where
+    D: image::AnimationDecoder<'a> + image::ImageDecoder,
+{
     let (gw, gh) = decoder.dimensions();
     if gw == 0 || gh == 0 || gw > DECODE_LIMIT || gh > DECODE_LIMIT {
         return Err(Failure::NotPicture);
@@ -881,9 +1072,21 @@ pub fn demo(target: &Target, url: &str) -> Result<Content, Failure> {
             thumbnail: Some(demo_still(480, 360, 1)),
             aspect: Some(4.0 / 3.0),
         })),
-        Target::Picture if file.ends_with(".gif") => Ok(Content::Picture(demo_gif())),
+        // a file names no shape; its page reports it once it plays
+        Target::Clip(clip) => Ok(Content::Clip(ClipInfo {
+            clip: clip.clone(),
+            thumbnail: None,
+            aspect: None,
+        })),
+        Target::Picture if file.ends_with(".gif") || file.ends_with(".webp") => Ok(Content::Picture(demo_gif())),
         Target::Picture => Ok(Content::Picture(demo_still(640, 480, 0))),
-        // the saved answers of each service lead to the picture's address
+        // the saved answers of each service lead to the picture's address,
+        // Gyazo's video capture to its clip
+        Target::Page(_) if let Some(found) = services::demo_clip(url) => Ok(Content::Clip(ClipInfo {
+            clip: found.clip,
+            thumbnail: Some(demo_still(640, 360, 1)),
+            aspect: Some(16.0 / 9.0),
+        })),
         Target::Page(service) => {
             let (source, sensitive) = services::demo_source(url).ok_or(Failure::Unavailable)?;
             let picture = match service {
@@ -996,6 +1199,67 @@ mod tests {
         assert_eq!(target("https://example.net/gallery/abc"), None);
         assert_eq!(target("ftp://example.net/scene.png"), None);
         assert_eq!(target("https://example.net/scene.png.html"), None);
+    }
+
+    fn clip(file: &str) -> Option<Target> {
+        Some(Target::Clip(Clip { file: file.into() }))
+    }
+
+    /// A video file is a clip on a trusted site only, over https, without
+    /// credentials or port (#983); an Imgur `.gifv` is its `.mp4`.
+    #[test]
+    fn video_files_are_clips_on_trusted_sites_only() {
+        let gyazo = "https://i.gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9.mp4";
+        assert_eq!(target(gyazo), clip(gyazo));
+        assert_eq!(
+            target("https://i.imgur.com/DemoClp.gifv?x=1#top"),
+            clip("https://i.imgur.com/DemoClp.mp4")
+        );
+        assert_eq!(
+            target("https://media1.giphy.com/media/demo/giphy.WEBM"),
+            clip("https://media1.giphy.com/media/demo/giphy.WEBM")
+        );
+        assert_eq!(target("https://videos.example.net/clip.mp4"), None);
+        assert_eq!(target("http://i.imgur.com/DemoClp.mp4"), None);
+        assert_eq!(target("https://someone@i.imgur.com/DemoClp.mp4"), None);
+        assert_eq!(target("https://i.imgur.com:8443/DemoClp.mp4"), None);
+        // another site's .gifv is nothing
+        assert_eq!(target("https://videos.example.net/clip.gifv"), None);
+        // a trusted clip loads by itself, or waits for a click as set
+        let s = Settings::default();
+        assert_eq!(decide(&s, Place::Im, gyazo), Some((clip(gyazo).unwrap(), Start::Load)));
+        let never = Settings {
+            load: Load::Never,
+            ..Settings::default()
+        };
+        assert_eq!(decide(&never, Place::Im, gyazo), Some((clip(gyazo).unwrap(), Start::Ask)));
+    }
+
+    /// A Gyazo video capture leads to its file and its thumbnail, a 640
+    /// wide copy first; a photo's answer is no clip.
+    #[test]
+    fn a_gyazo_video_capture_leads_to_its_clip() {
+        let page = "https://gyazo.com/9F8E7D6C5B4A39281706F5E4D3C2B1A0";
+        let found = services::clip_from_oembed(Service::Gyazo, page, include_bytes!("link_preview/fixtures/gyazo_video.json")).unwrap();
+        assert_eq!(found.clip.file, "https://i.gyazo.com/9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4");
+        assert_eq!(found.posters.len(), 2);
+        assert!(found.posters[0].starts_with("https://thumb.gyazo.com/thumb/640_w/"));
+        assert!(found.posters[1].starts_with("https://thumb.gyazo.com/thumb/116_w/"));
+        // the sizes Gyazo leaves empty give no shape
+        assert_eq!(found.size, None);
+        let photo = include_bytes!("link_preview/fixtures/gyazo_oembed.json");
+        assert!(services::clip_from_oembed(Service::Gyazo, page, photo).is_none());
+        let video = include_bytes!("link_preview/fixtures/gyazo_video.json");
+        assert!(services::clip_from_oembed(Service::Flickr, page, video).is_none());
+        // a thumbnail on another site is dropped, the clip kept
+        let elsewhere = br#"{"type":"video","thumbnail_url":"https://example.net/t.jpg","width":640,"height":360}"#;
+        let found = services::clip_from_oembed(Service::Gyazo, page, elsewhere).unwrap();
+        assert!(found.posters.is_empty());
+        assert_eq!(found.size, Some((640.0, 360.0)));
+        assert!(matches!(
+            demo(&Target::Page(Service::Gyazo), page),
+            Ok(Content::Clip(c)) if c.clip.file.ends_with("9f8e7d6c5b4a39281706f5e4d3c2b1a0.mp4") && c.thumbnail.is_some()
+        ));
     }
 
     /// The page of an image service gets a picture card, which loads by
@@ -1249,6 +1513,56 @@ mod tests {
         assert_eq!(volume_answer("GET /youtube/jNQXAC9IVRw HTTP/1.1"), None);
     }
 
+    /// The page of a clip holds a file that is a clip as a link would name
+    /// it, escaped, sends no referrer and starts at the volume kept;
+    /// anything else gets no page.
+    #[test]
+    fn the_clip_page_holds_a_checked_file_only() {
+        let file = "https://i.imgur.com/DemoClp.mp4?a=1&b=2";
+        let page = clip_answer("GET /clip?k=42&vol=30&src=https%3A%2F%2Fi.imgur.com%2FDemoClp.mp4%3Fa%3D1%26b%3D2 HTTP/1.1").unwrap();
+        assert!(page.contains("src=\"https://i.imgur.com/DemoClp.mp4?a=1&amp;b=2\""));
+        assert!(page.contains("<meta name=\"referrer\" content=\"no-referrer\">"));
+        assert!(page.contains("l=30;") && page.contains("/aspect?k=42&w="));
+        assert!(page.contains("autoplay loop controls"));
+        let untrusted = "GET /clip?k=1&src=https%3A%2F%2Fvideos.example.net%2Fclip.mp4 HTTP/1.1";
+        assert!(clip_answer(untrusted).is_none());
+        // a .gifv names its .mp4 in a link, never in the page
+        assert!(clip_answer("GET /clip?k=1&src=https%3A%2F%2Fi.imgur.com%2FDemoClp.gifv HTTP/1.1").is_none());
+        assert!(clip_answer("GET /clip?src=https%3A%2F%2Fi.imgur.com%2FDemoClp.mp4 HTTP/1.1").is_none());
+        assert!(clip_answer("POST /clip?k=1&src=https%3A%2F%2Fi.imgur.com%2FDemoClp.mp4 HTTP/1.1").is_none());
+        assert!(clip_answer("GET /youtube/jNQXAC9IVRw HTTP/1.1").is_none());
+        // a volume out of bounds is held within them
+        assert!(
+            clip_answer("GET /clip?k=1&vol=900&src=https%3A%2F%2Fi.imgur.com%2FDemoClp.mp4 HTTP/1.1")
+                .unwrap()
+                .contains("l=100;")
+        );
+        // the address the card opens leads to the same page
+        let clip = Clip { file: file.into() };
+        let opened = clip.player_page(&PlayerOptions::default(), 7);
+        let path = opened
+            .split_once("127.0.0.1:")
+            .and_then(|(_, rest)| rest.split_once('/'))
+            .map(|(_, p)| p)
+            .unwrap();
+        let page = clip_answer(&format!("GET /{path} HTTP/1.1")).unwrap();
+        assert!(page.contains("src=\"https://i.imgur.com/DemoClp.mp4?a=1&amp;b=2\"") && page.contains("k=7&w="));
+        assert_eq!(attribute_text("\"'<>&"), "&quot;&#39;&lt;&gt;&amp;");
+    }
+
+    /// A clip's page reports its shape as two sizes that make sense.
+    #[test]
+    fn the_clip_page_reports_its_shape_as_numbers_only() {
+        let (key, aspect) = aspect_answer("GET /aspect?k=42&w=1280&h=720 HTTP/1.1").unwrap();
+        assert_eq!(key, 42);
+        assert!((aspect - 16.0 / 9.0).abs() < 1e-4);
+        assert_eq!(aspect_answer("GET /aspect?k=42&w=1280&h=0 HTTP/1.1"), None);
+        assert_eq!(aspect_answer("GET /aspect?k=42&w=10000&h=1 HTTP/1.1"), None);
+        assert_eq!(aspect_answer("GET /aspect?k=x&w=1&h=1 HTTP/1.1"), None);
+        assert_eq!(aspect_answer("GET /aspect?w=1&h=1 HTTP/1.1"), None);
+        assert_eq!(aspect_answer("POST /aspect?k=1&w=1&h=1 HTTP/1.1"), None);
+    }
+
     fn png(w: u32, h: u32) -> Vec<u8> {
         let img = image::RgbaImage::from_pixel(w, h, image::Rgba([10, 20, 30, 255]));
         let mut out = std::io::Cursor::new(Vec::new());
@@ -1291,6 +1605,20 @@ mod tests {
         assert_eq!(p.frames[0].1, Duration::from_millis(50));
         // no delay: drawn as browsers do
         assert_eq!(p.frames[1].1, Duration::from_millis(100));
+    }
+
+    /// An animated WebP keeps its frames and delays as a GIF does (#983).
+    #[test]
+    fn an_animated_webp_keeps_its_frames_and_delays() {
+        let p = decode(include_bytes!("link_preview/fixtures/anim.webp")).unwrap();
+        assert_eq!(p.size, [8, 6]);
+        let delays: Vec<_> = p.frames.iter().map(|f| f.1).collect();
+        assert_eq!(
+            delays,
+            [80, 120, 200].map(Duration::from_millis),
+            "three frames with their own delays"
+        );
+        assert_ne!(p.frames[0].0.pixels[0], p.frames[1].0.pixels[0]);
     }
 
     /// A server answering each connection with one of `answers`.

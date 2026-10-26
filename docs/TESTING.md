@@ -3687,7 +3687,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|links\|net` | Picture, GIF and YouTube cards; `links[:gif\|image\|video]` isolates URL actions; `services[:gyazo,…]` shows service pages and social posts; `net` uses real sites |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|clips\|services\|links\|net` | Picture, GIF and YouTube cards; `clips` shows video files and an animated WebP; `links[:gif\|image\|video]` isolates URL actions; `services[:gyazo,…]` shows service pages and social posts; `net` uses real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
 | `AURORA_DEMO_GIFS=1\|klipy\|sent\|menu\|nokey\|net` | Conversations open on the GIF picker of the field, its results made here; `sent` sends the first GIF; `menu` the button's right-click menu; `nokey` no button; `net` the real services |
@@ -4848,7 +4848,14 @@ failure. Grid validation and any paid upload are performed by the human.
   not trusted, then shows it). `services:gyazo,flickr`
   keeps the listed services only (`gyazo`, `flickr`, `imgur`, `lightshot`,
   `reddit`, `bluesky`, `x`, `nextcloud`, `none` for the two links without a
-  card). The Legacy lines (`bubbles:legacy`)
+  card).
+  `clips` (#983): an `.mp4` of an unknown site (the link alone: clips play
+  from trusted sites only), a GIPHY WebP animated like a GIF, a Gyazo video
+  capture (the thumbnail of the saved answer, a video card with the play
+  button, the site as its channel) and our Imgur `.gifv` link (a video card
+  with the film icon, no thumbnail). Playing a clip needs the network and a
+  real file: send a Gyazo video, Imgur `.gifv` or `.mp4` link of a trusted
+  site in a demo conversation. The Legacy lines (`bubbles:legacy`)
   show the same cards, including animated GIFs and consent prompts (#976);
   combine with `AURORA_DEMO_CONV_POPOUT=1` to check independent windows.
   Transcript history and the chat lines at the bottom stay text-only. Capture at frame 900
