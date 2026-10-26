@@ -2640,6 +2640,7 @@ pub fn show(
     let mut tear_off = false;
     let mut detach = false;
     let mut floater = super::widgets::Floater::new("conversations", title, default.min, default.size())
+        .chat()
         .attention(conversations_waiting(world))
         .attention_flash(st.button_flash.bar(ctx.input(|i| i.time)))
         .steady_size();

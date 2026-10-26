@@ -3615,7 +3615,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_MAP=1`, `mini` or words among `search:<text>`, `drawer:<tab>`, `landmarks`, `friend`, `legacy`, `coordinates`, `beacon[-click|-offscreen]` | Maps, search, drawer, landmarks, followed friend, side panel layout, coordinate entry and clickable 3D beacon |
 | `AURORA_DEMO_NOTIF=1`, `AURORA_DEMO_STATUSMENU=1` or `invisible`, `AURORA_DEMO_MICMENU=1`, `AURORA_DEMO_NAVEDIT=1` | Notification list, status menu, microphone panel, location field |
 | `AURORA_DEMO_PARCEL_NAME=<text>` | Any parcel name in the place island (odd names, line breaks) |
-| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden, the chat bar autohidden |
+| `AURORA_DEMO_BARS=<words>` | Top and bottom bars: islands and dock, Firestorm's bars, place island stretched or not, rights named, talking, wide chat island, the favourites (menu, row, dock), a menu open, the clock, the interface hidden, immersive mode, the chat bar autohidden |
 | `AURORA_DEMO_TOASTS=1\|bell\|click\|minimized` | Friend online/offline and IM toasts, unread pill, Conversations button flash, click on an IM card |
 | `AURORA_DEMO_CONV_BUTTON=1\|mute\|still\|menu` | The Conversations button flashing for nearby chat and an IM, nearby chat left out, Reduce motion, its right-click menu |
 | `AURORA_DEMO_ATTENTION=1\|front\|capture` | Taskbar flashes and Windows notifications for messages, mentions and offers arriving in the background |
@@ -5555,7 +5555,11 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   Firestorm's question instead), `peek` (hidden, the pointer held at the
   top edge: the top islands back, no hint under them), `peekleft` (hidden,
   the pointer held at the left edge: the left toolbar back, with
-  `AURORA_DEMO_TOOLBAR=side`).
+  `AURORA_DEMO_TOOLBAR=side`), `immersive` (#859: Conversations opened at
+  frame 300, immersive mode at frame 600: the bars and the other windows
+  go, Conversations and the chat lines stay, no edge brings a bar back, no
+  hint; a faint square glass button in the top right corner, 8 px from
+  the edges and as high as the islands, leaves it).
   The chat bar: `autohide` (shown only while it is used, as with
   Preferences › Chat › "Hide the chat bar when not in use", with either
   bars: with the islands the chat island goes and the dock gets its

@@ -23,7 +23,8 @@
 //! (hidden at frame 600, its hint shown), `peek` (hidden, the pointer held at
 //! the top edge: the top islands back), `peekleft` (hidden, the pointer held
 //! at the left edge: the left toolbar back); with `legacy`, Firestorm's
-//! question. The chat bar: `autohide` (shown only while it is used, with
+//! question; `immersive` (Conversations opened at frame 300, immersive mode
+//! at frame 600: the chat kept, the button to leave it). The chat bar: `autohide` (shown only while it is used, with
 //! either bars), `chatstart` (autohidden, Enter pressed at frame 300 on a
 //! draft: the bar back).
 //! `normal` or nothing
@@ -82,6 +83,8 @@ pub struct DemoBars {
     pub hidden: Option<bool>,
     /// Hidden, the pointer held at the left edge: the left toolbar back.
     pub peek_left: bool,
+    /// Conversations opened at frame 300, immersive mode at frame 600.
+    pub immersive: bool,
     /// The chat bar autohidden (#1009), whatever is saved.
     pub autohide: bool,
     /// Autohidden, Enter pressed at frame 300 on a draft: the bar back.
@@ -160,6 +163,7 @@ pub fn parse(value: &str) -> DemoBars {
                 d.hidden = Some(false);
                 d.peek_left = true;
             }
+            "immersive" => d.immersive = true,
             "rowdrag" => {
                 d.access = Some(crate::settings::FavoritesAccess::Row);
                 d.row_drag = true;

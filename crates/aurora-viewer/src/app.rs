@@ -11037,6 +11037,7 @@ impl App {
             BarAction::Favorite(f) => self.favorite_action(f),
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
+            BarAction::ToggleImmersive => self.toggle_immersive(),
             BarAction::HoverTips(menu) => {
                 let tips = &mut self.settings.hover_tips;
                 tips.enabled = menu.enabled;
@@ -11103,6 +11104,20 @@ impl App {
             self.interface.confirm_again = true;
         } else {
             self.interface.set_hidden(&self.egui_ctx, true);
+        }
+    }
+
+    /// Immersive mode (#859): nothing in mouselook, as Show User Interface;
+    /// no question first (asked for by its own button); on, its button or
+    /// the shortcut of Show User Interface leaves it.
+    fn toggle_immersive(&mut self) {
+        if self.camera.mouselook() {
+            return;
+        }
+        if self.interface.immersive {
+            self.interface.set_hidden(&self.egui_ctx, false);
+        } else {
+            self.interface.set_immersive(&self.egui_ctx);
         }
     }
 
@@ -12892,10 +12907,21 @@ impl App {
                         }
                     }
                 }
+                if self.interface.immersive && !self.camera.mouselook() && ui::interface::exit_button(&ctx, &p) {
+                    a.bar = BarAction::ToggleImmersive;
+                }
                 // AURORA_DEMO_BARS=hidden / peek: hidden at frame 600 (asked
-                // first with Firestorm's bars)
+                // first with Firestorm's bars); `immersive`: Conversations
+                // opened at frame 300, immersive mode at 600
                 if demo_hidden.is_some() && ctx.cumulative_frame_nr() == 600 && !self.interface.hidden {
                     a.bar = BarAction::ToggleInterface;
+                }
+                if self.demo && ui::bars::demo::get().immersive {
+                    match ctx.cumulative_frame_nr() {
+                        300 => ui::widgets::open_floater(&ctx, "conversations", &mut self.panels.chat),
+                        600 if !self.interface.hidden => a.bar = BarAction::ToggleImmersive,
+                        _ => {}
+                    }
                 }
                 t = self.ui_parts.lap(Part::UiOverlays, t);
                 let map_cam = {
