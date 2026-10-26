@@ -453,9 +453,11 @@ impl InventoryUi {
         self.received_badge = received::Badge::load(path, root);
     }
 
-    pub(crate) fn update_received(&mut self, inv: &mut Inventory, receipts: Vec<crate::world::received_items::Receipt>) {
+    /// Returns the Marketplace deliveries discovered this frame (#752).
+    pub(crate) fn update_received(&mut self, inv: &mut Inventory, receipts: Vec<crate::world::received_items::Receipt>) -> Vec<Uuid> {
         self.received_badge.receive(receipts);
         self.received_badge.update(inv);
+        self.received_badge.take_fresh()
     }
 
     pub fn begin_move_to(&mut self, id: Uuid) {

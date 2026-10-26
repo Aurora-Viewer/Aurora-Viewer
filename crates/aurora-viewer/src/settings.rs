@@ -817,6 +817,10 @@ pub struct Settings {
     /// Experimental filing of new deliveries by the sender's legacy name.
     pub sort_received_items: bool,
     pub received_items_since: i64,
+    /// Preferences › Inventory › Received items: a notification for each
+    /// Marketplace delivery (Aurora only, the Legacy Viewer just marks the
+    /// inbox new; #752). On by default: nothing else tells about a gift.
+    pub notify_deliveries: bool,
     /// Replace native motion foot placement/recovery with Aurora's terrain
     /// solver. Off by default: the Legacy Viewer behaviour remains automatic.
     pub ground_avatar_feet: bool,
@@ -1586,6 +1590,7 @@ impl Default for Settings {
             synchronize_animations: false,
             sort_received_items: false,
             received_items_since: 0,
+            notify_deliveries: true,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,

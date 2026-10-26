@@ -515,6 +515,9 @@ pub(super) fn card(
                     buttons.push((aurora_i18n::tr!("ui-notifications-decline").into(), Response::Decline, false));
                 }
                 Data::Url(_) => buttons.push((aurora_i18n::tr!("ui-notifications-open-link").into(), Response::OpenUrl, true)),
+                Data::Delivery { .. } => {
+                    buttons.push((aurora_i18n::tr!("ui-notifications-show-in-inventory").into(), Response::Open, true));
+                }
                 Data::Dialog {
                     buttons: b, own_object, ..
                 } => {
@@ -1008,6 +1011,66 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// A Marketplace delivery's card names it and its one button shows it in
+    /// the inventory, in both styles (#752).
+    #[test]
+    fn delivery_card_shows_its_name_and_opens_the_inventory_in_both_styles() {
+        for (aurora, toast) in [(false, true), (true, true), (true, false)] {
+            let ctx = egui::Context::default();
+            let theme = crate::theme::Theme::default();
+            theme.apply(&ctx, 1.0);
+            let p = theme.palette();
+            let icons = Icons::default();
+            let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+            let mut list = Notifications::default();
+            list.push_deliveries(&[(Uuid::from_u128(7), "Lantern".into())], Uuid::from_u128(50));
+            let mut time = 0.0;
+            let mut frame = |events| {
+                time += 0.1;
+                let mut answer = None;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        ui.set_width(320.0);
+                        answer = card(ui, &p, &icons, &world, &mut list.list[0], toast, aurora);
+                    },
+                );
+                output.textures_delta.clear();
+                (output, answer)
+            };
+            for _ in 0..3 {
+                frame(vec![]);
+            }
+            let (output, _) = frame(vec![]);
+            let text = |wanted: &str| {
+                output.shapes.iter().find_map(|s| match &s.shape {
+                    egui::Shape::Text(t) if t.galley.text() == wanted => Some(t.pos + t.galley.size() * 0.5),
+                    _ => None,
+                })
+            };
+            assert!(text(aurora_i18n::tr!("received-delivery-title")).is_some(), "title visible");
+            assert!(text("Lantern").is_some(), "the delivery's name visible");
+            let pos = text(aurora_i18n::tr!("ui-notifications-show-in-inventory")).expect("button visible");
+            frame(vec![egui::Event::PointerMoved(pos)]);
+            let mut clicked = None;
+            for pressed in [true, false] {
+                let (_, answer) = frame(vec![egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                }]);
+                clicked = clicked.or(answer);
+            }
+            assert!(matches!(clicked, Some(Response::Open)), "Show in inventory answers Open");
         }
     }
 

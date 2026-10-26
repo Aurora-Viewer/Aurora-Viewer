@@ -43,20 +43,27 @@ pub fn roots(inv: &Inventory) -> Vec<Uuid> {
     actions::system(inv, 50).into_iter().chain(root(inv)).collect()
 }
 
+fn children(inv: &Inventory, id: Uuid) -> impl Iterator<Item = Uuid> + '_ {
+    inv.folders
+        .get(&id)
+        .into_iter()
+        .flat_map(|folder| folder.children.iter().chain(&folder.items).copied())
+}
+
+/// What Direct Delivery put in the Marketplace inbox (FT_INBOX): it arrives
+/// with no offer, so nothing else tells the user about it (#752).
+pub fn marketplace_deliveries(inv: &Inventory) -> impl Iterator<Item = Uuid> + '_ {
+    actions::system(inv, 50).into_iter().flat_map(|id| children(inv, id))
+}
+
 /// Count delivered items/categories, not their sender containers or a gift's contents.
 pub fn deliveries(inv: &Inventory) -> impl Iterator<Item = Uuid> + '_ {
-    let children = |id| {
-        inv.folders
-            .get(&id)
-            .into_iter()
-            .flat_map(|folder| folder.children.iter().chain(&folder.items).copied())
-    };
-    let marketplace = actions::system(inv, 50).into_iter().flat_map(children);
+    let marketplace = marketplace_deliveries(inv);
     let senders = root(inv)
         .and_then(|id| inv.folders.get(&id))
         .into_iter()
         .flat_map(|folder| folder.children.iter().copied())
-        .flat_map(children);
+        .flat_map(|id| children(inv, id));
     marketplace.chain(senders)
 }
 
@@ -525,6 +532,21 @@ impl World {
             self.discard_offer(movement.asset_type, movement.id);
         }
         true
+    }
+
+    /// Notify the Marketplace deliveries the Received badge just found
+    /// (`marketplace_deliveries`, #752), named as the inventory shows them.
+    pub fn notify_deliveries(&mut self, ids: &[Uuid]) -> Option<u64> {
+        let inv = &self.inventory;
+        let named: Vec<(Uuid, String)> = ids
+            .iter()
+            .filter_map(|id| {
+                let name = inv.folders.get(id).map(|f| f.info.name.clone());
+                Some((*id, name.or_else(|| inv.items.get(id).map(|item| item.name.clone()))?))
+            })
+            .collect();
+        let inbox = actions::system(inv, 50).unwrap_or(inv.root);
+        self.notifications.push_deliveries(&named, inbox)
     }
 }
 

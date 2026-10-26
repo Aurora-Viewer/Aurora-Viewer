@@ -7036,7 +7036,11 @@ impl App {
         }
         self.world.poll_inventory_cache();
         let receipts = std::mem::take(&mut self.world.received_items.receipts);
-        self.inventory_ui.update_received(&mut self.world.inventory, receipts);
+        let deliveries = self.inventory_ui.update_received(&mut self.world.inventory, receipts);
+        // the demo's seeded inboxes are not news unless its scenario asks
+        if !deliveries.is_empty() && self.settings.notify_deliveries && (!self.demo || crate::demo::delivery::mode().is_some()) {
+            self.world.notify_deliveries(&deliveries);
+        }
         self.world.poll_transcripts();
         self.update_hover_height();
         self.update_avatar_health();
@@ -9349,6 +9353,37 @@ impl App {
                 if let Some(e) = self.world.apply(event) {
                     self.on_app_event(e);
                 }
+            }
+        }
+        if self.demo
+            && let Some(mode) = crate::demo::delivery::mode()
+        {
+            use crate::demo::delivery::{ARRIVE_AT, READ_AT, SEED_AT};
+            let agent = self.world.agent_id;
+            if self.frame_count == SEED_AT {
+                crate::world::inventory::demo::seed_received(&mut self.world.inventory, agent);
+                // the inbox already held its purchase: the badge's baseline, not news
+                let _ = self.inventory_ui.update_received(&mut self.world.inventory, Vec::new());
+            }
+            if self.frame_count == ARRIVE_AT
+                && let Some(event) = crate::demo::delivery::arrival(&self.world.inventory, agent)
+                && let Some(e) = self.world.apply(event)
+            {
+                self.on_app_event(e);
+            }
+            if mode == "history" && self.frame_count == READ_AT {
+                let card = self
+                    .world
+                    .notifications
+                    .list
+                    .iter()
+                    .find(|n| matches!(n.data, crate::world::notifications::Data::Delivery { .. }))
+                    .map(|n| n.id);
+                if let Some(id) = card {
+                    let _ = self.world.respond_notification(id, crate::world::notifications::Response::Dismiss);
+                }
+                self.notif_ui.open = true;
+                self.notif_ui.center.tab = ui::notification_center::Tab::History;
             }
         }
         if self.demo
@@ -13409,6 +13444,19 @@ impl App {
                 }
                 for (id, r) in answers {
                     if self.region_restart_bell_answer(id, &r) {
+                        continue;
+                    }
+                    if matches!(r, crate::world::notifications::Response::Open)
+                        && let Some(object) = self.world.notifications.list.iter().find_map(|n| match n.data {
+                            crate::world::notifications::Data::Delivery { object } if n.id == id => Some(object),
+                            _ => None,
+                        })
+                    {
+                        // "Show in inventory": read, and selected in the inventory
+                        let _ = self.world.respond_notification(id, r);
+                        self.inventory_ui.show_original(&self.world.inventory, object);
+                        self.panels.inventory = true;
+                        self.notif_ui.open = false;
                         continue;
                     }
                     if matches!(r, crate::world::notifications::Response::Open) {
