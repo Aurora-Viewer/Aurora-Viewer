@@ -5557,9 +5557,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   the pointer held at the left edge: the left toolbar back, with
   `AURORA_DEMO_TOOLBAR=side`), `immersive` (#859: Conversations opened at
   frame 300, immersive mode at frame 600: the bars and the other windows
-  go, Conversations and the chat lines stay, no edge brings a bar back, no
-  hint; a faint square glass button in the top right corner, 8 px from
-  the edges and as high as the islands, leaves it).
+  go, Conversations and the chat lines stay, the avatars' name tags go
+  (the objects' floating texts stay), no edge brings a bar back, no hint;
+  two faint square glass buttons in the top right corner, 8 px from the
+  edges and as high as the islands: the name tags (struck-through label)
+  and the way out), `immersivetags` (the same with the name tags shown:
+  the label violet; nothing saved).
   The chat bar: `autohide` (shown only while it is used, as with
   Preferences › Chat › "Hide the chat bar when not in use", with either
   bars: with the islands the chat island goes and the dock gets its

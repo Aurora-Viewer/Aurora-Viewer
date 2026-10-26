@@ -12253,6 +12253,7 @@ impl App {
                         projector,
                         self.camera.position,
                         !self.camera.mouselook(),
+                        !self.interface.immersive || self.settings.immersive_name_tags,
                         &self.settings,
                         &mut self.name_tag_visibility,
                         &voice_levels,
@@ -12907,19 +12908,30 @@ impl App {
                         }
                     }
                 }
-                if self.interface.immersive && !self.camera.mouselook() && ui::interface::exit_button(&ctx, &p) {
-                    a.bar = BarAction::ToggleImmersive;
+                if self.interface.immersive && !self.camera.mouselook() {
+                    match ui::interface::immersive_buttons(&ctx, &p, self.settings.immersive_name_tags) {
+                        Some(ui::interface::ImmersiveAction::Leave) => a.bar = BarAction::ToggleImmersive,
+                        Some(ui::interface::ImmersiveAction::NameTags(on)) => {
+                            self.settings.immersive_name_tags = on;
+                            self.settings.save();
+                        }
+                        None => {}
+                    }
                 }
                 // AURORA_DEMO_BARS=hidden / peek: hidden at frame 600 (asked
                 // first with Firestorm's bars); `immersive`: Conversations
-                // opened at frame 300, immersive mode at 600
+                // opened at frame 300, immersive mode at 600 (`immersivetags`:
+                // the name tags shown, not saved)
                 if demo_hidden.is_some() && ctx.cumulative_frame_nr() == 600 && !self.interface.hidden {
                     a.bar = BarAction::ToggleInterface;
                 }
                 if self.demo && ui::bars::demo::get().immersive {
                     match ctx.cumulative_frame_nr() {
                         300 => ui::widgets::open_floater(&ctx, "conversations", &mut self.panels.chat),
-                        600 if !self.interface.hidden => a.bar = BarAction::ToggleImmersive,
+                        600 if !self.interface.hidden => {
+                            self.settings.immersive_name_tags = ui::bars::demo::get().immersive_tags;
+                            a.bar = BarAction::ToggleImmersive;
+                        }
                         _ => {}
                     }
                 }
