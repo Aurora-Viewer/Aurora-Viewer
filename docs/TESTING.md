@@ -4172,6 +4172,14 @@ are generated and released sequentially. Use existing `AURORA_DEMO_IMPORT_FILE`
 with `mesh` or `mesh-avatar` for native captures of a supplied rigged asset;
 `mesh-avatar-rigged` deliberately replaces its skin with the synthetic fixture.
 The Mesh Options tab must show generated models = 768 and transfer timeout = 600.
+Rigged previews play the standard standing animation independently of the
+wearer and other imports, in both the inspector and enlarged canvas. Offline
+`mesh*` demos use the existing synthetic idle under that standard motion ID.
+Enabling imported joint positions must apply offsets without adding spheres.
+Only "Show joint positions" enables markers; they follow the animation, with
+1 mm dots and a 16 mm selected joint. Physics previews show no joint markers.
+The synthetic preview regressions also cover independent animation clocks,
+the pelvis offset and bend diagnostic, and upload/preview flag independence.
 Human grid validation: compare the same DAE/GLB in the Legacy Viewer, including
 weights, optional joint positions/scale lock, authored lower LODs and a slow
 large-file upload. Only the human connects and confirms a paid transfer.

@@ -20,6 +20,12 @@ normalized extents keep preview dimensions and scene-span checks accurate.
 After supported-joint filtering, unweighted source vertices inherit nearby
 valid influences in normalized space before model splitting. High and lower
 LODs consequently share the reference weight fallback in previews and uploads.
+`imports/mesh/preview.rs` owns an independent standard-standing animation
+controller per import. The shared animation streamer loads the reference
+asset; normal and enlarged canvases receive only updated joint palettes.
+Imported-position preview and joint-marker visibility are independent.
+Markers use the same animated pose, are deduplicated, and retain the reference
+1 mm radius (16 mm selected). Offline mesh demos seed the existing synthetic idle.
 
 The application constructor returns its runtime state on the heap, avoiding
 large return-value temporaries on the Windows startup stack as editors grow.

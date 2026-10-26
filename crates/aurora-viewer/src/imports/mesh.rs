@@ -4,6 +4,7 @@
 pub(super) mod inspector;
 #[cfg(test)]
 mod parity_tests;
+pub(crate) mod preview;
 
 use super::*;
 use aurora_assets::{

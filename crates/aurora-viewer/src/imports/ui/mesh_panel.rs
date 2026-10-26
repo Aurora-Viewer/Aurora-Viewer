@@ -63,6 +63,7 @@ pub(super) fn show(
     let mut content_ui = ui.new_child(egui::UiBuilder::new().id_salt("mesh_content").max_rect(content_rect));
     content_ui.set_clip_rect(content_rect.intersect(ui.clip_rect()));
     let before_lod = draft.preview_lod;
+    let before_joint = draft.inspector.selected_joint.clone();
     let body = egui::ScrollArea::both()
         .id_salt(("mesh_data", entry.id))
         .auto_shrink([false, false])
@@ -82,7 +83,7 @@ pub(super) fn show(
     let mut summary_ui = ui.new_child(egui::UiBuilder::new().id_salt("mesh_summary").max_rect(summary_rect));
     summary_ui.set_clip_rect(summary_rect.intersect(ui.clip_rect()));
     mesh_summary(&mut summary_ui, p, draft);
-    if changed || before_lod != draft.preview_lod {
+    if changed || before_lod != draft.preview_lod || before_joint != draft.inspector.selected_joint {
         entry.invalidate_preview();
     }
 }
@@ -195,12 +196,13 @@ fn preview(
         entry.view.edge_color = prefs.preview_physics_edges.unwrap_or_else(|| palette_color(p.ink));
     }
     let response = if let Some(model) = &entry.model {
-        aurora_render::preview::paint(
+        aurora_render::preview::paint_with_pose(
             ui,
             egui::Id::unique(("mesh_preview", entry.id)),
             model.clone(),
             &mut entry.view,
             Vec2::new(width, height),
+            entry.mesh_player.pose.clone(),
         )
     } else {
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());

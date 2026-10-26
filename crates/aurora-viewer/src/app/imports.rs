@@ -14,6 +14,15 @@ impl App {
             self.world.balance = Some(1000);
             self.imports.demo_started = true;
             crate::imports::demo::start(&mut self.imports, &self.scene.jobs, ctx);
+            if self.imports.demo_mode.starts_with("mesh") {
+                // Offline previews use the existing synthetic idle; normal
+                // operation loads the standard asset through AnimStreamer.
+                let rig = &self.scene.avatar_lib.rig;
+                self.scene.anims.insert(
+                    crate::own_motion::ANIM_STAND,
+                    std::sync::Arc::new(crate::scene::anim::BoundAnim::bind(crate::demo::idle_animation(), rig)),
+                );
+            }
             if self.imports.demo_mode == "bulk-mesh-denied" {
                 self.imports.mesh_permission_account = self.world.agent_id;
             }
@@ -211,6 +220,16 @@ impl App {
                 self.imports.play(id, &self.scene.jobs, ctx, self.scene.avatar_lib.rig.clone());
             }
             for entry in &mut self.imports.entries {
+                let mesh_visible = self.imports.active == Some(entry.id)
+                    || self.imports.preview_zoom.is_some_and(|(id, slot)| id == entry.id && slot.is_none());
+                if mesh_visible
+                    && let Some(Source::Mesh(draft)) = &entry.source
+                    && entry
+                        .mesh_player
+                        .tick(draft, &self.scene.avatar_lib.rig, &mut self.scene.anims, std::time::Instant::now())
+                {
+                    ctx.request_repaint();
+                }
                 if self.imports.active == Some(entry.id) && matches!(entry.source, Some(Source::Animation { .. })) {
                     if self.demo
                         && self.imports.demo_mode == "animation-own"
