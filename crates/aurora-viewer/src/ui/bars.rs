@@ -26,6 +26,9 @@ pub enum BarAction {
     Poser,
     CheckUpdates,
     ReportBug,
+    /// The bug button's right click: the viewer's version to the clipboard,
+    /// silently, for a report or a chat.
+    CopyVersion,
     /// Help › Report Abuse (LLFloaterReporter::showFromMenu).
     ReportAbuse,
     /// Help › Server release notes (LLFloaterAbout's release notes link).
@@ -269,10 +272,6 @@ fn bar_frame(p: &Palette) -> egui::Frame {
 /// a regular pitch whatever they draw.
 const TOP_SLOT: Vec2 = Vec2::new(22.0, 20.0);
 const TOP_ICON: f32 = 16.0;
-
-fn icon_button(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> bool {
-    icon_button_response(ui, p, icons, icon, tip, size).clicked()
-}
 
 fn icon_button_response(ui: &mut egui::Ui, p: &Palette, icons: &Icons, icon: &str, tip: &str, size: f32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(TOP_SLOT, egui::Sense::click());
@@ -928,6 +927,14 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         flip_window(
             ui,
             p,
+            "music",
+            aurora_i18n::tr!("toolbar-command-sound-explorer"),
+            super::sound_explorer::WINDOW,
+            &mut panels.sound_explorer,
+        );
+        flip_window(
+            ui,
+            p,
             "eye-off",
             aurora_i18n::tr!("blacklist-title"),
             super::blacklist::WINDOW,
@@ -1477,8 +1484,13 @@ pub fn top_bars(
                     }
                 }
                 // online status (away, do not disturb, automatic responses)
-                if st.show_bug_report && icon_button(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON) {
-                    action = BarAction::ReportBug;
+                if st.show_bug_report {
+                    let resp = icon_button_response(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON);
+                    if resp.clicked() {
+                        action = BarAction::ReportBug;
+                    } else if resp.secondary_clicked() {
+                        action = BarAction::CopyVersion;
+                    }
                 }
                 status_dot(ui, p, st.status, &mut action);
                 // back / forward through the teleport history, home (Firestorm navigation bar)
@@ -1682,6 +1694,8 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "places" => toggle("places", &mut panels.places),
         "search" => toggle(super::search::WINDOW, &mut panels.search),
         "areasearch" => toggle(super::area_search::WINDOW, &mut panels.area_search),
+        "soundexplorer" => toggle(super::sound_explorer::WINDOW, &mut panels.sound_explorer),
+        "assetblacklist" => toggle(super::blacklist::WINDOW, &mut panels.asset_blacklist),
         "performance" => toggle("perf", &mut panels.perf),
         "snapshot" => toggle(super::snapshot::WINDOW, &mut panels.snapshot),
         "preferences" => toggle("options", &mut panels.settings),
@@ -1746,6 +1760,8 @@ fn command_active(cmd: &str, panels: &Panels, flying: bool, seated: bool, mousel
         "places" => panels.places,
         "search" => panels.search,
         "areasearch" => panels.area_search,
+        "soundexplorer" => panels.sound_explorer,
+        "assetblacklist" => panels.asset_blacklist,
         "performance" => panels.perf,
         "snapshot" => panels.snapshot,
         "preferences" => panels.settings,
@@ -2997,6 +3013,8 @@ mod tests {
             ("people", "people", |p| p.people),
             ("preferences", "options", |p| p.settings),
             ("areasearch", super::super::area_search::WINDOW, |p| p.area_search),
+            ("soundexplorer", super::super::sound_explorer::WINDOW, |p| p.sound_explorer),
+            ("assetblacklist", super::super::blacklist::WINDOW, |p| p.asset_blacklist),
         ] {
             run_command(&ctx, cmd, &mut panels);
             if !open(&panels) {

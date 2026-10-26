@@ -856,6 +856,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_TEXREFRESH=1\|auto` | "Refresh textures" on a panel whose cached texture is stale |
 | `AURORA_DEMO_SCULPT_ZERO=1` | Subtype-zero sculpt classification beside torus and sphere controls |
 | `AURORA_DEMO_SCULPT_MISSING=1\|late` | A sculpt whose map is missing: the sphere placeholder, then its torus with `late` |
+| `AURORA_DEMO_TEXTURE_MISSING=1` | Boxes whose texture is missing: the Legacy Viewer's grey, never the rez grid for ever |
 | `AURORA_DEMO_OBJECT_MENU=<mode>` | The object menu's entries: scripts, Return, Put on, particle owner, Link, Drop |
 
 **Beacon details.** `AURORA_DEMO_BEACONS=1` adds seven labelled sources, including an invisible scripted cube. `lines`, `highlights` and `off` isolate the two render modes; `hidden-particles` keeps the source marker while hiding emitted particles. `parcels` frames the terrain boundaries and ownership colours. `owned` opens My land with an offline parcel and group contributions. Check each source switch, Scripted versus Touch, width, both master switches off, and closing/reopening the floater without losing the active filters. The grid check compares real sound/particle/media sources, linked children, attachments, neighbouring parcels and the personal holdings list with the Legacy Viewer.
@@ -933,6 +934,15 @@ the disk cache and read again, as a retry finding it on the server): the
 torus it describes replaces the sphere. A map still loading draws nothing,
 as in the Legacy Viewer. Capture with `AURORA_FPS_LIMIT=60` around frames
 700 and 1100.
+
+`AURORA_DEMO_TEXTURE_MISSING=1` places two boxes east of the start position
+(x=134, y=133 and 135.5) at frame 300, a white one and a dark, mostly
+transparent one. Their texture is in no cache and the asset CDN answers 403
+(a missing asset). With the rez effect on (Preferences › Aurora), they show
+the grid only while the texture is asked for, then the plain grey the Legacy
+Viewer draws for a missing texture (the dark box: a faint dark veil). Before
+the fix they stayed the grid for as long as they were in view. Capture with
+`AURORA_FPS_LIMIT=60` around frame 700.
 
 `AURORA_DEMO_PROJECTOR=1`, `AURORA_DEMO_BUILD=move,object:9712` and
 `AURORA_DEMO_BUILD_TAB=features:light-picker` select a light and open its
@@ -1818,8 +1828,10 @@ grid.
 - `faces-alpha` uses a texture with holes in those panels. Normal touches
   and hover reach transparent Blend texels; quick movement and local resizing
   pass through them. Masked cutouts still let normal touches through, and
-  opaque PBR ignores texture alpha. Editing and right-click selection retain
-  access to invisible faces.
+  opaque PBR ignores texture alpha. A face that draws nothing (texture-entry
+  alpha 0, or the library's transparent texture) takes normal touches and
+  hover whatever its material mode.
+  Editing and right-click selection retain access to invisible faces.
   With `AURORA_DEMO_DEBUG=alpha`, translucent/invisible HUD faces appear red
   and material masks blue; their highlighted surfaces become pickable.
 - `blend-opacity`: three rows of panels, Legacy Blend, PBR Blend and Mask, at 0%, 50% and
@@ -2647,7 +2659,7 @@ both open states and the selection count. Capture at frame 620.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_PARCEL_VISIBILITY=<mode>` | Parcel content isolation and same-owner neighbours |
-| `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, or particle load |
+| `AURORA_DEMO_PARTICLES=<mode>` | Wind and smoke particles, region wind comparison, a leash chain, or particle load |
 | `AURORA_DEMO_PLANAR=1` | Slabs with planar texture mapping |
 | `AURORA_DEMO_PBR_OVERRIDE=1` (or `alpha`) | GLTF material override (`alpha`: overrides with a zero base color alpha) |
 | `AURORA_DEMO_PBR_METAL=1` | White PBR metal, polished to rough, and a cube with an occlusion map |
@@ -2729,6 +2741,11 @@ both open states and the selection count. Capture at frame 620.
   example `0,3` to reverse the drift. No grid connection is needed.
   These two modes frame the plumes automatically and close the demo's
   Inventory/AO windows so saved camera preferences cannot hide the comparison.
+  `leash`: a leash script in front of the panel, a white ribbon chain from a
+  small cube to a teal "hand" cube 5 m away, sagging under gravity, two links
+  per burst and a 2.5 m y scale (ribbons ignore it). It must look like a
+  thin chain; tall vertical strips are the links emitted together drawn as
+  billboards (#1049).
   `load`: instead, 32 more fountains in a circle around the plaza,
   that is about 4,000 live particles, to measure the `p_part_*` parts
   of the profile (combine with `AURORA_DEMO_STREAM=<n>` for the
@@ -5944,11 +5961,17 @@ unit tests, the real requests by a grid test. The menu itself:
 `AURORA_DEMO_DOUBLECLICK=menu,<y>` with the height of the Avatar health row
 opens its submenu.
 
-**`AURORA_DEMO_APPEARANCE=gallery|outfits|worn|save|edit|menu|duplicates`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|worn|save|edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
   choice, save to the chosen outfit and move to the Trash);
+- `gallery-fit` / `gallery-fill`: local portrait, landscape and square preview
+  cards. Fit shows the whole image; Fill uses a centred crop without stretching.
+  The discs stay round, the images stay inside their frames and the names and
+  Worn tags stay below. Toggle **Fill outfit previews** in the gallery's bottom
+  options menu; this setting is saved and off by default. Reopen Appearance
+  and restart with `gallery` to check persistence without a forced mode;
 - `outfits`: the list of outfits; `worn`: the worn items. A right click on
   an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,387,r"`
   (Neurolab) or `"90,419,r"` (the worn outfit) in the default window, capture
@@ -6377,6 +6400,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_MUSIC=<url>` or `1` | Music of the demo parcel |
 | `AURORA_DEMO_MEDIA_FILTER=ask`, `first`, `music`, `list`, `worn` or `hud` | Media filter question or list; media on our own worn items |
 | `AURORA_DEMO_SOUND=1` or `hud` | World or HUD chime; interface and media sounds audible |
+| `AURORA_DEMO_SOUND_EXPLORER=1\|all\|blacklist\|blacklist-ignored\|avatar-menu\|avatar-menu-mixed\|avatar-menu-pie` | Sound Explorer, separate blacklist categories, ignored objects or avatar sound-category switches |
 | `AURORA_DEMO_WIND=<x>,<y>[,fly]` | Uniform region wind for the wind sound; `fly`: arrive flying |
 | `AURORA_DEMO_VOLUME=open` or `muted` | Volume panel of the top bar pinned open |
 | `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
@@ -6591,6 +6615,41 @@ What the inventory must show with these scenarios:
   option off for the run, and the question comes; `worn-blocked` /
   `hud-blocked` put the site in the list as blocked: refused without a
   question, told in the local chat.
+- **`AURORA_DEMO_SOUND_EXPLORER=1|all|blacklist|blacklist-ignored|avatar-menu|avatar-menu-mixed|avatar-menu-pie`** exercises Sound Explorer
+  with a looping object, triggered avatar and default collision sound. `1`
+  keeps the default filters; `all` shows avatars, collisions and repeated
+  assets. The fixtures use the normal sound manager. Check pause/resume,
+  Ctrl/Shift selection, local preview/stop, source camera and blocking; open
+  Asset blacklist to remove a sound or owner category. Add
+  `AURORA_DEMO_SOUND=1` to hear the fixtures. Grid validation still requires
+  real scripted objects, gesture sounds and a relog for account persistence.
+  `blacklist` instead opens the blacklist with one resident's three sound
+  categories and an unrelated asset, held in memory without changing the
+  demo account's saved list. Each category has its own line and selection;
+  removing one must leave the other two, and removing the last must leave
+  the unrelated asset. Check type labels, Ctrl/Shift selection and both the
+  Remove selected button and row context menu.
+  Check the full UUID column at normal and narrow window sizes, searching by
+  UUID (also uppercase), sorting and Copy UUID in the row menu. A sound asset
+  shows its own UUID, while owner category rows show the owner's UUID; copying
+  several categories of one owner copies that UUID once. The Ignored objects
+  and residents button opens People › Blocked with its filter cleared, where
+  a separate in-memory ignored object fixture is listed. `blacklist-ignored`
+  opens that destination directly through the same app action. These fixtures
+  do not write either the asset blacklist or the mute cache. On the grid,
+  confirm that Ignore lists an object under People › Blocked and Block sound
+  lists the sound asset UUID in Asset blacklist; remove each through its own
+  list and verify account persistence after relog.
+  `avatar-menu` opens the other avatar's world menu with all three sound
+  categories OFF. `avatar-menu-mixed` starts with worn/gesture sounds ON and
+  rezzed-object sounds OFF; `avatar-menu-pie` exercises the same actions in
+  the radial menu. Open Disturbance and toggle each category in both directions:
+  ON blocks it, OFF removes only that category, and the list menu stays open.
+  The fixture blacklist stays in memory. Use AURORA_DEMO_POINTER to hover the
+  submenu or activate its controls. On the grid, check the real sounds, the
+  separate blacklist rows and persistence after relog. Sound filtering is local
+  and does not use the Bridge; blocking an object does not inherit to rez descendants.
+
 - **`AURORA_DEMO_SOUND=1|hud`**: world sounds (looping chime) and interface
   sounds (taken from the real sound cache if it exists, otherwise a brief
   tick per sound). Without it the media play muted too: the viewer sends

@@ -115,6 +115,8 @@ pub mod keywords;
 pub mod land;
 #[path = "demo_link.rs"]
 pub mod link;
+#[path = "demo_missing_texture.rs"]
+pub mod missing_texture;
 /// The notification center's mockup scenario, in either style
 /// (AURORA_DEMO_NOTIFS).
 #[path = "demo_notifs.rs"]
@@ -429,6 +431,28 @@ fn fountain_particles() -> Vec<u8> {
     out.push(ufix8(0.18, 5));
     out.push(ufix8(0.45, 5));
     out.push(ufix8(0.45, 5));
+    out
+}
+
+/// Leash script (legacy block): a ribbon chain dropped at the collar that
+/// steers towards `target` and sags under gravity, two links per burst. Its
+/// y scale is long because ribbons ignore it (#1049).
+fn leash_particles(target: Uuid) -> Vec<u8> {
+    use aurora_prim::particles::*;
+    let mut out = fountain_particles();
+    out[0..4].copy_from_slice(&0xA0E0_0002u32.to_le_bytes()); // crc
+    out[4..8].copy_from_slice(&0u32.to_le_bytes()); // source flags
+    out[8] = LL_PART_SRC_PATTERN_DROP;
+    out[15..17].copy_from_slice(&0u16.to_le_bytes()); // burst rate (clamped)
+    out[23] = 2; // particles per burst
+    out[34..36].copy_from_slice(&(((-1.0f32 + 256.0) * 128.0) as u16).to_le_bytes()); // gravity
+    out[52..68].copy_from_slice(target.as_bytes());
+    let part = PS_SYS_DATA_BLOCK_SIZE;
+    let flags = LL_PART_RIBBON_MASK | LL_PART_FOLLOW_SRC_MASK | LL_PART_TARGET_POS_MASK | LL_PART_EMISSIVE_MASK;
+    out[part..part + 4].copy_from_slice(&flags.to_le_bytes());
+    out[part + 4..part + 6].copy_from_slice(&(((3.5 * 256.0) as u16).to_le_bytes())); // max age
+    out[part + 6..part + 14].copy_from_slice(&[226, 232, 240, 255, 226, 232, 240, 255]);
+    out[part + 14..part + 18].copy_from_slice(&[(0.07 * 32.0) as u8, (2.5 * 32.0) as u8, (0.07 * 32.0) as u8, (2.5 * 32.0) as u8]);
     out
 }
 
@@ -4646,7 +4670,7 @@ pub fn events() -> Vec<NetEvent> {
             (true, 126.0, aurora_i18n::tr!("common-wind")),
             (false, 130.0, aurora_i18n::tr!("demo-smoke")),
         ] {
-            if (mode == "wind" && !wind) || (mode == "smoke" && wind) || (mode == "legacy" && !wind) {
+            if (mode == "wind" && !wind) || (mode == "smoke" && wind) || (mode == "legacy" && !wind) || mode == "leash" {
                 continue;
             }
             let mut o = prim(
@@ -4668,6 +4692,35 @@ pub fn events() -> Vec<NetEvent> {
                 o.particles = particles;
             }
             add(o);
+            id += 1;
+        }
+        if mode == "leash" {
+            // a collar and the hand that holds it, 5 m apart
+            let hand = prim(
+                id,
+                Vec3::new(137.0, 126.5, ground + 3.5),
+                Quat::IDENTITY,
+                Vec3::splat(0.1),
+                boxp,
+                te(teal, 0, true, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            let target = hand.full_id;
+            add(hand);
+            id += 1;
+            let mut collar = prim(
+                id,
+                Vec3::new(137.0, 121.5, ground + 3.0),
+                Quat::IDENTITY,
+                Vec3::splat(0.1),
+                boxp,
+                te(teal, 0, true, 0.0),
+                ExtraParams::default(),
+                "",
+            );
+            collar.particles = aurora_net::objects::ParticleUpdate::Set(leash_particles(target));
+            add(collar);
             id += 1;
         }
     }
@@ -7884,6 +7937,21 @@ mod particle_tests {
         assert_ne!(wind.part.flags & ps::LL_PART_WIND_MASK, 0);
         wind.part.flags &= !ps::LL_PART_WIND_MASK;
         assert_eq!(wind, calm);
+    }
+
+    #[test]
+    fn demo_leash_is_a_sagging_ribbon_towards_its_target() {
+        use aurora_prim::particles as ps;
+        let target = Uuid::from_u128(1049);
+        let d = ps::parse(&leash_particles(target)).expect("leash particle data");
+        assert_eq!(d.pattern, ps::LL_PART_SRC_PATTERN_DROP);
+        assert_eq!(d.burst_rate, ps::MIN_BURST_RATE);
+        assert_eq!(d.burst_part_count, 2);
+        assert_eq!(d.part_accel, Vec3::new(0.0, 0.0, -1.0));
+        assert_eq!(d.target_id, target);
+        assert_eq!(d.part.flags & ps::LL_PART_RIBBON_MASK, ps::LL_PART_RIBBON_MASK);
+        assert_eq!(d.part.max_age, 3.5);
+        assert_eq!(d.part.start_scale, glam::Vec2::new(0.0625, 2.5));
     }
 
     #[test]

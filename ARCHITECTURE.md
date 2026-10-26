@@ -46,6 +46,25 @@ Hidden linksets release their draw records and visual asset references before
 geometry preparation. Lights, particles, world labels and beacons share the
 visibility rule. `demo_parcel_visibility.rs` supplies four offline parcels.
 
+`scene/sounds/history.rs` records actual world playback with stable voice IDs,
+owner/source identity and global positions, retaining up to 256 rows. UI sounds
+and independent local previews never enter the log. `ui/sound_explorer.rs` owns
+the virtualized table, filters, frozen snapshot and multiple selection;
+`app/sound_explorer.rs` resolves privacy-aware names and applies preview, stop,
+camera and blacklist actions. Sound entries in `world/derender.rs` reuse the
+account's Legacy asset-blacklist XML (AT_SOUND and worn/rezzed/gesture flags)
+without derendering their owners. The blacklist projects each owner's flags
+into separate rows keyed by UUID and category, and removes only the selected
+bits in one atomic save. Removing the final category removes the stored entry;
+object/resident entries still restore their hidden objects as before.
+The avatar/attachment Disturbance submenu controls the three owner sound
+categories with independent ON/OFF actions, sharing the local persisted mask
+with Sound Explorer. Sound filtering does not use the Bridge.
+The blacklist shows each unmasked UUID in a fixed-width column, searches by
+name or UUID, and copies unique selected keys from the row menu. Its Blocked
+shortcut opens the separate People mute list; Ignore never derenders an object
+or adds a sound asset to the blacklist.
+
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer
 helper preserves rejection of malformed and null UUIDs in both HTTP requests
@@ -652,6 +671,12 @@ aurora-viewer ──► aurora-net ──► aurora-msg, aurora-llsd
 ```
 
 ## `aurora-viewer` in detail
+
+The Appearance gallery keeps whole-image previews by default. Its options menu
+can enable saved `Settings::appearance_fill_previews`: `ui/appearance.rs` crops
+centred UVs to fill the existing frame without stretching the image, changing
+the gallery layout or adding texture work. The `gallery-fit` / `gallery-fill`
+offline scenarios supply local cards with three aspect ratios.
 
 `World::can_locate_avatar` and `locate_avatar` share nearby positions and
 received map rights across contact, conversation and profile actions.
@@ -1471,6 +1496,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `demo_blend_shadows.rs` | `AURORA_DEMO_BLEND_SHADOWS` scenario: alpha-blended panels in the sun (greenhouse pane with opaque frame, face and texture alpha above and under the shadow cutoffs), or 400 greenhouse panes for the cost of blended casters |
 | `demo_plants.rs` | `AURORA_DEMO_PLANTS` scenario: the 21 tree species and 6 grass species near or far along the start view, or a forest of about 600 trees and 400 grass tufts; stand-in species textures drawn under their ids, in this scenario only |
 | `demo_sculpt.rs` | `AURORA_DEMO_SCULPT_ZERO` scenario: ordinary torus and two sculpts sharing its path/profile, subtype zero and sphere, with a synthetic JPEG2000 map in the demo cache |
+| `demo_missing_texture.rs` | `AURORA_DEMO_TEXTURE_MISSING` scenario: boxes whose texture the asset server does not have (the Legacy Viewer's grey, not the rez grid) |
 | `demo_social_menu.rs`, `app/social_menu_demo.rs` | `AURORA_DEMO_SOCIAL_MENU` scenario: a resident's "Invite to group" (group picker, then the invitation), "Add to contact set" (a new set), "Block particles" (the fountain they own) and calling cards (given, accepted by the demo server, or offered by the resident) |
 | `demo_notifs.rs` | `AURORA_DEMO_NOTIFS` scenario: the notification center's mockup (an IM, a friend online, a teleport and an inventory offer, a burst of five), in do not disturb, with the list or the history open, or with Firestorm's toasts |
 | `demo_seat_kill.rs` | `AURORA_DEMO_SEAT_KILL` scenario (issue #746): a resident's seat deleted before the simulator stands them up; they stay where they sat, with what they wear |

@@ -274,12 +274,14 @@ pub fn top(
     });
     if let Some(bug_rect) = bug_rect {
         area(&ctx, p, "bug", bug_rect, |ui| {
-            // its right click hides it, as the wolf's does
+            // its right click copies the version (the wolf's menu still
+            // hides it)
             let back = ui.interact(bug_rect, Id::unique("bars_island_bug_back"), Sense::click());
-            menu_options(&back, p, st, &mut action);
             let bug = Rect::from_center_size(bug_rect.center(), Vec2::splat(SLOT));
             let resp = icon_slot(ui, p, icons, bug, Id::unique("bars_island_bug"), "bug-filled", true);
-            menu_options(&resp, p, st, &mut action);
+            if back.secondary_clicked() || resp.secondary_clicked() {
+                action = BarAction::CopyVersion;
+            }
             if resp.on_hover_text(aurora_i18n::tr!("bug-title")).clicked() {
                 action = BarAction::ReportBug;
             }
@@ -305,7 +307,7 @@ pub fn top(
     (action, audio_action)
 }
 
-/// Right-click menu of the menu and bug islands: the bug report button, also in
+/// Right-click menu of the menu island: the bug report button, also in
 /// Preferences › Interface ("Report a bug in the top bar", on by default
 /// during the alpha).
 fn menu_options(resp: &egui::Response, p: &Palette, st: &StatusInfo, action: &mut BarAction) {
@@ -1469,6 +1471,29 @@ mod tests {
         frame_at(&ctx, &st, 1.35, vec![]);
         assert!(egui::Popup::is_any_open(&ctx), "the island's menu");
         assert!(!open(), "no tooltip under the menu");
+    }
+
+    /// The bug button's right click copies the version, silently: no menu
+    /// opens, the left click still reports a bug.
+    #[test]
+    fn the_bug_button_right_click_copies_the_version() {
+        let ctx = egui::Context::default();
+        let st = status(true, true);
+        frame_at(&ctx, &st, 0.0, vec![]);
+        frame_at(&ctx, &st, 0.1, vec![]);
+        let bug = ctx
+            .memory(|m| m.area_rect(Id::unique(("bars_island", "bug"))))
+            .expect("the bug island")
+            .center();
+        frame_at(&ctx, &st, 0.2, vec![egui::Event::PointerMoved(bug)]);
+        frame_at(&ctx, &st, 0.25, vec![press(bug, egui::PointerButton::Secondary, true)]);
+        let action = frame_at(&ctx, &st, 0.3, vec![press(bug, egui::PointerButton::Secondary, false)]);
+        assert!(matches!(action, BarAction::CopyVersion), "the right click copies the version");
+        frame_at(&ctx, &st, 0.35, vec![]);
+        assert!(!egui::Popup::is_any_open(&ctx), "and opens no menu");
+        frame_at(&ctx, &st, 0.4, vec![press(bug, egui::PointerButton::Primary, true)]);
+        let action = frame_at(&ctx, &st, 0.45, vec![press(bug, egui::PointerButton::Primary, false)]);
+        assert!(matches!(action, BarAction::ReportBug), "the left click reports a bug");
     }
 
     /// The home button's right click offers Set Home to Here (instead of the

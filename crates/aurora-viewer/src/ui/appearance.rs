@@ -17,6 +17,7 @@ pub(crate) mod items;
 #[derive(Default)]
 pub struct AppearanceUi {
     pub tab: usize,
+    pub fill_previews: bool,
     pub editing: bool,
     edit_tab: usize,
     search: String,
@@ -432,14 +433,8 @@ fn gallery(
                         st.wanted_images.insert(image);
                     }
                     if let Some(t) = images.get(&image) {
-                        let size = t.size_vec2();
-                        let scale = ((rect.width() - 6.0) / size.x).min((rect.height() - 6.0) / size.y);
-                        ui.painter().image(
-                            t.id(),
-                            egui::Rect::from_center_size(rect.center(), size * scale),
-                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            widgets::PICTURE_TINT,
-                        );
+                        let (image_rect, uv) = preview_rects(rect.shrink(3.0), t.size_vec2(), st.fill_previews);
+                        ui.painter().image(t.id(), image_rect, uv, widgets::PICTURE_TINT);
                     } else if let Some(t) = icons::global("hanger-2-filled") {
                         ui.painter().image(
                             t.id(),
@@ -480,6 +475,26 @@ fn gallery(
         let height = ui.cursor().top() - top;
         let first = *pitch.get_or_insert(height);
         st.rows.gallery.insert(pair[0], height - first);
+    }
+}
+
+/// Fit keeps the whole image; Fill crops its UVs around the centre, keeping
+/// its aspect ratio and all geometry inside the frame. This optional crop
+/// is an Aurora extension to LLOutfitGalleryItem::draw (lloutfitgallery.cpp).
+fn preview_rects(frame: egui::Rect, size: Vec2, fill: bool) -> (egui::Rect, egui::Rect) {
+    let scale = frame.size() / size;
+    if fill {
+        let visible = if scale.x < scale.y {
+            Vec2::new(scale.x / scale.y, 1.0)
+        } else {
+            Vec2::new(1.0, scale.y / scale.x)
+        };
+        (frame, egui::Rect::from_center_size(egui::pos2(0.5, 0.5), visible))
+    } else {
+        (
+            egui::Rect::from_center_size(frame.center(), size * scale.min_elem()),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+        )
     }
 }
 
@@ -1160,6 +1175,16 @@ pub fn show(
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             icon_menu(ui, p, "settings-filled", aurora_i18n::tr!("ui-appearance-outfit-options"), |ui| {
+                if !st.editing && st.tab == 0 {
+                    menu::toggle(
+                        ui,
+                        p,
+                        "photo-filled",
+                        aurora_i18n::tr!("ui-appearance-fill-previews"),
+                        &mut st.fill_previews,
+                    );
+                    menu::separator(ui, p);
+                }
                 if menu::item(ui, p, "refresh", aurora_i18n::tr!("ui-appearance-refresh")) {
                     st.refresh(&mut world.inventory);
                 }
@@ -1295,9 +1320,133 @@ pub fn demo_events(frame: u64) -> Vec<egui::Event> {
     ]
 }
 
+/// Local test cards: portrait, landscape and square, with a central disc
+/// and edge marks that make cropping and distortion visible without assets.
+pub fn demo_previews(ctx: &egui::Context, inv: &mut crate::world::inventory::Inventory, images: &mut HashMap<Uuid, egui::TextureHandle>) {
+    let p = crate::theme::Theme::default().palette();
+    for (folder, size, color) in [(703, [240, 400], p.rose), (704, [400, 180], p.teal), (705, [256, 256], p.amber)] {
+        let id = Uuid::from_u128(80_000 + folder);
+        let mut image = egui::ColorImage::filled(size, p.field);
+        let centre = egui::vec2(size[0] as f32, size[1] as f32) * 0.5;
+        let radius = centre.min_elem() * 0.6;
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                let point = egui::vec2(x as f32, y as f32);
+                let edge = x < 10 || y < 10 || x + 10 >= size[0] || y + 10 >= size[1];
+                image[(x, y)] = if edge || (point - centre).length_sq() < radius * radius {
+                    color
+                } else if x % 40 < 2 || y % 40 < 2 {
+                    p.muted
+                } else {
+                    p.field
+                };
+            }
+        }
+        if let Some(folder) = inv.folders.get_mut(&Uuid::from_u128(folder)) {
+            folder.info.thumbnail = id;
+        }
+        images.insert(
+            id,
+            ctx.load_texture(format!("demo-outfit-{folder}"), image, egui::TextureOptions::LINEAR),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outfit_previews_fit_or_fill_without_distortion_or_overflow() {
+        let frame = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(240.0, 210.0));
+        for size in [egui::vec2(240.0, 400.0), egui::vec2(400.0, 180.0), Vec2::splat(256.0), frame.size()] {
+            for fill in [false, true] {
+                let (rect, uv) = preview_rects(frame, size, fill);
+                assert!(frame.expand(1e-4).contains_rect(rect), "{size:?}, fill={fill}: {rect:?}");
+                assert_eq!(rect.center(), frame.center());
+                assert_eq!(uv.center(), egui::pos2(0.5, 0.5));
+                assert!(uv.min.x >= 0.0 && uv.min.y >= 0.0 && uv.max.x <= 1.0 && uv.max.y <= 1.0);
+                let source = size * uv.size();
+                assert!((source.x / source.y - rect.width() / rect.height()).abs() < 1e-5);
+                if fill {
+                    assert_eq!(rect, frame);
+                    assert!((uv.width().max(uv.height()) - 1.0).abs() < 1e-5);
+                } else {
+                    assert_eq!(uv.min, egui::Pos2::ZERO);
+                    assert_eq!(uv.max, egui::pos2(1.0, 1.0));
+                    assert!((rect.width() - frame.width()).abs() < 1e-4 || (rect.height() - frame.height()).abs() < 1e-4);
+                }
+            }
+        }
+        let (_, portrait) = preview_rects(frame, egui::vec2(240.0, 400.0), true);
+        assert_eq!(portrait.min.x, 0.0);
+        assert!(portrait.min.y > 0.0);
+        let (_, landscape) = preview_rects(frame, egui::vec2(400.0, 180.0), true);
+        assert!(landscape.min.x > 0.0);
+        assert_eq!(landscape.min.y, 0.0);
+    }
+
+    #[test]
+    fn outfit_previews_default_to_fit_and_remember_the_saved_choice() {
+        use crate::settings::Settings;
+        let old: Settings = serde_json::from_str("{}").expect("old settings");
+        assert!(!old.appearance_fill_previews);
+        for fill in [true, false] {
+            let settings = Settings {
+                appearance_fill_previews: fill,
+                ..Default::default()
+            };
+            let saved = serde_json::to_vec(&settings).expect("save settings");
+            let restored: Settings = serde_json::from_slice(&saved).expect("restore settings");
+            assert_eq!(restored.appearance_fill_previews, fill);
+        }
+    }
+
+    #[test]
+    fn outfit_preview_option_toggles_both_ways_in_the_gallery_menu() {
+        let ctx = egui::Context::default();
+        crate::theme::Theme::default().apply(&ctx, 1.0);
+        let _icons = icons::Icons::load(&ctx, None);
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let mut st = AppearanceUi::default();
+        for _ in 0..4 {
+            draw(&ctx, &mut world, &mut st, None);
+        }
+        let click = |st: &mut AppearanceUi, world: &mut World, pos| {
+            for pressed in [true, false] {
+                draw_input(
+                    &ctx,
+                    world,
+                    st,
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1600.0, 900.0))),
+                        events: vec![
+                            egui::Event::PointerMoved(pos),
+                            egui::Event::PointerButton {
+                                pos,
+                                button: egui::PointerButton::Primary,
+                                pressed,
+                                modifiers: Default::default(),
+                            },
+                        ],
+                        ..Default::default()
+                    },
+                );
+            }
+        };
+        let rect = ctx.memory(|m| m.area_rect(egui::Id::unique("appearance"))).expect("appearance");
+        // The options button is left of the count, in the row above the footer.
+        let count = aurora_i18n::tr!("outfit-count", count = 4usize);
+        let pos = label_position(&ctx, &mut world, &mut st, &count);
+        let label = aurora_i18n::tr!("ui-appearance-fill-previews");
+        for fill in [true, false] {
+            click(&mut st, &mut world, egui::pos2(rect.left() + 20.0, pos.y));
+            let pos = menu_label_position(&ctx, &mut world, &mut st, label);
+            click(&mut st, &mut world, pos);
+            assert_eq!(st.fill_previews, fill);
+        }
+    }
 
     /// A refused outfit change (no capabilities in the region just entered)
     /// used to leave the current outfit unloaded: "still loading" for every

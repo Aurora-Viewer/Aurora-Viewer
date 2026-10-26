@@ -43,7 +43,13 @@ pub const TRANSPARENT: u32 = 3;
 /// first time cost ~1.3 µs of `write_texture` in the scene sync, 16 ms for
 /// the 12,000 of a region arrival.
 pub const PLACEHOLDER: u32 = 4;
-const RESERVED: u32 = 5;
+/// The grey of a texture that will not come (missing on the asset server,
+/// failing again and again): LLViewerFetchedTexture::sDefaultImagep, the
+/// 0x7f grey the Legacy Viewer binds instead (llviewertexture.cpp). A layer
+/// of its own, so that the shader tells it from the loading grey
+/// (`rez_still_grey` in object.wgsl): such a face is no rez grid for ever.
+pub const MISSING: u32 = 5;
+const RESERVED: u32 = 6;
 /// The white texture is the first one created: page 0, layer 0. Freed slots
 /// point there, so a stale draw record samples white, never a dropped page.
 const WHITE_LOC: u32 = 0;
@@ -884,6 +890,37 @@ impl PageStore {
         Some(slot)
     }
 
+    /// A slot still showing the loading placeholder shows the missing grey
+    /// ([`MISSING`]) instead; its first texels, if they ever come, replace
+    /// it as they replace the placeholder. False for any other slot.
+    fn show_missing(&mut self, slot: u32) -> bool {
+        let Some((key, page, layer)) = self
+            .slots
+            .get(MISSING as usize)
+            .and_then(Option::as_ref)
+            .map(|s| (s.key, s.page, s.layer))
+        else {
+            return false;
+        };
+        if slot < RESERVED {
+            return false;
+        }
+        let Some(Some(s)) = self.slots.get_mut(slot as usize) else {
+            return false;
+        };
+        if !s.shared {
+            return false;
+        }
+        *s = Slot {
+            key,
+            page,
+            layer,
+            shared: true,
+        };
+        self.set_loc(slot, pack(page, layer));
+        true
+    }
+
     fn replace(&mut self, device: &wgpu::Device, writes: &mut GpuWrites, slot: u32, mips: &[MipLevel]) -> bool {
         let Some(key) = page_key(mips, self.max_dim) else {
             return false;
@@ -1203,6 +1240,7 @@ impl TextureTable {
             (BLACK, [0, 0, 0, 255]),
             (TRANSPARENT, [0, 0, 0, 0]),
             (PLACEHOLDER, [148, 148, 156, 255]),
+            (MISSING, [127, 127, 127, 255]),
         ] {
             let created = store.create(
                 device,
@@ -1419,6 +1457,13 @@ impl TextureTable {
     /// gives it texels. Costs no GPU work.
     pub fn create_placeholder(&mut self) -> Option<u32> {
         self.store.create_placeholder()
+    }
+
+    /// A texture that will not come: its slot, while it still shows the
+    /// loading placeholder, shows the missing grey ([`MISSING`]). Costs no
+    /// GPU work. False for a slot with texels of its own.
+    pub fn show_missing(&mut self, slot: u32) -> bool {
+        self.store.show_missing(slot)
     }
 
     /// Replace the contents of an existing slot (e.g. higher resolution).
@@ -2021,6 +2066,42 @@ mod tests {
         // the reserved slots are never handed out nor freed
         store.free(WHITE);
         assert_eq!(store.create_placeholder(), None);
+    }
+
+    #[test]
+    fn a_texture_that_will_not_come_leaves_the_loading_grey() {
+        let mut store = bare_store(64, page_capacity(64, true));
+        for (slot, layer) in [(PLACEHOLDER, 4), (MISSING, 5)] {
+            if let Some(Some(s)) = store.slots.get_mut(slot as usize) {
+                s.layer = layer;
+            }
+            store.set_loc(slot, pack(0, layer));
+        }
+        let waiting = store.create_placeholder().expect("slot");
+        let other = store.create_placeholder().expect("slot");
+        assert_eq!(store.loc[waiting as usize], store.loc[PLACEHOLDER as usize]);
+        // the missing grey, without a layer of its own; the others still load
+        let (bytes, live) = (store.bytes, store.live);
+        assert!(store.show_missing(waiting));
+        assert_eq!(store.loc[waiting as usize], store.loc[MISSING as usize]);
+        assert_ne!(store.loc[waiting as usize], store.loc[PLACEHOLDER as usize]);
+        assert_eq!(store.loc[other as usize], store.loc[PLACEHOLDER as usize]);
+        assert_eq!((store.bytes, store.live), (bytes, live));
+        assert!(store.slots[waiting as usize].as_ref().is_some_and(|s| s.shared));
+        // never a reserved slot, a free one or one with texels of its own
+        assert!(!store.show_missing(PLACEHOLDER));
+        assert!(!store.show_missing(WHITE));
+        assert!(!store.show_missing(63));
+        if let Some(Some(s)) = store.slots.get_mut(other as usize) {
+            s.shared = false;
+            s.layer = 9;
+        }
+        assert!(!store.show_missing(other));
+        // freed, it is white again and handed out as a placeholder
+        store.free(waiting);
+        assert_eq!(store.loc[waiting as usize], WHITE_LOC);
+        assert_eq!(store.create_placeholder(), Some(waiting));
+        assert_eq!(store.loc[waiting as usize], store.loc[PLACEHOLDER as usize]);
     }
 
     /// Layers of successive pages of one size, each sized from the

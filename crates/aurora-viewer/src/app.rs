@@ -31,6 +31,7 @@ mod attention;
 mod bridge;
 mod movelock;
 mod poser;
+mod sound_explorer;
 // Bug report form (disabled, see main.rs):
 // mod bug_report;
 mod avatar_health;
@@ -514,6 +515,7 @@ pub struct App {
     snapshots: snapshot::Snapshots,
     inspect_ui: ui::inspect::InspectUi,
     area_search_ui: ui::area_search::AreaSearchUi,
+    sound_explorer_ui: ui::sound_explorer::SoundExplorer,
     area_search_feed: area_search::Feed,
     /// "Asset blacklist" (World menu).
     blacklist_ui: ui::blacklist::BlacklistUi,
@@ -649,6 +651,8 @@ pub struct App {
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
     sculpt_missing_demo: Option<crate::demo::sculpt::MissingMapDemo>,
+    /// AURORA_DEMO_TEXTURE_MISSING: boxes whose texture is missing.
+    texture_missing_demo: Option<crate::demo::missing_texture::MissingTextureDemo>,
     /// AURORA_DEMO_EXPERIENCE: experiences asking (door, pad, greeter).
     experience_demo: Option<crate::demo::experience::ExperienceDemo>,
     /// AURORA_DEMO_TP_AWAY: the demo region's coarse locations while away.
@@ -1150,6 +1154,7 @@ impl App {
             snapshots: Default::default(),
             inspect_ui: Default::default(),
             area_search_ui: Default::default(),
+            sound_explorer_ui: Default::default(),
             area_search_feed: Default::default(),
             blacklist_ui: Default::default(),
             bumps_ui: Default::default(),
@@ -1236,6 +1241,7 @@ impl App {
             arrival_demo: None,
             tex_refresh_demo: None,
             sculpt_missing_demo: None,
+            texture_missing_demo: None,
             experience_demo: None,
             away_coarse: Vec::new(),
             geometry_demo: None,
@@ -2311,6 +2317,8 @@ impl App {
             self.world.social.avatar_names.save(&path);
         }
         self.scene.sounds.clear(self.audio_engine.as_ref());
+        self.scene.sounds.history = Default::default();
+        self.sound_explorer_ui = Default::default();
         self.blender_live.stop();
         self.clear_blender_preview();
         self.blender_live = Default::default();
@@ -2378,7 +2386,6 @@ impl App {
             return;
         }
         if let NetEvent::BridgeQueryReply { request, result } = ev {
-            let _ = self.sync_bridge_queries();
             if self.bridge_services.owns(request) {
                 let error = result.as_ref().err().map(String::as_str);
                 self.bridge_runtime.query_reply(&self.world, error, Instant::now());
@@ -3032,7 +3039,9 @@ impl App {
                 position,
                 gain,
             } => {
-                if self.world.sound_blocked(&object, &owner) || (!parent.is_nil() && self.world.sound_blocked(&parent, &uuid::Uuid::nil()))
+                if self.world.sound_blocked(&object, &owner)
+                    || self.world.sound_blacklisted(sound, object, owner)
+                    || (!parent.is_nil() && self.world.sound_blocked(&parent, &uuid::Uuid::nil()))
                 {
                     return;
                 }
@@ -3045,7 +3054,9 @@ impl App {
                     return;
                 }
                 if let Some(off) = self.world.region_offset(handle) {
-                    self.scene.sounds.trigger(sound, off + position, None, gain);
+                    self.scene
+                        .sounds
+                        .trigger_owned(sound, off + position, None, gain, crate::scene::sounds::Origin { object, owner });
                 }
             }
             NetEvent::AttachedSound {
@@ -3056,12 +3067,13 @@ impl App {
                 flags,
             } => {
                 self.flush_object_sounds();
-                if !sound.is_nil() && self.world.sound_blocked(&object, &owner) {
+                if !sound.is_nil() && (self.world.sound_blocked(&object, &owner) || self.world.sound_blacklisted(sound, object, owner)) {
                     return;
                 }
                 self.scene
                     .sounds
                     .set_attached(self.audio_engine.as_ref(), object, sound, gain, flags);
+                self.scene.sounds.set_owner(object, owner);
             }
             NetEvent::AttachedSoundGain { object, gain } => {
                 self.flush_object_sounds();
@@ -3069,7 +3081,9 @@ impl App {
             }
             NetEvent::PreloadSounds(sounds) => {
                 for sound in sounds {
-                    self.scene.sounds.want(sound.sound);
+                    if !self.world.sound_blacklisted(sound.sound, sound.object, sound.owner) {
+                        self.scene.sounds.want(sound.sound);
+                    }
                 }
             }
             NetEvent::LoggedOut => {
@@ -4141,16 +4155,16 @@ impl App {
     fn flush_object_sounds(&mut self) {
         let engine = self.audio_engine.as_ref();
         // the block list changed: silence / restore the sounds it covers
-        let version = self.world.mutes.version.wrapping_add(self.world.anti_spam.version);
+        let version = self
+            .world
+            .mutes
+            .version
+            .wrapping_add(self.world.anti_spam.version)
+            .wrapping_add(self.world.derender.generation);
         let recheck = self.sound_blocks.0 != version;
         self.sound_blocks.0 = version;
-        let mutes = &self.world.mutes;
-        let anti_spam = &self.world.anti_spam;
-        let blocked = |o: &crate::world::objects::Object| {
-            mutes.is_muted_id(&o.full_id)
-                || (!o.owner_id.is_nil() && mutes.sounds_muted(&o.owner_id))
-                || anti_spam.is_blocked(crate::world::anti_spam::Queue::Sound, o.full_id)
-                || anti_spam.is_blocked(crate::world::anti_spam::Queue::Sound, o.owner_id)
+        let blocked = |world: &World, o: &crate::world::objects::Object| {
+            world.sound_blocked(&o.full_id, &o.owner_id) || world.sound_blacklisted(o.sound.id, o.full_id, o.owner_id)
         };
         if recheck {
             // rare: every object with a sound, but for those whose update is
@@ -4161,7 +4175,7 @@ impl App {
                 if o.sound_update {
                     continue;
                 }
-                if blocked(o) {
+                if blocked(&self.world, o) {
                     if self.sound_blocks.1.insert(o.full_id) {
                         self.scene.sounds.apply_object_sound(
                             engine,
@@ -4190,7 +4204,10 @@ impl App {
             if !std::mem::take(&mut o.sound_update) {
                 continue;
             }
-            if blocked(o) {
+            let Some(o) = self.world.objects.get(idx) else {
+                continue;
+            };
+            if blocked(&self.world, o) {
                 self.sound_blocks.1.insert(o.full_id);
                 self.scene.sounds.apply_object_sound(
                     engine,
@@ -9750,6 +9767,9 @@ impl App {
         if let Some(demo) = &mut self.sculpt_missing_demo {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
         }
+        if let Some(demo) = &mut self.texture_missing_demo {
+            demo.tick(self.frame_count, &mut self.world, &mut self.scene.textures);
+        }
         // AURORA_DEMO_EXPERIENCE: the door or the pad, and what asks
         // without a click (walking into the pad, arriving)
         if let Some(reply) = self
@@ -10520,6 +10540,13 @@ impl App {
         self.egui_ctx.open_url(egui::OpenUrl::new_tab(crate::links::NEW_ISSUE));
     }
 
+    /// The bug button's right click (login screen, top bar): the version a
+    /// report asks for, to the clipboard with no notice.
+    fn copy_version(&self) {
+        log::info!("bug report: version copied to the clipboard");
+        self.egui_ctx.copy_text(aurora_version::version().to_owned());
+    }
+
     fn handle_actions(&mut self, a: UiActions, event_loop: &ActiveEventLoop) {
         if let Some(action) = a.exit {
             self.confirm_exit(action);
@@ -10533,6 +10560,7 @@ impl App {
             LoginAction::Login if !self.updater.blocks_login() && aurora_updater::test_environment().is_none() => self.start_login(),
             LoginAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             LoginAction::ReportBug => self.open_issue_chooser(),
+            LoginAction::CopyVersion => self.copy_version(),
             LoginAction::SafeGraphics(choice) => self.safe_graphics_choice(choice),
             LoginAction::DismissDriverNotice => {
                 if let Some(notice) = self.login_form.driver_notice.take() {
@@ -10638,6 +10666,7 @@ impl App {
         match a.bar {
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
+            BarAction::CopyVersion => self.copy_version(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
             BarAction::ServerReleaseNotes => self.send(NetCommand::ServerReleaseNotes),
             BarAction::Import => {
@@ -13104,6 +13133,7 @@ impl App {
                 }
                 let complexity = self.scene.avatar_complexity.get(&self.world.agent_id).copied().unwrap_or_default();
                 let mut open = self.panels.appearance;
+                self.appearance_ui.fill_previews = self.settings.appearance_fill_previews;
                 for action in ui::appearance::show(
                     &ctx,
                     &p,
@@ -13114,6 +13144,10 @@ impl App {
                     &self.ui_images,
                 ) {
                     self.apply_appearance_action(action);
+                }
+                if self.settings.appearance_fill_previews != self.appearance_ui.fill_previews {
+                    self.settings.appearance_fill_previews = self.appearance_ui.fill_previews;
+                    self.settings.save();
                 }
                 self.panels.appearance = open;
                 self.update_demo_shape_mesh();
@@ -13483,6 +13517,7 @@ impl App {
                 }
                 self.blacklist_window(&ctx, &p);
                 self.area_search_window(&ctx, &p);
+                self.sound_explorer_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
                 ui::beacons::show(&ctx, &p, &mut self.panels.beacons, &mut self.settings);
                 if ui::owned_land::show(&ctx, &p, &mut self.world, &mut self.panels.owned_land) {
@@ -15219,6 +15254,9 @@ impl ApplicationHandler for App {
             if let Ok(mode) = std::env::var("AURORA_DEMO_AREA_SEARCH") {
                 self.demo_area_search(&mode);
             }
+            if let Ok(mode) = std::env::var("AURORA_DEMO_SOUND_EXPLORER") {
+                self.demo_sound_explorer(&mode);
+            }
             // AURORA_DEMO_OBJECT_CHAT: two notices among the lines, each with
             // its topic's icon when compact
             if crate::demo::object_chat::scene().is_some() {
@@ -15408,6 +15446,10 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
+                    ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
+                    self.settings.appearance_fill_previews = view == "gallery-fill";
+                }
                 let many = crate::world::appearance::demo_outfit_count();
                 if many > 0 {
                     crate::world::appearance::seed_demo_many(&mut self.world.inventory, self.world.agent_id, many);
@@ -15855,6 +15897,7 @@ impl ApplicationHandler for App {
             self.arrival_demo = crate::demo::arrival::ArrivalDemo::from_env();
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
+            self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();
             self.experience_demo = crate::demo::experience::ExperienceDemo::from_env();
             self.geometry_demo = crate::demo::geometry::GeometryDemo::from_env();
             self.turn_demo = crate::demo::turn::TurnDemo::from_env();

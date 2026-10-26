@@ -400,6 +400,12 @@ impl Entry {
         self.cache_state == 1 || self.decoding || self.fetching
     }
 
+    /// Never loaded and not coming for now: missing on the asset server
+    /// (asked again in ten minutes), or failing again and again.
+    fn unavailable(&self) -> bool {
+        self.decoded.is_none() && (self.gone || self.failures > 3)
+    }
+
     /// Texture Refresh (destroy_texture, llviewermenu.cpp): what is held of
     /// it is forgotten and it is downloaded again, not read from the disk
     /// (its files are removed by the caller). The slot keeps showing its
@@ -807,6 +813,8 @@ trait SlotTable {
     /// A slot showing the grey placeholder, None when the table is full.
     fn placeholder(&mut self) -> Option<u32>;
     fn free(&mut self, slot: u32);
+    /// The slot, while it shows the placeholder, shows the missing grey.
+    fn show_missing(&mut self, slot: u32) -> bool;
 }
 
 impl SlotTable for Renderer {
@@ -816,6 +824,10 @@ impl SlotTable for Renderer {
 
     fn free(&mut self, slot: u32) {
         self.free_texture(slot);
+    }
+
+    fn show_missing(&mut self, slot: u32) -> bool {
+        self.textures.show_missing(slot)
     }
 }
 
@@ -933,6 +945,10 @@ pub struct TextureStreamer {
     /// `report_slotless`).
     slotless: usize,
     slotless_unreported: usize,
+    /// Textures that just became unavailable (`is_unavailable`): `upload`
+    /// points their slot at the missing grey, so that their faces leave the
+    /// rez grid (`textures::MISSING`).
+    unavailable: Vec<Uuid>,
     /// Decoded levels the uploads are done with and download bodies once
     /// merged, freed off this thread.
     trash: Trash<Vec<u8>>,
@@ -1112,6 +1128,7 @@ impl TextureStreamer {
             evicted: Vec::new(),
             slotless: 0,
             slotless_unreported: 0,
+            unavailable: Vec::new(),
             trash: Trash::default(),
             cache_writer: None,
             alpha_changes: Vec::new(),
@@ -1490,6 +1507,20 @@ impl TextureStreamer {
         }
     }
 
+    /// The textures that became unavailable show the missing grey, as the
+    /// Legacy Viewer binds its default image for a missing asset
+    /// (LLViewerTexture::bindDefaultImage): with the rez effect on, a face
+    /// still showing the loading grey is the grid, which would stay for as
+    /// long as the texture is in use. One still unavailable only (it may
+    /// have loaded since), in its own slot (an evicted one gave it back).
+    fn show_unavailable(&mut self, table: &mut impl SlotTable) {
+        for id in std::mem::take(&mut self.unavailable) {
+            if let Some(e) = self.entries.get(&id).filter(|e| e.unavailable() && e.slot != NO_SLOT) {
+                table.show_missing(e.slot);
+            }
+        }
+    }
+
     /// One line of the log for the textures left without a slot since the
     /// last one (not one each: they come by the thousand).
     fn report_slotless(&mut self, capacity: u32) {
@@ -1632,9 +1663,7 @@ impl TextureStreamer {
     /// Never loaded and not coming for now: missing on the asset server
     /// (asked again in ten minutes), or failing again and again.
     pub fn is_unavailable(&self, id: &Uuid) -> bool {
-        self.entries
-            .get(id)
-            .is_some_and(|e| e.decoded.is_none() && (e.gone || e.failures > 3))
+        self.entries.get(id).is_some_and(Entry::unavailable)
     }
 
     /// Discard level on the GPU (None until the first upload).
@@ -2198,12 +2227,19 @@ impl TextureStreamer {
                 e.gone = false;
             }
             Err(err) => {
+                let was_unavailable = e.unavailable();
                 e.failures += 1;
                 let backoff = 2u64.pow(e.failures.min(6));
                 e.retry_at = Some(Instant::now() + Duration::from_secs(backoff));
-                e.gone = r.status == 404;
-                if r.status == 404 {
+                // the asset CDN answers 403 for a missing asset (S3), as for
+                // meshes; LLTextureFetchWorker gives up on it as on any
+                // failed GET (WAIT_HTTP_REQ, "Fail harder")
+                e.gone = matches!(r.status, 403 | 404);
+                if e.gone {
                     e.retry_at = Some(Instant::now() + Duration::from_secs(600));
+                }
+                if !was_unavailable && e.unavailable() {
+                    self.unavailable.push(id);
                 }
                 let source = match e.source {
                     TexSource::Bake { .. } => " (bake service)",
@@ -2309,7 +2345,11 @@ impl TextureStreamer {
                 self.decodes = self.decodes.saturating_sub(1);
                 if let Some(e) = self.entries.get_mut(&id) {
                     e.decoding = false;
+                    let was_unavailable = e.unavailable();
                     e.failures += 1;
+                    if !was_unavailable && e.unavailable() {
+                        self.unavailable.push(id);
+                    }
                     // Corrupt cached data: drop it and refetch.
                     if e.failures >= 2 {
                         e.data = Arc::default();
@@ -2362,6 +2402,9 @@ impl TextureStreamer {
         let Some(e) = self.entries.get_mut(id).filter(|e| !e.gone) else {
             return false;
         };
+        if !e.unavailable() {
+            self.unavailable.push(*id);
+        }
         e.gone = true;
         e.retry_at = Some(Instant::now() + Duration::from_secs(600));
         Self::settle(&mut self.todo, &mut self.counts, *id, e);
@@ -2414,6 +2457,7 @@ impl TextureStreamer {
     /// Send decoded textures to the GPU, most visible first, within the
     /// frame's budget (at least one a frame, so a slow one still goes).
     pub fn upload(&mut self, renderer: &mut Renderer, jobs: &Jobs, budget: UploadBudget) {
+        self.show_unavailable(renderer);
         let t0 = Instant::now();
         let mut spent = 0u64;
         let mut done = 0usize;
@@ -3770,6 +3814,7 @@ mod tests {
     struct Slots {
         left: Vec<u32>,
         freed: Vec<u32>,
+        missing: Vec<u32>,
     }
 
     impl SlotTable for Slots {
@@ -3781,6 +3826,62 @@ mod tests {
             self.freed.push(slot);
             self.left.push(slot);
         }
+
+        fn show_missing(&mut self, slot: u32) -> bool {
+            self.missing.push(slot);
+            true
+        }
+    }
+
+    /// A failed download of texture `n` (in slot `10 + n`, never loaded).
+    fn fail(s: &mut TextureStreamer, n: u128, status: u16) {
+        let key = 1000 + n as u64;
+        let e = s.entries.entry(id(n)).or_insert_with(|| {
+            let mut e = entry(None, 100.0);
+            e.slot = 10 + n as u32;
+            e
+        });
+        e.fetching = true;
+        e.fetch_key = key;
+        s.by_fetch_key.insert(key, id(n));
+        s.on_fetch(FetchResult {
+            key,
+            status,
+            complete: false,
+            offset: 0,
+            data: Err(format!("status {status}")),
+        });
+    }
+
+    #[test]
+    fn a_texture_missing_on_the_asset_server_leaves_the_rez_grid() {
+        let mut s = pressed(0, Vec::new());
+        let mut table = Slots::default();
+        // the asset CDN answers 403 for a missing asset, as 404: given up
+        // at once, asked again in ten minutes
+        fail(&mut s, 1, 403);
+        fail(&mut s, 2, 404);
+        for n in [1, 2] {
+            let e = &s.entries[&id(n)];
+            assert!(e.gone && s.is_unavailable(&id(n)));
+            assert!(e.retry_at.is_some_and(|t| t > Instant::now() + Duration::from_secs(500)));
+        }
+        // a server error is retried; only the fourth failure in a row gives up
+        for _ in 0..3 {
+            fail(&mut s, 3, 503);
+        }
+        assert!(!s.entries[&id(3)].gone && !s.is_unavailable(&id(3)));
+        s.show_unavailable(&mut table);
+        assert_eq!(table.missing, [11, 12]);
+        fail(&mut s, 3, 503);
+        assert!(s.is_unavailable(&id(3)));
+        // told once; one that loaded meanwhile keeps its texels
+        fail(&mut s, 3, 503);
+        fail(&mut s, 4, 404);
+        s.entries.get_mut(&id(4)).expect("entry").decoded = Some(2);
+        table.missing.clear();
+        s.show_unavailable(&mut table);
+        assert_eq!(table.missing, [13]);
     }
 
     /// The streamer with texture `n` in slot `10 + n` for each of `used`

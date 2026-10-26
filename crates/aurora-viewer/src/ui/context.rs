@@ -22,6 +22,10 @@ mod entries;
 mod multi;
 mod pie;
 
+#[cfg(test)]
+#[path = "context/sound_tests.rs"]
+mod sound_tests;
+
 pub use multi::avatars_menu;
 
 /// Object update flags (llprimitive/object_flags.h).
@@ -180,6 +184,8 @@ pub struct Facts {
     pub blocked: bool,
     /// Their particles are blocked (LLMute::flagParticles).
     pub particles_blocked: bool,
+    /// Asset blacklist owner categories: 1 worn, 2 rezzed, 4 gesture.
+    pub sound_blocks: u8,
     /// Our contact sets, for "Add to contact set" (getAllContactSets).
     pub contact_sets: Vec<String>,
     pub friend: bool,
@@ -299,6 +305,12 @@ pub enum CtxAction {
     /// Block / unblock only a resident's particles (LLMute::flagParticles,
     /// as the block list's "Block particles").
     ToggleParticleMute(Uuid),
+    /// One persistent owner category in the sound blacklist (ON blocks it).
+    SetOwnerSoundBlock {
+        owner: Uuid,
+        flag: u8,
+        blocked: bool,
+    },
     /// "Invite to group" (LLAvatarActions::inviteToGroup): the groups where
     /// we may invite, then the chosen group's invitation window.
     InviteToGroup(Uuid),

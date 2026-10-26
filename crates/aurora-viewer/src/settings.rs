@@ -568,6 +568,8 @@ pub struct Settings {
     pub people_tab: u8,
     pub show_inventory: bool,
     pub show_appearance: bool,
+    /// Crop outfit gallery previews to fill their frames (off: fit the whole image).
+    pub appearance_fill_previews: bool,
     pub show_ao: bool,
     /// Loading / teleport screens show the last view, blurred.
     pub loading_backdrop: bool,
@@ -1262,6 +1264,7 @@ pub enum StreamTitleShow {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AudioSettings {
+    pub explorer: crate::ui::sound_explorer::Filters,
     /// VoiceEarLocation, VoiceAutomaticGainControl, VoiceEchoCancellation and
     /// VoiceNoiseSuppressionLevel (panel_preferences_sound.xml).
     pub voice_ear: VoiceEar,
@@ -1330,6 +1333,7 @@ pub struct AudioSettings {
 impl Default for AudioSettings {
     fn default() -> Self {
         AudioSettings {
+            explorer: Default::default(),
             voice_ear: VoiceEar::Camera,
             voice_automatic_gain: true,
             voice_echo_cancellation: true,
@@ -1483,6 +1487,7 @@ impl Default for Settings {
             people_tab: 0,
             show_inventory: false,
             show_appearance: false,
+            appearance_fill_previews: false,
             show_ao: false,
             ao: Default::default(),
             bridge: Default::default(),
