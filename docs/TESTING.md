@@ -562,6 +562,33 @@ when unfocused") is ignored during a screenshot.
   This is a runtime experiment, not a saved preference or a new default.
   `foot scope` log lines report selected/cached remote residents and support
   frames (including our avatar); verify the cap alongside timing results.
+  Crowd foot-placement A/B (2026-10-26, source `92a040319`, optimized dev):
+  200 extra residents around us, 202 skeletons posed every frame, 1600x900,
+  immediate presentation, 500 FPS cap. Three interleaved 45-second runs per
+  mode; discard startup/calibration, retain the last fifteen one-second
+  summaries at least eight seconds after the fixture is ready. Values below
+  are medians of the three per-run means (45 summaries per mode).
+
+  | Aurora placement | FPS | Frame ms | Avatar stage ms | GPU ms |
+  | --- | ---: | ---: | ---: | ---: |
+  | Off | 179.8 | 5.566 | 1.196 | 3.871 |
+  | All residents | 35.6 | 28.079 | 23.041 | 3.764 |
+  | Visible nearest ten + self | 137.9 | 7.253 | 2.734 | 3.713 |
+
+  All nine runs have the same render counts: 100 full models (35 in view),
+  102 impostors (74 in view), one silhouette and zero loading avatars.
+  Selection telemetry confirms 201 remote calibrations/202 support frames
+  for unlimited placement, ten/eleven for the limited experiment, zero/zero
+  when disabled. The limited mode uses about 88.1% less avatar-stage time
+  than unlimited placement and delivers about 3.87x its FPS in this fixture.
+  Across runs, FPS ranges were 176.2-212.3 off, 35.4-40.5 all and 136.5-141.2
+  limited. One to three other compiler processes were observed at run start:
+  this is a shared-desktop comparison, not an isolated solver benchmark.
+  The avatar stage includes pose evaluation and calibration, not only IK.
+  Captures were inspected in all three modes; runtime logs have no errors or
+  panics before the scheduled process stop. Normal behavior stays unlimited;
+  real outfits, camera transitions and grid behavior still need human validation.
+
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera
