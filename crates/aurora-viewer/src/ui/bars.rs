@@ -1070,7 +1070,8 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // window carries the system information
         menu::todo(ui, p, "device-desktop-filled", aurora_i18n::tr!("ui-bars-sysinfo-button"));
         menu::separator(ui, p);
-        menu::todo(ui, p, "info-circle-filled", aurora_i18n::tr!("ui-bars-about"));
+        let about = aurora_i18n::tr!("ui-bars-about");
+        flip_window(ui, p, "info-circle-filled", about, super::about::WINDOW, &mut panels.about);
         let version = aurora_i18n::tr!("common-aurora-viewer", value0 = aurora_version::version().to_string());
         menu::info(ui, p, "info-circle-filled", &version);
         menu::separator(ui, p);

@@ -77,6 +77,7 @@ mod slurl_handoff;
 mod snapshot;
 mod spelling;
 mod sys_probe;
+mod system_info;
 mod system_notify;
 mod theme;
 mod tolerant;
