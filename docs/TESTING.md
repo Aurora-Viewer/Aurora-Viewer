@@ -4164,6 +4164,9 @@ preview dimensions, generated-model settings, authored
 LOD material subsets/order/suffixes and node identities, unused texture dependencies, crease and
 area-weighted normals, large source skin palettes, DAE axis-independent bind
 frames, and glTF shoulder orientation / inherited rest transforms.
+Synthetic weight regressions cover High vertices losing their only supported
+influence, nearest-weight lookup across source faces in normalized space, and
+the resulting serialized weights. No external model data is used in fixtures.
 The large-input test briefly retains several hundred MiB; its two fixtures
 are generated and released sequentially. Use existing `AURORA_DEMO_IMPORT_FILE`
 with `mesh` or `mesh-avatar` for native captures of a supplied rigged asset;

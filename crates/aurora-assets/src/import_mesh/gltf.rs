@@ -526,6 +526,9 @@ pub fn parse_with_options(doc: &Document, skeleton: &crate::Skeleton, model_limi
             }
             let mut models = Vec::new();
             let (center, size) = normalization(&faces)?;
+            if skin.is_some() {
+                super::skin::complete_weights(&mut faces, size);
+            }
             for (submodel, group) in faces.chunks(8).enumerate() {
                 let mut model = Model {
                     name: name.clone(),

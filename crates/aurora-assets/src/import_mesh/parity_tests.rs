@@ -355,3 +355,81 @@ fn mesh_import_parity_gltf_large_source_palette_prunes_after_usage() {
     assert_eq!(model.skin.as_ref().expect("pruned skin").names, ["mPelvis"]);
     assert!(model.faces[0].vertices.iter().all(|v| v.joints[0] == 0 && v.weights[0] == 1.0));
 }
+
+#[test]
+fn mesh_import_parity_missing_weights_search_other_faces_in_normalized_space() {
+    let mut source = triangle();
+    source.vertices.truncate(2);
+    source.indices.clear();
+    source.vertices[0].position = [10.0, 0.0, 2.0];
+    source.vertices[0].joints = [1, 0, 0, 0];
+    source.vertices[1].position = [0.0, 2.0, 2.0];
+    let mut missing = triangle();
+    for vertex in &mut missing.vertices {
+        vertex.position = [0.0, 0.0, 2.0];
+        vertex.weights = [0.0; 4];
+    }
+    let mut faces = vec![source, missing];
+    let geometry: Vec<_> = faces
+        .iter()
+        .flat_map(|face| face.vertices.iter().map(|v| (v.position, v.normal, v.uv)))
+        .collect();
+    skin::complete_weights(&mut faces, Vec3::new(100.0, 1.0, 1.0));
+    assert!(
+        faces[1]
+            .vertices
+            .iter()
+            .all(|v| v.joints[0] == 1 && v.weights == [1.0, 0.0, 0.0, 0.0])
+    );
+    assert_eq!(faces[0].vertices[1].joints[0], 0, "existing influences remain authored");
+    assert_eq!(
+        geometry,
+        faces
+            .iter()
+            .flat_map(|face| face.vertices.iter().map(|v| (v.position, v.normal, v.uv)))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn mesh_import_parity_gltf_high_repairs_vertices_whose_only_joint_is_unsupported() {
+    // Entirely synthetic: a triangle, one standard joint and one helper.
+    let rig = skeleton();
+    let mut doc = simple_gltf(
+        json!([{"mesh":0,"skin":0},{"name":"mHead","translation":[0.0,2.0,0.0]},{"name":"ExporterHelper"}]),
+        json!([0, 1, 2]),
+    );
+    doc.json["skins"] = json!([{"joints":[1,2]}]);
+    let mut bytes = doc.buffers[0].to_vec();
+    let joint_start = bytes.len();
+    for id in [0u16, 0, 1] {
+        for joint in [id, 0, 0, 0] {
+            bytes.extend(joint.to_le_bytes());
+        }
+    }
+    let weight_start = bytes.len();
+    for _ in 0..3 {
+        for weight in [1.0f32, 0.0, 0.0, 0.0] {
+            bytes.extend(weight.to_le_bytes());
+        }
+    }
+    doc.buffers[0] = bytes.into();
+    doc.json["bufferViews"].as_array_mut().expect("views").extend([
+        json!({"buffer":0,"byteOffset":joint_start,"byteLength":24}),
+        json!({"buffer":0,"byteOffset":weight_start,"byteLength":48}),
+    ]);
+    doc.json["accessors"].as_array_mut().expect("accessors").extend([
+        json!({"bufferView":1,"componentType":5123,"count":3,"type":"VEC4"}),
+        json!({"bufferView":2,"componentType":5126,"count":3,"type":"VEC4"}),
+    ]);
+    doc.json["meshes"][0]["primitives"][0]["attributes"]["JOINTS_0"] = json!(1);
+    doc.json["meshes"][0]["primitives"][0]["attributes"]["WEIGHTS_0"] = json!(2);
+    let scene = gltf::parse(&doc, &rig).expect("synthetic rig");
+    let high = &scene.models[0];
+    assert_eq!(high.skin.as_ref().expect("skin").names, ["mHead"]);
+    assert!(high.faces[0].vertices.iter().all(|v| v.joints[0] == 0 && v.weights[0] == 1.0));
+    let encoded = encode::lod(high, true).expect("High weights");
+    let weights = encoded[0]["Weights"].as_binary();
+    assert_eq!(weights.len(), high.faces[0].vertices.len() * 4);
+    assert!(weights.as_chunks::<4>().0.iter().all(|weight| *weight == [0, 255, 255, 255]));
+}

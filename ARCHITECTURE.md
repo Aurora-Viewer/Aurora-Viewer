@@ -17,6 +17,9 @@ are frozen in the same quoted request. Quote confirmation time starts on receipt
 independently of a long fee transfer. Texture payloads follow used instances.
 Flat axes retain the reference unit normalization scale; worker-cached actual
 normalized extents keep preview dimensions and scene-span checks accurate.
+After supported-joint filtering, unweighted source vertices inherit nearby
+valid influences in normalized space before model splitting. High and lower
+LODs consequently share the reference weight fallback in previews and uploads.
 
 The application constructor returns its runtime state on the heap, avoiding
 large return-value temporaries on the Windows startup stack as editors grow.

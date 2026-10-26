@@ -353,9 +353,12 @@ pub fn parse_with_options(data: &[u8], skeleton: &crate::Skeleton, assume_meters
                     ));
                     ordered.truncate(face_limit);
                 }
-                let (faces, face_symbols): (Vec<_>, Vec<_>) = ordered.into_iter().unzip();
+                let (mut faces, face_symbols): (Vec<_>, Vec<_>) = ordered.into_iter().unzip();
                 let mut models = Vec::new();
                 let (center, size) = normalization_with_flat_scale(&faces, geometry_basis.x_axis.truncate().length())?;
+                if skin.is_some() {
+                    super::skin::complete_weights(&mut faces, size);
+                }
                 for (index, group) in faces.chunks(8).enumerate() {
                     let mut model = Model {
                         name: geometry.attr("name").or_else(|| geometry.attr("id")).unwrap_or("Mesh").into(),
