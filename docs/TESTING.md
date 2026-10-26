@@ -81,6 +81,7 @@ viewer's process closes. For a test with human intervention, keep the title
 |---|---|
 | `AURORA_DEMO=1` | Offline demo mode |
 | `AURORA_DEMO_POS="x,y"` | Start position |
+| `AURORA_DEMO_PORTALS=1\|near\|friends` | Open the portal creator and a shared-portal preview |
 | `AURORA_DEMO_TOD=0..5` | Time of day (5: the legacy midday) |
 | `AURORA_DEMO_SUN=<azimuth>,<elevation>` | Sun direction for the lighting and the shadows, in degrees |
 | `AURORA_DEMO_ALTITUDE=<m>` | Puts the whole demo location at this altitude |
@@ -102,6 +103,19 @@ The demo shows no sample offer or dialog by default. The fountain menu,
 gift and teleport offer are restricted to `AURORA_DEMO_NOTIF=1`.
 `AURORA_DEMO_DIALOG` adds only the requested dialog;
 `AURORA_DEMO_INVENTORY=offer|offer-reject|offer-card…` adds only the received item.
+
+`AURORA_DEMO_PORTALS=1` opens World > Portals with a fixed aperture four metres
+ahead and its destination, owner and access label. `near` spawns it around our
+avatar: standing inside and moving across it before leaving the 3.5 m clearance
+must never teleport. `friends` previews a denied friends-only portal from a
+non-friend. Apertures use world depth, so walls hide them and their labels.
+Ordinary creation accepts a same-grid place link or region coordinates; one
+portal per creator expires after two minutes. Another Aurora client needs the
+ready 1.36 bridge and scripts enabled to receive regional invitations.
+Human two-client grid checks: public crossing, friends/non-friends, selected
+group members/non-members, appearing on a stationary or moving avatar,
+leaving and returning, crossing from either side, closing/replacing/expiry,
+late arrival discovery, failed/restricted destinations and teleport cancellation.
 
 `AURORA_TEST_NEUTRAL_POSE=1`: exposes "Neutral pose — local test" in
 Appearance › Hover Height, initially off. Our avatar starts with normal

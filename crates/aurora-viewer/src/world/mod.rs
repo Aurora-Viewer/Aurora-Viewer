@@ -59,6 +59,7 @@ pub mod parked;
 pub mod place_details;
 pub mod place_snapshots;
 pub mod pointat;
+pub mod portals;
 pub mod poser_consent;
 pub mod profiles;
 pub mod radar;
@@ -360,6 +361,7 @@ pub struct World {
     /// Block list (LLMuteList).
     pub mutes: mutes::MuteList,
     pub poser_consent: poser_consent::State,
+    pub portals: portals::State,
     /// Firestorm LSL bridge messages kept out of nearby chat.
     pub lsl_bridge: lslbridge::LslBridge,
     pub rlva: rlva::Rlva,
@@ -636,6 +638,7 @@ impl World {
             aliases_synced: 0,
             mutes: mutes::MuteList::default(),
             poser_consent: poser_consent::State::default(),
+            portals: portals::State::default(),
             lsl_bridge: lslbridge::LslBridge::default(),
             hand_contacts: hand_ik::Contacts::default(),
             ik_targets: rig_targets::Targets::default(),

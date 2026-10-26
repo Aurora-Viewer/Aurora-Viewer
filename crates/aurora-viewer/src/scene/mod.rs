@@ -42,6 +42,7 @@ pub mod particles;
 mod pick_accel;
 pub mod picking;
 mod plants;
+pub mod portals;
 pub mod probes;
 pub mod rez;
 mod sculpt_watch;
@@ -743,6 +744,7 @@ pub struct Scene {
     water_effects: water_effects::Effects,
     /// Ban lines of the parcel we may not enter.
     pub banlines: banlines::BanLines,
+    pub portals: portals::Portals,
     pub particles: particles::ParticleManager,
     /// Bundled swimming fallback for our own rendering only. Its private ID
     /// is never sent in AgentAnimation; remote viewers receive a real asset.
@@ -1363,6 +1365,7 @@ impl Scene {
             water: water::WaterGpu::default(),
             water_effects: Default::default(),
             banlines: banlines::BanLines::default(),
+            portals: portals::Portals::default(),
             particles: particles::ParticleManager::default(),
             movement_preview: None,
             paused_skeletons: HashSet::new(),
@@ -2000,6 +2003,7 @@ impl Scene {
         }
         self.water.clear(renderer);
         self.banlines.clear(renderer);
+        self.portals.clear(renderer);
         self.creation_preview.clear(renderer);
         self.land_overlays.clear(renderer);
         self.particles.clear(&mut self.textures);
@@ -4569,16 +4573,21 @@ impl Scene {
         self.lists.mask = result.mask;
         self.lists.mask_two_sided = result.mask2;
         self.blend_tmp = result.blend;
-        self.blend_tmp
-            .extend(self.banlines.cmds.iter().map(|(d, c)| blend_order::BlendEntry {
-                distance: *d,
-                cmd: *c,
-                glow: false,
-                rigged: false,
-                object: u32::MAX,
-                face: 0,
-                rig: None,
-            }));
+        self.blend_tmp.extend(
+            self.banlines
+                .cmds
+                .iter()
+                .chain(self.portals.cmds.iter())
+                .map(|(d, c)| blend_order::BlendEntry {
+                    distance: *d,
+                    cmd: *c,
+                    glow: false,
+                    rigged: false,
+                    object: u32::MAX,
+                    face: 0,
+                    rig: None,
+                }),
+        );
         self.lists.blend_depth = blend_order::sort(&mut self.blend_tmp, blend_order::rigged_apart());
         self.lists.blend_depth_mode = blend_order::depth_mode();
         if self.lists.blend_depth_mode == aurora_render::RiggedBlendDepth::Split {

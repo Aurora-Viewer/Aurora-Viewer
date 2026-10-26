@@ -1,0 +1,266 @@
+use super::*;
+use crate::scene::avatar::AvatarLibrary;
+use std::sync::Arc;
+
+fn portal() -> Portal {
+    Portal {
+        id: Uuid::from_u128(7),
+        region: 256,
+        center: [10.0, 10.0, 25.0],
+        yaw: 0.0,
+        destination: "Demo destination".into(),
+        position: [128.0, 128.0, 25.0],
+        access: Access::Everyone,
+        expires: 1120,
+    }
+}
+fn point(x: f32) -> Vec3 {
+    Vec3::new(10.0 + x, 10.0, 25.0)
+}
+
+#[test]
+fn portal_placement_stays_inside_standard_and_variable_size_regions() {
+    assert!(fits_region(Vec3::new(128.0, 128.0, 25.0), [256, 256]));
+    assert!(!fits_region(Vec3::new(258.0, 128.0, 25.0), [256, 256]));
+    assert!(!fits_region(Vec3::new(128.0, 0.5, 25.0), [256, 256]));
+    assert!(fits_region(Vec3::new(500.0, 200.0, 25.0), [512, 256]));
+    assert!(!fits_region(Vec3::new(128.0, 300.0, 25.0), [512, 256]));
+}
+fn wire(owner: Uuid, message: Message) -> String {
+    format!("<auroraPortal>{owner}|{}</auroraPortal>", message.encode().unwrap())
+}
+fn fixture() -> (World, State) {
+    let mut world = World::new(Arc::new(AvatarLibrary::load()));
+    world.agent_id = Uuid::from_u128(1);
+    world.main_region = Some(256);
+    world.agent.position = point(4.0);
+    let mut state = State::default();
+    state.sync(&world, None, 1000);
+    (world, state)
+}
+
+#[test]
+fn portal_dropped_on_someone_requires_leaving_then_a_voluntary_plane_crossing() {
+    let p = portal();
+    let now = Instant::now();
+    let mut gate = Gate::new(Vec3::from(p.center), point(0.0), now);
+    let later = now + Duration::from_secs(1);
+    assert!(!gate.sample(&p, point(0.0), true, later));
+    for x in [0.5, -0.5, 1.0, 2.0, 3.0] {
+        assert!(!gate.sample(&p, point(x), true, later));
+    }
+    assert!(!gate.armed);
+    assert!(!gate.sample(&p, point(3.5), true, later));
+    assert!(gate.armed);
+    assert!(!gate.sample(&p, point(1.0), true, later));
+    assert!(gate.sample(&p, point(-0.5), true, later));
+    assert!(!gate.sample(&p, point(0.5), true, later));
+    assert!(!gate.sample(&p, point(-0.5), true, later));
+}
+
+#[test]
+fn portal_pushes_corrections_standing_inside_and_walking_around_do_not_teleport() {
+    let p = portal();
+    let now = Instant::now();
+    let later = now + Duration::from_secs(1);
+    let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
+    assert!(!gate.sample(&p, point(1.0), false, later));
+    assert!(!gate.sample(&p, point(-0.5), false, later));
+    assert!(!gate.sample(&p, point(-0.5), true, later));
+    assert!(!gate.armed);
+    let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
+    assert!(!gate.sample(&p, point(-1.0), true, later));
+    assert!(!gate.armed);
+    let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
+    for x in [2.0, 0.5, -0.5] {
+        assert!(!gate.sample(&p, point(x) + Vec3::Y * 1.2, true, later));
+    }
+    let mut gate = Gate::new(Vec3::from(p.center), point(4.0), now);
+    assert!(!gate.sample(&p, point(1.0), true, now));
+    assert!(!gate.sample(&p, point(-0.5), true, now));
+}
+
+#[test]
+fn portal_crossing_is_two_sided_bounded_by_the_aperture_and_rotates_with_its_plane() {
+    let p = portal();
+    let now = Instant::now();
+    let later = now + Duration::from_secs(1);
+    let mut gate = Gate::new(Vec3::from(p.center), point(-4.0), now);
+    for x in [-2.0, -0.5] {
+        assert!(!gate.sample(&p, point(x), true, later));
+    }
+    assert!(gate.sample(&p, point(0.5), true, later));
+    let p = Portal {
+        yaw: std::f32::consts::FRAC_PI_2,
+        ..p
+    };
+    let center = Vec3::from(p.center);
+    let mut gate = Gate::new(center, center + Vec3::Y * 4.0, now);
+    assert!(!gate.sample(&p, center + Vec3::Y, true, later));
+    assert!(gate.sample(&p, center - Vec3::Y * 0.5, true, later));
+    let mut gate = Gate::new(center, center + Vec3::Y * 4.0 + Vec3::Z * 2.0, now);
+    assert!(!gate.sample(&p, center + Vec3::Y + Vec3::Z * 2.0, true, later));
+    assert!(!gate.sample(&p, center - Vec3::Y * 0.5 + Vec3::Z * 2.0, true, later));
+}
+
+#[test]
+fn portal_replays_never_move_the_portal_or_rearm_its_proximity_gate_and_close_is_owner_scoped() {
+    let (mut world, mut state) = fixture();
+    let now = Instant::now();
+    let owner = Uuid::from_u128(2);
+    world.agent.position = point(0.0);
+    let p = portal();
+    state.receive(&world, &wire(owner, Message::Open(p.clone())), now, 1000);
+    assert_eq!(state.entries.len(), 1);
+    assert!(state.entries[0].waiting_for_clearance());
+    let mut changed = p.clone();
+    changed.center[0] += 10.0;
+    state.receive(&world, &wire(owner, Message::Open(changed)), now, 1000);
+    assert_eq!(state.entries[0].portal, p);
+    assert!(state.entries[0].waiting_for_clearance());
+    state.receive(
+        &world,
+        &wire(Uuid::from_u128(3), Message::Close { region: 256, id: p.id }),
+        now,
+        1000,
+    );
+    assert_eq!(state.entries.len(), 1);
+    state.receive(&world, &wire(owner, Message::Close { region: 256, id: p.id }), now, 1000);
+    state.receive(&world, &wire(owner, Message::Open(p)), now, 1000);
+    assert!(state.entries.is_empty());
+}
+
+#[test]
+fn portal_permissions_are_checked_at_crossing_and_expiry_region_and_session_clear_state() {
+    let (mut world, mut state) = fixture();
+    let owner = Uuid::from_u128(2);
+    let group = Uuid::from_u128(3);
+    assert!(allowed(&world, owner, Access::Everyone));
+    assert!(!allowed(&world, owner, Access::Friends));
+    world.social.form_friendship(owner);
+    assert!(allowed(&world, owner, Access::Friends));
+    assert!(!allowed(&world, owner, Access::Group(group)));
+    world.groups.groups.push(aurora_net::GroupMembership {
+        id: group,
+        name: "Demo group".into(),
+        insignia: Uuid::nil(),
+        powers: 0,
+        accept_notices: true,
+        list_in_profile: true,
+        contribution: 0,
+    });
+    assert!(allowed(&world, owner, Access::Group(group)));
+    let now = Instant::now();
+    state.receive(
+        &world,
+        &wire(
+            owner,
+            Message::Open(Portal {
+                access: Access::Friends,
+                ..portal()
+            }),
+        ),
+        now,
+        1000,
+    );
+    world.social.end_friendship(&owner);
+    world.agent.position = point(1.0);
+    assert!(state.update(&world, Vec3::NEG_X, now + Duration::from_secs(1)).is_none());
+    world.agent.position = point(-0.5);
+    assert!(state.update(&world, Vec3::NEG_X, now + Duration::from_secs(1)).is_none());
+    state.sync(&world, None, 1120);
+    assert!(state.entries.is_empty());
+    assert!(state.create(Portal { expires: 1240, ..portal() }, world.agent.position, now, 1120));
+    world.main_region = Some(512);
+    state.sync(&world, None, 1120);
+    assert!(state.entries.is_empty());
+    assert!(state.out.is_empty());
+}
+
+#[test]
+fn portal_discovery_is_targeted_once_per_peer_and_outgoing_traffic_is_bounded() {
+    let (world, mut state) = fixture();
+    let now = Instant::now();
+    assert!(state.create(portal(), world.agent.position, now, 1000));
+    let owner = Uuid::from_u128(2);
+    let discover = wire(owner, Message::Discover { region: 256 });
+    state.receive(&world, &discover, now, 1000);
+    let count = state.out.len();
+    state.receive(&world, &discover, now, 1000);
+    assert_eq!(state.out.len(), count);
+    assert!(
+        state
+            .out
+            .iter()
+            .any(|(target, message)| *target == owner && matches!(message, Message::Open(_)))
+    );
+    let endpoint = Endpoint {
+        url: String::new(),
+        token: Uuid::from_u128(4),
+    };
+    assert!(state.command(Some(&endpoint), now).is_some());
+    assert!(state.command(Some(&endpoint), now).is_none());
+    assert!(state.command(Some(&endpoint), now + Duration::from_millis(250)).is_some());
+    state.sync(&world, Some(Uuid::from_u128(5)), 1000);
+    assert!(state.entries.is_empty() && state.out.is_empty());
+}
+
+#[test]
+fn portal_failed_sharing_removes_the_local_aperture_and_never_removes_a_replacement() {
+    let (world, mut state) = fixture();
+    let now = Instant::now();
+    let endpoint = Endpoint {
+        url: String::new(),
+        token: Uuid::from_u128(4),
+    };
+    assert!(state.create(portal(), world.agent.position, now, 1000));
+    let Some(NetCommand::BridgeQuery { request, query, .. }) = state.command(Some(&endpoint), now) else {
+        panic!("portal command");
+    };
+    assert!(matches!(
+        query,
+        Query::Portal {
+            message: Message::Open(_),
+            ..
+        }
+    ));
+    assert!(state.owns(request));
+    let replacement = Portal {
+        id: Uuid::from_u128(8),
+        ..portal()
+    };
+    assert!(state.create(replacement.clone(), world.agent.position, now, 1000));
+    state.reply(request, &Err("unavailable".into()));
+    assert_eq!(state.own().unwrap().portal.id, replacement.id);
+    assert!(state.failed);
+    let Some(NetCommand::BridgeQuery { request, .. }) = state.command(Some(&endpoint), now + Duration::from_secs(1)) else {
+        panic!("discovery command");
+    };
+    state.reply(request, &Ok(Reply::Portal));
+    assert!(!state.owns(request));
+}
+
+#[test]
+fn portal_messages_from_wrong_regions_expired_and_close_before_open_are_rejected() {
+    let (world, mut state) = fixture();
+    let now = Instant::now();
+    let owner = Uuid::from_u128(2);
+    for p in [Portal { region: 512, ..portal() }, Portal { expires: 1000, ..portal() }] {
+        state.receive(&world, &wire(owner, Message::Open(p)), now, 1000);
+    }
+    state.receive(
+        &world,
+        &wire(
+            owner,
+            Message::Close {
+                region: 256,
+                id: portal().id,
+            },
+        ),
+        now,
+        1000,
+    );
+    state.receive(&world, &wire(owner, Message::Open(portal())), now, 1000);
+    assert!(state.entries.is_empty());
+    assert!(state.out.is_empty());
+}

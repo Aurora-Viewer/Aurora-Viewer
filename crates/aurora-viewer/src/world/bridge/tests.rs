@@ -604,6 +604,43 @@ fn queries_use_their_own_script_endpoint_installed_beside_the_controller() {
 }
 
 #[test]
+fn portal_relay_accepts_only_the_exact_ready_worn_bridge_and_never_enters_chat() {
+    use aurora_net::bridge::portal::{Access, LIFETIME, Message, Portal};
+    let mut sim = Simulator::new();
+    sim.ready();
+    let NetEvent::Chat(mut chat) = sim.demo.query_handshake(&sim.bridge, &sim.world).expect("query hello") else {
+        panic!("chat");
+    };
+    let owner = Uuid::from_u128(0xA770);
+    let portal = Portal {
+        id: Uuid::from_u128(0xA771),
+        region: sim.world.main_region.unwrap(),
+        center: [10.0, 10.0, 25.0],
+        yaw: 0.0,
+        destination: "Demo destination".into(),
+        position: [128.0, 128.0, 25.0],
+        access: Access::Everyone,
+        expires: super::super::portals::unix_time() + LIFETIME,
+    };
+    chat.message = format!("<auroraPortal>{owner}|{}</auroraPortal>", Message::Open(portal).encode().unwrap());
+    for (source, claimed_owner) in [(Uuid::new_v4(), sim.world.agent_id), (sim.bridge.object, Uuid::new_v4())] {
+        let mut invalid = chat.clone();
+        invalid.source_id = source;
+        invalid.owner_id = claimed_owner;
+        assert!(sim.bridge.event(&mut sim.world, &NetEvent::Chat(invalid), sim.now));
+        assert!(sim.world.portals.entries.is_empty());
+    }
+    let before = sim.world.chat.len();
+    assert!(sim.bridge.event(&mut sim.world, &NetEvent::Chat(chat.clone()), sim.now));
+    assert_eq!(sim.world.portals.entries.len(), 1);
+    assert_eq!(sim.world.chat.len(), before);
+    sim.world.portals.entries.clear();
+    sim.world.main_region = Some(123);
+    assert!(sim.bridge.event(&mut sim.world, &NetEvent::Chat(chat), sim.now));
+    assert!(sim.world.portals.entries.is_empty());
+}
+
+#[test]
 fn an_older_bridge_gets_only_the_missing_query_script() {
     let mut sim = Simulator::new();
     sim.ready();

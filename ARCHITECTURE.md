@@ -72,6 +72,21 @@ The blacklist shows each unmasked UUID in a fixed-width column, searches by
 name or UUID, and copies unique selected keys from the row menu. Its Blocked
 shortcut opens the separate People mute list; Ignore never derenders an object
 or adds a sound asset to the blacklist.
+`world/portals.rs` owns bounded, immutable two-minute portal invitations and
+per-observer crossing gates. `aurora-net/src/bridge/portal.rs` validates their
+bounded base64/JSON wire format. Bridge 1.36 adds an owner-authenticated,
+region-local relay to the independent query script; late arrivals discover
+existing portals once, with targeted replies and bounded traffic. The bridge
+never teleports anyone. Each recipient checks friendship or their own group
+membership at crossing, then `app/portals.rs` uses the ordinary user location
+teleport boundary, retaining RLVa and simulator destination access checks.
+Near-spawn observers must first leave a 3.5 m clearance; standing inside,
+involuntary motion, position jumps and replayed announcements never trigger.
+`scene/portals.rs` shares one procedural aperture texture and one GPU disc,
+depth-tested and sorted with world transparency. `ui/portals.rs` provides
+World > Portals and depth-occluded destination/creator/access labels. This is
+an Aurora feature; ordinary teleport behavior follows LLAgent::teleportViaLocation
+and teleportRequest (`indra/newview/llagent.cpp`).
 
 Bridge 1.35 repairs the query script's posing-consent key checks: LSL permits
 key validity in a condition but does not define unary `!` for a key. An integer

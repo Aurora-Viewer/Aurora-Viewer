@@ -422,7 +422,9 @@ The texture memory budget is set automatically from the detected VRAM.
   sky, water and day-cycle editors, world sounds, parcel music and media
   on prims, with Aurora's downloadable media plugins pack; an area search
   for the objects rezzed around you, with filters and sortable results;
-  a Sound Explorer with local previews, source camera and sound blocking.
+  a Sound Explorer with local previews, source camera and sound blocking;
+  walk-through portals shared with other Aurora users, with friend/group
+  access and protection against portals appearing on top of someone.
 - **Photos and camera** — a full-screen viewfinder with face autofocus, lens
   rings, focus peaking, a live histogram, exposure lock and a self-timer;
   snapshots up to 8K to disk, inventory or

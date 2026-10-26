@@ -24,6 +24,7 @@ use egui::{Color32, RichText, Vec2};
 pub enum BarAction {
     IkEdit,
     Poser,
+    Portals,
     CheckUpdates,
     ReportBug,
     /// The bug button's right click: the viewer's version to the clipboard,
@@ -699,6 +700,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
             }
         });
         // menu_viewer.xml: Teleport history (Alt+H), Places
+        if menu::item(ui, p, "door-enter", aurora_i18n::tr!("portal-title")) {
+            *action = BarAction::Portals;
+        }
         if menu::item_keys(ui, p, "history", aurora_i18n::tr!("common-teleport-history"), "Alt+H") {
             *action = BarAction::TeleportHistory;
         }
