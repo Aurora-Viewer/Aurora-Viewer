@@ -2,8 +2,10 @@
 //! (LLLineEditor / LLTextEditor::showContextMenu and menu_text_editor.xml,
 //! indra/llui, originally LGPL 2.1): Cut, Copy, Paste, Delete and Select
 //! All, greyed out by the rules of canCut / canCopy / canPaste /
-//! canDoDelete. Firestorm's spelling suggestions are not there: Aurora has
-//! no spell checker yet.
+//! canDoDelete; above them, on a misspelled word of a spell-checked field
+//! (`ui/spelling.rs`), up to five suggestions, Add to Dictionary and Add to
+//! Ignore (LLSpellCheckMenuHandler, the "SpellCheck.*" entries of
+//! llviewermenu.cpp).
 //!
 //! egui's `TextEdit` has no menu of its own, and the viewer has well over a
 //! hundred of them: one hook around the interface pass covers them all
@@ -16,7 +18,8 @@
 //! - a chosen entry is played into the field at the next frame as the
 //!   keyboard would (egui's Cut / Copy events, the clipboard's text as a
 //!   Paste, Delete, Ctrl+A), so each field keeps its own rules (password,
-//!   single line, character limit);
+//!   single line, character limit); a suggestion selects its word and is
+//!   pasted over it (LLLineEditor::replaceWithSuggestion);
 //! - a field with a right-click menu of its own (script editor, notecards)
 //!   keeps it.
 
@@ -107,11 +110,27 @@ fn events(entry: Entry, clipboard: Option<String>) -> Vec<Event> {
     }
 }
 
+/// The misspelled word under the right click: its characters and itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Misspelled {
+    range: std::ops::Range<usize>,
+    word: String,
+}
+
+/// What runs in the field at the next frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Pending {
+    Entry(Entry),
+    /// The word replaced by a suggestion.
+    Replace(Misspelled, String),
+}
+
 struct Open {
     field: Id,
     pos: Pos2,
     can: Field,
     clipboard: bool,
+    spell: Option<Misspelled>,
     /// One menu id per opening: a right click on another field while a
     /// menu is open opens the new one instead of closing both.
     serial: u64,
@@ -124,8 +143,30 @@ fn demo_wanted() -> bool {
     *WANTED.get_or_init(|| std::env::var_os("AURORA_DEMO_TEXT_MENU").is_some())
 }
 
+/// `AURORA_DEMO_SPELLING`: the app fills the chat bar and gives it the
+/// keyboard (frame 700); then the menu opens on its last word, or keywords
+/// are typed for the auto-replace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SpellingDemo {
+    Words,
+    Menu,
+    Replace,
+}
+
+pub(crate) fn spelling_demo() -> Option<SpellingDemo> {
+    static MODE: std::sync::OnceLock<Option<SpellingDemo>> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| {
+        std::env::var("AURORA_DEMO_SPELLING").ok().map(|mode| match mode.trim() {
+            "menu" => SpellingDemo::Menu,
+            "replace" => SpellingDemo::Replace,
+            _ => SpellingDemo::Words,
+        })
+    })
+}
+
 const DEMO_FOCUS: u64 = 700;
 const DEMO_TYPE: u64 = 703;
+const DEMO_TYPE_MORE: u64 = 705;
 const DEMO_OPEN: u64 = 706;
 
 #[derive(Default)]
@@ -137,7 +178,7 @@ pub(crate) struct TextMenu {
     open: Option<Open>,
     serial: u64,
     /// The entry chosen last frame, played into its field this frame.
-    pending: Option<(Id, Entry)>,
+    pending: Option<(Id, Pending)>,
     demo_open: bool,
 }
 
@@ -146,11 +187,16 @@ impl TextMenu {
     /// clipboard (only on a right click or for Paste); `demo_frame` is the
     /// app's frame in demo mode.
     pub fn before(&mut self, ctx: &Context, raw: &mut RawInput, mut clipboard: impl FnMut() -> Option<String>, demo_frame: Option<u64>) {
-        if let Some((field, entry)) = self.pending.take()
+        if let Some((field, pending)) = self.pending.take()
             && ctx.memory(|m| m.has_focus(field))
         {
-            let text = if entry == Entry::Paste { clipboard() } else { None };
-            raw.events.extend(events(entry, text));
+            match pending {
+                Pending::Entry(entry) => {
+                    let text = if entry == Entry::Paste { clipboard() } else { None };
+                    raw.events.extend(events(entry, text));
+                }
+                Pending::Replace(word, with) => replace(ctx, raw, field, &word, with),
+            }
         }
         let right = |pressed: bool| {
             raw.events
@@ -167,6 +213,17 @@ impl TextMenu {
         };
         if right(false) {
             self.clipboard = clipboard().is_some_and(|text| !text.is_empty());
+        }
+        if let Some(frame) = demo_frame {
+            match (spelling_demo(), frame) {
+                (Some(SpellingDemo::Menu), DEMO_OPEN) => {
+                    self.clipboard = clipboard().is_some_and(|text| !text.is_empty());
+                    self.demo_open = true;
+                }
+                (Some(SpellingDemo::Replace), DEMO_TYPE) => raw.events.push(Event::Text("brb ".into())),
+                (Some(SpellingDemo::Replace), DEMO_TYPE_MORE) => raw.events.push(Event::Text("ty ".into())),
+                _ => {}
+            }
         }
         if let Some(frame) = demo_frame.filter(|_| demo_wanted()) {
             let chat = Id::unique("nearby_chat_input");
@@ -220,6 +277,7 @@ impl TextMenu {
                 pos,
                 can,
                 clipboard: self.clipboard,
+                spell: can.editable.then(|| misspelled_at_cursor(ctx, field)).flatten(),
                 serial: self.serial,
             });
         }
@@ -236,26 +294,95 @@ impl TextMenu {
             return;
         }
         let (field, can, clipboard) = (open.field, open.can, open.clipboard);
+        let spell = open.spell.clone();
+        // the spelling thread may still be looking: the entries come as
+        // soon as it has them
+        let suggestions = spell.as_ref().map(|s| crate::spelling::suggestions(&s.word));
+        if matches!(suggestions, Some(None)) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         let mut keep = true;
         let mut chosen = None;
+        let mut done = false;
         super::menu::popup_at(ctx, Id::unique("text_field_menu").with(open.serial), open.pos, &mut keep, p, |ui| {
+            if let Some(word) = &spell {
+                match &suggestions {
+                    Some(Some(list)) => {
+                        for with in list {
+                            if super::menu::item(ui, p, "replace-filled", with) {
+                                chosen = Some(Pending::Replace(word.clone(), with.clone()));
+                            }
+                        }
+                        // "Suggestion Separator", only with suggestions
+                        if !list.is_empty() {
+                            super::menu::separator(ui, p);
+                        }
+                    }
+                    _ => {
+                        super::menu::item_if(ui, p, "replace-filled", aurora_i18n::tr!("spelling-looking"), false);
+                        super::menu::separator(ui, p);
+                    }
+                }
+                if super::menu::item(ui, p, "book-filled", aurora_i18n::tr!("spelling-add-to-dictionary")) {
+                    crate::spelling::add_to_dictionary(&word.word);
+                    done = true;
+                }
+                if super::menu::item(ui, p, "eye-off", aurora_i18n::tr!("spelling-ignore")) {
+                    crate::spelling::ignore(&word.word);
+                    done = true;
+                }
+                super::menu::separator(ui, p);
+            }
             for (entry, icon) in ENTRIES {
                 if super::menu::item_if(ui, p, icon, label(entry), enabled(entry, can, clipboard)) {
-                    chosen = Some(entry);
+                    chosen = Some(Pending::Entry(entry));
                 }
             }
         });
-        if let Some(entry) = chosen {
+        if let Some(pending) = chosen {
             // the click on the menu took the focus from the field: it gets
             // it back, and the entry runs there at the next frame
             ctx.memory_mut(|m| m.request_focus(field));
-            self.pending = Some((field, entry));
+            self.pending = Some((field, pending));
+            keep = false;
+        } else if done {
+            ctx.memory_mut(|m| m.request_focus(field));
             keep = false;
         }
         if !keep {
             self.open = None;
         }
     }
+}
+
+/// The misspelled word at the cursor of `field` (where the right click put
+/// it, or the end of the selection it kept: LLLineEditor::showContextMenu).
+fn misspelled_at_cursor(ctx: &Context, field: Id) -> Option<Misspelled> {
+    let marked = super::spelling::marked(ctx, field)?;
+    let range = TextEditState::load(ctx, field)?.cursor.char_range()?;
+    let at = range.sorted_cursors()[1].index.0;
+    crate::spelling::words::at(&marked, at).map(|(range, word)| Misspelled {
+        range: range.clone(),
+        word: word.clone(),
+    })
+}
+
+/// A suggestion pasted over its word, selected first, if the field still
+/// holds that misspelled word there (LLLineEditor::replaceWithSuggestion).
+fn replace(ctx: &Context, raw: &mut RawInput, field: Id, word: &Misspelled, with: String) {
+    let still = super::spelling::marked(ctx, field).is_some_and(|marked| marked.iter().any(|(r, w)| *r == word.range && *w == word.word));
+    if !still || with.is_empty() {
+        return;
+    }
+    let Some(mut state) = TextEditState::load(ctx, field) else {
+        return;
+    };
+    state.cursor.set_char_range(Some(CCursorRange::two(
+        egui::text::CCursor::new(word.range.start),
+        egui::text::CCursor::new(word.range.end),
+    )));
+    state.store(ctx, field);
+    raw.events.push(Event::Paste(with));
 }
 
 /// The text field `field` under `pos`, if the menu may open there.

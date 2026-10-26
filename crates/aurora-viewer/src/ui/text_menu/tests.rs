@@ -42,6 +42,8 @@ enum Kind {
     ReadOnly,
     /// The field has a right-click menu of its own.
     OwnMenu,
+    /// Spell checked (`ui::spelling::field`).
+    Spelled,
 }
 
 struct Bench {
@@ -93,6 +95,10 @@ impl Bench {
                 }
                 Kind::ReadOnly => {
                     ui.add(egui::TextEdit::singleline(&mut text.as_str()).id(id));
+                }
+                Kind::Spelled => {
+                    let mut out = egui::TextEdit::singleline(text).id(id).show(ui);
+                    crate::ui::spelling::field(ui, &p, &mut out, text, false);
                 }
                 Kind::OwnMenu => {
                     let response = ui.add(egui::TextEdit::singleline(text).id(id));
@@ -187,14 +193,14 @@ fn chosen_entries_run_in_the_field() {
     assert_eq!(b.copied, ["hello world"]);
     // Paste plays the clipboard's text at the cursor
     b.clipboard = Some("pasted".into());
-    b.menu.pending = Some((Id::unique(FIELD), Entry::Paste));
+    b.menu.pending = Some((Id::unique(FIELD), Pending::Entry(Entry::Paste)));
     b.frame(Vec::new());
     assert_eq!(b.text, "pasted");
     // Select All then Delete
-    b.menu.pending = Some((Id::unique(FIELD), Entry::SelectAll));
+    b.menu.pending = Some((Id::unique(FIELD), Pending::Entry(Entry::SelectAll)));
     b.frame(Vec::new());
     assert_eq!(b.selection(), 0..6);
-    b.menu.pending = Some((Id::unique(FIELD), Entry::Delete));
+    b.menu.pending = Some((Id::unique(FIELD), Pending::Entry(Entry::Delete)));
     b.frame(Vec::new());
     assert_eq!(b.text, "");
 }
@@ -213,7 +219,7 @@ fn passwords_and_read_only_fields_are_recognised() {
         })
     );
     // even run, Copy leaves a password out of the clipboard
-    b.menu.pending = Some((Id::unique(FIELD), Entry::Copy));
+    b.menu.pending = Some((Id::unique(FIELD), Pending::Entry(Entry::Copy)));
     b.frame(Vec::new());
     assert!(b.copied.is_empty());
 
@@ -242,4 +248,56 @@ fn a_right_click_elsewhere_opens_nothing() {
     let mut b = Bench::new("hello", Kind::Editable);
     b.click(Pos2::new(480.0, 380.0), PointerButton::Secondary);
     assert!(b.menu.open.is_none());
+}
+
+#[test]
+fn a_misspelled_word_gets_its_suggestions() {
+    crate::spelling::tests::ready();
+    let mut b = Bench::new("Hello wrold", Kind::Spelled);
+    let field = Id::unique(FIELD);
+    let marked = crate::ui::spelling::marked(&b.ctx, field).expect("checked");
+    assert_eq!(marked.as_slice(), [(6..11, "wrold".to_owned())]);
+    // the click right of the text puts the cursor after the word: still it
+    b.click(b.center(), PointerButton::Secondary);
+    let spell = b.menu.open.as_ref().and_then(|open| open.spell.clone()).expect("on the word");
+    assert_eq!(spell.word, "wrold");
+    let started = std::time::Instant::now();
+    let suggestions = loop {
+        if let Some(found) = crate::spelling::suggestions("wrold") {
+            break found;
+        }
+        assert!(started.elapsed().as_secs() < 30, "suggestions arrive");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert!(suggestions.contains(&"world".to_owned()));
+    // the menu is drawn with them, then the suggestion replaces the word
+    b.frame(Vec::new());
+    b.menu.pending = Some((field, Pending::Replace(spell, "world".into())));
+    b.frame(Vec::new());
+    assert_eq!(b.text, "Hello world");
+    b.frame(Vec::new());
+    assert!(crate::ui::spelling::marked(&b.ctx, field).expect("checked").is_empty());
+}
+
+#[test]
+fn a_suggestion_waits_for_its_word() {
+    crate::spelling::tests::ready();
+    let mut b = Bench::new("Hello wrold", Kind::Spelled);
+    let field = Id::unique(FIELD);
+    b.click(b.center(), PointerButton::Secondary);
+    let spell = b.menu.open.as_ref().and_then(|open| open.spell.clone()).expect("on the word");
+    // the text changed meanwhile: nothing is pasted over another word
+    b.text = "Bye".into();
+    b.frame(Vec::new());
+    b.menu.pending = Some((field, Pending::Replace(spell, "world".into())));
+    b.frame(Vec::new());
+    assert_eq!(b.text, "Bye");
+}
+
+#[test]
+fn a_field_without_spelling_has_no_suggestions() {
+    crate::spelling::tests::ready();
+    let mut b = Bench::new("Hello wrold", Kind::Editable);
+    b.click(b.center(), PointerButton::Secondary);
+    assert!(b.menu.open.as_ref().expect("opened").spell.is_none());
 }

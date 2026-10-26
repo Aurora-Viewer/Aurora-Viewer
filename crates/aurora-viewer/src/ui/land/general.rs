@@ -50,13 +50,19 @@ pub(super) fn show(ui: &mut egui::Ui, p: &Palette, s: &mut LandUi, v: &View, wor
     ui.horizontal_top(|ui| {
         super::key(ui, p, aurora_i18n::tr!("common-description"));
         s.desc.sync(&parcel.desc);
-        let r = ui.add_enabled(
-            can_identity,
-            egui::TextEdit::multiline(&mut s.desc.text)
-                .desired_rows(3)
-                .desired_width(f32::INFINITY),
-        );
-        if let Some(desc) = s.desc.after(&r) {
+        let mut out = ui
+            .add_enabled_ui(can_identity, |ui| {
+                egui::TextEdit::multiline(&mut s.desc.text)
+                    .desired_rows(3)
+                    .desired_width(f32::INFINITY)
+                    .show(ui)
+            })
+            .inner;
+        // spell checked, as floater_about_land.xml
+        if can_identity {
+            crate::ui::spelling::field(ui, p, &mut out, &mut s.desc.text, false);
+        }
+        if let Some(desc) = s.desc.after(&out.response) {
             world.land.update(|u| u.desc = desc);
         }
     });

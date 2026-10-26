@@ -20,6 +20,7 @@ pub mod privacy;
 pub mod protections;
 pub mod shortcuts;
 pub mod sound;
+pub mod spelling;
 pub mod system;
 
 use super::Page;
@@ -60,6 +61,7 @@ pub fn tabs(page: Page) -> Vec<&'static str> {
             aurora_i18n::tr!("ui-options-tab-history"),
             aurora_i18n::tr!("ui-options-tab-away-and-replies"),
             aurora_i18n::tr!("ui-options-groups-and-blocking"),
+            aurora_i18n::tr!("ui-options-tab-spelling"),
         ],
         Page::Sound => vec![
             aurora_i18n::tr!("ui-options-volumes"),

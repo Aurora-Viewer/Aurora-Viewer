@@ -755,6 +755,12 @@ pub struct Settings {
     pub chat_commands: crate::cmdline::ChatCommandSettings,
     /// Keyword alerts in chat and IMs (FSKeyword*, Preferences › Chat).
     pub keywords: crate::keywords::KeywordSettings,
+    /// Spell checking of the text fields (SpellCheck, SpellCheckDictionary;
+    /// Preferences › Chat › Spelling).
+    pub spelling: crate::spelling::SpellSettings,
+    /// AutoReplace: the keywords of the replacement lists replaced as they
+    /// are typed (off, as in the Legacy Viewer).
+    pub auto_replace: bool,
     pub name_tag_distance: f32,
     pub show_own_name_tag: bool,
     pub show_friend_name_tags: bool,
@@ -1594,6 +1600,8 @@ impl Default for Settings {
             autoresponse: Default::default(),
             chat_commands: Default::default(),
             keywords: Default::default(),
+            spelling: Default::default(),
+            auto_replace: false,
             name_tag_distance: 64.0,
             show_own_name_tag: true,
             show_friend_name_tags: true,

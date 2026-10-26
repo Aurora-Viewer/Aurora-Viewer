@@ -252,6 +252,8 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "plates" => row(Page::Avatars, 0, tr!("ui-options-plate-click")),
         "attention" => row(Page::Chat, 1, tr!("ui-options-flash-on-message")),
         "keywords" => row(Page::Chat, 2, tr!("ui-options-keywords-on")),
+        "spelling" => row(Page::Chat, 6, tr!("ui-options-spelling-on")),
+        "auto-replace" => row(Page::Chat, 6, tr!("ui-options-auto-replace-on")),
         "gifs" => row(Page::Chat, 0, tr!("ui-options-gifs-show")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         _ => None,
@@ -393,6 +395,9 @@ pub struct OptionsUi {
     media_filter_typed: String,
     /// The site being typed in Preferences › Protections › Trusted sites.
     trusted_site_typed: String,
+    /// Preferences › Chat › Spelling: the auto-replace list shown, the
+    /// keyword being typed, the file dialogs.
+    spelling_page: pages::spelling::SpellingPage,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,

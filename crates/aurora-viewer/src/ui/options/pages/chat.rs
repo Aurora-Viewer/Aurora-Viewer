@@ -2,7 +2,8 @@
 //! of messages (Legacy Viewer: Chat › Notifications, Notifications), the
 //! keyword alerts (panel_preferences_chat.xml, "ChatKeywordAlerts"), the
 //! transcripts (Privacy › Logs & Transcripts), away and the automatic
-//! replies (Privacy › Autoresponse), groups and blocking.
+//! replies (Privacy › Autoresponse), groups and blocking; the spelling and
+//! auto-replace tab is in `spelling.rs`.
 
 use super::super::cx::{Cx, Nothing, field, fields};
 use super::super::{COMBO_W, Folder, FolderChoice, parse_uuid_text, path_label, swatch, toggle, uuid_text};
@@ -148,6 +149,7 @@ pub fn page(cx: &mut Cx, tab: usize) {
         2 => keyword_alerts(cx),
         3 => history(cx),
         4 => away_and_replies(cx),
+        6 => super::spelling::page(cx),
         _ => cx.group(tr!("ui-options-groups-and-blocking"), |cx| {
             cx.toggle(
                 tr!("ui-options-no-group-chats"),

@@ -926,6 +926,9 @@ impl App {
         }
         ui::colors::set(&settings.colors);
         crate::keywords::set(&settings.keywords);
+        crate::spelling::configure(&egui_ctx, &settings.spelling);
+        crate::autoreplace::set_enabled(settings.auto_replace);
+        crate::autoreplace::load();
         crate::link_trust::configure(&settings.trusted_sites);
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
@@ -6933,6 +6936,17 @@ impl App {
         if self.demo && self.frame_count == 700 && std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some() {
             self.chat_ui.conv_focus_request = true;
         }
+        // AURORA_DEMO_SPELLING=menu|replace: the chat bar takes the keyboard,
+        // its caret at the end
+        if self.demo
+            && self.frame_count == 700
+            && matches!(
+                crate::ui::text_menu::spelling_demo(),
+                Some(crate::ui::text_menu::SpellingDemo::Menu | crate::ui::text_menu::SpellingDemo::Replace)
+            )
+        {
+            self.chat_ui.focus_request = true;
+        }
         if self.demo
             && self.frame_count == 800
             && let Ok(mode) = std::env::var("AURORA_DEMO_EXIT")
@@ -8986,6 +9000,8 @@ impl App {
             self.skin.theme.apply(&self.egui_ctx, self.settings.font_scale);
             ui::colors::set(&self.settings.colors);
             crate::keywords::set(&self.keyword_settings());
+            crate::spelling::configure(&self.egui_ctx, &self.settings.spelling);
+            crate::autoreplace::set_enabled(self.settings.auto_replace);
             crate::link_trust::configure(&self.settings.trusted_sites);
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
@@ -16218,6 +16234,20 @@ impl ApplicationHandler for App {
                 self.panels.chat = true;
                 *self.chat_ui.draft_mut(self.chat_ui.selected) = text;
                 self.chat_ui.conv_focus_request = true;
+            }
+            // AURORA_DEMO_SPELLING=1|menu|replace: misspelled words in the
+            // chat bar and in the conversation input (`spelling.rs`); `menu`:
+            // the text menu opened on the bar's last word with its
+            // suggestions; `replace`: auto-replace on for the run (not
+            // saved), "brb " then "ty " typed in the bar (`ui/text_menu.rs`)
+            if let Some(mode) = crate::ui::text_menu::spelling_demo() {
+                self.panels.chat = true;
+                if mode == crate::ui::text_menu::SpellingDemo::Replace {
+                    crate::autoreplace::set_enabled(true);
+                } else {
+                    self.chat_ui.input = "Helo, I am teleporting to the sandbox with my frends".into();
+                    *self.chat_ui.draft_mut(self.chat_ui.selected) = "Teh avatar is waiting at the landng point".into();
+                }
             }
             // AURORA_DEMO_CONV_SELECT=all|part: the conversation window open,
             // its lines selected (Ctrl+A, or across three lines)

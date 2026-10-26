@@ -21,6 +21,7 @@ fn main() {
         .map(|i| parts[i].clone())
         .unwrap_or_default();
     println!("cargo:rustc-env=AURORA_BUILD_PROFILE={dir}");
+    dictionaries();
 
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         windows_resources();
@@ -31,6 +32,33 @@ fn main() {
             for symbol in ["NvOptimusEnablement", "AmdPowerXpressRequestHighPerformance"] {
                 println!("cargo:rustc-link-arg-bin=aurora-viewer=/EXPORT:{symbol},DATA");
             }
+        }
+    }
+}
+
+/// The spelling dictionaries (assets/dictionaries/<name>/<name>.aff and
+/// .dic, kept as text in the repository) gzipped into OUT_DIR, where
+/// spelling/dictionaries.rs embeds them: 22 MB of words take about 5 MB of
+/// the exe, inflated on the spelling thread only for the languages in use.
+fn dictionaries() {
+    use std::io::Write as _;
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("Cargo supplies CARGO_MANIFEST_DIR");
+    let source = Path::new(&manifest).join("assets/dictionaries");
+    println!("cargo:rerun-if-changed={}", source.display());
+    let out = Path::new(&std::env::var("OUT_DIR").expect("Cargo supplies OUT_DIR")).join("dictionaries");
+    std::fs::create_dir_all(&out).expect("the build folder is writable");
+    let folders = std::fs::read_dir(&source).expect("assets/dictionaries is in the repository");
+    for folder in folders.flatten().filter(|entry| entry.path().is_dir()) {
+        for file in std::fs::read_dir(folder.path()).expect("a dictionary folder is readable").flatten() {
+            let path = file.path();
+            if !matches!(path.extension().and_then(|e| e.to_str()), Some("aff" | "dic")) {
+                continue;
+            }
+            let bytes = std::fs::read(&path).expect("a dictionary file is readable");
+            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            gz.write_all(&bytes).expect("gzip in memory");
+            let name = format!("{}.gz", path.file_name().and_then(|n| n.to_str()).expect("an ASCII file name"));
+            std::fs::write(out.join(name), gz.finish().expect("gzip in memory")).expect("the build folder is writable");
         }
     }
 }

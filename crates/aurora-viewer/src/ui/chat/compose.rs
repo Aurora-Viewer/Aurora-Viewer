@@ -169,6 +169,7 @@ pub(super) fn show(
                             output.response.mark_changed();
                         }
                         crate::ui::emoji::codes::after(ui, p, Some(&mut *emoji), &mut output, &mut draft, nav);
+                        crate::ui::spelling::field(ui, p, &mut output, &mut draft, true);
                         let selected = st.selected;
                         let people = move || selected.map_or_else(Vec::new, |id| suggest::members(world, id));
                         let scope = match selected {
