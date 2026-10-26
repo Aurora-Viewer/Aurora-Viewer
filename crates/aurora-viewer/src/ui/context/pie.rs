@@ -415,7 +415,7 @@ pub(super) fn show(
                     super::request(ctx, action.clone());
                     // Entering arrangement editing keeps the temporary build
                     // selection and its live permissions until editing ends.
-                    if !matches!(action, CtxAction::CustomizeMenu(_)) {
+                    if !current[index].keeps_open() {
                         *open = false;
                     }
                 }
@@ -490,6 +490,72 @@ mod tests {
             pie_path: Vec::new(),
             pie_input_frame: None,
         })
+    }
+
+    #[test]
+    fn radial_checkable_choices_keep_the_current_submenu_open() {
+        fn locate(rows: &[Entry], predicate: &dyn Fn(&CtxAction) -> bool) -> Option<Vec<usize>> {
+            for (index, row) in rows.iter().enumerate() {
+                match &row.kind {
+                    Kind::Action(action) if predicate(action) => return Some(vec![index]),
+                    Kind::Submenu(children) => {
+                        if let Some(mut path) = locate(children, predicate) {
+                            path.insert(0, index);
+                            return Some(path);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        let ctx = egui::Context::default();
+        let mut facts = Facts::default();
+        let target = Target::Avatar {
+            id: uuid::Uuid::from_u128(7),
+            own: false,
+            attachment: None,
+        };
+        let mut menu = open(target.clone());
+        for mode in [2, 1, 0, 3, 3] {
+            let entries = super::super::entries::world_menu(&target, &facts, Vec3::ZERO);
+            let root = layout(&target, &entries);
+            let path = locate(&root, &|action| {
+                if mode == 3 {
+                    matches!(action, CtxAction::ToggleParticleMute(_))
+                } else {
+                    matches!(action, CtxAction::SetRender(_, value) if *value == mode)
+                }
+            })
+            .expect("checkable slice");
+            let (index, parent) = path.split_last().expect("slice path");
+            menu.as_mut().expect("open").pie_path = parent.to_vec();
+            for _ in 0..2 {
+                frame(&ctx, &mut menu, &facts, Vec::new());
+            }
+            let angle = *index as f32 * FRAC_PI_4;
+            click(
+                &ctx,
+                &mut menu,
+                &facts,
+                egui::pos2(400.0 + angle.cos() * 100.0, 400.0 - angle.sin() * 100.0),
+                egui::PointerButton::Primary,
+            );
+            assert_eq!(menu.as_ref().expect("checkable keeps menu open").pie_path, parent);
+            let actions = super::super::take_requests(&ctx);
+            if mode == 3 {
+                assert!(matches!(&actions[..], [CtxAction::ToggleParticleMute(_)]), "{actions:?}");
+                facts.particles_blocked = !facts.particles_blocked;
+            } else {
+                assert!(
+                    matches!(&actions[..], [CtxAction::SetRender(_, value)] if *value == mode),
+                    "{actions:?}"
+                );
+                facts.render = mode;
+            }
+        }
+        click(&ctx, &mut menu, &facts, egui::pos2(900.0, 800.0), egui::PointerButton::Primary);
+        assert!(menu.is_none());
     }
 
     #[test]

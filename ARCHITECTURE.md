@@ -13,6 +13,11 @@ so customization cannot move/hide it. Avatar technical actions use separate
 display, information, reset, moderation and disturbance groups (#1135).
 Clicked attachments keep object and wearer targets explicit; derender actions
 belong to disturbance for objects, attachments, HUDs and other avatars.
+Checkable scene commands use live check marks and retain the popup/submenu
+hierarchy (including radial paths); ordinary commands explicitly close it.
+The shared editor gives scene submenus outside-click dismissal instead of
+closing on every selection. `context/toggle_tests.rs` exercises actual render
+choices, sound/particle/block toggles, custom nested groups and dismissal.
 Scene reset clears only the current profile. `context/notecards.rs` validates
 bounded versioned snapshots of all seven scene profiles, reuses the inventory's
 COPY-aware picker and native transfers, and applies only correlated successful

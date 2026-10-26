@@ -16,6 +16,14 @@ pub(super) struct Entry {
     pub kind: Kind,
 }
 
+impl Entry {
+    /// Checkable settings are applied live; keep their menu and submenu open
+    /// for another change (human preference over the Legacy default).
+    pub(super) fn keeps_open(&self) -> bool {
+        self.checked.is_some() || matches!(self.kind, Kind::Action(CtxAction::CustomizeMenu(_)))
+    }
+}
+
 #[derive(Clone)]
 pub(super) enum Kind {
     Action(CtxAction),
@@ -162,7 +170,7 @@ pub(super) fn draw_list(ui: &mut egui::Ui, p: &crate::theme::Palette, entries: &
         match &entry.kind {
             Kind::Action(action) => {
                 let clicked = match entry.checked {
-                    Some(checked) if entry.enabled && matches!(action, CtxAction::SetOwnerSoundBlock { .. }) => {
+                    Some(checked) if entry.enabled => {
                         let mut on = checked;
                         menu::toggle(ui, p, entry.icon, &entry.label, &mut on)
                     }
@@ -267,12 +275,13 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
             aurora_i18n::tr!("common-report"),
             CtxAction::ReportAbuse(ReportTarget::Object(id)),
         );
-        let (icon, label) = if o.blocked {
-            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("ban", aurora_i18n::tr!("common-ignore"))
-        };
-        ui.item(icon, label, CtxAction::ToggleBlockObject { id, name: o.name.clone() });
+        ui.check(
+            "ban",
+            aurora_i18n::tr!("common-ignore"),
+            o.blocked,
+            true,
+            CtxAction::ToggleBlockObject { id, name: o.name.clone() },
+        );
         ui.separator();
         derender_items(ui, id, aurora_i18n::tr!("ui-context-derender"), true);
         particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
@@ -568,22 +577,15 @@ fn avatar_navigation(ui: &mut Builder, f: &Facts, id: Uuid) {
 }
 
 fn sound_block_items(ui: &mut Builder, f: &Facts, owner: Uuid) {
-    let state = |flag| {
-        if f.sound_blocks & flag != 0 {
-            aurora_i18n::tr!("sound-block-state-on")
-        } else {
-            aurora_i18n::tr!("sound-block-state-off")
-        }
-    };
     for (flag, label) in [
-        (1, aurora_i18n::tr!("ui-context-block-worn-sounds", state = state(1))),
-        (2, aurora_i18n::tr!("ui-context-block-rezzed-sounds", state = state(2))),
-        (4, aurora_i18n::tr!("ui-context-block-gesture-sounds", state = state(4))),
+        (1, aurora_i18n::tr!("ui-context-block-worn-sounds")),
+        (2, aurora_i18n::tr!("ui-context-block-rezzed-sounds")),
+        (4, aurora_i18n::tr!("ui-context-block-gesture-sounds")),
     ] {
         let on = f.sound_blocks & flag != 0;
         ui.check(
             "volume-off",
-            &label,
+            label,
             on,
             true,
             CtxAction::SetOwnerSoundBlock { owner, flag, blocked: !on },
@@ -736,12 +738,13 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
             aurora_i18n::tr!("common-report"),
             CtxAction::ReportAbuse(ReportTarget::Object(id)),
         );
-        let (icon, label) = if f.blocked {
-            ("circle-check-filled", aurora_i18n::tr!("common-stop-ignoring"))
-        } else {
-            ("ban", aurora_i18n::tr!("common-ignore"))
-        };
-        ui.item(icon, label, CtxAction::ToggleBlock(id));
+        ui.check(
+            "ban",
+            aurora_i18n::tr!("common-ignore"),
+            f.blocked,
+            true,
+            CtxAction::ToggleBlock(id),
+        );
         ui.separator();
         if let Some(object) = attachment {
             // Derender on a clicked attachment has always targeted that
@@ -772,12 +775,13 @@ fn avatar_moderation(ui: &mut Builder, f: &Facts, id: Uuid) {
     ui.submenu("shield-filled", aurora_i18n::tr!("ui-context-moderation-options"), true, |ui| {
         moderation_items(ui, f, id);
         if let Some(muted) = voice {
-            let (icon, label) = if muted {
-                ("microphone-filled", aurora_i18n::tr!("ui-context-voice-unmute-for-everyone"))
-            } else {
-                ("microphone-off", aurora_i18n::tr!("ui-context-voice-mute-for-everyone"))
-            };
-            ui.item(icon, label, CtxAction::ModerateVoice(Some(id), !muted));
+            ui.check(
+                "microphone-off",
+                aurora_i18n::tr!("ui-context-voice-mute-for-everyone"),
+                muted,
+                true,
+                CtxAction::ModerateVoice(Some(id), !muted),
+            );
             ui.item(
                 "microphone-off",
                 aurora_i18n::tr!("ui-context-voice-mute-everyone"),

@@ -608,6 +608,7 @@ pub(crate) fn editable_submenu(
     response: &egui::Response,
     editing: bool,
     click_only: bool,
+    persistent: bool,
     body: impl FnOnce(&mut Ui),
 ) {
     if click_only {
@@ -634,6 +635,14 @@ pub(crate) fn editable_submenu(
         submenu = submenu.config(
             egui::containers::menu::MenuConfig::new()
                 .close_behavior(PopupCloseBehavior::IgnoreClicks)
+                .style(style(p)),
+        );
+    } else if persistent {
+        // Scene checkable choices stay open until an action explicitly closes
+        // them. Preserve the hierarchy's normal outside-click dismissal.
+        submenu = submenu.config(
+            egui::containers::menu::MenuConfig::new()
+                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                 .style(style(p)),
         );
     }

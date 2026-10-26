@@ -34,6 +34,8 @@ mod pie;
 #[cfg(test)]
 #[path = "context/sound_tests.rs"]
 mod sound_tests;
+#[cfg(test)]
+mod toggle_tests;
 
 pub use multi::avatars_menu;
 

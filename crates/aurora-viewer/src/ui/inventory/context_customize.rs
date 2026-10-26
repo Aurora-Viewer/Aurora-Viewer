@@ -766,6 +766,7 @@ impl View<'_> {
                             response,
                             !self.profile.locked || self.profile.layout.filters.contains(&entry.id),
                             icon,
+                            self.scope.starts_with("scene:"),
                             |ui| {
                                 self.state.submenus.push(ui.layer_id());
                                 menu::distinct_surface(ui);

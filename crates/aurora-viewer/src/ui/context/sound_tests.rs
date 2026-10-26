@@ -21,16 +21,11 @@ fn sound_menu(mask: u8, attachment: Option<Uuid>) -> Vec<Entry> {
     rows
 }
 
-fn label(flag: u8, blocked: bool) -> String {
-    let state = if blocked {
-        aurora_i18n::tr!("sound-block-state-on")
-    } else {
-        aurora_i18n::tr!("sound-block-state-off")
-    };
+fn label(flag: u8) -> &'static str {
     match flag {
-        1 => aurora_i18n::tr!("ui-context-block-worn-sounds", state = state),
-        2 => aurora_i18n::tr!("ui-context-block-rezzed-sounds", state = state),
-        _ => aurora_i18n::tr!("ui-context-block-gesture-sounds", state = state),
+        1 => aurora_i18n::tr!("ui-context-block-worn-sounds"),
+        2 => aurora_i18n::tr!("ui-context-block-rezzed-sounds"),
+        _ => aurora_i18n::tr!("ui-context-block-gesture-sounds"),
     }
 }
 
@@ -48,7 +43,7 @@ fn avatar_and_attachment_disturbance_menus_show_each_category_state_and_inverse_
                 let on = mask & flag != 0;
                 assert!(row.enabled);
                 assert_eq!(row.checked, Some(on));
-                assert_eq!(row.label, label(flag, on));
+                assert_eq!(row.label, label(flag));
                 assert!(
                     matches!(row.kind, Kind::Action(CtxAction::SetOwnerSoundBlock { owner, flag: f, blocked }) if owner == Uuid::from_u128(7) && f == flag && blocked != on)
                 );
@@ -105,7 +100,7 @@ impl Harness {
         let pos = out
             .shapes
             .iter()
-            .find_map(|s| text_rect(&s.shape, &label(flag, blocked)))
+            .find_map(|s| text_rect(&s.shape, label(flag)))
             .expect("complete sound control label")
             .center();
         let event = |pressed| {

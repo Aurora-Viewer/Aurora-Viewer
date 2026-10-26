@@ -93,14 +93,16 @@ impl Customization {
         let profile = profile(prefs, scope);
         if let Some(index) = context_customize::show(ui, p, item, scope, &catalog.entries, profile, &mut self.editor)
             && profile.locked
-            && let Some(entries::Entry {
-                enabled: true,
-                kind: entries::Kind::Action(action),
-                ..
-            }) = catalog.commands.get(index)
+            && let Some(
+                entry @ entries::Entry {
+                    enabled: true,
+                    kind: entries::Kind::Action(action),
+                    ..
+                },
+            ) = catalog.commands.get(index)
         {
             super::request(ui.ctx(), action.clone());
-            if !matches!(action, CtxAction::SetOwnerSoundBlock { .. }) {
+            if !entry.keeps_open() {
                 ui.close();
             }
         }
@@ -111,13 +113,13 @@ impl Customization {
 }
 
 pub(super) struct Catalog {
-    entries: Vec<layout::Entry>,
+    pub(super) entries: Vec<layout::Entry>,
     commands: Vec<entries::Entry>,
     originals: BTreeMap<String, entries::Entry>,
 }
 
 impl Catalog {
-    fn new(entries: &[entries::Entry]) -> Self {
+    pub(super) fn new(entries: &[entries::Entry]) -> Self {
         let mut catalog = Self {
             entries: Vec::new(),
             commands: Vec::new(),
