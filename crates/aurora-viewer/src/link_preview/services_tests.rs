@@ -337,3 +337,60 @@ fn the_demo_s_links_use_the_saved_answers() {
     assert!(demo_source("https://redd.it/demo01").is_some());
     assert_eq!(demo_source("https://redd.it/demo02"), None);
 }
+
+/// The picture sites of these tests: the list is shared by every test, so
+/// each sets the same one.
+fn with_sites() {
+    set_sites(vec!["cloud.example.org".into()]);
+}
+
+/// A page of a listed site (or of a subdomain) is read for its `og:image`;
+/// its root, a plain http link, a hidden user and the other sites are not.
+#[test]
+fn the_pages_of_the_user_s_picture_sites_are_recognized() {
+    with_sites();
+    assert_eq!(
+        recognize("https://cloud.example.org/s/DemoShare7xKq2#top"),
+        Some((Service::Site, Step::Head("https://cloud.example.org/s/DemoShare7xKq2".into())))
+    );
+    assert_eq!(service("https://photos.cloud.example.org/share/abc"), Some(Service::Site));
+    assert_eq!(
+        service("https://CLOUD.example.org./index.php/s/DemoShare7xKq2"),
+        Some(Service::Site)
+    );
+    for url in [
+        "https://cloud.example.org/",
+        "http://cloud.example.org/s/DemoShare7xKq2",
+        "https://me@cloud.example.org/s/DemoShare7xKq2",
+        "https://example.org/s/DemoShare7xKq2",
+        "https://cloud.example.org.evil.example/s/DemoShare7xKq2",
+        "https://evilcloud.example.org/s/DemoShare7xKq2",
+    ] {
+        assert_eq!(service(url), None, "{url}");
+    }
+    // a built-in service keeps its own reading
+    assert_eq!(service("https://gyazo.com/0a1b2c3d4e5f60718293a4b5c6d7e8f9"), Some(Service::Gyazo));
+}
+
+/// A Nextcloud share names its picture; a folder's share names the site's
+/// icon, which is no picture; a picture elsewhere is refused.
+#[test]
+fn a_picture_site_s_page_leads_to_its_own_picture_only() {
+    with_sites();
+    assert_eq!(
+        from_head(Service::Site, NEXTCLOUD_PICTURE).as_deref(),
+        Some("https://cloud.example.org/s/DemoShare7xKq2/preview")
+    );
+    assert_eq!(from_head(Service::Site, NEXTCLOUD_FOLDER), None);
+    let elsewhere = NEXTCLOUD_PICTURE.replace("https://cloud.example.org/s/", "https://pics.example.net/s/");
+    assert_eq!(from_head(Service::Site, &elsewhere), None);
+    // a port is allowed on the user's own server, not http
+    assert!(picture_host_ok(Service::Site, "https://cloud.example.org:8443/s/x/preview"));
+    assert!(!picture_host_ok(Service::Site, "http://cloud.example.org/s/x/preview"));
+    assert!(!picture_host_ok(Service::Gyazo, "https://cloud.example.org/s/x/preview"));
+    assert_eq!(
+        demo_source("https://cloud.example.org/s/DemoShare7xKq2"),
+        Some(("https://cloud.example.org/s/DemoShare7xKq2/preview".into(), false))
+    );
+    assert_eq!(demo_source("https://cloud.example.org/s/DemoFolder3Pq9"), None);
+}

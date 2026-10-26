@@ -938,6 +938,7 @@ impl App {
         crate::autoreplace::set_enabled(settings.auto_replace);
         crate::autoreplace::load();
         crate::link_trust::configure(&settings.trusted_sites);
+        crate::link_preview::configure_sites(&settings.link_previews.picture_sites, crate::demo::picture_sites());
         // before the skin's palette is built and applied
         crate::colorblind::set(wanted_vision(&settings));
         crate::high_contrast::set(wanted_high_contrast(&settings));
@@ -9068,6 +9069,7 @@ impl App {
             crate::spelling::configure(&self.egui_ctx, &self.settings.spelling);
             crate::autoreplace::set_enabled(self.settings.auto_replace);
             crate::link_trust::configure(&self.settings.trusted_sites);
+            crate::link_preview::configure_sites(&self.settings.link_previews.picture_sites, crate::demo::picture_sites());
             gfx.renderer.apply_settings(self.settings.render_settings());
             self.panels.time_of_day = self.settings.time_of_day;
             self.egui_ctx.set_zoom_factor(ui_scale(&self.settings));

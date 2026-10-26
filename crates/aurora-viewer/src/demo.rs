@@ -948,6 +948,15 @@ pub fn previews_offline() -> bool {
     !*NET.get_or_init(|| std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok_and(|v| v == "net"))
 }
 
+/// AURORA_DEMO_CONV_PREVIEWS=services: the made-up Nextcloud of the demo's
+/// links is one of the picture sites (#1063), without being added to the
+/// user's settings.
+pub fn picture_sites() -> &'static [&'static str] {
+    let on =
+        std::env::var_os("AURORA_DEMO").is_some() && std::env::var("AURORA_DEMO_CONV_PREVIEWS").is_ok_and(|v| v.starts_with("services"));
+    if on { &["cloud.example.org"] } else { &[] }
+}
+
 /// AURORA_DEMO_GIFS: the GIF picker of the Conversations field (#932).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gifs {
@@ -1272,8 +1281,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                     // Bluesky and X (#1051), from saved answers: a removed
                     // screenshot and a text post first (no card), then a
                     // picture per service, the labelled Bluesky post's
-                    // blurred; `services:gyazo,imgur` keeps those services
-                    // only
+                    // blurred, then the shares of a folder (no picture) and
+                    // of a picture on a self-hosted Nextcloud (#1063);
+                    // `services:gyazo,imgur` keeps those services only
                     let only: Vec<&str> = only.trim_start_matches(':').split(',').filter(|s| !s.is_empty()).collect();
                     [
                         ("none", "https://prnt.sc/removed1"),
@@ -1286,6 +1296,8 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         ("bluesky", "https://bsky.app/profile/aurora-demo.bsky.social/post/3demopost2abc"),
                         ("x", "https://x.com/AuroraDemo/status/1850000000000000001"),
                         ("bluesky", "https://bsky.app/profile/aurora-demo.bsky.social/post/3demolabelled"),
+                        ("nextcloud", "https://cloud.example.org/s/DemoFolder3Pq9"),
+                        ("nextcloud", "https://cloud.example.org/s/DemoShare7xKq2"),
                     ]
                     .iter()
                     .filter(|(key, _)| only.is_empty() || only.contains(key))
