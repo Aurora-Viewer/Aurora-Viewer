@@ -628,7 +628,11 @@ impl ViewCache {
         } else {
             Vec::new()
         };
-        let favored = if favorites.is_empty() { IdSet::default() } else { within(inv, &favorites) };
+        let favored = if favorites.is_empty() {
+            IdSet::default()
+        } else {
+            within(inv, &favorites)
+        };
         self.results = self
             .entries
             .par_iter()
