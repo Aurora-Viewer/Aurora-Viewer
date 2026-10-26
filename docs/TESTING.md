@@ -3675,6 +3675,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_PRESENCE=<place>` | Friends' online / offline toasts at one of their six places, waiting under the bell's cards and list |
 | `AURORA_DEMO_FRIEND_PROMPT=1\|later` | Friendship offers in the middle of the screen (#465), one waiting behind the other |
 | `AURORA_DEMO_OBJECT_IM=off\|region\|parcel\|strict` | Objects' messages from near and far, with the filter of Preferences › Privacy set for this run |
+| `AURORA_DEMO_ABOUT=info\|licences[:end]` | Help › About Aurora Viewer opens on its Info or Licences tab |
 | `AURORA_DEMO_COLLISIONS=1\|chat` | Residents bump, push and hit the agent; the "Bumps, pushes & hits" window opens on the list |
 | `AURORA_DEMO_RESTART=<seconds>[:manager][:fast][:still][:min][:lm]…` | The demo region announces its restart: the alert card, its steps, pill, bell card, Firestorm's box |
 | `AURORA_DEMO_LINK=stall:<frame>[:<seconds>],lost:<frame>` | The region goes silent (the unsteady-connection pill and its count), or the link is lost (login screen offering to go back to the same place) |
@@ -4302,6 +4303,13 @@ failure. Grid validation and any paid upload are performed by the human.
   arrives. Capture with `AURORA_FPS_LIMIT=60` at 800 (and 960 with
   `later`), in `--language en` and `fr`; Preferences › Interface › "Reduce
   animations" leaves the card still.
+- **`AURORA_DEMO_ABOUT=info|licences[:end]`**: the About window
+  (`ui/about.rs`) opens at frame 600 on the tab asked for (`info` when the
+  value is anything else); `:end` scrolls the tab to its last card. Info shows the demo region and simulator, the
+  computer once `system_info.rs` has read it in the background (a
+  "Reading…" line for a moment), and "Copy to clipboard"; Licences lists
+  NOTICE.md, a card per heading. Capture at frame 700 with
+  `AURORA_FPS_LIMIT=60`, in `--language en` and `fr`.
 - **`AURORA_DEMO_COLLISIONS=1|chat`**: MeanCollisionAlert as the simulator
   sends it (`world/collisions.rs`), at 60 frames a second: the "Bumps,
   pushes & hits" window opens at frame 600, a resident bumps the agent at

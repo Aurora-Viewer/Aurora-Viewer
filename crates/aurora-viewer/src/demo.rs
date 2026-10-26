@@ -31,6 +31,9 @@ pub mod water;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// Help › About Aurora Viewer on one of its tabs (AURORA_DEMO_ABOUT).
+#[path = "demo_about.rs"]
+pub mod about;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;

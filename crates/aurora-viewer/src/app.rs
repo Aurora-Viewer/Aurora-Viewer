@@ -24,6 +24,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+mod about;
 mod ao;
 mod app_links;
 mod area_search;
@@ -545,6 +546,7 @@ pub struct App {
     blacklist_ui: ui::blacklist::BlacklistUi,
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
+    about: about::About,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
@@ -1196,6 +1198,7 @@ impl App {
             area_search_feed: Default::default(),
             blacklist_ui: Default::default(),
             bumps_ui: Default::default(),
+            about: Default::default(),
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
             money_tracker_ui: Default::default(),
@@ -9458,6 +9461,15 @@ impl App {
                 self.world.apply(event);
             }
         }
+        if self.demo
+            && let Some((tab, end)) = crate::demo::about::tab()
+        {
+            if self.frame_count == crate::demo::about::OPEN {
+                self.about.ui.open(&self.egui_ctx, tab, &mut self.panels.about);
+            }
+            // until the computer is read and the cards have their height
+            self.about.ui.scroll_to_end = end && self.frame_count.saturating_sub(crate::demo::about::OPEN) < 60;
+        }
         if self.demo && crate::demo::collisions::mode().is_some() {
             for event in crate::demo::collisions::events(self.frame_count) {
                 self.world.apply(event);
@@ -14204,6 +14216,7 @@ impl App {
                 self.panels.perf = open;
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
+                self.about_window(&ctx, &p, renderer);
                 let region = self.world.region_name();
                 let available = self.world.main_has_cap("SimConsoleAsync");
                 let rlva_actions = self.options_ui.rlva_tools.show(&ctx, &p, &self.world);
