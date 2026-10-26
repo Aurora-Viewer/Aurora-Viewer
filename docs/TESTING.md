@@ -6060,6 +6060,10 @@ offline; the files and snapshots uploaded in demo stay offline.
 - `1`: the inventory alone. This mode and every one below but the
   `aurora` ones were written for the Legacy Viewer's window and show it,
   whatever Preferences › Aurora › Inventory says.
+- `landmark`, `aurora-landmark`: a landmark's context menu in each inventory
+  layout. Capture at frame 700. Copy SLurl must copy the destination's actual
+  region and coordinates; Show on map must open and center the map without
+  teleporting. Both actions resolve an initially unloaded landmark offline.
 - `uuid`, `uuid-restricted`, `uuid-missing`, `uuid-multi`: the texture's
   context menu with Copy asset UUID enabled, disabled by a missing transfer
   permission, disabled by an unavailable UUID, or disabled by multiple

@@ -6646,6 +6646,17 @@ impl App {
             }
         }
         self.world.place_details.update(&self.world.map, &mut self.world.landmarks, now);
+        for result in self.world.landmarks.take_actions(&mut self.world.map, now) {
+            use crate::world::landmarks::ActionResult;
+            match result {
+                ActionResult::Slurl(url) => self.egui_ctx.copy_text(url),
+                ActionResult::Map(global) => {
+                    self.world.map.track_location(global.x, global.y, global.z as f32, false);
+                    ui::widgets::open_floater(&self.egui_ctx, "worldmap", &mut self.panels.world_map);
+                }
+                ActionResult::Unavailable => self.inventory_ui.message = aurora_i18n::tr!("inventory-landmark-location-unknown").into(),
+            }
+        }
         let mut cmds = self.world.place_details.take_commands();
         cmds.extend(self.world.place_snapshots.take_commands());
         cmds.extend(self.world.landmarks.take_commands());
@@ -8439,6 +8450,8 @@ impl App {
                     matches!(
                         v.as_str(),
                         "rename"
+                            | "landmark"
+                            | "aurora-landmark"
                             | "new-script"
                             | "new-note"
                             | "new-folder"
@@ -15502,6 +15515,15 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_INVENTORY") {
                 crate::world::inventory::demo::seed(&mut self.world.inventory, self.world.agent_id);
+                if matches!(view.as_str(), "landmark" | "aurora-landmark") {
+                    let mut landmark = self.world.inventory.items[&uuid::Uuid::from_u128(8103)].clone();
+                    landmark.id = uuid::Uuid::from_u128(8120);
+                    landmark.name = aurora_i18n::tr!("common-landmark").into();
+                    landmark.asset_type = 3;
+                    landmark.inv_type = 3;
+                    landmark.asset_id = crate::demo::place::landmark_ids(1).1;
+                    self.world.inventory.add_items(vec![landmark]);
+                }
                 if matches!(view.as_str(), "outfit-menu" | "outfit-menu-loading") {
                     crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
                     if view == "outfit-menu-loading" {
@@ -15542,6 +15564,7 @@ impl ApplicationHandler for App {
                         | "aurora-received-unread-compact"
                         | "aurora"
                         | "aurora-medium"
+                        | "aurora-landmark"
                         | "aurora-wide"
                         | "aurora-sidebar-medium"
                         | "aurora-sidebar-wide"

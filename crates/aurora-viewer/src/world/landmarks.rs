@@ -10,7 +10,30 @@ use crate::world::inventory::Inventory;
 use aurora_net::{NetCommand, RegionHandle};
 use glam::{DVec3, Vec3};
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
+
+/// LLItemBridge::performAction / doShowOnMap (indra/newview/llinventorybridge.cpp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Action {
+    CopySlurl,
+    ShowOnMap,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ActionResult {
+    Slurl(String),
+    Map(DVec3),
+    Unavailable,
+}
+
+#[derive(Debug)]
+struct PendingAction {
+    asset: Uuid,
+    action: Action,
+    since: Instant,
+    asked_region: bool,
+}
 
 /// Fetch key family of landmark assets (top four bits, as scene/*).
 pub const FETCH_KIND_LANDMARK: u64 = 7 << 60;
@@ -83,6 +106,8 @@ pub struct Landmarks {
     keys: HashMap<u64, Uuid>,
     next_key: u64,
     out: Vec<NetCommand>,
+    /// At most one pending request per action: a newer click supersedes it.
+    actions: [Option<PendingAction>; 2],
     /// Bumped whenever an asset or a region handle arrives (cached lookups
     /// such as "a landmark already points here" rebuild).
     pub version: u64,
@@ -105,6 +130,76 @@ pub fn in_parcel(bitmap: &[u8], origin: (u32, u32), pos: DVec3) -> bool {
 }
 
 impl Landmarks {
+    /// Resolve inventory destination actions asynchronously, including assets
+    /// that have never been opened. Never use the inventory label as a region.
+    pub fn request_action(&mut self, asset: Uuid, action: Action, now: Instant) {
+        let slot = match action {
+            Action::CopySlurl => 0,
+            Action::ShowOnMap => 1,
+        };
+        self.actions[slot] = Some(PendingAction {
+            asset,
+            action,
+            since: now,
+            asked_region: false,
+        });
+        self.resolve(asset);
+    }
+
+    pub fn take_actions(&mut self, map: &mut super::worldmap::WorldMap, now: Instant) -> Vec<ActionResult> {
+        let mut results = Vec::new();
+        for (slot, pending) in std::mem::take(&mut self.actions).into_iter().enumerate() {
+            let Some(mut pending) = pending else { continue };
+            if pending.asset.is_nil() || now.saturating_duration_since(pending.since) >= Duration::from_secs(30) {
+                results.push(ActionResult::Unavailable);
+                continue;
+            }
+            match self.resolve(pending.asset) {
+                Resolved::Failed => results.push(ActionResult::Unavailable),
+                Resolved::Ready { global, region_pos, .. } => {
+                    if !global.is_finite() || global == DVec3::ZERO || global.x < 0.0 || global.y < 0.0 {
+                        results.push(ActionResult::Unavailable);
+                    } else if pending.action == Action::ShowOnMap {
+                        results.push(ActionResult::Map(global));
+                    } else if let Some(((x, y), sim)) = map.sim_at_global(global.x, global.y).filter(|(_, sim)| !sim.name.is_empty()) {
+                        let local = Vec3::new(
+                            (global.x - f64::from(x) * 256.0) as f32,
+                            (global.y - f64::from(y) * 256.0) as f32,
+                            global.z as f32,
+                        );
+                        results.push(ActionResult::Slurl(crate::slurl::make(&sim.name, local)));
+                    } else {
+                        let (x, y) = (
+                            ((global.x - f64::from(region_pos.x)) / 256.0).round() as u16,
+                            ((global.y - f64::from(region_pos.y)) / 256.0).round() as u16,
+                        );
+                        if pending.asked_region && map.null_sims.contains(&(u32::from(x), u32::from(y))) {
+                            results.push(ActionResult::Unavailable);
+                        } else {
+                            if !pending.asked_region {
+                                // LLLandmarkActions::getSLURLfromPosGlobal /
+                                // LLWorldMapMessage::sendHandleRegionRequest:
+                                // one cell, including a reply for a removed region.
+                                map.null_sims.remove(&(u32::from(x), u32::from(y)));
+                                map.push(NetCommand::MapBlockRequest {
+                                    min_x: x,
+                                    min_y: y,
+                                    max_x: x,
+                                    max_y: y,
+                                    null_sims: true,
+                                });
+                                pending.asked_region = true;
+                            }
+                            self.actions[slot] = Some(pending);
+                        }
+                    }
+                }
+                Resolved::Pending => self.actions[slot] = Some(pending),
+            }
+        }
+        results
+    }
+
     /// LLLandmarkList::getAsset: load the asset if it is not known yet.
     pub fn want(&mut self, asset: Uuid) {
         if !asset.is_nil() {
@@ -270,6 +365,104 @@ mod tests {
     use super::*;
 
     const REGION: Uuid = Uuid::from_u128(0x5E61_0000_0000_0000_0000_0000_0000_0001);
+
+    #[test]
+    fn inventory_actions_wait_for_asset_handle_and_actual_region_name() {
+        let now = Instant::now();
+        let asset = Uuid::from_u128(42);
+        let mut l = Landmarks::default();
+        let mut map = super::super::worldmap::WorldMap::default();
+        l.request_action(asset, Action::CopySlurl, now);
+        l.request_action(asset, Action::ShowOnMap, now);
+        assert!(l.take_actions(&mut map, now).is_empty());
+        let wanted = l.take_wanted();
+        assert_eq!(wanted.len(), 1);
+        let data = format!("Landmark version 2\nregion_id {REGION}\nlocal_pos 300.4 20.6 30.5\n");
+        l.on_fetch(wanted[0].0, Some(data.as_bytes()));
+        assert!(l.take_actions(&mut map, now).is_empty());
+        assert!(matches!(&l.take_commands()[..], [NetCommand::RegionHandleRequest(id)] if *id == REGION));
+        assert!(l.take_actions(&mut map, now).is_empty());
+        assert!(l.take_commands().is_empty(), "one shared handle request");
+        l.on_region_handle(REGION, aurora_net::origin_to_handle(256_000, 256_000));
+        let Resolved::Ready { global, .. } = l.peek(asset) else {
+            panic!("resolved landmark")
+        };
+        assert_eq!(l.take_actions(&mut map, now), vec![ActionResult::Map(global)]);
+        assert!(matches!(
+            &map.take_commands()[..],
+            [NetCommand::MapBlockRequest {
+                min_x: 1000,
+                min_y: 1000,
+                max_x: 1000,
+                max_y: 1000,
+                null_sims: true,
+            }]
+        ));
+        assert!(l.take_actions(&mut map, now).is_empty());
+        assert!(map.take_commands().is_empty(), "map requests are deduplicated");
+        map.sims.insert(
+            (1000, 1000),
+            super::super::worldmap::SimInfo {
+                name: "Demo & Test".into(),
+                access: 13,
+                flags: 0,
+                image: Uuid::nil(),
+                size_x: 512,
+                size_y: 512,
+            },
+        );
+        assert_eq!(
+            l.take_actions(&mut map, now),
+            vec![ActionResult::Slurl(
+                "http://maps.secondlife.com/secondlife/Demo%20%26%20Test/300/21/31".into()
+            )]
+        );
+        assert!(l.take_actions(&mut map, now).is_empty(), "actions complete once");
+    }
+
+    #[test]
+    fn inventory_actions_supersede_old_clicks_and_finish_failed_or_stalled_requests() {
+        let now = Instant::now();
+        let mut l = Landmarks::default();
+        let mut map = super::super::worldmap::WorldMap::default();
+        let old = Uuid::from_u128(42);
+        let new = Uuid::from_u128(43);
+        l.request_action(old, Action::ShowOnMap, now);
+        l.request_action(new, Action::ShowOnMap, now);
+        l.on_data(old, Some(b"Landmark version 1\nposition 256010.1 256020.1 30\n"));
+        assert!(l.take_actions(&mut map, now).is_empty(), "old click cannot move the map later");
+        l.on_data(new, None);
+        assert_eq!(l.take_actions(&mut map, now), vec![ActionResult::Unavailable]);
+        let stalled = Uuid::from_u128(44);
+        l.request_action(stalled, Action::CopySlurl, now);
+        assert!(l.take_actions(&mut map, now).is_empty());
+        assert_eq!(
+            l.take_actions(&mut map, now + Duration::from_secs(31)),
+            vec![ActionResult::Unavailable]
+        );
+        for data in [
+            b"Landmark version 1\nposition NaN 10 30\n".as_slice(),
+            b"Landmark version 1\nposition 0 0 0\n".as_slice(),
+        ] {
+            let asset = Uuid::from_u128(44);
+            l.request_action(asset, Action::CopySlurl, now);
+            l.on_data(asset, Some(data));
+            assert_eq!(l.take_actions(&mut map, now), vec![ActionResult::Unavailable]);
+            assert!(l.take_actions(&mut map, now).is_empty());
+        }
+        l.request_action(old, Action::ShowOnMap, now);
+        assert_eq!(
+            l.take_actions(&mut map, now),
+            vec![ActionResult::Map(DVec3::new(256010.1, 256020.1, 30.0))]
+        );
+        l.request_action(Uuid::nil(), Action::CopySlurl, now);
+        assert_eq!(l.take_actions(&mut map, now), vec![ActionResult::Unavailable]);
+        map.null_sims.insert((1000, 1000));
+        l.request_action(old, Action::CopySlurl, now);
+        assert!(l.take_actions(&mut map, now).is_empty(), "refresh a cached missing region");
+        map.null_sims.insert((1000, 1000));
+        assert_eq!(l.take_actions(&mut map, now), vec![ActionResult::Unavailable]);
+    }
 
     #[test]
     fn parses_both_versions() {

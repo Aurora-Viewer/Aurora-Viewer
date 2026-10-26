@@ -502,6 +502,22 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     single && !landmark.asset_id.is_nil(),
                     InvAction::AboutLandmark(landmark.id, landmark.asset_id),
                 );
+                c.invoke(
+                    "copy-landmark-slurl",
+                    TEXT,
+                    "link-filled",
+                    aurora_i18n::tr!("common-copy-slurl"),
+                    single && !landmark.asset_id.is_nil(),
+                    InvAction::CopyLandmarkSlurl(landmark.asset_id),
+                );
+                c.invoke(
+                    "show-landmark-on-map",
+                    TEXT,
+                    "map",
+                    aurora_i18n::tr!("common-show-on-map"),
+                    single && !landmark.asset_id.is_nil(),
+                    InvAction::ShowLandmarkOnMap(landmark.asset_id),
+                );
             }
             if (kind == 6 && !worn) || all {
                 c.invoke(
@@ -1188,6 +1204,57 @@ mod tests {
         inv
     }
     #[test]
+    fn landmark_destination_actions_use_link_targets_and_require_one_available_asset() {
+        let mut inv = inventory();
+        let item = Uuid::from_u128(8103);
+        let asset = Uuid::from_u128(4242);
+        let landmark = inv.items.get_mut(&item).expect("demo item");
+        landmark.asset_type = 3;
+        landmark.inv_type = 3;
+        landmark.asset_id = asset;
+        landmark.owner_mask = 0;
+        let link = Uuid::from_u128(8113);
+        inv.items.get_mut(&link).expect("demo link").asset_id = item;
+        for target in [item, link] {
+            for multiple in [false, true] {
+                let mut st = InventoryUi::default();
+                if multiple {
+                    st.selection.extend([target, Uuid::from_u128(8100)]);
+                }
+                let c = build(&inv, target, &st, &InventoryPreferences::default(), &facts());
+                for (id, copy) in [("copy-landmark-slurl", true), ("show-landmark-on-map", false)] {
+                    let entry = c.entries.iter().find(|e| e.id == id).expect("destination action");
+                    assert_eq!(entry.enabled, !multiple);
+                    let Kind::Action(index) = entry.kind else { panic!("action") };
+                    assert!(
+                        matches!(&c.commands[index], Some(Command::Invoke(InvAction::CopyLandmarkSlurl(a))) if copy && *a == asset)
+                            || matches!(&c.commands[index], Some(Command::Invoke(InvAction::ShowLandmarkOnMap(a))) if !copy && *a == asset)
+                    );
+                }
+            }
+        }
+        inv.items.get_mut(&item).expect("landmark").asset_id = Uuid::nil();
+        let c = build(&inv, item, &InventoryUi::default(), &InventoryPreferences::default(), &facts());
+        assert!(
+            c.entries
+                .iter()
+                .filter(|e| matches!(e.id.as_str(), "copy-landmark-slurl" | "show-landmark-on-map"))
+                .all(|e| !e.enabled)
+        );
+        let c = build(
+            &inv,
+            Uuid::from_u128(8100),
+            &InventoryUi::default(),
+            &InventoryPreferences::default(),
+            &facts(),
+        );
+        assert!(
+            !c.entries
+                .iter()
+                .any(|e| matches!(e.id.as_str(), "copy-landmark-slurl" | "show-landmark-on-map"))
+        );
+    }
+    #[test]
     fn incomplete_folder_menus_keep_native_descendant_preparation_out_of_the_inert_catalogue() {
         let mut inv = inventory();
         let folder = Uuid::from_u128(8000);
@@ -1242,6 +1309,8 @@ mod tests {
             "apply-environment",
             "gesture-active",
             "about-landmark",
+            "copy-landmark-slurl",
+            "show-landmark-on-map",
             "detach",
             "attach:1",
             "attach:31",

@@ -502,6 +502,16 @@ impl App {
             }
             InvAction::Profile(id) => self.profile_ui.open(&mut self.world, id),
             InvAction::AboutLandmark(item, asset) => self.show_place_profile(crate::world::place_details::Source::Landmark { item, asset }),
+            InvAction::CopyLandmarkSlurl(asset) => {
+                self.world
+                    .landmarks
+                    .request_action(asset, crate::world::landmarks::Action::CopySlurl, Instant::now());
+            }
+            InvAction::ShowLandmarkOnMap(asset) => {
+                self.world
+                    .landmarks
+                    .request_action(asset, crate::world::landmarks::Action::ShowOnMap, Instant::now());
+            }
             InvAction::ThumbnailCopied(asset) => {
                 self.inventory_ui.clipboard = vec![asset];
                 self.inventory_ui.cut = false;

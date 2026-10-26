@@ -1,5 +1,13 @@
 # Aurora Viewer architecture
 
+Inventory landmark destination actions use the shared context-menu catalogue.
+Saved orders gain unseen destination entries beside About without moving edited entries.
+`world/landmarks.rs` retains at most one Copy SLurl and one Show on map request
+while their asset and region handle resolve. Copy also requests map metadata for
+the destination's real region name and origin. `app.rs` consumes each result
+once, copying through egui or restoring and centering the world map; failed or
+timed-out lookups report a translated inventory message.
+
 First-person avatar visibility follows `LLAgent::needsRenderAvatar/Head` and
 `LLVOAvatarSelf::updateAttachmentVisibility`: `CameraSettings::show_avatar_in_mouselook`
 defaults off. System head faces and `avatar_lad.xml` attachment-point visibility
