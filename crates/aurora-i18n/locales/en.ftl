@@ -2077,6 +2077,17 @@ ui-options-typing-chevron = Chevron before "is typing"
 ui-options-typing-chevron-hint = Adds "> " to the tab of a private conversation while the other resident types.
 ui-options-flash-unread = Flash unread conversations
 ui-options-flash-unread-hint = The entry of a conversation that receives a message while you read another one flashes softly in violet, then stays tinted until it is read.
+ui-options-chat-thumbnails = Conversation thumbnails
+ui-options-chat-thumbnails-hint = A picture for each open conversation, with its unread count: a click shows the conversation, a right click opens its menu.
+ui-options-chat-thumbnails-off = Hidden
+ui-options-chat-thumbnails-chat-bar = Beside the chat bar
+ui-options-chat-thumbnails-top-right = Top right
+ui-options-chat-thumbnails-flash = Flash the thumbnails for new messages
+ui-options-chat-thumbnails-flash-hint = The thumbnail of a conversation that receives a message flashes, then keeps a mark until the conversation is read.
+ui-chat-thumbnails-more = { $n ->
+    [one] { $n } more conversation
+   *[other] { $n } more conversations
+    }
 ui-options-flash-conversations-button = Flash the Conversations button for new messages
 ui-options-flash-conversations-button-hint = When a message arrives with the Conversations window closed, its button flashes softly in violet, then stays tinted until the window is opened. Minimized, the window's bar flashes instead, then stays tinted while messages wait unread.
 ui-options-flash-conversations-nearby = Also for nearby chat

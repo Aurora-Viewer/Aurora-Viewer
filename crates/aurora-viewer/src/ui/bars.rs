@@ -229,6 +229,9 @@ pub struct StatusInfo<'a> {
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
     pub show_transparency: bool,
+    /// The conversations' thumbnails at the top right (#1134): how many,
+    /// 0 for none (`thumbnails::reserve_top`).
+    pub conversation_thumbnails: usize,
 }
 
 /// World › World tooltips: the Legacy Viewer's Show Tips, Show Land
@@ -1646,6 +1649,14 @@ pub fn top_bars(
                             action = BarAction::BuyCurrency;
                         }
                     }
+                    // the conversations' thumbnails, left of the balance as
+                    // the Legacy Viewer's chiclets (#1134)
+                    let size = super::chat::thumbnails::BAR_SIZE;
+                    let w = super::chat::thumbnails::top_width(st.conversation_thumbnails, size, 0.0, ui.available_width() / 3.0);
+                    if w > 0.0 {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::new(w, size), egui::Sense::hover());
+                        super::chat::thumbnails::reserve_top(ui.ctx(), rect, size, false);
+                    }
                     for (on, text) in [
                         (st.flying, aurora_i18n::tr!("ui-bars-flying")),
                         (st.seated, aurora_i18n::tr!("ui-bars-sitting")),
@@ -2723,6 +2734,15 @@ pub fn bottom_bar(
                         width_committed = true;
                     }
                     chat.bar_hovered = ui.rect_contains_pointer(egui::Rect::from_min_max(start, handle.max));
+                }
+                // the conversations' thumbnails beside the chat bar (#1134);
+                // the toolbar keeps a narrow button per command
+                let size = super::chat::thumbnails::BAR_SIZE;
+                let room = ui.available_width() - n * (MIN_BTN + 4.0) - 8.0;
+                let thumbs = chat.thumbnails.bar_width(size, 0.0, room);
+                if thumbs > 0.0 {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(thumbs, size), egui::Sense::hover());
+                    chat.thumbnails.reserve(rect, size, false);
                 }
 
                 // by default the buttons stretch over the whole remaining

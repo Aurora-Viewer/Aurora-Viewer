@@ -147,6 +147,27 @@ pub fn page(cx: &mut Cx, tab: usize) {
                         &field!(flash_conversations_nearby),
                     );
                 });
+                // the Legacy Viewer's IM chiclets (FSDisableIMChiclets off):
+                // beside the chat bar by default, the human's choice (#1134)
+                use crate::settings::ChatThumbnails;
+                cx.combo(
+                    tr!("ui-options-chat-thumbnails"),
+                    tr!("ui-options-chat-thumbnails-hint"),
+                    &field!(chat_thumbnails),
+                    &[
+                        (ChatThumbnails::ChatBar, tr!("ui-options-chat-thumbnails-chat-bar")),
+                        (ChatThumbnails::TopRight, tr!("ui-options-chat-thumbnails-top-right")),
+                        (ChatThumbnails::Off, tr!("ui-options-chat-thumbnails-off")),
+                    ],
+                );
+                let off = cx.s.chat_thumbnails == ChatThumbnails::Off;
+                cx.subs(off, |cx| {
+                    cx.toggle(
+                        tr!("ui-options-chat-thumbnails-flash"),
+                        tr!("ui-options-chat-thumbnails-flash-hint"),
+                        &field!(chat_thumbnails_flash),
+                    );
+                });
             });
             link_previews(cx);
             gifs(cx);

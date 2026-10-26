@@ -3716,6 +3716,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_REORDER=1\|hold\|out\|nearby` | Drag the first conversation after the next of its category, or hold it over its gap, or drag it (or the nearby chat) out of the window (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_GIVE=away\|over\|many\|drop\|give` | Inventory carried to the IM shown: drop feedback, give confirmation, or give and its notice (all conversation styles) |
 | `AURORA_DEMO_FLASH=1` | Tess writes every 8 s: her conversation's entry flashes while another is shown |
+| `AURORA_DEMO_THUMBNAILS=bar\|top\|off` | The conversations' thumbnails beside the chat bar, at the top right or hidden, for the run (#1134) |
 | `AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]` | Tess writes in the group chat every 6 s; its snooze lasts `<seconds>`; `auto` snoozes it at the 14th second, `ask` asks the duration first |
 | `AURORA_DEMO_CONFERENCE=1\|<seconds>` | A conference invitation every 20 s (or `<seconds>`), from a stranger then a friend in turn |
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
@@ -4705,6 +4706,17 @@ failure. Grid validation and any paid upload are performed by the human.
   `AURORA_FPS_LIMIT=60`: the chat at frame 780, gone at 1500, back at
   2280 with the message of the 34th second. With `ask`, the dialog shows
   from frame 840 until it is answered.
+- **`AURORA_DEMO_THUMBNAILS=bar|top|off`**: where the conversations'
+  thumbnails stand for the run (`ui/chat/thumbnails.rs`), Preferences ›
+  Chat › Conversation thumbnails left alone. `bar` (the default): a glass
+  island between the chat island and the dock, or in the Legacy bar after
+  the chat field; `top`: an island at the top right of the windows' area;
+  `off`: none. One square per open conversation (picture, insignia or
+  conference glyph) with the red unread counter; with more conversations
+  than room (`AURORA_DEMO_CONV=many`), a "+N" square lists the others and
+  the unread ones stay in sight. With `AURORA_DEMO_FLASH=1`, Tess's
+  thumbnail flashes from the 10th second (eight rises, then a faint mark
+  until her conversation is opened).
 - **`AURORA_DEMO_FLASH=1`**: from the 10th second, Tess writes to us every
   8 seconds ("Are you there? (n)"), while the Conversations window is
   open. With another conversation shown, her entry (the column in
