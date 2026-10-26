@@ -255,6 +255,13 @@ struct Release {
     pelvis: Vec3,
 }
 
+#[derive(Clone, Copy)]
+struct Acquisition {
+    at: Instant,
+    rotations: [Quat; 2],
+    penetration: [f32; 2],
+}
+
 #[derive(Default)]
 pub(super) struct Placement {
     setup: Option<Setup>,
@@ -265,6 +272,7 @@ pub(super) struct Placement {
     held: Option<Placed>,
     deltas: Vec<Quat>,
     release: Option<Release>,
+    acquired: Option<Acquisition>,
 }
 
 impl Placement {
@@ -273,9 +281,13 @@ impl Placement {
         if let Some(release) = &mut self.release {
             release.at += duration;
         }
+        if let Some(acquired) = &mut self.acquired {
+            acquired.at += duration;
+        }
     }
 
     fn disable(&mut self, pose: &Pose<'_>, now: Instant) -> Option<Placed> {
+        self.acquired = None;
         let held = self.held.as_ref()?;
         let release = self.release.get_or_insert_with(|| Release {
             at: now,
@@ -329,21 +341,52 @@ impl Placement {
         let teleported = self
             .previous_frame
             .is_some_and(|old| old.to_world.w_axis.distance_squared(frame.to_world.w_axis) > 4.0);
-        if self
+        let reset = self
             .setup
             .as_ref()
             .is_none_or(|setup| setup.base != *base || setup.reference != reference)
-            || (teleported && self.release.is_none())
-        {
+            || (teleported && self.release.is_none());
+        // Capture the visible correction before rebuilding a changed sole or
+        // shape reference. Calibration must not discard an in-progress fade.
+        let seed = self
+            .release
+            .take()
+            .map(|release| {
+                let weight = 1.0 - cubic_step(now.saturating_duration_since(release.at).as_secs_f32() / TRANSITION_SECONDS);
+                Placed {
+                    rotations: pose
+                        .rotations
+                        .iter()
+                        .zip(&release.rotations)
+                        .map(|(&raw, &delta)| (Quat::IDENTITY.slerp(delta, weight) * raw).normalize())
+                        .collect(),
+                    pelvis: release.pelvis * weight,
+                }
+            })
+            .or_else(|| {
+                (from_source || (reset && self.sampled.is_some() && !teleported)).then(|| Placed {
+                    rotations: pose
+                        .rotations
+                        .iter()
+                        .enumerate()
+                        .map(|(joint, &raw)| (self.deltas.get(joint).copied().unwrap_or(Quat::IDENTITY) * raw).normalize())
+                        .collect(),
+                    pelvis: self.held.as_ref().map_or(Vec3::ZERO, |held| held.pelvis),
+                })
+            });
+        if reset {
             *self = Self {
                 setup: Some(Setup::new(rig, base, reference)?),
                 ..Default::default()
             };
         }
-        let dt = self
-            .sampled
-            .map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f32())
-            .min(0.1);
+        let dt = if seed.is_some() {
+            0.0
+        } else {
+            self.sampled
+                .map_or(0.0, |at| now.saturating_duration_since(at).as_secs_f32())
+                .min(0.1)
+        };
         self.sampled = Some(now);
         let previous_frame = self.previous_frame.replace(frame);
         let setup = self.setup.as_ref()?;
@@ -365,33 +408,14 @@ impl Placement {
         let source: Vec<Mat4> = source.into_iter().map(|matrix| frame.to_world * matrix).collect();
         let reference_floor = frame.to_world.transform_point3(Vec3::Z * setup.floor + pose.reference_offset).z;
         let inverse_frame = frame.to_world.inverse();
-        let seed = self
-            .release
-            .take()
-            .map(|release| {
-                // Re-enabling midway through the fade starts at the visible pose.
-                // Filtering the correction, rather than joint rotations or foot
-                // positions, keeps the current animation's motion responsive.
-                let weight = 1.0 - cubic_step(now.saturating_duration_since(release.at).as_secs_f32() / TRANSITION_SECONDS);
-                let rotations: Vec<_> = pose
-                    .rotations
-                    .iter()
-                    .zip(&release.rotations)
-                    .map(|(&raw, &delta)| (Quat::IDENTITY.slerp(delta, weight) * raw).normalize())
-                    .collect();
-                Placed {
-                    rotations,
-                    pelvis: release.pelvis * weight,
-                }
-            })
-            .or_else(|| {
-                from_source.then(|| Placed {
-                    rotations: pose.rotations.to_vec(),
-                    pelvis: Vec3::ZERO,
-                })
-            });
+        let query = |point: Vec3| {
+            ground(point)
+                .filter(|hit| hit.normal.z > 0.2 && hit.position.distance(point) <= crate::settings::MAX_GROUND_FEET_HEIGHT + MARGIN * 2.0)
+        };
         if let Some(seed) = seed {
             let visible = rig.world_with(&seed.rotations, pose.pelvis + seed.pelvis, pose.positions, &base.scale);
+            let mut rotations = [Quat::IDENTITY; 2];
+            let mut penetration = [0.0; 2];
             self.feet = Default::default();
             for (side, leg) in setup.legs.iter().enumerate() {
                 let ankle = leg.joints[2];
@@ -400,17 +424,28 @@ impl Placement {
                     value: reference_floor + visible.w_axis.z - source[ankle].w_axis.z,
                     velocity: 0.0,
                 });
-                self.feet[side].normal = orientation(visible) * orientation(source[ankle]).inverse() * Vec3::Z;
+                rotations[side] = orientation(visible) * orientation(source[ankle]).inverse();
+                self.feet[side].normal = rotations[side] * Vec3::Z;
+                let corners = footprint(visible.w_axis.truncate(), orientation(visible), leg.sole);
+                penetration[side] = correction(corners, corners.map(query)).unwrap_or(0.0).max(0.0);
             }
             self.height = Some(Height {
                 value: reference_floor + frame.to_world.transform_vector3(seed.pelvis).z,
                 velocity: 0.0,
             });
+            self.acquired = Some(Acquisition {
+                at: now,
+                rotations,
+                penetration,
+            });
         }
-        let query = |point: Vec3| {
-            ground(point)
-                .filter(|hit| hit.normal.z > 0.2 && hit.position.distance(point) <= crate::settings::MAX_GROUND_FEET_HEIGHT + MARGIN * 2.0)
-        };
+        let acquisition = self.acquired;
+        let acquisition_weight = acquisition.map_or(1.0, |entry| {
+            cubic_step(now.saturating_duration_since(entry.at).as_secs_f32() / TRANSITION_SECONDS)
+        });
+        if acquisition_weight >= 1.0 {
+            self.acquired = None;
+        }
         let mut targets = [Vec3::ZERO; 2];
         let mut rotations = [Quat::IDENTITY; 2];
         let mut supported = [false; 2];
@@ -469,6 +504,12 @@ impl Placement {
             }
             let tilt_weight = 1.0 - cubic_step(height.max(0.0) / 0.06);
             rotations[side] = (Quat::IDENTITY.slerp(slope, tilt_weight) * authored).normalize();
+            if let Some(entry) = acquisition {
+                // Blend only terrain tilt over the live authored rotation;
+                // activating placement must not instantly flatten the shoe.
+                rotations[side] =
+                    (entry.rotations[side].slerp(rotations[side] * authored.inverse(), acquisition_weight) * authored).normalize();
+            }
             if foot.contact {
                 targets[side].z += correction(footprint(ankle, rotations[side], leg.sole), hits).unwrap_or(0.0);
             } else if let Some(floor) = flight_floor {
@@ -498,8 +539,11 @@ impl Placement {
                 // reach, so a toe crossing an edge is part of that constraint.
                 let corners = footprint(targets[side], rotations[side], leg.sole);
                 if let Some(lift) = correction(corners, corners.map(query)) {
-                    // Collision is a hard constraint; settling toward a lower
-                    // support may ease, but a sole must never ease through it.
+                    // Ease the initial penetration by elapsed time, rather
+                    // than a per-frame fraction. New collision remains hard
+                    // once the avatar has joined the selected set.
+                    let remaining = acquisition.map_or(0.0, |entry| entry.penetration[side] * (1.0 - acquisition_weight));
+                    let lift = lift - remaining;
                     if lift > 0.0 {
                         targets[side].z += lift;
                         elevation.value += lift;
@@ -1518,6 +1562,117 @@ mod tests {
                 &raised,
             );
             f.check(&placement, &placed, &raw, Vec3::ZERO, frame, &raised);
+        }
+    }
+
+    #[test]
+    fn grounding_acquisition_from_penetrating_source_is_continuous() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let torso = f.rig.names["mTorso"];
+        let mut initial = f.rig.local_rot.clone();
+        initial[f.rig.names["mAnkleRight"]] = Quat::from_rotation_y(0.15);
+        for fps in [30, 60, 144] {
+            for depth in [0.18, 0.35] {
+                let frame = f.frame(-Vec3::Z * depth, 0.0);
+                let mut placement = Placement::default();
+                f.sample(&mut placement, &initial, Vec3::ZERO, None, now, &flat);
+                let source = f.rig.world_with(&initial, Vec3::ZERO, &f.base.local_pos, &f.base.scale);
+                let mut previous = source;
+                for step in 0..=fps {
+                    let time = step as f32 / fps as f32;
+                    let mut raw = initial.clone();
+                    raw[torso] = Quat::from_rotation_x(0.15 * (time * 5.0).sin());
+                    let placed = f.sample(
+                        &mut placement,
+                        &raw,
+                        Vec3::ZERO,
+                        Some(frame),
+                        now + Duration::from_secs_f32(time + 1.0 / fps as f32),
+                        &flat,
+                    );
+                    assert!(
+                        placed.rotations[torso].abs_diff_eq(raw[torso], 1e-6),
+                        "activation froze the current animation"
+                    );
+                    if step == 0 {
+                        for (placed, raw) in placed.rotations.iter().zip(&raw) {
+                            assert!(placed.abs_diff_eq(*raw, 1e-5), "activation changed the source orientation");
+                        }
+                        assert!(
+                            placed.pelvis.length() < 0.002,
+                            "activation jumped the pelvis by {:.6} m at {fps} fps",
+                            placed.pelvis.length()
+                        );
+                    }
+                    let output = f.rig.world_with(&placed.rotations, placed.pelvis, &f.base.local_pos, &f.base.scale);
+                    for name in ["mPelvis", "mKneeLeft", "mKneeRight", "mAnkleLeft", "mAnkleRight"] {
+                        let joint = f.rig.names[name];
+                        let distance = output[joint].w_axis.distance(previous[joint].w_axis);
+                        assert!(distance < 2.5 / fps as f32, "{name} jumped {distance:.6} m at {fps} fps");
+                    }
+                    if time >= 0.6 {
+                        f.check(&placement, &placed, &raw, Vec3::ZERO, frame, &flat);
+                    }
+                    previous = output;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn grounding_acquisition_after_recalibration_preserves_the_visible_release() {
+        let f = Fixture::new();
+        let now = Instant::now();
+        let old_frame = f.frame(Vec3::Z * 0.2, 0.0);
+        for delay in [0.25, 0.75] {
+            let mut placement = Placement::default();
+            f.sample(&mut placement, &f.rig.local_rot, Vec3::ZERO, Some(old_frame), now, &flat);
+            f.sample(
+                &mut placement,
+                &f.rig.local_rot,
+                Vec3::ZERO,
+                None,
+                now + Duration::from_secs(1),
+                &flat,
+            );
+            let at = now + Duration::from_secs_f32(1.0 + delay);
+            let before = f.sample(&mut placement, &f.rig.local_rot, Vec3::ZERO, None, at, &flat);
+            let frame = Frame {
+                sole_height: Some(f.floor - 0.08),
+                ..old_frame
+            };
+            let after = f.sample(
+                &mut placement,
+                &f.rig.local_rot,
+                Vec3::ZERO,
+                Some(frame),
+                at + Duration::from_micros(1),
+                &flat,
+            );
+            let positions = |pose: &Placed| f.rig.world_with(&pose.rotations, pose.pelvis, &f.base.local_pos, &f.base.scale);
+            let (before, after) = (positions(&before), positions(&after));
+            for name in ["mPelvis", "mKneeLeft", "mKneeRight", "mAnkleLeft", "mAnkleRight"] {
+                let joint = f.rig.names[name];
+                let distance = before[joint].w_axis.distance(after[joint].w_axis);
+                assert!(
+                    distance < 0.002,
+                    "{name} snapped {distance:.6} m on acquisition after a new sole measurement ({delay}s release)"
+                );
+            }
+            for step in 1..=60 {
+                let placed = f.sample(
+                    &mut placement,
+                    &f.rig.local_rot,
+                    Vec3::ZERO,
+                    Some(frame),
+                    at + Duration::from_secs_f32(step as f32 / 60.0),
+                    &flat,
+                );
+                if step == 60 {
+                    f.check(&placement, &placed, &f.rig.local_rot, Vec3::ZERO, frame, &flat);
+                }
+            }
         }
     }
 

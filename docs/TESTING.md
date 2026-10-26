@@ -606,6 +606,16 @@ when unfocused") is ignored during a screenshot.
   Native French captures at 5/0/12 and English after restoring 5 were inspected.
   Both runs confirm 5/0/12 remote calibrations and 6/1/13 support frames
   including self; no runtime error or panic. Grid validation remains pending.
+  Acquisition regression: begin with a resident outside the saved budget,
+  then increase the maximum. Also turn the camera away and back while its
+  release is still running. The first corrected frame must retain the visible
+  pose, followed by a roughly half-second transition, including shoes that
+  were initially below the surface or tilted. A new sole measurement during
+  release must not reset that transition. Automated cases exercise 30/60/144
+  FPS, live animation, final contact, and the real budget/camera/calibration
+  path. For a native sequence, use `auto-ik-budget` with 60 crowd avatars and
+  capture 1100/1124/1132/1144/1160 without the options panel; twelve residents
+  become eligible at 1100 and acquire their correction after calibration.
   `failure` simulates a rejected update and exposes Retry. Demo changes stay
   in memory and never contact a grid. Use the slider, its editable value,
   +/- (Alt: 10 cm, Ctrl/Shift: 1 mm, otherwise 1 cm), Reset and the camera

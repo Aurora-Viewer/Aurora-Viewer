@@ -1468,6 +1468,64 @@ mod tests {
     }
 
     #[test]
+    fn remote_saved_budget_acquisition_stays_continuous_through_camera_reentry() {
+        let _inline = super::super::jobs::execute_inline_on_this_thread();
+        let (mut world, mut scene, now) = fixture();
+        world.agent.flying = true;
+        let resident = remote_shoes(&mut scene, &mut world, now, 1, 0.0);
+        let index = world.objects.index_of_uuid(&resident.avatar).unwrap();
+        world.objects.get_mut(index).unwrap().position.z -= 0.18;
+        // A moving resident's render root is already clamped above the land.
+        // Keep this fixture stationary to exercise actual source penetration.
+        world.objects.get_mut(index).unwrap().velocity = Vec3::ZERO;
+        scene.foot_scope = super::super::foot_scope::Scope::default();
+        scene.ground_avatar_feet = true;
+        scene.ground_feet_while_moving = true;
+        let eye = Vec3::Z;
+        let projection = glam::camera::rh::proj::directx::perspective_infinite_reverse(std::f32::consts::FRAC_PI_2, 1.0, 0.1);
+        let view = |direction| {
+            super::super::CullView::new(
+                projection * glam::camera::rh::view::look_at_mat4(eye, eye + direction, Vec3::Z),
+                eye,
+                900.0,
+                std::f32::consts::FRAC_PI_2,
+            )
+        };
+        let mut previous = None::<Vec<Mat4>>;
+        for frame in 0..540 {
+            let at = now + Duration::from_secs_f32(frame as f32 / 60.0);
+            scene.set_foot_scope_limit(if frame < 60 || (300..390).contains(&frame) { 0 } else { 5 });
+            scene.update_foot_scope(&world, view(if frame == 180 { -Vec3::X } else { Vec3::X }), at);
+            remote_step(&mut scene, &mut world, at);
+            let rig = &world.avatar_lib.rig;
+            let matrices: Vec<_> = world.avatar_poses[&resident.avatar]
+                .iter()
+                .zip(&rig.default_world_inv)
+                .map(|(pose, inverse)| *pose * inverse.inverse())
+                .collect();
+            if let Some(previous) = &previous {
+                for name in ["mPelvis", "mKneeLeft", "mKneeRight", "mAnkleLeft", "mAnkleRight"] {
+                    let joint = rig.names[name];
+                    let distance = matrices[joint].w_axis.distance(previous[joint].w_axis);
+                    assert!(distance < 2.5 / 60.0, "{name} jumped {distance:.6} m at frame {frame}");
+                }
+            }
+            previous = Some(matrices);
+            if frame == 59 || frame == 389 {
+                let sole = rendered_remote_sole(&scene, &world, &resident, at);
+                assert!(
+                    sole < -0.17,
+                    "the source penetration was not reproduced: sole {sole:.6} m at frame {frame}"
+                );
+            }
+            if [179, 299, 539].contains(&frame) {
+                let sole = rendered_remote_sole(&scene, &world, &resident, at);
+                assert!(sole.abs() < 0.003, "sole {sole:.6} m after acquisition at frame {frame}");
+            }
+        }
+    }
+
+    #[test]
     fn aurora_idle_keeps_measured_shoe_soles_without_changing_manual_hover() {
         for while_moving in [false, true] {
             let (mut world, mut scene, now) = fixture();
