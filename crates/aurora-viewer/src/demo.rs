@@ -2362,10 +2362,11 @@ pub const DEMO_OFFER: Uuid = Uuid::from_u128(0x0FFE_0000_0000_0000_0000_0000_000
 /// (Violet Wolf in the offers, Orion Example in the demo's names).
 pub const DEMO_GIVER: Uuid = Uuid::from_u128(2);
 
-/// AURORA_DEMO_INVENTORY=offer-card[-legacy][-keep|-reject]: the sample
-/// offer's card in Violet Wolf's conversation, opened in sight (no toast),
-/// with the bubbles or the legacy lines; `-keep` keeps it from the card at
-/// frame 700, `-reject` rejects it from its notification.
+/// AURORA_DEMO_INVENTORY=offer-card[-legacy][-keep|-reject|-show]: the
+/// sample offer's card in Violet Wolf's conversation, opened in sight (no
+/// toast), with the bubbles or the legacy lines; `-keep` keeps it from the
+/// card at frame 700, `-reject` rejects it from its notification, `-show`
+/// keeps it with "Show accepted items in the inventory" on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct OfferCardScene {
     pub legacy: bool,
@@ -2381,13 +2382,54 @@ pub fn offer_card_scene() -> Option<OfferCardScene> {
         None => (false, rest),
     };
     match rest {
-        "" | "-keep" | "-reject" => Some(OfferCardScene {
+        "" | "-keep" | "-reject" | "-show" => Some(OfferCardScene {
             legacy,
-            keep: rest == "-keep",
+            keep: matches!(rest, "-keep" | "-show"),
             reject: rest == "-reject",
         }),
         _ => None,
     }
+}
+
+/// AURORA_DEMO_INVENTORY=offer-object-show: an object's offer (its
+/// transaction) and what accepting it delivers.
+pub const DEMO_TASK_OFFER: Uuid = Uuid::from_u128(0x0FFE_0000_0000_0000_0000_0000_0000_0002);
+pub const DEMO_TASK_GIFT: Uuid = Uuid::from_u128(0x0FFE_0000_0000_0000_0000_0000_0000_0003);
+
+/// "Show accepted items in the inventory" demos (`AURORA_DEMO_INVENTORY=
+/// offer-show|offer-card-show|offer-object-show`): the inventory closed and
+/// the option on, the offer kept at frame 700.
+pub fn show_accepted_scene() -> bool {
+    std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| mode.starts_with("offer") && mode.ends_with("-show"))
+}
+
+/// The simulator's answer to keeping `DEMO_TASK_OFFER`: the gift added to
+/// the folder of the acceptance (BulkUpdateInventory).
+pub fn task_offer_delivery(command: &aurora_net::NetCommand, owner: Uuid) -> Option<NetEvent> {
+    let aurora_net::NetCommand::SendImDialog {
+        dialog: crate::world::notifications::im::TASK_INVENTORY_ACCEPTED,
+        id: DEMO_TASK_OFFER,
+        bucket,
+        ..
+    } = command
+    else {
+        return None;
+    };
+    let parent = Uuid::from_slice(bucket).ok()?;
+    Some(NetEvent::InventoryUpdated {
+        folders: Vec::new(),
+        items: vec![aurora_net::inventory::InvItem {
+            id: DEMO_TASK_GIFT,
+            parent,
+            name: aurora_i18n::tr!("received-filing-demo-object").into(),
+            asset_type: 6,
+            inv_type: 6,
+            owner,
+            base_mask: 0x7fffffff,
+            owner_mask: 0x7fffffff,
+            ..Default::default()
+        }],
+    })
 }
 
 /// What fetching `DEMO_OFFER` by id returns: the offered object, filed by
@@ -5272,8 +5314,23 @@ pub fn events() -> Vec<NetEvent> {
         }
     }
     let dialog = std::env::var("AURORA_DEMO_DIALOG").ok().filter(|mode| !mode.is_empty());
-    let inventory_offer = std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| matches!(mode.as_str(), "offer" | "offer-reject"))
+    let inventory_offer = std::env::var("AURORA_DEMO_INVENTORY")
+        .is_ok_and(|mode| matches!(mode.as_str(), "offer" | "offer-reject" | "offer-show"))
         || offer_card_scene().is_some();
+    if std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|mode| mode == "offer-object-show") {
+        ev.push(NetEvent::InstantMessage(aurora_net::InstantMessage {
+            from_agent_id: DEMO_GIVER,
+            from_name: aurora_i18n::tr!("demo-gift-dispenser").into(),
+            to_agent_id: agent,
+            dialog: crate::world::notifications::im::TASK_INVENTORY_OFFERED,
+            session_id: DEMO_TASK_OFFER,
+            message: aurora_i18n::tr!("received-filing-demo-object").into(),
+            offline: false,
+            from_group: false,
+            binary_bucket: vec![6],
+            timestamp: 0,
+        }));
+    }
     ev.extend(notification_samples(
         std::env::var_os("AURORA_DEMO_NOTIF").is_some(),
         inventory_offer,

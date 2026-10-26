@@ -10978,6 +10978,8 @@ received-filing-help = File new items and folders in #Aurora/Received items/<leg
 received-delivery-notify = Notify Marketplace deliveries
 received-delivery-notify-help = Show a notification for each Marketplace purchase or gift that arrives in Received items, and keep it in the notification history.
 received-delivery-title = Marketplace delivery
+received-show-accepted = Show accepted items in the inventory
+received-show-accepted-help = Keeping an offer from a resident or an object opens the inventory on what it gave.
 received-delivery-several = { $count ->
     [one] { $count } Marketplace delivery
    *[other] { $count } Marketplace deliveries
@@ -10987,6 +10989,7 @@ received-marketplace-folder = MarketPlace
 received-filing-demo-gift = Example gift
 received-filing-demo-photo = Example photo
 received-filing-demo-object = Gift from a scripted object
+demo-gift-dispenser = Gift dispenser
 anti-spam-title = Anti-spam
 anti-spam-demo-object = Flood test object
 anti-spam-demo-resident = Flood Test

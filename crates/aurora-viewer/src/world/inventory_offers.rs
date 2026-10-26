@@ -11,11 +11,18 @@
 //! the giver, the Trash for a rejected item, the history's outcome); the
 //! card answers through it (`World::answer_inventory_offer`) and shows what
 //! became of the offer, whichever side answered.
+//!
+//! With ShowInInventory (Preferences › Inventory, off by default as in the
+//! Legacy Viewer), keeping an offer, a resident's or an object's, opens the
+//! inventory on what it gave once it is there (`World::take_inventory_reveal`).
 
+use super::inventory::actions;
 use super::notification_history::Outcome;
 use super::notifications::{AT_CATEGORY, Data, Kind, NameLink, NameTarget, Response};
 use super::{ChatKind, World};
+use aurora_net::inventory::{InvFolder, InvItem};
 use aurora_net::{InstantMessage, NetCommand};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// ObjectGiveItem / OwnObjectGiveItem, inventory_offer_handler in
@@ -94,10 +101,33 @@ impl Offer {
 /// Offers kept once answered, for the conversation cards.
 const MAX_OFFERS: usize = 50;
 
+/// What a kept offer gave, to show in the inventory once it is there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reveal {
+    /// A resident's offer names it (inventory_offer_callback, IOR_ACCEPT:
+    /// openInventoryPanelAndSetSelection on mObjectID,
+    /// indra/newview/llviewermessage.cpp, originally LGPL 2.1).
+    Known(Uuid),
+    /// An object's offer does not: the first folder or item the server adds
+    /// after the answer (LLOpenTaskOffer, an LLInventoryAddedObserver).
+    Added,
+}
+
+/// How long a kept offer waits for its delivery, and for its move when
+/// Received items files it (as long as that filing waits for a name).
+const REVEAL_WAIT: Duration = Duration::from_secs(120);
+
+/// LLViewerFolderType's quiet folders (highlight_offered_object): Trash,
+/// Lost and Found, Current Outfit, My Outfits.
+const QUIET_FOLDERS: [i32; 4] = [14, 16, 46, 48];
+
 #[derive(Default)]
 pub struct InventoryOffers {
     pub list: Vec<Offer>,
     next: u64,
+    /// ShowInInventory, from the preferences.
+    pub show_accepted: bool,
+    reveal: Option<(Reveal, Instant)>,
 }
 
 impl InventoryOffers {
@@ -315,6 +345,65 @@ impl World {
             aurora_i18n::tr!("world-inventory-offers-item-sent", item = item)
         };
         self.note_with(to, text);
+    }
+
+    /// A kept offer (its Accept, never its closing: "we simply won't
+    /// highlight it") waits for what it gave, with ShowInInventory. The
+    /// last one kept wins.
+    pub(super) fn reveal_kept_offer(&mut self, object: Uuid, task: bool) {
+        if !self.inventory_offers.show_accepted {
+            return;
+        }
+        let what = match (task, object.is_nil()) {
+            (true, _) => Reveal::Added,
+            (false, false) => Reveal::Known(object),
+            (false, true) => return,
+        };
+        self.inventory_offers.reveal = Some((what, Instant::now()));
+    }
+
+    /// A server update (BulkUpdateInventory, UpdateCreateInventoryItem),
+    /// before it is applied: what it adds that the inventory did not know is
+    /// what an object's kept offer gave, its top folder (llGiveInventoryList)
+    /// or else its last item, as LLOpenTaskOffer::done shows added.back().
+    pub(super) fn reveal_added(&mut self, folders: &[InvFolder], items: &[InvItem]) {
+        let Some((Reveal::Added, since)) = self.inventory_offers.reveal else {
+            return;
+        };
+        let inv = &self.inventory;
+        let new: Vec<&InvFolder> = folders.iter().filter(|f| !inv.folders.contains_key(&f.id)).collect();
+        let added = new
+            .iter()
+            .find(|f| !new.iter().any(|o| o.id == f.parent))
+            .map(|f| f.id)
+            .or_else(|| {
+                items
+                    .iter()
+                    .rev()
+                    .find(|it| !it.id.is_nil() && !inv.items.contains_key(&it.id))
+                    .map(|it| it.id)
+            });
+        if let Some(id) = added {
+            self.inventory_offers.reveal = Some((Reveal::Known(id), since));
+        }
+    }
+
+    /// What the inventory now shows, once (the app opens its window on it):
+    /// the kept offer's item or folder once the inventory knows it and
+    /// Received items has filed it, unless it is in a quiet folder.
+    pub fn take_inventory_reveal(&mut self, now: Instant) -> Option<Uuid> {
+        let (what, since) = self.inventory_offers.reveal?;
+        if !self.inventory_offers.show_accepted || now.duration_since(since) >= REVEAL_WAIT {
+            self.inventory_offers.reveal = None;
+            return None;
+        }
+        let Reveal::Known(id) = what else { return None };
+        let inv = &self.inventory;
+        if actions::parent(inv, id).is_none() || self.received_items.filing(id) {
+            return None;
+        }
+        self.inventory_offers.reveal = None;
+        (!QUIET_FOLDERS.iter().any(|t| actions::in_type(inv, id, *t))).then_some(id)
     }
 
     /// Answer an offer from its card: through its entry, as its Keep or
@@ -587,6 +676,130 @@ mod tests {
             w.answer_inventory_offer(id, keep);
             assert!(w.inventory_offers.get(id).unwrap().inventory_link("Gift").is_none());
             assert!(transcript(&mut w).iter().all(|text| !text.contains("/app/inventory/")));
+            clean(&w, &root);
+        }
+    }
+
+    fn item(id: Uuid, parent: Uuid) -> InvItem {
+        InvItem {
+            id,
+            parent,
+            name: "Welcome note".into(),
+            asset_type: 7,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_kept_offer_shows_its_item_once_it_is_known_only_with_the_option() {
+        for show in [false, true] {
+            let root = temp();
+            let mut w = world(&root);
+            w.inventory_offers.show_accepted = show;
+            w.on_im(offer(im::INVENTORY_OFFERED, "Welcome note"));
+            let id = w.inventory_offers.list[0].id;
+            w.answer_inventory_offer(id, true);
+            // not fetched yet: nothing to select
+            assert_eq!(w.take_inventory_reveal(Instant::now()), None);
+            let folder = w.inventory.root;
+            w.inventory.add_items(vec![item(ITEM, folder)]);
+            assert_eq!(w.take_inventory_reveal(Instant::now()), show.then_some(ITEM), "{show}");
+            // once
+            assert_eq!(w.take_inventory_reveal(Instant::now()), None);
+            clean(&w, &root);
+        }
+    }
+
+    #[test]
+    fn a_rejected_or_closed_offer_shows_nothing() {
+        for r in [Response::Decline, Response::Dismiss] {
+            let root = temp();
+            let mut w = world(&root);
+            w.inventory_offers.show_accepted = true;
+            let folder = w.inventory.root;
+            w.inventory.add_items(vec![item(ITEM, folder)]);
+            w.on_im(offer(im::INVENTORY_OFFERED, "Welcome note"));
+            let n = w.notifications.list[0].id;
+            w.respond_notification(n, r.clone());
+            assert_eq!(w.take_inventory_reveal(Instant::now()), None, "{r:?}");
+            clean(&w, &root);
+        }
+    }
+
+    #[test]
+    fn an_object_s_kept_offer_shows_what_the_server_adds_next() {
+        let root = temp();
+        let mut w = world(&root);
+        w.inventory_offers.show_accepted = true;
+        let folder = w.inventory.root;
+        let old = Uuid::from_u128(0x30);
+        w.inventory.add_items(vec![item(old, folder)]);
+        w.on_im(offer(im::TASK_INVENTORY_OFFERED, "Free gift"));
+        // an update before the answer is not the gift
+        w.apply(aurora_net::NetEvent::InventoryUpdated {
+            folders: Vec::new(),
+            items: vec![item(Uuid::from_u128(0x31), folder)],
+        });
+        let n = w.notifications.list[0].id;
+        w.respond_notification(n, Response::Accept);
+        assert_eq!(w.take_inventory_reveal(Instant::now()), None);
+        // what the inventory already knew is not the gift
+        let gift = Uuid::from_u128(0x32);
+        w.apply(aurora_net::NetEvent::InventoryUpdated {
+            folders: Vec::new(),
+            items: vec![item(gift, folder), item(old, folder)],
+        });
+        assert_eq!(w.take_inventory_reveal(Instant::now()), Some(gift));
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn an_object_s_folder_shows_the_folder_not_its_contents() {
+        let root = temp();
+        let mut w = world(&root);
+        w.inventory_offers.show_accepted = true;
+        w.on_im(offer(im::TASK_INVENTORY_OFFERED, "Free outfit"));
+        let n = w.notifications.list[0].id;
+        w.respond_notification(n, Response::Accept);
+        let (top, inner) = (Uuid::from_u128(0x40), Uuid::from_u128(0x41));
+        let folder = |id, parent| InvFolder {
+            id,
+            parent,
+            name: "Free outfit".into(),
+            type_default: -1,
+            ..Default::default()
+        };
+        let inv_root = w.inventory.root;
+        w.apply(aurora_net::NetEvent::InventoryUpdated {
+            folders: vec![folder(inner, top), folder(top, inv_root)],
+            items: vec![item(Uuid::from_u128(0x42), inner)],
+        });
+        assert_eq!(w.take_inventory_reveal(Instant::now()), Some(top));
+        clean(&w, &root);
+    }
+
+    #[test]
+    fn a_gift_in_a_quiet_folder_or_too_late_shows_nothing() {
+        for late in [false, true] {
+            let root = temp();
+            let mut w = world(&root);
+            w.inventory_offers.show_accepted = true;
+            let trash = Uuid::from_u128(0x50);
+            let inv_root = w.inventory.root;
+            w.inventory.created_folders(vec![InvFolder {
+                id: trash,
+                parent: inv_root,
+                name: "Trash".into(),
+                type_default: 14,
+                ..Default::default()
+            }]);
+            w.on_im(offer(im::INVENTORY_OFFERED, "Welcome note"));
+            let id = w.inventory_offers.list[0].id;
+            w.answer_inventory_offer(id, true);
+            let parent = if late { inv_root } else { trash };
+            w.inventory.add_items(vec![item(ITEM, parent)]);
+            let now = Instant::now() + if late { REVEAL_WAIT } else { Duration::ZERO };
+            assert_eq!(w.take_inventory_reveal(now), None, "{late}");
             clean(&w, &root);
         }
     }

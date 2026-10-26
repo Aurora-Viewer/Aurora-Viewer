@@ -156,6 +156,14 @@ impl ReceivedItems {
         }
     }
 
+    /// `id` is still on its way to its sender's folder (filing or moving).
+    pub(crate) fn filing(&self, id: Uuid) -> bool {
+        self.pending
+            .iter()
+            .any(|p| matches!(p.delivery, Delivery::Item { id: item, .. } if item == id))
+            || self.moves.values().any(|m| m.id == id)
+    }
+
     /// Keep ordinary offer semantics: a declined item can never be filed back
     /// out of the Trash. Accepted scripted deliveries wait for their destination.
     pub fn answer(&mut self, offer: u64, commands: &mut Vec<NetCommand>) {

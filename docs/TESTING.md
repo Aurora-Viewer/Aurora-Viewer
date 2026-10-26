@@ -4165,6 +4165,15 @@ failure. Grid validation and any paid upload are performed by the human.
   `offer-card-legacy-reject` rejects it from its notification at frame 700:
   the line ends with "· Rejected". Capture at frame 900, with
   `--language fr` and `--language en`.
+- **`AURORA_DEMO_INVENTORY=offer-show|offer-card-show|offer-object-show`**:
+  "Show accepted items in the inventory" turned on for the run, the
+  Inventory window closed. At frame 700 the offer is kept: `offer-show`
+  from its entry under the bell (the "Aurora lantern" of a resident),
+  `offer-card-show` from its card in the giver's conversation,
+  `offer-object-show` from the entry of a "Gift dispenser" object's offer,
+  whose gift the demo then adds to Objects. Inventory opens on the kept
+  item, selected, its folder expanded and the filters cleared. Capture at
+  frame 900.
 - **`AURORA_DEMO_NOTIFS=object|object-own|object-group|object-history|legacy-object`**: one object inventory offer at frame 700, with the source name, owner and item. `object` shows Accept, Discard and Mute Owner; `object-own` omits owner blocking for our own object; `object-group` uses a group owner; `object-history` refuses the gift and opens History at frame 850, retaining the clickable owner; `legacy-object` exercises the same gift in Legacy toasts. Capture at frame 900 in English and French. Identity names are underlined links to their native profiles; clicking a name keeps the offer pending.
 - **`AURORA_DEMO_NOTIFS=1|dnd|list|history|legacy|legacy-history`**: the notification
   center's mockup, at 60 frames a second. An IM from Nova at frame 700

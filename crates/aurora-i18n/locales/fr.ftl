@@ -10974,6 +10974,8 @@ received-filing-help = Range les nouveaux éléments et dossiers dans #Aurora/Re
 received-delivery-notify = Signaler les livraisons Marketplace
 received-delivery-notify-help = Affiche une notification pour chaque achat ou cadeau Marketplace qui arrive dans Éléments reçus, et la garde dans l’historique des notifications.
 received-delivery-title = Livraison Marketplace
+received-show-accepted = Afficher les objets acceptés dans l’inventaire
+received-show-accepted-help = Garder l’offre d’un résident ou d’un objet ouvre l’inventaire sur ce qu’elle donne.
 received-delivery-several = { $count ->
     [one] { $count } livraison Marketplace
    *[other] { $count } livraisons Marketplace
@@ -10983,6 +10985,7 @@ received-marketplace-folder = MarketPlace
 received-filing-demo-gift = Cadeau de démonstration
 received-filing-demo-photo = Photo de démonstration
 received-filing-demo-object = Cadeau envoyé par un objet scripté
+demo-gift-dispenser = Distributeur de cadeaux
 anti-spam-title = Anti-spam
 anti-spam-demo-object = Objet de test anti-spam
 anti-spam-demo-resident = Test Anti-spam

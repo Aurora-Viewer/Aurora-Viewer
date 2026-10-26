@@ -1,6 +1,7 @@
 //! Preferences › Inventory: the settings of the Inventory window's own
 //! preferences (`ui::inventory::controls::preferences`), the order of its
-//! main tabs, and Aurora's filing of the items received.
+//! main tabs, what follows a kept offer, and Aurora's filing of the items
+//! received.
 
 use super::super::cx::{Cx, field};
 
@@ -62,6 +63,13 @@ pub fn page(cx: &mut Cx) {
         cx.toggle(tr!("ui-inventory-controls-outfit-folders"), "", &field!(inventory.search_outfits));
     });
     cx.group(tr!("received-filing-title"), |cx| {
+        // ShowInInventory ("Automatically show newly accepted items in
+        // inventory", panel_preferences_privacy.xml)
+        cx.toggle(
+            tr!("received-show-accepted"),
+            tr!("received-show-accepted-help"),
+            &field!(show_accepted_in_inventory),
+        );
         cx.toggle(
             tr!("received-delivery-notify"),
             tr!("received-delivery-notify-help"),

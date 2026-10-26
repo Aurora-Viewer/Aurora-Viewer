@@ -832,6 +832,10 @@ pub struct Settings {
     /// Marketplace delivery (Aurora only, the Legacy Viewer just marks the
     /// inbox new; #752). On by default: nothing else tells about a gift.
     pub notify_deliveries: bool,
+    /// Preferences › Inventory › Received items: keeping an offer opens the
+    /// inventory on what it gave (ShowInInventory, off by default as in the
+    /// Legacy Viewer).
+    pub show_accepted_in_inventory: bool,
     /// Replace native motion foot placement/recovery with Aurora's terrain
     /// solver. Off by default: the Legacy Viewer behaviour remains automatic.
     pub ground_avatar_feet: bool,
@@ -1606,6 +1610,7 @@ impl Default for Settings {
             sort_received_items: false,
             received_items_since: 0,
             notify_deliveries: true,
+            show_accepted_in_inventory: false,
             ground_avatar_feet: false,
             ground_feet_while_moving: false,
             ground_feet_max_height: DEFAULT_GROUND_FEET_HEIGHT,
