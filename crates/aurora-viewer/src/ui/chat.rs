@@ -58,6 +58,10 @@ use std::collections::{HashMap, HashSet};
 pub struct ChatUi {
     pub input: String,
     pub focus_request: bool,
+    /// `start_gesture` resumes a nonempty draft at its existing caret.
+    gesture_keep_cursor: bool,
+    /// The slash press reserved for `start_gesture`, until its release.
+    gesture_key_down: Option<winit::keyboard::KeyCode>,
     pub has_focus: bool,
     /// The local chat field keeps the keyboard after a message is sent
     /// (Preferences › Chat; the Legacy Viewer's CloseChatOnReturn off).
@@ -253,6 +257,47 @@ pub(crate) fn line_style(style: crate::settings::ChatStyle, group: Option<bool>)
 }
 
 impl ChatUi {
+    /// `start_gesture` and FSNearbyChat::showDefaultChatBar
+    /// (indra/newview/llviewerinput.cpp, fsnearbychathub.cpp): take the local
+    /// bar's keyboard, adding `/` only to an empty editor. A conversation's
+    /// draft stays separate, even when its nearby-chat tab is in sight.
+    pub(crate) fn gesture_key(
+        &mut self,
+        ctx: &egui::Context,
+        key: &winit::keyboard::Key,
+        code: winit::keyboard::KeyCode,
+        pressed: bool,
+        mods: crate::keybinds::Mods,
+    ) -> bool {
+        let released = !pressed && self.gesture_key_down == Some(code);
+        if released {
+            self.gesture_key_down = None;
+        }
+        // A focused button or list is not a text editor. `egui_wants_keyboard_input`
+        // includes those too, whereas the Legacy action checks acceptsTextInput.
+        if ctx.text_edit_focused() || egui::Popup::is_any_open(ctx) || mods.ctrl || mods.alt {
+            return false;
+        }
+        if pressed && (self.gesture_key_down == Some(code) || crate::keybinds::gesture_chat_key(key, mods)) {
+            // Shift may be released before the slash key on AZERTY. Remember
+            // its physical key so the changed release character still works.
+            self.gesture_key_down = Some(code);
+            return true;
+        }
+        if released {
+            self.gesture_keep_cursor = !self.input.is_empty();
+            if self.input.is_empty() {
+                self.input.push('/');
+            }
+            self.focus_request = true;
+        }
+        released
+    }
+
+    pub(crate) fn cancel_gesture_key(&mut self) {
+        self.gesture_key_down = None;
+    }
+
     /// A demo scene's lines, given while its conversation is in sight,
     /// count as arrived while away: their "New" line shows.
     pub fn demo_lines_unseen(&mut self) {
@@ -3630,7 +3675,11 @@ pub(crate) fn bar_input(
     let focusing = std::mem::take(&mut st.focus_request);
     if focusing {
         resp.request_focus();
-        cursor_to_end(ui.ctx(), resp.id, &st.input);
+        // FSNearbyChat::showDefaultChatBar only moves the caret after
+        // inserting `/` into an empty field; a draft keeps its position.
+        if !std::mem::take(&mut st.gesture_keep_cursor) {
+            cursor_to_end(ui.ctx(), resp.id, &st.input);
+        }
     }
     st.has_focus = resp.has_focus();
     // Modified Enter does not surrender egui's single-line field focus.
@@ -3670,6 +3719,78 @@ pub(crate) fn bar_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gesture_chat_remembers_a_shifted_slash_until_its_own_release() {
+        let ctx = egui::Context::default();
+        let mut st = ChatUi::default();
+        let slash = winit::keyboard::Key::Character("/".into());
+        let period = winit::keyboard::Key::Character(".".into());
+        let code = winit::keyboard::KeyCode::Period;
+        let plain = crate::keybinds::Mods::default();
+        let shifted = crate::keybinds::Mods { shift: true, ..plain };
+        for _ in 0..3 {
+            assert!(st.gesture_key(&ctx, &slash, code, true, shifted));
+            assert!(st.input.is_empty());
+            assert!(!st.focus_request);
+        }
+        assert!(!st.gesture_key(&ctx, &period, winit::keyboard::KeyCode::ShiftLeft, false, plain));
+        assert!(st.gesture_key(&ctx, &period, code, false, plain));
+        assert_eq!(st.input, "/");
+        assert!(st.focus_request);
+
+        st.input.clear();
+        st.focus_request = false;
+        assert!(st.gesture_key(&ctx, &slash, code, true, shifted));
+        st.cancel_gesture_key();
+        assert!(!st.gesture_key(&ctx, &period, code, false, plain));
+        assert!(st.input.is_empty());
+        assert!(!st.focus_request);
+    }
+
+    #[test]
+    fn gesture_chat_respects_text_editors_and_popups_but_accepts_button_focus() {
+        let mut frames = Frames::new();
+        let mut st = ChatUi::default();
+        let slash = winit::keyboard::Key::Character("/".into());
+        let code = winit::keyboard::KeyCode::Slash;
+        let mods = crate::keybinds::Mods::default();
+        let mut search = "search".to_owned();
+        frames.run(vec![], |ui| {
+            egui::TextEdit::singleline(&mut search)
+                .id_salt("search")
+                .show(ui)
+                .response
+                .request_focus();
+        });
+        assert!(frames.ctx.text_edit_focused());
+        for pressed in [true, false] {
+            assert!(!st.gesture_key(&frames.ctx, &slash, code, pressed, mods));
+        }
+        frames.run(vec![egui::Event::Text("/".into())], |ui| {
+            egui::TextEdit::singleline(&mut search).id_salt("search").show(ui);
+        });
+        assert_eq!(search, "search/");
+        assert!(st.input.is_empty());
+        assert!(!st.focus_request);
+
+        frames.run(vec![], |ui| {
+            ui.button("A button").request_focus();
+        });
+        assert!(frames.ctx.egui_wants_keyboard_input());
+        assert!(!frames.ctx.text_edit_focused());
+        assert!(st.gesture_key(&frames.ctx, &slash, code, true, mods));
+        let popup = egui::Id::unique("gesture_popup");
+        egui::Popup::open_id(&frames.ctx, popup);
+        assert!(!st.gesture_key(&frames.ctx, &slash, code, false, mods));
+        assert!(!st.focus_request);
+        egui::Popup::close_all(&frames.ctx);
+        assert!(!st.gesture_key(&frames.ctx, &slash, code, false, mods));
+        assert!(st.gesture_key(&frames.ctx, &slash, code, true, mods));
+        assert!(st.gesture_key(&frames.ctx, &slash, code, false, mods));
+        assert_eq!(st.input, "/");
+        assert!(st.focus_request);
+    }
 
     /// One frame of a notification text with place links: the regions
     /// whose rating is not known are the ones asked, each once.
