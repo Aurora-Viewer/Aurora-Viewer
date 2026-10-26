@@ -199,7 +199,7 @@ pub fn paint(painter: &egui::Painter, p: &Palette, bubble: &Bubble, top: Pos2, f
         let at = Pos2::new(rect.left() + PADDING.x, y);
         if !plate {
             // the classic tag's drop shadow (LLFontGL::DROP_SHADOW)
-            faded.galley_with_override_text_color(at + Vec2::splat(1.0), galley.clone(), Color32::from_black_alpha(180));
+            faded.galley_with_override_text_color(at + Vec2::splat(1.0), galley.clone(), p.navy.gamma_multiply(0.7));
         }
         faded.galley(at, galley.clone(), Color32::PLACEHOLDER);
         y += galley.size().y + GAP;
