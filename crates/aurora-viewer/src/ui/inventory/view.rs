@@ -620,6 +620,19 @@ impl ViewCache {
         } else {
             within(inv, &[root])
         };
+        // A favorite folder shows its whole content, favorite or not
+        // (LLInventoryFavoritesItemsPanel::findAndInitRootContent builds the
+        // full tree under each favorite folder, llinventorypanel.cpp).
+        let favorites: Vec<Uuid> = if tab == 4 {
+            inv.folders.values().filter(|f| f.info.favorite).map(|f| f.info.id).collect()
+        } else {
+            Vec::new()
+        };
+        let favored = if favorites.is_empty() {
+            IdSet::default()
+        } else {
+            within(inv, &favorites)
+        };
         self.results = self
             .entries
             .par_iter()
@@ -643,7 +656,7 @@ impl ViewCache {
                     if filters.always_folders {
                         return true;
                     }
-                    if matches!(tab, 2 | 3) || (tab == 4 && !inv.folders.get(&e.id).is_some_and(|f| f.info.favorite)) {
+                    if matches!(tab, 2 | 3) || (tab == 4 && !favored.contains(&e.id)) {
                         return false;
                     }
                     return !filters.active()
@@ -690,7 +703,7 @@ impl ViewCache {
                 if tab == 3 && (!query.worn.contains(&original_id) || e.outfit) {
                     return false;
                 }
-                if tab == 4 && !rules::is_favorite(inv, e.id) {
+                if tab == 4 && !favored.contains(&e.parent) && !rules::is_favorite(inv, e.id) {
                     return false;
                 }
                 let creator = || query.names.get(&original.creator).map(|s| s.to_lowercase()).unwrap_or_default();
@@ -1101,6 +1114,28 @@ mod tests {
         let results = search(&inv, &facts, &prefs, &filters, 4);
         assert!(!results.contains(&id(10)));
         assert!(!results.contains(&id(13)), "ignore a stale favorite on the link itself");
+    }
+
+    #[test]
+    fn inventory_favorite_folders_show_their_whole_content() {
+        let (mut inv, facts) = fixture();
+        folder(&mut inv, 20, id(2), -1, "Sub");
+        folder(&mut inv, 21, id(20), -1, "Empty");
+        inv.add_items(vec![item(22, id(20), "Deep", 100)]);
+        inv.folders.get_mut(&id(2)).expect("folder").info.favorite = true;
+        let prefs = InventoryPreferences::default();
+        let filters = Filters::default();
+        let results = search(&inv, &facts, &prefs, &filters, 4);
+        for n in [2, 10, 11, 12, 20, 21, 22] {
+            assert!(results.contains(&id(n)), "{n} sits in a favorite folder");
+        }
+        assert!(!results.contains(&id(4)), "a folder outside stays hidden");
+        inv.folders.get_mut(&id(2)).expect("folder").info.favorite = false;
+        inv.folders.get_mut(&id(20)).expect("folder").info.favorite = true;
+        inv.generation += 1;
+        let results = search(&inv, &facts, &prefs, &filters, 4);
+        assert!(results.contains(&id(22)) && results.contains(&id(21)));
+        assert!(!results.contains(&id(10)), "the parent of a favorite folder shows only its path");
     }
 
     #[test]

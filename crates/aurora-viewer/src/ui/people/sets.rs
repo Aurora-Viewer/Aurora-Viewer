@@ -264,7 +264,20 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         _ => {}
     }
     let color = crate::ui::colors::resident_name(world, &id, p.ink);
-    let cut = rows::names(ui, p, rect, left, end.names_right, name, color, &second_line(c, &id), None, None);
+    let second = second_line(c, &id);
+    let cut = rows::person_names(
+        ui,
+        p,
+        rect,
+        left,
+        end.names_right,
+        name,
+        color,
+        &second,
+        None,
+        None,
+        crate::world::staff::mark(world, &id),
+    );
     let action = rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id);
     if action.sheet {
         super::nearby::open_sheet(st, id);

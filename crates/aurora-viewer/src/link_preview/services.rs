@@ -1,7 +1,7 @@
 //! The pages of image services whose links get the picture they show
-//! (#923): a link to a Gyazo, Flickr, Imgur, Lightshot or Reddit page, not to
-//! the picture's file, still gets a picture card. An Aurora feature, like the
-//! rest of the previews.
+//! (#923): a link to a Gyazo, Flickr, Imgur, Lightshot or Reddit page, or to
+//! a Bluesky or X post (#1051), not to the picture's file, still gets a
+//! picture card. An Aurora feature, like the rest of the previews.
 //!
 //! Each page leads to its picture by the cleanest way its service offers:
 //! * Gyazo and Flickr: their oEmbed endpoints (documented, no key);
@@ -11,9 +11,17 @@
 //!   (Reddit's JSON answers 403 to clients without an account, its post
 //!   pages a script challenge; the feed is public). A `reddit.com/media`
 //!   link names its picture itself.
+//! * Bluesky: the post from its public API (`app.bsky.feed.getPostThread`,
+//!   documented, no account), its first picture or its video's thumbnail;
+//! * X: the post as X's own embed widget reads it (`tweet-result` of
+//!   `cdn.syndication.twimg.com`): X's documented oEmbed gives no picture
+//!   and its API needs a paid key. Undocumented, so it may stop answering:
+//!   the link then stays a link.
 //!
 //! The picture found must be on the service's own image servers
-//! (`picture_host_ok`): a page cannot send the viewer anywhere else.
+//! (`picture_host_ok`): a page cannot send the viewer anywhere else. A post
+//! its network marks sensitive (X's `possibly_sensitive`, Bluesky's adult
+//! and graphic labels) is blurred until clicked.
 
 use reqwest::Url;
 
@@ -25,6 +33,8 @@ pub enum Service {
     Imgur,
     Lightshot,
     Reddit,
+    Bluesky,
+    X,
 }
 
 /// How a page leads to its picture.
@@ -38,6 +48,8 @@ pub(super) enum Step {
     Head(String),
     /// Reddit's Atom feed of a post.
     Feed(String),
+    /// A Bluesky or X post as JSON (`from_post`).
+    Post(String),
 }
 
 /// The host of a link without the prefixes of the services' mobile and
@@ -45,7 +57,7 @@ pub(super) enum Step {
 fn bare_host(parsed: &Url) -> Option<String> {
     let host = parsed.host_str()?.trim_end_matches('.').to_lowercase();
     let mut host = host.as_str();
-    for prefix in ["www.", "m.", "old.", "new.", "np."] {
+    for prefix in ["www.", "m.", "mobile.", "old.", "new.", "np."] {
         host = host.strip_prefix(prefix).unwrap_or(host);
     }
     Some(host.to_owned())
@@ -68,6 +80,92 @@ fn alnum(s: &str, min: usize, max: usize) -> bool {
 /// A Reddit post's id: base 36, lowercase.
 fn reddit_id(s: &str) -> bool {
     (4..=10).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
+/// A Bluesky account in a post's link: its handle (a domain name) or its
+/// DID.
+fn bluesky_actor(s: &str) -> bool {
+    let handle = (3..=253).contains(&s.len()) && s.contains('.') && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+    let did = s.len() <= 2048
+        && s.strip_prefix("did:")
+            .is_some_and(|rest| rest.contains(':') && rest.bytes().all(|b| b.is_ascii_alphanumeric() || b".:_-%".contains(&b)));
+    handle || did
+}
+
+/// A Bluesky record key (a post's id, 13 characters in practice).
+fn bluesky_key(s: &str) -> bool {
+    (1..=512).contains(&s.len()) && s != "." && s != ".." && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:~-".contains(&b))
+}
+
+/// An X post's id: a number.
+fn x_id(s: &str) -> Option<u64> {
+    s.bytes().all(|b| b.is_ascii_digit()).then(|| s.parse().ok())?
+}
+
+/// The token X's embed widget sends with a post's id (as react-tweet
+/// computes it): `(id / 1e15 * π).toString(36)` without its zeros and its
+/// dot. X asks for one; its value is not checked today, but it may be.
+pub(super) fn x_token(id: u64) -> String {
+    js_base36(id as f64 / 1e15 * std::f64::consts::PI)
+        .chars()
+        .filter(|&c| c != '0' && c != '.')
+        .collect()
+}
+
+/// A positive number written in base 36 as JavaScript writes it
+/// (`Number.prototype.toString(36)`): the fraction's digits stop as soon as
+/// they name the number (V8's DoubleToRadixCString, src/numbers/conversions.cc).
+fn js_base36(value: f64) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut integer = value.floor();
+    let mut fraction = value - integer;
+    let mut delta = (0.5 * (f64::from_bits(value.to_bits() + 1) - value)).max(f64::from_bits(1));
+    let mut digits: Vec<u8> = Vec::new();
+    if fraction >= delta {
+        loop {
+            fraction *= 36.0;
+            delta *= 36.0;
+            let digit = fraction as usize;
+            digits.push(digit as u8);
+            fraction -= digit as f64;
+            if (fraction > 0.5 || (fraction == 0.5 && digit & 1 == 1)) && fraction + delta > 1.0 {
+                // round up: the last digit that is not 'z' gains one
+                loop {
+                    match digits.pop() {
+                        None => {
+                            integer += 1.0;
+                            break;
+                        }
+                        Some(d) if d + 1 < 36 => {
+                            digits.push(d + 1);
+                            break;
+                        }
+                        Some(_) => {}
+                    }
+                }
+                break;
+            }
+            if fraction < delta {
+                break;
+            }
+        }
+    }
+    let mut whole = Vec::new();
+    let mut n = integer as u64;
+    loop {
+        whole.push(DIGITS[(n % 36) as usize]);
+        n /= 36;
+        if n == 0 {
+            break;
+        }
+    }
+    whole.reverse();
+    let mut out = String::from_utf8(whole).unwrap_or_default();
+    if !digits.is_empty() {
+        out.push('.');
+        out.extend(digits.iter().map(|&d| DIGITS[d as usize] as char));
+    }
+    out
 }
 
 /// Imgur's own pages, whose names look like a picture's id.
@@ -142,6 +240,43 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
                 )
             })
         }
+        "bsky.app" => {
+            // bsky.app/profile/<handle or DID>/post/<key>; getPostThread
+            // takes a handle where getPosts wants a DID
+            let ["profile", actor, "post", key] = segs.as_slice() else {
+                return None;
+            };
+            if !bluesky_actor(actor) || !bluesky_key(key) {
+                return None;
+            }
+            let uri = format!("at://{actor}/app.bsky.feed.post/{key}");
+            let endpoint = with(
+                "https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread",
+                &[("uri", &uri), ("depth", "0"), ("parentHeight", "0")],
+            )?;
+            Some((Service::Bluesky, Step::Post(endpoint)))
+        }
+        "x.com" | "twitter.com" => {
+            // <user>/status/<id>, with /photo/1 or /video/1 after;
+            // i/status/<id> and i/web/status/<id> have no user
+            let id = match segs.as_slice() {
+                ["i", "web", "status", id, ..] => id,
+                [user, "status" | "statuses", id, ..]
+                    if (1..=15).contains(&user.len()) && user.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') =>
+                {
+                    id
+                }
+                _ => return None,
+            };
+            let id = x_id(id)?;
+            Some((
+                Service::X,
+                Step::Post(format!(
+                    "https://cdn.syndication.twimg.com/tweet-result?id={id}&lang=en&token={}",
+                    x_token(id)
+                )),
+            ))
+        }
         _ => None,
     }
 }
@@ -155,6 +290,9 @@ fn picture_hosts(service: Service) -> &'static [&'static str] {
         // Lightshot's former screenshots are kept on Imgur
         Service::Lightshot => &["image.prntscr.com", "img.prnt.sc", "i.imgur.com"],
         Service::Reddit => &["i.redd.it", "preview.redd.it", "external-preview.redd.it"],
+        // pictures and video thumbnails
+        Service::Bluesky => &["cdn.bsky.app", "video.bsky.app"],
+        Service::X => &["pbs.twimg.com"],
     }
 }
 
@@ -268,6 +406,62 @@ pub(super) fn from_feed(xml: &str) -> Option<String> {
     picture_host_ok(Service::Reddit, &url).then_some(url)
 }
 
+/// Bluesky's labels that hide a post's media behind a warning in its own
+/// app: adult content and graphic violence (`porn`, `sexual`, `nudity`,
+/// `graphic-media`, and the older `gore`), any warning (`!warn`, `!hide`).
+const BLUESKY_SENSITIVE: &[&str] = &[
+    "porn",
+    "sexual",
+    "sexual-figurative",
+    "nudity",
+    "graphic-media",
+    "gore",
+    "!warn",
+    "!hide",
+];
+
+/// The picture of a post's JSON answer and whether its network marks it
+/// sensitive: its first picture, or its video's thumbnail. A text post has
+/// none.
+pub(super) fn from_post(service: Service, body: &[u8]) -> Option<(String, bool)> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let (url, sensitive) = match service {
+        Service::Bluesky => {
+            let post = &v["thread"]["post"];
+            let embed = &post["embed"];
+            // a quote with pictures keeps them in `media`
+            let media = if embed["$type"] == "app.bsky.embed.recordWithMedia#view" {
+                &embed["media"]
+            } else {
+                embed
+            };
+            let url = match media["$type"].as_str()? {
+                "app.bsky.embed.images#view" => media["images"][0]["fullsize"].as_str(),
+                "app.bsky.embed.video#view" => media["thumbnail"].as_str(),
+                _ => None,
+            }?;
+            // the labels of the post (its author's own included) and of its
+            // author's account
+            let labels = [&post["labels"], &post["author"]["labels"], &post["record"]["labels"]["values"]];
+            let sensitive = labels
+                .iter()
+                .filter_map(|l| l.as_array())
+                .flatten()
+                .any(|l| l["val"].as_str().is_some_and(|val| BLUESKY_SENSITIVE.contains(&val)) && l["neg"].as_bool() != Some(true));
+            (url, sensitive)
+        }
+        Service::X => {
+            let url = v["mediaDetails"][0]["media_url_https"]
+                .as_str()
+                .or_else(|| v["photos"][0]["url"].as_str())
+                .or_else(|| v["video"]["poster"].as_str())?;
+            (url, v["possibly_sensitive"].as_bool() == Some(true))
+        }
+        _ => return None,
+    };
+    picture_host_ok(service, url).then(|| (url.to_owned(), sensitive))
+}
+
 /// Pictures from Reddit are blurred until clicked, in every conversation:
 /// Reddit hosts adult communities and tells a viewer without an account
 /// nothing of a post being adult (its feed has no such mark).
@@ -291,20 +485,35 @@ const LIGHTSHOT: &str = include_str!("fixtures/lightshot.html");
 const LIGHTSHOT_REMOVED: &str = include_str!("fixtures/lightshot_removed.html");
 const REDDIT_POST: &str = include_str!("fixtures/reddit_post.rss");
 const REDDIT_TEXT: &str = include_str!("fixtures/reddit_text.rss");
+const BLUESKY_POST: &str = include_str!("fixtures/bluesky_post.json");
+const BLUESKY_LABELLED: &str = include_str!("fixtures/bluesky_labelled.json");
+const X_POST: &str = include_str!("fixtures/x_post.json");
 
 /// Demo mode: the picture a service's link leads to, from the saved
-/// answers. A Lightshot link whose id starts with `removed` is a removed
-/// screenshot, the Reddit post `demo02` a text post: no picture for either.
-pub(super) fn demo_source(url: &str) -> Option<String> {
+/// answers, and whether it is marked sensitive. A Lightshot link whose id
+/// starts with `removed` is a removed screenshot, the Reddit post `demo02` a
+/// text post: no picture for either. A Bluesky post whose key holds
+/// `labelled` is labelled `nudity`.
+pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
     let (service, step) = recognize(url)?;
+    let plain = |source: Option<String>| source.map(|s| (s, false));
     match step {
-        Step::Direct(source) => Some(source),
-        Step::OEmbed(_) => from_oembed(service, if service == Service::Gyazo { GYAZO } else { FLICKR }.as_bytes()),
-        Step::Head(_) if service == Service::Lightshot => {
-            from_head(service, if url.contains("/removed") { LIGHTSHOT_REMOVED } else { LIGHTSHOT })
-        }
-        Step::Head(_) => from_head(service, IMGUR_ALBUM),
-        Step::Feed(_) => from_feed(if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST }),
+        Step::Direct(source) => Some((source, false)),
+        Step::OEmbed(_) => plain(from_oembed(
+            service,
+            if service == Service::Gyazo { GYAZO } else { FLICKR }.as_bytes(),
+        )),
+        Step::Head(_) if service == Service::Lightshot => plain(from_head(
+            service,
+            if url.contains("/removed") { LIGHTSHOT_REMOVED } else { LIGHTSHOT },
+        )),
+        Step::Head(_) => plain(from_head(service, IMGUR_ALBUM)),
+        Step::Feed(_) => plain(from_feed(if url.contains("demo02") { REDDIT_TEXT } else { REDDIT_POST })),
+        Step::Post(_) if service == Service::X => from_post(service, X_POST.as_bytes()),
+        Step::Post(_) => from_post(
+            service,
+            if url.contains("labelled") { BLUESKY_LABELLED } else { BLUESKY_POST }.as_bytes(),
+        ),
     }
 }
 

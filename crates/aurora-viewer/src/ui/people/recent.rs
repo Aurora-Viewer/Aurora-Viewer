@@ -110,7 +110,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         (None, Some(cell)) => super::radar::icon(ui, "heart-filled", *cell, 13.0, p.success),
         _ => {}
     }
-    let cut = rows::names(
+    let cut = rows::person_names(
         ui,
         p,
         rect,
@@ -121,6 +121,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
         &ago(met),
         None,
         None,
+        crate::world::staff::mark(world, &id),
     );
     let action = rows::select(ui, &resp, &mut st.sel, &mut st.anchor, order, id);
     if action.sheet {

@@ -267,16 +267,34 @@ pub(super) fn show(
         rect.center().y - 8.0
     };
     let title_font = egui::FontId::new(14.0, crate::ui::fonts::semibold(ui.ctx()));
+    // a member of the Aurora team's tag after the name, cut before it
+    let room = text_right - text_left;
+    let mark = who.avatar.and_then(|id| crate::world::staff::mark(world, &id));
+    let staff = crate::ui::staff::width(ui, p, mark, 14.0);
+    let staff = if staff > 0.0 && room - staff - 6.0 >= 60.0 {
+        staff + 6.0
+    } else {
+        0.0
+    };
     let cut = crate::ui::widgets::paint_elided(
         ui,
         &who.title,
         egui::pos2(text_left, title_y),
-        text_right - text_left,
-        title_font,
+        room - staff,
+        title_font.clone(),
         who.avatar
             .map(|id| crate::ui::colors::resident_name(world, &id, p.ink))
             .unwrap_or(p.ink),
     );
+    if staff > 0.0 {
+        let shown = ui
+            .painter()
+            .layout_no_wrap(who.title.clone(), title_font, p.ink)
+            .size()
+            .x
+            .min(room - staff);
+        crate::ui::staff::paint_at(ui, ui.painter(), p, mark, egui::pos2(text_left + shown + 6.0, title_y), 14.0);
+    }
     if !who.subtitle.is_empty() {
         crate::ui::widgets::paint_elided(
             ui,

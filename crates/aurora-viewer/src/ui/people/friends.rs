@@ -389,7 +389,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
     }
     let color = crate::ui::colors::resident_name(c.world, &f.id, p.ink);
     let cut = if end.names_right > left {
-        rows::names(
+        rows::person_names(
             ui,
             p,
             identity,
@@ -400,6 +400,7 @@ fn row(ui: &mut egui::Ui, c: &mut Ctx, data: &super::RadarData, st: &mut PeopleU
             &line.status,
             line.set,
             None,
+            crate::world::staff::mark(c.world, &f.id),
         )
     } else {
         true

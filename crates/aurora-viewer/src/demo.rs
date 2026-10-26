@@ -175,6 +175,9 @@ pub mod sky;
 /// particles" (AURORA_DEMO_SOCIAL_MENU).
 #[path = "demo_social_menu.rs"]
 pub mod social_menu;
+/// The Aurora team's marks on demo residents (AURORA_DEMO_STAFF).
+#[path = "demo_staff.rs"]
+pub mod staff;
 /// Streaming hitch test: objects and textures arriving in waves
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
@@ -1243,10 +1246,12 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         line(ago(5), &me, Uuid::nil(), ChatKind::Own, "https://youtube.com/shorts/DemoShort01"),
                     ]
                 } else if let Some(only) = mode.strip_prefix("services") {
-                    // the pages of image services (#923), from saved
-                    // answers: a removed screenshot and a text post first
-                    // (no card), then a picture per service;
-                    // `services:gyazo,imgur` keeps those services only
+                    // the pages of image services (#923) and the posts of
+                    // Bluesky and X (#1051), from saved answers: a removed
+                    // screenshot and a text post first (no card), then a
+                    // picture per service, the labelled Bluesky post's
+                    // blurred; `services:gyazo,imgur` keeps those services
+                    // only
                     let only: Vec<&str> = only.trim_start_matches(':').split(',').filter(|s| !s.is_empty()).collect();
                     [
                         ("none", "https://prnt.sc/removed1"),
@@ -1256,6 +1261,9 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         ("imgur", "https://imgur.com/a/DemoAlb"),
                         ("lightshot", "https://prnt.sc/demo42"),
                         ("reddit", "https://www.reddit.com/r/AuroraDemo/comments/demo01/a_new_build/"),
+                        ("bluesky", "https://bsky.app/profile/aurora-demo.bsky.social/post/3demopost2abc"),
+                        ("x", "https://x.com/AuroraDemo/status/1850000000000000001"),
+                        ("bluesky", "https://bsky.app/profile/aurora-demo.bsky.social/post/3demolabelled"),
                     ]
                     .iter()
                     .filter(|(key, _)| only.is_empty() || only.contains(key))

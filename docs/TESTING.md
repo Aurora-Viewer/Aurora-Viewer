@@ -3633,7 +3633,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_CONV_EMOJI=1` | Messages of emoji alone in the friend's conversation, drawn large (with `AURORA_DEMO_CONV`) |
-| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services; `net` from the real sites |
+| `AURORA_DEMO_CONV_PREVIEWS=1\|states\|videos\|services\|net` | Links with their picture, GIF and YouTube cards (with `AURORA_DEMO_CONV`); `videos` a 4:3 clip and an upright short; `services[:gyazo,…]` the pages of image services and Bluesky / X posts; `net` from the real sites |
 | `AURORA_DEMO_PREVIEW_PLAY=card\|window` | The first video card plays by itself, in its card or in the player window |
 | `AURORA_DEMO_VIDEO_VOLUME=<0-100>` | The level a playing video starts at, as if kept from an earlier one |
 | `AURORA_DEMO_GIFS=1\|klipy\|sent\|menu\|nokey\|net` | Conversations open on the GIF picker of the field, its results made here; `sent` sends the first GIF; `menu` the button's right-click menu; `nokey` no button; `net` the real services |
@@ -3650,6 +3650,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_CONV_SCROLL=up\|new` | The friend's conversation, long, shown from its top: the button back to the latest messages; `new` with three messages come in (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_CONV_LINE_MENU=1` | Open a visible message's context menu in Aurora or Compact (with `AURORA_DEMO_CONV`) |
 | `AURORA_DEMO_PROFILE=<avatar>[:tab\|edit\|compact\|form\|publish]` | An avatar's profile window |
+| `AURORA_DEMO_GIVE=profile\|avatar[:over\|:drop]` | Inventory carried to a resident's profile window or to their avatar in the world: hint, outline, give confirmation (#991) |
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll]` | A large wardrobe in the Appearance demo: generated outfits, the window closed or scrolled |
@@ -4532,6 +4533,27 @@ failure. Grid validation and any paid upload are performed by the human.
   (the Share confirmation opens), onto a group's (no hint, nothing given),
   and Escape during the drag (the messages come back). No grid is needed.
 
+- **`AURORA_DEMO_GIVE=profile|avatar[:over|:drop]`**: with `AURORA_DEMO_INVENTORY=1`, seven of
+  its entries are carried from frame 700, without a press. `profile`, with
+  `AURORA_DEMO_PROFILE=wolf` (or any other resident), leaves the pointer
+  beside the profile window: the whole window fades behind the gift and
+  "Drop here to give to <name>" in the muted ink, "7 items" under it.
+  `profile:over` puts the pointer on the window: its violet outline and the
+  hint in the ink. `profile:drop` releases there at frame 720: the give
+  confirmation of the conversations opens for that resident. `avatar` puts
+  the pointer on the other avatar nearest the middle of the view: it and
+  what it wears get the violet outline of the photo's chosen subjects;
+  `avatar:drop` releases there at frame 720 and opens the confirmation. For
+  a readable avatar capture use `AURORA_DEMO_CROWD=12`,
+  `AURORA_DEMO_POS=129,134` and `AURORA_DEMO_CAMERA=close,1110,420,20`;
+  capture at frame 715 (`over`) or 760 (`drop`) with `AURORA_FPS_LIMIT=60`.
+  The demo crowd is drawn as a grid: compare with a capture without the
+  variable to see the outline. Manually: drag an item, a folder or a
+  selection onto another resident's profile (any tab, both styles), onto
+  our own (nothing), onto an avatar, onto what it wears, onto an avatar
+  behind a wall (the wall wins), and Escape during the drag. No grid is
+  needed.
+
 - **`AURORA_DEMO_SNOOZE=<seconds>[,auto][,ask]`**: from the 10th second in
   world, Tess writes in the Aurora Builders group chat every 6 seconds
   ("Group update number n"). The Snooze of a group chat (its head's button
@@ -4718,11 +4740,12 @@ failure. Grid validation and any paid upload are performed by the human.
   (#923): links to the pages of image services, read from the saved answers
   of `link_preview/fixtures/` (made-up ids, no network): a removed Lightshot
   screenshot and a Reddit text post (the links alone, no card), then a
-  Gyazo page, a Flickr short link, an Imgur album, a Lightshot screenshot
-  and a Reddit post, each with its picture (the demo draws it); the Reddit
-  one blurred until clicked. `services:gyazo,flickr` keeps the listed
-  services only (`gyazo`, `flickr`, `imgur`, `lightshot`, `reddit`, `none`
-  for the two links without a card). The Legacy lines (`bubbles:legacy`)
+  Gyazo page, a Flickr short link, an Imgur album, a Lightshot screenshot,
+  a Reddit post, a Bluesky post, an X post and a Bluesky post labelled
+  `nudity` (#1051), each with its picture (the demo draws it); the Reddit
+  one and the labelled one blurred until clicked. `services:gyazo,flickr`
+  keeps the listed services only (`gyazo`, `flickr`, `imgur`, `lightshot`,
+  `reddit`, `bluesky`, `x`, `none` for the two links without a card). The Legacy lines (`bubbles:legacy`)
   show the same cards, including animated GIFs and consent prompts (#976);
   combine with `AURORA_DEMO_CONV_POPOUT=1` to check independent windows.
   Transcript history and the chat lines at the bottom stay text-only. Capture at frame 900
@@ -6474,6 +6497,7 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
 | `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
 | `AURORA_DEMO_CHAT_BUBBLES=1`, `typing` or `talk` | With `AURORA_DEMO_TAGS`: the residents talk, chat bubbles above the heads for this run; `typing`: the typing dots too; `talk`: as Preferences say |
+| `AURORA_DEMO_STAFF=1` | A few demo residents count as Aurora team members or Linden Lab employees: their plate's light and their tag |
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
 | `AURORA_DEMO_VOICE_MODERATION=1` or `self` | Nearby voice moderation: the estate manager's entries, or a moderator muting us |
 | `AURORA_VOICE_LEVEL_LOG=1` | Our own plate's voice level in the log, once a second (demo or grid) |
@@ -6528,6 +6552,29 @@ What the inventory must show with these scenarios:
   or People › Nearby onto the conversation) join it at once, and our
   message "<names> was / were invited to the conversation." follows in it
   (`conference-invite` adds Orion by itself once the conference is connected).
+- **`AURORA_DEMO_STAFF`**: the members of the Aurora team (`world/staff.rs`)
+  are marked everywhere Aurora shows a resident: on the name plate, green
+  to violet curtains of light rise from behind the top edge, the border's
+  colours flow around it over a soft halo, and the full and compact plates
+  carry the "Aurora Staff" tag over their top left edge (the far pill keeps
+  the light alone); after the name in People (Nearby, Friends, Recent,
+  Contact sets, the radar table), in the Conversations window (the name of
+  a message, the head of a conversation) and on the profile, the same tag
+  in the windows' corners, plus the light over the Aurora profile's
+  banner. With "Reduce animations" the light holds still. The demo's
+  members: ourselves, the first friend of the buddy list
+  (`AURORA_DEMO_PROFILE=friend`, the conversation of `AURORA_DEMO_CONV=bubbles`),
+  the resident who speaks in nearby chat (`AURORA_DEMO_CONV=bubbles:local`
+  and the chat console), and with `AURORA_DEMO_TAGS=voice`
+  Orion (full plate, speaking: the voice ring over the light), Sol (compact
+  pill) and Vega (far pill). Linden Lab's employees (on the grid: the last
+  name Linden) get their own mark in the Linden colour of Preferences ›
+  Colors: four-pointed stars rising and twinkling above the plate, a shine
+  running around the border, the "Linden Lab" tag with the verified
+  rosette, and stars twinkling over the profile's banner. The demo's
+  Lindens: the wolf (nearby chat, `AURORA_DEMO_PROFILE=wolf`), Lune of
+  People › Near you, and with `AURORA_DEMO_TAGS=voice` Lune (full plate,
+  typing) and Iris (compact pill).
 - **`AURORA_DEMO_TAGS`**: nine residents in front of the starting position
   (`demo_tags.rs`), to see the name plates without a grid. Five are less
   than 15 m from the camera (full plate), two around 27 m (compact pill),

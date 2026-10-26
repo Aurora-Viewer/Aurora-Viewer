@@ -351,6 +351,7 @@ const FILLED: &[(&str, &[u8])] = svg_list!(
     "radar",
     "receipt",
     "replace",
+    "rosette-discount-check",
     "search",
     "send",
     "settings",

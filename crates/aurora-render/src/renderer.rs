@@ -75,6 +75,7 @@ struct FrameU {
     view_proj: [[f32; 4]; 4],
     inv_view_proj: [[f32; 4]; 4],
     eye_view_proj: [[f32; 4]; 4],
+    inv_view_proj_rot: [[f32; 4]; 4],
     eye: [f32; 4],
     camera_pos: [f32; 4],
     sun_dir: [f32; 4],
@@ -651,6 +652,16 @@ fn eye_view_proj(proj: Mat4, view: Mat4, eye: Vec3, exact: bool) -> Mat4 {
         (view.as_dmat4() * glam::DMat4::from_translation(eye.as_dvec3())).as_mat4()
     };
     proj * relative
+}
+
+/// Inverse of the projection by the view's rotation alone: it turns a screen
+/// point into a direction from the camera. The sky took its directions from
+/// the full inverse minus the camera position, both rounded to the f32 of
+/// region coordinates: at skybox heights they shook by about a pixel from one
+/// frame to the next as the camera moved (#1059).
+fn inv_view_proj_rot(proj: Mat4, view: Mat4) -> Mat4 {
+    let rotation = glam::DMat4::from_mat3(glam::Mat3::from_mat4(view).as_dmat3());
+    (proj.as_dmat4() * rotation).inverse().as_mat4()
 }
 
 /// AURORA_EYE_RELATIVE=0: object vertices transformed in region coordinates,
@@ -4510,6 +4521,7 @@ impl Backend {
         u.rez_gradient = f.rez_gradient;
         u.view_proj = vp.to_cols_array_2d();
         u.inv_view_proj = vp.inverse().to_cols_array_2d();
+        u.inv_view_proj_rot = inv_view_proj_rot(f.proj, view).to_cols_array_2d();
         if eye_relative_enabled() {
             let origin = eye.unwrap_or(camera_pos);
             u.eye_view_proj = eye_view_proj(f.proj, view, origin, eye.is_some()).to_cols_array_2d();
@@ -7595,6 +7607,42 @@ mod tests {
         let p = Vec3::new(1.0, -2.0, 3.0);
         let relative = eye_view_proj(proj, view, eye, false) * (p - eye).extend(1.0);
         assert!(relative.abs_diff_eq(view * p.extend(1.0), 1e-5));
+    }
+
+    #[test]
+    fn sky_directions_hold_still_high_above_the_ground() {
+        // A camera walking on a skybox 2 447 m up (the report), in a 720-pixel
+        // high window. The sky shader's arithmetic in single precision against
+        // the exact direction of the same view: largest error in pixels.
+        let fov = 60f32.to_radians();
+        let proj = glam::camera::rh::proj::directx::perspective_infinite_reverse(fov, 16.0 / 9.0, 0.1);
+        let pixel = f64::from(fov) / 720.0;
+        let (mut world, mut rotation) = (0f64, 0f64);
+        for step in 0..200 {
+            let s = step as f32;
+            let eye = Vec3::new(206.0 + s * 0.031, 189.0 - s * 0.017, 2448.7);
+            let target = eye + Vec3::new((s * 0.05).cos() * 3.0, (s * 0.05).sin() * 3.0, -0.5);
+            let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Z);
+            let exact_inv = (proj.as_dmat4() * view.as_dmat4()).inverse();
+            let exact_eye = view.as_dmat4().inverse().w_axis.truncate();
+            let inv_world = (proj * view).inverse();
+            let camera = view.inverse().transform_point3(Vec3::ZERO);
+            let inv_rot = inv_view_proj_rot(proj, view);
+            for corner in 0..9 {
+                let ndc = glam::Vec2::new((corner % 3) as f32 - 1.0, (corner / 3) as f32 - 1.0) * 0.9;
+                let p = ndc.extend(0.5).extend(1.0);
+                let e = exact_inv * p.as_dvec4();
+                let exact = (e.truncate() / e.w - exact_eye).normalize();
+                let angle = |d: Vec3| d.as_dvec3().normalize().dot(exact).clamp(-1.0, 1.0).acos() / pixel;
+                let w = inv_world * p;
+                world = world.max(angle(w.truncate() / w.w - camera));
+                let r = inv_rot * p;
+                rotation = rotation.max(angle(r.truncate() / r.w));
+            }
+        }
+        // from region positions the sky shook by about a pixel (#1059)
+        assert!(world > 0.3, "{world}");
+        assert!(rotation < 0.02, "{rotation}");
     }
 
     #[test]
