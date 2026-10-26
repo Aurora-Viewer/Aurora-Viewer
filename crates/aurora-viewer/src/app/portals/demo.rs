@@ -28,10 +28,14 @@ impl App {
             self.portal_ui.open = false;
             self.panels.chat = false;
             self.panels.people = false;
-            self.panels.inventory = false;
+            self.panels.inventory = mode == "drop-focus";
+            if self.panels.inventory {
+                ui::widgets::place_floater(&self.egui_ctx, "inventory", egui::pos2(20.0, 85.0), egui::vec2(460.0, 560.0));
+            }
             let (item, asset) = crate::demo::place::landmark_ids(0);
             self.world.inventory.add_items(vec![aurora_net::inventory::InvItem {
                 id: item,
+                parent: self.world.inventory.root,
                 asset_id: if mode == "drop-invalid" {
                     uuid::Uuid::from_u128(0x0A77_0BAD)
                 } else {
@@ -43,6 +47,13 @@ impl App {
                 name: aurora_i18n::tr!("common-landmark").into(),
                 ..Default::default()
             }]);
+        }
+        if mode == "drop-focus" && self.frame_count == 562 {
+            log::info!(
+                "portal drop focus: inventory open {}, keyboard focus {}",
+                self.panels.inventory,
+                self.egui_ctx.egui_wants_keyboard_input()
+            );
         }
         true
     }
@@ -72,6 +83,10 @@ impl App {
         }
         if self.frame_count == 482 {
             egui::DragAndDrop::set_payload(&self.egui_ctx, ui::inventory::InvDrag(crate::demo::place::landmark_ids(0).0));
+            if mode == "drop-focus" {
+                self.egui_ctx
+                    .memory_mut(|memory| memory.request_focus(egui::Id::unique(("inventory_clipboard_focus", self.inventory_ui.ui_id))));
+            }
         }
     }
 
@@ -153,7 +168,7 @@ impl App {
             ..
         }) = self.world.portals.command(Some(&peer.endpoint), now)
         {
-            self.world.portals.reply(request, &Ok(Reply::Portal));
+            self.world.portals.reply(request, &Ok(Reply::Portal), now);
             if (target.is_nil() || target == peer.world.agent_id)
                 && let Some(wire) = message.encode()
             {
@@ -172,7 +187,7 @@ impl App {
             ..
         }) = peer.state.command(Some(&peer.endpoint), now)
         {
-            peer.state.reply(request, &Ok(Reply::Portal));
+            peer.state.reply(request, &Ok(Reply::Portal), now);
             if (target.is_nil() || target == self.world.agent_id)
                 && let Some(wire) = message.encode()
             {

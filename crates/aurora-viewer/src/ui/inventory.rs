@@ -431,6 +431,20 @@ pub struct AnimationStats {
 }
 
 impl InventoryUi {
+    /// A successful scene drop gives movement keys back to the world while
+    /// keeping inventory windows and their selections open.
+    pub fn release_world_drag_focus(&mut self, ctx: &egui::Context) {
+        self.list_focus_frame = None;
+        ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+        for window in &mut self.windows {
+            window.state.release_world_drag_focus(ctx);
+        }
+    }
+
     pub(crate) fn open_bulk_permissions(&mut self, roots: Vec<Uuid>) {
         self.bulk_permissions.open(roots);
     }

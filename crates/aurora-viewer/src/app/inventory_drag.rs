@@ -356,6 +356,7 @@ impl App {
                 Ok(_) => {
                     if let Some((point, _)) = self.inventory_drag.surface {
                         self.queue_landmark_portal(drag.item, point, drag.shift);
+                        self.inventory_ui.release_world_drag_focus(ctx);
                     }
                 }
                 Err(reason) => self.portal_drop_notice(reason),

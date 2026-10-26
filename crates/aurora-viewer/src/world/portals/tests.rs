@@ -205,11 +205,12 @@ fn portal_discovery_is_targeted_once_per_peer_and_outgoing_traffic_is_bounded() 
     assert!(state.command(Some(&endpoint), now).is_none());
     assert!(state.command(Some(&endpoint), now + Duration::from_millis(250)).is_some());
     state.sync(&world, Some(Uuid::from_u128(5)), 1000);
-    assert!(state.entries.is_empty() && state.out.is_empty());
+    assert_eq!(state.entries.len(), 1, "HTTP-in renewal does not close a portal");
+    assert!(!state.discovered);
 }
 
 #[test]
-fn portal_failed_sharing_removes_the_local_aperture_and_never_removes_a_replacement() {
+fn portal_late_sharing_failure_never_removes_or_retries_a_replaced_portal() {
     let (world, mut state) = fixture();
     let now = Instant::now();
     let endpoint = Endpoint {
@@ -233,14 +234,104 @@ fn portal_failed_sharing_removes_the_local_aperture_and_never_removes_a_replacem
         ..portal()
     };
     assert!(state.create(replacement.clone(), world.agent.position, now, 1000));
-    state.reply(request, &Err("unavailable".into()));
+    state.reply(request, &Err("unavailable".into()), now);
     assert_eq!(state.own().unwrap().portal.id, replacement.id);
-    assert!(state.failed);
+    assert!(!state.failed && state.retries.is_empty());
     let Some(NetCommand::BridgeQuery { request, .. }) = state.command(Some(&endpoint), now + Duration::from_secs(1)) else {
         panic!("discovery command");
     };
-    state.reply(request, &Ok(Reply::Portal));
+    state.reply(request, &Ok(Reply::Portal), now + Duration::from_secs(1));
     assert!(!state.owns(request));
+}
+
+#[test]
+fn portal_sharing_retries_the_same_redacted_action_and_reports_only_exhausted_failures() {
+    for recovers in [true, false] {
+        let (world, mut state) = fixture();
+        let now = Instant::now();
+        let endpoint = Endpoint {
+            url: String::new(),
+            token: Uuid::from_u128(4),
+        };
+        let mut invitation = portal();
+        invitation.access = Access::Friends;
+        assert!(state.create(invitation.clone(), world.agent.position, now, 1000));
+        state.discovered = true;
+        let mut at = now;
+        for attempt in 1..=3 {
+            let Some(NetCommand::BridgeQuery {
+                request,
+                query: Query::Portal { target, message },
+                ..
+            }) = state.command(Some(&endpoint), at)
+            else {
+                panic!("announcement attempt {attempt}");
+            };
+            assert!(target.is_nil());
+            assert_eq!(message, Message::Open(invitation.announcement()));
+            assert!(matches!(&message, Message::Open(portal) if portal.destination.is_none()));
+            let result = if recovers && attempt == 3 {
+                Ok(Reply::Portal)
+            } else {
+                Err("timeout".into())
+            };
+            state.reply(request, &result, at);
+            if attempt < 3 {
+                assert!(state.own().is_some() && !state.failed);
+                assert!(state.command(Some(&endpoint), at + Duration::from_millis(250)).is_none());
+            }
+            at += Duration::from_secs(attempt);
+        }
+        assert_eq!(state.own().is_some(), recovers);
+        assert_eq!(state.failed, !recovers);
+        assert!(state.retries.is_empty() && state.pending.is_empty());
+        assert!(state.command(Some(&endpoint), at + Duration::from_secs(10)).is_none());
+    }
+}
+
+#[test]
+fn portal_query_renewal_preserves_observer_gate_and_transport_retries_end_on_close_or_region_change() {
+    let (mut world, mut state) = fixture();
+    let now = Instant::now();
+    let endpoint = Endpoint {
+        url: String::new(),
+        token: Uuid::from_u128(4),
+    };
+    let owner = Uuid::from_u128(2);
+    world.agent.position = Vec3::from(portal().center);
+    state.receive(&world, &wire(owner, Message::Open(portal().announcement())), now, 1000);
+    state.sync(&world, Some(endpoint.token), 1000);
+    assert_eq!(state.entries.len(), 1);
+    assert!(state.entries[0].waiting_for_clearance());
+    state.sync(&world, None, 1000);
+    state.sync(&world, Some(Uuid::from_u128(5)), 1000);
+    assert_eq!(state.entries.len(), 1);
+    assert!(state.entries[0].waiting_for_clearance());
+    state.discovered = true;
+    assert!(state.create(portal(), world.agent.position, now, 1000));
+    let Some(NetCommand::BridgeQuery { request, .. }) = state.command(Some(&endpoint), now) else {
+        panic!("open");
+    };
+    state.reply(request, &Err("timeout".into()), now);
+    assert_eq!(state.retries.len(), 1);
+    state.close(1000);
+    assert!(state.retries.is_empty());
+    let Some(NetCommand::BridgeQuery {
+        request,
+        query: Query::Portal {
+            message: Message::Close { .. },
+            ..
+        },
+        ..
+    }) = state.command(Some(&endpoint), now + SEND_INTERVAL)
+    else {
+        panic!("close");
+    };
+    state.reply(request, &Err("timeout".into()), now + SEND_INTERVAL);
+    assert_eq!(state.retries.len(), 1);
+    world.main_region = Some(512);
+    state.sync(&world, Some(endpoint.token), 1000);
+    assert!(state.entries.is_empty() && state.retries.is_empty() && state.pending.is_empty());
 }
 
 #[test]

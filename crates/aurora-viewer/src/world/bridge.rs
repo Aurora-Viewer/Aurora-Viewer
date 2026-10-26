@@ -242,6 +242,9 @@ impl Bridge {
             self.query_watch.heard(error, now);
         }
         if error.is_some() && self.available() {
+            if error.is_some_and(aurora_net::bridge::gone) {
+                self.query = None;
+            }
             self.discover(world, now);
         }
     }
@@ -662,6 +665,7 @@ impl Bridge {
             let installed = matches!(self.phase, Phase::Ready | Phase::Handshake);
             self.probe = None;
             self.endpoint = None;
+            self.query = None;
             self.pending = None;
             self.sent = None;
             self.ack = Ack::default();

@@ -141,6 +141,18 @@ struct Inquiry {
     replied: bool,
 }
 
+struct Delivery {
+    sent: Instant,
+    action: Option<Message>,
+    attempt: u8,
+}
+
+struct Retry {
+    due: Instant,
+    action: Message,
+    attempt: u8,
+}
+
 #[derive(Default)]
 pub struct State {
     agent: Uuid,
@@ -153,7 +165,8 @@ pub struct State {
     last_send: Option<Instant>,
     last_exchange: Option<Instant>,
     discoveries: HashMap<Uuid, Instant>,
-    pending: HashMap<Uuid, (Instant, Option<Uuid>)>,
+    pending: HashMap<Uuid, Delivery>,
+    retries: VecDeque<Retry>,
     fetches: HashMap<(Uuid, Uuid), Fetch>,
     inquiries: HashMap<Uuid, Inquiry>,
     group_refresh: Option<Uuid>,
@@ -162,13 +175,19 @@ pub struct State {
 
 impl State {
     pub fn sync(&mut self, world: &World, endpoint: Option<Uuid>, now: u64) {
-        if self.agent != world.agent_id || self.region != world.main_region || self.endpoint != endpoint || world.teleporting {
+        if self.agent != world.agent_id || self.region != world.main_region || world.teleporting {
             *self = Self {
                 agent: world.agent_id,
                 region: world.main_region,
                 endpoint,
                 ..Default::default()
             };
+        }
+        // Renewing HTTP-in within the same region must not erase invitations
+        // or reset an observer's clearance gate. Session/region changes do.
+        if self.endpoint != endpoint {
+            self.endpoint = endpoint;
+            self.discovered = false;
         }
         self.entries
             .retain(|entry| entry.portal.live(now) && Instant::now() < entry.expires_at && !world.mutes.is_muted_id(&entry.owner));
@@ -189,6 +208,12 @@ impl State {
                 .iter()
                 .any(|entry| entry.owner == *target && entry.portal.id == *id && entry.details.is_none()),
             _ => true,
+        });
+        let own = self.own().map(|entry| entry.portal.id);
+        self.retries.retain(|retry| match &retry.action {
+            Message::Open(portal) => Some(portal.id) == own && portal.live(now),
+            Message::Close { id, .. } => self.ended.contains_key(&(self.agent, *id)),
+            _ => false,
         });
     }
 
@@ -247,6 +272,8 @@ impl State {
                 !matches!(message, Message::Open(portal) if portal.id == id)
                     && !matches!(message, Message::Details { id: old, .. } if *old == id)
             });
+            self.retries
+                .retain(|retry| !matches!(&retry.action, Message::Open(portal) if portal.id == id));
             self.inquiries.clear();
             self.group_refresh = None;
             self.remember(self.agent, id, unix);
@@ -498,11 +525,11 @@ impl State {
         let expired: Vec<_> = self
             .pending
             .iter()
-            .filter(|(_, (at, _))| now.saturating_duration_since(*at) >= Duration::from_secs(8))
+            .filter(|(_, delivery)| now.saturating_duration_since(delivery.sent) >= Duration::from_secs(8))
             .map(|(request, _)| *request)
             .collect();
         for request in expired {
-            self.reply(request, &Err(String::new()));
+            self.reply(request, &Err(String::new()), now);
         }
         let mut crossed = None;
         for entry in &mut self.entries {
@@ -527,20 +554,35 @@ impl State {
         if self.pending.len() >= 32 || self.last_send.is_some_and(|at| now.saturating_duration_since(at) < SEND_INTERVAL) {
             return None;
         }
-        let (target, message) = self.out.pop_front()?;
+        let retry = self
+            .retries
+            .iter()
+            .position(|retry| retry.due <= now)
+            .and_then(|at| self.retries.remove(at));
+        let (target, message, attempt) = if let Some(retry) = retry {
+            (Uuid::nil(), retry.action, retry.attempt)
+        } else {
+            let (target, message) = self.out.pop_front()?;
+            (target, message, 1)
+        };
         self.last_send = Some(now);
         let request = Uuid::new_v4();
-        let public_portal = if target.is_nil() {
+        let action = if target.is_nil() {
             match &message {
-                Message::Open(portal) => Some(portal.id),
-                Message::Close { id, .. } => Some(*id),
-                Message::Discover { .. } => None,
-                Message::Request { .. } | Message::Details { .. } => None,
+                Message::Open(_) | Message::Close { .. } => Some(message.clone()),
+                _ => None,
             }
         } else {
             None
         };
-        self.pending.insert(request, (now, public_portal));
+        self.pending.insert(
+            request,
+            Delivery {
+                sent: now,
+                action,
+                attempt,
+            },
+        );
         Some(NetCommand::BridgeQuery {
             request,
             endpoint: endpoint.clone(),
@@ -552,12 +594,35 @@ impl State {
         self.pending.contains_key(&request)
     }
 
-    pub fn reply(&mut self, request: Uuid, result: &Result<Reply, String>) {
-        let Some((_, portal)) = self.pending.remove(&request) else { return };
+    pub fn reply(&mut self, request: Uuid, result: &Result<Reply, String>, now: Instant) {
+        let Some(delivery) = self.pending.remove(&request) else { return };
         if !matches!(result, Ok(Reply::Portal))
-            && let Some(id) = portal
+            && let Some(action) = delivery.action
         {
-            self.entries.retain(|entry| entry.owner != self.agent || entry.portal.id != id);
+            // A timed-out POST may already have been relayed. Replay the same
+            // immutable announcement/close, never a new portal or private grant.
+            let current = match &action {
+                Message::Open(portal) => self
+                    .own()
+                    .is_some_and(|entry| entry.portal.id == portal.id && entry.expires_at > now),
+                Message::Close { id, .. } => self.ended.contains_key(&(self.agent, *id)),
+                _ => false,
+            };
+            if !current {
+                return;
+            }
+            if delivery.attempt < 3 && self.retries.len() < LIMIT * 2 {
+                self.retries.push_back(Retry {
+                    due: now + Duration::from_secs(u64::from(delivery.attempt)),
+                    action,
+                    attempt: delivery.attempt + 1,
+                });
+                return;
+            }
+            if let Message::Open(portal) = action {
+                self.entries
+                    .retain(|entry| entry.owner != self.agent || entry.portal.id != portal.id);
+            }
             self.failed = true;
         }
     }

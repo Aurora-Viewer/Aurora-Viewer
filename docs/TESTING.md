@@ -118,13 +118,15 @@ group members/non-members, appearing on a stationary or moving avatar,
 leaving and returning, crossing from either side, closing/replacing/expiry,
 late arrival discovery, failed/restricted destinations and teleport cancellation.
 
-`AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid`
+`AURORA_DEMO_PORTALS=drop-friends|drop-public|drop-friends-hover|drop-public-hover|drop-invalid|drop-focus`
 drags an inventory landmark over the world. Hover scenarios retain the cargo;
 the others release it at frame 560. Shift changes at frame 500 in public modes:
 capture around 530 for the access preview and 700 for the created portal or
 the unavailable-landmark notice. Use `AURORA_DEMO_POS=100,100` to avoid plaza
 props. The landmark stays in inventory. Ctrl insertion and other inventory drops
 retain their normal behavior.
+`drop-focus` keeps the inventory open with keyboard focus during the drag;
+after release it stays open and logs that keyboard focus returned to the scene.
 
 `AURORA_DEMO_PORTALS=private-friends-allowed|private-friends-denied|private-group-allowed|private-group-denied`
 exchanges real v2 codec messages between two offline peer states. Everyone sees

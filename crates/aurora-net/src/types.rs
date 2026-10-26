@@ -609,6 +609,7 @@ pub enum NetEvent {
     /// TeleportFinish: the destination region is known, connecting to it.
     TeleportFinished {
         handle: RegionHandle,
+        flying: bool,
     },
     /// A named destination lookup completed. The viewer rechecks the pending
     /// action before issuing TeleportTo; resolving a name never teleports.

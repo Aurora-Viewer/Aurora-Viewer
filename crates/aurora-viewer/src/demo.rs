@@ -6129,7 +6129,7 @@ pub fn away_teleport(frame: u64, world: &crate::world::World, kept: &mut Vec<(Uu
     }
     let (position, look_at) = (world.agent.position, world.agent.forward());
     Some(vec![
-        NetEvent::TeleportFinished { handle },
+        NetEvent::TeleportFinished { handle, flying: false },
         NetEvent::MainRegionChanged { handle },
         NetEvent::AgentMovementComplete { handle, position, look_at },
     ])

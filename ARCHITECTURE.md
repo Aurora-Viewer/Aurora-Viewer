@@ -97,6 +97,11 @@ are checked again at the bounded send cadence; unknown/denied requests remain
 silent. Responses cannot use regional broadcast, in both Rust and the bridge.
 Private details remain in session memory, bound to creator, portal and request;
 discovery is redacted and close/expiry/session changes retire pending exchanges.
+HTTP-in renewal within the same region preserves invitations and clearance gates.
+The query endpoint is invalidated on region changes or a dead-URL response;
+announcement/close delivery retries the same immutable action at most twice,
+with one- and two-second backoff. Only exhausted failures remove the
+local aperture. Replacement, expiry and region/session changes retire retries.
 
 `app/portals/landmark.rs` resolves inventory landmark drops asynchronously through
 the ordinary landmark and map caches, including variable regions. A scene drop
@@ -105,6 +110,13 @@ The shared overlay previews the selected access. Inventory items are never consu
 Ctrl insertion retains its existing behavior. Pending drops expire and cancel on
 region/session change, teleport or item replacement. `app/portals/demo.rs` drives
 actual world-drop input and authenticated in-memory peers for offline coverage.
+Successful landmark scene drops release inventory keyboard focus, including its
+short-lived list-focus restoration, while keeping inventory windows open.
+
+Remote `TeleportFinished` events carry the simulator's flight flag. The ordinary
+arrival path applies both flying and grounded states with the explicit fly-after-
+teleport preference. Only the current agent circuit may update our avatar's
+animations; late packets from a previous region cannot restore stale flight.
 
 `scene/portals/clipping.rs` assigns a stable entry-side plane from the posed
 body and worn-object bounds, independently of locomotion or teleport gates.
