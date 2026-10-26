@@ -157,6 +157,9 @@ area-search-copy = Copier l’UUID
 area-search-neighbors = Inclure les régions voisines
 area-search-demo-description = Objet hors ligne pour tester la recherche et les filtres
 area-search-empty = Aucun objet ne correspond à ces filtres.
+area-search-sit = S'asseoir
+area-search-filter-mine = Filtrer mes objets
+area-search-clear-selection = Effacer la sélection
 
 toolbar-command-debug-settings = Paramètres de débogage
 toolbar-command-statistics = Statistiques

@@ -3475,16 +3475,22 @@ both open states and the selection count. Capture at frame 620.
 | Variable | Effect |
 |---|---|
 | `AURORA_DEMO_TOOLBAR=1` | Open the "Toolbar buttons" window; the bars mockup's custom state, side toolbars, labels. |
-| `AURORA_DEMO_AREA_SEARCH=1\|filters\|parcel\|sale\|search` | Open Area Search with named objects and sale entries. |
+| `AURORA_DEMO_AREA_SEARCH=1\|filters\|parcel\|sale\|search\|menu` | Open Area Search with named objects and sale entries; `menu` opens its right-click menu. |
 | `AURORA_DEMO_TEXTURE_LIBRARY=<mode>` | Compact inventory library with synthetic folders, eight types and thumbnails. |
 
 `AURORA_DEMO_AREA_SEARCH`: `1` opens the object list; `parcel` restricts it to
 the agent's parcel, `sale` shows sale entries, `filters` expands the filters, and
-`search` searches the localized fountain name. Capture after frame 740, in English and French. Check the column
+`search` searches the localized fountain name, and `menu` right-clicks the
+second row to open the result menu. Capture after frame 740, in English and French. Check the column
 sorting, combined text and flag filters, the in-field crosses that clear only
 their filled text filter and return keyboard focus to it, Reset, Refresh preserving filters,
 selection, Inspect, Zoom/double click, Copy UUID, and the toolbar button reopening
-a minimized window. On the grid, compare the received roots with the Legacy
+a minimized window. The right-click menu (`menu`): Ctrl and Shift clicks select
+several rows and every entry acts on all of them; Sit, Teleport to and Buy need
+one row (Buy one for sale), Zoom one within the draw distance; a right click
+outside the selection selects that row alone; Select all, Clear selection and
+Filter my objects (the owner field, opened). Edit, Delete (with its question),
+Return, Inspect, Touch, Derender & blacklist and Sit work on the demo objects. On the grid, compare the received roots with the Legacy
 Viewer, check parcel boundaries and neighboring regions, linked prim names,
 group-owned objects, late name replies, derez/movement and region changes.
 Keep a Build/Inspect selection while requests are arriving: it must stay selected.

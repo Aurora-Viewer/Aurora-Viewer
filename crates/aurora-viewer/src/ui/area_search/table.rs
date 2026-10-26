@@ -243,6 +243,8 @@ pub(crate) struct Table {
     pub descending: bool,
     pub pending: usize,
     pub dirty: bool,
+    /// Counts the recomputed result lists (the selection is checked once each).
+    pub generation: u64,
     applied: Option<Filters>,
 }
 impl Table {
@@ -281,5 +283,6 @@ impl Table {
         });
         self.applied = Some(self.filters.clone());
         self.dirty = false;
+        self.generation += 1;
     }
 }
