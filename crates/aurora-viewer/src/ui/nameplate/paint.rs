@@ -509,6 +509,7 @@ fn badge_icon(p: &Palette, badge: Badge) -> Option<(&'static str, Color32)> {
         Badge::Voice => ("microphone-filled", p.success),
         Badge::Friend => ("heart-filled", p.success),
         Badge::TooComplex => ("alert-triangle-filled", p.amber),
+        Badge::RenderNever => ("eye-off", p.amber),
         Badge::Blocked => ("ban", p.danger),
         Badge::Typing => return None,
     })

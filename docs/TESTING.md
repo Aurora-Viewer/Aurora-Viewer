@@ -6655,7 +6655,7 @@ What the inventory must show with these scenarios:
 | `AURORA_PERCEPTUAL_VOLUME=0` or `1` | The volume sliders' perceptual curve forced off or on for this launch |
 | `AURORA_DEMO_VOICE=speaking`, `loud`, `listening`, `off`, `cycle` or `sweep` | Voice states and colours of the avatar name tags; `sweep`: a plate from a whisper to a shout |
 | `AURORA_DEMO_CALL=p2p`, `hangup`, `group`, `conference`, `conference-legacy`, `conference-invite`, `incoming` or `incoming-group` | A voice call started or received, with a simulated voice server |
-| `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall` or `height` | Name plates in all their states, at the three distances; occlusion and stable height |
+| `AURORA_DEMO_TAGS=voice`, `status`, `cycle`, `wall`, `height` or `render` | Name plates in all their states, at the three distances; occlusion, stable height and manual rendering limits |
 | `AURORA_DEMO_CHAT_BUBBLES=1`, `typing` or `talk` | With `AURORA_DEMO_TAGS`: the residents talk, chat bubbles above the heads for this run; `typing`: the typing dots too; `talk`: as Preferences say |
 | `AURORA_DEMO_STAFF=1` | A few demo residents count as Aurora team members or Linden Lab employees: their plate's light and their tag |
 | `AURORA_DEMO_VOICE_MENU=1`, `louder` or `muted` | The world menu of a resident in our voice channel, with their voice volume row first |
@@ -6741,6 +6741,11 @@ What the inventory must show with these scenarios:
   two around 50 m (name only). A white wall stands behind the two on the
   left, to judge the glass on a light background next to the same plates on
   the dark scene. The People window is closed.
+  - `render`: the voice scene with Tess (full plate) and Iris (compact pill)
+    set to Never fully render through the ordinary rendering exceptions.
+    Both have the crossed-out eye badge; Orion keeps the automatic-limit
+    warning triangle. Brume keeps the separate blocked badge. Use
+    `AURORA_NAME_TAGS=classic` to check the neighbouring classic tags.
   - `AURORA_DEMO_CHAT_BUBBLES=1|typing|talk` turns the chat bubbles above
     the heads on for the run (nothing saved; `typing` adds the typing dots;
     `talk` forces nothing, to try Preferences › Chat's options) and

@@ -14914,6 +14914,7 @@ impl ApplicationHandler for App {
             // AURORA_DEMO_TAGS: residents whose name plates show every
             // state, at the three distance levels
             if crate::demo::tags::mode().is_some() {
+                crate::demo::tags::apply_render_preferences(&mut self.settings);
                 for ev in crate::demo::tags::events() {
                     self.world.apply(ev);
                 }

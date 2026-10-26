@@ -239,6 +239,8 @@ pub enum Badge {
     Friend,
     /// Drawn as a silhouette: over the complexity or surface limit.
     TooComplex,
+    /// Drawn as a silhouette by the resident's Never fully render setting.
+    RenderNever,
     Blocked,
 }
 
@@ -289,6 +291,7 @@ pub struct Content {
     pub typing: bool,
     pub friend: bool,
     pub too_complex: bool,
+    pub render_never: bool,
     pub blocked: bool,
     /// A member of the Aurora team or a Linden Lab employee
     /// (`world::staff`): the plate has its light and its tag (`mark.rs`).
@@ -315,6 +318,7 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, appearance: std::sync::Arc<crate:
         typing: false,
         friend: true,
         too_complex: false,
+        render_never: false,
         blocked: false,
         mark: None,
     };
@@ -381,7 +385,7 @@ pub fn badges(level: Level, c: &Content) -> Badges {
         (c.in_voice, Badge::Voice),
         (c.typing, Badge::Typing),
         (c.friend && !c.appearance.replace_friend, Badge::Friend),
-        (c.too_complex, Badge::TooComplex),
+        (c.too_complex, if c.render_never { Badge::RenderNever } else { Badge::TooComplex }),
         (c.blocked, Badge::Blocked),
     ] {
         if on {
