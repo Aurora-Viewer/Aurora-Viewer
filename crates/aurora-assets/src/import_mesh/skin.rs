@@ -58,7 +58,7 @@ pub fn prune_gltf(faces: &mut [Face], skin: &mut Skin, skeleton: &crate::Skeleto
     }
     let mut remap = vec![None; skin.names.len()];
     for (index, source) in selected.iter().enumerate() {
-        remap[*source] = Some(index as u8);
+        remap[*source] = Some(index as u16);
     }
     for vertex in faces.iter_mut().flat_map(|face| &mut face.vertices) {
         for (joint, weight) in vertex.joints.iter_mut().zip(&mut vertex.weights) {
@@ -123,6 +123,45 @@ fn nearest(nodes: &[Node<'_>], index: usize, point: Vec3, best: &mut (usize, f32
         nearest(nodes, index, point, best);
     }
 }
+
+/// LLModel::getJointInfluences / LLModelPreview::genBuffers: even High
+/// inherits the nearest available weights when an exporter helper joint
+/// was stripped. Search the whole source in its normalized metric before
+/// splitting models; leaving zero weights mixes normalized and posed space.
+pub fn complete_weights(faces: &mut [Face], normalized_scale: Vec3) {
+    if !faces
+        .iter()
+        .flat_map(|face| &face.vertices)
+        .any(|v| v.weights.iter().sum::<f32>() <= 0.0)
+    {
+        return;
+    }
+    let sources: Vec<_> = faces
+        .iter()
+        .flat_map(|face| &face.vertices)
+        .filter(|v| v.weights.iter().sum::<f32>() > 0.0)
+        .map(|v| {
+            let mut source = v.clone();
+            source.position = (Vec3::from_array(source.position) / normalized_scale).to_array();
+            source
+        })
+        .collect();
+    let mut points: Vec<_> = sources.iter().collect();
+    let mut nodes = Vec::with_capacity(points.len());
+    let Some(root) = tree(&mut points, 0, &mut nodes) else { return };
+    for vertex in faces
+        .iter_mut()
+        .flat_map(|face| &mut face.vertices)
+        .filter(|v| v.weights.iter().sum::<f32>() <= 0.0)
+    {
+        let mut best = (root, f32::MAX);
+        nearest(&nodes, root, Vec3::from_array(vertex.position) / normalized_scale, &mut best);
+        let source = nodes[best.0].vertex;
+        vertex.joints = source.joints;
+        vertex.weights = source.weights;
+    }
+}
+
 pub fn transfer_weights(model: &mut Model, high: &Model) -> Result<(), AssetError> {
     let Some(skin) = &high.skin else { return Ok(()) };
     let remap = model.skin.as_ref().map(|s| {
@@ -136,7 +175,7 @@ pub fn transfer_weights(model: &mut Model, high: &Model) -> Result<(), AssetErro
             for (joint, weight) in vertex.joints.iter_mut().zip(&mut vertex.weights) {
                 if *weight > 0.0 {
                     if let Some(Some(index)) = remap.get(*joint as usize) {
-                        *joint = *index as u8;
+                        *joint = *index as u16;
                     } else {
                         *weight = 0.0;
                     }

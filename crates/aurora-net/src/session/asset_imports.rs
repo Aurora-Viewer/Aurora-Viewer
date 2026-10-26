@@ -22,6 +22,23 @@ struct MeshOffer {
     upload: crate::inventory::mesh_upload::Request,
     offer: Option<crate::inventory::mesh_upload::Offer>,
 }
+
+impl MeshOffer {
+    fn expired(&self) -> bool {
+        let seconds = if self.offer.is_some() {
+            300
+        } else {
+            u64::from(self.upload.timeout_secs) + 40
+        };
+        self.started.elapsed() > Duration::from_secs(seconds)
+    }
+
+    fn quoted(&mut self, offer: crate::inventory::mesh_upload::Offer) {
+        // A slow fee transfer must not consume the user's confirmation time.
+        self.started = Instant::now();
+        self.offer = Some(offer);
+    }
+}
 /// LLSettingsVOBase::createInventoryItem: the item first, its asset once the
 /// callback names it (onInventoryItemCreated → updateInventoryItem).
 struct SettingsCreate {
@@ -214,7 +231,7 @@ impl Session<'_> {
                         data: offer.data.clone(),
                     };
                     if let Some(pending) = offers.lock().get_mut(&token) {
-                        pending.offer = Some(offer);
+                        pending.quoted(offer);
                         Ok(quote)
                     } else {
                         Err(Error::PriceChanged(None))
@@ -241,7 +258,7 @@ impl Session<'_> {
         let owner = self.agent_id();
         tokio::spawn(async move {
             let result = if let Some(pending) = pending {
-                if pending.started.elapsed() > Duration::from_secs(300) {
+                if pending.expired() {
                     Err(Error::PriceChanged(None))
                 } else if let Some(offer) = pending.offer {
                     crate::inventory::mesh_upload::upload(&http, offer.uploader, owner, offer.cost, pending.upload).await
@@ -599,10 +616,7 @@ impl Session<'_> {
     }
 
     pub(super) fn expire_asset_imports(&mut self) {
-        self.asset_imports
-            .meshes
-            .lock()
-            .retain(|_, pending| pending.started.elapsed() < Duration::from_secs(300));
+        self.asset_imports.meshes.lock().retain(|_, pending| !pending.expired());
         self.asset_imports.settings.retain(|_, pending| {
             if pending.started.elapsed() < Duration::from_secs(60) {
                 return true;
@@ -636,6 +650,32 @@ impl Session<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mesh_import_parity_slow_quote_keeps_the_full_transfer_and_confirmation_windows() {
+        let mut pending = MeshOffer {
+            started: Instant::now() - Duration::from_secs(400),
+            upload: crate::inventory::mesh_upload::Request {
+                folder: Uuid::from_u128(1),
+                texture_folder: Uuid::from_u128(2),
+                name: "Mesh".into(),
+                description: String::new(),
+                query: Arc::new(vec![1]),
+                resources: Arc::new(vec![1]),
+                timeout_secs: 600,
+            },
+            offer: None,
+        };
+        assert!(!pending.expired(), "a fee request can take the configured 600 seconds");
+        pending.quoted(crate::inventory::mesh_upload::Offer {
+            uploader: String::new(),
+            cost: 0,
+            data: Llsd::Undef,
+        });
+        assert!(!pending.expired(), "confirmation time starts when the quote arrives");
+        pending.started = Instant::now() - Duration::from_secs(301);
+        assert!(pending.expired());
+    }
     #[test]
     fn legacy_rights_update_preserves_identity_and_clamps_to_owned_permissions() {
         let item = InvItem {

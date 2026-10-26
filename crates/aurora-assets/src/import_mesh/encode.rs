@@ -30,7 +30,7 @@ fn quantize(value: f32, min: f32, max: f32) -> u16 {
 }
 fn compressed(value: &Llsd) -> Result<Vec<u8>, AssetError> {
     let bytes = aurora_llsd::to_binary(value);
-    if bytes.len() > 32 * 1024 * 1024 {
+    if bytes.len() > i32::MAX as usize {
         return Err(AssetError::TooLarge("mesh section"));
     }
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
@@ -80,10 +80,10 @@ pub fn lod(model: &Model, include_skin: bool) -> Result<Llsd, AssetError> {
                 let mut count = 0;
                 for (joint, weight) in vertex.joints.iter().zip(vertex.weights) {
                     if weight > 0.0 {
-                        if *joint == 255 {
+                        if *joint >= 255 {
                             return Err(AssetError::invalid("skin joint terminator index"));
                         }
-                        weights.push(*joint);
+                        weights.push(*joint as u8);
                         weights.extend(quantize(weight, 0.0, 1.0).max(1).to_le_bytes());
                         count += 1;
                     }
@@ -113,7 +113,6 @@ pub fn lod(model: &Model, include_skin: bool) -> Result<Llsd, AssetError> {
 
 fn skin(skin: &Skin, options: Options) -> Result<Llsd, AssetError> {
     if skin.names.is_empty()
-        || skin.names.len() > 110
         || skin.names.len() != skin.inverse_bind.len()
         || !skin.bind_shape.is_finite()
         || !options.pelvis_offset.is_finite()
@@ -238,17 +237,15 @@ pub fn asset(
     if let Some(index) = secondary {
         header.insert("submodel_id", Llsd::Integer(index as i32));
     }
-    let mut offset = 0;
+    let mut offset = 0i32;
     for (key, bytes) in &sections {
-        header.insert(*key, llsd_map! { "offset" => offset, "size" => bytes.len() as i32 });
-        offset += bytes.len() as i32;
+        let size = i32::try_from(bytes.len()).map_err(|_| AssetError::TooLarge("mesh section"))?;
+        header.insert(*key, llsd_map! { "offset" => offset, "size" => size });
+        offset = offset.checked_add(size).ok_or(AssetError::TooLarge("mesh asset"))?;
     }
     let mut output = aurora_llsd::to_binary(&header);
     for (_, bytes) in sections {
         output.extend(bytes);
-    }
-    if output.len() > 64 * 1024 * 1024 {
-        return Err(AssetError::TooLarge("mesh asset"));
     }
     Ok(output)
 }

@@ -8,7 +8,7 @@ use glam::Quat;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-fn integer(value: &Value, field: &'static str) -> Result<usize, AssetError> {
+pub(super) fn integer(value: &Value, field: &'static str) -> Result<usize, AssetError> {
     value
         .as_u64()
         .and_then(|n| usize::try_from(n).ok())
@@ -60,7 +60,11 @@ pub fn attribute<const N: usize>(doc: &Document, index: usize) -> Result<Vec<[f3
         return Err(AssetError::invalid("accessor shape"));
     }
     let count = integer(&accessor["count"], "accessor count")?;
-    if count > 4 * 1024 * 1024 || count.checked_mul(N).is_none_or(|n| n > 16 * 1024 * 1024) {
+    if count > u32::MAX as usize
+        || count
+            .checked_mul(N * std::mem::size_of::<f32>())
+            .is_none_or(|n| n > isize::MAX as usize)
+    {
         return Err(AssetError::TooLarge("glTF accessor"));
     }
     let ty = integer(&accessor["componentType"], "accessor component type")?;
@@ -74,10 +78,35 @@ pub fn attribute<const N: usize>(doc: &Document, index: usize) -> Result<Vec<[f3
     if normalized && matches!(ty, 5125 | 5126) {
         return Err(AssetError::invalid("normalized integer/float accessor"));
     }
-    let mut values = vec![[0.0; N]; count];
+    if let Some(view) = accessor["bufferView"].as_u64() {
+        let data = doc.view(view as usize)?;
+        let stride = doc.json["bufferViews"][view as usize]["byteStride"]
+            .as_u64()
+            .unwrap_or((N * width) as u64) as usize;
+        let offset = accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let end = count
+            .saturating_sub(1)
+            .checked_mul(stride)
+            .and_then(|n| n.checked_add(offset))
+            .and_then(|n| n.checked_add(N * width));
+        if count > 0 && end.is_none_or(|n| n > data.len()) {
+            return Err(AssetError::Truncated("accessor values"));
+        }
+    }
+    let mut values = super::allocate(count, [0.0; N], "glTF accessor memory")?;
     let read = |data: &[u8], offset: usize, stride: usize, values: &mut [[f32; N]]| -> Result<(), AssetError> {
         if stride < N * width || !stride.is_multiple_of(width) {
             return Err(AssetError::invalid("accessor stride"));
+        }
+        let end = values
+            .len()
+            .saturating_sub(1)
+            .checked_mul(stride)
+            .and_then(|n| n.checked_add(offset))
+            .and_then(|n| n.checked_add(N * width))
+            .ok_or(AssetError::Truncated("accessor values"))?;
+        if !values.is_empty() && end > data.len() {
+            return Err(AssetError::Truncated("accessor values"));
         }
         for (row, value) in values.iter_mut().enumerate() {
             let start = row
@@ -120,7 +149,7 @@ pub fn attribute<const N: usize>(doc: &Document, index: usize) -> Result<Vec<[f3
         };
         let index_data = doc.view(integer(&indices["bufferView"], "sparse index view")?)?;
         let index_offset = indices["byteOffset"].as_u64().unwrap_or(0) as usize;
-        let mut patches = vec![[0.0; N]; count_sparse];
+        let mut patches = super::allocate(count_sparse, [0.0; N], "sparse accessor memory")?;
         let source = &sparse["values"];
         read(
             doc.view(integer(&source["bufferView"], "sparse values view")?)?,
@@ -134,13 +163,11 @@ pub fn attribute<const N: usize>(doc: &Document, index: usize) -> Result<Vec<[f3
                 .checked_mul(index_width)
                 .and_then(|n| n.checked_add(index_offset))
                 .ok_or(AssetError::Truncated("sparse indices"))?;
-            let index = component(
+            let index = unsigned(
                 index_data
                     .get(start..start + index_width)
                     .ok_or(AssetError::Truncated("sparse indices"))?,
-                index_ty,
-                false,
-            )? as usize;
+            ) as usize;
             if index >= count || previous.is_some_and(|previous| index <= previous) {
                 return Err(AssetError::invalid("sparse indices must be ordered and in range"));
             }
@@ -151,7 +178,94 @@ pub fn attribute<const N: usize>(doc: &Document, index: usize) -> Result<Vec<[f3
     Ok(values)
 }
 
-fn transform(node: &Value) -> Result<Mat4, AssetError> {
+fn unsigned(bytes: &[u8]) -> u32 {
+    match bytes.len() {
+        1 => u32::from(bytes[0]),
+        2 => u32::from(u16::from_le_bytes([bytes[0], bytes[1]])),
+        _ => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+    }
+}
+
+fn source_bytes(data: &[u8], start: usize, length: usize) -> Result<&[u8], AssetError> {
+    let end = start.checked_add(length).ok_or(AssetError::Truncated("glTF accessor bytes"))?;
+    data.get(start..end).ok_or(AssetError::Truncated("glTF accessor bytes"))
+}
+
+pub(super) fn indices(doc: &Document, index: usize) -> Result<Vec<u32>, AssetError> {
+    let accessor = &doc.json["accessors"][index];
+    let ty = accessor["componentType"].as_u64();
+    if !matches!(ty, Some(5121 | 5123 | 5125)) || accessor["normalized"].as_bool().unwrap_or(false) {
+        return Err(AssetError::invalid("indices must be unsigned integers"));
+    }
+    if ty != Some(5125) {
+        return Ok(attribute::<1>(doc, index)?.into_iter().map(|v| v[0] as u32).collect());
+    }
+    if accessor["type"].as_str() != Some("SCALAR") {
+        return Err(AssetError::invalid("index accessor shape"));
+    }
+    let count = integer(&accessor["count"], "index accessor count")?;
+    let source = if let Some(view) = accessor["bufferView"].as_u64() {
+        let bytes = doc.view(view as usize)?;
+        let stride = doc.json["bufferViews"][view as usize]["byteStride"].as_u64().unwrap_or(4) as usize;
+        let offset = accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let end = count
+            .saturating_sub(1)
+            .checked_mul(stride)
+            .and_then(|n| n.checked_add(offset))
+            .and_then(|n| n.checked_add(4));
+        if stride < 4 || !stride.is_multiple_of(4) || (count > 0 && end.is_none_or(|end| end > bytes.len())) {
+            return Err(AssetError::Truncated("index accessor"));
+        }
+        Some((bytes, offset, stride))
+    } else {
+        None
+    };
+    let mut values = super::allocate(count, 0u32, "index accessor memory")?;
+    if let Some((bytes, offset, stride)) = source {
+        for (row, value) in values.iter_mut().enumerate() {
+            *value = unsigned(source_bytes(bytes, offset + row * stride, 4)?);
+        }
+    } else if accessor.get("sparse").is_none() {
+        return Err(AssetError::invalid("index accessor has no data"));
+    }
+    if let Some(sparse) = accessor.get("sparse") {
+        let count_sparse = integer(&sparse["count"], "sparse count")?;
+        if count_sparse > count {
+            return Err(AssetError::invalid("sparse count exceeds accessor"));
+        }
+        let patches = &sparse["indices"];
+        let width = match patches["componentType"].as_u64() {
+            Some(5121) => 1,
+            Some(5123) => 2,
+            Some(5125) => 4,
+            _ => return Err(AssetError::invalid("sparse index type")),
+        };
+        let patch_indices = doc.view(integer(&patches["bufferView"], "sparse index view")?)?;
+        let index_offset = patches["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let patch_values = doc.view(integer(&sparse["values"]["bufferView"], "sparse value view")?)?;
+        let value_offset = sparse["values"]["byteOffset"].as_u64().unwrap_or(0) as usize;
+        let mut previous = None;
+        for row in 0..count_sparse {
+            let start = row
+                .checked_mul(width)
+                .and_then(|n| n.checked_add(index_offset))
+                .ok_or(AssetError::Truncated("sparse indices"))?;
+            let index = unsigned(source_bytes(patch_indices, start, width)?) as usize;
+            if index >= count || previous.is_some_and(|p| index <= p) {
+                return Err(AssetError::invalid("sparse indices must be ordered and in range"));
+            }
+            previous = Some(index);
+            let start = row
+                .checked_mul(4)
+                .and_then(|n| n.checked_add(value_offset))
+                .ok_or(AssetError::Truncated("sparse values"))?;
+            values[index] = unsigned(source_bytes(patch_values, start, 4)?);
+        }
+    }
+    Ok(values)
+}
+
+pub(super) fn transform(node: &Value) -> Result<Mat4, AssetError> {
     let array = |key: &str, defaults: &[f32]| -> Result<Vec<f32>, AssetError> {
         if let Some(values) = node[key].as_array() {
             if values.len() != defaults.len() {
@@ -178,8 +292,8 @@ fn transform(node: &Value) -> Result<Mat4, AssetError> {
     let t = array("translation", &[0.0; 3])?;
     let s = array("scale", &[1.0; 3])?;
     let r = array("rotation", &[0.0, 0.0, 0.0, 1.0])?;
-    if s.iter().any(|n| *n <= 0.0) {
-        return Err(AssetError::invalid("negative or zero node scale"));
+    if s.contains(&0.0) {
+        return Err(AssetError::invalid("zero node scale"));
     }
     let rotation = Quat::from_xyzw(r[0], r[1], r[2], r[3]);
     if rotation.length_squared() < 0.000001 {
@@ -193,68 +307,47 @@ fn transform(node: &Value) -> Result<Mat4, AssetError> {
 }
 
 pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetError> {
+    parse_with_options(doc, skeleton, DEFAULT_MODEL_LIMIT)
+}
+
+pub fn parse_with_options(doc: &Document, skeleton: &crate::Skeleton, model_limit: u32) -> Result<Scene, AssetError> {
     let nodes = doc.json["nodes"]
         .as_array()
         .ok_or_else(|| AssetError::invalid("glTF has no nodes"))?;
-    if nodes.len() > 8192 {
-        return Err(AssetError::TooLarge("glTF nodes"));
-    }
-    let basis = Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2);
-    let mut globals = vec![Mat4::IDENTITY; nodes.len()];
     let mut instances = Vec::new();
     let scene_index = doc.json["scene"].as_u64().unwrap_or(0) as usize;
     let roots = doc.json["scenes"][scene_index]["nodes"]
         .as_array()
         .ok_or_else(|| AssetError::invalid("glTF has no selected scene"))?;
-    fn visit(
-        index: usize,
-        parent: Mat4,
-        nodes: &[Value],
-        globals: &mut [Mat4],
-        instances: &mut Vec<usize>,
-        visiting: &mut HashSet<usize>,
-        depth: usize,
-    ) -> Result<(), AssetError> {
-        if depth >= 128 || !visiting.insert(index) {
-            return Err(AssetError::invalid("cyclic or too deep glTF hierarchy"));
-        }
+    let mut pending = roots
+        .iter()
+        .rev()
+        .map(|r| integer(r, "root node index"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut visited = HashSet::new();
+    while let Some(index) = pending.pop() {
         let node = nodes.get(index).ok_or_else(|| AssetError::invalid("glTF node index"))?;
-        let global = parent * transform(node)?;
-        if !global.is_finite() || global.determinant() <= 0.0 {
-            return Err(AssetError::invalid("node transform is mirrored or singular"));
+        if !visited.insert(index) {
+            continue;
         }
-        globals[index] = global;
         if node.get("mesh").is_some() {
             instances.push(index);
         }
-        for child in node["children"].as_array().into_iter().flatten() {
-            visit(
-                integer(child, "child node index")?,
-                global,
-                nodes,
-                globals,
-                instances,
-                visiting,
-                depth + 1,
-            )?;
+        for child in node["children"].as_array().into_iter().flatten().rev() {
+            pending.push(integer(child, "child node index")?);
         }
-        visiting.remove(&index);
-        Ok(())
     }
-    for root in roots {
-        visit(
-            integer(root, "root node index")?,
-            Mat4::IDENTITY,
-            nodes,
-            &mut globals,
-            &mut instances,
-            &mut HashSet::new(),
-            0,
-        )?;
+    if instances.is_empty() {
+        return Err(AssetError::invalid("mesh scene has no instances"));
     }
-    if instances.is_empty() || instances.len() > 256 {
-        return Err(AssetError::invalid("mesh scene must contain between one and 256 instances"));
+    let mut required: Vec<_> = visited.into_iter().collect();
+    for skin in doc.json["skins"].as_array().into_iter().flatten() {
+        for joint in skin["joints"].as_array().into_iter().flatten() {
+            required.push(integer(joint, "skin joint index")?);
+        }
     }
+    let globals = super::gltf_skin::globals_for(nodes, &required)?;
+    let basis = super::gltf_skin::basis(doc, nodes, &globals, skeleton)?;
     let mut scene = Scene::default();
     if doc.json["materials"].is_array() {
         scene.materials = doc
@@ -273,18 +366,49 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
         value: PbrMaterial::default(),
         images: [None; 4],
     });
-    let mut mesh_models = HashMap::<(usize, Option<usize>), Vec<usize>>::new();
+    let mesh_count = doc.json["meshes"].as_array().map_or(1, |m| m.len().max(1));
+    let face_limit = (model_limit as usize / mesh_count + 1).saturating_mul(8);
+    let mut mesh_models = HashMap::<(usize, Option<usize>, usize), Vec<usize>>::new();
+    let mut labels = HashMap::<String, usize>::new();
     for node_index in instances {
         let node = &nodes[node_index];
         let mesh_index = integer(&node["mesh"], "mesh index")?;
         let skin_index = node["skin"].as_u64().map(|n| n as usize);
-        let key = (mesh_index, skin_index);
+        let mirrored = globals[node_index].determinant() < 0.0;
+        // processNodeHierarchy keeps node identities even when they share a
+        // glTF mesh. Their authored lower LODs may differ independently.
+        let key = (mesh_index, skin_index, node_index);
+        let reflection = if mirrored {
+            Mat4::from_scale(Vec3::new(-1.0, 1.0, 1.0))
+        } else {
+            Mat4::IDENTITY
+        };
+        let vertex_transform = basis * if skin_index.is_some() { globals[node_index] } else { reflection };
+        let normal_transform = vertex_transform.inverse().transpose();
         if let std::collections::hash_map::Entry::Vacant(e) = mesh_models.entry(key) {
             let mesh = doc.json["meshes"]
                 .get(mesh_index)
                 .ok_or_else(|| AssetError::invalid("mesh index"))?;
+            let mut name = node["name"]
+                .as_str()
+                .filter(|n| !n.is_empty())
+                .or_else(|| mesh["name"].as_str().filter(|n| !n.is_empty()))
+                .map_or_else(|| format!("node_{node_index}"), str::to_owned);
+            let copies = labels.entry(name.clone()).or_default();
+            if *copies > 0 {
+                name.push_str(&format!("_copy_{copies}"));
+            }
+            *copies += 1;
             let mut skin = if let Some(index) = skin_index {
-                Some(read_skin(doc, index, nodes, basis, skeleton, &mut scene.warnings)?)
+                Some(super::gltf_skin::read(
+                    doc,
+                    index,
+                    nodes,
+                    &globals,
+                    basis,
+                    skeleton,
+                    &mut scene.warnings,
+                )?)
             } else {
                 None
             };
@@ -323,7 +447,7 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
                     for slot in 0..4 {
                         let index = joints.as_ref().map(|j| j[i][slot]).unwrap_or(0.0);
                         if index < 0.0
-                            || index > 254.0
+                            || index >= u16::MAX as f32
                             || index.fract() != 0.0
                             || skin
                                 .as_ref()
@@ -331,7 +455,7 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
                         {
                             return Err(AssetError::invalid("joint index is outside skin"));
                         }
-                        ids[slot] = index as u8;
+                        ids[slot] = index as u16;
                     }
                     let sum: f32 = influence.iter().sum();
                     if sum > 0.0 {
@@ -339,25 +463,24 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
                             *w /= sum;
                         }
                     }
-                    let normal = normals.as_ref().map(|n| n[i]).unwrap_or([0.0; 3]);
+                    // populateModelFromMesh uses the source +Z default when
+                    // the exporter omitted normals; explicit regeneration
+                    // remains a separate importer option.
+                    let normal = normals.as_ref().map(|n| n[i]).unwrap_or([0.0, 0.0, 1.0]);
                     let uv = uvs.as_ref().map(|u| u[i]).unwrap_or([0.0; 2]);
                     vertices.push(Vertex {
-                        position: basis.transform_point3(Vec3::from_array(position)).to_array(),
-                        normal: basis.transform_vector3(Vec3::from_array(normal)).normalize_or_zero().to_array(),
+                        position: vertex_transform.transform_point3(Vec3::from_array(position)).to_array(),
+                        normal: normal_transform
+                            .transform_vector3(Vec3::from_array(normal))
+                            .normalize_or_zero()
+                            .to_array(),
                         uv: [uv[0], 1.0 - uv[1]],
                         joints: ids,
                         weights: influence,
                     });
                 }
                 let mut indices = if let Some(index) = primitive["indices"].as_u64() {
-                    let accessor = &doc.json["accessors"][index as usize];
-                    if !matches!(accessor["componentType"].as_u64(), Some(5121 | 5123 | 5125)) {
-                        return Err(AssetError::invalid("indices must be unsigned integers"));
-                    }
-                    attribute::<1>(doc, index as usize)?
-                        .into_iter()
-                        .map(|v| v[0] as u32)
-                        .collect::<Vec<_>>()
+                    indices(doc, index as usize)?
                 } else {
                     (0..vertices.len() as u32).collect()
                 };
@@ -386,23 +509,29 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
                 if material >= scene.materials.len() {
                     return Err(AssetError::invalid("mesh material index"));
                 }
-                let mut split = split_face(vertices, indices, material)?;
-                if normals.is_none() {
-                    for face in &mut split {
-                        process::normals(face, 180.0)?;
+                if mirrored {
+                    for triangle in indices.as_chunks_mut::<3>().0 {
+                        triangle.swap(1, 2);
                     }
                 }
-                faces.extend(split);
+                faces.extend(split_face(vertices, indices, material)?);
             }
             if let Some(skin) = &mut skin {
                 super::skin::prune_gltf(&mut faces, skin, skeleton)?;
             }
+            faces.sort_by(|a, b| scene.materials[a.material].name.cmp(&scene.materials[b.material].name));
+            if faces.len() > face_limit {
+                scene.warnings.push(format!("Generated model limit reached for mesh {mesh_index}"));
+                faces.truncate(face_limit);
+            }
             let mut models = Vec::new();
             let (center, size) = normalization(&faces)?;
+            if skin.is_some() {
+                super::skin::complete_weights(&mut faces, size);
+            }
             for (submodel, group) in faces.chunks(8).enumerate() {
-                let name = mesh["name"].as_str().unwrap_or("Mesh").to_owned();
                 let mut model = Model {
-                    name,
+                    name: name.clone(),
                     submodel: submodel as u32,
                     faces: group.to_vec(),
                     skin: skin.clone(),
@@ -410,6 +539,11 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
                     size: Vec3::ONE,
                 };
                 model.normalize_to(center, size)?;
+                scene.normalized_bounds.insert(scene.models.len(), model.normalized_bounds());
+                scene.material_bindings.insert(
+                    scene.models.len(),
+                    model.faces.iter().map(|f| scene.materials[f.material].name.clone()).collect(),
+                );
                 models.push(scene.models.len());
                 scene.models.push(model);
             }
@@ -420,70 +554,18 @@ pub fn parse(doc: &Document, skeleton: &crate::Skeleton) -> Result<Scene, AssetE
             let normalized_to_source = Mat4::from_scale_rotation_translation(source.size, Quat::IDENTITY, source.center);
             scene.instances.push(Instance {
                 model: *model,
-                transform: basis * globals[node_index] * basis.inverse() * normalized_to_source,
+                transform: if skin_index.is_some() {
+                    normalized_to_source
+                } else {
+                    basis * globals[node_index] * reflection * basis.inverse() * normalized_to_source
+                },
                 name: node["name"].as_str().unwrap_or(&source.name).into(),
                 materials: source.faces.iter().map(|face| face.material).collect(),
             });
         }
     }
-    if scene.models.is_empty() || scene.instances.len() > 256 {
+    if scene.models.is_empty() {
         return Err(AssetError::TooLarge("split mesh instances"));
     }
     Ok(scene)
-}
-
-fn read_skin(
-    doc: &Document,
-    index: usize,
-    nodes: &[Value],
-    basis: Mat4,
-    skeleton: &crate::Skeleton,
-    warnings: &mut Vec<String>,
-) -> Result<Skin, AssetError> {
-    let skin = doc.json["skins"].get(index).ok_or_else(|| AssetError::invalid("skin index"))?;
-    let joints = skin["joints"].as_array().ok_or_else(|| AssetError::invalid("skin has no joints"))?;
-    if joints.is_empty() || joints.len() > 254 {
-        return Err(AssetError::TooLarge("skin joints"));
-    }
-    let inverse = skin["inverseBindMatrices"]
-        .as_u64()
-        .map(|i| attribute::<16>(doc, i as usize))
-        .transpose()?
-        .unwrap_or(vec![Mat4::IDENTITY.to_cols_array(); joints.len()]);
-    if inverse.len() != joints.len() {
-        return Err(AssetError::invalid("inverse bind matrix count"));
-    }
-    let mut names = Vec::new();
-    let mut inverse_bind = Vec::new();
-    let mut alternate_bind = Vec::new();
-    for (joint, inverse) in joints.iter().zip(inverse) {
-        let index = integer(joint, "skin joint node")?;
-        let node = nodes.get(index).ok_or_else(|| AssetError::invalid("skin joint node index"))?;
-        let name = node["name"]
-            .as_str()
-            .ok_or_else(|| AssetError::invalid("skin joint needs a name"))?;
-        let canonical = skeleton.find(name).map(|i| skeleton.joints[i].name.clone()).unwrap_or_else(|| {
-            warnings.push(format!("Unknown joint: {name}"));
-            name.into()
-        });
-        names.push(canonical);
-        let matrix = Mat4::from_cols_array(&inverse);
-        if !matrix.is_finite() || matrix.determinant().abs() < 0.000001 {
-            return Err(AssetError::invalid("singular skin inverse bind"));
-        }
-        let inverse = basis * matrix * basis.inverse();
-        inverse_bind.push(inverse);
-        // Alternate binds preserve inverse rotation and carry the imported
-        // local joint offset (LLDAELoader's mAlternateBindMatrix convention).
-        let mut alternate = inverse;
-        alternate.w_axis = basis.transform_vector3(transform(node)?.w_axis.truncate()).extend(1.0);
-        alternate_bind.push(alternate);
-    }
-    Ok(Skin {
-        names,
-        inverse_bind,
-        alternate_bind,
-        bind_shape: Mat4::IDENTITY,
-        pelvis_offset: 0.0,
-    })
 }

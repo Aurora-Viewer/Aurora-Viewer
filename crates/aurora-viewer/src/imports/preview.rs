@@ -316,6 +316,7 @@ fn build(
     match source {
         Source::Mesh(draft) => {
             let mut cache = HashMap::new();
+            let mut marked_joints = std::collections::HashSet::new();
             for instance in &draft.scene.instances {
                 let Some(high) = draft.scene.models.get(instance.model) else {
                     continue;
@@ -384,7 +385,7 @@ fn build(
                             .map(|name| avatars.rig.names.get(name).copied())
                             .collect::<Option<Vec<_>>>()?;
                         let inverse = skin.inverse_bind.iter().map(|m| *m * skin.bind_shape).collect::<Vec<_>>();
-                        let world = mesh_joint_world(&avatars.rig, skin, draft.options.joints, draft.options.pelvis, draft.preview_bend);
+                        let world = mesh_joint_world(&avatars.rig, skin, draft.show_overrides, draft.options.pelvis, draft.preview_bend);
                         let rest = joints.iter().zip(&inverse).map(|(j, m)| world[*j] * *m).collect();
                         Some(Arc::new(aurora_render::preview::Skin {
                             joints,
@@ -471,16 +472,25 @@ fn build(
                     });
                     parts.extend(diagnostic_part);
                 }
-                if (draft.show_joints || draft.show_overrides)
+                // LLModelPreview keeps applying overrides separate from
+                // show_joint_positions. Debug dots are never mesh surfaces.
+                if draft.show_joints
+                    && draft.preview_weights
+                    && !draft.preview_physics
                     && let Some(skin) = &high.skin
                 {
                     let world = mesh_joint_world(&avatars.rig, skin, draft.show_overrides, draft.options.pelvis, draft.preview_bend);
                     for name in &skin.names {
                         let Some(&joint) = avatars.rig.names.get(name) else { continue };
-                        let center = world[joint].w_axis.truncate();
+                        if !marked_joints.insert(joint) {
+                            continue;
+                        }
+                        // LLVOAvatar::renderBones uses 1 mm, 16 mm selected.
+                        let radius = if *name == draft.inspector.selected_joint { 0.016 } else { 0.001 };
                         let (mut vertices, indices) = sphere();
                         for vertex in &mut vertices {
-                            vertex.position = (Vec3::from_array(vertex.position) * 0.015 + center).to_array();
+                            vertex.position = (Vec3::from_array(vertex.position) * radius).to_array();
+                            vertex.weights = [1.0, 0.0, 0.0, 0.0];
                         }
                         parts.push(Part {
                             diagnostic: false,
@@ -488,7 +498,11 @@ fn build(
                             indices: indices.into(),
                             textures: std::array::from_fn(|_| None),
                             material: Material::default(),
-                            skin: None,
+                            skin: Some(Arc::new(aurora_render::preview::Skin {
+                                joints: vec![joint],
+                                inverse_bind: vec![glam::Mat4::IDENTITY],
+                                rest: vec![world[joint]],
+                            })),
                         });
                     }
                 }
@@ -767,6 +781,50 @@ impl Imports {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mesh_import_parity_imported_positions_do_not_create_marker_spheres() {
+        use aurora_assets::import_mesh::Skin;
+        let avatars = crate::scene::avatar::AvatarLibrary::load();
+        let mut draft = crate::imports::tests::mesh_fixture();
+        let model = &mut Arc::make_mut(&mut draft.scene).models[0];
+        model.skin = Some(Skin {
+            names: vec!["mPelvis".into()],
+            inverse_bind: vec![glam::Mat4::IDENTITY],
+            alternate_bind: vec![glam::Mat4::from_translation(Vec3::new(0.0, 0.0, 1.4))],
+            bind_shape: glam::Mat4::IDENTITY,
+            pelvis_offset: 0.0,
+        });
+        for vertex in model.faces.iter_mut().flat_map(|face| &mut face.vertices) {
+            vertex.weights = [1.0, 0.0, 0.0, 0.0];
+        }
+        let faces = model.faces.len();
+        draft.preview_weights = true;
+        draft.show_overrides = true;
+        draft.inspector.selected_joint = "mPelvis".into();
+        let render = |draft: &super::super::mesh::Draft| {
+            build(
+                &Source::Mesh(Box::new(draft.clone())),
+                0,
+                MaterialShape::default(),
+                Default::default(),
+                &avatars,
+            )
+            .expect("rig preview")
+        };
+        let plain = render(&draft);
+        assert_eq!(plain.parts.len(), faces, "overrides alone never add geometry");
+        assert!((plain.parts[0].skin.as_ref().expect("skin").rest[0].w_axis.z - 1.4).abs() < 0.0001);
+        draft.show_joints = true;
+        let marked = render(&draft);
+        assert_eq!(marked.parts.len(), faces + 1);
+        let marker = marked.parts.last().expect("marker");
+        assert_eq!(marker.skin.as_ref().expect("animated marker").joints, [avatars.rig.pelvis]);
+        assert!(marker.vertices.iter().all(|v| v.weights == [1.0, 0.0, 0.0, 0.0]));
+        assert!((marker.vertices[0].position[2] - 0.016).abs() < 0.00001);
+        draft.preview_physics = true;
+        assert_eq!(render(&draft).parts.len(), faces, "collision view never adds bone markers");
+    }
+
     #[test]
     fn mesh_lod_bend_diagnostic_moves_wrists_and_ankles_without_editing_the_upload_geometry() {
         let avatars = crate::scene::avatar::AvatarLibrary::load();

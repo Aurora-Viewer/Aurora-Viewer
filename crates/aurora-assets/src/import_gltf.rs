@@ -15,6 +15,7 @@ const MAX_BYTES: usize = 256 * 1024 * 1024;
 pub struct Document {
     pub json: Value,
     pub buffers: Vec<Arc<[u8]>>,
+    mesh: bool,
 }
 #[derive(Debug, Clone)]
 pub enum Image {
@@ -32,7 +33,17 @@ pub struct Material {
 
 impl Document {
     pub fn parse(data: &[u8], mut load: impl FnMut(&str) -> Result<Vec<u8>, AssetError>) -> Result<Self, AssetError> {
-        if data.len() > MAX_BYTES {
+        Self::parse_inner(data, &mut load, false)
+    }
+
+    /// Mesh imports follow LLGLTFLoader's file acceptance; material-only
+    /// imports keep their existing bounded resource policy.
+    pub fn parse_mesh(data: &[u8], mut load: impl FnMut(&str) -> Result<Vec<u8>, AssetError>) -> Result<Self, AssetError> {
+        Self::parse_inner(data, &mut load, true)
+    }
+
+    fn parse_inner(data: &[u8], load: &mut impl FnMut(&str) -> Result<Vec<u8>, AssetError>, mesh: bool) -> Result<Self, AssetError> {
+        if !mesh && data.len() > MAX_BYTES {
             return Err(AssetError::TooLarge("glTF"));
         }
         let mut binary = None;
@@ -73,17 +84,19 @@ impl Document {
             return Err(AssetError::Unsupported("glTF version".into()));
         }
         let mut buffers = Vec::new();
+        // A GLB's embedded buffer is already included in the file length.
         let mut total = data.len();
         let mut resources = HashMap::<String, Arc<[u8]>>::new();
         for (index, buffer) in json["buffers"].as_array().into_iter().flatten().enumerate() {
-            if buffers.len() >= 4096 {
+            let embedded = index == 0 && buffer.get("uri").is_none() && binary.is_some();
+            if !mesh && buffers.len() >= 4096 {
                 return Err(AssetError::TooLarge("glTF buffers"));
             }
             let bytes = if let Some(uri) = buffer["uri"].as_str() {
                 if let Some(cached) = resources.get(uri) {
                     cached.clone()
                 } else {
-                    let bytes: Arc<[u8]> = resource(uri, &mut load)?.into();
+                    let bytes: Arc<[u8]> = resource(uri, load, mesh)?.into();
                     resources.insert(uri.into(), bytes.clone());
                     bytes
                 }
@@ -97,12 +110,12 @@ impl Document {
                 return Err(AssetError::invalid("buffer length mismatch"));
             }
             total = total
-                .checked_add(bytes.len())
-                .filter(|n| *n <= MAX_BYTES)
+                .checked_add(if embedded { 0 } else { bytes.len() })
+                .filter(|n| mesh || *n <= MAX_BYTES)
                 .ok_or(AssetError::TooLarge("glTF resources"))?;
             buffers.push(bytes);
         }
-        Ok(Self { json, buffers })
+        Ok(Self { json, buffers, mesh })
     }
 
     pub fn view(&self, index: usize) -> Result<&[u8], AssetError> {
@@ -130,7 +143,7 @@ impl Document {
             if let Ok(id) = Uuid::parse_str(uri) {
                 return Ok(Image::Existing(id));
             }
-            return Ok(Image::Bytes(resource(uri, &mut load)?));
+            return Ok(Image::Bytes(resource(uri, &mut load, self.mesh)?));
         }
         let index = image["bufferView"]
             .as_u64()
@@ -142,7 +155,7 @@ impl Document {
         let materials = self.json["materials"]
             .as_array()
             .ok_or_else(|| AssetError::invalid("glTF has no materials"))?;
-        if materials.len() > 4096 {
+        if !self.mesh && materials.len() > 4096 {
             return Err(AssetError::TooLarge("material count"));
         }
         materials
@@ -203,10 +216,10 @@ impl Document {
     }
 }
 
-fn resource(uri: &str, load: &mut impl FnMut(&str) -> Result<Vec<u8>, AssetError>) -> Result<Vec<u8>, AssetError> {
+fn resource(uri: &str, load: &mut impl FnMut(&str) -> Result<Vec<u8>, AssetError>, mesh: bool) -> Result<Vec<u8>, AssetError> {
     if let Some(data) = uri.strip_prefix("data:") {
         let (header, data) = data.split_once(',').ok_or_else(|| AssetError::invalid("data URI"))?;
-        if !header.ends_with(";base64") || data.len() > MAX_BYTES {
+        if !header.ends_with(";base64") || (!mesh && data.len() > MAX_BYTES) {
             return Err(AssetError::Unsupported("data URI encoding".into()));
         }
         return base64::engine::general_purpose::STANDARD
@@ -217,7 +230,7 @@ fn resource(uri: &str, load: &mut impl FnMut(&str) -> Result<Vec<u8>, AssetError
         return Err(AssetError::Unsupported("remote glTF resource".into()));
     }
     let bytes = load(uri)?;
-    if bytes.len() > MAX_BYTES {
+    if !mesh && bytes.len() > MAX_BYTES {
         return Err(AssetError::TooLarge("glTF resource"));
     }
     Ok(bytes)
