@@ -1429,6 +1429,18 @@ No real L$ and no connection to a grid.
   stops the click without touching; `ignore-build` selects this screen in
   build mode.
 - `open` shows three simulated content items.
+- `open-copy`, `open-replace`, `open-add` (#1103): after `open`, the
+  window's "Copy to inventory" at frame 420 (`replace` / `add`: the "Copy
+  and wear" menu's "Replace outfit with contents" / "Add contents to
+  outfit"). The cube is ours and its "Spare cube" is no copy, so the move
+  warning opens and waits; add `-yes` to confirm it at frame 480. The
+  inventory opens at frame 540 on a new folder named after the cube (under
+  Clothing for `replace` / `add`) holding the three items, and the cube's
+  contents lose the spare cube. The log has one `demo contents copy: 3
+  item(s), 1 moved` line; for `replace` / `add`, then `contents copy: all
+  items arrived, wearing the folder`. Wearing needs a Current Outfit folder:
+  add `AURORA_DEMO_APPEARANCE=worn` (the cube is then linked in the outfit;
+  the demo does not attach it).
 - `play` starts a local HTML page; `pause` and `open-media-playing`
   inject a simulated playback state before the click; `open-media` simulates
   the opening of the external browser.

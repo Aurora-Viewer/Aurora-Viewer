@@ -7838,6 +7838,24 @@ task-transfer-warn-move = Confirm moving no-copy items
 task-transfer-warn-scripted = Warn when removal may disrupt scripts
 task-transfer-move-menu = Move to inventory
 task-transfer-confirm = Move
+contents-copy-button = Copy to inventory
+contents-copy-tip = Copy every item into a new folder named after the object.
+contents-copy-wear = Copy and wear
+contents-copy-replace = Replace outfit with contents
+contents-copy-add = Add contents to outfit
+contents-copy-nothing = There are no items in this object that you are allowed to copy.
+contents-copy-item-refused = { $name }: { $reason }
+contents-copy-move-warning = { $count ->
+    [one] This 'no copy' item will be moved to your inventory, not copied:
+   *[other] These { $count } 'no copy' items will be moved to your inventory, not copied:
+    }
+contents-copy-move-more = { $count ->
+    [one] …and { $count } more item
+   *[other] …and { $count } more items
+    }
+contents-copy-requested = Copy of the contents to "{ $folder }" requested.
+contents-copy-failed = The folder for the object's contents could not be created: { $reason }
+contents-copy-wear-timeout = Not every item of "{ $folder }" reached your inventory: your outfit was not changed. Wear the folder from your inventory.
 build-compact-land = Land
 build-compact-capacity = Remaining capacity: { $remaining }. Click to view detailed weights.
 build-compact-empty = Select an object

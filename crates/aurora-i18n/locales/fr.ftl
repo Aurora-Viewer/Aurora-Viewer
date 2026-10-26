@@ -7831,6 +7831,24 @@ task-transfer-warn-move = Confirmer le déplacement des éléments non copiables
 task-transfer-warn-scripted = Avertir si le retrait peut perturber les scripts
 task-transfer-move-menu = Déplacer vers l’inventaire
 task-transfer-confirm = Déplacer
+contents-copy-button = Copier dans l’inventaire
+contents-copy-tip = Copier chaque élément dans un nouveau dossier au nom de l’objet.
+contents-copy-wear = Copier et porter
+contents-copy-replace = Remplacer la tenue par le contenu
+contents-copy-add = Ajouter le contenu à la tenue
+contents-copy-nothing = Cet objet ne contient aucun élément que vous êtes autorisé à copier.
+contents-copy-item-refused = { $name } : { $reason }
+contents-copy-move-warning = { $count ->
+    [one] Cet élément non copiable sera déplacé dans votre inventaire, pas copié :
+   *[other] Ces { $count } éléments non copiables seront déplacés dans votre inventaire, pas copiés :
+    }
+contents-copy-move-more = { $count ->
+    [one] …et { $count } autre élément
+   *[other] …et { $count } autres éléments
+    }
+contents-copy-requested = Copie du contenu dans « { $folder } » demandée.
+contents-copy-failed = Le dossier du contenu de l’objet n’a pas pu être créé : { $reason }
+contents-copy-wear-timeout = Tous les éléments de « { $folder } » ne sont pas arrivés dans votre inventaire : votre tenue n’a pas changé. Portez le dossier depuis votre inventaire.
 build-compact-land = Terrain
 build-compact-capacity = Capacité restante : { $remaining }. Cliquer pour voir les poids détaillés.
 build-compact-empty = Sélectionner un objet
