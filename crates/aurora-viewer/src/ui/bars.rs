@@ -26,6 +26,9 @@ pub enum BarAction {
     Poser,
     CheckUpdates,
     ReportBug,
+    /// The bug button's right click: the viewer's version to the clipboard,
+    /// silently, for a report or a chat.
+    CopyVersion,
     /// Help › Report Abuse (LLFloaterReporter::showFromMenu).
     ReportAbuse,
     /// Help › Server release notes (LLFloaterAbout's release notes link).
@@ -1477,8 +1480,13 @@ pub fn top_bars(
                     }
                 }
                 // online status (away, do not disturb, automatic responses)
-                if st.show_bug_report && icon_button(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON) {
-                    action = BarAction::ReportBug;
+                if st.show_bug_report {
+                    let resp = icon_button_response(ui, p, icons, "bug-filled", aurora_i18n::tr!("bug-title"), TOP_ICON);
+                    if resp.clicked() {
+                        action = BarAction::ReportBug;
+                    } else if resp.secondary_clicked() {
+                        action = BarAction::CopyVersion;
+                    }
                 }
                 status_dot(ui, p, st.status, &mut action);
                 // back / forward through the teleport history, home (Firestorm navigation bar)
