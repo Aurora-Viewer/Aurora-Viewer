@@ -106,8 +106,9 @@ pub fn demo_place(ctx: &egui::Context, frame: u64) {
     let Some(mode) = demo_mode() else { return };
     if frame == 2 {
         let size = match mode {
-            "aurora-medium" | "aurora-sidebar-medium" => egui::vec2(800.0, 640.0),
+            "aurora-medium" | "aurora-sidebar-medium" | "aurora-worn-medium" => egui::vec2(800.0, 640.0),
             "aurora-wide"
+            | "aurora-worn-wide"
             | "aurora-sidebar-wide"
             | "aurora-keyboard-wide"
             | "aurora-rights"
