@@ -376,6 +376,78 @@ pub fn state_events(time: f64, shown: &mut Option<bool>) -> Vec<NetEvent> {
         .collect()
 }
 
+/// AURORA_DEMO_CHAT_BUBBLES=1|typing (with AURORA_DEMO_TAGS): the chat
+/// bubbles on for the run, the typing ones too with `typing`.
+pub fn chat_bubbles() -> Option<bool> {
+    static MODE: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *MODE.get_or_init(|| {
+        let v = std::env::var("AURORA_DEMO_CHAT_BUBBLES").ok()?;
+        Some(v.trim() == "typing")
+    })
+}
+
+/// Seconds between two rounds of the scenario's chat, which starts
+/// `CHAT_START` seconds in: every line has gone (24 s) before the next.
+const CHAT_ROUND: f64 = 30.0;
+const CHAT_START: f64 = 2.0;
+
+/// AURORA_DEMO_CHAT_BUBBLES: what the residents say, every `CHAT_ROUND`
+/// seconds: a line, a whisper, a shout, an emote, a long line that wraps,
+/// ours, a far resident's, and the blocked one's (no bubble). Nova speaks
+/// again later, her first lines greyed by then. Sends what is due since
+/// `last`.
+pub fn chat_events(time: f64, last: &mut f64) -> Vec<NetEvent> {
+    use aurora_net::{ChatMessage, ChatSourceType, ChatType};
+    if chat_bubbles().is_none() || mode().is_none() {
+        return Vec::new();
+    }
+    use aurora_i18n::tr;
+    let script: [(f64, Uuid, ChatType, &str); 9] = [
+        (0.0, NOVA, ChatType::Normal, tr!("demo-bubbles-local-1")),
+        (0.6, ORION, ChatType::Whisper, tr!("demo-chat-bubbles-whisper")),
+        (1.2, TESS, ChatType::Shout, tr!("demo-chat-lines-shout")),
+        (1.8, LUNE, ChatType::Normal, tr!("demo-chat-lines-emote")),
+        (2.4, super::DEMO_AGENT, ChatType::Normal, tr!("demo-bubbles-free")),
+        (3.0, SOL, ChatType::Normal, tr!("demo-chat-lines-long")),
+        (3.6, BRUME, ChatType::Normal, tr!("demo-bubbles-local-3")),
+        (4.2, NOVA, ChatType::Normal, tr!("demo-bubbles-local-2")),
+        (12.0, NOVA, ChatType::Normal, tr!("demo-bubbles-local-3")),
+    ];
+    let mut events = Vec::new();
+    let first = ((*last - CHAT_START) / CHAT_ROUND).floor().max(0.0) as u64;
+    let rounds = ((time - CHAT_START) / CHAT_ROUND).floor();
+    if rounds >= 0.0 {
+        for round in first..=rounds as u64 {
+            for (offset, who, chat_type, text) in &script {
+                let at = CHAT_START + round as f64 * CHAT_ROUND + offset;
+                if at <= *last || at > time {
+                    continue;
+                }
+                let name = if *who == super::DEMO_AGENT {
+                    "Aurora Demo".to_owned()
+                } else {
+                    residents()
+                        .iter()
+                        .find(|r| r.id == *who)
+                        .map(|r| format!("{} {}", r.first, aurora_i18n::tr!("demo-example")))
+                        .unwrap_or_default()
+                };
+                events.push(NetEvent::Chat(ChatMessage {
+                    from_name: name,
+                    source_id: *who,
+                    owner_id: *who,
+                    source_type: ChatSourceType::Agent,
+                    chat_type: *chat_type,
+                    position: Vec3::ZERO,
+                    message: (*text).to_owned(),
+                }));
+            }
+        }
+    }
+    *last = time;
+    events
+}
+
 /// Who is in the voice channel at `time`, and how loud: (raw level,
 /// speaking), as `demo::voice_levels`.
 pub fn voice(levels: &mut HashMap<Uuid, (f32, bool)>, time: f64) {

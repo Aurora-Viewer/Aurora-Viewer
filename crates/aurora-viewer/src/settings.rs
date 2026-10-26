@@ -628,6 +628,17 @@ pub struct Settings {
     /// A "> " before "… is typing" in the tab of a conversation with one
     /// resident (FSTypingChevronPrefix, off).
     pub typing_chevron: bool,
+    /// Nearby chat in bubbles above the residents' heads, under their name
+    /// (UseChatBubbles, off; Preferences > Chat; #673).
+    pub chat_bubbles: bool,
+    /// With the bubbles, the residents' lines leave the chat above the chat
+    /// bar; the nearby chat keeps them (FSBubblesHideConsoleAndToasts, on).
+    pub chat_bubbles_hide_console: bool,
+    /// Three dots in the bubble of a resident who types
+    /// (UseTypingBubbles, off).
+    pub typing_bubbles: bool,
+    /// Opacity of the bubbles' background (ChatBubbleOpacity, 0.5).
+    pub chat_bubble_opacity: f32,
     /// The entry of a conversation that receives a message while another
     /// is shown flashes in violet, then stays tinted until read
     /// (FSFloaterIMContainer::startFlashingTab, FlashCount / FlashPeriod;
@@ -1516,6 +1527,10 @@ impl Default for Settings {
             type_during_emote: false,
             typing_in_name_tags: true,
             typing_chevron: false,
+            chat_bubbles: false,
+            chat_bubbles_hide_console: true,
+            typing_bubbles: false,
+            chat_bubble_opacity: 0.5,
             flash_unread_conversations: true,
             flash_conversations_button: true,
             flash_conversations_nearby: true,
@@ -2202,6 +2217,11 @@ impl Settings {
             TONEMAP_MIX
         };
         self.chat_toast_seconds = self.chat_toast_seconds.clamp(0.0, 60.0);
+        self.chat_bubble_opacity = if self.chat_bubble_opacity.is_finite() {
+            self.chat_bubble_opacity.clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
         self.im_toast_seconds = self.im_toast_seconds.clamp(3.0, 60.0);
         self.name_tag_distance = self.name_tag_distance.clamp(0.0, 128.0);
         self.name_tag_show_seconds = if self.name_tag_show_seconds.is_finite() {

@@ -3206,11 +3206,18 @@ fn bubble_sender(
     }
 }
 
+/// A resident's line, ours included: with the bubbles above the heads it
+/// may leave the lines above the chat bar, never the nearby chat
+/// (CHAT_SOURCE_AGENT in LLFloaterIMNearbyChatHandler::processChat).
+fn said_by_resident(line: &crate::world::ChatLine) -> bool {
+    matches!(line.kind, ChatKind::Local(_) | ChatKind::Own)
+}
+
 /// Recent chat lines floating above the chat bar (fade out after 20 s);
 /// names of linked avatars and pictures of the senders are asked through
 /// `want_names` / `wanted_pics`. `cards`: Aurora's cards grouped by sender
 /// (`console.rs`), else the Legacy Viewer's one-line look (pills over the
-/// islands when `pills`).
+/// islands when `pills`). Without `residents`, only the other lines.
 #[allow(clippy::too_many_arguments)]
 pub fn toasts(
     ctx: &egui::Context,
@@ -3225,6 +3232,7 @@ pub fn toasts(
     pills: bool,
     cards: bool,
     compact_automated: bool,
+    residents: bool,
 ) {
     if cards {
         console::cards(
@@ -3238,6 +3246,7 @@ pub fn toasts(
             seconds,
             times,
             compact_automated,
+            residents,
         );
         return;
     }
@@ -3246,6 +3255,7 @@ pub fn toasts(
         .chat
         .iter()
         .rev()
+        .filter(|l| residents || !said_by_resident(l))
         .take(6)
         .filter(|l| now.duration_since(l.time).map(|d| d.as_secs_f32() < seconds).unwrap_or(false))
         .collect();
@@ -4280,6 +4290,7 @@ mod tests {
                         true,
                         false,
                         false,
+                        true,
                     )
                 },
             );

@@ -1024,6 +1024,14 @@ continuous visible interval ends with a one-second fade; leaving the view
 prunes the clock so returning starts again. Filtering precedes both painting
 and hit rectangles; object floating text keeps its independent lifetime.
 
+The chat bubbles above the heads (#673, off by default): `world/bubble_chat.rs`
+keeps what each resident said lately (from `World::on_chat`, whatever the
+setting) and ages it; `ui/chat_bubbles.rs` lays a resident's lines out and
+paints them under its tag, classic or plate. `ui/hud.rs` lets a resident with
+a bubble past the name tags' own visibility rules and raises its tag by the
+bubble's height; under plates the bubble is painted from `Plates::paint`'s
+callback, right after its plate, so nearer plates still cover it.
+
 Preferences › Aurora › Animations selects the playback clock for both avatars
 and animesh. Legacy is the persisted default, including older settings files:
 activate at asset loading and suspend playback during editing, following

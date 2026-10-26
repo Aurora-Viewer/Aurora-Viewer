@@ -5,6 +5,7 @@ pub mod appearance;
 pub mod attention;
 pub mod blocking;
 pub mod body;
+pub mod bubble_chat;
 pub mod calling_cards;
 
 pub mod beacons;
@@ -245,6 +246,8 @@ pub struct World {
     /// before its object, and the scene merges them when it builds the faces.
     pub gltf_overrides: HashMap<ObjKey, Arc<[(u8, aurora_assets::material::PbrOverride)]>>,
     pub chat: VecDeque<ChatLine>,
+    /// What each avatar said lately, for the bubbles above its head.
+    pub bubble_chat: bubble_chat::BubbleChat,
     /// Follows `chat` for the view.
     pub chat_clock: transcripts::LineClock,
     pub chat_unread: usize,
@@ -582,6 +585,7 @@ impl World {
             motion_tick: Instant::now(),
             gltf_overrides: HashMap::new(),
             chat: VecDeque::new(),
+            bubble_chat: Default::default(),
             chat_clock: Default::default(),
             chat_unread: 0,
             nearby_news: false,
@@ -3338,6 +3342,29 @@ impl World {
         // a resident's line, not ours nor an object's: the Conversations
         // button may flash (the blocked never got this far)
         self.nearby_news |= matches!(kind, ChatKind::Local(_));
+        // the bubble above the speaker's head: residents only, ourselves
+        // included, never while we are in do not disturb
+        // (process_chat_from_simulator, LLVOAvatar::addChat)
+        if matches!(kind, ChatKind::Local(_) | ChatKind::Own) && !self.status.dnd {
+            use bubble_chat::Voice;
+            let voice = match c.chat_type {
+                ChatType::Whisper => Some(Voice::Whisper),
+                ChatType::Normal => Some(Voice::Normal),
+                ChatType::Shout => Some(Voice::Shout),
+                _ => None,
+            };
+            if let Some(voice) = voice {
+                self.bubble_chat.add(
+                    c.source_id,
+                    bubble_chat::Utterance {
+                        text: c.message.clone(),
+                        from: from.clone(),
+                        voice,
+                        said: Instant::now(),
+                    },
+                );
+            }
+        }
         self.push_chat(ChatLine {
             time: SystemTime::now(),
             from,

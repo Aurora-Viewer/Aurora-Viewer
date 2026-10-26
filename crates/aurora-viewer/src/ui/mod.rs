@@ -18,6 +18,7 @@ pub mod buy_currency;
 pub mod buy_land;
 pub mod call_invite;
 pub mod chat;
+pub mod chat_bubbles;
 pub mod click_away_focus;
 pub mod close_key;
 pub mod color_picker;
