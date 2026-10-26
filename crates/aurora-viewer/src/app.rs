@@ -8243,6 +8243,9 @@ impl App {
             let view = crate::scene::lights::LightView {
                 eye: self.camera.position,
                 forward: self.camera.forward(),
+                // the frame's own view, even when the culling is frozen
+                frustum: CullView::new(vp, self.camera.position, lod_height as f32, self.camera.fov_y),
+                range: self.settings.draw_distance,
                 dt,
                 projector_shadows: self.settings.projector_shadows && self.settings.shadow_quality > 0,
             };

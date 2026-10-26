@@ -3136,10 +3136,15 @@ both open states and the selection count. Capture at frame 620.
   head height, spaced 1.6 m apart on the crowd's plaza and beyond,
   with a 3 m radius (4.5 m once extended like Firestorm's deferred
   lights): the "face lights" of a crowd and the lamps of a club. The
-  renderer takes the 64 nearest (`lights=` in `perf summary`). With
+  renderer takes 64 (`lights=` in `perf summary`): those that reach the
+  view first, nearest first, then the nearest of the others. With
   `AURORA_DEMO_POS="129,134"` they are in front of the camera, 9 m away and
   more; with `"140,134"`, the camera is in the middle of them. Used to measure
-  `AURORA_LIGHT_TILES`.
+  `AURORA_LIGHT_TILES`. With 150 and `"147,144"` (at night,
+  `AURORA_DEMO_TOD=4`), the camera stands in the grid and about 100 of them
+  reach the view: the list holds 64 of those (#1032: the 64 nearest all
+  around the camera held only 50, and the pools of light halfway across
+  the ground went out).
 - **Probe selection (#446):** combine `AURORA_DEMO_PROBES=1` with
   `AURORA_DEMO_BUILD=move,0,0` and capture after frame 650. With no object
   selected, every inspector section must show "Select reflection probes"
