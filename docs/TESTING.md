@@ -6243,6 +6243,12 @@ offline; the files and snapshots uploaded in demo stay offline.
   column holds the folder itself and its subfolders only (no shortcuts, no
   Trash); the explorer and the breadcrumb stop at the folder; a search stays
   inside it.
+- `aurora-worn`, `aurora-worn-medium`, `aurora-worn-wide`: Aurora's three
+  widths on the clothing folder with no selection. Worn clothing names stay
+  bold beside the regular spare shirt, without needing a click. Compare an
+  embedded font with `AURORA_UI_FONT=system:C:\Windows\Fonts\segoeui.ttf`
+  (a static font uses the shared bold fallback). Capture at frame
+  700; removing clothing must restore its regular weight on the next frame.
 - `permissions`: expanded inventory with the approved additive next-owner
   indicators enabled. Combine with `AURORA_DEMO_BUILD=contents-ready,object:118`
   and `AURORA_DEMO_BUILD_TAB=contents+next-owner` to inspect both windows.
