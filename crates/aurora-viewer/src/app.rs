@@ -80,6 +80,7 @@ mod object_menu;
 mod object_menu_demo;
 mod own_motion;
 mod pay;
+mod photo_isolate;
 mod physics_editor;
 mod plate_click;
 mod pointing;
@@ -7166,6 +7167,7 @@ impl App {
         // part of it this frame draws, the height its details are chosen for
         self.photo_update(&gfx.renderer);
         self.viewfinder_frame(&mut gfx.renderer);
+        self.photo_isolate_frame(&mut gfx.renderer);
         let photo = self.photo_frame(&mut gfx.renderer);
         let window_aspect = w as f32 / h.max(1) as f32;
         let aspect = photo.as_ref().map_or(window_aspect, |f| f.aspect);
@@ -8363,6 +8365,8 @@ impl App {
                 let fov = 2.0 * (1.0 / lens_proj.y_axis.y.max(1e-6)).atan();
                 self.dof_frame(&mut gfx.renderer, dt, fov, lod_height, h)
             },
+            // the photo's isolation, "show only" on an empty background
+            cutout: self.world.photo_isolation.empty_background(),
         };
         self.scene.parts.lap(Part::ParamsProbes, t_part);
 

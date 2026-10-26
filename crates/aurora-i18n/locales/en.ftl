@@ -5743,6 +5743,25 @@ photo-vf-menu-tip = Quick menu ({ $key })
 photo-vf-menu-hint = Click: next value · { $key } or Escape: close
 photo-vf-drawer = All settings
 photo-vf-drawer-tip = All the photo settings
+photo-isolate = Isolate
+photo-isolate-tip = Isolate: show or hide avatars and objects in the photo
+photo-isolate-off = All
+photo-isolate-off-tip = Everything is drawn, the selection is kept
+photo-isolate-hide = Hide
+photo-isolate-hide-tip = The selected avatars and objects are hidden
+photo-isolate-only = Only
+photo-isolate-only-tip = Only the selected avatars and objects are drawn
+photo-isolate-add-tip = Add: paint over an avatar or an object
+photo-isolate-remove-tip = Remove: paint over a selected avatar or object
+photo-isolate-count = { $n ->
+    [one] { $n } selected
+   *[other] { $n } selected
+    }
+photo-isolate-clear = Clear the selection
+photo-isolate-transparent = Transparent background
+photo-isolate-brush-hint = Paint over the scene · the same button puts the brush down
+photo-isolate-png-hint = Saved as a PNG with nothing behind the selection
+photo-isolate-hint = Take + or − and paint over what to select
 photo-vf-disp-tip = Display: Full, Essential, Hidden (I)
 photo-vf-show-ui = Show the interface (I)
 photo-vf-hidden-how = Interface hidden · I or the button at the bottom right shows it again

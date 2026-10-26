@@ -3,8 +3,8 @@
 //! viewfinder. Its three display levels (DISP), the AF point that hunts,
 //! turns green and beeps, the distance scale with the zone kept sharp, the
 //! exposure bar, the histogram, the level, the dock for the mouse, the
-//! quick menu, the help and a drawer with every setting of the photo
-//! panel. The logic is `snapshot::viewfinder`, the frames and the keys
+//! quick menu, the help, a drawer with every setting of the photo panel
+//! and the isolation panel (`isolate`). The logic is `snapshot::viewfinder`, the frames and the keys
 //! `app::viewfinder`; TASKS.md (photo window, part 6) tells what it does.
 
 use super::snapshot::{self as panel, Action, Destination, SnapshotUi, View};
@@ -16,7 +16,9 @@ use crate::theme::Palette;
 use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 mod controls;
+mod isolate;
 pub use controls::{CamMode, Pad, roll_text};
+pub use isolate::Isolate;
 #[cfg(test)]
 mod message_tests;
 
@@ -38,6 +40,8 @@ pub struct Viewfinder {
     pub help: bool,
     /// Every setting of the photo panel, in a drawer on the right.
     pub drawer: bool,
+    /// The isolation panel (what the photo shows), on the right.
+    pub isolate: bool,
     pub dial: Dial,
     /// The shutter half-pressed (Enter or the button held).
     pub pressed: bool,
@@ -119,6 +123,8 @@ pub struct Frame<'a> {
     pub free_camera: bool,
     /// The keys: menu, AF mode, first person.
     pub keys: Keys<'a>,
+    /// What the photo shows (`snapshot::isolate`).
+    pub isolation: &'a crate::snapshot::isolate::Isolation,
 }
 
 /// The keys the help and the hints name.
@@ -162,6 +168,8 @@ pub enum Out {
     Roll(f32),
     /// A lens ring passed a mark: its click.
     Detent,
+    /// The isolation panel or its brush.
+    Isolate(Isolate),
     /// Out of the photo mode.
     Exit,
 }
@@ -531,6 +539,10 @@ impl Viewfinder {
         }
         if self.drawer {
             self.drawer(ctx, p, screen, s, panel, fov, default_fov, view, &mut out);
+        }
+        if self.isolate {
+            self.isolate_brush(ctx, p, frame, f, &mut out);
+            self.isolate_panel(ctx, p, screen, f, &mut out);
         }
         // the shutter's blackout: black at once, then gone in 0.18 s
         if let Some(t) = self.flash_at {
@@ -1384,6 +1396,18 @@ impl Viewfinder {
                         self.drawer,
                     ) {
                         self.drawer = !self.drawer;
+                        if self.drawer && self.isolate {
+                            self.isolate = false;
+                            out.push(Out::Isolate(Isolate::Brush(None)));
+                        }
+                    }
+                    let isolating = self.isolate || f.isolation.mode != crate::snapshot::isolate::Mode::Off;
+                    if dock_button(ui, p, Face::Icon("user-scan"), aurora_i18n::tr!("photo-isolate-tip"), isolating) {
+                        self.isolate = !self.isolate;
+                        self.drawer &= !self.isolate;
+                        if !self.isolate {
+                            out.push(Out::Isolate(Isolate::Brush(None)));
+                        }
                     }
                     if dock_button(ui, p, Face::Text("DISP"), aurora_i18n::tr!("photo-vf-disp-tip"), false) {
                         s.viewfinder.display = s.viewfinder.display.next();

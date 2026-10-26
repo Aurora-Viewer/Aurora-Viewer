@@ -704,7 +704,7 @@ fn paint_ruler(
 }
 
 /// Choices side by side; the index clicked. `width`: share it equally.
-fn segmented(ui: &mut egui::Ui, p: &Palette, items: &[(&str, bool, &str)], width: Option<f32>) -> Option<usize> {
+pub(super) fn segmented(ui: &mut egui::Ui, p: &Palette, items: &[(&str, bool, &str)], width: Option<f32>) -> Option<usize> {
     let font = bold(ui.ctx(), 12.0);
     let pad = 2.0;
     let widths: Vec<f32> = items

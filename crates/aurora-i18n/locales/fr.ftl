@@ -5748,6 +5748,25 @@ photo-vf-menu-tip = Menu rapide ({ $key })
 photo-vf-menu-hint = Clic : valeur suivante · { $key } ou Échap : fermer
 photo-vf-drawer = Tous les réglages
 photo-vf-drawer-tip = Tous les réglages de la photo
+photo-isolate = Isoler
+photo-isolate-tip = Isoler : afficher ou masquer des avatars et des objets sur la photo
+photo-isolate-off = Tout
+photo-isolate-off-tip = Tout est affiché, la sélection est gardée
+photo-isolate-hide = Masquer
+photo-isolate-hide-tip = Les avatars et objets sélectionnés sont masqués
+photo-isolate-only = Seulement
+photo-isolate-only-tip = Seuls les avatars et objets sélectionnés sont affichés
+photo-isolate-add-tip = Ajouter : peignez sur un avatar ou un objet
+photo-isolate-remove-tip = Retirer : peignez sur un avatar ou un objet sélectionné
+photo-isolate-count = { $n ->
+    [one] { $n } sélectionné
+   *[other] { $n } sélectionnés
+    }
+photo-isolate-clear = Vider la sélection
+photo-isolate-transparent = Fond transparent
+photo-isolate-brush-hint = Peignez sur la scène · le même bouton repose le pinceau
+photo-isolate-png-hint = Enregistrée en PNG, sans rien derrière la sélection
+photo-isolate-hint = Prenez + ou − et peignez sur ce qu'il faut sélectionner
 photo-vf-disp-tip = Affichage : Complet, Essentiel, Masqué (I)
 photo-vf-show-ui = Afficher l'interface (I)
 photo-vf-hidden-how = Interface masquée · I ou le bouton en bas à droite pour la réafficher

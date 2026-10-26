@@ -10,6 +10,7 @@ pub mod arena;
 pub mod bc7;
 mod bloom;
 mod contact_shadows;
+mod cutout;
 mod dedicated;
 mod dof;
 mod drawn_pick;
@@ -999,6 +1000,11 @@ fn probe(@builtin(global_invocation_id) id:vec3<u32>) {{
     #[test]
     fn post_shader_is_valid() {
         validate(include_str!("shaders/post.wgsl"));
+    }
+
+    #[test]
+    fn cutout_shader_is_valid() {
+        validate(include_str!("shaders/cutout.wgsl"));
     }
 
     #[test]

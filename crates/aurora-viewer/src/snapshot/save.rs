@@ -1,7 +1,8 @@
 //! Writing a photo to disk on a worker, with its progress
 //! (LLViewerWindow::saveImageLocal / LLImageFormatted::save): RGBA from the
-//! renderer, RGB in the file, PNG row by row so the window can show how far
-//! it is, JPEG at its quality, BMP. The file is written beside its final
+//! renderer, RGB in the file (RGBA in the PNG of a cut-out photo,
+//! `isolate`), PNG row by row so the window can show how far it is, JPEG
+//! at its quality, BMP. The file is written beside its final
 //! name and renamed once complete: a photo is never seen half written.
 
 use super::FileFormat;
@@ -21,6 +22,8 @@ pub struct Job {
     pub format: FileFormat,
     pub jpeg_quality: u8,
     pub path: PathBuf,
+    /// A cut-out photo: the PNG keeps the alpha.
+    pub alpha: bool,
 }
 
 /// What a finished save gives back.
@@ -79,14 +82,18 @@ pub fn save(job: Job, progress: &AtomicU32) -> Result<Saved, String> {
         format,
         jpeg_quality,
         path,
+        alpha,
     } = job;
     if rgba.len() != width as usize * height as usize * 4 {
         return Err(format!("photo: {} bytes for {width} x {height}", rgba.len()));
     }
     let thumb = thumbnail(width, height, &rgba);
     set(progress, 0.05);
-    let rgb: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
-    drop(rgba);
+    let rgb: Vec<u8> = if alpha && format == FileFormat::Png {
+        rgba
+    } else {
+        rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect()
+    };
     set(progress, 0.1);
     if let Some(folder) = path.parent() {
         std::fs::create_dir_all(folder).map_err(|e| format!("{}: {e}", folder.display()))?;
@@ -123,7 +130,8 @@ fn part_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// Encode RGB8 rows; progress from 0.1 to 0.98.
+/// Encode RGB8 rows (or RGBA8 ones for a PNG, by their length); progress
+/// from 0.1 to 0.98.
 pub fn encode(
     out: &mut impl Write,
     width: u32,
@@ -135,13 +143,14 @@ pub fn encode(
 ) -> Result<(), String> {
     match format {
         FileFormat::Png => {
+            let channels = if rgb.len() == width as usize * height as usize * 4 { 4 } else { 3 };
             let mut enc = png::Encoder::new(&mut *out, width, height);
-            enc.set_color(png::ColorType::Rgb);
+            enc.set_color(if channels == 4 { png::ColorType::Rgba } else { png::ColorType::Rgb });
             enc.set_depth(png::BitDepth::Eight);
             enc.set_compression(png::Compression::Fast);
             let mut writer = enc.write_header().map_err(|e| e.to_string())?;
             let mut stream = writer.stream_writer().map_err(|e| e.to_string())?;
-            let row = width as usize * 3;
+            let row = width as usize * channels;
             // a band of rows at a time, the progress after each
             for (i, band) in rgb.chunks(row * 64).enumerate() {
                 stream.write_all(band).map_err(|e| e.to_string())?;
@@ -183,7 +192,9 @@ pub fn thumbnail(width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
 }
 
 /// A copy whose long side is at most `max_side` (box filter over whole
-/// pixels: fast, and a photo reduced several times needs no better).
+/// pixels: fast, and a photo reduced several times needs no better). The
+/// colour is weighted by the alpha: the empty pixels of a cut-out photo
+/// (black, transparent) darken none of its edges.
 pub fn downscale(width: u32, height: u32, rgba: &[u8], max_side: u32) -> (u32, u32, Vec<u8>) {
     let scale = max_side as f32 / width.max(height).max(1) as f32;
     if scale >= 1.0 {
@@ -198,20 +209,23 @@ pub fn downscale(width: u32, height: u32, rgba: &[u8], max_side: u32) -> (u32, u
         for tx in 0..tw {
             let x0 = tx * width / tw;
             let x1 = ((tx + 1) * width / tw).max(x0 + 1).min(width);
-            let mut sum = [0u32; 4];
+            let mut sum = [0u64; 4];
             for y in y0..y1 {
                 let start = ((y * width + x0) * 4) as usize;
                 for px in rgba[start..start + ((x1 - x0) * 4) as usize].as_chunks::<4>().0 {
-                    for c in 0..4 {
-                        sum[c] += u32::from(px[c]);
+                    let a = u64::from(px[3]);
+                    for c in 0..3 {
+                        sum[c] += u64::from(px[c]) * a;
                     }
+                    sum[3] += a;
                 }
             }
-            let n = ((y1 - y0) * (x1 - x0)).max(1);
+            let n = u64::from((y1 - y0) * (x1 - x0)).max(1);
             let o = ((ty * tw + tx) * 4) as usize;
-            for c in 0..4 {
-                out[o + c] = (sum[c] / n) as u8;
+            for c in 0..3 {
+                out[o + c] = sum[c].checked_div(sum[3]).unwrap_or(0) as u8;
             }
+            out[o + 3] = (sum[3] / n) as u8;
         }
     }
     (tw, th, out)

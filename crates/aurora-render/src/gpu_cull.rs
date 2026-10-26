@@ -65,6 +65,9 @@ pub mod object_flags {
     pub const POSED: u32 = 32;
     /// Attachment point marked invisible in first person by avatar_lad.xml.
     pub const FIRST_PERSON_HIDDEN: u32 = 64;
+    /// Left out of the photo by its isolation (the viewer's
+    /// `snapshot::isolate`): not drawn, casting no shadow, in no reflection.
+    pub const PHOTO_HIDDEN: u32 = 128;
 }
 
 /// `CullObject::state` of an avatar entry, set every frame by the scene.
@@ -431,7 +434,7 @@ pub fn face_bins(frame: &CullFrame, faces: &[CullFace], objects: &[CullObject], 
         return (0, false);
     }
     let o = objects[f.object as usize];
-    if o.flags & object_flags::ACTIVE == 0 || o.flags & object_flags::HUD != 0 {
+    if o.flags & object_flags::ACTIVE == 0 || o.flags & (object_flags::HUD | object_flags::PHOTO_HIDDEN) != 0 {
         return (0, false);
     }
     let is_avatar = o.flags & object_flags::AVATAR != 0;
@@ -1403,7 +1406,7 @@ mod tests {
                 .trim_end_matches('u');
             v.parse().unwrap_or_else(|_| panic!("{name}: {v}"))
         };
-        let pairs: [(&str, u32); 46] = [
+        let pairs: [(&str, u32); 47] = [
             ("F_FIRST_PERSON", frame_flags::FIRST_PERSON),
             ("F_SHOW_SELF", frame_flags::SHOW_SELF),
             ("OBJ_FIRST_PERSON_HIDDEN", object_flags::FIRST_PERSON_HIDDEN),
@@ -1445,6 +1448,7 @@ mod tests {
             ("OBJ_HUD", object_flags::HUD),
             ("OBJ_NO_PROBE", object_flags::NO_PROBE),
             ("OBJ_POSED", object_flags::POSED),
+            ("OBJ_PHOTO_HIDDEN", object_flags::PHOTO_HIDDEN),
             ("SKELETON_ANCHOR", SKELETON_ANCHOR),
             ("AV_FULL", avatar_state::FULL),
             ("AV_TOO_COMPLEX", avatar_state::TOO_COMPLEX),

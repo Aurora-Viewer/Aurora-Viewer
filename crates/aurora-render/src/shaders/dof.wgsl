@@ -22,7 +22,8 @@ struct Dof {
     lens: vec4<f32>,
     // full width, height, half width, height
     sizes: vec4<f32>,
-    // tile width, height, debug view, unused
+    // tile width, height, debug view, a cut-out photo (cutout.rs: the
+    // alpha holds what shows through)
     tiles: vec4<f32>,
     // focus peaking: colour, w 1 when on
     peak: vec4<f32>,
@@ -69,6 +70,11 @@ fn coc_at(px: vec2<i32>) -> f32 {
     let size = vec2<i32>(textureDimensions(t_depth));
     let p = clamp(px, vec2<i32>(0), size - vec2<i32>(1));
     let d = textureLoad(t_depth, p, 0);
+    if (dof.tiles.w > 0.5 && d <= 0.0) {
+        // a cut-out photo's empty pixel: sharp, so that its black never
+        // blurs into a subject behind the focus
+        return 0.0;
+    }
     let uv = (vec2<f32>(p) + 0.5) / vec2<f32>(size);
     return coc(view_depth(d, uv));
 }
@@ -270,5 +276,8 @@ fn fs_composite(in: Out) -> @location(0) vec4<f32> {
         let g = dot(sharp.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
         col = select(vec3<f32>(g * (1.0 - k), g * (1.0 - k), g * (1.0 - k) + k), vec3<f32>(g * (1.0 - k) + k, g * (1.0 - k), g * (1.0 - k)), c > 0.0);
     }
-    return vec4<f32>(col, sharp.a);
+    // a cut-out photo: a blurred foreground covers the empty pixels around
+    // it as much as it hides what would be behind them
+    let alpha = select(sharp.a, sharp.a * (1.0 - near.a), dof.tiles.w > 0.5);
+    return vec4<f32>(col, alpha);
 }

@@ -378,7 +378,10 @@ pub(super) fn visibility(scene: &super::Scene, world: &crate::world::World, cand
         let Some(owner) = g.skeleton_owner else { continue };
         let Some(mask) = visible.get_mut(&owner) else { continue };
         let Some(object) = world.objects.get(idx) else { continue };
-        if world.derender.contains(&object.full_id) || !world.parcel_object_visible(idx) {
+        if world.derender.contains(&object.full_id)
+            || !world.parcel_object_visible(idx)
+            || !crate::snapshot::isolate::object_visible(world, idx)
+        {
             continue;
         }
         let Some(GeomKey::Mesh { id, .. }) = g.geom else { continue };

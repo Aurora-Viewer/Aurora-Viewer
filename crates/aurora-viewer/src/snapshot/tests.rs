@@ -296,6 +296,7 @@ fn saved_photos_read_back_in_every_format() {
                 format,
                 jpeg_quality: 95,
                 path: path.clone(),
+                alpha: false,
             },
             &progress,
         )
@@ -332,11 +333,45 @@ fn a_wrong_buffer_is_refused_without_a_file() {
             format: FileFormat::Png,
             jpeg_quality: 75,
             path: path.clone(),
+            alpha: false,
         },
         &AtomicU32::new(0),
     );
     assert!(r.is_err());
     assert!(!path.exists());
+}
+
+#[test]
+fn a_cut_out_photo_keeps_its_alpha_in_the_png_and_its_colour_when_reduced() {
+    let dir = std::env::temp_dir().join(format!("aurora-photo-cutout-{}", std::process::id()));
+    let path = dir.join("cutout.png");
+    // left half a red subject, a half covered column, the rest empty
+    let (w, h) = (4u32, 2u32);
+    let mut rgba = Vec::new();
+    for _ in 0..h {
+        rgba.extend_from_slice(&[255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 128, 0, 0, 0, 0]);
+    }
+    save::save(
+        save::Job {
+            width: w,
+            height: h,
+            rgba: rgba.clone(),
+            format: FileFormat::Png,
+            jpeg_quality: 75,
+            path: path.clone(),
+            alpha: true,
+        },
+        &AtomicU32::new(0),
+    )
+    .unwrap();
+    let back = image::open(&path).unwrap().to_rgba8();
+    assert_eq!(back.get_pixel(2, 1).0, [255, 0, 0, 128]);
+    assert_eq!(back.get_pixel(3, 0).0, [0, 0, 0, 0]);
+    // halved: the empty pixels take nothing from the subject's colour
+    let (_, _, half) = save::downscale(w, h, &rgba, 2);
+    assert_eq!(&half[..4], &[255, 0, 0, 255]);
+    assert_eq!(&half[4..8], &[255, 0, 0, 64]);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -72,6 +72,7 @@ const OBJ_HUD: u32 = 8u;
 const OBJ_NO_PROBE: u32 = 16u;
 const OBJ_POSED: u32 = 32u;
 const OBJ_FIRST_PERSON_HIDDEN: u32 = 64u;
+const OBJ_PHOTO_HIDDEN: u32 = 128u;
 const FACE_FIRST_PERSON_HIDDEN: u32 = 16u;
 
 // a skeleton's own anchor, from the first joint of its palette (common.wgsl)
@@ -337,7 +338,7 @@ fn face_mask(i: u32) -> u32 {
         return 0u;
     }
     let o = objects[f.object];
-    if ((o.flags & OBJ_ACTIVE) == 0u || (o.flags & OBJ_HUD) != 0u) {
+    if ((o.flags & OBJ_ACTIVE) == 0u || (o.flags & (OBJ_HUD | OBJ_PHOTO_HIDDEN)) != 0u) {
         return 0u;
     }
     let is_avatar = (o.flags & OBJ_AVATAR) != 0u;

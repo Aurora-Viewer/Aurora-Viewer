@@ -25,7 +25,11 @@ struct PostParams {
     // the automatic exposure (exposure.wgsl), copied here on the GPU before
     // the glow, the bloom and this pass
     auto_exposure: f32,
-    _pad: vec2<f32>,
+    // a cut-out photo (FrameParams::cutout): the scene's alpha holds what
+    // shows through each pixel; 1: the photo, straight color and coverage,
+    // 2: the live view, over a checkerboard
+    cutout: f32,
+    _pad: f32,
 };
 @group(0) @binding(2) var<uniform> post: PostParams;
 // Blurred glow (512x512, display space), see glow.wgsl.
@@ -156,12 +160,25 @@ fn bloom_extract(c: vec3<f32>) -> vec3<f32> {
 // by bloom.rs GAIN, folded into bloom_norm): bright spots keep their
 // shape, gain a soft halo, and nothing far under the threshold moves.
 fn scene(uv: vec2<f32>) -> vec3<f32> {
-    let c = textureSampleLevel(hdr, hdr_sampler, uv, 0.0).rgb;
-    if (post.bloom <= 0.0) {
-        return c;
+    let px = textureSampleLevel(hdr, hdr_sampler, uv, 0.0);
+    let c = px.rgb;
+    var lit = c;
+    if (post.bloom > 0.0) {
+        let spread = textureSampleLevel(bloom_tex, hdr_sampler, uv, 0.0).rgb * post.bloom_norm;
+        lit = c + post.bloom * (spread - bloom_extract(c));
     }
-    let spread = textureSampleLevel(bloom_tex, hdr_sampler, uv, 0.0).rgb * post.bloom_norm;
-    return c + post.bloom * (spread - bloom_extract(c));
+    if (post.cutout > 0.5) {
+        // drawn over black: premultiplied by the coverage, tone mapped as
+        // the surface's own color
+        let cover = 1.0 - px.a;
+        return select(vec3<f32>(0.0), lit / max(cover, 1e-4), cover > 1.0 / 1024.0);
+    }
+    return lit;
+}
+
+// What a cut-out photo covers at `uv` (0 where nothing is drawn).
+fn cutout_cover(uv: vec2<f32>) -> f32 {
+    return clamp(1.0 - textureSampleLevel(hdr, hdr_sampler, uv, 0.0).a, 0.0, 1.0);
 }
 
 // Tone mapped color, before legacyGamma (CAS input).
@@ -307,9 +324,19 @@ fn fs_post(in: Out) -> @location(0) vec4<f32> {
         let l = dot(m, vec3<f32>(0.2126, 0.7152, 0.0722));
         m = vec3<f32>(clamp(a * 10.0, 0.0, 1.0), clamp(a * 2.0, 0.0, 1.0), l * 0.5);
     }
+    var alpha = 1.0;
+    if (post.cutout > 1.5) {
+        // the live view: what the photo leaves empty shows as a checkerboard
+        let cell = vec2<u32>(in.clip.xy / 12.0);
+        let light = ((cell.x + cell.y) & 1u) == 0u;
+        let checker = select(vec3<f32>(0.16), vec3<f32>(0.32), light);
+        m = mix(checker, m, cutout_cover(in.uv));
+    } else if (post.cutout > 0.5) {
+        alpha = cutout_cover(in.uv);
+    }
     if (post.output_srgb < 0.5) {
         // target is not an sRGB format: encode manually
         m = linear_to_srgb(m);
     }
-    return vec4<f32>(m, 1.0);
+    return vec4<f32>(m, alpha);
 }

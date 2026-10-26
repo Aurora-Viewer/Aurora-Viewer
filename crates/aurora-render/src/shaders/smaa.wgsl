@@ -389,7 +389,10 @@ fn fs_smaa_blend(in: Out) -> @location(0) vec4<f32> {
         here.z,
         here.x,
     );
+    // the alpha follows the color: 1 on the live view, the coverage of a
+    // cut-out photo (post.wgsl, PostParams::cutout)
     var col: vec3<f32>;
+    var alpha = textureSampleLevel(color_tex, lin, tc, 0.0).a;
     if (dot(a, vec4<f32>(1.0)) < 1e-5) {
         col = lin_color(tc);
     } else {
@@ -403,9 +406,11 @@ fn fs_smaa_blend(in: Out) -> @location(0) vec4<f32> {
         weight /= dot(weight, vec2<f32>(1.0));
         let coord = offset * vec4<f32>(rt.xy, -rt.xy) + tc.xyxy;
         col = weight.x * lin_color(coord.xy) + weight.y * lin_color(coord.zw);
+        alpha = weight.x * textureSampleLevel(color_tex, lin, coord.xy, 0.0).a
+            + weight.y * textureSampleLevel(color_tex, lin, coord.zw, 0.0).a;
     }
     if (smaa.output_srgb > 0.5) {
-        return vec4<f32>(col, 1.0);
+        return vec4<f32>(col, alpha);
     }
-    return vec4<f32>(linear_to_srgb(col), 1.0);
+    return vec4<f32>(linear_to_srgb(col), alpha);
 }

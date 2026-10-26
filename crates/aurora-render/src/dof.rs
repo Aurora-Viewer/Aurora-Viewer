@@ -227,6 +227,7 @@ impl Dof {
         params: &DepthOfField,
         hdr: wgpu::TextureFormat,
         post: &PostInputs,
+        cutout: bool,
     ) -> &wgpu::BindGroup {
         let (hw, hh) = (size.0.div_ceil(2), size.1.div_ceil(2));
         let u = DofU {
@@ -242,7 +243,7 @@ impl Dof {
                 hw.div_ceil(TILE) as f32,
                 hh.div_ceil(TILE) as f32,
                 if params.debug { 1.0 } else { 0.0 },
-                0.0,
+                if cutout { 1.0 } else { 0.0 },
             ],
             peak: match params.peaking {
                 Some([r, g, b]) => [r, g, b, 1.0],
