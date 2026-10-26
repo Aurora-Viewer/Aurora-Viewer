@@ -4,7 +4,8 @@
 //! picture card. An Aurora feature, like the rest of the previews.
 //!
 //! Each page leads to its picture by the cleanest way its service offers:
-//! * Gyazo and Flickr: their oEmbed endpoints (documented, no key);
+//! * Gyazo and Flickr: their oEmbed endpoints (documented, no key); a Gyazo
+//!   video capture leads to its file instead, played in a video card (#983);
 //! * Imgur and Lightshot: the page's `og:image`, read from the first part of
 //!   the page only (Imgur's API needs a registered key, Lightshot has none);
 //! * Reddit: the post's Atom feed, its first entry's `media:thumbnail`
@@ -326,7 +327,8 @@ pub(super) fn recognize(url: &str) -> Option<(Service, Step)> {
 /// The servers each service keeps its pictures on.
 fn picture_hosts(service: Service) -> &'static [&'static str] {
     match service {
-        Service::Gyazo => &["i.gyazo.com"],
+        // pictures and the thumbnails of video captures
+        Service::Gyazo => &["i.gyazo.com", "thumb.gyazo.com"],
         Service::Flickr => &["staticflickr.com"],
         Service::Imgur => &["i.imgur.com"],
         // Lightshot's former screenshots are kept on Imgur
@@ -388,6 +390,53 @@ pub(super) fn from_oembed(service: Service, body: &[u8]) -> Option<String> {
     let v: serde_json::Value = serde_json::from_slice(body).ok()?;
     let url = (v["type"].as_str() == Some("photo")).then(|| v["url"].as_str())??.to_owned();
     picture_host_ok(service, &url).then_some(url)
+}
+
+/// The clip of a Gyazo video capture, from its page's oEmbed answer.
+pub(super) struct FoundClip {
+    pub clip: super::Clip,
+    /// Its thumbnail's addresses, the larger first.
+    pub posters: Vec<String>,
+    /// Its size in pixels, when the answer gives it.
+    pub size: Option<(f64, f64)>,
+}
+
+/// A Gyazo video capture (#983): its oEmbed answer has the type `video` and
+/// an embed of Gyazo's own player, not the file, which Gyazo serves as
+/// `i.gyazo.com/<id>.mp4` (the id of the page the link names). Its
+/// `thumbnail_url` is a small copy (`thumb/116_w/…`) whose width is part of
+/// the address: a 640 wide copy is asked for first.
+pub(super) fn clip_from_oembed(service: Service, page: &str, body: &[u8]) -> Option<FoundClip> {
+    if service != Service::Gyazo {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    if v["type"].as_str() != Some("video") {
+        return None;
+    }
+    let parsed = Url::parse(page).ok()?;
+    let id = segments(&parsed).first().copied().filter(|id| gyazo_id(id))?.to_lowercase();
+    let clip = super::Clip::of(&format!("https://i.gyazo.com/{id}.mp4"))?;
+    let posters = match v["thumbnail_url"].as_str().filter(|t| picture_host_ok(service, t)) {
+        Some(small) => {
+            let large = small
+                .split('/')
+                .map(|seg| match seg.strip_suffix("_w") {
+                    Some(n) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => "640_w",
+                    _ => seg,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            if large == small {
+                vec![large]
+            } else {
+                vec![large, small.to_owned()]
+            }
+        }
+        None => Vec::new(),
+    };
+    let size = v["width"].as_f64().zip(v["height"].as_f64());
+    Some(FoundClip { clip, posters, size })
 }
 
 /// HTML's character references the services put in an attribute.
@@ -540,6 +589,7 @@ pub fn blurred_until_clicked(url: &str) -> bool {
 // Saved answers of each service, with made-up ids: the demo's links and the
 // tests read them as the real answers are read.
 const GYAZO: &str = include_str!("fixtures/gyazo_oembed.json");
+const GYAZO_VIDEO: &str = include_str!("fixtures/gyazo_video.json");
 const FLICKR: &str = include_str!("fixtures/flickr_oembed.json");
 const IMGUR_ALBUM: &str = include_str!("fixtures/imgur_album.html");
 const LIGHTSHOT: &str = include_str!("fixtures/lightshot.html");
@@ -587,6 +637,13 @@ pub(super) fn demo_source(url: &str) -> Option<(String, bool)> {
             if url.contains("labelled") { BLUESKY_LABELLED } else { BLUESKY_POST }.as_bytes(),
         ),
     }
+}
+
+/// Demo mode: the clip of a Gyazo link to the video capture of the saved
+/// answer (`9f8e7d6c…`).
+pub(super) fn demo_clip(url: &str) -> Option<FoundClip> {
+    clip_from_oembed(recognize(url)?.0, url, GYAZO_VIDEO.as_bytes())
+        .filter(|found| found.clip.file.contains("9f8e7d6c5b4a39281706f5e4d3c2b1a0"))
 }
 
 #[cfg(test)]

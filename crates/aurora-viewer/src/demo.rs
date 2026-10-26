@@ -1216,7 +1216,7 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
             if let Some(extra) = emoji_lines {
                 lines.splice(4..4, extra);
             }
-            // AURORA_DEMO_CONV_PREVIEWS=1|states|videos: links with their
+            // AURORA_DEMO_CONV_PREVIEWS=1|states|videos|clips: links with their
             // cards (#538, #739, #848), made here without network
             // (`link_preview::demo`)
             let preview_lines = std::env::var("AURORA_DEMO_CONV_PREVIEWS").ok().map(|mode| {
@@ -1276,6 +1276,23 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                             &with(aurora_i18n::tr!("demo-previews-teaser"), "https://youtu.be/jNQXAC9IVRw"),
                         ),
                         line(ago(5), &me, Uuid::nil(), ChatKind::Own, "https://youtube.com/shorts/DemoShort01"),
+                    ]
+                } else if mode == "clips" {
+                    // video files and an animated WebP (#983): an unknown
+                    // site's .mp4 stays a link, a GIPHY WebP, then the
+                    // video cards in sight: a Gyazo video capture (its
+                    // thumbnail from the saved answer), an Imgur .gifv
+                    vec![
+                        line(ago(9), name, friend, ChatKind::Im, "https://videos.example.net/clip.mp4"),
+                        line(ago(8), name, friend, ChatKind::Im, "https://media.giphy.com/media/demo/giphy.webp"),
+                        line(
+                            ago(7),
+                            name,
+                            friend,
+                            ChatKind::Im,
+                            "https://gyazo.com/9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+                        ),
+                        line(ago(6), &me, Uuid::nil(), ChatKind::Own, "https://i.imgur.com/DemoClp.gifv"),
                     ]
                 } else if let Some(only) = mode.strip_prefix("services") {
                     // the pages of image services (#923) and the posts of

@@ -259,6 +259,7 @@ fn video_hover_actions_copy_the_original_url_and_use_the_browser_confirmation_pa
                 channel: "Demo channel".into(),
                 thumbnail: None,
                 aspect: 16.0 / 9.0,
+                clip: None,
             },
             used: 0,
         },
