@@ -75,6 +75,7 @@ mod inventory;
 mod inventory_drag;
 mod inventory_thumbnail;
 mod joystick;
+mod land_moderation;
 mod link_health;
 mod marketplace_listings;
 mod money_tracker;
@@ -442,6 +443,8 @@ pub struct App {
     context_menu_was: bool,
     /// "Delete" waiting for a yes: (object, why it asks).
     delete_confirm: Option<(uuid::Uuid, String)>,
+    /// "Freeze" / "Eject" waiting for an answer (app/land_moderation.rs).
+    moderation_ask: Option<land_moderation::Ask>,
     /// The object menus' questions and script queue (app/object_menu.rs).
     object_menu: object_menu::ObjectMenu,
     /// Teleport asked by a place link, waiting for a yes (TeleportViaSLAPP),
@@ -1121,6 +1124,7 @@ impl App {
             mic_was: false,
             context_menu_was: false,
             delete_confirm: None,
+            moderation_ask: None,
             object_menu: Default::default(),
             place_confirm: None,
             url_confirm: None,
@@ -9742,6 +9746,7 @@ impl App {
         self.demo_worn_steps();
         self.demo_derender_steps();
         self.demo_social_menu_steps();
+        self.demo_land_moderation();
         if self.demo && std::env::var("AURORA_DEMO_HUDS").is_ok_and(|m| m == "touch") {
             if self.frame_count == 720
                 && let Some(view) = self.scene.lists.hud_view
@@ -13551,6 +13556,7 @@ impl App {
                     self.flush_build();
                 }
                 self.object_menu_ui(&ctx, &p);
+                self.land_moderation_ui(&ctx, &p);
                 if let Some((id, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {

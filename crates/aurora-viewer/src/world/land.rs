@@ -31,6 +31,8 @@ pub mod powers {
     pub const LAND_ALLOW_FLY: u64 = 1 << 24;
     pub const LAND_MANAGE_ALLOWED: u64 = 1 << 29;
     pub const LAND_MANAGE_BANNED: u64 = 1 << 30;
+    /// Eject and freeze residents on the group's land.
+    pub const LAND_ADMIN: u64 = 1 << 32;
     pub const LAND_RETURN_GROUP_SET: u64 = 1 << 33;
     pub const LAND_RETURN_NON_GROUP: u64 = 1 << 34;
     pub const LAND_ALLOW_ENVIRONMENT: u64 = 1 << 46;

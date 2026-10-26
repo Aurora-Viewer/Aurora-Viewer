@@ -3735,6 +3735,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_GROUP_PROFILE=<scenario>[:members\|:invite\|:notices\|:compose\|:admin\|:identity\|:land\|:experiences]` | Group profile window, as a member, officer, owner or guest |
 | `AURORA_DEMO_GROUP_CREATE=form\|cost\|refused\|limit\|created[:classic]` | "Create a group" window and its simulated server |
 | `AURORA_DEMO_SOCIAL_MENU=<step>` | A resident's "Invite to group", "Add to contact set", "Block particles" and calling card |
+| `AURORA_DEMO_LAND_MODERATION=menu\|none\|freeze\|eject\|eject-ban` | "Freeze" and "Eject" of a resident on our land |
 | `AURORA_DEMO_PLACE=<place>` | "Places" on a place profile |
 | `AURORA_DEMO_PLACES=<tab>[:wide,open]` | "Places" on a tab, widened, its first place selected |
 | `AURORA_DEMO_LANDMARK=<mode>` | "Create landmark" window, or the lit landmark star |
@@ -5995,6 +5996,19 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   (Group Name, insignia and charter, Anyone can join, Cost to join, the
   maturity list, the fees by membership, Create group for L$ 100, the
   48-hour note), and the new group's classic profile.
+- **`AURORA_DEMO_LAND_MODERATION=menu|none|freeze|eject|eject-ban`**: the
+  violet wolf stands on our land (the ParcelOverlay cell under it becomes
+  ours), then at frame 600 `menu` opens its world menu from its name plate
+  (capture 720 with `AURORA_DEMO_PIE=0` and the pointer on Disturbance,
+  `AURORA_DEMO_POINTER="830,585,s"` in the default window): "Freeze" and
+  "Eject" follow "Report". `none` leaves the land someone else's: the two
+  entries are hidden, as in the Legacy Viewer. `freeze` asks Freeze /
+  Unfreeze / Cancel; `eject` asks Eject / Cancel and `eject-ban` adds
+  "Eject and ban" (a parcel whose ban list is ours). An answer logs the
+  FreezeUser or EjectUser command (`land moderation:`); the demo simulator
+  does nothing with it. On the grid, test as the parcel owner, an estate
+  manager and a group member with and without "Eject and freeze": the
+  resident must be frozen, unfrozen, ejected, or ejected and banned.
 - **`AURORA_DEMO_SOCIAL_MENU=menu|picker|invite|new-set|new-set-done|particles|card|card-offer`**:
   a resident's "Invite to group", "Add to contact set", "Block
   particles" and "Give my calling card", on the wolf (unblocked for the scenario, owner of the

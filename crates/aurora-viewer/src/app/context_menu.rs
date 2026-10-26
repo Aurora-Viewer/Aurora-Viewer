@@ -110,6 +110,9 @@ impl App {
             None => Target::Ground,
         };
         self.object_menu_pick(picked, point);
+        if let Target::Avatar { id, own: false, .. } = target {
+            self.moderation_menu_opened(id);
+        }
         if self.clicks.scripted() || self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             log::info!("demo menu: {target:?}");
         }
@@ -180,6 +183,7 @@ impl App {
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
                 f.voice_volume = crate::ui::context::voice_volume_of(w, *id);
                 f.worn = !super::inspect::worn_roots(w, id).is_empty();
+                f.moderation = self.moderation_rights(*id);
             }
             _ => {}
         }
@@ -280,6 +284,8 @@ impl App {
                 }
             }
             CtxAction::NewPhysics => self.new_physics(),
+            CtxAction::Freeze(id) => self.ask_moderation(id, false),
+            CtxAction::Eject(id) => self.ask_moderation(id, true),
             CtxAction::EditWorn(item) => {
                 if Some(item) == crate::shape_editor::worn_shape(&self.world) {
                     self.open_shape_editor(item);
