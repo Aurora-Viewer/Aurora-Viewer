@@ -821,6 +821,9 @@ pub struct Settings {
     /// Firestorm's ConfirmHideUI ("Confirm before hiding UI"): with
     /// Firestorm's bars, hiding the interface asks first.
     pub confirm_hide_interface: bool,
+    /// The avatars' name tags in immersive mode (#859): off by default, its
+    /// button beside the one that leaves it.
+    pub immersive_name_tags: bool,
     /// Firestorm's traffic indicator (ShowNetStats, off by default): a
     /// small curve of the network in the system island.
     pub show_net_stats: bool,
@@ -1643,6 +1646,7 @@ impl Default for Settings {
             favorites_row_folded: false,
             system_island: SystemIsland::default(),
             confirm_hide_interface: true,
+            immersive_name_tags: false,
             show_net_stats: false,
             classic_people: false,
             classic_restart_alert: false,

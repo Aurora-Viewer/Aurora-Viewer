@@ -284,6 +284,8 @@ pub struct Floater<'a> {
     pub aspect: Option<(f32, Vec2)>,
     cascade: Option<CascadeGroup>,
     partial_outside: bool,
+    /// A chat window: it stays in immersive mode (`hide_windows`).
+    chat: bool,
 }
 
 impl<'a> Floater<'a> {
@@ -314,6 +316,7 @@ impl<'a> Floater<'a> {
             aspect: None,
             cascade: None,
             partial_outside: false,
+            chat: false,
         }
     }
 
@@ -361,6 +364,12 @@ impl<'a> Floater<'a> {
 
     pub fn silent(mut self) -> Self {
         self.silent = true;
+        self
+    }
+
+    /// A chat window: immersive mode keeps it (#859).
+    pub fn chat(mut self) -> Self {
+        self.chat = true;
         self
     }
 
@@ -427,7 +436,7 @@ impl<'a> Floater<'a> {
     /// Show the floater; `open` is cleared by the close button.
     pub fn show<R>(mut self, ctx: &egui::Context, p: &Palette, open: &mut bool, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
         super::layout::set_partial_outside(ctx, egui::Id::unique(self.id), self.partial_outside);
-        if window_hidden(ctx, egui::Id::unique(self.id), *open) {
+        if window_hidden(ctx, egui::Id::unique(self.id), *open, self.chat) {
             if self.cascade.is_some() {
                 cascade::hidden(ctx, egui::Id::unique(self.id));
             }
@@ -898,7 +907,7 @@ pub(crate) fn bare_window(
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let window_id = egui::Id::unique(id);
-    if window_hidden(ctx, window_id, true) {
+    if window_hidden(ctx, window_id, true, false) {
         return;
     }
     let drag = resize::Drag::prepare(ctx, window_id, min_size);
@@ -964,12 +973,14 @@ const PLACE_POS: &str = "place_pos";
 /// The windows the hidden interface keeps out of sight (Alt+Shift+U,
 /// LLFloaterView::hideAllFloaters / showHiddenFloaters): those open on the
 /// frame it was hidden. A window opened afterwards shows; one closed in the
-/// meantime is forgotten.
+/// meantime is forgotten. Immersive mode (#859) keeps the chat windows.
 #[derive(Clone, Default)]
 struct HiddenWindows {
     /// The frame whose open windows are hidden.
     capture: Option<u64>,
     ids: std::collections::HashSet<egui::Id>,
+    /// The chat windows stay (immersive mode).
+    keep_chat: bool,
 }
 
 fn hidden_windows_id() -> egui::Id {
@@ -981,12 +992,13 @@ pub fn interface_hidden(ctx: &egui::Context) -> bool {
     ctx.data(|d| d.get_temp::<HiddenWindows>(hidden_windows_id()).is_some())
 }
 
-/// Hide the windows open now (on the next frame), or show them back. Called
-/// between two frames.
-pub fn hide_windows(ctx: &egui::Context, hide: bool) {
+/// Hide the windows open now (on the next frame), or show them back; with
+/// `keep_chat`, the chat windows stay. Called between two frames.
+pub fn hide_windows(ctx: &egui::Context, hide: bool, keep_chat: bool) {
     let state = HiddenWindows {
         capture: hide.then(|| ctx.cumulative_frame_nr()),
         ids: Default::default(),
+        keep_chat,
     };
     ctx.data_mut(|d| {
         if hide {
@@ -997,13 +1009,17 @@ pub fn hide_windows(ctx: &egui::Context, hide: bool) {
     });
 }
 
-/// The window `id` (`open` or not) is kept hidden this frame.
-fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool) -> bool {
+/// The window `id` (`open` or not, a `chat` window or not) is kept hidden
+/// this frame.
+fn window_hidden(ctx: &egui::Context, id: egui::Id, open: bool, chat: bool) -> bool {
     let frame = ctx.cumulative_frame_nr();
     ctx.data_mut(|d| {
         let Some(mut state) = d.get_temp::<HiddenWindows>(hidden_windows_id()) else {
             return false;
         };
+        if chat && state.keep_chat {
+            return false;
+        }
         let hidden = if !open {
             state.ids.remove(&id);
             false

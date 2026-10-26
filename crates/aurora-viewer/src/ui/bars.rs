@@ -120,6 +120,8 @@ pub enum BarAction {
     /// Show User Interface (Alt+Shift+U), and hiding it once confirmed.
     ToggleInterface,
     HideInterface,
+    /// Immersive mode (#859): the interface hidden but the chat.
+    ToggleImmersive,
     /// World › World tooltips: the three checks, as they are now.
     HoverTips(HoverTipsMenu),
     WorldOverlays(crate::world::beacons::Overlays),
@@ -384,6 +386,11 @@ pub(super) fn interface_item(ui: &mut egui::Ui, p: &Palette, st: &StatusInfo) ->
     menu::item_keys(ui, p, icon, label, &st.interface_keys)
 }
 
+/// The menus' Immersive mode, after Show User Interface (#859).
+pub(super) fn immersive_item(ui: &mut egui::Ui, p: &Palette) -> bool {
+    menu::item(ui, p, "maximize", aurora_i18n::tr!("ui-bars-immersive"))
+}
+
 fn flip(ui: &mut egui::Ui, p: &Palette, icon: &str, label: &str, on: &mut bool, enabled: bool) -> bool {
     let clicked = menu::check(ui, p, icon, label, *on, enabled);
     if clicked {
@@ -645,6 +652,9 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         // Preferences, Toolbar Buttons and Show HUD Attachments
         if interface_item(ui, p, st) {
             *action = BarAction::ToggleInterface;
+        }
+        if immersive_item(ui, p) {
+            *action = BarAction::ToggleImmersive;
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "logout", aurora_i18n::tr!("ui-bars-log-out")) {
@@ -1742,6 +1752,7 @@ pub fn run_command(ctx: &egui::Context, cmd: &str, panels: &mut Panels) -> BarAc
         "landmark_here" => return BarAction::CreateLandmark,
         "marketplacelistings" => return BarAction::MarketplaceListings,
         "stop_animations" => return BarAction::StopAnimations,
+        "immersive" => return BarAction::ToggleImmersive,
         _ => {}
     }
     BarAction::None
