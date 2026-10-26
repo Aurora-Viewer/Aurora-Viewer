@@ -13,6 +13,9 @@
 //! the source, and a texture with too many blocks off stays RGBA8, as before.
 //! About 85 % of the textures pass, for 2.9 times less video memory overall
 //! (`cargo run --release -p aurora-render --example bc7_check -- <cache/tex>`).
+//! With alpha, the texels at an end of alpha (0 or 255) are kept exact on
+//! top of that, in every block ([`mend_alpha_ends`]): a mask cutoff at an
+//! end turns the smallest error there into holes.
 
 use intel_tex_2::{RgbaSurface, bc7};
 
@@ -63,13 +66,193 @@ pub fn encode_chain(mips: &[(u32, u32, Vec<u8>)], alpha: bool) -> Option<Chain> 
 fn try_chain(settings: &bc7::EncodeSettings, mips: &[(u32, u32, Vec<u8>)], alpha: bool) -> Option<Chain> {
     let mut out = Vec::with_capacity(mips.len());
     for (w, h, rgba) in mips {
-        let blocks = encode_level(settings, *w, *h, rgba);
+        let mut blocks = encode_level(settings, *w, *h, rgba);
+        if alpha && !mend_alpha_ends(rgba, &mut blocks, *w as usize, *h as usize) {
+            return None;
+        }
         if harmed(rgba, &blocks, *w, *h, alpha) {
             return None;
         }
         out.push((*w, *h, blocks));
     }
     Some(out)
+}
+
+/// An end of alpha: a texel there must decode to it exactly (see
+/// [`mend_alpha_ends`]).
+fn alpha_end(a: u8) -> bool {
+    a == 0 || a == 255
+}
+
+/// Puts back, block by block, the texels at an end of alpha (0 or 255) that
+/// the encoding moved; false when a block cannot keep them (the texture
+/// then stays RGBA8). A mask cutoff can sit at either end (255: only the
+/// opaque texels show; 1: all but the transparent ones), where a texel off
+/// by one is a hole or a speck that the tolerance of [`harmed`] lets
+/// through. Mode 6 shares the lowest bit of its endpoints between color and
+/// alpha: with that bit at 0, its opaque texels decode at 254 (a third of
+/// the opaque texels of the compressed alpha textures, holes all over a hat
+/// at a cutoff of 255). Its endpoints' bits are set again first (the color
+/// moves by 1 of 255 at most); a block they do not mend is encoded again
+/// with alpha apart (modes 4 and 5), whose alpha is then set from the
+/// texels when the encoder still misses an end ([`snap_alpha`]: in mixed
+/// blocks it puts them a few steps in). Every block is looked at, not a
+/// sample: one block off is enough to show.
+fn mend_alpha_ends(rgba: &[u8], blocks: &mut [u8], w: usize, h: usize) -> bool {
+    let columns = w.div_ceil(4);
+    let mut decoded = [0u8; 64];
+    let mut again: Vec<(usize, [u8; 64])> = Vec::new();
+    for by in 0..h.div_ceil(4) {
+        for bx in 0..columns {
+            let src = source_block(rgba, w, h, bx, by);
+            if !src.as_chunks::<4>().0.iter().any(|t| alpha_end(t[3])) {
+                continue;
+            }
+            let at = (by * columns + bx) * 16;
+            let Some(block) = blocks.get_mut(at..at + 16) else {
+                return false;
+            };
+            bcdec_rs::bc7(block, &mut decoded, 16);
+            if !ends_kept(&src, &decoded) && !mend_mode6(block, &src) {
+                again.push((at, src));
+            }
+        }
+    }
+    if again.is_empty() {
+        return true;
+    }
+    // the blocks left, stacked in one surface for a single encoder call
+    let data: Vec<u8> = again.iter().flat_map(|(_, src)| *src).collect();
+    let surface = RgbaSurface {
+        data: &data,
+        width: 4,
+        height: 4 * again.len() as u32,
+        stride: 16,
+    };
+    let apart = bc7::EncodeSettings {
+        mode_selection: [false, false, true, false],
+        ..bc7::alpha_ultra_fast_settings()
+    };
+    let mut encoded = bc7::compress_blocks(&apart, &surface);
+    for ((at, src), block) in again.iter().zip(encoded.as_chunks_mut::<16>().0) {
+        bcdec_rs::bc7(block, &mut decoded, 16);
+        if !ends_kept(src, &decoded) {
+            if !snap_alpha(block, src) {
+                return false;
+            }
+            bcdec_rs::bc7(block, &mut decoded, 16);
+            if !ends_kept(src, &decoded) {
+                return false;
+            }
+        }
+        blocks[*at..*at + 16].copy_from_slice(block);
+    }
+    true
+}
+
+/// BC7 interpolation weights, of 64, for 2- and 3-bit indices.
+const WEIGHTS2: [u32; 4] = [0, 21, 43, 64];
+const WEIGHTS3: [u32; 8] = [0, 9, 18, 27, 37, 46, 55, 64];
+
+/// Sets again the alpha of a mode 4 or 5 block (alpha apart from the color,
+/// with endpoints and indices of its own) from the texels' alpha: the
+/// lowest and the highest as the endpoints, each texel at the nearest step
+/// between them, so that the ends of alpha come out exact. The color is
+/// left as the encoder made it. False for another mode, or a block whose
+/// alpha is rotated into a color channel.
+///
+/// Mode 4: 5 mode bits, rotation, index selection, 6 × 5 color bits, 2 × 6
+/// alpha bits at 38, 2-bit indices at 50, 3-bit ones at 81 (alpha takes the
+/// 3-bit ones unless the selection bit is set). Mode 5: 6 mode bits,
+/// rotation, 6 × 7 color bits, 2 × 8 alpha bits at 50, 2-bit color indices
+/// at 66, 2-bit alpha indices at 97. The first index of a set has one bit
+/// less (its highest is 0).
+fn snap_alpha(block: &mut [u8; 16], src: &[u8; 64]) -> bool {
+    let mut b = u128::from_le_bytes(*block);
+    let get = |b: u128, at: u32, n: u32| ((b >> at) & ((1 << n) - 1)) as u32;
+    // (alpha endpoint bits, first index bit, index bits)
+    let (end_bits, ends_at, index_at, index_bits) = if b & 0x3f == 0x20 && get(b, 6, 2) == 0 {
+        (8, 50, 97, 2)
+    } else if b & 0x1f == 0x10 && get(b, 5, 2) == 0 {
+        if get(b, 7, 1) == 0 { (6, 38, 81, 3) } else { (6, 38, 50, 2) }
+    } else {
+        return false;
+    };
+    let expand = |e: u32| if end_bits == 8 { e } else { (e << 2) | (e >> 4) };
+    let quantize = |v: u32| (0..1 << end_bits).min_by_key(|&e| expand(e).abs_diff(v)).unwrap_or(0);
+    let alphas: [u32; 16] = std::array::from_fn(|i| u32::from(src[i * 4 + 3]));
+    let (lo, hi) = alphas.iter().fold((255, 0), |(lo, hi), &a| (a.min(lo), a.max(hi)));
+    let (mut e0, mut e1) = (quantize(lo), quantize(hi));
+    let weights: &[u32] = if index_bits == 2 { &WEIGHTS2 } else { &WEIGHTS3 };
+    let level = |e0: u32, e1: u32, w: u32| (expand(e0) * (64 - w) + expand(e1) * w + 32) >> 6;
+    let nearest = |a: u32, e0: u32, e1: u32| {
+        (0..weights.len() as u32)
+            .min_by_key(|&i| level(e0, e1, weights[i as usize]).abs_diff(a))
+            .unwrap_or(0)
+    };
+    let mut indices = alphas.map(|a| nearest(a, e0, e1));
+    // the first index has no highest bit: swap the endpoints when it needs one
+    let top = weights.len() as u32 - 1;
+    if indices[0] > top / 2 {
+        (e0, e1) = (e1, e0);
+        indices = indices.map(|i| top - i);
+    }
+    let mut put = |at: u32, n: u32, v: u32| {
+        let mask = ((1u128 << n) - 1) << at;
+        b = (b & !mask) | ((u128::from(v) << at) & mask);
+    };
+    put(ends_at, end_bits, e0);
+    put(ends_at + end_bits, end_bits, e1);
+    for (i, &index) in indices.iter().enumerate() {
+        let at = if i == 0 { index_at } else { index_at + i as u32 * index_bits - 1 };
+        put(at, if i == 0 { index_bits - 1 } else { index_bits }, index);
+    }
+    *block = b.to_le_bytes();
+    true
+}
+
+/// The 16 texels of block (`bx`, `by`), padded with the level's edge as
+/// [`encode_level`] pads it. `rgba` holds the whole level ([`encode_chain`]
+/// checks its length).
+fn source_block(rgba: &[u8], w: usize, h: usize, bx: usize, by: usize) -> [u8; 64] {
+    let mut out = [0u8; 64];
+    for y in 0..4 {
+        let sy = (by * 4 + y).min(h - 1);
+        for x in 0..4 {
+            let s = (sy * w + (bx * 4 + x).min(w - 1)) * 4;
+            out[(y * 4 + x) * 4..][..4].copy_from_slice(&rgba[s..s + 4]);
+        }
+    }
+    out
+}
+
+fn ends_kept(src: &[u8; 64], decoded: &[u8; 64]) -> bool {
+    src.as_chunks::<4>()
+        .0
+        .iter()
+        .zip(decoded.as_chunks::<4>().0)
+        .all(|(s, d)| !alpha_end(s[3]) || d[3] == s[3])
+}
+
+/// A mode 6 block (one line, 7-bit endpoints and one shared lowest bit
+/// each: bits 63 and 64) with the lowest bits that keep the ends of alpha
+/// of `src`; the block is left as it was when no setting does.
+fn mend_mode6(block: &mut [u8], src: &[u8; 64]) -> bool {
+    if block.len() != 16 || block[0] & 0x7f != 0x40 {
+        return false;
+    }
+    let (b7, b8) = (block[7], block[8]);
+    let mut decoded = [0u8; 64];
+    for (p0, p1) in [(1, 1), (1, 0), (0, 1), (0, 0)] {
+        block[7] = (b7 & 0x7f) | (p0 << 7);
+        block[8] = (b8 & 0xfe) | p1;
+        bcdec_rs::bc7(block, &mut decoded, 16);
+        if ends_kept(src, &decoded) {
+            return true;
+        }
+    }
+    (block[7], block[8]) = (b7, b8);
+    false
 }
 
 /// Blocks of one level; a level that is not made of whole blocks is padded
@@ -265,6 +448,123 @@ mod tests {
             }
         });
         assert!(encode_chain(&build_mips(32, 32, hidden, 16), true).is_some());
+    }
+
+    /// Every texel at an end of alpha (0 or 255) decodes to it exactly.
+    fn ends_exact(mips: &[(u32, u32, Vec<u8>)], chain: &Chain) -> bool {
+        mips.iter().zip(chain).all(|((w, h, rgba), (_, _, blocks))| {
+            let decoded = decode_level(blocks, *w, *h).expect("level");
+            rgba.as_chunks::<4>()
+                .0
+                .iter()
+                .zip(decoded.as_chunks::<4>().0)
+                .all(|(s, d)| !alpha_end(s[3]) || s[3] == d[3])
+        })
+    }
+
+    #[test]
+    fn ends_of_alpha_stay_exact() {
+        // colored, with opaque texels, transparent ones and soft edges
+        // between them in the same blocks (strands of hair, cut-outs): the
+        // opaque ones must stay at 255 for a mask cutoff of 255
+        let rgba = image(64, 64, |x, y| {
+            let a = match (x + y / 2) % 48 {
+                n @ 0..=17 => (255 - 15 * n) as u8,
+                18..=29 => 0,
+                n @ 30..=46 => (15 * (n - 29)) as u8,
+                _ => 255,
+            };
+            [(x * 3 + y) as u8, (y * 4) as u8, (130 + x) as u8, a]
+        });
+        let mips = build_mips(64, 64, rgba, 16);
+        let chain = encode_chain(&mips, true).expect("compressible");
+        assert!(ends_exact(&mips, &chain));
+        // opaque everywhere but one corner, under a busy color: mode 6 alone
+        // leaves its opaque texels at 254 in some blocks
+        let rgba = image(64, 64, |x, y| {
+            [
+                hash(x / 2, y / 2, 0) / 4 + (x * 3) as u8,
+                (y * 3) as u8,
+                90,
+                if x + y < 4 { 0 } else { 255 },
+            ]
+        });
+        let mips = build_mips(64, 64, rgba, 16);
+        let chain = encode_chain(&mips, true).expect("compressible");
+        assert!(ends_exact(&mips, &chain));
+    }
+
+    #[test]
+    fn snapped_alpha_keeps_its_ends_and_the_color() {
+        let src: [u8; 64] = std::array::from_fn(|i| match i % 4 {
+            3 => [255, 0, 200, 37, 255, 255, 0, 120, 255, 64, 0, 255, 180, 0, 255, 9][i / 4],
+            c => (40 * c + i) as u8,
+        });
+        for settings in [
+            // mode 5, then mode 4 with either index selection
+            bc7::EncodeSettings {
+                mode_selection: [false, false, true, false],
+                ..bc7::alpha_ultra_fast_settings()
+            },
+            bc7::EncodeSettings {
+                mode_selection: [false, false, true, false],
+                mode45_channel0: 0,
+                ..bc7::alpha_slow_settings()
+            },
+        ] {
+            let surface = RgbaSurface {
+                data: &src,
+                width: 4,
+                height: 4,
+                stride: 16,
+            };
+            let encoded = bc7::compress_blocks(&settings, &surface);
+            let mut block: [u8; 16] = encoded[..16].try_into().expect("one block");
+            let mut before = [0u8; 64];
+            bcdec_rs::bc7(&block, &mut before, 16);
+            if !snap_alpha(&mut block, &src) {
+                // (rotated alpha: left to the encoder)
+                continue;
+            }
+            let mut after = [0u8; 64];
+            bcdec_rs::bc7(&block, &mut after, 16);
+            assert!(
+                ends_kept(&src, &after),
+                "{:?}",
+                after.as_chunks::<4>().0.iter().map(|t| t[3]).collect::<Vec<_>>()
+            );
+            for (s, d) in src.as_chunks::<4>().0.iter().zip(after.as_chunks::<4>().0) {
+                assert!(s[3].abs_diff(d[3]) <= 20, "alpha {} for {}", d[3], s[3]);
+            }
+            for (b, a) in before.as_chunks::<4>().0.iter().zip(after.as_chunks::<4>().0) {
+                assert_eq!(b[..3], a[..3], "the color does not move");
+            }
+        }
+    }
+
+    #[test]
+    fn mode6_endpoint_bits_mend_opaque_blocks() {
+        // an opaque block whose endpoints' lowest bits are 0 decodes at 254
+        let src: [u8; 64] = std::array::from_fn(|i| if i % 4 == 3 { 255 } else { (i * 7) as u8 });
+        let surface = RgbaSurface {
+            data: &src,
+            width: 4,
+            height: 4,
+            stride: 16,
+        };
+        let settings = bc7::EncodeSettings {
+            channels: 4,
+            ..bc7::opaque_ultra_fast_settings()
+        };
+        let mut block = bc7::compress_blocks(&settings, &surface);
+        assert_eq!(block[0] & 0x7f, 0x40, "mode 6");
+        (block[7], block[8]) = (block[7] & 0x7f, block[8] & 0xfe);
+        let mut decoded = [0u8; 64];
+        bcdec_rs::bc7(&block, &mut decoded, 16);
+        assert!(!ends_kept(&src, &decoded));
+        assert!(mend_mode6(&mut block, &src));
+        bcdec_rs::bc7(&block, &mut decoded, 16);
+        assert!(ends_kept(&src, &decoded));
     }
 
     #[test]

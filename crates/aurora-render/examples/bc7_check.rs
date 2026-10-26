@@ -23,6 +23,10 @@ struct Sums {
     decode: Duration,
     mips: Duration,
     encode: Duration,
+    /// Texels of every level opaque in the source and not after BC7: a mask
+    /// with a cutoff of 255 shows them as holes.
+    opaque_lost: u64,
+    opaque_texels: u64,
 }
 
 impl Sums {
@@ -35,6 +39,8 @@ impl Sums {
         self.decode += o.decode;
         self.mips += o.mips;
         self.encode += o.encode;
+        self.opaque_lost += o.opaque_lost;
+        self.opaque_texels += o.opaque_texels;
     }
 
     fn print(&self, name: &str) {
@@ -56,7 +62,34 @@ impl Sums {
             self.pixels as f64 / 1e6 / self.encode.as_secs_f64().max(1e-9),
             100.0 * self.encode.as_secs_f64() / self.decode.as_secs_f64().max(1e-9),
         );
+        if self.opaque_texels > 0 {
+            println!(
+                "  {:<8} opaque texels no longer opaque: {} of {} ({:.3}%)",
+                "",
+                self.opaque_lost,
+                self.opaque_texels,
+                100.0 * self.opaque_lost as f64 / self.opaque_texels as f64
+            );
+        }
     }
+}
+
+/// (opaque texels of the source, of them no longer opaque in the blocks)
+/// over the whole chain.
+fn opaque_lost(mips: &[(u32, u32, Vec<u8>)], chain: &[(u32, u32, Vec<u8>)]) -> (u64, u64) {
+    let (mut texels, mut lost) = (0, 0);
+    for ((w, h, rgba), (_, _, blocks)) in mips.iter().zip(chain) {
+        let Some(decoded) = bc7::decode_level(blocks, *w, *h) else {
+            continue;
+        };
+        for (s, d) in rgba.as_chunks::<4>().0.iter().zip(decoded.as_chunks::<4>().0) {
+            if s[3] == 255 {
+                texels += 1;
+                lost += u64::from(d[3] < 255);
+            }
+        }
+    }
+    (texels, lost)
 }
 
 fn to_rgba(components: usize, data: &[u8]) -> Vec<u8> {
@@ -120,6 +153,13 @@ fn main() {
         let chain = bc7::encode_chain(&mips, alpha);
         let encode = t.elapsed();
         let whole = img.width.is_multiple_of(4) && img.height.is_multiple_of(4);
+        let (opaque_texels, opaque_lost) = match &chain {
+            Some(c) if alpha => opaque_lost(&mips, c),
+            _ => (0, 0),
+        };
+        if opaque_lost > 0 && files.len() <= 20 {
+            println!("  {}: {opaque_lost} of {opaque_texels} opaque texels lost", path.display());
+        }
         let s = Sums {
             textures: 1,
             compressed: chain.is_some() as u32,
@@ -129,6 +169,8 @@ fn main() {
             decode,
             mips: mips_time,
             encode,
+            opaque_lost,
+            opaque_texels,
         };
         sums[if !whole { 2 } else { usize::from(alpha) }].add(&s);
     }

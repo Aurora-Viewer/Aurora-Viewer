@@ -26,8 +26,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const MAGIC: &[u8; 4] = b"AUTX";
 /// Bumped when the layout, the encoder profile or its quality check change:
 /// older files are ignored (and rewritten by the next decode). 2: the
-/// colour of the mips is the plain average of the texels (`build_mips`).
-const VERSION: u8 = 2;
+/// colour of the mips is the plain average of the texels (`build_mips`). 3:
+/// the ends of alpha stay exact (`aurora_render::bc7::encode_chain`).
+const VERSION: u8 = 3;
 const KIND_KEEP_RGBA: u8 = 0;
 const KIND_BC7: u8 = 1;
 /// Fixed part of the header, then 8 bytes per level.
