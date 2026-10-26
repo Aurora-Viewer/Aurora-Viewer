@@ -287,6 +287,10 @@ impl App {
             CtxAction::Freeze(id) => self.ask_moderation(id, false),
             CtxAction::Eject(id) => self.ask_moderation(id, true),
             CtxAction::EditWorn(item) => {
+                if self.world.inventory.items.get(&item).is_some_and(crate::wearable_editor::supported) {
+                    self.open_wearable_editor(item);
+                    return;
+                }
                 if Some(item) == crate::shape_editor::worn_shape(&self.world) {
                     self.open_shape_editor(item);
                     return;

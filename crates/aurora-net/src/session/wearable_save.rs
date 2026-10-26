@@ -16,10 +16,9 @@ pub(super) struct Pending {
     pub started: Instant,
 }
 
-/// The wearables the viewer edits: a shape (body part 0) or a physics layer
-/// (clothing 15).
+/// LLWearableType: the four body parts and the thirteen clothing types.
 fn editable(asset_type: i32, flags: u32) -> bool {
-    matches!((asset_type, flags & 0xff), (13, 0) | (5, 15))
+    matches!((asset_type, flags & 0xff), (13, 0..=3) | (5, 4..=16))
 }
 
 /// Why a save failed, worded for the kind of wearable saved.
@@ -33,6 +32,16 @@ pub(super) enum Failure {
 }
 
 pub(super) fn failure(item: &InvItem, why: Failure) -> String {
+    if !matches!((item.asset_type, item.flags & 0xff), (13, 0) | (5, 15)) {
+        return match why {
+            Failure::Denied => aurora_i18n::tr!("wearable-save-denied"),
+            Failure::Rejected => aurora_i18n::tr!("wearable-save-rejected"),
+            Failure::Interrupted => aurora_i18n::tr!("wearable-save-interrupted"),
+            Failure::Unconfirmed => aurora_i18n::tr!("wearable-save-unconfirmed"),
+            Failure::Unavailable => aurora_i18n::tr!("wearable-save-unavailable"),
+        }
+        .into();
+    }
     let physics = item.asset_type == 5;
     match (why, physics) {
         (Failure::Denied, false) => aurora_i18n::tr!("shape-save-denied"),
@@ -342,11 +351,11 @@ mod tests {
         assert!(!eligible(&item, item.owner, false));
         assert!(eligible(&item, item.owner, true));
         assert!(!eligible(&item, Uuid::nil(), true));
-        item.flags = 1;
+        item.flags = 17;
         assert!(!eligible(&item, item.owner, true));
     }
     #[test]
-    fn a_physics_layer_saves_like_a_shape_and_other_clothing_does_not() {
+    fn a_physics_layer_and_system_clothing_save_with_their_original_kind() {
         let mut item = InvItem {
             id: Uuid::from_u128(1),
             owner: Uuid::from_u128(2),
@@ -362,7 +371,7 @@ mod tests {
         read_back.flags = 4;
         assert!(!same_kind(&read_back, &item), "a shirt is not the saved physics");
         item.flags = 4;
-        assert!(!eligible(&item, item.owner, false), "a shirt has no editor");
+        assert!(eligible(&item, item.owner, false), "system clothing is editable");
         item.flags = 0x0100_000F;
         assert!(eligible(&item, item.owner, false), "only the low byte is the wearable type");
     }

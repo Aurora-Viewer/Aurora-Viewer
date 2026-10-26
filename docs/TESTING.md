@@ -3728,6 +3728,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
+| `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
 | `AURORA_DEMO_AVATAR_HEALTH=undeform\|refresh` | Me › Avatar health's Undeform avatar or Refresh attachments at frame 600 |
 | `AURORA_DEMO_INVENTORY=<mode>` | Synthetic inventory, menus, layout notecards, filters, drag feedback, windows, keyboard and search selection; `aurora…` modes show Aurora's window at each width |
@@ -6181,6 +6182,25 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   command gets "Unknown command"; the arrow keys walk the typed commands.
   `open` opens it at frame 600 with `help` and `stats` typed (capture at
   frame 640).
+
+**`AURORA_DEMO_WEARABLE=<type>[:mode]`** opens the shared editor on a worn
+skin, hair, eyes, shirt, pants, shoes, socks, jacket, gloves, undershirt,
+underpants, skirt, alpha, tattoo or universal item. Optional modes are
+`readonly`, `nocopy`, `dirty` (the unsaved-changes dialog), `preview` (a real
+local texture/mask change), `save-as` and
+`save` (a changed asset saved through the normal offline acknowledgement at
+frame 650). Capture after frame 760 for save feedback. Check texture slots,
+shared clothing tint, sex-filtered parameter groups, the fixed save controls,
+the picker and its permissions, cancellation, and the existing shape/physics
+editors when switching. No grid traffic is used.
+The local preview composites the avatar definition's original masks and
+worn layers on workers and uploads a complete generation through GPU staging.
+It uses 2048-pixel bakes (512 for eyes), or 1024 on a low-memory staging pool;
+saving still requests the server's normal bake. Capture `skin:preview`,
+`shirt:preview`, `tattoo:preview` and `alpha:preview` after frame 900; cancellation
+restores the pinned server textures. `AURORA_DEMO_INVENTORY=aurora-menu-folder-uuid`
+shows the UUID command in the unlocked menu's hidden shelf;
+`aurora-menu-folder-uuid-restored` shows it after the user exposes it.
 
 **`AURORA_DEMO_PHYSICS_EDIT=1|new|drag`** (with `AURORA_DEMO_PHYSICS=1` for
 the balls and the hops): `1` wears a physics layer with the lively values of

@@ -136,6 +136,10 @@ pub enum Action {
 }
 #[derive(Default)]
 pub struct LibraryUi {
+    export_folder: Option<crossbeam_channel::Receiver<Option<std::path::PathBuf>>>,
+    export_items: Vec<Uuid>,
+    export_queue: std::collections::VecDeque<(Uuid, std::path::PathBuf)>,
+    export_jobs: Vec<windows::BatchExport>,
     catalogue: Catalogue,
     search: String,
     folder: Option<Uuid>,

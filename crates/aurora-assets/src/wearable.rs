@@ -8,8 +8,11 @@ use std::collections::BTreeMap;
 pub struct Wearable {
     pub kind: u8,
     pub params: BTreeMap<i32, f32>,
+    pub textures: BTreeMap<u32, uuid::Uuid>,
+    original_textures: BTreeMap<u32, uuid::Uuid>,
     prefix: String,
     suffix: String,
+    tail: String,
 }
 
 impl Wearable {
@@ -67,12 +70,18 @@ impl Wearable {
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|n| *n <= 256 && end + 1 + n <= lines.len())
             .ok_or("invalid texture count")?;
+        let mut texture_map = BTreeMap::new();
         for line in &lines[end + 1..end + 1 + textures] {
             let mut words = line.split_whitespace();
-            if words.next().and_then(|s| s.parse::<u32>().ok()).is_none()
-                || words.next().and_then(|s| s.parse::<uuid::Uuid>().ok()).is_none()
-                || words.next().is_some()
-            {
+            let slot = words
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+                .ok_or("invalid wearable texture slot")?;
+            let texture = words
+                .next()
+                .and_then(|s| s.parse::<uuid::Uuid>().ok())
+                .ok_or("invalid wearable texture UUID")?;
+            if words.next().is_some() || texture_map.insert(slot, texture).is_some() {
                 return Err("invalid wearable texture");
             }
         }
@@ -81,8 +90,11 @@ impl Wearable {
         Ok(Self {
             kind,
             params,
+            original_textures: texture_map.clone(),
+            textures: texture_map,
             prefix: text[..offset(section)].into(),
             suffix: text[offset(end)..].into(),
+            tail: text[offset(end + 1 + textures)..].into(),
         })
     }
 
@@ -91,6 +103,7 @@ impl Wearable {
             || name.contains(['\r', '\n', '\0'])
             || name.len() > 255
             || self.params.len() > 2048
+            || self.textures.len() > 256
             || self.params.values().any(|v| !v.is_finite())
         {
             return Err("invalid wearable contents");
@@ -103,7 +116,15 @@ impl Wearable {
         for (id, value) in &self.params {
             text.push_str(&format!("{id} {value}\n"));
         }
-        text.push_str(&self.suffix);
+        if self.textures == self.original_textures {
+            text.push_str(&self.suffix);
+        } else {
+            text.push_str(&format!("textures {}\n", self.textures.len()));
+            for (slot, texture) in &self.textures {
+                text.push_str(&format!("{slot} {texture}\n"));
+            }
+            text.push_str(&self.tail);
+        }
         if text.len() > 64 * 1024 {
             return Err("wearable too large");
         }
@@ -115,6 +136,27 @@ impl Wearable {
 mod tests {
     use super::*;
     const ASSET: &str = "LLWearable version 22\nOriginal\nDescription\npermissions 0\n{\nowner_mask 00004000\n}\nsale_info 0\n{\nsale_type not\n}\ntype 0\nparameters 3\n33 0.5\n80 1\n9999 -2\ntextures 1\n0 00000000-0000-0000-0000-000000000001\nfuture section\n";
+    #[test]
+    fn texture_edits_preserve_metadata_unknown_slots_and_future_sections() {
+        let mut wearable = Wearable::parse(ASSET.as_bytes()).expect("asset");
+        let replacement = uuid::Uuid::from_u128(42);
+        wearable.textures.insert(0, replacement);
+        wearable.textures.insert(39, uuid::Uuid::nil());
+        let data = wearable.encode("Edited texture").expect("encoded");
+        let copy = Wearable::parse(&data).expect("parsed");
+        assert_eq!(copy.textures, wearable.textures);
+        assert_eq!(copy.params, wearable.params);
+        assert_eq!(copy.tail, "future section\n");
+        assert!(String::from_utf8(data).expect("text").contains("owner_mask 00004000"));
+        assert!(
+            Wearable::parse(
+                ASSET
+                    .replace("textures 1", "textures 2\n0 00000000-0000-0000-0000-000000000001")
+                    .as_bytes()
+            )
+            .is_err()
+        );
+    }
     #[test]
     fn edits_preserve_permissions_textures_unknown_parameters_and_future_sections() {
         let mut asset = Wearable::parse(ASSET.as_bytes()).expect("wearable");

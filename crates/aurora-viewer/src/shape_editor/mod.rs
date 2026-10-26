@@ -36,7 +36,7 @@ pub struct Draft {
 }
 impl Draft {
     pub fn dirty(&self) -> bool {
-        self.original.params != self.edited.params
+        self.original.params != self.edited.params || self.original.textures != self.edited.textures
     }
     pub fn can_modify(&self, world: &World) -> bool {
         world

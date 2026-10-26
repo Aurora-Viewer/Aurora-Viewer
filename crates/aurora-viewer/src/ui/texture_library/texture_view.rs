@@ -88,6 +88,7 @@ pub(crate) struct ImageView {
     pub image: Option<egui::TextureHandle>,
     pub dimensions: Option<(u32, u32)>,
     pub export: Option<bool>,
+    pub export_path: Option<std::path::PathBuf>,
     pub(super) metadata: Metadata,
     pub message: String,
     pixels: Option<Arc<aurora_render::preview::Image>>,
@@ -96,6 +97,16 @@ pub(crate) struct ImageView {
     export_reply: Option<crossbeam_channel::Receiver<String>>,
 }
 impl ImageView {
+    pub(super) fn batch_export(path: std::path::PathBuf) -> Self {
+        Self {
+            export_path: Some(path),
+            export: Some(false),
+            ..Default::default()
+        }
+    }
+    pub(super) fn export_finished(&self) -> bool {
+        self.export.is_none() && self.export_reply.is_none() && !self.message.is_empty()
+    }
     pub fn prepare(&mut self, ctx: &egui::Context, asset: Uuid, scene: &mut Scene) {
         if let Some(rx) = &self.pending
             && let Ok(decoded) = rx.try_recv()
@@ -139,13 +150,20 @@ impl ImageView {
             let (tx, rx) = crossbeam_channel::bounded(1);
             self.export_reply = Some(rx);
             let wake = ctx.clone();
+            let batch_path = self.export_path.take();
             std::thread::spawn(move || {
                 let (extension, format) = if png {
                     ("png", image::ImageFormat::Png)
                 } else {
                     ("tga", image::ImageFormat::Tga)
                 };
-                let message = if let Some(path) = rfd::FileDialog::new()
+                let message = if let Some(path) = batch_path {
+                    let result = write_batch(&path, &pixels, format);
+                    match result {
+                        Ok(()) => aurora_i18n::tr!("resource-preview-exported").to_owned(),
+                        Err(reason) => aurora_i18n::tr!("resource-preview-export-error", reason = reason.to_string()),
+                    }
+                } else if let Some(path) = rfd::FileDialog::new()
                     .set_title(aurora_i18n::tr!("common-save-as"))
                     .set_file_name(format!("{asset}.{extension}"))
                     .add_filter(extension, &[extension])
@@ -170,6 +188,24 @@ impl ImageView {
             });
         }
     }
+}
+
+fn write_batch(path: &std::path::Path, pixels: &aurora_render::preview::Image, format: image::ImageFormat) -> image::ImageResult<()> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(image::ImageError::IoError)?;
+    let mut writer = std::io::BufWriter::new(file);
+    image::write_buffer_with_format(
+        &mut writer,
+        &pixels.rgba,
+        pixels.size[0],
+        pixels.size[1],
+        image::ColorType::Rgba8,
+        format,
+    )?;
+    std::io::Write::flush(&mut writer).map_err(image::ImageError::IoError)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -410,6 +446,21 @@ fn checkerboard(ui: &egui::Ui, p: &Palette, image: egui::Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_export_preserves_dimensions_and_never_overwrites_existing_files() {
+        let path = std::env::temp_dir().join(format!("aurora-texture-export-{}.tga", Uuid::new_v4()));
+        let pixels = aurora_render::preview::Image {
+            size: [19, 7],
+            rgba: vec![103; 19 * 7 * 4].into(),
+        };
+        write_batch(&path, &pixels, image::ImageFormat::Tga).expect("new export");
+        let decoded = image::open(&path).expect("exported texture").into_rgba8();
+        assert_eq!(decoded.dimensions(), (19, 7));
+        assert_eq!(decoded.into_raw(), pixels.rgba.as_ref());
+        assert!(write_batch(&path, &pixels, image::ImageFormat::Tga).is_err());
+        std::fs::remove_file(path).expect("temporary export cleanup");
+    }
     #[test]
     fn cache_only_coarse_pixels_are_previewed_but_never_accepted_for_full_resolution_export() {
         let pixels = aurora_assets::DecodedImage {

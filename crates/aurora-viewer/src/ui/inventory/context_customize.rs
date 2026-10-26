@@ -34,6 +34,7 @@ impl super::InventoryUi {
                 | "aurora-menu-drop"
                 | "aurora-menu-all-texture"
                 | "aurora-menu-all-folder"
+                | "aurora-menu-folder-uuid"
                 | "aurora-menu-all-trash"
                 | "aurora-menu-empty-custom"
         );
@@ -96,6 +97,9 @@ impl super::InventoryUi {
         if mode == "aurora-menu-hidden" {
             profile.layout.placements.insert("image".into(), HIDDEN.into());
             profile.layout.placements.insert("organize".into(), HIDDEN.into());
+        }
+        if mode == "aurora-menu-folder-uuid-restored" {
+            profile.layout.placements.insert("folder-uuid".into(), TEXT.into());
         }
         if mode == "aurora-menu-bars" {
             let catalog = super::context_catalog::build(inv, id, self, prefs, &super::Facts::default());

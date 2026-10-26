@@ -21,6 +21,8 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 pub const WINDOW: &str = "marketplace_listings";
+mod commands;
+pub use commands::{Command, OptionState};
 const AUDIT_WINDOW: &str = "marketplace_validation";
 /// MarketplaceURL_CreateStore (strings.xml): the knowledge base page on
 /// opening a store, outside the Marketplace.
@@ -587,104 +589,15 @@ impl ListingsUi {
         worn: &HashSet<Uuid>,
         root: Uuid,
         id: Uuid,
-        depth: i32,
+        _depth: i32,
         actions: &mut Vec<Action>,
     ) {
-        use super::menu;
-        let updating = self.data.is_updating(inv, root, id);
-        if depth == 1 {
-            let listed = self.data.is_listed(id);
-            let version = self.data.version_folder(id);
-            let live = self.data.activation_state(id);
-            if menu::item_if(
-                ui,
-                p,
-                "tag-filled",
-                aurora_i18n::tr!("marketplace-action-create"),
-                !updating && !listed,
-            ) {
-                self.create_listing(inv, worn, root, id, actions);
-            }
-            if menu::item_if(
-                ui,
-                p,
-                "link",
-                aurora_i18n::tr!("marketplace-action-associate"),
-                !updating && !listed,
-            ) {
-                self.associate = Some((id, String::new()));
-            }
-            if menu::item_if(
-                ui,
-                p,
-                "clipboard-text-filled",
-                aurora_i18n::tr!("marketplace-action-check"),
-                !updating,
-            ) {
-                self.run_audit(inv, worn, root, id);
-            }
-            if menu::item_if(
-                ui,
-                p,
-                "circle-check-filled",
-                aurora_i18n::tr!("marketplace-action-list"),
-                !updating && listed && !version.is_nil() && !live,
-            ) {
-                self.list(inv, worn, root, id, actions);
-            }
-            if menu::item_if(
-                ui,
-                p,
-                "eye-off",
-                aurora_i18n::tr!("marketplace-action-unlist"),
-                !updating && listed && !version.is_nil() && live,
-            ) {
-                self.data.activate_listing(inv, root, id, false);
-            }
-            if menu::item_if(
-                ui,
-                p,
-                "unlink",
-                aurora_i18n::tr!("marketplace-action-disassociate"),
-                !updating && listed,
-            ) {
-                self.data.clear_listing(inv, root, id);
-            }
-        }
-        if depth == 2 {
-            let parent = inv.folders.get(&id).map_or(Uuid::nil(), |f| f.info.parent);
-            if self.data.is_listed(parent) {
-                let is_version = self.data.is_version_folder(id);
-                if menu::item_if(
-                    ui,
-                    p,
-                    "circle-check-filled",
-                    aurora_i18n::tr!("marketplace-action-activate"),
-                    !updating && !is_version,
-                ) {
-                    self.activate(inv, worn, root, id, actions);
-                }
-                if menu::item_if(
-                    ui,
-                    p,
-                    "x",
-                    aurora_i18n::tr!("marketplace-action-deactivate"),
-                    !updating && is_version && !self.data.activation_state(id),
-                ) {
-                    self.data.set_version_folder(inv, root, parent, Uuid::nil());
-                }
-            }
-        }
-        let listing = mp::nested_parent(inv, id, depth);
-        let editable = self.data.is_listed(listing) && !self.data.version_folder(listing).is_nil();
-        if menu::item_if(ui, p, "edit-filled", aurora_i18n::tr!("marketplace-action-edit"), editable) {
-            let url = self.data.listing_url(inv, root, id);
-            if !url.is_empty() {
-                actions.push(Action::OpenMarketplace(url));
+        for option in self.inventory_commands(inv, root, id) {
+            if super::menu::item_if(ui, p, option.command.icon(), option.command.label(), option.enabled) {
+                self.inventory_command(inv, worn, root, id, option.command, actions);
             }
         }
     }
-
     /// marketplace_create_listing: an audit, then one that fixes, then the
     /// listing.
     fn create_listing(&mut self, inv: &Inventory, worn: &HashSet<Uuid>, root: Uuid, id: Uuid, actions: &mut Vec<Action>) {
@@ -1023,6 +936,7 @@ fn placeholder(ui: &mut egui::Ui, p: &Palette, title: &str, text: &str) {
 mod tests {
     use super::*;
     use crate::world::marketplace::demo;
+    use std::time::Instant;
 
     fn demo_inventory() -> Inventory {
         let mut inv = Inventory {
@@ -1076,6 +990,32 @@ mod tests {
         assert!(text(demo::LANTERN).is_empty());
         assert!(in_active_folder(&ui.data, &inv, root, Uuid::from_u128(8_400_102)));
         assert!(!in_active_folder(&ui.data, &inv, root, Uuid::from_u128(8_400_101)));
+    }
+
+    #[test]
+    fn inventory_commands_recheck_merchant_loading_and_pending_listing_updates() {
+        let inv = demo_inventory();
+        let root = mp::root(&inv).expect("listings root");
+        let mut ui = ListingsUi::default();
+        assert!(ui.inventory_commands(&inv, root, demo::HOODIE).iter().all(|option| !option.enabled));
+        let mut actions = Vec::new();
+        ui.inventory_command(&inv, &HashSet::new(), root, demo::HOODIE, Command::Unlist, &mut actions);
+        assert!(actions.is_empty());
+        assert!(ui.data.take_requests(Instant::now()).is_empty());
+        ui = merchant(&inv);
+        assert!(
+            ui.inventory_commands(&inv, root, demo::HOODIE)
+                .iter()
+                .any(|option| option.command == Command::Unlist && option.enabled)
+        );
+        ui.inventory_command(&inv, &HashSet::new(), root, demo::HOODIE, Command::Unlist, &mut actions);
+        assert!(ui.inventory_commands(&inv, root, demo::HOODIE).iter().all(|option| !option.enabled));
+        assert!(
+            ui.data
+                .take_requests(Instant::now())
+                .iter()
+                .any(|request| matches!(request, aurora_net::slm::SlmRequest::Update { .. }))
+        );
     }
 
     #[test]

@@ -13,11 +13,106 @@ pub(super) struct PreviewWindow {
     description: Option<String>,
 }
 
+pub(super) struct BatchExport {
+    item: Uuid,
+    asset: Uuid,
+    view: texture_view::ImageView,
+}
+
 pub(crate) fn window_id(item: Uuid) -> String {
     format!("resource_preview_{item}")
 }
 
 impl LibraryUi {
+    /// LLTextureBridge::save_as / LLInventoryAction::saveMultipleTextures.
+    /// Every image still passes the ordinary full-resolution export path.
+    pub(crate) fn begin_exports(&mut self, ctx: &egui::Context, world: &World, items: Vec<Uuid>) {
+        let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
+        let mut seen = HashSet::new();
+        let items: Vec<_> = items
+            .into_iter()
+            .filter(|id| seen.insert(*id))
+            .filter(|id| {
+                world
+                    .inventory
+                    .items
+                    .get(id)
+                    .is_some_and(|item| matches!(item.asset_type, 0 | 15) && item.owner_mask & full == full)
+            })
+            .collect();
+        if items.len() == 1 {
+            self.open_preview(ctx, world, items[0]);
+            self.export_texture(items[0], true);
+        } else if !items.is_empty() && self.export_folder.is_none() {
+            self.export_items = items;
+            let (sender, receiver) = crossbeam_channel::bounded(1);
+            self.export_folder = Some(receiver);
+            let wake = ctx.clone();
+            std::thread::spawn(move || {
+                let folder = rfd::FileDialog::new()
+                    .set_title(aurora_i18n::tr!("inventory-save-selected-textures"))
+                    .pick_folder();
+                let _ = sender.send(folder);
+                wake.request_repaint();
+            });
+        }
+    }
+
+    fn update_exports(&mut self, ctx: &egui::Context, world: &World, scene: &mut Scene) {
+        if let Some(folder) = self.export_folder.as_ref().and_then(|receiver| receiver.try_recv().ok()) {
+            self.export_folder = None;
+            let items = std::mem::take(&mut self.export_items);
+            if let Some(folder) = folder {
+                self.export_queue.extend(items.into_iter().map(|id| (id, folder.clone())));
+            }
+        }
+        let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
+        // Bounded decoding and IO; a large selection does not open hundreds
+        // of preview windows or retain all full-resolution images together.
+        self.export_jobs.retain_mut(|job| {
+            if world
+                .inventory
+                .items
+                .get(&job.item)
+                .is_none_or(|item| item.asset_id != job.asset || item.owner_mask & full != full)
+            {
+                return false;
+            }
+            self.wanted_images.insert(job.asset);
+            scene.textures.note_usage_fixed(&job.asset, 16384.0);
+            job.view.prepare(ctx, job.asset, scene);
+            if job.view.export_finished() {
+                self.message = job.view.message.clone();
+                false
+            } else {
+                true
+            }
+        });
+        while self.export_jobs.len() < 3 {
+            let Some((id, folder)) = self.export_queue.pop_front() else { break };
+            let Some(item) = world.inventory.items.get(&id).filter(|item| item.owner_mask & full == full) else {
+                continue;
+            };
+            let name: String = item
+                .name
+                .chars()
+                .map(|character| {
+                    if character.is_control() || "<>:\"/\\|?*".contains(character) {
+                        '_'
+                    } else {
+                        character
+                    }
+                })
+                .take(100)
+                .collect();
+            let filename = format!("{}-{id}.tga", name.trim().trim_end_matches('.'));
+            self.export_jobs.push(BatchExport {
+                item: id,
+                asset: item.asset_id,
+                view: texture_view::ImageView::batch_export(folder.join(filename)),
+            });
+        }
+    }
     pub(crate) fn prepare_exit(&mut self, ctx: &egui::Context) -> bool {
         let Some(window) = self.windows.iter_mut().find(|window| {
             window
@@ -174,6 +269,7 @@ impl LibraryUi {
         actions: &mut Vec<Action>,
     ) {
         // Keep one shared worker/GPU cache for every swatch and window.
+        self.update_exports(ctx, world, scene);
         let mut windows = std::mem::take(&mut self.windows);
         windows.retain_mut(|window| self.preview_window(ctx, p, world, scene, images, prefs, window, actions));
         self.windows = windows;
@@ -240,6 +336,10 @@ impl LibraryUi {
                 }
             } else {
                 self.wanted_images.insert(asset);
+                if item.owner_mask & (rules::COPY | rules::MODIFY | rules::TRANSFER) != rules::COPY | rules::MODIFY | rules::TRANSFER {
+                    window.texture.export = None;
+                    window.texture.export_path = None;
+                }
                 window.texture.prepare(ctx, asset, scene);
                 let image = window.texture.image.as_ref().or_else(|| images.get(&asset));
                 let dimensions = scene.textures.full_size(&asset).or(window.texture.dimensions);

@@ -54,6 +54,7 @@ pub enum Action {
     Add(Uuid),
     WearItem { item: Uuid, replace: bool, point: u8 },
     WearItems { items: Vec<Uuid>, replace: bool, point: u8 },
+    ReplaceWearable { old: Uuid, new: Uuid },
     DeleteFromOutfit { folder: Uuid, item: Uuid },
     ShowOriginal(Uuid),
     Favorite(Uuid),
@@ -573,6 +574,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 _ => unreachable!(),
             };
             let mut seen = HashSet::new();
+            let mut replaced_clothing = HashSet::new();
             for id in ids {
                 let id = super::inventory::actions::original(inv, id)
                     .ok_or(aurora_i18n::tr!("world-appearance-this-item-has-not-loaded-yet"))?;
@@ -589,7 +591,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 {
                     return Err(aurora_i18n::tr!("world-appearance-this-item-cannot-be-worn").into());
                 }
-                if it.asset_type == 13 || (replace && it.asset_type == 5) {
+                if it.asset_type == 13 || (replace && it.asset_type == 5 && replaced_clothing.insert(it.flags & 0xff)) {
                     current.retain(|l| {
                         l.folder
                             || inv
@@ -614,6 +616,24 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 if !current.iter().any(|l| l.target == id) {
                     current.push(item_link(it));
                 }
+            }
+            change.links = current;
+        }
+        Action::ReplaceWearable { old, new } => {
+            let original = inv.items.get(&old).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
+            let replacement = inv.items.get(&new).ok_or(aurora_i18n::tr!("common-item-not-found"))?;
+            if original.asset_type != replacement.asset_type
+                || original.flags & 0xff != replacement.flags & 0xff
+                || !matches!(original.asset_type, 5 | 13)
+                || !current.iter().any(|link| !link.folder && link.target == old)
+                || super::inventory::actions::library(inv, new)
+                || super::inventory::actions::in_type(inv, new, 14)
+            {
+                return Err(aurora_i18n::tr!("wearable-save-denied").into());
+            }
+            for link in current.iter_mut().filter(|link| !link.folder && link.target == old) {
+                link.target = new;
+                link.name.clone_from(&replacement.name);
             }
             change.links = current;
         }
@@ -1866,6 +1886,52 @@ mod tests {
             assert!(batches[0].iter().any(|a| a.item_id == id && a.point == 35 && a.add));
         }
         assert!(matches!(commands.last(), Some(NetCommand::RequestServerAppearance { .. })));
+    }
+
+    #[test]
+    fn bulk_replace_keeps_every_new_layer_of_each_selected_clothing_type() {
+        for kind in [4, 14] {
+            let mut inv = fixture();
+            let root = inv.root;
+            let template = inv.items[&Uuid::from_u128(714)].clone();
+            let ids: [Uuid; 3] = [9901, 9902, 9903].map(Uuid::from_u128);
+            let items = ids
+                .into_iter()
+                .map(|id| InvItem {
+                    id,
+                    parent: root,
+                    flags: kind,
+                    asset_type: 5,
+                    ..template.clone()
+                })
+                .collect();
+            inv.add_items(items);
+            let (old, _) = plan(
+                &inv,
+                Action::WearItem {
+                    item: ids[0],
+                    replace: true,
+                    point: 0,
+                },
+                &HashMap::new(),
+            )
+            .expect("old layer");
+            demo_mutate(&mut inv, Uuid::from_u128(1), &old).expect("old COF");
+            let (change, _) = plan(
+                &inv,
+                Action::WearItems {
+                    items: ids[1..].to_vec(),
+                    replace: true,
+                    point: 0,
+                },
+                &HashMap::new(),
+            )
+            .expect("bulk replace");
+            assert!(!change.links.iter().any(|link| link.target == ids[0]));
+            for id in &ids[1..] {
+                assert_eq!(change.links.iter().filter(|link| link.target == *id).count(), 1);
+            }
+        }
     }
 
     #[test]

@@ -1,9 +1,13 @@
 //! Native inventory commands and their current availability, before presentation.
+mod extra;
 use super::menu_layout::{Direction, Entry, Kind, LOCK, TEXT, children};
 use super::*;
 use crate::world::appearance::Action as Wear;
+pub(super) use extra::FolderCache;
+pub(super) use extra::process_deferred;
 
 pub(super) enum Command {
+    Extra(extra::Command),
     Invoke(InvAction),
     Folder(Uuid),
     Upload(usize, Uuid),
@@ -12,6 +16,9 @@ pub(super) enum Command {
     Delete(Vec<Uuid>, bool),
     Share(Vec<Uuid>),
     Open(Uuid),
+    OpenMany(Vec<Uuid>),
+    PropertiesMany(Vec<Uuid>),
+    Batch(Vec<InvAction>),
     Properties(Uuid),
     BulkPermissions(Vec<Uuid>),
     Rename(Uuid),
@@ -364,6 +371,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         );
         c.divider("folder-navigation", TEXT);
         navigation(&mut c, inv, id, single);
+        extra::build(&mut c, inv, id, st, prefs, facts, all);
         return c;
     }
     let copyable = clipboard::copy_allowed(inv, &ids);
@@ -460,7 +468,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             TEXT,
             "restore",
             aurora_i18n::tr!("ui-inventory-context-restore-object"),
-            ready && movable && single,
+            ready && movable,
             Command::DefaultFolder(ids.clone()),
         );
     }
@@ -476,7 +484,12 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             );
         }
         if folder.is_none() || all {
-            let opens = single && target.is_some() && matches!(kind, 0 | 1 | 2 | 3 | 7 | 10 | 20 | 21 | 56 | 57);
+            let opens = !ids.is_empty()
+                && ids.iter().all(|id| {
+                    rules::original(inv, *id)
+                        .and_then(|id| inv.items.get(&id))
+                        .is_some_and(|item| matches!(item.asset_type, 0 | 1 | 2 | 3 | 7 | 10 | 20 | 21 | 56 | 57))
+                });
             if opens || !matches!(kind, 5 | 6 | 13) || all {
                 c.add(
                     "open",
@@ -490,7 +503,11 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                         aurora_i18n::tr!("common-open")
                     },
                     opens,
-                    Command::Open(id),
+                    if single {
+                        Command::Open(id)
+                    } else {
+                        Command::OpenMany(ids.clone())
+                    },
                 );
             }
             let placeholder = aurora_net::inventory::InvItem::default();
@@ -526,7 +543,12 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     TEXT,
                     "restore",
                     aurora_i18n::tr!("ui-inventory-context-return-to-last-location"),
-                    single && writable,
+                    writable
+                        && ids.iter().all(|id| {
+                            rules::original(inv, *id)
+                                .and_then(|id| inv.items.get(&id))
+                                .is_some_and(|item| item.asset_type == 6 && !facts.worn.contains(&item.id))
+                        }),
                     InvAction::Restore(target.unwrap_or(id)),
                 );
             }
@@ -604,19 +626,13 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                     InvAction::Gesture(crate::ui::gestures::Action::Play(target.unwrap_or(id))),
                 );
             }
-            if all
-                || (single
-                    && original.is_some_and(|it| {
-                        ((it.asset_type == 13 && it.flags & 0xff == 0) || crate::physics_editor::is_physics(it))
-                            && facts.worn.contains(&it.id)
-                    }))
-            {
+            if all || (single && original.is_some_and(|it| (matches!(it.asset_type, 5 | 13)) && facts.worn.contains(&it.id))) {
                 c.add(
                     "edit-worn",
                     TEXT,
                     "pencil-filled",
                     aurora_i18n::tr!("common-edit"),
-                    true,
+                    original.is_some_and(|item| item.owner_mask & rules::MODIFY != 0),
                     Command::Worn(crate::ui::context::CtxAction::EditWorn(target.unwrap_or(id))),
                 );
             }
@@ -688,8 +704,12 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 TEXT,
                 "info-circle-filled",
                 aurora_i18n::tr!("common-properties"),
-                single,
-                Command::Properties(id),
+                !ids.is_empty(),
+                if single {
+                    Command::Properties(id)
+                } else {
+                    Command::PropertiesMany(ids.clone())
+                },
             );
         }
         if all || !single || folder.is_some() {
@@ -760,7 +780,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
                 &organize,
                 "folder-filled",
                 aurora_i18n::tr!("ui-inventory-context-move-to-default-folder"),
-                ready && movable && single,
+                ready && movable,
                 Command::DefaultFolder(ids.clone()),
             );
         }
@@ -903,7 +923,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             Command::Image(id),
         );
     }
-    if (folder.is_some() && !trash) || all {
+    if folder.is_some() || all {
         c.divider("folder-navigation", TEXT);
         navigation(&mut c, inv, id, single);
     }
@@ -939,6 +959,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         );
         c.slot("delete", 7);
     }
+    extra::build(&mut c, inv, id, st, prefs, facts, all);
     c
 }
 
@@ -1117,14 +1138,20 @@ pub(super) fn execute(
         }
     };
     match command {
+        Command::Extra(command) => extra::execute(command, ui, inv, st, prefs, facts, actions),
         Command::Invoke(action) => actions.push(action),
         Command::Folder(id) => submit(rules::create_folder(id, aurora_i18n::tr!("common-new-folder"))),
         Command::Upload(slot, id) => prefs.upload_folders[slot] = id,
         Command::Empty(id) => st.dialog = Some(EditDialog::Empty(id)),
         Command::DefaultFolder(ids) => {
-            if let Some(to) = ids.first().and_then(|id| rules::default_folder(inv, *id)) {
-                submit(rules::move_selection(inv, &ids, to, &prefs.protected, &facts.worn));
-            }
+            let plan = ids.iter().try_fold(Mutation::default(), |mut plan, id| {
+                let to = rules::default_folder(inv, *id).ok_or_else(|| aurora_i18n::tr!("common-folder-not-found").to_owned())?;
+                let change = rules::move_selection(inv, &[*id], to, &prefs.protected, &facts.worn)?;
+                plan.operations.extend(change.operations);
+                plan.refresh.extend(change.refresh);
+                Ok::<_, String>(plan)
+            });
+            submit(plan);
         }
         Command::Delete(ids, purge) => st.dialog = Some(EditDialog::Delete(ids, purge)),
         Command::Share(ids) => {
@@ -1132,6 +1159,34 @@ pub(super) fn execute(
             st.share_picker.open(&format!("inventory_share_{}", st.ui_id), false);
         }
         Command::Open(id) => super::context::open(inv, id, st, actions),
+        Command::OpenMany(ids) => {
+            for id in ids {
+                super::context::open(inv, id, st, actions);
+            }
+        }
+        Command::Batch(batch) => actions.extend(batch),
+        Command::PropertiesMany(ids) => {
+            for id in ids {
+                if !st
+                    .windows
+                    .iter()
+                    .any(|window| matches!(window.state.dialog, Some(EditDialog::Properties(item)) if item == id))
+                {
+                    let state = InventoryUi {
+                        ui_id: Uuid::new_v4(),
+                        dialog: Some(EditDialog::Properties(id)),
+                        ..Default::default()
+                    };
+                    st.windows.push(InventoryWindow {
+                        id: state.ui_id,
+                        root: Uuid::nil(),
+                        additional: false,
+                        state: Box::new(state),
+                        open: false,
+                    });
+                }
+            }
+        }
         Command::Properties(id) => {
             st.property_edit = None;
             st.dialog = Some(EditDialog::Properties(id));
@@ -1197,6 +1252,7 @@ mod tests {
             active_gestures: Default::default(),
             touchable: Default::default(),
             names: Default::default(),
+            ..Default::default()
         }
     }
     fn inventory() -> Inventory {

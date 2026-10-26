@@ -80,6 +80,7 @@ impl Fixture {
                 appearance_busy: false,
                 touchable: Default::default(),
                 names: Default::default(),
+                ..Default::default()
             },
             time: 0.0,
             actions: Vec::new(),

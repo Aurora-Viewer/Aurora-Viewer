@@ -24,6 +24,15 @@ const TYPES: [&str; 17] = [
     "universal",
 ];
 
+pub fn default_texture(kind: u8) -> Uuid {
+    match kind {
+        2 => Uuid::from_u128(0x7ca39b4c_bd19_4699_aff7_f93fd03d3e7b),
+        3 => Uuid::from_u128(0x6522e74d_1660_4e7f_b601_6f48c1659a77),
+        1 | 14 | 16 => crate::scene::avatar::IMG_DEFAULT_AVATAR,
+        _ => aurora_prim::te::BLANK_TEXTURE,
+    }
+}
+
 pub fn create(kind: u8, name: &str, owner: Uuid) -> Result<Vec<u8>, String> {
     let Some(kind_name) = TYPES.get(kind as usize) else {
         return Err(aurora_i18n::tr!("world-inventory-wearable-unknown-clothing-type").into());
@@ -77,12 +86,7 @@ pub fn create(kind: u8, name: &str, owner: Uuid) -> Result<Vec<u8>, String> {
         16 => &[29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39],
         _ => &[],
     };
-    let texture = match kind {
-        2 => "7ca39b4c-bd19-4699-aff7-f93fd03d3e7b",
-        3 => "6522e74d-1660-4e7f-b601-6f48c1659a77",
-        1 | 14 | 16 => "c228d1cf-4b5d-4ba8-84f4-899a0796aa97",
-        _ => "5748decc-f629-461c-9a36-a35a221fe21f",
-    };
+    let texture = default_texture(kind);
     out.push_str(&format!("textures {}\n", indices.len()));
     for index in indices {
         out.push_str(&format!("{index} {texture}\n"));
