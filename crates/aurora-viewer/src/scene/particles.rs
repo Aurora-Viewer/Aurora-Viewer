@@ -343,22 +343,10 @@ impl ParticleManager {
                 if p.blend_dst == ps::LL_PART_BF_ONE {
                     flags |= particle_flags::ADDITIVE;
                 }
-                let mut pos = p.pos;
-                let mut axis = Vec3::ZERO;
-                let mut size = [p.size.x, p.size.y];
-                if p.is_ribbon() {
-                    // segment towards the parent particle
-                    let seg = p.prev_pos - p.pos;
-                    if seg.length_squared() > 1e-8 {
-                        pos = p.pos + seg * 0.5;
-                        axis = seg;
-                        size = [p.size.x, seg.length()];
-                        flags |= particle_flags::AXIS;
-                    }
-                } else if p.flags & ps::LL_PART_FOLLOW_VELOCITY_MASK != 0 && p.vel.length_squared() > 1e-8 {
-                    axis = p.vel.normalize() * p.size.y;
-                    flags |= particle_flags::FOLLOW_VELOCITY;
-                }
+                let Some((pos, axis, size, shape)) = geometry(p) else {
+                    continue;
+                };
+                flags |= shape;
                 let inst = ParticleInstance {
                     pos: pos.to_array(),
                     texture: slot,
@@ -379,6 +367,34 @@ impl ParticleManager {
         out.extend(self.order_tmp.iter().map(|k| self.inst_tmp[(k & 0xFFFF_FFFF) as usize]));
         parts.lap(Part::ParamsPartList, t);
     }
+}
+
+/// Quad of a particle: centre, axis, size and `particle_flags` shape bits,
+/// or `None` when it covers nothing (LLVOPartGroup::getGeometry).
+///
+/// A ribbon segment runs to its parent particle and is `size.x` wide: its
+/// `size.y` is never used. Particles emitted in the same frame (several per
+/// burst, or several bursts in one frame) share their position and motion,
+/// so a segment between two of them stays empty all its life; the Legacy
+/// Viewer draws it as a zero-area quad. Drawing it as a billboard instead
+/// stood each such link of a leash chain up `size.y` tall (#1049).
+fn geometry(p: &ps::Particle) -> Option<(Vec3, Vec3, [f32; 2], u32)> {
+    if p.is_ribbon() {
+        let seg = p.prev_pos - p.pos;
+        if seg.length_squared() <= 1e-8 {
+            return None;
+        }
+        return Some((p.pos + seg * 0.5, seg, [p.size.x, seg.length()], particle_flags::AXIS));
+    }
+    if p.flags & ps::LL_PART_FOLLOW_VELOCITY_MASK != 0 && p.vel.length_squared() > 1e-8 {
+        return Some((
+            p.pos,
+            p.vel.normalize() * p.size.y,
+            [p.size.x, p.size.y],
+            particle_flags::FOLLOW_VELOCITY,
+        ));
+    }
+    Some((p.pos, Vec3::ZERO, [p.size.x, p.size.y], 0))
 }
 
 /// Distance along the ray (`dir` unit, perpendicular to the quad) to a
@@ -497,6 +513,41 @@ mod tests {
         world.regions.clear();
         source.update(0.1, &ctx, &mut budget, &world);
         assert!((source.ps.particles()[0].vel - p.vel * 0.99).length() < 1e-6);
+    }
+
+    #[test]
+    fn ribbon_links_emitted_together_draw_nothing_instead_of_standing_up() {
+        // a leash: ribbon chain from the collar towards a held point, two
+        // links per burst, a long y scale that ribbons ignore
+        let mut data = ps::PartSysData {
+            pattern: ps::LL_PART_SRC_PATTERN_DROP,
+            burst_rate: 0.05,
+            burst_part_count: 2,
+            part_accel: Vec3::new(0.0, 0.0, -1.0),
+            ..Default::default()
+        };
+        data.part.flags = ps::LL_PART_RIBBON_MASK | ps::LL_PART_FOLLOW_SRC_MASK | ps::LL_PART_TARGET_POS_MASK;
+        data.part.max_age = 3.5;
+        data.part.start_scale = glam::Vec2::new(0.07, 3.0);
+        data.part.end_scale = data.part.start_scale;
+        let mut source = ParticleSource::new(data, 1);
+        let ctx = SourceContext {
+            pos: Vec3::new(10.0, 10.0, 21.0),
+            target: Some(Vec3::new(12.0, 10.0, 21.5)),
+            ..Default::default()
+        };
+        let mut budget = usize::MAX;
+        for _ in 0..40 {
+            source.update_with_wind(0.06, &ctx, &mut budget, |_| Vec3::ZERO);
+        }
+        let quads: Vec<_> = source.particles().iter().map(geometry).collect();
+        assert!(quads.len() > 20);
+        assert!(quads.iter().any(Option::is_none), "links of one burst share their position");
+        for (_, axis, size, shape) in quads.into_iter().flatten() {
+            assert_eq!(shape, particle_flags::AXIS);
+            assert_eq!(size, [0.07, axis.length()]);
+            assert!(size[1] < 0.5, "a segment runs between neighbouring links, not {}", size[1]);
+        }
     }
 
     #[test]
