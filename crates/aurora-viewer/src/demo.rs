@@ -1309,7 +1309,10 @@ pub fn bubbles_lines(world: &mut crate::world::World, view: Bubbles) {
                         } else {
                             (name, friend, ChatKind::Im)
                         };
-                        line(ago(9 - i as u64), who, id, kind, url)
+                        // half a minute apart from 9 minutes ago: the twelve
+                        // links stay before the last lines of the scenario
+                        let at = now - std::time::Duration::from_secs(540u64.saturating_sub(30 * i as u64));
+                        line(at, who, id, kind, url)
                     })
                     .collect()
                 } else if mode == "states" {
