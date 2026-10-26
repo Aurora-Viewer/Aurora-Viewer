@@ -6,13 +6,94 @@
 //! on the live view of the photo mode and on the photo, at a strength, with
 //! a before / after line on the live view.
 //!
+//! Looks stack: each layer of `Settings::looks` is drawn over the ones
+//! before at its own strength, and can be switched off without losing its
+//! place. Aurora's looks have settings (`knobs`), kept per look.
+//!
 //! A look is saved by its id: the Legacy Viewer's file name (`Sepia`),
 //! `aurora:<id>` or `lut:<file name>`.
 
+use super::knobs;
 use super::luts::LutLibrary;
-use aurora_render::looks::{AuroraSection, LookOp, Lut, PhotoLook, aurora_look, aurora_looks, legacy_look, legacy_looks};
+use aurora_render::looks::{AuroraSection, LookLayer, LookOp, Lut, PhotoLook, aurora_look, aurora_looks, legacy_look, legacy_looks};
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+/// Layers of the stack at most.
+pub const MAX_LAYERS: usize = 6;
+
+/// One look of the stack.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Layer {
+    pub id: String,
+    /// In percent.
+    pub strength: u8,
+    /// Drawn (unticked: kept in the stack, not drawn).
+    pub on: bool,
+}
+
+impl Default for Layer {
+    fn default() -> Self {
+        Layer {
+            id: String::new(),
+            strength: 100,
+            on: true,
+        }
+    }
+}
+
+impl Layer {
+    pub fn new(id: impl Into<String>) -> Layer {
+        Layer {
+            id: id.into(),
+            ..Default::default()
+        }
+    }
+}
+
+/// How a click in the list changes the stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// The chosen layer takes the look.
+    #[default]
+    Replace,
+    /// The look goes on top as a new layer.
+    Add,
+}
+
+/// The stack once `pointed` (Some(None): "No filter") is tried in `mode`
+/// over layer `selected`.
+pub fn tried(stack: &[Layer], pointed: Option<Option<&str>>, mode: Mode, selected: usize) -> Vec<Layer> {
+    let mut stack = stack.to_vec();
+    match pointed {
+        None => {}
+        Some(None) => stack.clear(),
+        Some(Some(id)) => {
+            choose(&mut stack, id, mode, selected);
+        }
+    }
+    stack
+}
+
+/// A look chosen in the list: the chosen layer takes it, or it goes on
+/// top; returns the layer it is in.
+pub fn choose(stack: &mut Vec<Layer>, id: &str, mode: Mode, selected: usize) -> usize {
+    if mode == Mode::Add || stack.is_empty() {
+        if stack.len() >= MAX_LAYERS {
+            stack.pop();
+        }
+        stack.push(Layer::new(id));
+        stack.len() - 1
+    } else {
+        let at = selected.min(stack.len() - 1);
+        stack[at].id = id.to_owned();
+        stack[at].on = true;
+        at
+    }
+}
 
 pub const AURORA: &str = "aurora:";
 pub const LUT: &str = "lut:";
@@ -246,19 +327,25 @@ pub fn search(query: &str, lut_names: &[String]) -> Vec<Entry> {
 }
 
 /// What a look draws: its operations, and its table.
+#[derive(Clone)]
 pub struct Resolved {
     pub ops: Arc<[LookOp]>,
     pub lut: Option<Arc<Lut>>,
 }
 
-/// The operations of a look; a table not read yet gives None (it is being
-/// read, on a worker).
-pub fn resolve(id: &str, luts: &mut LutLibrary) -> Option<Resolved> {
+/// The settings of one of Aurora's looks by id.
+pub type Settings = BTreeMap<String, Vec<f32>>;
+
+/// The operations of a look with its settings; a table not read yet gives
+/// None (it is being read, on a worker).
+pub fn resolve(id: &str, settings: &Settings, luts: &mut LutLibrary) -> Option<Resolved> {
     if let Some(aurora) = id.strip_prefix(AURORA) {
-        return Some(Resolved {
-            ops: aurora_look(aurora)?.ops.clone(),
-            lut: None,
-        });
+        let look = aurora_look(aurora)?;
+        let ops = match settings.get(id) {
+            Some(values) => knobs::apply(knobs::knobs(aurora), &look.ops, values).into(),
+            None => look.ops.clone(),
+        };
+        return Some(Resolved { ops, lut: None });
     }
     if let Some(file) = id.strip_prefix(LUT) {
         let lut = luts.table(file)?;
@@ -284,20 +371,38 @@ pub struct Placement {
     pub scale: f32,
 }
 
-/// The look of a frame at `strength` percent; `focus`: the focus distance
-/// of the depth operations (the photo's depth of field), None for the
-/// scene at the middle of the photo.
-pub fn frame_look(look: &Resolved, strength: u8, place: Placement, compare: Option<f32>, hold: bool, focus: Option<f32>) -> PhotoLook {
-    PhotoLook {
-        ops: look.ops.clone(),
-        intensity: f32::from(strength.min(100)) / 100.0,
+/// The layers switched on, resolved, with their strength (a table not
+/// read yet is left out this frame).
+pub fn resolve_stack(stack: &[Layer], settings: &Settings, luts: &mut LutLibrary) -> Vec<(Resolved, u8)> {
+    stack
+        .iter()
+        .filter(|l| l.on)
+        .filter_map(|l| Some((resolve(&l.id, settings, luts)?, l.strength)))
+        .collect()
+}
+
+/// The looks of a frame; `focus`: the focus distance of the depth
+/// operations (the photo's depth of field), None for the scene at the
+/// middle of the photo. None without a layer.
+pub fn frame_look(layers: &[(Resolved, u8)], place: Placement, compare: Option<f32>, hold: bool, focus: Option<f32>) -> Option<PhotoLook> {
+    if layers.is_empty() {
+        return None;
+    }
+    Some(PhotoLook {
+        layers: layers
+            .iter()
+            .map(|(look, strength)| LookLayer {
+                ops: look.ops.clone(),
+                intensity: f32::from((*strength).min(100)) / 100.0,
+                lut: look.lut.clone(),
+            })
+            .collect(),
         compare: compare.map(|c| c.clamp(0.0, 1.0)),
         image: [place.origin[0], place.origin[1], place.photo.0 as f32, place.photo.1 as f32],
         scale: place.scale,
         hold,
-        lut: look.lut.clone(),
         focus,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -345,15 +450,50 @@ mod tests {
             scale: 0.5,
         };
         let mut luts = LutLibrary::new(std::env::temp_dir().join("aurora-no-luts"));
-        let sepia = resolve("Sepia", &mut luts).expect("Sepia");
-        let look = frame_look(&sepia, 140, place, Some(1.4), true, Some(3.0));
-        assert_eq!(look.intensity, 1.0);
+        let settings = Settings::new();
+        let mut stack = vec![Layer::new("Sepia"), Layer::new("aurora:vhs"), Layer::new("Nothing")];
+        stack[0].strength = 140;
+        stack[1].on = false;
+        let layers = resolve_stack(&stack, &settings, &mut luts);
+        assert_eq!(layers.len(), 1);
+        let look = frame_look(&layers, place, Some(1.4), true, Some(3.0)).expect("a look");
+        assert_eq!(look.layers[0].intensity, 1.0);
         assert_eq!(look.compare, Some(1.0));
         assert_eq!(look.image, [10.0, -4.0, 3840.0, 2160.0]);
         assert!(look.hold);
         assert_eq!(look.focus, Some(3.0));
-        assert!(resolve("aurora:vhs", &mut luts).is_some());
-        assert!(resolve("Nothing", &mut luts).is_none());
-        assert!(resolve("aurora:nothing", &mut luts).is_none());
+        assert!(frame_look(&[], place, None, false, None).is_none());
+        assert!(resolve("aurora:nothing", &settings, &mut luts).is_none());
+    }
+
+    #[test]
+    fn settings_change_an_aurora_look() {
+        let mut luts = LutLibrary::new(std::env::temp_dir().join("aurora-no-luts"));
+        let mut settings = Settings::new();
+        let plain = resolve("aurora:glitch", &settings, &mut luts).expect("glitch");
+        settings.insert("aurora:glitch".into(), vec![0.05, 0.02, 9.0]);
+        let set = resolve("aurora:glitch", &settings, &mut luts).expect("glitch");
+        assert_ne!(plain.ops, set.ops);
+        assert_eq!(set.ops[0].param(0), Some(0.05));
+    }
+
+    #[test]
+    fn clicks_replace_the_chosen_layer_or_add_one() {
+        let mut stack = Vec::new();
+        assert_eq!(choose(&mut stack, "Sepia", Mode::Replace, 0), 0);
+        assert_eq!(choose(&mut stack, "aurora:vhs", Mode::Add, 0), 1);
+        assert_eq!(choose(&mut stack, "Negative", Mode::Replace, 0), 0);
+        let ids: Vec<&str> = stack.iter().map(|l| l.id.as_str()).collect();
+        assert_eq!(ids, ["Negative", "aurora:vhs"]);
+        // trying leaves the stack as it is
+        let tried = tried(&stack, Some(Some("Sepia")), Mode::Add, 0);
+        assert_eq!(tried.len(), 3);
+        assert_eq!(stack.len(), 2);
+        assert!(super::tried(&stack, Some(None), Mode::Add, 0).is_empty());
+        // the stack has a ceiling: the top layer gives way
+        for _ in 0..10 {
+            choose(&mut stack, "aurora:pixel", Mode::Add, 0);
+        }
+        assert_eq!(stack.len(), MAX_LAYERS);
     }
 }

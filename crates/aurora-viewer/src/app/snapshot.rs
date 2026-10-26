@@ -101,9 +101,10 @@ struct Job {
     supersample: u32,
     /// Cut out by the isolation (`snapshot::isolate`): its alpha is kept.
     cutout: bool,
-    /// The look it is drawn with, chosen when it started, its strength and
-    /// the focus distance of its depth operations.
-    look: Option<(Resolved, u8, Option<f32>)>,
+    /// The looks it is drawn with, chosen when it started, their strength,
+    /// and the focus distance of their depth operations.
+    looks: Vec<(Resolved, u8)>,
+    focus: Option<f32>,
     /// The photo's size, before its supersampling or the preview's
     /// reduction: the look's pixels.
     photo: (u32, u32),
@@ -366,14 +367,12 @@ impl App {
         s.capturing = Some(spec);
         // the look in the photo's own pixels, from the corner of the part
         // drawn; the tiles share the histogram of the live view's last frame
-        let look = job.look.as_ref().map(|(look, strength, focus)| {
-            let place = Placement {
-                origin: [-(tile.x as f32), -(tile.y as f32)],
-                photo: job.photo,
-                scale: job.size.1 as f32 / job.photo.1.max(1) as f32,
-            };
-            looks::frame_look(look, *strength, place, None, !single, *focus)
-        });
+        let place = Placement {
+            origin: [-(tile.x as f32), -(tile.y as f32)],
+            photo: job.photo,
+            scale: job.size.1 as f32 / job.photo.1.max(1) as f32,
+        };
+        let look = looks::frame_look(&job.looks, place, None, !single, job.focus);
         Some(PhotoFrame {
             aspect: job.size.0 as f32 / job.size.1.max(1) as f32,
             tile: if single {
@@ -764,19 +763,15 @@ impl App {
             started: Instant::now(),
             supersample,
             cutout: self.world.photo_isolation.empty_background(),
-            look: None,
+            looks: Vec::new(),
+            focus: self.snapshots.look_focus,
             photo: full,
         });
-        let strength = self.settings.snapshot.look_strength;
-        let focus = self.snapshots.look_focus;
-        let look = self
-            .settings
-            .snapshot
-            .look
-            .clone()
-            .and_then(|id| looks::resolve(&id, self.photo_luts()));
+        let stack = self.settings.snapshot.looks.clone();
+        let settings = self.settings.snapshot.look_settings.clone();
+        let resolved = looks::resolve_stack(&stack, &settings, self.photo_luts());
         if let Some(job) = &mut self.snapshots.job {
-            job.look = look.map(|look| (look, strength, focus));
+            job.looks = resolved;
         }
     }
 
@@ -795,12 +790,15 @@ impl App {
         if !self.panels.snapshot {
             return None;
         }
-        let id = match &self.snapshots.ui.look_hover {
-            Some(pointed) => pointed.clone()?,
-            None => self.settings.snapshot.look.clone()?,
-        };
-        let look = looks::resolve(&id, self.photo_luts())?;
-        let s = &self.settings.snapshot;
+        let ui = &self.snapshots.ui.looks;
+        let stack = looks::tried(
+            &self.settings.snapshot.looks,
+            ui.hover.as_ref().map(|h| h.as_deref()),
+            ui.mode,
+            ui.selected,
+        );
+        let settings = self.settings.snapshot.look_settings.clone();
+        let layers = looks::resolve_stack(&stack, &settings, self.photo_luts());
         let photo = self.photo_size(window);
         let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(window.0 as f32, window.1 as f32));
         let frame = crate::ui::snapshot::fit(screen, photo.0 as f32 / photo.1.max(1) as f32);
@@ -809,8 +807,8 @@ impl App {
             photo,
             scale: frame.height() / photo.1.max(1) as f32,
         };
-        let compare = self.snapshots.ui.look_compare.filter(|_| self.viewfinder_on());
-        Some(looks::frame_look(&look, s.look_strength, place, compare, false, focus))
+        let compare = self.snapshots.ui.looks.compare.filter(|_| self.viewfinder_on());
+        looks::frame_look(&layers, place, compare, false, focus)
     }
 
     /// The largest side drawn in one pass: the card's, or in demo
@@ -1421,10 +1419,9 @@ impl App {
                 if let Err(e) = self.photo_luts().remove(&name) {
                     log::warn!("photo LUT {name} not removed: {e}");
                 }
-                if self.settings.snapshot.look.as_deref() == Some(&format!("{}{name}", looks::LUT)) {
-                    self.settings.snapshot.look = None;
-                    self.settings.save();
-                }
+                let id = format!("{}{name}", looks::LUT);
+                self.settings.snapshot.looks.retain(|l| l.id != id);
+                self.settings.save();
             }
             Action::OpenLutFolder => {
                 let dir = self.photo_luts().dir().to_path_buf();
@@ -1458,7 +1455,8 @@ impl App {
             Some(Ok((name, lut))) => {
                 let text = aurora_i18n::tr!("photo-lut-imported", name = looks::lut_display(&name));
                 self.photo_luts().imported(name.clone(), lut);
-                self.settings.snapshot.look = Some(format!("{}{name}", looks::LUT));
+                let id = format!("{}{name}", looks::LUT);
+                self.snapshots.ui.looks.pick(&mut self.settings.snapshot, &id);
                 self.settings.save();
                 self.snapshots.message = Some((text.clone(), false));
                 let now = self.egui_ctx.input(|i| i.time);
@@ -1473,58 +1471,84 @@ impl App {
         }
     }
 
-    /// AURORA_DEMO_PHOTO_LOOK=<filter>[:<percent>][:compare][:panel]
-    /// [:tab=legacy|aurora|luts][:search=<text>], with AURORA_DEMO_SNAPSHOT:
-    /// the filter (`Sepia`, `aurora:vhs`, `lut:<file>`, or `lut:demo` for a
-    /// warm table written into the library) at that strength (100 by
+    /// AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel]
+    /// [:tab=legacy|aurora|luts][:search=<text>][:set=<n>,<v>,…], with
+    /// AURORA_DEMO_SNAPSHOT: the looks stacked in that order (`Sepia`,
+    /// `aurora:vhs`, `lut:<file>`, or `lut:demo` for a warm table written
+    /// into the library), the last one chosen, at that strength (100 by
     /// default), the before / after line in the middle, the viewfinder's
-    /// filter panel open on the filter's tab or the one given, a search
-    /// typed (the photo window's settings scrolled to the filter). Without
-    /// it, the scenarios start with no filter.
+    /// filter panel open on the chosen look's tab or the one given, a
+    /// search typed, the chosen Aurora look's settings set (the photo
+    /// window's settings scrolled to the filters). Without it, the
+    /// scenarios start with no look.
     fn photo_look_demo(&mut self) {
         let value = std::env::var("AURORA_DEMO_PHOTO_LOOK").unwrap_or_default();
-        let mut parts = value.split(':').peekable();
+        let mut parts: Vec<&str> = value.split('+').collect();
+        let last = parts.pop().unwrap_or_default();
+        let mut tokens = last.split(':');
         // `aurora:` and `lut:` ids hold a colon
-        let mut id = parts.next().unwrap_or_default().to_owned();
-        if matches!(id.as_str(), "aurora" | "lut")
-            && let Some(rest) = parts.next()
-        {
-            id = format!("{id}:{rest}");
+        let id_of = |tokens: &mut std::str::Split<'_, char>| {
+            let mut id = tokens.next().unwrap_or_default().to_owned();
+            if matches!(id.as_str(), "aurora" | "lut")
+                && let Some(rest) = tokens.next()
+            {
+                id = format!("{id}:{rest}");
+            }
+            id
+        };
+        let mut ids: Vec<String> = parts.iter().map(|part| id_of(&mut part.split(':'))).collect();
+        ids.push(id_of(&mut tokens));
+        for id in &mut ids {
+            if id == "lut:demo" {
+                *id = format!("{}{}", looks::LUT, self.photo_demo_lut());
+            }
         }
-        if id == "lut:demo" {
-            id = format!("{}{}", looks::LUT, self.photo_demo_lut());
+        let s = &mut self.settings.snapshot;
+        s.looks = ids
+            .iter()
+            .filter(|id| looks::name(id).is_some())
+            .map(|id| looks::Layer::new(id.clone()))
+            .collect();
+        let ui = &mut self.snapshots.ui.looks;
+        ui.selected = s.looks.len().saturating_sub(1);
+        ui.compare = None;
+        ui.mode = looks::Mode::Replace;
+        if let Some(layer) = s.looks.last() {
+            ui.tab = looks::tab_of(&layer.id);
         }
-        self.settings.snapshot.look = (looks::name(&id).is_some()).then(|| id.clone());
-        self.settings.snapshot.look_strength = 100;
-        self.snapshots.ui.look_compare = None;
-        self.snapshots.vf.looks_state.tab = looks::tab_of(&id);
-        for part in parts {
+        for part in tokens {
             match part.split_once('=') {
                 Some(("tab", tab)) => {
-                    self.snapshots.vf.looks_state.tab = match tab {
+                    ui.tab = match tab {
                         "aurora" => looks::Tab::Aurora,
                         "luts" => looks::Tab::Luts,
                         _ => looks::Tab::Legacy,
                     };
                 }
-                Some(("search", text)) => self.snapshots.vf.looks_state.query = text.to_owned(),
+                Some(("search", text)) => ui.query = text.to_owned(),
+                Some(("set", values)) => {
+                    if let Some(layer) = s.looks.last() {
+                        let values: Vec<f32> = values.split(',').filter_map(|v| v.parse().ok()).collect();
+                        s.look_settings.insert(layer.id.clone(), values);
+                    }
+                }
                 _ => match part {
-                    "compare" => self.snapshots.ui.look_compare = Some(0.5),
+                    "compare" => ui.compare = Some(0.5),
                     "panel" => {
                         self.snapshots.vf.looks = true;
                         self.snapshots.vf.hinted = true;
-                        self.snapshots.ui.look_reveal = true;
+                        ui.reveal = true;
                     }
                     strength => {
-                        if let Ok(v) = strength.parse::<u8>() {
-                            self.settings.snapshot.look_strength = v.min(100);
+                        if let (Ok(v), Some(layer)) = (strength.parse::<u8>(), s.looks.last_mut()) {
+                            layer.strength = v.min(100);
                         }
                     }
                 },
             }
         }
-        if let Some(id) = &self.settings.snapshot.look {
-            log::info!("photo look demo: {id} at {} %", self.settings.snapshot.look_strength);
+        for layer in &s.looks {
+            log::info!("photo look demo: {} at {} %", layer.id, layer.strength);
         }
     }
 

@@ -225,6 +225,19 @@ are planned or in progress: they are not in the viewer yet.
   on-screen camera pad, and a 2 s or 10 s self-timer to get into your pose.
 - **Up to 8K**: 4K by default, in PNG, JPEG or BMP, to disk, inventory or the
   profile feed ([how to use it](#photos)).
+- **Isolate your subject**: your avatar alone, or the avatars and objects you
+  click, on a transparent background: a PNG ready for a poster or a profile,
+  with soft hair and glass kept partly transparent.
+- **Filters and effects, live**: the Legacy Viewer's 30 photo filters, 36 of
+  Aurora's own (film grain, teal and orange, instant photo, halation, chromatic
+  aberration, cinema bars, VHS, glitch, oil paint, sketch…) and your own `.cube`
+  LUTs from Lightroom, DaVinci Resolve or Photoshop. Stack up to six, each with
+  its strength and its own sliders, and compare before / after with a line you
+  drag. Some read the scene's depth: a haze that grows with distance, a true 3D
+  miniature, a blurred background, the subject standing out. What you see in
+  the viewfinder is what the photo gets, at full resolution.
+
+<img width="1600" height="900" alt="The photo mode's filter panel: three effects stacked (silver black and white, old lens, glitch), the glitch's sliders, and the Aurora tab with its sections" src="docs/screenshots/photo-looks.webp" />
 
 ### Creator tools
 
@@ -428,7 +441,9 @@ The texture memory budget is set automatically from the detected VRAM.
 - **Photos and camera** — a full-screen viewfinder with face autofocus, lens
   rings, focus peaking, a live histogram, exposure lock and a self-timer;
   snapshots up to 8K to disk, inventory or
-  the profile feed; depth of field, a maximum-quality photo mode with 8× MSAA,
+  the profile feed; isolation of your avatar or chosen subjects on a
+  transparent background; 66 stackable filters and effects with their own
+  sliders, and your `.cube` LUTs; depth of field, a maximum-quality photo mode with 8× MSAA,
   temporary lighting controls, keyboard free camera and a combined camera /
   movement Controls window.
 - **Social** — local chat as cards or classic lines, messenger-style IMs and
@@ -474,7 +489,7 @@ completed work from features awaiting that validation.
 **Not there yet**
 
 - The clothing texture / colour editors.
-- Photo filters, depth exports and 360° snapshots.
+- Depth exports and 360° snapshots.
 - A macOS build: the code is portable but not validated.
 - Automatic installation of updates on Linux (the viewer points to the
   new release instead).
@@ -636,6 +651,29 @@ offers a caption and an optional location.
 for the capture. The window also offers depth of field, exposure, time of
 day, cloud pause and worn-light controls. Closing it restores your ordinary
 graphics and lighting settings.
+
+**Filters and effects**: the dock's three-circle button (or the **Filters**
+section of the photo window) opens the effects panel. Its tabs hold the
+Legacy Viewer's 30 photo filters, Aurora's 36 effects in five sections
+(film, colour, lens, creative, depth) and **My LUTs**, where **Import a
+.cube file…** adds a 3D LUT from Lightroom, DaVinci Resolve or Photoshop;
+the search looks in all three. Point at an effect to try it live, click to
+use it. **Replace the chosen one** swaps the selected effect, **Add on top**
+stacks a new one (up to six): each line of **Active looks** can be switched
+off, moved up or down, or taken out. The selected effect's **Strength** and
+its own sliders (a glitch's amplitude and bands, a grain's size, a haze's
+distance and colour…) are under the list, with **Default values**; your
+settings are kept for each effect. **Before / after** puts a line on the
+frame that you drag. The depth effects (Haze, Miniature 3D, Background blur,
+Subject spotlight) focus where the depth of field focuses, or on the middle
+of the photo. The photo is drawn with the same effects, at its resolution.
+
+**Isolate**: the dock's button under the shutter shows **All**, **My
+avatar** (alone) or **My choice**: click avatars and objects in the scene to
+add or remove them (a whole avatar with its attachments, a whole linkset),
+listed by name with a cross each. With a transparent background (the
+default) the photo has no sky, ground or water and is saved as a PNG whose
+transparency follows the real edges, soft hair included.
 
 Enable **Free camera** to move the camera with the movement keys while your
 avatar stays put. Hold the right mouse button to look, use Shift to move

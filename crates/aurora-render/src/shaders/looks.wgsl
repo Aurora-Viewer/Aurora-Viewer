@@ -35,7 +35,9 @@ struct Pass {
     intensity: f32,
     // the original left of this share of the photo's width (< 0: none)
     compare: f32,
-    _pad: vec2<f32>,
+    // the layer's first operation: its stencil starts there
+    layer_start: u32,
+    _pad: f32,
     // the frame's inverse projection (view distance of a depth value)
     inv_proj: mat4x4<f32>,
 };
@@ -45,6 +47,9 @@ const FINAL: u32 = 2u;
 const DST_SRGB: u32 = 4u;
 // the scene's depth is bound (not the tests' blank one)
 const DEPTH_OK: u32 = 8u;
+const LAYER_SRGB: u32 = 16u;
+const LAST: u32 = 32u;
+const SCENE_SRGB: u32 = 64u;
 
 const OP_STENCIL: f32 = 0.0;
 const OP_MATRIX: f32 = 1.0;
@@ -80,6 +85,8 @@ const OP_SPLIT: f32 = 22.0;
 @group(0) @binding(7) var lut_tex: texture_3d<f32>;
 // x: the focus distance along the view axis (m)
 @group(0) @binding(8) var<storage, read> focus: vec4<f32>;
+// the scene before every layer (comparison, coverage)
+@group(0) @binding(9) var scene: texture_2d<f32>;
 
 struct Out {
     @builtin(position) clip: vec4<f32>,
@@ -483,7 +490,7 @@ fn fs_look(in: Out) -> @location(0) vec4<f32> {
     var p = levels(textureLoad(src, px, 0).rgb, src_srgb);
     if (inside) {
         var st = Stencil(0.0, 0.0, 0.0, 1.0, vec4<f32>(0.0));
-        for (var k = 0u; k < pass_u.end; k++) {
+        for (var k = pass_u.layer_start; k < pass_u.end; k++) {
             let op = ops[k];
             let kind = op.a.x;
             if (kind == OP_STENCIL) {
@@ -544,20 +551,24 @@ fn fs_look(in: Out) -> @location(0) vec4<f32> {
     if ((pass_u.flags & FINAL) == 0u) {
         return vec4<f32>(p / 255.0, 1.0);
     }
-    // the last pass: the look at its intensity over the original, the
-    // original kept left of the comparison line, and its coverage
+    // the layer's last pass: the look at its intensity over the image the
+    // layers below left; the last layer's: the scene as it is left of the
+    // comparison line and outside the photo, and the scene's coverage
     let o = textureLoad(original, px, 0);
-    // the original has the target's format
-    let before = levels(o.rgb, (pass_u.flags & DST_SRGB) != 0u);
-    var v = mix(before, p, clamp(pass_u.intensity, 0.0, 1.0));
-    if (!inside || (pass_u.compare >= 0.0 && q.x < pass_u.compare * size.x)) {
-        v = before;
+    var v = mix(levels(o.rgb, (pass_u.flags & LAYER_SRGB) != 0u), p, clamp(pass_u.intensity, 0.0, 1.0));
+    var alpha = 1.0;
+    if ((pass_u.flags & LAST) != 0u) {
+        let sc = textureLoad(scene, px, 0);
+        alpha = sc.a;
+        if (!inside || (pass_u.compare >= 0.0 && q.x < pass_u.compare * size.x)) {
+            v = levels(sc.rgb, (pass_u.flags & SCENE_SRGB) != 0u);
+        }
     }
     var rgb = v / 255.0;
     if ((pass_u.flags & DST_SRGB) != 0u) {
         rgb = to_linear(rgb);
     }
-    return vec4<f32>(rgb, o.a);
+    return vec4<f32>(rgb, alpha);
 }
 
 // ---- the brightness histogram of filterLinearize / filterEqualize (its own
@@ -647,7 +658,7 @@ fn cs_lut(@builtin(local_invocation_index) t: u32) {
         cumulated[i] = sum;
     }
     let total = cumulated[255];
-    let base = t * 256u;
+    let base = curve.z * 256u;
     if (curve.y == 0u) {
         let tail = clamp(op.a.z, 0.0, 1.0);
         let min_c = u32(f32(total) * tail);

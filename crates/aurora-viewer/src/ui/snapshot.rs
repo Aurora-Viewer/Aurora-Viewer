@@ -42,14 +42,8 @@ pub struct SnapshotUi {
     pub light: crate::snapshot::light::PhotoLight,
     /// The free camera's switch and flight (never saved).
     pub free: crate::camera::free::FreeSettings,
-    /// The filter pointed at in a list, tried on the live view until the
-    /// next frame of the interface (Some(None): "No filter").
-    pub look_hover: Option<Option<String>>,
-    /// The before / after comparison of the live view: the share of the
-    /// photo's width left as it is.
-    pub look_compare: Option<f32>,
-    /// The settings scroll to the filter once (AURORA_DEMO_PHOTO_LOOK).
-    pub look_reveal: bool,
+    /// The looks editor's state (`ui::looks_editor`).
+    pub looks: super::looks_editor::LooksUi,
     /// The user's 3D tables, by file name (`snapshot::luts`).
     pub lut_names: Vec<String>,
 }
@@ -189,7 +183,7 @@ impl SnapshotUi {
         classic: bool,
     ) -> Vec<Action> {
         let mut out = Vec::new();
-        self.look_hover = None;
+        self.looks.hover = None;
         let screen = ctx.content_rect();
         let mut full = false;
         let full_tip = aurora_i18n::tr!("photo-full-frame");
@@ -685,8 +679,13 @@ impl SnapshotUi {
 
         let filter = ui.cursor();
         section(ui, p, "color-filter", aurora_i18n::tr!("photo-looks"));
-        look_rows(ui, p, s, self, out);
-        if std::mem::take(&mut self.look_reveal) {
+        let opts = super::looks_editor::Options {
+            list_height: 220.0,
+            compare: false,
+            luts: &self.lut_names,
+        };
+        self.looks.show(ui, p, s, opts, out);
+        if std::mem::take(&mut self.looks.reveal) {
             ui.scroll_to_rect(filter.with_max_y(ui.cursor().top()), Some(egui::Align::Center));
         }
 
@@ -984,61 +983,6 @@ fn dof_rows(ui: &mut egui::Ui, p: &Palette, d: &mut crate::dof::PhotoDof) {
     });
 }
 
-/// The photo's filter (the Legacy Viewer's Filter list, LLFloaterSnapshot's
-/// filters_combobox, with Aurora's looks and the user's tables in their own
-/// groups) and its strength; the entry pointed at is tried on the live view.
-fn look_rows(ui: &mut egui::Ui, p: &Palette, s: &mut Settings, panel: &mut SnapshotUi, out: &mut Vec<Action>) {
-    use crate::snapshot::looks;
-    row(ui, p, aurora_i18n::tr!("photo-look"), None, |ui| {
-        egui::ComboBox::from_id_salt("photo_look")
-            .selected_text(looks::label(s.look.as_deref()))
-            .width(ui.available_width().min(170.0))
-            .height(420.0)
-            .show_ui(ui, |ui| {
-                let mut entry = |ui: &mut egui::Ui, id: Option<&str>, name: &str, tip: Option<&str>| {
-                    let mut resp = ui.selectable_label(s.look.as_deref() == id, name);
-                    if let Some(tip) = tip {
-                        resp = resp.on_hover_text(tip);
-                    }
-                    if resp.hovered() {
-                        panel.look_hover = Some(id.map(str::to_owned));
-                    }
-                    if resp.clicked() {
-                        s.look = id.map(str::to_owned);
-                    }
-                };
-                let heading = |ui: &mut egui::Ui, text: &str| {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(text).size(11.0).strong().color(p.muted));
-                };
-                entry(ui, None, aurora_i18n::tr!("photo-look-none"), None);
-                heading(ui, looks::Tab::Legacy.label());
-                for e in looks::legacy_list() {
-                    entry(ui, Some(&e.id), &e.name, None);
-                }
-                for (section, entries) in looks::aurora_list() {
-                    heading(ui, &format!("{} · {}", looks::Tab::Aurora.label(), looks::section_name(section)));
-                    for e in entries {
-                        entry(ui, Some(&e.id), &e.name, e.tip);
-                    }
-                }
-                heading(ui, looks::Tab::Luts.label());
-                for e in looks::lut_list(&panel.lut_names) {
-                    entry(ui, Some(&e.id), &e.name, None);
-                }
-                if ui.selectable_label(false, aurora_i18n::tr!("photo-lut-import")).clicked() {
-                    out.push(Action::ImportLut);
-                }
-            });
-    });
-    if s.look.is_some() {
-        row(ui, p, aurora_i18n::tr!("photo-look-strength"), None, |ui| {
-            ui.spacing_mut().slider_width = (ui.available_width() - 60.0).clamp(40.0, 130.0);
-            ui.add(egui::Slider::new(&mut s.look_strength, 0..=100).suffix(" %"));
-        });
-    }
-}
-
 /// The window's quick light (Phototools' Quick Environments, Pause Clouds,
 /// Attached Lights and Exposure), for the photo only: the window gives the
 /// user's own back when it closes.
@@ -1178,8 +1122,8 @@ fn changed(s: &Settings, before: &Settings, out: &mut Vec<Action>) {
             || s.dof != before.dof
             || s.interface != before.interface
             || s.huds != before.huds
-            || s.look != before.look
-            || s.look_strength != before.look_strength;
+            || s.looks != before.looks
+            || s.look_settings != before.look_settings;
         out.push(if photo_changed { Action::Changed } else { Action::Saved });
     }
 }

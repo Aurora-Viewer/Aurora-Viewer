@@ -541,13 +541,15 @@ fn draw(
 
 fn look_over(ops: Arc<[LookOp]>, size: (u32, u32)) -> PhotoLook {
     PhotoLook {
-        ops,
-        intensity: 1.0,
+        layers: vec![LookLayer {
+            ops,
+            intensity: 1.0,
+            lut: None,
+        }],
         compare: None,
         image: [0.0, 0.0, size.0 as f32, size.1 as f32],
         scale: 1.0,
         hold: false,
-        lut: None,
         focus: None,
     }
 }
@@ -613,16 +615,16 @@ fn intensity_and_comparison_keep_the_original() {
     let negative = legacy_look("Negative").expect("Negative");
     let mut look = look_over(negative, (w, h));
     let full = draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &look, (w, h), &image);
-    look.intensity = 0.0;
+    look.layers[0].intensity = 0.0;
     let none = draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &look, (w, h), &image);
     assert_eq!(none, image);
-    look.intensity = 0.5;
+    look.layers[0].intensity = 0.5;
     let half = draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &look, (w, h), &image);
     for ((a, b), c) in image.iter().zip(&full).zip(&half) {
         assert!((*a as f32 * 0.5 + *b as f32 * 0.5 - *c as f32).abs() <= 1.0);
     }
     // the left quarter as it is, the rest negative
-    look.intensity = 1.0;
+    look.layers[0].intensity = 1.0;
     look.compare = Some(0.25);
     let compared = draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &look, (w, h), &image);
     for y in 0..h as usize {
@@ -705,7 +707,7 @@ fn draw_ops(ops: Vec<LookOp>, size: (u32, u32), image: &[u8], lut: Option<Arc<Lu
     let _gpu = crate::test_gpu::lock();
     let (device, queue) = gpu()?;
     let mut look = look_over(ops.into(), size);
-    look.lut = lut;
+    look.layers[0].lut = lut;
     Some(draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &look, size, image))
 }
 
@@ -787,4 +789,45 @@ fn every_aurora_look_draws() {
             assert_ne!(out, image, "{} changes nothing", look.id);
         }
     }
+}
+
+#[test]
+fn stacked_layers_draw_one_after_the_other() {
+    let _gpu = crate::test_gpu::lock();
+    let Some((device, queue)) = gpu() else {
+        return;
+    };
+    let (w, h) = (64u32, 48u32);
+    let image = test_image(w as usize, h as usize);
+    let sepia = legacy_look("Sepia").expect("Sepia");
+    let toy = legacy_look("Toycamera").expect("Toycamera");
+    let both: Arc<[LookOp]> = sepia.iter().chain(toy.iter()).copied().collect();
+    let one = draw(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &look_over(both, (w, h)),
+        (w, h),
+        &image,
+    );
+    let mut stacked = look_over(sepia.clone(), (w, h));
+    stacked.layers.push(LookLayer {
+        ops: toy.clone(),
+        intensity: 1.0,
+        lut: None,
+    });
+    let two = draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &stacked, (w, h), &image);
+    assert_eq!(one, two);
+    // a layer at 0 % leaves the one below as it is
+    stacked.layers[1].intensity = 0.0;
+    let first = draw(
+        &device,
+        &queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        &look_over(sepia, (w, h)),
+        (w, h),
+        &image,
+    );
+    let under = draw(&device, &queue, wgpu::TextureFormat::Rgba8Unorm, &stacked, (w, h), &image);
+    assert_eq!(first, under);
 }

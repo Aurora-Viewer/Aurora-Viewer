@@ -20,6 +20,11 @@
 //! worked in the photo's own pixels (`PhotoLook::scale`), so that a blur or
 //! a vignette look on screen as on the photo, at its size.
 //!
+//! Looks stack: each layer runs on the image the one before left, then is
+//! laid over it at its own intensity, like the effects of a post-processing
+//! chain. The comparison line and the photo's coverage come from the scene
+//! before the first.
+//!
 //! Aurora adds operations of its own (`LookOp::Grain` and those after it),
 //! for the looks of `looks/aurora/`: film grain, lens effects, colour
 //! toning, creative effects, three that read the scene's depth (from the
@@ -37,10 +42,15 @@ pub use parse::{AuroraLook, AuroraSection, LookError, aurora_look, aurora_looks,
 
 /// Operations of one look at most (Miniature has 27).
 pub const MAX_OPS: usize = 64;
-/// Passes of one look at most (one per convolution, and the first).
-const MAX_PASSES: usize = 48;
+/// Layers of a frame at most.
+pub const MAX_LAYERS: usize = 8;
+/// Passes of a frame at most (one per convolution, and the first of each
+/// layer).
+const MAX_PASSES: usize = 128;
 /// Histogram curves of one look at most.
 const MAX_CURVES: usize = 8;
+/// Histogram curves of a frame at most.
+const MAX_SLOTS: usize = 16;
 const PASS_STRIDE: u64 = 256;
 const INTER: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
@@ -242,6 +252,63 @@ impl LookOp {
         matches!(self, LookOp::Linearize { .. } | LookOp::Posterize { .. })
     }
 
+    /// The operation's numbers in the order of its fields, colours as
+    /// three: what the interface's settings change (`param`, `set_param`).
+    fn slots(&mut self) -> Vec<&mut f32> {
+        fn three(v: &mut [f32; 3]) -> impl Iterator<Item = &mut f32> {
+            v.iter_mut()
+        }
+        match self {
+            LookOp::Stencil { min, max, params, .. } => [min, max].into_iter().chain(params.iter_mut()).collect(),
+            LookOp::Saturate(v) | LookOp::Rotate(v) | LookOp::Chroma(v) | LookOp::Distort(v) | LookOp::Pixelate(v) | LookOp::Paint(v) => {
+                vec![v]
+            }
+            LookOp::Gamma { gamma: v, alpha }
+            | LookOp::Contrast { slope: v, alpha }
+            | LookOp::Brightness { step: v, alpha }
+            | LookOp::Linearize { tail: v, alpha }
+            | LookOp::Posterize { classes: v, alpha } => std::iter::once(v).chain(three(alpha)).collect(),
+            LookOp::Colorize { color, alpha } => three(color).chain(three(alpha)).collect(),
+            LookOp::Screen { wavelength, angle, .. } => vec![wavelength, angle],
+            LookOp::Convolve { kernel, .. } => kernel.iter_mut().flatten().collect(),
+            LookOp::ColorTransform(m) => m.iter_mut().flatten().collect(),
+            LookOp::Grain { amount, size, .. } => vec![amount, size],
+            LookOp::Bars { ratio, color } => std::iter::once(ratio).chain(three(color)).collect(),
+            LookOp::Frame { side, bottom, color } => [side, bottom].into_iter().chain(three(color)).collect(),
+            LookOp::Selective { hue, width, soft } => vec![hue, width, soft],
+            LookOp::GradientMap(colors) => colors.iter_mut().flatten().collect(),
+            LookOp::Split { amount, shadows, lights } => std::iter::once(amount).chain(three(shadows)).chain(three(lights)).collect(),
+            LookOp::Glitch { amount, band, seed } => vec![amount, band, seed],
+            LookOp::Clarity { amount, radius } => vec![amount, radius],
+            LookOp::Glow {
+                amount,
+                radius,
+                threshold,
+                tint,
+            } => [amount, radius, threshold].into_iter().chain(three(tint)).collect(),
+            LookOp::Fog { start, end, max, color } => [start, end, max].into_iter().chain(three(color)).collect(),
+            LookOp::DepthBlur { radius, range, .. } => vec![radius, range],
+            LookOp::Subject {
+                desaturate,
+                darken,
+                tolerance,
+            } => vec![desaturate, darken, tolerance],
+            LookOp::Sepia | LookOp::GrayScale | LookOp::Lut => Vec::new(),
+        }
+    }
+
+    /// The `index`-th number of the operation (`slots`).
+    pub fn param(&self, index: usize) -> Option<f32> {
+        self.clone().slots().get(index).map(|v| **v)
+    }
+
+    /// Changes the `index`-th number of the operation (`slots`).
+    pub fn set_param(&mut self, index: usize, value: f32) {
+        if let Some(v) = self.slots().into_iter().nth(index) {
+            *v = value;
+        }
+    }
+
     /// Reads the image around the pixel: the first operation of a pass.
     fn reads_around(&self) -> bool {
         matches!(
@@ -264,12 +331,21 @@ impl LookOp {
     }
 }
 
-/// The look of the frame (`FrameParams::look`).
+/// One look of the stack.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LookLayer {
+    pub ops: Arc<[LookOp]>,
+    /// Share of the look over the image the layers below left, 0..=1.
+    pub intensity: f32,
+    /// The table of `LookOp::Lut`.
+    pub lut: Option<Arc<Lut>>,
+}
+
+/// The looks of the frame (`FrameParams::look`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct PhotoLook {
-    pub ops: Arc<[LookOp]>,
-    /// Share of the look over the image as it is, 0..=1.
-    pub intensity: f32,
+    /// The layers, the first one drawn first.
+    pub layers: Vec<LookLayer>,
     /// The image as it is left of this share of the photo's width (the
     /// before / after comparison of the live view); None: the whole look.
     pub compare: Option<f32>,
@@ -283,8 +359,6 @@ pub struct PhotoLook {
     /// Keep the histogram curves and the focus distance of the last frame
     /// (the tiles of a photo drawn in parts, which must share them).
     pub hold: bool,
-    /// The table of `LookOp::Lut`.
-    pub lut: Option<Arc<Lut>>,
     /// The focus distance of the depth operations (m); None: the scene's at
     /// the middle of the photo.
     pub focus: Option<f32>,
@@ -553,7 +627,9 @@ struct PassU {
     flags: u32,
     intensity: f32,
     compare: f32,
-    _pad: [f32; 2],
+    /// The layer's first operation: its stencil starts there.
+    layer_start: u32,
+    _pad: f32,
     inv_proj: [[f32; 4]; 4],
 }
 
@@ -577,14 +653,21 @@ const SRC_SRGB: u32 = 1;
 const FINAL: u32 = 2;
 const DST_SRGB: u32 = 4;
 const DEPTH_OK: u32 = 8;
-
+/// The layer's source is the scene (its first layer).
+const LAYER_SRGB: u32 = 16;
+/// The last pass of the last layer: comparison and coverage.
+const LAST: u32 = 32;
+const SCENE_SRGB: u32 = 64;
+const HIST_STRIDE: u64 = 256;
 /// The images of the passes, for one size and format: the input the post
-/// pass draws into, and two images the passes go back and forth between.
+/// pass draws into, two images the passes of a layer go back and forth
+/// between, and two the layers leave in turn for the next.
 struct Targets {
     size: (u32, u32),
     format: wgpu::TextureFormat,
     input: wgpu::TextureView,
     inter: [wgpu::TextureView; 2],
+    layers: [wgpu::TextureView; 2],
 }
 
 /// The frame's depth and projection, for the depth operations.
@@ -607,9 +690,9 @@ pub(crate) struct Looks {
     /// The look whose histogram curves and focus distance the buffers hold:
     /// a tile keeps them only when they are its own (the frame before may
     /// have tried another filter pointed at in a list).
-    counted: parking_lot::Mutex<Option<Arc<[LookOp]>>>,
-    /// The 3D table uploaded, and its texture.
-    table: parking_lot::Mutex<Option<(Arc<Lut>, wgpu::TextureView)>>,
+    counted: parking_lot::Mutex<Option<Vec<Arc<[LookOp]>>>>,
+    /// The 3D tables uploaded, the latest last, and their textures.
+    tables: parking_lot::Mutex<Vec<(Arc<Lut>, wgpu::TextureView)>>,
     /// Bound when the frame has no depth or no table.
     blank_depth: wgpu::TextureView,
     blank_table: wgpu::TextureView,
@@ -725,6 +808,7 @@ impl Looks {
                     count: None,
                 },
                 buffer_entry(8, fragment, read, false),
+                texture_entry(9, fragment, true),
             ],
         });
         let hist_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -732,7 +816,7 @@ impl Looks {
             entries: &[
                 texture_entry(16, compute, false),
                 buffer_entry(17, compute, write, false),
-                buffer_entry(18, compute, wgpu::BufferBindingType::Uniform, false),
+                buffer_entry(18, compute, wgpu::BufferBindingType::Uniform, true),
                 buffer_entry(19, compute, read, false),
                 buffer_entry(20, compute, write, false),
                 depth_entry(21, compute),
@@ -805,8 +889,13 @@ impl Looks {
         });
         let storage = wgpu::BufferUsages::STORAGE;
         Looks {
-            ops: buffer(device, "photo look ops", (MAX_OPS * size_of::<GpuOp>()) as u64, storage),
-            luts: buffer(device, "photo look curves", (MAX_CURVES * 256 * 4) as u64, storage),
+            ops: buffer(
+                device,
+                "photo look ops",
+                (MAX_LAYERS * MAX_OPS * size_of::<GpuOp>()) as u64,
+                storage,
+            ),
+            luts: buffer(device, "photo look curves", (MAX_SLOTS * 256 * 4) as u64, storage),
             bins: buffer(device, "photo look histogram", 256 * 4, storage),
             passes: buffer(
                 device,
@@ -817,7 +906,7 @@ impl Looks {
             hist_u: buffer(
                 device,
                 "photo look histogram params",
-                size_of::<HistU>() as u64,
+                MAX_LAYERS as u64 * HIST_STRIDE,
                 wgpu::BufferUsages::UNIFORM,
             ),
             layout,
@@ -830,7 +919,7 @@ impl Looks {
             lut,
             focus_pipeline,
             counted: Default::default(),
-            table: Default::default(),
+            tables: Default::default(),
             blank_depth,
             blank_table,
             focus: buffer(device, "photo look focus", 16, storage),
@@ -873,11 +962,13 @@ impl Looks {
         };
         let input = make("photo look input", format);
         let inter = [make("photo look a", INTER), make("photo look b", INTER)];
+        let layers = [make("photo look layer a", INTER), make("photo look layer b", INTER)];
         self.targets = Some(Targets {
             size,
             format,
             input,
             inter,
+            layers,
         });
     }
 
@@ -894,7 +985,7 @@ impl Looks {
         self.targets.as_ref().map(|t| &t.input)
     }
 
-    /// Draws the look from the input into `target`, of the format given to
+    /// Draws the looks from the input into `target`, of the format given to
     /// `prepare`, with the frame's depth for the depth operations. Returns
     /// the passes drawn.
     pub(crate) fn encode(
@@ -909,142 +1000,202 @@ impl Looks {
         let (Some(t), Some((_, final_pipeline))) = (&self.targets, &self.final_pipeline) else {
             return 0;
         };
-        let plan = plan(&look.ops);
-        if !plan.ops.is_empty() {
-            queue.write_buffer(&self.ops, 0, bytemuck::cast_slice(&plan.ops));
+        let layers = &look.layers[..look.layers.len().min(MAX_LAYERS)];
+        if layers.is_empty() {
+            return 0;
         }
+        // every layer's operations one after the other, its passes and
+        // curves moved to their place in the frame's buffers
+        let plans: Vec<Plan> = layers.iter().map(|l| plan(&l.ops)).collect();
+        let mut ops = Vec::new();
+        let mut op_base = Vec::with_capacity(plans.len());
+        let mut slot_base = Vec::with_capacity(plans.len());
+        let mut slots = 0usize;
+        for plan in &plans {
+            op_base.push(ops.len() as u32);
+            slot_base.push(slots);
+            for op in &plan.ops {
+                let mut op = *op;
+                if op.a[0] == 3.0 {
+                    op.a[1] = ((slots + op.a[1] as usize).min(MAX_SLOTS - 1)) as f32;
+                }
+                ops.push(op);
+            }
+            slots += plan.curves.len();
+        }
+        queue.write_buffer(&self.ops, 0, bytemuck::cast_slice(&ops));
         let srgb = t.format.is_srgb();
         let inv_proj = depth.as_ref().map_or(glam::Mat4::IDENTITY, |d| d.proj.inverse()).to_cols_array_2d();
         let depth_flag = if depth.is_some() { DEPTH_OK } else { 0 };
-        let count = plan.passes.len();
-        let mut uniforms = vec![0u8; count * PASS_STRIDE as usize];
-        for (k, &(start, end)) in plan.passes.iter().enumerate() {
-            let last = k + 1 == count;
-            let mut flags = depth_flag;
-            if k == 0 && srgb {
-                flags |= SRC_SRGB;
-            }
-            if last {
-                flags |= FINAL;
-                if srgb {
-                    flags |= DST_SRGB;
+        let scale = look.scale.max(1e-3);
+
+        // the passes: their layer, place in it, flags
+        struct PassAt {
+            layer: usize,
+            local: usize,
+            last_of_layer: bool,
+        }
+        let mut passes = Vec::new();
+        let mut uniforms = Vec::new();
+        for (l, plan) in plans.iter().enumerate() {
+            let count = plan.passes.len();
+            for (j, &(start, end)) in plan.passes.iter().enumerate() {
+                if passes.len() >= MAX_PASSES {
+                    break;
                 }
+                let last_of_layer = j + 1 == count;
+                let last = last_of_layer && l + 1 == plans.len();
+                let mut flags = depth_flag;
+                if srgb {
+                    flags |= SCENE_SRGB;
+                    if l == 0 && j == 0 {
+                        flags |= SRC_SRGB;
+                    }
+                    if l == 0 {
+                        flags |= LAYER_SRGB;
+                    }
+                    if last {
+                        flags |= DST_SRGB;
+                    }
+                }
+                if last_of_layer {
+                    flags |= FINAL;
+                }
+                if last {
+                    flags |= LAST;
+                }
+                let u = PassU {
+                    image: look.image,
+                    scale,
+                    start: op_base[l] + start,
+                    end: op_base[l] + end,
+                    flags,
+                    intensity: layers[l].intensity,
+                    compare: look.compare.unwrap_or(-1.0),
+                    layer_start: op_base[l],
+                    _pad: 0.0,
+                    inv_proj,
+                };
+                let mut bytes = [0u8; PASS_STRIDE as usize];
+                bytes[..size_of::<PassU>()].copy_from_slice(bytemuck::bytes_of(&u));
+                uniforms.extend_from_slice(&bytes);
+                passes.push(PassAt {
+                    layer: l,
+                    local: j,
+                    last_of_layer,
+                });
             }
-            let u = PassU {
-                image: look.image,
-                scale: look.scale.max(1e-3),
-                start,
-                end,
-                flags,
-                intensity: look.intensity,
-                compare: look.compare.unwrap_or(-1.0),
-                _pad: [0.0; 2],
-                inv_proj,
-            };
-            let at = k * PASS_STRIDE as usize;
-            uniforms[at..at + size_of::<PassU>()].copy_from_slice(bytemuck::bytes_of(&u));
         }
         queue.write_buffer(&self.passes, 0, &uniforms);
-        let table = self.table(device, queue, look.lut.as_ref());
-        let depth_view = depth.as_ref().map_or(&self.blank_depth, |d| d.view);
 
-        // which image each pass reads: 0 the input, then the two in turn
-        let sources = [&t.input, &t.inter[0], &t.inter[1]];
-        let source = |k: usize| sources[if k == 0 { 0 } else { 1 + (k - 1) % 2 }];
-        let held = look.hold && self.counted.lock().as_deref().is_some_and(|ops| *ops == *look.ops);
-        let count_histogram = plan.histogram_pass.filter(|_| !held && !plan.curves.is_empty());
-        let find_focus = plan.focus && !held;
-        if count_histogram.is_some() || find_focus {
+        // the histogram of each layer that has curves, from its own place
+        let key: Vec<Arc<[LookOp]>> = layers.iter().map(|l| l.ops.clone()).collect();
+        let held = look.hold && self.counted.lock().as_ref().is_some_and(|counted| *counted == key);
+        let find_focus = plans.iter().any(|p| p.focus) && !held;
+        let middle = [
+            look.image[0] + look.image[2] * scale * 0.5,
+            look.image[1] + look.image[3] * scale * 0.5,
+        ];
+        let mut hist = vec![0u8; layers.len() * HIST_STRIDE as usize];
+        for (l, plan) in plans.iter().enumerate() {
             let mut curves = [[0u32; 4]; MAX_CURVES];
-            for (c, &[op, kind]) in curves.iter_mut().zip(&plan.curves) {
-                *c = [op, kind, 0, 0];
+            for (k, (c, &[op, kind])) in curves.iter_mut().zip(&plan.curves).enumerate() {
+                *c = [op_base[l] + op, kind, (slot_base[l] + k).min(MAX_SLOTS - 1) as u32, 0];
             }
-            let scale = look.scale.max(1e-3);
-            let middle = [
-                look.image[0] + look.image[2] * scale * 0.5,
-                look.image[1] + look.image[3] * scale * 0.5,
-            ];
-            let h = count_histogram.unwrap_or(0);
+            let first_pass = plan.histogram_pass == Some(0);
             let u = HistU {
                 image: look.image,
                 scale,
-                flags: depth_flag | if h == 0 && srgb { SRC_SRGB } else { 0 },
+                flags: depth_flag | if l == 0 && first_pass && srgb { SRC_SRGB } else { 0 },
                 count: plan.curves.len() as u32,
                 _pad: 0,
                 curves,
                 inv_proj,
                 focus: [look.focus.unwrap_or(0.0).max(0.0), middle[0], middle[1], 0.0],
             };
-            *self.counted.lock() = Some(look.ops.clone());
-            queue.write_buffer(&self.hist_u, 0, bytemuck::bytes_of(&u));
+            let at = l * HIST_STRIDE as usize;
+            hist[at..at + size_of::<HistU>()].copy_from_slice(bytemuck::bytes_of(&u));
         }
-        let hist_bg = |src: &wgpu::TextureView| self.hist_bind_group(device, src, depth_view);
+        queue.write_buffer(&self.hist_u, 0, &hist);
+        if !held {
+            *self.counted.lock() = Some(key);
+        }
+
+        let depth_view = depth.as_ref().map_or(&self.blank_depth, |d| d.view);
+        let tables: Vec<Option<wgpu::TextureView>> = layers.iter().map(|l| self.table(device, queue, l.lut.as_ref())).collect();
         if find_focus {
-            let bg = hist_bg(&t.input);
+            let bg = self.hist_bind_group(device, &t.input, depth_view);
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("photo look focus"),
                 timestamp_writes: None,
             });
-            pass.set_bind_group(0, &bg, &[]);
+            pass.set_bind_group(0, &bg, &[0]);
             pass.set_pipeline(&self.focus_pipeline);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        let draw = |encoder: &mut wgpu::CommandEncoder, range: std::ops::Range<usize>| {
-            for k in range {
-                let last = k + 1 == count;
-                let view = if last { target } else { &t.inter[k % 2] };
-                let bg = self.draw_bind_group(device, source(k), &t.input, depth_view, table.as_ref().unwrap_or(&self.blank_table));
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("photo look"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
+
+        let last_layer = layers.len() - 1;
+        for (k, at) in passes.iter().enumerate() {
+            let l = at.layer;
+            let layer_input = if l == 0 { &t.input } else { &t.layers[(l - 1) % 2] };
+            let src = if at.local == 0 { layer_input } else { &t.inter[(at.local - 1) % 2] };
+            let to_target = at.last_of_layer && l == last_layer;
+            let view = if to_target {
+                target
+            } else if at.last_of_layer {
+                &t.layers[l % 2]
+            } else {
+                &t.inter[at.local % 2]
+            };
+            if !held && plans[l].histogram_pass == Some(at.local) && !plans[l].curves.is_empty() {
+                // the curves from the image as this pass finds it
+                encoder.clear_buffer(&self.bins, 0, None);
+                let bg = self.hist_bind_group(device, src, depth_view);
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("photo look histogram"),
                     timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
                 });
-                pass.set_pipeline(if last { final_pipeline } else { &self.inter_pipeline });
-                pass.set_bind_group(0, &bg, &[(k as u64 * PASS_STRIDE) as u32]);
-                pass.draw(0..3, 0..1);
+                pass.set_bind_group(0, &bg, &[(l as u64 * HIST_STRIDE) as u32]);
+                pass.set_pipeline(&self.histogram);
+                pass.dispatch_workgroups(t.size.0.div_ceil(16), t.size.1.div_ceil(16), 1);
+                pass.set_pipeline(&self.lut);
+                pass.dispatch_workgroups(1, 1, 1);
             }
-        };
-        if let Some(h) = count_histogram {
-            // the passes before the one counted, then the counting
-            draw(encoder, 0..h);
-            encoder.clear_buffer(&self.bins, 0, None);
-            let bg = hist_bg(source(h));
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("photo look histogram"),
+            let table = tables[l].as_ref().unwrap_or(&self.blank_table);
+            let bg = self.draw_bind_group(device, src, layer_input, &t.input, depth_view, table);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("photo look"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
                 timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
             });
-            pass.set_bind_group(0, &bg, &[]);
-            pass.set_pipeline(&self.histogram);
-            pass.dispatch_workgroups(t.size.0.div_ceil(16), t.size.1.div_ceil(16), 1);
-            pass.set_pipeline(&self.lut);
-            pass.dispatch_workgroups(1, 1, 1);
-            drop(pass);
-            draw(encoder, h..count);
-        } else {
-            draw(encoder, 0..count);
+            pass.set_pipeline(if to_target { final_pipeline } else { &self.inter_pipeline });
+            pass.set_bind_group(0, &bg, &[(k as u64 * PASS_STRIDE) as u32]);
+            pass.draw(0..3, 0..1);
         }
-        count as u32
+        passes.len() as u32
     }
 
-    /// The 3D table's texture, uploaded when the look's changes.
+    /// A 3D table's texture, uploaded the first time it is drawn; the four
+    /// latest are kept.
     fn table(&self, device: &wgpu::Device, queue: &wgpu::Queue, lut: Option<&Arc<Lut>>) -> Option<wgpu::TextureView> {
         let lut = lut?;
-        let mut table = self.table.lock();
-        if let Some((uploaded, view)) = table.as_ref()
-            && Arc::ptr_eq(uploaded, lut)
-        {
-            return Some(view.clone());
+        let mut tables = self.tables.lock();
+        if let Some(i) = tables.iter().position(|(uploaded, _)| Arc::ptr_eq(uploaded, lut)) {
+            let entry = tables.remove(i);
+            let view = entry.1.clone();
+            tables.push(entry);
+            return Some(view);
         }
         let n = lut.size;
         let extent = wgpu::Extent3d {
@@ -1073,15 +1224,20 @@ impl Looks {
             extent,
         );
         let view = texture.create_view(&Default::default());
-        *table = Some((lut.clone(), view.clone()));
+        if tables.len() >= 4 {
+            tables.remove(0);
+        }
+        tables.push((lut.clone(), view.clone()));
         Some(view)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_bind_group(
         &self,
         device: &wgpu::Device,
         src: &wgpu::TextureView,
         original: &wgpu::TextureView,
+        scene: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         table: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
@@ -1129,6 +1285,10 @@ impl Looks {
                     binding: 8,
                     resource: self.focus.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(scene),
+                },
             ],
         })
     }
@@ -1148,7 +1308,11 @@ impl Looks {
                 },
                 wgpu::BindGroupEntry {
                     binding: 18,
-                    resource: self.hist_u.as_entire_binding(),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.hist_u,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(size_of::<HistU>() as u64),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 19,

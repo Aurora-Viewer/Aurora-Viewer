@@ -7028,7 +7028,7 @@ impl Backend {
         };
         // the photo's look: the post pass and SMAA draw into its input,
         // and its passes into the frame
-        let look = f.look.as_ref().filter(|look| !look.ops.is_empty());
+        let look = f.look.as_ref().filter(|look| look.layers.iter().any(|l| !l.ops.is_empty()));
         if look.is_some() {
             self.looks
                 .get_or_insert_with(|| crate::looks::Looks::new(&self.device))

@@ -249,7 +249,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_SNAPSHOT_FRAME=<n>` | Frame the scenario's photo is taken (700 by default) |
 | `AURORA_DEMO_SNAPSHOT_TILE=<px>` | Largest side drawn in one pass: forces the tiles |
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
-| `AURORA_DEMO_PHOTO_LOOK=<filter>[:<percent>][:compare][:panel][:tab=…][:search=…]` | The photo's filter (Legacy, Aurora or a LUT), its strength, the before / after line, the filter panel |
+| `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
 
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
@@ -374,14 +374,18 @@ and capture from frame 700 (`AURORA_AA=3` and `6` for the two edge paths,
 MSAA and SMAA).
 
 `AURORA_DEMO_PHOTO_LOOK` (with `AURORA_DEMO_SNAPSHOT`, which opens the photo
-mode): at frame 600 the photo takes that filter: a Legacy Viewer filter by
+mode): at frame 600 the photo takes those looks, stacked in the order
+given with `+` (`Sepia+aurora:fine-grain`), the last one chosen: each a
+Legacy Viewer filter by
 its file's name (`Sepia`, `Toycamera`, `Lightleak`, `Miniature`,
 `Posterize`…, see `crates/aurora-render/src/looks/legacy/`), one of Aurora's
 looks as `aurora:<id>` (`aurora:instant`, `aurora:vhs`, `aurora:haze`…, see
 `crates/aurora-render/src/looks/aurora/`), a table of the library as
 `lut:<file>`, or `lut:demo` (a warm table, "Demo warm", written into the
-demo's library), at 100 % or the percentage given; the log gives `photo
-look demo: <filter> at <n> %`. `compare` puts the before / after line in
+demo's library); the chosen one at 100 % or the percentage given, its
+settings set with `set=<v>,<v>,…` (an Aurora look's values in the order of
+its sliders, `aurora:glitch:set=0.03,0.02,42`); the log gives `photo look
+demo: <look> at <n> %` for each. `compare` puts the before / after line in
 the middle of the viewfinder's frame (the scene as it is on its left,
 "Before" and "After" over it); `panel` opens the viewfinder's filter panel
 on the filter's tab (`tab=legacy|aurora|luts` for another), or scrolls the
