@@ -3099,6 +3099,7 @@ impl World {
                 None
             }
             NetEvent::InventoryUpdated { folders, items } => {
+                self.reveal_added(&folders, &items);
                 self.inventory.server_updated(folders, items);
                 None
             }
@@ -3892,6 +3893,13 @@ impl World {
             }
             _ => None,
         };
+        // ShowInInventory: what a kept offer gives is shown in the inventory
+        let kept = match self.notifications.list.iter().find(|n| n.id == id).map(|n| &n.data) {
+            Some(notifications::Data::Inventory { object, task, .. }) if matches!(r, notifications::Response::Accept) => {
+                Some((*object, *task))
+            }
+            _ => None,
+        };
         // a resident's offer: its card in the conversation takes the answer
         let offer_outcome = self
             .notifications
@@ -3912,6 +3920,9 @@ impl World {
         }
         if let Some(outcome) = offer_outcome {
             self.inventory_offer_answered(id, outcome);
+        }
+        if let Some((object, task)) = kept {
+            self.reveal_kept_offer(object, task);
         }
         out
     }

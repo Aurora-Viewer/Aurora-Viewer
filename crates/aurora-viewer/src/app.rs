@@ -1677,6 +1677,12 @@ impl App {
             if crate::world::received_items::demo_accept(&mut self.world, &cmd) {
                 return;
             }
+            if let Some(ev) = crate::demo::task_offer_delivery(&cmd, self.world.agent_id) {
+                if let Some(e) = self.world.apply(ev) {
+                    self.on_app_event(e);
+                }
+                return;
+            }
             if let NetCommand::UploadInventoryThumbnail {
                 request,
                 item,
@@ -7008,6 +7014,7 @@ impl App {
         self.world.events_this_frame = 0;
         self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
         self.world.received_items.enabled = self.settings.sort_received_items;
+        self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
         self.world.received_items.enabled_since = self.settings.received_items_since;
         if self.demo
             && self.frame_count == 700
@@ -7156,6 +7163,14 @@ impl App {
             self.update_marketplace_listings();
             for command in self.world.file_received_items(Instant::now()) {
                 self.send(command);
+            }
+            // ShowInInventory: a kept offer's item, once it is there
+            // (openInventoryPanelAndSetSelection), never past @showinv
+            if let Some(id) = self.world.take_inventory_reveal(Instant::now())
+                && !self.world.rlva.has("showinv")
+            {
+                self.inventory_ui.show_original(&self.world.inventory, id);
+                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
@@ -9544,7 +9559,7 @@ impl App {
         // AURORA_DEMO_INVENTORY=offer|offer-reject: the sample offer's item
         // shown in the folder it reaches; the second rejects it at frame 700
         // (offer-card…: answered from its card or its notification, the
-        // conversation in sight)
+        // conversation in sight; …-show: kept, the inventory opening on it)
         if self.demo
             && let Ok(mode) = std::env::var("AURORA_DEMO_INVENTORY")
             && mode.starts_with("offer")
@@ -9556,7 +9571,17 @@ impl App {
             {
                 self.on_ctx_action(ui::context::CtxAction::AnswerInventoryOffer { offer, keep: true });
             }
-            if self.frame_count == 700 && (mode == "offer-reject" || card.is_some_and(|s| s.reject)) {
+            // offer-show|offer-object-show: kept from the bell's entry
+            let bell = match mode.as_str() {
+                "offer-reject" => Some(crate::world::notifications::Response::Decline),
+                "offer-show" | "offer-object-show" => Some(crate::world::notifications::Response::Accept),
+                _ => card
+                    .is_some_and(|s| s.reject)
+                    .then_some(crate::world::notifications::Response::Decline),
+            };
+            if self.frame_count == 700
+                && let Some(r) = bell
+            {
                 let offer = self
                     .world
                     .notifications
@@ -9564,17 +9589,13 @@ impl App {
                     .iter()
                     .find(|n| n.kind == crate::world::notifications::Kind::Inventory);
                 if let Some(id) = offer.map(|n| n.id) {
-                    for cmd in self
-                        .world
-                        .respond_notification(id, crate::world::notifications::Response::Decline)
-                        .0
-                    {
+                    for cmd in self.world.respond_notification(id, r).0 {
                         self.send(cmd);
                     }
                 }
             }
             let folder = self.world.inventory.items.get(&crate::demo::DEMO_OFFER).map(|it| it.parent);
-            if card.is_none() && folder.is_some() && folder != self.demo_offer_shown {
+            if card.is_none() && !crate::demo::show_accepted_scene() && folder.is_some() && folder != self.demo_offer_shown {
                 self.demo_offer_shown = folder;
                 self.inventory_ui.show_original(&self.world.inventory, crate::demo::DEMO_OFFER);
             }
@@ -15824,7 +15845,9 @@ impl ApplicationHandler for App {
                     self.inventory_ui.tab = if big.recent { 2 } else { 0 };
                     self.inventory_ui.search.clone_from(&big.search);
                 }
-                self.panels.inventory = true;
+                // the "…-show" offers: the window opens on the kept item
+                self.panels.inventory = !crate::demo::show_accepted_scene();
+                self.settings.show_accepted_in_inventory |= crate::demo::show_accepted_scene();
                 self.panels.perf = false;
                 self.panels.appearance = false;
                 self.panels.minimap = false;
