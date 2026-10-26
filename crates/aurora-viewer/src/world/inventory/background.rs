@@ -187,6 +187,10 @@ impl BackgroundFetch {
         }
         let request = self.next_request;
         self.next_request += 1;
+        log::debug!(
+            "inventory background read {request}: {kind:?} {folder}, {} folders, depth {depth}",
+            children.len()
+        );
         out.push(NetCommand::FetchInventoryTree {
             request,
             parent: folder,
