@@ -169,10 +169,15 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             aurora_i18n::tr!("inventory-empty-lost-found"),
             ready
                 && single
-                && inv
-                    .folders
-                    .get(&id)
-                    .is_some_and(|folder| folder.state == FetchState::Fetched && (!folder.items.is_empty() || !folder.children.is_empty())),
+                && inv.folders.get(&id).is_some_and(|folder| {
+                    folder.state == FetchState::Fetched
+                        && super::super::delete::allowed(
+                            inv,
+                            &folder.items.iter().chain(&folder.children).copied().collect::<Vec<_>>(),
+                            prefs,
+                            facts,
+                        )
+                }),
             super::Command::Extra(Command::EmptyLost(id)),
         );
     }
@@ -242,7 +247,7 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
         {
             let mut cache = st.context_folders.borrow_mut();
             let contacts = cache.contacts(inv, id).to_vec();
-            if !all && !cache.complete {
+            if !all && single && !cache.complete {
                 c.prepare_outfit = Some(id);
             }
             contacts
@@ -313,7 +318,7 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
             TEXT,
             "messages-filled",
             aurora_i18n::tr!("inventory-card-conference"),
-            !contacts.is_empty() && !trash && (folder || cards_only && contacts.iter().all(|who| facts.online.contains(who))),
+            !contacts.is_empty() && !trash && (folder && single || cards_only && contacts.iter().all(|who| facts.online.contains(who))),
             super::Command::Worn(crate::ui::context::CtxAction::Conference(contacts)),
         );
     }
@@ -485,6 +490,9 @@ pub(super) fn build(c: &mut Catalog, inv: &Inventory, id: Uuid, st: &InventoryUi
 }
 
 fn replace(c: &mut Catalog, id: &str, enabled: bool, command: super::Command) {
+    if c.editing {
+        return;
+    }
     if let Some(entry) = c.entries.iter_mut().find(|entry| entry.id == id) {
         entry.enabled = enabled;
         if let Kind::Action(index) = entry.kind {
@@ -757,11 +765,45 @@ mod tests {
             let menu = super::super::build(&inv, id, &state, &InventoryPreferences::default(), &facts);
             for key in ["card-im", "card-offer-teleport", "card-request-teleport", "card-conference"] {
                 assert_eq!(
-                    menu.entries.iter().find(|entry| entry.id == key).expect("card action").enabled,
+                    menu.entries.iter().find(|entry| entry.id == key).is_some_and(|entry| entry.enabled),
                     !mixed,
                     "{key}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn empty_lost_and_found_obeys_the_same_worn_and_protection_rules_as_delete() {
+        let mut inv = seed();
+        let lost = Uuid::from_u128(9400);
+        let item = Uuid::from_u128(8100);
+        let mut folder = inv.folders[&Uuid::from_u128(8000)].clone();
+        folder.info.id = lost;
+        folder.info.type_default = 16;
+        folder.children.clear();
+        folder.items = vec![item];
+        inv.folders.insert(lost, folder);
+        inv.items.get_mut(&item).expect("lost item").parent = lost;
+        let mut facts = Facts::default();
+        let mut prefs = InventoryPreferences::default();
+        for blocked in 0..3 {
+            if blocked == 1 {
+                facts.worn.insert(item);
+            }
+            if blocked == 2 {
+                facts.worn.clear();
+                prefs.protected.insert(lost);
+            }
+            let menu = super::super::build(&inv, lost, &InventoryUi::default(), &prefs, &facts);
+            assert_eq!(
+                menu.entries
+                    .iter()
+                    .find(|entry| entry.id == "empty-lost-found")
+                    .expect("empty command")
+                    .enabled,
+                blocked == 0
+            );
         }
     }
 

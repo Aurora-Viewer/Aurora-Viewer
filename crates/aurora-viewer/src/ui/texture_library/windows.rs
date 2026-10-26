@@ -44,6 +44,9 @@ impl LibraryUi {
             self.open_preview(ctx, world, items[0]);
             self.export_texture(items[0], true);
         } else if !items.is_empty() && self.export_folder.is_none() {
+            if self.export_jobs.is_empty() && self.export_queue.is_empty() {
+                self.export_error = None;
+            }
             self.export_items = items;
             let (sender, receiver) = crossbeam_channel::bounded(1);
             self.export_folder = Some(receiver);
@@ -58,7 +61,7 @@ impl LibraryUi {
         }
     }
 
-    fn update_exports(&mut self, ctx: &egui::Context, world: &World, scene: &mut Scene) {
+    fn update_exports(&mut self, ctx: &egui::Context, world: &World, scene: &mut Scene, actions: &mut Vec<Action>) {
         if let Some(folder) = self.export_folder.as_ref().and_then(|receiver| receiver.try_recv().ok()) {
             self.export_folder = None;
             let items = std::mem::take(&mut self.export_items);
@@ -67,6 +70,7 @@ impl LibraryUi {
             }
         }
         let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
+        let mut completed = false;
         // Bounded decoding and IO; a large selection does not open hundreds
         // of preview windows or retain all full-resolution images together.
         self.export_jobs.retain_mut(|job| {
@@ -83,6 +87,10 @@ impl LibraryUi {
             job.view.prepare(ctx, job.asset, scene);
             if job.view.export_finished() {
                 self.message = job.view.message.clone();
+                completed = true;
+                if job.view.message != aurora_i18n::tr!("resource-preview-exported") && self.export_error.is_none() {
+                    self.export_error = Some(job.view.message.clone());
+                }
                 false
             } else {
                 true
@@ -111,6 +119,11 @@ impl LibraryUi {
                 asset: item.asset_id,
                 view: texture_view::ImageView::batch_export(folder.join(filename)),
             });
+        }
+        if completed && self.export_jobs.is_empty() && self.export_queue.is_empty() && self.export_folder.is_none() {
+            actions.push(Action::ExportResult(
+                self.export_error.take().unwrap_or_else(|| self.message.clone()),
+            ));
         }
     }
     pub(crate) fn prepare_exit(&mut self, ctx: &egui::Context) -> bool {
@@ -269,7 +282,7 @@ impl LibraryUi {
         actions: &mut Vec<Action>,
     ) {
         // Keep one shared worker/GPU cache for every swatch and window.
-        self.update_exports(ctx, world, scene);
+        self.update_exports(ctx, world, scene, actions);
         let mut windows = std::mem::take(&mut self.windows);
         windows.retain_mut(|window| self.preview_window(ctx, p, world, scene, images, prefs, window, actions));
         self.windows = windows;

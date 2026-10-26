@@ -127,6 +127,7 @@ pub enum Action {
         item: Uuid,
         png: bool,
     },
+    ExportResult(String),
     Profile(Uuid),
     Discard(Uuid),
     MaterialMapFile {
@@ -140,6 +141,7 @@ pub struct LibraryUi {
     export_items: Vec<Uuid>,
     export_queue: std::collections::VecDeque<(Uuid, std::path::PathBuf)>,
     export_jobs: Vec<windows::BatchExport>,
+    export_error: Option<String>,
     catalogue: Catalogue,
     search: String,
     folder: Option<Uuid>,

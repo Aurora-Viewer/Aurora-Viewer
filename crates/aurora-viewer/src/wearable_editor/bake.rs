@@ -330,6 +330,22 @@ pub fn compose(
     images: &HashMap<Uuid, Arc<Image>>,
 ) -> Result<Vec<u8>, String> {
     let mut output = vec![0u8; (size * size * 4) as usize];
+    // Publishing a bake UUID also enables the system skirt mesh. An empty
+    // universal's optional skirt slot must therefore remain transparent;
+    // the compositor's usual opaque-black clear would create a black skirt.
+    if region.te == 19
+        && !worn.iter().any(|wearable| {
+            [18, 32].into_iter().any(|slot| {
+                wearable
+                    .value
+                    .textures
+                    .get(&slot)
+                    .is_some_and(|id| !id.is_nil() && *id != IMG_DEFAULT_AVATAR && *id != IMG_INVISIBLE)
+            })
+        })
+    {
+        return Ok(output);
+    }
     output.par_chunks_exact_mut(4).for_each(|p| p[3] = 255);
     for layer in region.layers.iter().filter(|layer| !layer.visibility) {
         let instances: Vec<Option<&Worn>> = if let Some((_, kind)) = layer.local {
@@ -493,6 +509,27 @@ mod tests {
             rgba: vec![255, 255, 255, 0, 255, 255, 255, 255].into(),
         };
         assert!((sample_lut(&image, 1, 0, 3, &alpha_table(0.0, 0.5)) - 127.5).abs() < 0.1);
+    }
+
+    #[test]
+    fn an_empty_universal_does_not_create_a_visible_system_skirt() {
+        let defs = definitions().expect("definitions");
+        let region = defs.regions.iter().find(|region| region.te == 19).expect("skirt region");
+        let asset = crate::world::inventory::wearable::create(16, "Empty universal", Uuid::nil()).expect("asset");
+        let value = Wearable::parse(&asset).expect("wearable");
+        let pixels = compose(
+            defs,
+            region,
+            8,
+            &[Worn {
+                value,
+                weights: HashMap::new(),
+            }],
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .expect("empty skirt");
+        assert!(pixels.iter().all(|channel| *channel == 0));
     }
 
     fn solid(rgba: [u8; 4]) -> Arc<Image> {

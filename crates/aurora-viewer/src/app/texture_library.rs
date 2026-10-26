@@ -444,6 +444,7 @@ impl App {
                     self.scene.textures.refresh(&asset);
                     self.texture_library.refresh_texture(&self.world, asset);
                 }
+                library::Action::ExportResult(message) => self.world.system_message(message),
                 library::Action::ExportTexture { item, png } => {
                     let full = rules::COPY | rules::MODIFY | rules::TRANSFER;
                     if self.world.inventory.items.get(&item).is_some_and(|it| it.owner_mask & full == full) {

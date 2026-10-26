@@ -1,5 +1,8 @@
 # Aurora Viewer architecture
 
+The application constructor returns its runtime state on the heap, avoiding
+large return-value temporaries on the Windows startup stack as editors grow.
+
 `ui/inventory/context_catalog/extra.rs` adds inventory commands to the shared
 customization catalogue without changing existing identities or placements.
 Folder UUID copying starts in the recoverable hidden area. Native document,

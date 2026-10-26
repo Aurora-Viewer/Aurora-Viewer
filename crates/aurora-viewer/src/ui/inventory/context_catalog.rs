@@ -1325,6 +1325,8 @@ mod tests {
         multi.selection.extend([folder, Uuid::from_u128(8100)]);
         assert!(build(&inv, folder, &multi, &prefs, &facts()).prepare_outfit.is_none());
         inv.folders.get_mut(&child).unwrap().state = FetchState::Fetched;
+        // A received folder response advances the generation used by caches.
+        inv.generation += 1;
         assert!(build(&inv, folder, &state, &prefs, &facts()).prepare_outfit.is_none());
         inv.folders.get_mut(&child).unwrap().state = FetchState::Unknown;
         inv.folders.get_mut(&folder).unwrap().library = true;

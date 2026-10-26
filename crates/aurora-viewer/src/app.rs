@@ -908,7 +908,9 @@ fn apply_test_overrides(settings: &mut Settings) {
 }
 
 impl App {
-    pub fn new() -> anyhow::Result<App> {
+    // Growing editor state must not accumulate large return-value temporaries
+    // on the Windows main stack while the avatar library is being loaded.
+    pub fn new() -> anyhow::Result<Box<App>> {
         // found on a background thread while the rest starts
         ui::fonts::fallback::start();
         // the regional 12 / 24 hours and time zone of the bars' clock, read once
@@ -995,7 +997,7 @@ impl App {
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
-        Ok(App {
+        Ok(Box::new(App {
             settings,
             disk_cache,
             skin,
@@ -1360,7 +1362,7 @@ impl App {
                     std::env::var_os("AURORA_CAPTURE_EXIT").is_some(),
                 )
             }),
-        })
+        }))
     }
 
     /// What the experience demo's simulator answers or does on its own.
