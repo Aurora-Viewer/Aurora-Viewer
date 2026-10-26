@@ -72,11 +72,23 @@ pub struct Offer {
     pub from: Uuid,
     /// The item's or folder's name, as the offer gives it.
     pub item: String,
+    /// Delivered inventory UUID from the resident's offer bucket, never its transaction.
+    pub object: Uuid,
     /// LLAssetType of what is given (AT_CATEGORY for a folder).
     pub asset_type: i8,
     pub answer: Answer,
     /// Its entry in the notification centre.
     pub notification: u64,
+}
+
+impl Offer {
+    /// LLInventoryHandler's explicit selection, available only after keeping the gift.
+    pub(crate) fn inventory_link(&self, label: &str) -> Option<String> {
+        (self.answer == Answer::Kept && !self.object.is_nil()).then(|| {
+            let name = crate::slurl::encode(label);
+            format!("secondlife:///app/inventory/{}/select?name={name}", self.object)
+        })
+    }
 }
 
 /// Offers kept once answered, for the conversation cards.
@@ -89,12 +101,13 @@ pub struct InventoryOffers {
 }
 
 impl InventoryOffers {
-    fn push(&mut self, from: Uuid, item: String, asset_type: i8, notification: u64) -> u64 {
+    fn push(&mut self, from: Uuid, item: String, object: Uuid, asset_type: i8, notification: u64) -> u64 {
         self.next += 1;
         self.list.push(Offer {
             id: self.next,
             from,
             item,
+            object,
             asset_type,
             answer: Answer::Pending,
             notification,
@@ -274,9 +287,10 @@ impl World {
     /// counted as unread, and its text in the giver's transcript. Blocked
     /// givers were answered before (`im_blocked`): no conversation for them.
     pub(super) fn on_inventory_offer_card(&mut self, im: &InstantMessage, from: &str, asset_type: i8, notification: u64) {
+        let object = super::notifications::offered_object(&im.binary_bucket).map_or(Uuid::nil(), |(_, id)| id);
         let offer = self
             .inventory_offers
-            .push(im.from_agent_id, im.message.clone(), asset_type, notification);
+            .push(im.from_agent_id, im.message.clone(), object, asset_type, notification);
         let title = aurora_i18n::tr!("world-mod-gives-you", from = from.to_string(), what = item_label(&im.message));
         self.add_card(im, ChatKind::InventoryOffer(offer), title);
         let line = self.notice_line(aurora_i18n::tr!(
@@ -331,6 +345,12 @@ impl World {
             .find(|v| v.notification == notification && v.answer == Answer::Pending)
         {
             v.answer = if outcome == Outcome::Kept { Answer::Kept } else { Answer::Rejected };
+            if let Some(item) = v.inventory_link(&item_label(&v.item)) {
+                let from = v.from;
+                // Keep the confirmation in the transcript too, where the live card
+                // is no longer available after reopening the conversation.
+                self.note_with(from, aurora_i18n::tr!("world-inventory-offers-kept", item = item));
+            }
         }
     }
 
@@ -509,8 +529,66 @@ mod tests {
         }
         // one conversation, three cards
         assert_eq!(w.social.ims.len(), 1);
-        assert_eq!(w.social.ims[0].lines.len(), 3);
+        assert_eq!(
+            w.social.ims[0]
+                .lines
+                .iter()
+                .filter(|l| matches!(l.kind, ChatKind::InventoryOffer(_)))
+                .count(),
+            3
+        );
         clean(&w, &root);
+    }
+
+    #[test]
+    fn kept_gifts_link_the_delivered_item_or_folder_in_the_card_and_transcript() {
+        for kind in [6, AT_CATEGORY] {
+            let root = temp();
+            let mut w = world(&root);
+            let name = "Gift & café + 50%? #1\nsecondlife:///app/chat/5/hello";
+            let mut gift = offer(im::INVENTORY_OFFERED, name);
+            gift.binary_bucket[0] = kind as u8;
+            w.on_im(gift);
+            let id = w.inventory_offers.list[0].id;
+            assert!(w.inventory_offers.get(id).unwrap().inventory_link(name).is_none());
+            w.answer_inventory_offer(id, true);
+            let v = w.inventory_offers.get(id).unwrap();
+            let link = v.inventory_link(&item_label(name)).expect("kept gift link");
+            assert_eq!(
+                crate::slapp::parse(&link),
+                Some(crate::slapp::AppLink::Inventory {
+                    id: ITEM,
+                    name: Some(item_label(name)),
+                })
+            );
+            assert!(!link.contains('\n') && !link.contains(' '));
+            assert!(w.social.ims[0].lines.back().unwrap().text.contains(&link));
+            // Repeated answers do not duplicate the confirmation; reopening chat
+            // can recover the same native selection from its stored text.
+            w.answer_inventory_offer(id, true);
+            let log = transcript(&mut w);
+            assert_eq!(log.len(), 2, "{log:?}");
+            assert!(log[1].contains(&link), "{log:?}");
+            clean(&w, &root);
+        }
+    }
+
+    #[test]
+    fn rejected_or_unidentified_gifts_never_offer_an_inventory_link() {
+        for (keep, identified) in [(false, true), (true, false)] {
+            let root = temp();
+            let mut w = world(&root);
+            let mut gift = offer(im::INVENTORY_OFFERED, "Welcome note");
+            if !identified {
+                gift.binary_bucket.truncate(1);
+            }
+            w.on_im(gift);
+            let id = w.inventory_offers.list[0].id;
+            w.answer_inventory_offer(id, keep);
+            assert!(w.inventory_offers.get(id).unwrap().inventory_link("Gift").is_none());
+            assert!(transcript(&mut w).iter().all(|text| !text.contains("/app/inventory/")));
+            clean(&w, &root);
+        }
     }
 
     #[test]

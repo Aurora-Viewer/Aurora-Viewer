@@ -4045,6 +4045,12 @@ failure. Grid validation and any paid upload are performed by the human.
   Wolf in the offer's entry): "gives you « Aurora lantern »", "Object",
   Keep / Reject, and no toast. `offer-card-keep` keeps it from the card at
   frame 700: the card greys with "Kept" and the entry leaves the list.
+  The kept card offers "Show in inventory"; clicking it opens Inventory on
+  the received object, clearing filters and expanding its parent path.
+  A confirmation with the linked item name is also saved in the giver's
+  transcript so it remains available after reopening the conversation.
+  `offer-card-legacy-keep` exercises the same links in the Legacy lines.
+  Pending, rejected and unidentified offers show no inventory shortcut.
   `offer-card-legacy` shows the card as one line of the legacy lines;
   `offer-card-legacy-reject` rejects it from its notification at frame 700:
   the line ends with "· Rejected". Capture at frame 900, with

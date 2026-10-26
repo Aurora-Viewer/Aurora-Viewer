@@ -6172,6 +6172,7 @@ world-mod-declined-your-teleport-offer = { $from }{ " a refusé votre téléport
 world-mod-has-your-object = { $from }{ " a " }{ $verb }{ " votre objet" }
 world-mod-gives-you = { $from }{ " vous donne " }{ $what }
 world-inventory-offers-received = { $name }{ " vous a donné cet élément (" }{ $kind }{ ") : " }{ $item }
+world-inventory-offers-kept = Élément gardé : { $item }
 world-inventory-offers-item-sent = { "Objet de l’inventaire " }{ $item }{ " offert" }
 world-inventory-offers-folder-sent = { "Dossier de l’inventaire " }{ $item }{ " offert" }
 world-inventory-offers-body-part = Partie du corps
