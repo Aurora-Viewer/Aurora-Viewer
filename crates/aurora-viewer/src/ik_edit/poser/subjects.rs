@@ -1,6 +1,9 @@
 //! Subject eligibility is checked every frame, independently of the picker.
 use super::*;
-use crate::{ui::menu, world::poser_consent};
+use crate::{
+    ui::menu,
+    world::{bridge::QueryState, poser_consent},
+};
 
 pub(super) fn allowed(world: &World, id: Uuid) -> bool {
     if id == world.agent_id {
@@ -180,7 +183,7 @@ impl Editor {
             ui.painter().image(chevron.id(), at, uv, p.muted);
         }
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
-        // AURORA_DEMO_POSER=consent-*: the menu opens by itself, as a click
+        // AURORA_DEMO_POSER=consent-* / bridge-*: the menu opens by itself, as a click
         let demo = egui::Id::unique("poser-subjects-open");
         if ui.ctx().data_mut(|d| d.remove_temp::<bool>(demo)).unwrap_or(false) {
             egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
@@ -246,7 +249,7 @@ impl Editor {
                                 aurora_i18n::text("poser-consent-ask"),
                                 widgets::ActionKind::Flat,
                                 size,
-                                self.poser.bridge_ready,
+                                self.poser.bridge == QueryState::Ready,
                             )
                             .clicked()
                             {
@@ -286,8 +289,24 @@ impl Editor {
         }
         if !any {
             menu::info(ui, p, "users", aurora_i18n::text("poser-nearby-none"));
-        } else if !self.poser.bridge_ready {
-            menu::info(ui, p, "unlink", aurora_i18n::text("poser-bridge-needed"));
+        } else {
+            // Say why Ask waits: a worn bridge whose query script is silent
+            // needs Repair, not "wear it".
+            let hint = match self.poser.bridge {
+                QueryState::Ready => None,
+                QueryState::Starting => Some(("hourglass-filled", "poser-bridge-starting")),
+                QueryState::Silent => Some(("alert-triangle-filled", "poser-bridge-silent")),
+                QueryState::Failed => Some(("alert-triangle-filled", "poser-bridge-failed")),
+                QueryState::Detached => Some(("unlink", "poser-bridge-needed")),
+            };
+            if let Some((icon, key)) = hint {
+                menu::info(ui, p, icon, aurora_i18n::text(key));
+            }
+            if matches!(self.poser.bridge, QueryState::Silent | QueryState::Failed)
+                && menu::item(ui, p, "refresh", aurora_i18n::text("bridge-repair"))
+            {
+                self.poser.requests.push(Request::RepairBridge);
+            }
         }
         menu::separator(ui, p);
         if menu::item(ui, p, "lock-filled", aurora_i18n::text("poser-privacy")) {

@@ -59,6 +59,8 @@ pub enum Request {
     Ask(Uuid),
     Cancel(Uuid),
     OpenPrivacy,
+    /// The bridge's Repair, offered when its query service is silent or failed.
+    RepairBridge,
 }
 /// Which side of the paired joints the window edits: the Côté selector. In
 /// `Mirror` the left joint is edited and its counterpart follows (the
@@ -92,9 +94,9 @@ pub(super) struct State {
     scale_gizmo: scale_gizmo::Gizmo,
     side: Side,
     requests: Vec<Request>,
-    /// The worn bridge answers queries: the consent requests travel through
-    /// it (query.lsl), so Ask waits for it.
-    bridge_ready: bool,
+    /// The consent requests travel through the worn bridge's query service
+    /// (query.lsl): Ask waits for `Ready`, and the menu says why it waits.
+    bridge: crate::world::bridge::QueryState,
 }
 impl Deref for State {
     type Target = Config;
@@ -143,8 +145,8 @@ impl Editor {
     pub fn take_poser_requests(&mut self) -> Vec<Request> {
         std::mem::take(&mut self.poser.requests)
     }
-    pub fn set_poser_bridge(&mut self, ready: bool) {
-        self.poser.bridge_ready = ready;
+    pub fn set_poser_bridge(&mut self, state: crate::world::bridge::QueryState) {
+        self.poser.bridge = state;
     }
     pub fn select_pose_subject(&mut self, world: &World, id: Uuid) {
         self.pick_subject(world, id);

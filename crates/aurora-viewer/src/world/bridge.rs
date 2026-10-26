@@ -84,6 +84,19 @@ impl Preferences {
     }
 }
 
+/// See [`Bridge::query_state`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QueryState {
+    #[default]
+    Starting,
+    Ready,
+    /// Worn and answering, but its query script does not.
+    Silent,
+    Failed,
+    /// The wearer took the bridge off.
+    Detached,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum Phase {
     #[default]
@@ -234,6 +247,28 @@ impl Bridge {
     }
     pub fn query_endpoint(&self) -> Option<Endpoint> {
         self.available().then(|| self.query.clone()).flatten()
+    }
+    /// Why the query service (posing requests, script information) is or is
+    /// not usable, so a waiting button can say what is wrong. A worn bridge
+    /// whose query script stays silent past SILENCE_CHECK (it stopped, or did
+    /// not compile as in bridge 1.34) is not "missing".
+    pub fn query_state(&self, now: Instant) -> QueryState {
+        if self.query_endpoint().is_some() {
+            QueryState::Ready
+        } else if self.user_detached {
+            QueryState::Detached
+        } else if self.error.is_some() {
+            QueryState::Failed
+        } else if self.available()
+            && self
+                .query_watch
+                .silent_since
+                .is_some_and(|since| now.duration_since(since) >= SILENCE_CHECK)
+        {
+            QueryState::Silent
+        } else {
+            QueryState::Starting
+        }
     }
     /// A failed read can reveal a replaced HTTP-in URL while movement is idle.
     /// Rediscovery is throttled and must not reset the motor or its pending ack.

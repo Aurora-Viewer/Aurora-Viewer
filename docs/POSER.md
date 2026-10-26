@@ -104,7 +104,10 @@ confirmation still require the human's action; saving never uploads.
 
 The subject menu lists every nearby avatar without probing their viewer or
 bridge. Ask needs the worn bridge (the request travels through its query
-service): without it the button is disabled and the menu says why. Ask sends one explicit request, with Cancel while
+service): until that service answers the button is disabled and the menu says
+why: the bridge is starting, it was taken off, it failed, or it is worn but
+its query script stays silent for 10 seconds. The last two offer **Repair
+Aurora bridge**, the Movelock window's Repair. Ask sends one explicit request, with Cancel while
 pending. The target sees the requester, distance, the local-only photo use,
 the session lifetime, Refuse, Accept and a permanent-request-block checkbox.
 Accepted targets keep a reminder with Withdraw even when Poser is closed.
