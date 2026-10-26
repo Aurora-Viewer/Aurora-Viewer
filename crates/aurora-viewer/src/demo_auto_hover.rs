@@ -250,7 +250,7 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
     if frame == 620 {
         let objects = if matches!(
             mode,
-            "auto-rigged" | "auto-contact" | "auto-offset" | "auto-state" | "auto-pelvis" | "auto-stilt"
+            "auto-rigged" | "auto-contact" | "auto-offset" | "auto-state" | "auto-pelvis" | "auto-stilt" | "auto-ik" | "auto-ik-moving"
         ) {
             if let Err(error) = install_mesh(&world.avatar_lib, scene) {
                 log::warn!("demo auto hover: {error}");

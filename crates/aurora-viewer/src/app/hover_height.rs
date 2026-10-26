@@ -72,6 +72,17 @@ impl App {
                         _ => {}
                     }
                 }
+                if matches!(mode, "auto-ik" | "auto-ik-moving") {
+                    if self.frame_count == 600 {
+                        self.settings.ground_avatar_feet = true;
+                        self.settings.ground_feet_while_moving = mode == "auto-ik-moving";
+                    }
+                    match self.frame_count {
+                        720 => self.settings.auto_hover_height = false,
+                        840 => self.settings.auto_hover_height = true,
+                        _ => {}
+                    }
+                }
                 // A separate ground height, then the sit shortcut: the avatar
                 // floats 0.5 m above its ground pose, and stands back at 0.
                 if mode == "sit-ground" {

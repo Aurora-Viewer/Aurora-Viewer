@@ -1121,8 +1121,15 @@ excluded. The application supplies this context anew with every AO update.
 For large corrections, the body constraint keeps an upright source hip above
 its planted ankle so that the knee hinge cannot turn backward.
 
-Four shaped sole probes use the existing neutral shoe calibration. Source
-clearance with hysteresis distinguishes contact and flight, measured before
+Four shaped sole probes use the existing neutral shoe calibration.
+The local avatar's sole geometry is measured whenever automatic height or
+Aurora foot placement needs it. With automatic height disabled, calibration
+updates only the cached sole reference; it never previews or commits hover
+height. Toggling automatic height preserves that reference while foot
+placement remains enabled, so manual height and movement scope cannot make
+the shoes sink when placement resumes.
+
+Source clearance with hysteresis distinguishes contact and flight, measured before
 the render-space translation to retain submillimetre precision. Contact targets
 follow the support; a flying foot retains the source arc from its departure
 elevation, transitioning toward the landing elevation during descent. Collision

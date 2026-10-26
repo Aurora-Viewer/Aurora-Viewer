@@ -201,12 +201,14 @@ impl Scene {
     }
 
     /// Called after the rest skeleton has been refreshed, before scene sync.
+    /// Foot placement also needs the neutral sole measurement when automatic
+    /// height is off; only `enabled` permits changing the user's hover height.
     /// Snapshots contain only Arc handles and transforms; decoding, skinning
     /// and vertex scans use the scene's low-priority pool. Old jobs are ignored
     /// after another wear/detach; HUDs without avatar foot skin cannot trigger
     /// a recalibration.
     pub fn update_auto_hover(&mut self, world: &mut World, enabled: bool, offset: f32, commit: bool, now: Instant) {
-        if !enabled {
+        if !enabled && !self.ground_avatar_feet {
             self.auto_hover.observed = None;
             self.auto_hover.finished = None;
             self.auto_hover.offset = None;
@@ -343,8 +345,9 @@ impl Scene {
         }
         let offset = crate::world::hover_height::bounded(offset).unwrap_or(0.0);
         let offset_changed = state.offset != Some(offset);
-        state.offset = Some(offset);
-        if ready
+        state.offset = enabled.then_some(offset);
+        if enabled
+            && ready
             && offset_changed
             && state.finished == Some(signature)
             && let Some(measurement) = state.measurement
@@ -359,7 +362,7 @@ impl Scene {
             if ready && state.observed == Some(stamp) {
                 state.finished = Some(stamp);
                 state.measurement = result;
-                if let Some(Measurement { height: value, .. }) = result {
+                if enabled && let Some(Measurement { height: value, .. }) = result {
                     world.hover_height.preview(value + offset);
                     log::info!(
                         "auto hover height: {:.3} m (raw {value:.3} m, offset {offset:.3} m)",
@@ -961,6 +964,90 @@ mod tests {
         settle(&mut scene, &mut world, now + Duration::from_secs(1));
         assert_eq!(world.hover_height.value(), 0.35);
         assert_eq!(scene.auto_hover.finished, calibration);
+    }
+
+    #[test]
+    fn aurora_calibrates_shoes_without_writing_the_manual_hover_height() {
+        let (mut world, mut scene, now) = fixture();
+        let lib = world.avatar_lib.clone();
+        crate::demo::auto_hover::install_mesh(&lib, &mut scene).unwrap();
+        world.apply(NetEvent::ObjectUpdates {
+            handle: 1,
+            objects: vec![crate::demo::auto_hover::rigged_object()],
+        });
+        scene.ground_avatar_feet = true;
+        world.hover_height.preview(0.35);
+        world.hover_height.commit();
+        let Some(aurora_net::NetCommand::SetHoverHeight { request, .. }) = world.hover_height.next_update(Some(1)) else {
+            panic!("initial manual height");
+        };
+        world.hover_height.reply(request, 1, true);
+        rest(&mut scene, &world, now);
+        scene.update_auto_hover(&mut world, false, 0.5, true, now);
+        for _ in 0..1000 {
+            scene.update_auto_hover(&mut world, false, 0.5, true, now + SETTLE);
+            if scene.automatic_hover_base(&world).is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let baseline = scene
+            .automatic_hover_base(&world)
+            .expect("IK needs neutral shoe calibration even with automatic height off");
+        assert_eq!(world.hover_height.value(), 0.35);
+        assert!(
+            world.hover_height.next_update(Some(1)).is_none(),
+            "calibration must not publish a hover change"
+        );
+        scene.update_auto_hover(&mut world, true, 0.0, true, now + Duration::from_secs(1));
+        assert_eq!(
+            world.hover_height.value(),
+            baseline,
+            "enabling automatic height must apply the cached estimate"
+        );
+    }
+
+    #[test]
+    fn aurora_idle_keeps_measured_shoe_soles_without_changing_manual_hover() {
+        for while_moving in [false, true] {
+            let (mut world, mut scene, now) = fixture();
+            let lib = world.avatar_lib.clone();
+            crate::demo::auto_hover::install_mesh(&lib, &mut scene).unwrap();
+            world.apply(NetEvent::ObjectUpdates {
+                handle: 1,
+                objects: vec![crate::demo::auto_hover::rigged_object()],
+            });
+            let owner = world.objects.index_of_uuid(&world.agent_id).unwrap();
+            let skeleton = &scene.skeletons[&world.agent_id];
+            let box_height = standing_box_height(skeleton.neutral_body_height, skeleton.neutral_shape_hover, true).unwrap();
+            world.objects.get_mut(owner).unwrap().position.z = 0.5 * box_height;
+            world.objects.get_mut(owner).unwrap().foot_plane = Some(Vec4::new(0.0, 0.0, 1.0, 0.05));
+            world.agent.position.z = 0.5 * box_height;
+            world.agent.flying = false;
+            settle(&mut scene, &mut world, now);
+            let manual = world.hover_height.value();
+            scene.ground_avatar_feet = true;
+            scene.ground_feet_while_moving = while_moving;
+            scene.palette_base(world.agent_id);
+            let mesh = scene.meshes.view(&crate::demo::auto_hover::MESH).unwrap();
+            let faces = aurora_assets::decode_mesh_lod(mesh.lod_section(3).unwrap()).unwrap();
+            for frame in 0..=180 {
+                let at = now + Duration::from_secs(1) + Duration::from_secs_f32(frame as f32 / 60.0);
+                scene.ground_feet_own_moving = frame < 60;
+                scene.update_auto_hover(&mut world, false, 0.0, true, at);
+                scene.update_poses(&mut world, Vec3::ZERO, at);
+                let matrices: Vec<_> = world.avatar_poses[&world.agent_id]
+                    .iter()
+                    .zip(&lib.rig.default_world_inv)
+                    .map(|(posed, inv)| *posed * inv.inverse())
+                    .collect();
+                let lowest = mesh_min(&faces, mesh.skin.as_deref(), None, &lib.rig, &matrices).unwrap();
+                let root = Scene::object_transform(&world, owner, at, 0).unwrap().0;
+                let sole = root.z - lib.pelvis.z + lowest;
+                assert!(sole.abs() < 0.003, "frame {frame}: stopping changed the sole height to {sole:.6} m");
+                assert_eq!(world.hover_height.value(), manual, "IK must not write the manual hover height");
+            }
+        }
     }
 
     #[test]
