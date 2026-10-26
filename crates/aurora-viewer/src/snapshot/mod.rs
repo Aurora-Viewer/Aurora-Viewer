@@ -5,11 +5,12 @@
 //! cannot draw it in one pass, its file name, and the settings kept between
 //! sessions. Saving runs on a worker (`save`), the recent photos are listed
 //! by `gallery`, a photo for the inventory is prepared by `inventory`, one
-//! for the profile feed posted by `profile`; the window is `ui::snapshot`,
-//! the frames `app::snapshot`.
+//! for the profile feed posted by `profile`; what the photo shows is chosen
+//! by `isolate`; the window is `ui::snapshot`, the frames `app::snapshot`.
 
 pub mod gallery;
 pub mod inventory;
+pub mod isolate;
 pub mod light;
 pub mod profile;
 pub mod quality;

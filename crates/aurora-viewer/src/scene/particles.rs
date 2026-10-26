@@ -291,7 +291,7 @@ impl ParticleManager {
             let blocked = idx
                 .and_then(|i| world.objects.get(i))
                 .is_some_and(|o| world.particles_blocked(&o.owner_id))
-                || idx.is_some_and(|idx| !world.parcel_object_visible(idx));
+                || idx.is_some_and(|idx| !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx));
             if blocked {
                 // what they already sent goes at once: the Legacy Viewer
                 // lets it live out its age, which a block from the menu

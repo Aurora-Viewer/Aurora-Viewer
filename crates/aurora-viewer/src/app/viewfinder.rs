@@ -782,6 +782,8 @@ impl App {
                     .world
                     .objects
                     .avatars()
+                    // (not those the photo's isolation leaves out)
+                    .filter(|(idx, _)| crate::snapshot::isolate::object_visible(&self.world, *idx))
                     .filter_map(|(_, o)| Some((face_of(self, &o.full_id)?, o.full_id)))
                     .map(|(r, id)| (r.center().distance(point), r, id))
                     .filter(|(d, _, _)| *d < 120.0)
@@ -806,6 +808,7 @@ impl App {
         let pitch = dir.z.clamp(-1.0, 1.0).asin().to_degrees();
         let review = self.photo_review();
         let (af_key, menu_key, first_key) = self.vf_keys();
+        let (isolate_rows, isolate_hover) = self.photo_isolate_rows();
         let first_allowed = self.settings.camera.enable_mouselook;
         let frame = Frame {
             now,
@@ -830,6 +833,9 @@ impl App {
                 af_mode: &af_key,
                 first_person: first_key.as_deref().filter(|_| first_allowed),
             },
+            isolation: &self.world.photo_isolation,
+            isolate_rows: &isolate_rows,
+            isolate_hover,
         };
         // the demo aims at the own avatar's face, then shoots
         let (aim, shoot) = self.photo_demo_viewfinder();
@@ -884,6 +890,7 @@ impl App {
                         self.vf_play(VfSound::Click);
                     }
                 }
+                Out::Isolate(o) => self.photo_isolate_out(o, ctx.pixels_per_point()),
                 Out::Exit => self.panels.snapshot = false,
             }
         }

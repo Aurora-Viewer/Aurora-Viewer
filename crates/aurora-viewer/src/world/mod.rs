@@ -420,6 +420,9 @@ pub struct World {
     /// Full description of that parcel (navigation bar icons, media, voice).
     pub parcel: Option<Arc<aurora_net::ParcelInfo>>,
     pub parcel_visibility: parcel_visibility::Visibility,
+    /// The photo's isolation (`snapshot::isolate`): read with the parcel
+    /// filter by `parcel_object_visibility`.
+    pub photo_isolation: crate::snapshot::isolate::Isolation,
     /// About Land: the selected parcel, covenant, group / experience names.
     pub land: land::Land,
     /// The Region / Estate window's region and estate.
@@ -667,6 +670,7 @@ impl World {
             sky_directions: (glam::Vec3::Z, glam::Vec3::NEG_Z),
             parcel_name: String::new(),
             parcel_visibility: Default::default(),
+            photo_isolation: Default::default(),
             parcel: None,
             land: land::Land::default(),
             estate: estate::Estate::default(),

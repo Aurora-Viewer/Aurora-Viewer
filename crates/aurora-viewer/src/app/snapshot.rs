@@ -97,6 +97,8 @@ struct Job {
     /// Drawn at this many times the photo's size, reduced once complete
     /// (the photo quality's supersampling).
     supersample: u32,
+    /// Cut out by the isolation (`snapshot::isolate`): its alpha is kept.
+    cutout: bool,
 }
 
 /// A held photo (freeze frame) and what shows it.
@@ -104,6 +106,7 @@ struct Held {
     width: u32,
     height: u32,
     rgba: Vec<u8>,
+    cutout: bool,
     texture: Option<egui::TextureHandle>,
 }
 
@@ -191,6 +194,12 @@ pub(super) struct Snapshots {
     review: Option<(String, crate::ui::viewfinder::Review)>,
     review_tex: Option<egui::TextureHandle>,
     review_rx: Option<crossbeam_channel::Receiver<(u32, u32, Vec<u8>)>>,
+    /// Choosing for the isolation (`app::photo_isolate`): the points asked
+    /// of the renderer, this frame's point (window pixels), and the avatar
+    /// or linkset under the pointer.
+    pub(super) isolate_picks: Vec<(u64, super::photo_isolate::Pick)>,
+    pub(super) isolate_point: Option<((f32, f32), super::photo_isolate::Pick)>,
+    pub(super) isolate_hover: Option<Uuid>,
 }
 
 struct DemoPhoto {
@@ -300,6 +309,9 @@ impl Default for Snapshots {
             review: None,
             review_tex: None,
             review_rx: None,
+            isolate_picks: Vec::new(),
+            isolate_point: None,
+            isolate_hover: None,
         }
     }
 }
@@ -409,11 +421,12 @@ impl App {
                     width: w,
                     height: h,
                     rgba: job.pixels,
+                    cutout: job.cutout,
                     texture: None,
                 });
                 self.photo_shutter();
             }
-            Purpose::Save(path) => self.photo_save(job.size, job.pixels, path),
+            Purpose::Save(path) => self.photo_save(job.size, job.pixels, path, job.cutout),
             Purpose::Inventory(cost) => self.photo_encode(job.size, job.pixels, cost),
             Purpose::Profile => self.photo_post(job.size, job.pixels),
             Purpose::Postcard => self.photo_postcard(job.size, job.pixels),
@@ -698,6 +711,12 @@ impl App {
             1
         };
         let size = (size.0 * supersample, size.1 * supersample);
+        // the choosing in the scene stops: its outlines are not in the
+        // photo, which shows what is chosen (the scene follows before the
+        // photo's frame is drawn)
+        if purpose != Purpose::Preview {
+            self.world.photo_isolation.set_picking(false);
+        }
         let tiles = snapshot::plan(size, self.photo_max_side(renderer), self.photo_max_pixels(renderer));
         let interface = s.interface && snapshot::same_proportions(full, window);
         self.snapshots.job = Some(Job {
@@ -711,6 +730,7 @@ impl App {
             huds: s.huds,
             started: Instant::now(),
             supersample,
+            cutout: self.world.photo_isolation.empty_background(),
         });
     }
 
@@ -750,13 +770,17 @@ impl App {
         }
     }
 
-    fn photo_save(&mut self, size: (u32, u32), rgba: Vec<u8>, chosen: Option<PathBuf>) {
+    fn photo_save(&mut self, size: (u32, u32), rgba: Vec<u8>, chosen: Option<PathBuf>, cutout: bool) {
         let s = &self.settings.snapshot;
+        // a cut-out photo is a PNG whatever the format chosen: the only
+        // one of them with an alpha
+        let wanted = if cutout { snapshot::FileFormat::Png } else { s.format };
         let (format, path) = match chosen {
-            Some(path) => (snapshot::FileFormat::of_path(&path).unwrap_or(s.format), path),
+            Some(path) if cutout => (wanted, path.with_extension(wanted.extension())),
+            Some(path) => (snapshot::FileFormat::of_path(&path).unwrap_or(wanted), path),
             None => {
                 let stamp = s.timestamp_names.then(snapshot::local_stamp);
-                (s.format, snapshot::free_path(&s.folder(), &s.base_name, stamp.as_deref(), s.format))
+                (wanted, snapshot::free_path(&s.folder(), &s.base_name, stamp.as_deref(), wanted))
             }
         };
         self.snapshots.message_item = None;
@@ -768,6 +792,7 @@ impl App {
             format,
             jpeg_quality: s.jpeg_quality,
             path,
+            alpha: cutout,
         }));
         self.photo_shutter();
     }
@@ -992,8 +1017,8 @@ impl App {
             return;
         }
         if let Some(held) = &self.snapshots.held {
-            let (size, rgba) = ((held.width, held.height), held.rgba.clone());
-            self.photo_save(size, rgba, chosen);
+            let (size, rgba, cutout) = ((held.width, held.height), held.rgba.clone(), held.cutout);
+            self.photo_save(size, rgba, chosen, cutout);
             return;
         }
         self.photo_job(Purpose::Save(chosen), renderer);
@@ -1566,10 +1591,14 @@ impl App {
                 v.countdown = None;
                 let now = self.egui_ctx.input(|i| i.time);
                 self.snapshots.vf.say(aurora_i18n::tr!("photo-vf-timer-cancelled"), false, now);
-            } else if v.menu || v.help || v.drawer {
+            } else if self.world.photo_isolation.picking {
+                // the choosing in the scene stops, its panel left open
+                self.world.photo_isolation.set_picking(false);
+            } else if v.menu || v.help || v.drawer || v.isolate {
                 v.menu = false;
                 v.help = false;
                 v.drawer = false;
+                v.isolate = false;
             } else if self.camera.free().is_some() {
                 self.snapshots.ui.free.on = false;
                 self.photo_free_camera();

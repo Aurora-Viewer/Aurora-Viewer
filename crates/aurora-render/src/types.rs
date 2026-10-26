@@ -1103,6 +1103,10 @@ pub struct FrameParams {
     pub debug: DebugRender,
     /// Depth of field (RenderDepthOfField); None: off, at no cost.
     pub dof: Option<DepthOfField>,
+    /// A cut-out photo (cutout.rs): no sky, terrain or water, no glow, and
+    /// what is drawn keeps its coverage, in the snapshot's alpha or over a
+    /// checkerboard on the live view.
+    pub cutout: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -165,7 +165,9 @@ struct PostU {
     tonemap_mix: f32,
     /// Written on the GPU by `Exposure::encode`; 1 until then.
     auto_exposure: f32,
-    _pad: [f32; 2],
+    /// A cut-out photo (cutout.rs): 1 the snapshot, 2 the live view.
+    cutout: f32,
+    _pad: f32,
 }
 
 /// Where `PostU::auto_exposure` sits in the post uniforms.
@@ -1362,6 +1364,8 @@ pub(crate) struct Backend {
     previews: crate::preview::Cache,
     selection: Option<crate::selection::Overlay>,
     hud_selection: Option<crate::selection::Overlay>,
+    /// The coverage pass of cut-out photos (cutout.rs), made on first use.
+    cutout: Option<crate::cutout::Cutout>,
     frame_layout: wgpu::BindGroupLayout,
     records_layout: wgpu::BindGroupLayout,
     /// Layout of the scene's texture pages (textures.rs), for the pipelines.
@@ -2710,6 +2714,7 @@ impl Backend {
             ui_glass: None,
             previews: Default::default(),
             selection: None,
+            cutout: None,
             hud_selection: None,
             frame_layout,
             records_layout,
@@ -3582,7 +3587,8 @@ impl Backend {
                 h,
                 DEPTH_FORMAT,
                 samples,
-                att | wgpu::TextureUsages::COPY_SRC,
+                // (read by the coverage of a cut-out photo, cutout.rs)
+                sampled | wgpu::TextureUsages::COPY_SRC,
             )
         }) {
             Some((tex, view)) => (Some(tex), Some(view)),
@@ -5233,7 +5239,8 @@ impl Backend {
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }
         // glow passes only when some visible face glows (RenderGlow)
-        let glow_on = f.glow && (!lists.glow.is_empty() || !lists.glow_alpha.is_empty() || lists.blend_glow.contains(&true));
+        // (a cut-out photo's alpha holds its coverage instead, cutout.rs)
+        let glow_on = f.glow && !f.cutout && (!lists.glow.is_empty() || !lists.glow_alpha.is_empty() || lists.blend_glow.contains(&true));
         // diagnostic: AURORA_GLOW_SKIP bits leave out a family of glowing faces
         // (2 opaque, 4 alpha pool, 8 blended)
         static GLOW_SKIP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -5293,7 +5300,12 @@ impl Backend {
             // (LLSettingsSky::getTonemapMix, LLSettingsVOSky::applySpecial)
             tonemap_mix: if f.sky.classic { 0.0 } else { f.tonemap_mix.clamp(0.0, 1.0) },
             auto_exposure: 1.0,
-            _pad: [0.0; 2],
+            cutout: match (f.cutout, snapshot.is_some()) {
+                (false, _) => 0.0,
+                (true, true) => 1.0,
+                (true, false) => 2.0,
+            },
+            _pad: 0.0,
         };
         self.queue.write_buffer(&self.post_buffer, 0, bytemuck::bytes_of(&post));
         if let (true, Some(t)) = (self.contact_now, &self.targets.contact) {
@@ -5440,13 +5452,17 @@ impl Backend {
             (start, l.len() as u32)
         };
         let cpu = &mut self.indirect_cpu;
+        // a cut-out photo leaves the ground and the water out of the view
+        // (cutout.rs); the reflections and the probes keep them, for the
+        // light they give
+        let (terrain, water): (&[DrawCmd], &[DrawCmd]) = if f.cutout { (&[], &[]) } else { (&lists.terrain, &lists.water) };
         let mut rg = Ranges {
-            terrain: push(cpu, &lists.terrain),
+            terrain: push(cpu, terrain),
             opaque: push(cpu, &lists.opaque),
             opaque_2s: push(cpu, &lists.opaque_two_sided),
             mask: push(cpu, &lists.mask),
             mask_2s: push(cpu, &lists.mask_two_sided),
-            water: push(cpu, &lists.water),
+            water: push(cpu, water),
             water_exclusion: push(cpu, &lists.water_exclusion),
             blend: push(cpu, &lists.blend),
             glow: push(cpu, &lists.glow),
@@ -6409,7 +6425,9 @@ impl Backend {
                 Some(msaa) => (msaa, Some(&self.targets.color)),
                 None => (&self.targets.color, None),
             };
-            let cc = f.clear_color;
+            // (a cut-out photo starts from black: what is drawn over it is
+            // then premultiplied by its coverage)
+            let cc = if f.cutout { glam::Vec4::ZERO } else { f.clear_color };
             let mut atts = vec![Some(wgpu::RenderPassColorAttachment {
                 view,
                 depth_slice: None,
@@ -6472,8 +6490,10 @@ impl Backend {
                 multiview_mask: None,
             });
             bind_mesh(&mut pass, &self.groups.a);
-            pass.set_pipeline(&self.pipelines.sky);
-            pass.draw(0..3, 0..1);
+            if !f.cutout {
+                pass.set_pipeline(&self.pipelines.sky);
+                pass.draw(0..3, 0..1);
+            }
             pass_mark(&mut pass, MARK_SKY_END);
             draw(&mut pass, &self.pipelines.terrain, rg.terrain);
             pass_mark(&mut pass, MARK_TERRAIN_END);
@@ -6499,13 +6519,26 @@ impl Backend {
 
         prof.mark("scene_a");
         mark(&mut encoder, MARK_SCENE_A_END);
-        if self.water_effects.particles > 0 && above_water_possible {
+        // a cut-out photo: what shows through, from the depth the scene
+        // pass ended with (cutout.rs)
+        if f.cutout {
+            let t = &self.targets;
+            let (color, depth, samples) = match (&t.color_msaa, &t.depth_msaa, &t.depth_msaa_tex) {
+                (Some(c), Some(d), Some(tex)) => (c, d, tex.sample_count()),
+                _ => (&t.color, &t.depth_ss, 1),
+            };
+            self.cutout
+                .get_or_insert_with(|| crate::cutout::Cutout::new(&self.device, HDR_FORMAT))
+                .encode(&self.device, &mut encoder, color, depth, HDR_FORMAT, samples);
+        }
+        let water_particles = if f.cutout { 0 } else { self.water_effects.particles };
+        if water_particles > 0 && above_water_possible {
             let mut pass = begin_scene_b(&mut encoder, &self.targets, "submerged water particles", false, false);
             bind_mesh(&mut pass, &self.groups.a);
             pass.set_pipeline(&self.pipelines.water_particles_under);
-            pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..self.water_effects.particles);
+            pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
         }
-        if self.water_effects.particles > 0 && self.targets.color_msaa.is_some() && above_water_possible {
+        if water_particles > 0 && self.targets.color_msaa.is_some() && above_water_possible {
             let _resolve = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("resolve submerged particles"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -6617,9 +6650,9 @@ impl Backend {
                 }
             }
             pass_mark(pass, MARK_BLEND_END);
-            if self.water_effects.particles > 0 {
+            if water_particles > 0 {
                 pass.set_pipeline(&self.pipelines.water_particles);
-                pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..self.water_effects.particles);
+                pass.draw(0..crate::water_effects::WATER_PARTICLE_VERTICES, 0..water_particles);
             }
             // particles last: they rebind vertex buffer 0
             if n_particles > 0 {
@@ -6880,6 +6913,7 @@ impl Backend {
                         buffer: &self.post_buffer,
                         glow: &self.glow.views[1],
                     },
+                    f.cutout,
                 );
             }
             None => {
@@ -6900,7 +6934,9 @@ impl Backend {
             &crate::exposure::FrameExposure {
                 tone_mapped: !f.sky.no_post,
                 hdr_scale: f.sky.hdr_scale,
-                hold: snapshot.is_some() || f.exposure_lock,
+                // (a cut-out photo's empty background would raise it: the
+                // subject keeps the exposure the whole scene gave it)
+                hold: snapshot.is_some() || f.exposure_lock || f.cutout,
                 glow: self.glow_drawn,
                 inv_view_proj: unjittered_vp.inverse(),
             },
@@ -7276,14 +7312,17 @@ impl Backend {
                     self.config.format,
                     wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
                 );
+                // (a cut-out photo keeps its coverage, cutout.rs)
+                let opaque = if f.cutout { 0 } else { 255 };
                 let mut out = Vec::with_capacity((w * h * 4) as usize);
                 for y in 0..h {
                     let r = &view[(y * row) as usize..(y * row + w * 4) as usize];
                     for px in r.as_chunks::<4>().0 {
+                        let a = px[3] | opaque;
                         if bgra {
-                            out.extend_from_slice(&[px[2], px[1], px[0], 255]);
+                            out.extend_from_slice(&[px[2], px[1], px[0], a]);
                         } else {
-                            out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+                            out.extend_from_slice(&[px[0], px[1], px[2], a]);
                         }
                     }
                 }
