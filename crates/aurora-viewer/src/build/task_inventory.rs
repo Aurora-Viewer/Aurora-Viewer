@@ -106,6 +106,58 @@ pub fn destination(inv: &Inventory, folder: Uuid, item: &TaskItem, protected: &H
     false
 }
 
+/// "Copy to inventory" of a whole object's contents into one new folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentsTransfer {
+    /// The no-copy items, moved out of the object instead of copied.
+    pub moved: Vec<Uuid>,
+    /// The object holds scripts (MoveInventoryFromScriptedObject).
+    pub scripted: bool,
+}
+
+/// move_inv_category_world_to_agent (indra/newview/llinventorybridge.cpp):
+/// each item copyable and transferable, or the object ours and the no-copy
+/// ones moved; one refused item refuses the whole copy.
+pub fn contents_transfer(world: &World, object: Uuid, items: &[TaskItem], object_owned: bool) -> Result<ContentsTransfer, String> {
+    let items: Vec<_> = items.iter().filter(|item| !item.is_folder).collect();
+    if items.is_empty() {
+        return Err(aurora_i18n::tr!("contents-copy-nothing").into());
+    }
+    let mut transfer = ContentsTransfer {
+        moved: Vec::new(),
+        scripted: items.iter().any(|item| item.asset_type == 10),
+    };
+    for item in items {
+        match kind(world, object, item, object_owned) {
+            Ok(TransferKind::Copy) => {}
+            Ok(TransferKind::Move { scripted }) => {
+                transfer.scripted |= scripted;
+                transfer.moved.push(item.item_id);
+            }
+            Err(reason) => {
+                return Err(aurora_i18n::tr!(
+                    "contents-copy-item-refused",
+                    name = item.name.as_str(),
+                    reason = reason
+                ));
+            }
+        }
+    }
+    Ok(transfer)
+}
+
+/// The new folder's name: the object's (LLFloaterOpenObject::moveToInventory),
+/// without what an inventory name cannot hold.
+pub fn contents_folder_name(object_name: &str) -> String {
+    let name: String = object_name.chars().filter(|c| !c.is_control() && *c != '|').collect();
+    let name = name.trim();
+    if name.is_empty() {
+        aurora_i18n::tr!("common-object").into()
+    } else {
+        name.chars().take(63).collect()
+    }
+}
+
 impl BuildTool {
     pub fn task_transfer_kind(&self, world: &World, object: Uuid, item: &TaskItem) -> Result<TransferKind, &'static str> {
         let mut result = kind(world, object, item, owned(world, object, self.props.get(&object)))?;

@@ -44,6 +44,7 @@ mod buy_land;
 mod chat_commands;
 mod click_pick;
 mod color_picker;
+mod contents_copy;
 mod context_menu;
 mod controls;
 mod crash_state;
@@ -723,6 +724,8 @@ pub struct App {
     imports: crate::imports::Imports,
     blender_live: crate::blender_live::Live,
     task_transfer: Option<ui::inventory::task_drop::PendingTransfer>,
+    /// "Copy to inventory" of objects' contents (app/contents_copy.rs).
+    contents_copies: contents_copy::ContentsCopies,
     /// Inventory edits asked by the world (`World::take_inventory_edits`),
     /// awaiting their reply.
     world_edits: std::collections::HashSet<uuid::Uuid>,
@@ -1302,6 +1305,7 @@ impl App {
             imports: Default::default(),
             blender_live: Default::default(),
             task_transfer: None,
+            contents_copies: Default::default(),
             world_edits: Default::default(),
             demo_offer_shown: None,
             ao_ui: Default::default(),
@@ -2639,6 +2643,10 @@ impl App {
                 }
                 return;
             }
+            if self.contents_copies.owns(request) {
+                self.contents_copy_result(request, result);
+                return;
+            }
             if self.world_edits.remove(&request) {
                 match result {
                     Ok(reply) => {
@@ -2820,6 +2828,11 @@ impl App {
             NetEvent::AbuseCategories(list) => self.report_abuse.set_categories(list),
             NetEvent::AbuseReportSent(result) => self.report_abuse_sent(result),
             NetEvent::TaskInventory { object, serial, result } => {
+                if self.demo
+                    && let Ok(items) = &result
+                {
+                    self.build_demo.adopt_contents(object, items);
+                }
                 self.interactions.on_purchase_inventory(object, &result);
                 let items = result
                     .as_ref()
@@ -5427,6 +5440,9 @@ impl App {
         if mode.ends_with("-ready") && !mode.starts_with("blend-") && !mode.starts_with("mask-") {
             return;
         }
+        if let Some(copy) = mode.strip_prefix("open-") {
+            self.demo_contents_copy(copy);
+        }
         let id = crate::demo::action_mode_id(&mode);
         let click_frame = if mode.starts_with("linked-") { 724 } else { 284 };
         if self.frame_count == 260
@@ -7279,6 +7295,7 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, id);
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
+            self.contents_copy_tick(Instant::now());
             for change in self.world.take_inventory_edits() {
                 let request = uuid::Uuid::new_v4();
                 self.world_edits.insert(request);
@@ -13548,18 +13565,22 @@ impl App {
                 }
                 self.show_pay(&ctx, &p, &mut a);
                 self.show_money_tracker(&ctx, &p, &mut a);
-                for document in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
-                    match document {
-                        ui::object_actions::ContentsOpen::Script(object, item) => {
+                for action in ui::object_actions::show_contents(&ctx, &p, &self.skin.icons, &mut self.interactions, &self.world) {
+                    match action {
+                        ui::object_actions::ContentsAction::Script(object, item) => {
                             self.open_script(aurora_net::scripts::ScriptTarget { object, item })
                         }
-                        ui::object_actions::ContentsOpen::Notecard(object, item) => self.open_task_notecard(object, item),
+                        ui::object_actions::ContentsAction::Notecard(object, item) => self.open_task_notecard(object, item),
+                        ui::object_actions::ContentsAction::Copy(request) => self.copy_contents(*request),
                     }
                 }
                 self.show_task_notecards(&ctx, &p);
                 self.show_scripts(&ctx, &p);
                 if let Some(action) = ui::inventory::task_drop::confirm(&ctx, &p, &mut self.task_transfer) {
                     self.apply_inventory_action(action);
+                }
+                if let Some(confirm) = ui::object_actions::confirm_copy(&ctx, &p, &mut self.contents_copies.confirm) {
+                    self.contents_copy_confirmed(confirm);
                 }
                 // a teleport invitation or an inventory offer whose card is in
                 // sight needs no toast (LLOfferHandler: a toast only when the
