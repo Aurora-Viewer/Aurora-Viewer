@@ -67,15 +67,10 @@ impl App {
                         self.open_context_menu();
                     }
                 }
+            }
+            740 => {
                 if mode.starts_with("customize-") || matches!(mode, "avatar-menu" | "attachment-menu") {
                     let resident = crate::demo::DEMO_NOVA;
-                    if matches!(
-                        mode,
-                        "customize-avatar" | "customize-other-attachment" | "avatar-menu" | "attachment-menu"
-                    ) {
-                        // Synthetic nearby voice membership, with no audio session.
-                        self.world.calls.voice_peers.insert(resident);
-                    }
                     let target = match mode {
                         "customize-land" => Some(ui::context::Target::Ground),
                         "customize-self" => Some(ui::context::Target::Avatar {
@@ -113,8 +108,6 @@ impl App {
                         });
                     }
                 }
-            }
-            740 => {
                 let bell = id_of(self, BELL);
                 let action = match mode {
                     mode if mode.starts_with("customize") => self.context_menu.clone().map(|m| CtxAction::CustomizeMenu(Box::new(m))),
