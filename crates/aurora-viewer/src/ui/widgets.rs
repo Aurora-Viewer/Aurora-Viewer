@@ -2747,15 +2747,17 @@ pub fn row_tag_width(ui: &egui::Ui, text: &str) -> f32 {
         + ROW_TAG_PAD * 2.0
 }
 
+/// Text colour shared by row tags and the names that follow their state.
+pub fn row_tag_ink(p: &Palette, active: bool) -> Color32 {
+    if active { p.teal } else { p.muted }
+}
+
 /// A small tag after an item's name, the same in every list: teal when
 /// `active` (worn, an active gesture), neutral for a plain fact (a link).
 /// Returns its width.
 pub fn paint_row_tag(ui: &egui::Ui, p: &Palette, text: &str, active: bool, left: f32, center_y: f32) -> f32 {
-    let (fill, ink) = if active {
-        (p.teal.gamma_multiply(0.14), p.teal)
-    } else {
-        (p.raised, p.muted)
-    };
+    let fill = if active { p.teal.gamma_multiply(0.14) } else { p.raised };
+    let ink = row_tag_ink(p, active);
     let galley = ui.painter().layout_job(super::sheet::semibold(ui, text, 11.0, ink));
     let rect = egui::Rect::from_min_size(
         egui::pos2(left, center_y - 9.0),

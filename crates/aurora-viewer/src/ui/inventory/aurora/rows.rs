@@ -372,31 +372,27 @@ pub(in super::super) fn item(
     let star_w = if favorite { 20.0 } else { 0.0 };
     let room = cols.name_end - name_left - quick_w - trailing - pills_w - star_w - if trailing > 0.0 { 8.0 } else { 0.0 };
     // LLItemBridge::getLabelStyle / LLGestureBridge::getLabelStyle
-    // (indra/newview/llinventorybridge.cpp): worn originals and their links
-    // stay bold without being selected, as do active gestures.
-    let bold = selected || pills.iter().any(|(_, tone)| *tone == Tone::Worn);
-    let offset = bold.then(|| widgets::faux_bold_offset(ui)).flatten();
-    let name = if bold {
-        sheet::semibold(ui, &it.name, NAME, p.ink)
+    // (indra/newview/llinventorybridge.cpp) supply the worn/active state.
+    // By human choice, names share the tag's semi-bold face and text colour.
+    let active = pills.iter().any(|(_, tone)| *tone == Tone::Worn);
+    let ink = if active { widgets::row_tag_ink(p, true) } else { p.ink };
+    let name = if selected || active {
+        sheet::semibold(ui, &it.name, NAME, ink)
     } else {
-        egui::text::LayoutJob::single_section(it.name.clone(), egui::TextFormat::simple(egui::FontId::proportional(NAME), p.ink))
+        egui::text::LayoutJob::single_section(it.name.clone(), egui::TextFormat::simple(egui::FontId::proportional(NAME), ink))
     };
     let mut name = name;
-    name.wrap = egui::text::TextWrapping::truncate_at_width((room - offset.map_or(0.0, |offset| offset.x)).max(24.0));
+    name.wrap = egui::text::TextWrapping::truncate_at_width(room.max(24.0));
     if matches!(it.asset_type, 24 | 25) {
         for section in &mut name.sections {
             section.format.italics = true;
         }
     }
     let galley = ui.painter().layout_job(name);
-    let mut x = name_left + galley.size().x + offset.map_or(0.0, |offset| offset.x);
+    let mut x = name_left + galley.size().x;
     let clip = ui.clip_rect();
     ui.set_clip_rect(clip.intersect(Rect::from_min_max(full.min, Pos2::new(cols.name_end, full.bottom()))));
-    if let Some(offset) = offset {
-        let pos = widgets::row_text_origin(ui.painter(), &galley, name_left, rect.center().y);
-        ui.painter().galley(pos + offset, galley.clone(), p.ink);
-    }
-    widgets::paint_row_text(ui.painter(), galley, name_left, rect.center().y, p.ink);
+    widgets::paint_row_text(ui.painter(), galley, name_left, rect.center().y, ink);
     for (text, tone) in &pills {
         x += 6.0;
         x += paint_pill(ui, p, text, *tone, x, rect.center().y);
