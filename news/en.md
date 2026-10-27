@@ -26,6 +26,22 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-10-26 — Aurora 0.8.0: filters and effects for your photos
+The photo mode gets 66 filters and effects that show live in the viewfinder: the Legacy Viewer's 30 filters and 36 of Aurora's own, from film grain to VHS, plus your own .cube LUTs. Stack up to six, each with its own sliders, and compare before and after. Isolate your avatar, or the avatars and objects you click, on a transparent background: a PNG ready to use.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.0)
+
+## 2026-10-26 — Portals, and only your parcel
+Open a portal to a place, or drop a landmark into the world, and walk through it to teleport. Other Aurora users see it too: your friends by default. You can also hide what stands outside the current parcel, and immersive mode hides the whole interface but the chat, for photos and events.
+
+## 2026-10-26 — Chat that writes with you
+A spell checker with suggestions, auto-replace if you like, @ to mention someone, and / in nearby chat to find a gesture. A thumbnail per conversation waits beside the chat bar, and nearby chat can rise in bubbles above heads. Bluesky and X posts, short videos and animated WebP now preview in the conversation.
+
+## 2026-10-26 — Inventory and outfits
+Your whole inventory loads in the background from login on. Open a second inventory window to sort between folders, resize its columns, and give items by dropping them on a profile or an avatar. Copy a box's contents into your inventory or wear them straight away, and edit your skin, hair, eyes, tattoos, alphas and clothes.
+
+## 2026-10-26 — Also in 0.8.0
+Sound Explorer finds which object plays a sound, Quickjump skips the jump and landing delay, and Help › Grid status shows the grid's incidents. Name tags mark the Aurora team and Linden Lab staff, and the viewer stays within the video memory your graphics card grants it.
+
 ## 2026-10-25 — Aurora 0.7.5: tools for creators
 LiveMesh shows your Blender mesh in the viewer while you edit it, with nothing uploaded: rigged meshes on your avatar, static meshes and linksets as local objects you can place, move or attach. The new Poser poses you, your animesh or nearby avatars who agree to it, bone by bone, for photos, with a pose library and BVH export.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/blob/main/docs/BLENDER_LIVE.md)

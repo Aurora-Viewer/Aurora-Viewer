@@ -26,6 +26,22 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-10-26 — Aurora 0.8.0 : des filtres et des effets pour vos photos
+Le mode photo gagne 66 filtres et effets visibles en direct dans le viseur : les 30 filtres du Legacy Viewer et 36 effets propres à Aurora, du grain argentique à la VHS, plus vos propres LUT .cube. Empilez-en jusqu'à six, chacun avec ses réglages, et comparez avant et après. Isolez votre avatar, ou les avatars et objets que vous cliquez, sur fond transparent : un PNG prêt à l'emploi.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.0)
+
+## 2026-10-26 — Des portails, et seulement votre parcelle
+Ouvrez un portail vers un lieu, ou déposez un repère dans le monde, et traversez-le pour vous téléporter. Les autres utilisateurs d'Aurora le voient aussi : vos amis par défaut. Vous pouvez aussi masquer ce qui se trouve hors de la parcelle actuelle, et le mode immersif cache toute l'interface sauf le chat, pour les photos et les événements.
+
+## 2026-10-26 — Un chat qui écrit avec vous
+Un correcteur orthographique avec suggestions, le remplacement automatique au choix, @ pour mentionner quelqu'un, et / dans le chat local pour trouver un geste. Une vignette par conversation attend à côté de la barre de chat, et le chat local peut s'afficher en bulles au-dessus des têtes. Les posts Bluesky et X, les vidéos courtes et les WebP animés s'affichent désormais en aperçu dans la conversation.
+
+## 2026-10-26 — Inventaire et tenues
+Tout votre inventaire se charge en arrière-plan dès la connexion. Ouvrez une seconde fenêtre d'inventaire pour trier entre deux dossiers, redimensionnez ses colonnes, et donnez des objets en les déposant sur un profil ou un avatar. Copiez le contenu d'une boîte dans votre inventaire ou portez-le directement, et modifiez votre peau, vos cheveux, vos yeux, vos tatouages, vos alphas et vos vêtements.
+
+## 2026-10-26 — Aussi dans la 0.8.0
+Le Sound Explorer trouve quel objet joue un son, Quickjump supprime le délai du saut et de l'atterrissage, et Aide › État de la grille montre les incidents de la grille. Les étiquettes de nom signalent l'équipe Aurora et le personnel de Linden Lab, et le viewer reste dans la mémoire vidéo que votre carte graphique lui accorde.
+
 ## 2026-10-25 — Aurora 0.7.5 : des outils pour les créateurs
 LiveMesh montre votre mesh Blender dans le viewer pendant que vous le modifiez, sans rien envoyer : les mesh riggés sur votre avatar, les mesh statiques et les linksets comme objets locaux à poser, déplacer ou porter. Le nouveau Poser pose votre avatar, vos animesh ou les avatars proches qui l'acceptent, os par os, pour vos photos, avec une bibliothèque de poses et l'export BVH.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/blob/main/docs/BLENDER_LIVE.md)
