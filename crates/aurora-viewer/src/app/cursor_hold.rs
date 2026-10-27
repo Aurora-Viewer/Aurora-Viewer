@@ -1,8 +1,11 @@
 //! The system cursor while the camera holds it: hidden and locked during
 //! mouselook (LLToolGun) and during the camera drags (LLToolCamera), given
-//! back whatever ends the hold.
+//! back whatever ends the hold. Alt held in mouselook gives it back for as
+//! long as it is held (LLToolCompGun::handleHover, indra/newview/lltoolcomp.cpp,
+//! originally LGPL 2.1).
 
 use super::App;
+use winit::keyboard::KeyCode;
 use winit::window::CursorGrabMode;
 
 /// Why the camera took the cursor: it decides where the cursor reappears.
@@ -73,7 +76,75 @@ impl CursorHold {
     }
 }
 
+/// Alt in mouselook (LLToolCompGun::handleHover): held, the gun gives way to
+/// the grab tool, the cursor comes back at the centre and moves freely over
+/// the windows, the HUDs and the world while the view stays still; let go,
+/// the gun takes it again. Like the Legacy Viewer, neither switch happens
+/// while the left button is down: a click or a drag ends with the tool that
+/// began it.
+#[derive(Debug, Default)]
+pub(super) struct AltCursor {
+    free: bool,
+    left: bool,
+}
+
+/// What the cursor must do after `AltCursor::update`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum AltSwitch {
+    /// LLToolGun::handleDeselect: shown and released at the centre.
+    Free,
+    /// LLToolGun::handleSelect: hidden and locked at the centre again.
+    Take,
+}
+
+impl AltCursor {
+    /// Alt frees the cursor: the view no longer follows the mouse, a click
+    /// lands under the cursor and not at the crosshair.
+    pub(super) fn free(&self) -> bool {
+        self.free
+    }
+
+    /// The left button of the window, pressed or released.
+    pub(super) fn left_button(&mut self, pressed: bool) {
+        self.left = pressed;
+    }
+
+    /// Once a frame. `mouselook`: in mouselook with the window focused (the
+    /// cursor is given back otherwise); `alt`: Alt held.
+    pub(super) fn update(&mut self, mouselook: bool, alt: bool) -> Option<AltSwitch> {
+        if !mouselook {
+            // out of mouselook or of the focus, the cursor is already shown;
+            // mouselook takes it again with the focus, Alt then frees it
+            self.free = false;
+            return None;
+        }
+        if self.left || self.free == alt {
+            return None;
+        }
+        self.free = alt;
+        Some(if alt { AltSwitch::Free } else { AltSwitch::Take })
+    }
+}
+
 impl App {
+    /// Once a frame, before mouselook takes a cursor it does not hold: Alt
+    /// frees it or gives it back to the gun.
+    pub(super) fn mouselook_alt_cursor(&mut self) {
+        // (AURORA_DEMO_CAMERA scripts the keys: the window needs no focus)
+        let focused = self.focused || self.demo && std::env::var_os("AURORA_DEMO_CAMERA").is_some();
+        let mouselook = self.camera.mouselook() && focused && !self.exit_prompt.open;
+        match self.alt_cursor.update(mouselook, self.alt && !self.alt_gr_alone()) {
+            Some(AltSwitch::Free) => self.release_cursor(false),
+            Some(AltSwitch::Take) => self.set_mouselook_grab(true),
+            None => {}
+        }
+    }
+
+    /// AltGr alone (right Alt, typed as Ctrl + Alt) is a character key, not
+    /// the camera's Alt: typing `@` in mouselook must not free the cursor.
+    pub(super) fn alt_gr_alone(&self) -> bool {
+        self.down.contains(&super::Input::key(KeyCode::AltRight)) && !self.down.contains(&super::Input::key(KeyCode::AltLeft))
+    }
     /// Hide and lock the cursor for mouselook or a camera drag (`on`), or
     /// give it back.
     pub(super) fn set_mouselook_grab(&mut self, on: bool) {
@@ -203,6 +274,48 @@ mod tests {
         assert_eq!(hold.give_back(true), Some(Return::Stay));
         // mouselook takes it again once the window has the focus back
         assert_eq!(hold.take(true, (0.0, 0.0)), Some(HoldKind::Mouselook));
+    }
+
+    #[test]
+    fn alt_frees_the_mouselook_cursor_while_held() {
+        let mut alt = AltCursor::default();
+        assert_eq!(alt.update(true, false), None);
+        assert_eq!(alt.update(true, true), Some(AltSwitch::Free));
+        assert!(alt.free());
+        // once a frame: nothing more while Alt stays held
+        assert_eq!(alt.update(true, true), None);
+        assert_eq!(alt.update(true, false), Some(AltSwitch::Take));
+        assert!(!alt.free());
+        // Alt outside mouselook is the camera's, not this
+        assert_eq!(alt.update(false, true), None);
+        assert!(!alt.free());
+    }
+
+    #[test]
+    fn the_left_button_down_keeps_the_tool_it_began_with() {
+        let mut alt = AltCursor::default();
+        // a mouselook click held, then Alt: the gun keeps the cursor
+        alt.left_button(true);
+        assert_eq!(alt.update(true, true), None);
+        alt.left_button(false);
+        assert_eq!(alt.update(true, true), Some(AltSwitch::Free));
+        // a drag begun with the free cursor, then Alt let go: free until released
+        alt.left_button(true);
+        assert_eq!(alt.update(true, false), None);
+        assert!(alt.free());
+        alt.left_button(false);
+        assert_eq!(alt.update(true, false), Some(AltSwitch::Take));
+    }
+
+    #[test]
+    fn leaving_mouselook_or_the_focus_ends_the_free_cursor_without_taking_it() {
+        let mut alt = AltCursor::default();
+        assert_eq!(alt.update(true, true), Some(AltSwitch::Free));
+        // (Alt+Tab: the focus goes with Alt still down)
+        assert_eq!(alt.update(false, true), None);
+        assert!(!alt.free());
+        // back with Alt still held: freed again once mouselook took it
+        assert_eq!(alt.update(true, true), Some(AltSwitch::Free));
     }
 
     #[test]

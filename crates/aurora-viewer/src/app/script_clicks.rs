@@ -5,7 +5,9 @@
 //! - Mouselook, the mouselook bit taken: only ML_LBUTTON_DOWN / UP
 //!   (LLToolCompGun::handleMouseDown / handleMouseUp).
 //! - Mouselook, not taken: the object under the crosshair is touched, and
-//!   LBUTTON_DOWN / UP go out (LLToolGrabBase::handleMouseDown / Up).
+//!   LBUTTON_DOWN / UP go out (LLToolGrabBase::handleMouseDown / Up). With
+//!   Alt held the cursor is free (app/cursor_hold.rs): the HUD or the object
+//!   under it is touched instead.
 //! - Outside mouselook: a press on the world that nothing takes (ground, an
 //!   object without action) sends LBUTTON_DOWN / UP
 //!   (LLViewerInput::scanMouse, agent_control_lbutton_handle).
@@ -58,7 +60,9 @@ impl App {
         let gun = Gun::of(self.world.script_controls.left_button_grabbed(true));
         self.script_click_down(gun.bits());
         if gun == Gun::Grab {
-            self.click(click_pick::Click::Gun);
+            // Alt held: the grab tool picks under the free cursor
+            let at_cursor = self.alt_cursor.free();
+            self.click(click_pick::Click::Gun { at_cursor });
         }
     }
 
@@ -76,8 +80,15 @@ impl App {
     }
 
     /// LLToolGrabBase in mouselook: touch (or grab) what is under the
-    /// crosshair, run by `click` again once the depth there is known.
-    pub(super) fn gun_press(&mut self) {
+    /// crosshair, or under the cursor Alt freed (a HUD first, as the pick of
+    /// the Legacy Viewer); run by `click` again once the depth there is known.
+    pub(super) fn gun_press(&mut self, at_cursor: bool) {
+        if at_cursor {
+            if !self.gun_hud_touch() {
+                self.gun_touch();
+            }
+            return;
+        }
         let saved = self.cursor_pos;
         if let Some(g) = &self.gfx {
             let (w, h) = g.renderer.size();
@@ -85,6 +96,25 @@ impl App {
         }
         self.gun_touch();
         self.cursor_pos = saved;
+    }
+
+    /// The HUD under the free cursor takes the press, touched or grabbed like
+    /// a prim of the world; true when there is one. A HUD needs no depth: it
+    /// is known at the press, never when the press is run again.
+    fn gun_hud_touch(&mut self) -> bool {
+        if self.clicks.replaying() || !self.huds_shown() {
+            return false;
+        }
+        let Some((idx, point, hud_ray)) = self.scene.hud_pick(&self.world, self.cursor_pos, false) else {
+            return false;
+        };
+        self.left_down = true;
+        if let Some(target) = crate::interaction::target(&self.world, idx, &self.interactions.props)
+            && gun_acts_on(target.action)
+        {
+            self.activate_object_action(target, idx, point, Some(hud_ray));
+        }
+        true
     }
 
     fn gun_touch(&mut self) {

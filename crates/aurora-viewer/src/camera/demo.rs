@@ -22,6 +22,10 @@
 //! - `tag`: left press on our own name tag at frame 600, drag (steer the
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
+//! - `ml-alt`: into mouselook at 600, Alt held from 620 (the cursor freed,
+//!   no crosshair) with mouse motion from 625 to 640 (the view stays), Alt
+//!   let go at 650 and the same motion from 655 to 670 (the view turns), out
+//!   at 700
 //! - `ground-ml-body-on|off`: ground sit at 520, enter at 600, stand at 760.
 //! - `ml-eyes-on-body-on|ml-eyes-off-body-on`: animate the head with optional
 //!   eye following; prefix `ground-` to exercise ground sitting.
@@ -285,6 +289,23 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
             604 | 608 | 612 | 620 | 640 | 704 | 708 | 712 | 720 | 740 => out.push(Step::Log),
             _ => {}
         },
+        "ml-alt" => {
+            let alt = |alt| Step::Mods {
+                ctrl: false,
+                shift: false,
+                alt,
+            };
+            match frame {
+                600 | 700 => out.extend([Step::ToggleMouselook, Step::Log]),
+                620 => out.push(alt(true)),
+                650 => out.push(alt(false)),
+                625..=640 | 655..=670 => out.push(Step::Drag(8.0, 0.0)),
+                _ => {}
+            }
+            if matches!(frame, 622 | 641 | 652 | 671) {
+                out.push(Step::Log);
+            }
+        }
         "ml-zoom" => match frame {
             600 => out.extend([Step::ToggleMouselook, Step::Log]),
             640 | 720 => out.extend([Step::RightButton(true), Step::Log]),
@@ -473,6 +494,21 @@ mod tests {
         assert!(steps("drift,400,300", 900).contains(&Step::Drag(0.02, 0.0)));
         assert!(steps("drift,400,300", 1201).contains(&Step::Release));
         assert!(steps("drift,400,300", 1300).is_empty());
+    }
+
+    #[test]
+    fn ml_alt_scenario_moves_the_mouse_with_and_without_alt() {
+        let alt = |alt| Step::Mods {
+            ctrl: false,
+            shift: false,
+            alt,
+        };
+        assert!(steps("ml-alt", 600).contains(&Step::ToggleMouselook));
+        assert_eq!(steps("ml-alt", 620), vec![alt(true)]);
+        assert_eq!(steps("ml-alt", 630), vec![Step::Drag(8.0, 0.0)]);
+        assert_eq!(steps("ml-alt", 650), vec![alt(false)]);
+        assert_eq!(steps("ml-alt", 660), vec![Step::Drag(8.0, 0.0)]);
+        assert!(steps("ml-alt", 700).contains(&Step::ToggleMouselook));
     }
 
     #[test]
