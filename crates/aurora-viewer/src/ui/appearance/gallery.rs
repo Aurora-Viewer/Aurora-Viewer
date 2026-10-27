@@ -123,12 +123,16 @@ pub(super) fn context_menu(
             enabled(rules.remove, |rule| rule.remove),
         ) {
             actions.push(if multiple {
-                Action::RemoveOutfits(selection)
+                Action::RemoveOutfits(selection.clone())
             } else {
                 Action::RemoveOutfit(id)
             });
         }
         if multiple {
+            if ready {
+                menu::separator(ui, p);
+                super::folders::move_menu(ui, p, inv, st, &selection, actions);
+            }
             return;
         }
         menu::separator(ui, p);
@@ -183,6 +187,10 @@ pub(super) fn context_menu(
             rules.save,
         ) {
             st.gallery.confirm = Some((id, false));
+        }
+        // an Aurora addition, with the groups of My Outfits (#1002)
+        if rules.folder {
+            super::folders::move_menu(ui, p, inv, st, &[id], actions);
         }
         if let Some(enabled) = rules.delete {
             menu::separator(ui, p);

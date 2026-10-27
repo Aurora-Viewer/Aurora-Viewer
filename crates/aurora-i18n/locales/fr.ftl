@@ -12146,3 +12146,19 @@ about-hidden-rlva = Masquée par RLVa
 about-ping = Ping
 about-packet-loss = Paquets perdus
 about-bandwidth = Bande passante
+ui-appearance-folders-new = Nouveau dossier…
+ui-appearance-folders-rename = Renommer le dossier…
+ui-appearance-folders-delete = Supprimer le dossier
+ui-appearance-folders-delete-confirm = { $count ->
+    [0] { "Déplacer le dossier « " }{ $name }{ " » dans la corbeille ?" }
+    [one] { "Déplacer le dossier « " }{ $name }{ " » et sa tenue dans la corbeille ?" }
+   *[other] { "Déplacer le dossier « " }{ $name }{ " » et ses " }{ $count }{ " tenues dans la corbeille ?" }
+    }
+ui-appearance-folders-holds-current = Ce dossier contient la tenue que vous portez.
+ui-appearance-folders-move = Déplacer vers un dossier
+ui-appearance-folders-other = Autres tenues
+ui-appearance-folders-empty = Dossier vide
+ui-appearance-folders-save-in = Enregistrer dans
+world-outfit-folders-cannot-move-here = Impossible de le déplacer dans ce dossier.
+world-outfit-folders-already-there = Il est déjà dans ce dossier.
+world-outfit-folders-too-deep = Les dossiers de tenues ne dépassent pas quatre niveaux.

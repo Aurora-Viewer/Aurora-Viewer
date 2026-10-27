@@ -49,6 +49,7 @@ pub enum Action {
     WearOutfits { folders: Vec<Uuid>, append: bool },
     WearContents { folder: Uuid, mode: WearMode },
     Save(Option<String>),
+    SaveIn(String, Uuid),
     Remove(Uuid),
     RemoveItems(Vec<Uuid>),
     Add(Uuid),
@@ -59,6 +60,7 @@ pub enum Action {
     ShowOriginal(Uuid),
     Favorite(Uuid),
     Category(Uuid, aurora_net::outfits::categories::Update),
+    Folders(aurora_net::inventory::operations::Mutation),
     SaveTo(Uuid),
     RemoveOutfit(Uuid),
     RemoveOutfits(Vec<Uuid>),
@@ -132,7 +134,7 @@ pub fn folder_links(inv: &Inventory, folder: Uuid) -> Vec<OutfitLink> {
     links
 }
 
-fn item_link(it: &InvItem) -> OutfitLink {
+pub(super) fn item_link(it: &InvItem) -> OutfitLink {
     OutfitLink {
         target: it.id,
         name: it.name.clone(),
@@ -181,13 +183,11 @@ pub fn prepare(inv: &mut Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<Ne
 }
 
 /// The folders Appearance keeps loaded: the Current Outfit, My Outfits, the
-/// worn outfit and every outfit of My Outfits.
+/// worn outfit and every group and outfit of My Outfits.
 pub fn prepare_folders(inv: &Inventory) -> Vec<Uuid> {
     let my = system_folder(inv, FT_MY_OUTFITS);
     let mut folders: Vec<_> = [cof(inv), my, base(inv)].into_iter().flatten().collect();
-    if let Some(my) = my {
-        folders.extend(inv.folders.get(&my).into_iter().flat_map(|f| &f.children).copied());
-    }
+    folders.extend(super::outfit_folders::folders(inv));
     folders
 }
 
@@ -355,12 +355,19 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
     let original_current = current.clone();
     let mut sync = true;
     match action {
-        Action::Save(_) | Action::SaveTo(_) => {
-            let (name, destination) = match action {
-                Action::Save(name) => (name, base(inv)),
+        Action::Save(_) | Action::SaveIn(..) | Action::SaveTo(_) => {
+            let my = system_folder(inv, FT_MY_OUTFITS);
+            let (name, destination, parent) = match action {
+                Action::Save(name) => (name, base(inv), my),
+                Action::SaveIn(name, parent) => {
+                    if !super::outfit_folders::container(inv, parent) {
+                        return Err(aurora_i18n::tr!("world-outfit-folders-cannot-move-here").into());
+                    }
+                    (Some(name), None, Some(parent))
+                }
                 Action::SaveTo(id) => {
                     require_outfit(inv, id)?;
-                    (None, Some(id))
+                    (None, Some(id), my)
                 }
                 _ => unreachable!("save action"),
             };
@@ -380,8 +387,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
                 if name.is_empty() || name.chars().count() > 63 {
                     return Err(aurora_i18n::tr!("world-appearance-choose-a-name-of-1-to-63-characters").into());
                 }
-                let parent =
-                    system_folder(inv, FT_MY_OUTFITS).ok_or(aurora_i18n::tr!("world-appearance-the-my-outfits-folder-is-unavailable"))?;
+                let parent = parent.ok_or(aurora_i18n::tr!("world-appearance-the-my-outfits-folder-is-unavailable"))?;
                 let id = Uuid::new_v4();
                 change.folder = id;
                 change.create = Some(InvFolder {
@@ -686,7 +692,7 @@ pub fn plan(inv: &Inventory, action: Action, worn: &HashMap<Uuid, u8>) -> Result
             }
             change.links = current;
         }
-        Action::ShowOriginal(_) | Action::Favorite(_) | Action::Category(..) | Action::DeleteFromOutfit { .. } => {
+        Action::ShowOriginal(_) | Action::Favorite(_) | Action::Category(..) | Action::Folders(_) | Action::DeleteFromOutfit { .. } => {
             return Err(aurora_i18n::tr!("world-appearance-this-action-does-not-change-the-current-outfit").into());
         }
     }
@@ -737,7 +743,7 @@ fn require_outfit(inv: &Inventory, id: Uuid) -> Result<(), String> {
     if inv
         .folders
         .get(&id)
-        .is_some_and(|f| f.info.type_default == FT_OUTFIT && !f.library && Some(f.info.parent) == system_folder(inv, FT_MY_OUTFITS))
+        .is_some_and(|f| f.info.type_default == FT_OUTFIT && !f.library && super::outfit_folders::container(inv, f.info.parent))
     {
         Ok(())
     } else {
@@ -1182,7 +1188,7 @@ pub fn seed_duplicate_response(inv: &mut Inventory, agent: Uuid) {
     }
 }
 
-fn demo_replace(inv: &mut Inventory, agent: Uuid, id: Uuid, links: &[OutfitLink]) {
+pub(super) fn demo_replace(inv: &mut Inventory, agent: Uuid, id: Uuid, links: &[OutfitLink]) {
     let old = inv.folders.get(&id).map(|f| f.items.clone()).unwrap_or_default();
     for id in old {
         if inv.items.get(&id).is_some_and(|it| matches!(it.asset_type, 24 | 25)) {
