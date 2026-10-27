@@ -3616,6 +3616,7 @@ impl Session<'_> {
                 transition::step_once("first objects", || "first object update of the region (ObjectUpdate)".to_string());
             }
             let objects: Vec<_> = m.object_data.iter().filter_map(objects::parse_full).collect();
+            self.attach_queue.observe(objects.iter().map(|o| o.name_values.as_str()));
             self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
             crate::probe::objects(crate::probe::ObjectKind::Full, objects.len());
             if !objects.is_empty() {
@@ -3647,6 +3648,7 @@ impl Session<'_> {
                     Some(u)
                 })
                 .collect();
+            self.attach_queue.observe(objects.iter().map(|o| o.name_values.as_str()));
             self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
             crate::probe::objects(crate::probe::ObjectKind::Compressed, objects.len());
             if !objects.is_empty() {
@@ -4215,6 +4217,7 @@ impl Session<'_> {
         } else if id == AlertMessage::ID {
             let m: AlertMessage = pkt.decode()?;
             let msg = field_str(&m.alert_data.message);
+            self.attach_queue.on_alert(&msg, Instant::now());
             // attempt_standard_notification: a named notification (AlertInfo)
             // is the viewer's to word; then process_alert_core's system
             // messages (OpenSim's restart notices, the cancellation)
@@ -4250,6 +4253,7 @@ impl Session<'_> {
         } else if id == AgentAlertMessage::ID {
             let m: AgentAlertMessage = pkt.decode()?;
             let message = field_str(&m.alert_data.message);
+            self.attach_queue.on_alert(&message, Instant::now());
             match crate::home::from_text(&message) {
                 Some(alert) => emit(self.sh, NetEvent::HomeAlert(alert)),
                 None => emit(self.sh, NetEvent::Alert { message }),
