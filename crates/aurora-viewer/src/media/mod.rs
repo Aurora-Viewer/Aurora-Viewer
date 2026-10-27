@@ -179,6 +179,9 @@ pub struct MediaImpl {
     mouse_down: bool,
     /// The user navigated (clicks, URL bar): report it to the server.
     user_nav: bool,
+    /// Prim media: perms_interact lets us navigate the face to another page
+    /// (LLVOVolume::hasMediaPermission); otherwise the page bounces back.
+    may_navigate: bool,
 }
 
 impl MediaImpl {
@@ -221,6 +224,7 @@ impl MediaImpl {
             nav_pending: true,
             mouse_down: false,
             user_nav: false,
+            may_navigate: true,
         }
     }
 

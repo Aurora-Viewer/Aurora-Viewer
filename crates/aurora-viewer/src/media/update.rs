@@ -281,7 +281,9 @@ impl MediaManager {
                     face: fi as u8,
                 };
                 desired.insert(key);
+                let may_navigate = entry.may_navigate(om.owner == world.agent_id);
                 if let Some(m) = self.impls.iter_mut().find(|m| m.key == key) {
+                    m.may_navigate = may_navigate;
                     if m.entry.as_ref() != Some(entry) {
                         let old_url = m.entry.as_ref().map(|e| e.url().to_string()).unwrap_or_default();
                         m.entry = Some(entry.clone());
@@ -306,13 +308,16 @@ impl MediaManager {
                 m.wanted = entry.auto_play
                     && ((f.autoplay && self.tentative_autoplay) || (om.hud && f.settings.autoplay_huds) || self.force_autoplay);
                 m.entry = Some(entry.clone());
+                m.may_navigate = may_navigate;
                 log::info!(
-                    "media: {} face {fi}: {} (auto play {}, {}×{})",
+                    "media: {} face {fi}: {} (auto play {}, {}×{}, interact {}, first click {})",
                     id,
                     sanitize(&m.url),
                     entry.auto_play,
                     entry.width_pixels,
-                    entry.height_pixels
+                    entry.height_pixels,
+                    entry.perms_interact,
+                    entry.first_click_interact
                 );
                 created.push(m);
             }
@@ -587,8 +592,17 @@ impl MediaManager {
                         m.location = uri.clone();
                         // LLVOVolume::mediaNavigated
                         if let (MediaKey::Prim { object, face }, Some(entry)) = (m.key, m.entry.as_ref()) {
-                            if !entry.check_url(&uri) {
-                                log::info!("media: {} blocked by the whitelist", sanitize(&uri));
+                            let refused = if !entry.check_url(&uri) {
+                                Some("the whitelist")
+                            } else if m.user_nav && uri != entry.current_url && !m.may_navigate {
+                                Some("its interaction permissions")
+                            } else {
+                                None
+                            };
+                            if let Some(why) = refused {
+                                // mediaNavigateBounceBack
+                                log::info!("media: {} blocked by {why}", sanitize(&uri));
+                                m.user_nav = false;
                                 let back = entry.url().to_string();
                                 if back != uri {
                                     m.url = back;
