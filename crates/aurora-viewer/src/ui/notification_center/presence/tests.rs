@@ -154,6 +154,7 @@ fn status(classic: bool) -> StatusInfo<'static> {
         local_env: false,
         double_click: Default::default(),
         quickjump: false,
+        quiet_snapshots: false,
         marketplace: false,
         parcel_landmark: None,
         can_set_home: false,

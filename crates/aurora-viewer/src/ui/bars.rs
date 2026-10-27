@@ -58,6 +58,8 @@ pub enum BarAction {
     ToggleMoveLock,
     /// Me › Quickjump (Self.toggleIgnorePreJump, FSIgnoreFinishAnimation).
     ToggleQuickjump,
+    /// Advanced › Quiet snapshots (PlayModeUISndSnapshot).
+    ToggleQuietSnapshots,
     ToggleWaterWalk,
     ToggleSwimming,
     MoveLockOptions,
@@ -185,6 +187,9 @@ pub struct StatusInfo<'a> {
     pub double_click: crate::autopilot::DoubleClick,
     /// Quickjump is on (Me › Quickjump).
     pub quickjump: bool,
+    /// Photos are taken without the shutter sound nor the snapshot
+    /// animation (Advanced › Quiet snapshots).
+    pub quiet_snapshots: bool,
     /// The grid has a Marketplace (World › SL Marketplace is shown only on
     /// the Second Life grids, GridCheck "secondlife").
     pub marketplace: bool,
@@ -1032,6 +1037,11 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
                     crate::ui::sim_console::WINDOW,
                     &mut panels.sim_console,
                 );
+            }
+            // Advanced › Quiet Snapshots (PlayModeUISndSnapshot)
+            let quiet = aurora_i18n::tr!("photo-quiet-snapshots");
+            if menu::check(ui, p, "camera-off", quiet, st.quiet_snapshots, true) {
+                *action = BarAction::ToggleQuietSnapshots;
             }
             // Advanced › Media Streams Backup: the parcel stream list to
             // and from an XML file (Streamlist.xml_import / xml_export)

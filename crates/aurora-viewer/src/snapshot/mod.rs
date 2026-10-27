@@ -230,7 +230,10 @@ pub struct Settings {
     /// First part of the file name (SnapshotBaseName, "Snapshot").
     pub base_name: String,
     pub guide: Guide,
-    /// The shutter sound (PlayModeUISndSnapshot).
+    /// The shutter sound and the snapshot animation, for everyone around;
+    /// off: "Quiet snapshots" (PlayModeUISndSnapshot on). The photo window,
+    /// Preferences › Privacy and › Sound, and Advanced › Quiet snapshots
+    /// all switch it.
     pub sound: bool,
     /// Size of a photo for the inventory (LastSnapshotToInventoryResolution).
     pub inventory_size: inventory::TextureSize,
