@@ -353,7 +353,8 @@ are planned or in progress: they are not in the viewer yet.
 - **Windows that get out of the way**: double-click a window's title to
   collapse it into a movable bar, then restore it with its size and content.
   Hold Alt while dragging to attach windows together; Alt+Shift+U hides or
-  restores the interface, and the bars hide automatically in mouselook.
+  restores the interface, Alt+Shift+H the HUDs, and the bars hide
+  automatically in mouselook.
 - **Ready for your keyboard**: movement keys adapt to the keyboard layout on
   first launch (WASD or ZQSD), and letter shortcuts use the key that carries
   their letter (M is M on AZERTY too). Search Preferences › Shortcuts by

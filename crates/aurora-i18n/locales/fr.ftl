@@ -368,6 +368,7 @@ import-preview-aurora = Aurora 3D
 import-no-map = Aucune
 keybinds-import-files = Importer des fichiers
 keybinds-hide-interface = Masquer / afficher l'interface
+keybinds-show-huds = Afficher / masquer les HUDs
 import-preview-tools = Outils de visualisation
 import-local-mesh-instance = Modèle à appliquer
 import-suffix-help = Ces réglages s’appliquent au prochain chargement. Rechargez le modèle après modification.

@@ -3738,6 +3738,7 @@ impl App {
             Action::Preferences => ui::widgets::toggle_floater(&self.egui_ctx, ui::options::WINDOW, &mut self.panels.settings),
             Action::ToggleInterface => self.toggle_interface(),
             Action::HoverTips => self.toggle_hover_tips(),
+            Action::ShowHuds => self.set_show_huds(!self.settings.show_huds),
             Action::Import => self.imports.toggle_launcher(&self.egui_ctx),
             Action::Beacons => ui::widgets::toggle_floater(&self.egui_ctx, ui::beacons::WINDOW, &mut self.panels.beacons),
             Action::PropertyLines => {
@@ -11109,23 +11110,7 @@ impl App {
             BarAction::BlenderLive => {
                 ui::widgets::open_floater(&self.egui_ctx, "blender_live", &mut self.blender_live.open);
             }
-            BarAction::ShowHuds(visible) => {
-                if !visible && self.world.rlva_has_locked_hud() {
-                    self.world
-                        .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
-                    return;
-                }
-                if self.hud_drag.is_some() {
-                    self.on_left_release();
-                }
-                self.release_object_hold();
-                self.settings.show_huds = visible;
-                self.settings.save();
-                if !visible {
-                    self.scene.lists.hud_view = None;
-                    self.media.unfocus();
-                }
-            }
+            BarAction::ShowHuds(visible) => self.set_show_huds(visible),
             BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(0.1, 1.0),
             BarAction::None => {}
             BarAction::IkEdit => {
@@ -11317,6 +11302,28 @@ impl App {
             self.interface.confirm_again = true;
         } else {
             self.interface.set_hidden(&self.egui_ctx, true);
+        }
+    }
+
+    /// World › HUDs › Show HUDs and its Alt+Shift+H shortcut
+    /// (LLViewShowHUDAttachments, indra/newview/llviewermenu.cpp): a HUD
+    /// locked by RLVa keeps them shown; hiding them ends a HUD drag or hold
+    /// and the focus of HUD media.
+    fn set_show_huds(&mut self, visible: bool) {
+        if !visible && self.world.rlva_has_locked_hud() {
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+            return;
+        }
+        if self.hud_drag.is_some() {
+            self.on_left_release();
+        }
+        self.release_object_hold();
+        self.settings.show_huds = visible;
+        self.settings.save();
+        if !visible {
+            self.scene.lists.hud_view = None;
+            self.media.unfocus();
         }
     }
 
