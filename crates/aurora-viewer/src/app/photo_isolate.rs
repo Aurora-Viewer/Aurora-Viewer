@@ -21,6 +21,9 @@ pub(super) enum Pick {
     Toggle,
     /// The pointer: what it is over is named beside it.
     Hover,
+    /// A click choosing the object a camera preset holds the camera by
+    /// (`ui::viewfinder::presets`).
+    Anchor,
 }
 
 /// Points waiting for their answer: past this, the oldest are given up.
@@ -35,7 +38,7 @@ impl App {
         let iso = &mut self.world.photo_isolation;
         iso.set_own(agent);
         iso.set_open(open);
-        if !iso.picking {
+        if !iso.picking && !self.snapshots.vf.preset_form.picking {
             self.snapshots.isolate_hover = None;
         }
         if !open {
@@ -69,11 +72,19 @@ impl App {
                         log::info!("photo isolation: {id} {}", if added { "chosen" } else { "removed" });
                     }
                 }
+                Pick::Anchor => {
+                    if let Some(id) = root {
+                        log::info!("camera preset: anchor object {id}");
+                        let form = &mut self.snapshots.vf.preset_form;
+                        form.object = Some(id);
+                        form.picking = false;
+                    }
+                }
             }
         }
         // this frame's point (a click before the pointer's hover)
         if let Some(((x, y), pick)) = self.snapshots.isolate_point.take()
-            && (pick == Pick::Toggle || !self.snapshots.isolate_picks.iter().any(|(_, p)| *p == Pick::Hover))
+            && (pick != Pick::Hover || !self.snapshots.isolate_picks.iter().any(|(_, p)| *p == Pick::Hover))
         {
             let picks = &mut self.snapshots.isolate_picks;
             if picks.len() >= PENDING {
@@ -112,7 +123,7 @@ impl App {
 
     /// The name the panel gives an avatar or a linkset, and whether it is
     /// an avatar.
-    fn photo_isolate_name(&self, id: &Uuid) -> (String, bool) {
+    pub(super) fn photo_isolate_name(&self, id: &Uuid) -> (String, bool) {
         let object = self.world.objects.index_of_uuid(id).and_then(|i| self.world.objects.get(i));
         if object.is_some_and(|o| o.is_avatar()) {
             let name = self

@@ -3,8 +3,8 @@
 //! viewfinder. Its three display levels (DISP), the AF point that hunts,
 //! turns green and beeps, the distance scale with the zone kept sharp, the
 //! exposure bar, the histogram, the level, the dock for the mouse, the
-//! quick menu, the help, a drawer with every setting of the photo panel
-//! and the isolation panel (`isolate`). The logic is `snapshot::viewfinder`, the frames and the keys
+//! quick menu, the help, a drawer with every setting of the photo panel,
+//! the isolation panel (`isolate`) and the camera presets (`presets`). The logic is `snapshot::viewfinder`, the frames and the keys
 //! `app::viewfinder`; TASKS.md (photo window, part 6) tells what it does.
 
 use super::snapshot::{self as panel, Action, Destination, SnapshotUi, View};
@@ -18,8 +18,10 @@ use egui::{Align2, Color32, FontId, Id, Order, Pos2, Rect, Sense, Stroke, Stroke
 mod controls;
 mod isolate;
 mod looks;
+mod presets;
 pub use controls::{CamMode, Pad, roll_text};
 pub use isolate::{Isolate, IsolateRow};
+pub use presets::{Preset, PresetForm, anchor_icon};
 #[cfg(test)]
 mod message_tests;
 
@@ -45,6 +47,9 @@ pub struct Viewfinder {
     pub isolate: bool,
     /// The filter panel (`looks`).
     pub looks: bool,
+    /// The camera presets panel (`presets`) and its saving form.
+    pub presets: bool,
+    pub preset_form: PresetForm,
     pub dial: Dial,
     /// The shutter half-pressed (Enter or the button held).
     pub pressed: bool,
@@ -132,6 +137,10 @@ pub struct Frame<'a> {
     pub isolation: &'a crate::snapshot::isolate::Isolation,
     pub isolate_rows: &'a [IsolateRow],
     pub isolate_hover: Option<(String, bool)>,
+    /// The camera presets, and the name of the object an object anchor
+    /// would hold.
+    pub presets: &'a [crate::camera::CameraShot],
+    pub preset_object: Option<String>,
 }
 
 /// The keys the help and the hints name.
@@ -177,6 +186,8 @@ pub enum Out {
     Detent,
     /// The isolation panel, or choosing in the scene.
     Isolate(Isolate),
+    /// The camera presets panel, or choosing its object in the scene.
+    Preset(Preset),
     /// Out of the photo mode.
     Exit,
 }
@@ -557,6 +568,12 @@ impl Viewfinder {
         if self.isolate {
             self.isolate_picking(ctx, p, frame, f, &mut out);
             self.isolate_panel(ctx, p, screen, f, &mut out);
+        }
+        if self.presets {
+            self.preset_picking(ctx, p, frame, f, &mut out);
+            self.presets_panel(ctx, p, screen, f, &mut out);
+        } else {
+            self.preset_form.picking = false;
         }
         // the shutter's blackout: black at once, then gone in 0.18 s
         if let Some(t) = self.flash_at {
@@ -1425,6 +1442,7 @@ impl Viewfinder {
                     ) {
                         self.drawer = !self.drawer;
                         self.looks &= !self.drawer;
+                        self.presets &= !self.drawer;
                         if self.drawer && self.isolate {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
@@ -1451,7 +1469,8 @@ impl Viewfinder {
                     ) {
                         panel.freeze_world = !panel.freeze_world;
                     }
-                    // five above the shutter, five under it
+                    // five above the shutter, six under it (the panels of the
+                    // shot together)
                     ui.add_space(6.0);
                     self.shutter_button(ui, p, out);
                     ui.add_space(6.0);
@@ -1460,6 +1479,7 @@ impl Viewfinder {
                         self.isolate = !self.isolate;
                         self.drawer &= !self.isolate;
                         self.looks &= !self.isolate;
+                        self.presets &= !self.isolate;
                         if !self.isolate {
                             out.push(Out::Isolate(Isolate::Picking(false)));
                         }
@@ -1473,6 +1493,7 @@ impl Viewfinder {
                     ) {
                         self.looks = !self.looks;
                         self.drawer &= !self.looks;
+                        self.presets &= !self.looks;
                         // opens on the tab of the chosen look
                         if self.looks
                             && let Some(layer) = s.looks.get(panel.looks.selected)
@@ -1480,6 +1501,21 @@ impl Viewfinder {
                             panel.looks.tab = crate::snapshot::looks::tab_of(&layer.id);
                         }
                         if self.looks && self.isolate {
+                            self.isolate = false;
+                            out.push(Out::Isolate(Isolate::Picking(false)));
+                        }
+                    }
+                    if dock_button(
+                        ui,
+                        p,
+                        Face::Icon("bookmark-filled"),
+                        aurora_i18n::tr!("camera-presets-tip"),
+                        self.presets,
+                    ) {
+                        self.presets = !self.presets;
+                        self.drawer &= !self.presets;
+                        self.looks &= !self.presets;
+                        if self.presets && self.isolate {
                             self.isolate = false;
                             out.push(Out::Isolate(Isolate::Picking(false)));
                         }

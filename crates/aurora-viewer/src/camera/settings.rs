@@ -168,14 +168,50 @@ impl Default for CameraSettings {
     }
 }
 
-/// A camera position saved by name (LLFloaterSaveCameraPreset: the
-/// camera and its focus where they are, in the avatar's frame), used again
-/// as a custom view.
+/// A camera preset saved by name (LLFloaterSaveCameraPreset: the camera
+/// and its focus where they are, in the avatar's frame), used again as a
+/// custom view; Aurora's may hold the camera elsewhere and keep the lens,
+/// the looks and the light too (`presets`, issue #1164).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CameraShot {
     pub name: String,
     pub camera_offset: [f32; 3],
     pub focus_offset: [f32; 3],
+    /// What holds the camera; None: the preset leaves it where it is. A
+    /// position saved before presets is on the avatar.
+    #[serde(default = "avatar_anchor")]
+    pub anchor: Option<super::presets::Anchor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lens: Option<super::presets::Lens>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub looks: Option<super::presets::Looks>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<super::presets::Light>,
+}
+
+fn avatar_anchor() -> Option<super::presets::Anchor> {
+    Some(super::presets::Anchor::Avatar)
+}
+
+impl CameraShot {
+    /// A camera position in the avatar's frame, nothing else (the Legacy
+    /// Viewer's camera preset).
+    pub fn at_avatar(name: String, camera_offset: [f32; 3], focus_offset: [f32; 3]) -> CameraShot {
+        CameraShot {
+            name,
+            camera_offset,
+            focus_offset,
+            anchor: avatar_anchor(),
+            lens: None,
+            looks: None,
+            light: None,
+        }
+    }
+
+    /// The preset keeps something to apply.
+    pub fn has_any(&self) -> bool {
+        self.anchor.is_some() || self.lens.is_some() || self.looks.is_some() || self.light.is_some()
+    }
 }
 
 impl CameraSettings {

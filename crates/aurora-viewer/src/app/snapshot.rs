@@ -146,7 +146,7 @@ pub(super) struct Snapshots {
     preview: Option<egui::TextureHandle>,
     /// What the preview was drawn for (photo size, interface, HUDs).
     preview_for: Option<((u32, u32), bool, bool)>,
-    preview_wanted: bool,
+    pub(super) preview_wanted: bool,
     camera: Option<[f32; 7]>,
     camera_moved: Option<Instant>,
     saving: Option<save::Saving>,
@@ -1925,11 +1925,14 @@ LUT_3D_SIZE {n}
             } else if self.world.photo_isolation.picking {
                 // the choosing in the scene stops, its panel left open
                 self.world.photo_isolation.set_picking(false);
-            } else if v.menu || v.help || v.drawer || v.isolate {
+            } else if v.preset_form.picking {
+                v.preset_form.picking = false;
+            } else if v.menu || v.help || v.drawer || v.isolate || v.presets {
                 v.menu = false;
                 v.help = false;
                 v.drawer = false;
                 v.isolate = false;
+                v.presets = false;
             } else if self.camera.free().is_some() {
                 self.snapshots.ui.free.on = false;
                 self.photo_free_camera();

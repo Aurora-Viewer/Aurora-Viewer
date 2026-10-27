@@ -10,7 +10,7 @@ use crate::keybinds::{Action as Bind, Input, Mods};
 use crate::settings::PhotoWindowStyle;
 use crate::snapshot::viewfinder::{self as vf, AfArea, Event, Phase};
 use crate::ui::snapshot::Action;
-use crate::ui::viewfinder::{CamMode, Dial, Frame, Keys, Out};
+use crate::ui::viewfinder::{CamMode, Dial, Frame, Keys, Out, Preset};
 use aurora_render::Renderer;
 use egui::{Pos2, Rect, Vec2};
 use std::time::Instant;
@@ -48,6 +48,7 @@ impl App {
     /// Each frame, before it is laid out: the depth that came back under
     /// the AF point, the hunt, the lens in AF-C and MF, the histogram.
     pub(super) fn viewfinder_frame(&mut self, renderer: &mut Renderer) {
+        self.camera_presets_demo(renderer.size());
         // the focal length is the photo's: the view's own comes back when
         // the viewfinder closes
         // the depth of field on, once, for the profiles that saved it off
@@ -76,10 +77,12 @@ impl App {
             v.ae_lock = false;
             v.countdown = None;
             v.pad = Default::default();
-            if v.menu || v.help || v.drawer || v.pressed || v.pick.is_some() {
+            if v.menu || v.help || v.drawer || v.presets || v.pressed || v.pick.is_some() {
                 v.menu = false;
                 v.help = false;
                 v.drawer = false;
+                v.presets = false;
+                v.preset_form.picking = false;
                 v.pressed = false;
                 v.pending_shot = false;
                 v.pick = None;
@@ -809,6 +812,13 @@ impl App {
         let review = self.photo_review();
         let (af_key, menu_key, first_key) = self.vf_keys();
         let (isolate_rows, isolate_hover) = self.photo_isolate_rows();
+        // an object anchor holds the object the camera is on, until one is
+        // chosen in the scene
+        let form = &mut self.snapshots.vf.preset_form;
+        if self.snapshots.vf.presets && form.object.is_none() && !form.picking {
+            form.object = self.camera.focus_object_id();
+        }
+        let preset_object = self.snapshots.vf.preset_form.object.map(|id| self.photo_isolate_name(&id).0);
         let first_allowed = self.settings.camera.enable_mouselook;
         let frame = Frame {
             now,
@@ -836,6 +846,8 @@ impl App {
             isolation: &self.world.photo_isolation,
             isolate_rows: &isolate_rows,
             isolate_hover,
+            presets: &self.settings.camera_shots,
+            preset_object,
         };
         // the demo aims at the own avatar's face, then shoots
         let (aim, shoot) = self.photo_demo_viewfinder();
@@ -891,7 +903,45 @@ impl App {
                     }
                 }
                 Out::Isolate(o) => self.photo_isolate_out(o, ctx.pixels_per_point()),
+                Out::Preset(o) => self.vf_preset(o, ctx.pixels_per_point()),
                 Out::Exit => self.panels.snapshot = false,
+            }
+        }
+    }
+}
+
+impl App {
+    /// What the camera presets panel asks (`ppp`: pixels per point).
+    fn vf_preset(&mut self, o: Preset, ppp: f32) {
+        use super::photo_isolate::Pick;
+        let now = self.vf_now();
+        match o {
+            Preset::Apply(i) => {
+                let name = self.settings.camera_shots.get(i).map(|s| s.name.clone()).unwrap_or_default();
+                match self.apply_camera_preset(i) {
+                    Ok(()) => self
+                        .snapshots
+                        .vf
+                        .say(aurora_i18n::tr!("camera-preset-applied", name = name.as_str()), false, now),
+                    Err(text) => self.snapshots.vf.say(text, true, now),
+                }
+            }
+            Preset::Delete(i) => self.delete_camera_preset(i),
+            Preset::Save { name, include } => {
+                let object = self.snapshots.vf.preset_form.object;
+                match self.save_camera_preset(name.clone(), include, object) {
+                    Ok(()) => self
+                        .snapshots
+                        .vf
+                        .say(aurora_i18n::tr!("camera-preset-saved", name = name.as_str()), false, now),
+                    Err(text) => self.snapshots.vf.say(text, true, now),
+                }
+            }
+            Preset::Click(at) => self.snapshots.isolate_point = Some(((at.x * ppp, at.y * ppp), Pick::Anchor)),
+            Preset::Hover(at) => {
+                if self.snapshots.isolate_point.is_none() {
+                    self.snapshots.isolate_point = Some(((at.x * ppp, at.y * ppp), Pick::Hover));
+                }
             }
         }
     }

@@ -370,7 +370,8 @@ impl ControlsUi {
                         let room = ui.available_width() - SHOT_DELETE_W - ui.spacing().item_spacing.x;
                         let used = ui.scope(|ui| {
                             ui.set_max_width(room);
-                            super::menu::item(ui, p, "bookmark-filled", &shot.name)
+                            // the icon tells what holds the preset's camera
+                            super::menu::item(ui, p, super::viewfinder::anchor_icon(shot.anchor.as_ref()), &shot.name)
                         });
                         if used.inner {
                             out.actions.push(ControlAction::UseShot(i));
@@ -1515,11 +1516,7 @@ mod tests {
         theme.apply(&ctx, 1.0);
         let p = theme.palette();
         let keys = KeyBindings::default();
-        let shot = |name: &str| CameraShot {
-            name: name.to_owned(),
-            camera_offset: [-3.0, 0.0, 1.0],
-            focus_offset: [0.0, 0.0, 0.5],
-        };
+        let shot = |name: &str| CameraShot::at_avatar(name.to_owned(), [-3.0, 0.0, 1.0], [0.0, 0.0, 0.5]);
         // one clock for both menus: egui's time never goes back
         let mut time = 0.0;
         for shots in [

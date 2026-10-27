@@ -42,6 +42,7 @@ mod blender_live;
 mod blender_shape;
 mod buy_currency;
 mod buy_land;
+mod camera_presets;
 mod chat_commands;
 mod click_pick;
 mod color_picker;

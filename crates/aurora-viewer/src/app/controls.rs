@@ -85,36 +85,26 @@ impl App {
             ControlAction::Fly => self.toggle_fly(),
             ControlAction::StandUp => self.send(NetCommand::OneShotControl(control::STAND_UP)),
             ControlAction::UseShot(i) => {
-                if let Some(shot) = self.settings.camera_shots.get(i).cloned() {
-                    self.settings.camera.apply_shot(&shot);
-                    self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
-                    self.settings.save();
+                if let Err(text) = self.apply_camera_preset(i) {
+                    self.camera_preset_message(text);
                 }
             }
             ControlAction::SaveShot(name) => {
                 // LLFloaterSaveCameraPreset::onBtnSave: where the camera is,
-                // which becomes the view
-                let (camera, focus) = self.camera.current_offsets(&self.world.agent);
-                let shot = crate::camera::CameraShot {
-                    name,
-                    camera_offset: camera.to_array(),
-                    focus_offset: focus.to_array(),
+                // in the avatar's frame, which becomes the view (the
+                // viewfinder's presets keep more)
+                let include = crate::camera::presets::Include {
+                    anchor: Some(crate::camera::presets::AnchorKind::Avatar),
+                    lens: false,
+                    looks: false,
+                    light: false,
                 };
-                log::info!("camera position saved: {}", shot.name);
-                self.settings.camera.apply_shot(&shot);
-                match self.settings.camera_shots.iter_mut().find(|s| s.name == shot.name) {
-                    Some(old) => *old = shot,
-                    None => self.settings.camera_shots.push(shot),
-                }
-                self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera);
-                self.settings.save();
-            }
-            ControlAction::DeleteShot(i) => {
-                if i < self.settings.camera_shots.len() {
-                    self.settings.camera_shots.remove(i);
-                    self.settings.save();
+                match self.save_camera_preset(name, include, None) {
+                    Ok(()) => self.camera.reset_to_defaults(&mut self.world.agent, &self.settings.camera),
+                    Err(text) => self.camera_preset_message(text),
                 }
             }
+            ControlAction::DeleteShot(i) => self.delete_camera_preset(i),
         }
     }
 
