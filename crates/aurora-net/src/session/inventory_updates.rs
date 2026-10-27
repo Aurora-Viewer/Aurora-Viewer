@@ -406,6 +406,7 @@ mod tests {
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: Default::default(),
+            attach_queue: Default::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 40,
         };

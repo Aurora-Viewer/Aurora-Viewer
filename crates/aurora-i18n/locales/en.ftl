@@ -1068,6 +1068,7 @@ build-ui-contents-no-modify = { " (no modify)" }
 build-ui-contents-no-transfer = { " (no transfer)" }
 ui-land-dialogs-it-will-include-a-simultaneous-group-contribution-from = { " It will include a simultaneous group contribution from '" }{ $value0 }'.
 demo-hud-touched = { " · Touched" }
+demo-outfit-rez-failed = Attempt to rez an object failed.
 ui-avatar-picker-not-found = '{ $q }' not found
 cmdline-mod-is-not-a-valid-rand-min-max-expression-max = '{ $r }' is not a valid RAND(min,max) expression. MAX must be greater than MIN, and both must be between -10000 and 10000.
 build-ui-floaters-this-page-does-not-meet-the-whitelist-criteria = (This page does not meet the whitelist criteria)

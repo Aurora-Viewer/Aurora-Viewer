@@ -366,6 +366,7 @@ mod tests {
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: super::inventory_copies::Pending::default(),
+            attach_queue: Default::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
         };

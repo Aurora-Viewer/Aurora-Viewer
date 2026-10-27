@@ -6,6 +6,7 @@
 mod abuse_reports;
 mod account;
 mod asset_imports;
+mod attach_queue;
 mod build_cmds;
 mod currency;
 mod estate;
@@ -244,6 +245,7 @@ struct Session<'a> {
     script_transfers: scripts::ScriptTransfers,
     inventory_callbacks: HashMap<u32, (Instant, bool)>,
     inventory_copies: inventory_copies::Pending,
+    attach_queue: attach_queue::AttachQueue,
     inventory_merchant_pending: bool,
     next_inventory_callback: u32,
 }
@@ -390,6 +392,7 @@ pub(crate) async fn run_session(sh: &Shared, req: LoginRequest, cmd_rx: &mut mps
         script_transfers: Default::default(),
         inventory_callbacks: HashMap::new(),
         inventory_copies: inventory_copies::Pending::default(),
+        attach_queue: Default::default(),
         notecard_copy_tx,
         inventory_move_tx,
         notecard_copies: HashMap::new(),
@@ -1103,6 +1106,7 @@ impl Session<'_> {
             );
         }
         let now = Instant::now();
+        self.send_queued_attachment(now);
         self.publish_motion();
         self.object_cache.save_when_due(now);
         self.update_throttle(now);
@@ -2448,28 +2452,16 @@ impl Session<'_> {
                 self.send_main(&m, true);
             }
             NetCommand::RezAttachments(list) => {
-                // one object per message: batching makes the servers drop
-                // attachments (LLAttachmentsMgr, FIRE-6070)
-                for a in list {
-                    let mut m = RezMultipleAttachmentsFromInv::default();
-                    m.agent_data.agent_id = self.agent_id();
-                    m.agent_data.session_id = self.session_id();
-                    m.header_data.compound_msg_id = uuid::Uuid::new_v4();
-                    m.header_data.total_objects = 1;
-                    m.header_data.first_detach_all = false;
-                    m.object_data = vec![rez_multiple_attachments_from_inv::ObjectData {
-                        item_id: a.item_id,
-                        owner_id: a.owner_id,
-                        attachment_pt: a.point | if a.add { 0x80 } else { 0 },
-                        item_flags: a.flags,
-                        group_mask: a.group_mask,
-                        everyone_mask: a.everyone_mask,
-                        next_owner_mask: a.next_owner_mask,
-                        name: str_field(&a.name),
-                        description: str_field(&a.desc),
-                    }];
-                    self.send_main(&m, true);
+                // one object per message, one message per tick
+                // (LLAttachmentsMgr::requestAttachments)
+                if list.len() > 1 {
+                    log::info!(
+                        "attachments: {} requests queued, sent one at a time",
+                        list.len() + self.attach_queue.len()
+                    );
                 }
+                self.attach_queue.push(list);
+                self.send_queued_attachment(Instant::now());
             }
             NetCommand::DetachObject { handle, local_id } => {
                 if let Some(addr) = self.sim_for_handle(handle) {
@@ -5421,6 +5413,7 @@ mod event_queue_tests {
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: inventory_copies::Pending::default(),
+            attach_queue: Default::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
         }
@@ -5753,6 +5746,7 @@ mod script_dialog_tests {
             script_transfers: Default::default(),
             inventory_callbacks: HashMap::new(),
             inventory_copies: super::inventory_copies::Pending::default(),
+            attach_queue: Default::default(),
             inventory_merchant_pending: false,
             next_inventory_callback: 0,
         }

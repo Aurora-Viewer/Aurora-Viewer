@@ -3975,6 +3975,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_FEED=<url>` | Profile "Feed" tab on this page |
 | `AURORA_DEMO_APPEARANCE=<mode>` | Appearance window and outfits |
 | `AURORA_DEMO_OUTFITS=<count>[,closed][,scroll][,locate]` | A large wardrobe in the Appearance demo: generated outfits, the window closed, scrolled or located on the current outfit |
+| `AURORA_DEMO_OUTFIT_RESTORE=warm\|cold` | The outfit's attachments restored at login against a region that puts part of it back by itself |
 | `AURORA_DEMO_SHAPE=<mode>` | Worn shape editor and permission scenarios |
 | `AURORA_DEMO_WEARABLE=<type>[:mode]` | Skin, hair, eyes and system clothing editors |
 | `AURORA_DEMO_PHYSICS_EDIT=1\|new\|drag` | Physics layer editor: a worn layer, "New physics", sliders moving |
@@ -6612,6 +6613,23 @@ the demo always logs `0 of <m>`; the choice of objects is covered by the
 unit tests, the real requests by a grid test. The menu itself:
 `AURORA_DEMO_DOUBLECLICK=menu,<y>` with the height of the Avatar health row
 opens its submenu.
+
+**`AURORA_DEMO_OUTFIT_RESTORE=warm|cold`** — the login restore of the
+outfit's attachments (`world/outfit.rs`) against a demo region that behaves
+like the busy region of the 2026-10-27 grid logs: it puts back by itself
+the mesh hair 3 s after arriving and the boots 8 s after, refuses a request
+for an object it is still putting back ("Attempt to rez an object failed")
+and takes off an object added on a point before its own object arrives
+there. The ring of the demo outfit is worn on the boots' point for this.
+The region's 5 s pause is longer than the restore waits for it to be
+quiet, the unfavourable case. What to look for in the log: `outfit: the
+region put back 1 of 5 objects by itself`, `outfit: wearing 4
+attachments`, the alert, `'Bague argentée' came off` (or the English name)
+when the boots arrive, `outfit: wearing 1 taken-off attachments` about 4 s
+later and `outfit: 5 of 5 attachments worn` about 30 s after the requests;
+the Appearance window then opens on its Worn tab with the five objects
+worn. `cold` hides the five items from the inventory until FetchItems asks
+for them (`5 to look up`), as a cold inventory cache.
 
 **`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
