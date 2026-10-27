@@ -531,6 +531,13 @@ outliving their emitter share this path. Outside the known regions the main
 region supplies wind, as in the Legacy Viewer; without a main grid it is zero.
 The grid owns Legacy interpolation/scaling, and the simulator retains the
 Legacy velocity relaxation before target and acceleration updates.
+Build > Edit particles keeps its parameters, greying rules and LSL output in
+`build/particle_editor.rs`, its window in `build/ui/particles.rs` and the
+opening, target picker, Copy and Inject flow in `app/particle_editor.rs`.
+The preview is a local source of `ParticleManager::set_preview`, keyed beside
+the prim's own source (`Source::emitter` gives the place it follows), which is
+hidden meanwhile. Inject creates the script item in #Aurora, uploads it with
+UpdateScriptAgent and puts it into the prim with RezScript.
 `ik_edit/poser.rs` adds Build > Poser over the same shaped Bento skeleton
 as the IK editor. `poser/overlay.rs` owns joint selection and manipulation,
 sharing skeleton geometry and transform gizmos. It bypasses IK projects,

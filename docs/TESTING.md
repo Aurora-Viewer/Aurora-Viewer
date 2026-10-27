@@ -1059,6 +1059,7 @@ when unfocused") is ignored during a screenshot.
 | `AURORA_DEMO_BUILD_EDGE=<edge>` | Move to the edge, hold then release |
 | `AURORA_DEMO_BUILD_TAB=<tab>` | Tab of the build window; `features:light-picker` opens the projector texture picker |
 | `AURORA_DEMO_BUILD_SIZE=<width>,<height>` | Initial dimensions of the construction window |
+| `AURORA_DEMO_PARTICLE_EDITOR=1\|fountain\|inject` | Build › Edit particles on the object selected by `AURORA_DEMO_BUILD` |
 | `AURORA_DEMO_COLOR_PICKER=<mode>` | Colour picker and gestures offline |
 | `AURORA_DEMO_SCRIPTS=<mode>` | Editing and saving scripts offline |
 | `AURORA_DEMO_LSL_BRIDGE=1` | Messages of the Firestorm LSL bridge (hidden) |
@@ -1076,6 +1077,16 @@ when unfocused") is ignored during a screenshot.
 
 
 ### Details
+
+`AURORA_DEMO_PARTICLE_EDITOR` needs an object of ours selected by the build
+script, for example `AURORA_DEMO_BUILD=move,object:151`. At frame 700 the
+particle editor opens on it: `1` with the window's initial values (white
+particles exploding), `fountain` with a glowing violet-to-turquoise cone that
+falls back, and `inject` also presses Inject at frame 760 (the window shows
+"put into the object"; the demo inventory gets "New Particle Script" in
+#Aurora). Look for the preview on the prim, the greyed fields (end colour and
+scale follow the interpolation flags, angles the pattern) and, with `1`, the
+prim's own particles hidden while the editor is open.
 
 `AURORA_DEMO_BUILD=physics,object:99621` selects an encoded ring mesh with a
 separate triangular collision surface. `physics-analysed` uses two convex

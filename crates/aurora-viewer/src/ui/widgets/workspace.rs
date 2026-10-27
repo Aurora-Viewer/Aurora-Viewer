@@ -498,6 +498,7 @@ pub(super) fn window_icon(id: &str) -> &'static str {
         "import_local" => "eye-filled",
         "import_settings" => "settings-filled",
         "toolbar_editor" => "layout-bottombar-filled",
+        "particle_editor" => "sparkles-filled",
         _ => "layout-grid-filled",
     }
 }

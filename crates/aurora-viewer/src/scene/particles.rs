@@ -21,6 +21,16 @@ struct Source {
     cloud: bool,
     owner: Uuid,
     object: Uuid,
+    /// The object (or avatar) whose place it follows: its own key, except for
+    /// the particle editor's preview (`ParticleManager::set_preview`).
+    emitter: Uuid,
+}
+
+/// Key of the particle editor's preview source of `object`, beside the
+/// object's own source (ParticleEditor::updateParticles adds a separate
+/// LLViewerPartSourceScript to the prim).
+fn preview_key(object: Uuid) -> Uuid {
+    Uuid::from_u128(object.as_u128() ^ 0x5041_5254_4943_4c45_5f50_5245_5649_4557)
 }
 
 /// Captured at the press, before asynchronous object-depth readback. Retain
@@ -103,6 +113,9 @@ pub struct ParticleManager {
     order_tmp: Vec<u64>,
     /// Objects whose update carried a particle system change (reused).
     changed_tmp: Vec<usize>,
+    /// The prim the particle editor previews on: its own system is hidden
+    /// meanwhile, so that what shows is what the editor sets.
+    preview: Option<Uuid>,
     pub live: usize,
 }
 
@@ -154,6 +167,7 @@ impl ParticleManager {
                     cloud: true,
                     owner: Uuid::nil(),
                     object: *id,
+                    emitter: *id,
                 },
             );
         }
@@ -239,6 +253,46 @@ impl ParticleManager {
         hits
     }
 
+    /// Build › Edit particles: show `system` on the prim `object` (local
+    /// only, nothing is sent), or stop showing it with `None`. Called every
+    /// frame with the editor's state; a change of parameters keeps the
+    /// particles already out, as an object update would.
+    /// ParticleEditor::updateParticles / clearParticles
+    /// (indra/newview/particleeditor.cpp, originally LGPL 2.1).
+    pub fn set_preview(&mut self, wanted: Option<(Uuid, ps::PartSysData)>) {
+        let object = wanted.map(|(object, _)| object);
+        if let Some(old) = self.preview.filter(|old| Some(*old) != object)
+            && let Some(s) = self.sources.get_mut(&preview_key(old))
+        {
+            // closed or moved to another prim: its particles go at once
+            s.ps.stop();
+            s.ps.clear_particles();
+        }
+        self.preview = object;
+        let Some((object, data)) = wanted else { return };
+        let key = preview_key(object);
+        if let Some(s) = self.sources.get_mut(&key) {
+            if s.ps.data() != &data || !s.ps.is_emitting() {
+                s.ps.set_data(data);
+            }
+            return;
+        }
+        self.seed = self.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        // the texture is acquired by the update's texture change
+        self.sources.insert(
+            key,
+            Source {
+                ps: ParticleSource::new(data, self.seed ^ key.as_u128() as u64),
+                texture: Uuid::nil(),
+                slot: 0,
+                cloud: false,
+                owner: Uuid::nil(),
+                object,
+                emitter: object,
+            },
+        );
+    }
+
     /// Release every source (region change, logout).
     pub fn clear(&mut self, textures: &mut TextureStreamer) {
         for (_, s) in self.sources.drain() {
@@ -246,6 +300,7 @@ impl ParticleManager {
         }
         self.live = 0;
         self.property_owners.clear();
+        self.preview = None;
     }
 
     /// Apply object updates, simulate and build the sorted instance list.
@@ -302,6 +357,7 @@ impl ParticleManager {
                             cloud: false,
                             owner: o.owner_id,
                             object,
+                            emitter: o.full_id,
                         },
                     );
                 }
@@ -323,8 +379,9 @@ impl ParticleManager {
         let live: usize = self.sources.values().map(|s| s.ps.particles().len()).sum();
         let mut budget = max_particles.saturating_sub(live);
         let mut dead = Vec::new();
+        let previewed = self.preview;
         for (id, s) in self.sources.iter_mut() {
-            let idx = world.objects.index_of_uuid(id);
+            let idx = world.objects.index_of_uuid(&s.emitter);
             if let Some(object) = idx
                 .and_then(|i| world.objects.get(crate::build::root_of(world, i)))
                 .map(|o| o.full_id)
@@ -333,10 +390,11 @@ impl ParticleManager {
             }
             if let Some(owner) = idx.and_then(|i| world.objects.get(i)).map(|o| o.owner_id).filter(|id| !id.is_nil()) {
                 s.owner = owner;
-            } else if let Some(owner) = self.property_owners.get(id).or_else(|| self.property_owners.get(&s.object)) {
+            } else if let Some(owner) = self.property_owners.get(&s.emitter).or_else(|| self.property_owners.get(&s.object)) {
                 s.owner = *owner;
             }
             let blocked = (!s.cloud && filters.hides(s.object, s.owner))
+                || previewed == Some(*id)
                 || world.particles_blocked(&s.owner)
                 || idx.is_some_and(|idx| !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx));
             if blocked {
@@ -546,6 +604,7 @@ mod tests {
             cloud: false,
             owner: Uuid::from_u128(71),
             object: Uuid::from_u128(72),
+            emitter: Uuid::from_u128(72),
         };
         source.ps.update_with_wind(
             0.0,
@@ -657,6 +716,39 @@ mod tests {
     }
 
     #[test]
+    fn the_particle_editor_preview_follows_its_prim_and_goes_on_close() {
+        let object = Uuid::from_u128(5);
+        let mut manager = ParticleManager::default();
+        let data = ps::PartSysData {
+            burst_part_count: 3,
+            ..Default::default()
+        };
+        manager.set_preview(Some((object, data)));
+        let key = preview_key(object);
+        assert_ne!(key, object);
+        let s = &manager.sources[&key];
+        assert_eq!((s.emitter, s.object, s.cloud), (object, object, false));
+        assert_eq!(manager.preview, Some(object));
+        // a change of parameters updates the same source
+        let changed = ps::PartSysData {
+            burst_part_count: 7,
+            ..data
+        };
+        manager.set_preview(Some((object, changed)));
+        assert_eq!(manager.sources.len(), 1);
+        assert_eq!(manager.sources[&key].ps.data().burst_part_count, 7);
+        // another prim: the first preview stops, the new one starts
+        let other = Uuid::from_u128(6);
+        manager.set_preview(Some((other, changed)));
+        assert!(!manager.sources[&key].ps.is_emitting());
+        assert!(manager.sources[&preview_key(other)].ps.is_emitting());
+        // closed: nothing emits any more
+        manager.set_preview(None);
+        assert_eq!(manager.preview, None);
+        assert!(manager.sources.values().all(|s| !s.ps.is_emitting() && s.ps.particles().is_empty()));
+    }
+
+    #[test]
     fn particle_beacons_exclude_clouds_and_expired_sources_with_live_particles() {
         let id = Uuid::from_u128(682);
         let mut manager = ParticleManager::default();
@@ -677,6 +769,7 @@ mod tests {
                 cloud: false,
                 owner: Uuid::nil(),
                 object: Uuid::from_u128(72),
+                emitter: id,
             },
         );
         let mut budget = 1;
@@ -738,6 +831,7 @@ mod tests {
             cloud: false,
             owner: Uuid::nil(),
             object: Uuid::from_u128(72),
+            emitter: Uuid::from_u128(72),
         };
         let ctx = SourceContext {
             pos: Vec3::new(24.0, 8.0, 20.0),

@@ -27,6 +27,7 @@ pub mod layout;
 pub mod manip;
 mod material_preview;
 pub mod materials;
+pub mod particle_editor;
 mod property_query;
 pub mod replace;
 pub mod script_queue;
