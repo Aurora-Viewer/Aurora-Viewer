@@ -31,6 +31,8 @@ Particles exposes object/owner filters and named children for other emitters.
 rule sets independent of mutes, derender and sound blocking. The particle
 simulation applies them without affecting avatars or other communication;
 Avatar > Disturbance > Block particles controls that same owner rule.
+`App::new` returns a boxed application: the event loop retains a pointer rather
+than another full application value on Windows' startup stack.
 Scene reset clears only the current profile. `context/notecards.rs` validates
 bounded versioned snapshots of all seven scene profiles, reuses the inventory's
 COPY-aware picker and native transfers, and applies only correlated successful

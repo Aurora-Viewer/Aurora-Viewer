@@ -336,7 +336,7 @@ impl ParticleManager {
             } else if let Some(owner) = self.property_owners.get(id).or_else(|| self.property_owners.get(&s.object)) {
                 s.owner = *owner;
             }
-            let blocked = filters.hides(s.object, s.owner)
+            let blocked = (!s.cloud && filters.hides(s.object, s.owner))
                 || world.particles_blocked(&s.owner)
                 || idx.is_some_and(|idx| !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx));
             if blocked {
