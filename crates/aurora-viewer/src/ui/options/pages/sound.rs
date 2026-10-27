@@ -211,17 +211,19 @@ fn volumes(cx: &mut Cx) {
 
 /// A sound's play switch. The shutter's is the photos' own setting, as the
 /// Legacy Viewer's UISndSnapshot row is PlayModeUISndSnapshot inverted
-/// (fspanelpreferenceuisounds.cpp): one switch for "Quiet snapshots".
+/// (fspanelpreferenceuisounds.cpp): one switch for "Quiet snapshots". A
+/// conversation sound's is its mode (Never or not).
 fn ui_sound_plays(s: &crate::settings::Settings, sound: crate::ui_sound::UiSound) -> bool {
     match sound {
         crate::ui_sound::UiSound::Snapshot => s.snapshot.sound,
-        _ => s.audio.ui.plays(sound),
+        _ => s.audio.ui.im_plays(sound).unwrap_or_else(|| s.audio.ui.plays(sound)),
     }
 }
 
 fn set_ui_sound_plays(s: &mut crate::settings::Settings, sound: crate::ui_sound::UiSound, on: bool) {
     match sound {
         crate::ui_sound::UiSound::Snapshot => s.snapshot.sound = on,
+        _ if s.audio.ui.im_plays(sound).is_some() => s.audio.ui.set_im_plays(sound, on),
         _ => s.audio.ui.set_plays(sound, on),
     }
 }
@@ -297,8 +299,8 @@ fn interface_sounds(cx: &mut Cx) {
             });
         }
         // every sound one by one, behind the cog; the three conversation
-        // sounds too, for their asset (their mode above says when they
-        // play), as the UI sounds panel lists them with their own UUID
+        // sounds too, with their asset, as the UI sounds panel lists them
+        // (their switch turns their mode above to Never and back)
         cx.row(
             tr!("ui-options-per-sound-choices"),
             tr!("ui-options-per-sound-choices-help"),
@@ -325,20 +327,10 @@ fn interface_sounds(cx: &mut Cx) {
                     },
                 };
                 cx.wide().keywords(e.name).row_with((e.label)(), &hint, &t, |ui, s, st, _| {
-                    let mut ch = false;
-                    if e.sound.caller_gated() && e.sound != UiSound::TrackerBeacon {
-                        // played by its mode, not a switch: the switch's room
-                        // kept, so that the asset lines up with the others'
-                        ui.scope(|ui| {
-                            ui.set_invisible();
-                            widgets::switch(ui, &p, &mut true);
-                        });
-                    } else {
-                        let mut on = ui_sound_plays(s, e.sound);
-                        ch = widgets::switch(ui, &p, &mut on).changed();
-                        if ch {
-                            set_ui_sound_plays(s, e.sound, on);
-                        }
+                    let mut on = ui_sound_plays(s, e.sound);
+                    let mut ch = widgets::switch(ui, &p, &mut on).changed();
+                    if ch {
+                        set_ui_sound_plays(s, e.sound, on);
                     }
                     let u = &mut s.audio.ui;
                     let text = st.ui_sound_text.entry(e.name).or_insert_with(|| uuid_text(u.uuid(e.sound)));
