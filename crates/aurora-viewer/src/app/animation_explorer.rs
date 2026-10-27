@@ -44,7 +44,12 @@ impl Preview {
             self.motion = Some((selected, now));
         }
         let started = self.motion.map_or(now, |(_, at)| at);
-        let mut playing = vec![crate::world::PlayingAnimation::from_signal(crate::own_motion::ANIM_STAND, 0, started, None)];
+        let mut playing = vec![crate::world::PlayingAnimation::from_signal(
+            crate::own_motion::ANIM_STAND,
+            0,
+            started,
+            None,
+        )];
         if let Some(id) = selected {
             playing.push(crate::world::PlayingAnimation::from_signal(id, 1, started, None));
         }
@@ -56,7 +61,13 @@ impl Preview {
 
     /// The stand-in avatar with the hand pose and emote of the motion shown,
     /// built on a worker; the previous one stays drawn meanwhile.
-    fn model(&mut self, key: ModelKey, jobs: &crate::scene::jobs::Jobs, avatars: &Arc<AvatarLibrary>, ctx: &egui::Context) -> Option<Arc<Model>> {
+    fn model(
+        &mut self,
+        key: ModelKey,
+        jobs: &crate::scene::jobs::Jobs,
+        avatars: &Arc<AvatarLibrary>,
+        ctx: &egui::Context,
+    ) -> Option<Arc<Model>> {
         if let Some((built, rx)) = &self.building
             && let Ok(model) = rx.try_recv()
         {
@@ -181,7 +192,11 @@ impl App {
         let mut rows = Vec::with_capacity(entries.len());
         for entry in entries {
             let own = entry.source == self.world.agent_id;
-            let object = self.world.objects.index_of_uuid(&entry.source).and_then(|i| self.world.objects.get(i));
+            let object = self
+                .world
+                .objects
+                .index_of_uuid(&entry.source)
+                .and_then(|i| self.world.objects.get(i));
             let avatar = own || object.is_some_and(|o| o.is_avatar());
             let region = object.map(|o| o.key.region);
             let name = if avatar {
@@ -251,14 +266,12 @@ impl App {
             return;
         };
         let names = [(ball, "Dance ball"), (hud, "Greeter HUD")];
-        self.interactions.on_properties(
-            &names
-                .map(|(object_id, name)| aurora_net::build::ObjectProps {
-                    object_id,
-                    name: name.into(),
-                    ..Default::default()
-                }),
-        );
+        self.interactions
+            .on_properties(&names.map(|(object_id, name)| aurora_net::build::ObjectProps {
+                object_id,
+                name: name.into(),
+                ..Default::default()
+            }));
         let agent = self.world.agent_id;
         for (anims, sources) in [
             (vec![(crate::demo::IDLE_ANIM, 2), (wave, 1)], vec![agent, hud]),
@@ -270,12 +283,7 @@ impl App {
                 sources,
             });
         }
-        self.animation_explorer_ui.selected = self
-            .world
-            .animation_log
-            .entries()
-            .find(|e| e.animation == dance)
-            .map(|e| e.id);
+        self.animation_explorer_ui.selected = self.world.animation_log.entries().find(|e| e.animation == dance).map(|e| e.id);
         if mode == "blacklist" {
             // Isolate the fixture from the demo account's saved list.
             self.world.derender = Default::default();

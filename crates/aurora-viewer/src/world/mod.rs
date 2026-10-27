@@ -4665,13 +4665,16 @@ impl World {
     /// Whether `source` still plays `animation` on our avatar (the
     /// explorer's "Still playing", AnimationExplorer::updateList).
     pub fn animation_playing_from(&self, source: &Uuid, animation: &Uuid) -> bool {
-        self.animation_sources.get(source).is_some_and(|motions| motions.contains(animation))
+        self.animation_sources
+            .get(source)
+            .is_some_and(|motions| motions.contains(animation))
     }
 
     /// process_avatar_animation's asset blacklist (FSAssetBlacklist,
     /// indra/newview/llviewermessage.cpp): a blacklisted motion is never
-    /// played on an avatar, and a stop for it is sent for our own, so the
-    /// people around do not see it either. The source blocks stay aligned
+    /// played on an avatar, and each signal of it asks the simulator to
+    /// stop it on ours, so the people around do not see it either (once
+    /// per frame at most). The source blocks stay aligned
     /// with the motions they name. Animesh (ObjectAnimation) is left as is,
     /// like the Legacy Viewer's process_object_animation.
     fn drop_blacklisted_animations(&mut self, avatar: Uuid, anims: &mut Vec<(Uuid, i32)>, sources: &mut Vec<Uuid>) {
@@ -5201,7 +5204,12 @@ mod motion_tests {
         );
         // The blocked motion comes first: the sources of the others stay theirs.
         signal(&mut world, vec![(blocked, 3), (sit, 3), (hands, 3)], vec![linked, root, linked]);
-        assert!(world.animations.get(&world.agent_id).is_some_and(|list| list.iter().all(|a| a.id != blocked)));
+        assert!(
+            world
+                .animations
+                .get(&world.agent_id)
+                .is_some_and(|list| list.iter().all(|a| a.id != blocked))
+        );
         assert_eq!(world.animation_stops, [blocked], "the simulator is asked to stop it");
         assert!(world.animation_playing_from(&root, &sit) && world.animation_playing_from(&linked, &hands));
         assert!(!world.animation_playing_from(&linked, &blocked));

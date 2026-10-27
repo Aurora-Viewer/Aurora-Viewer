@@ -82,8 +82,10 @@ pub fn played_text(row: &Row, now: Instant) -> String {
 }
 
 fn priority_text(row: &Row) -> String {
-    row.priority
-        .map_or_else(|| aurora_i18n::tr!("animation-explorer-unknown-priority").to_owned(), |p| p.to_string())
+    row.priority.map_or_else(
+        || aurora_i18n::tr!("animation-explorer-unknown-priority").to_owned(),
+        |p| p.to_string(),
+    )
 }
 
 impl AnimationExplorer {
@@ -94,9 +96,7 @@ impl AnimationExplorer {
     /// The rows shown: own motions hidden by the check box, then the
     /// column sort (none: newest first).
     fn visible(&self) -> Vec<usize> {
-        let mut rows: Vec<_> = (0..self.rows.len())
-            .filter(|i| !(self.no_owned && self.rows[*i].own))
-            .collect();
+        let mut rows: Vec<_> = (0..self.rows.len()).filter(|i| !(self.no_owned && self.rows[*i].own)).collect();
         if let Some((column, descending)) = self.sort {
             rows.sort_by(|a, b| {
                 let (a, b) = (&self.rows[*a], &self.rows[*b]);
@@ -179,7 +179,11 @@ impl AnimationExplorer {
                     let full = Vec2::new(PREVIEW, 28.0);
                     for (icon, label, act) in [
                         ("player-stop-filled", aurora_i18n::tr!("common-stop"), Action::Stop),
-                        ("shield-off", aurora_i18n::tr!("animation-explorer-stop-revoke"), Action::StopAndRevoke),
+                        (
+                            "shield-off",
+                            aurora_i18n::tr!("animation-explorer-stop-revoke"),
+                            Action::StopAndRevoke,
+                        ),
                         ("eye-off", aurora_i18n::tr!("animation-explorer-blacklist"), Action::Blacklist),
                     ] {
                         let response = widgets::action_button_if(ui, p, icon, label, ActionKind::Flat, full, selected);

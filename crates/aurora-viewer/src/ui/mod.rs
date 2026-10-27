@@ -1,13 +1,13 @@
 //! egui user interface.
 
 pub mod about;
+pub mod animation_explorer;
 pub mod ao;
 pub mod appearance;
 pub mod area_search;
 pub mod audio;
 pub mod aurora_bg;
 pub mod avatar_picker;
-pub mod animation_explorer;
 pub mod avatar_render_settings;
 pub mod backdrop;
 pub mod bars;

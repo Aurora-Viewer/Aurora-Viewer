@@ -25,9 +25,9 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 mod about;
+mod animation_explorer;
 mod ao;
 mod app_links;
-mod animation_explorer;
 mod area_search;
 mod attention;
 mod avatar_render_settings;

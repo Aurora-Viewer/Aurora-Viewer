@@ -654,7 +654,6 @@ fn build(
     Ok(Model { parts, center, radius })
 }
 
-
 /// The preview's stand-in avatar: the default body meshes (no skirt),
 /// skinned to the default skeleton, with the hand pose and the emote of the
 /// animation shown (LLPreviewAnimation's dummy avatar,
