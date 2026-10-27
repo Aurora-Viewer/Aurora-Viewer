@@ -1426,6 +1426,15 @@ impl App {
         self.send_from(cmd, uuid::Uuid::nil());
     }
 
+    /// What a COF sync may take off: the worn objects but the Aurora
+    /// bridge, which the Legacy Viewer puts back into every replaced outfit
+    /// (FSLSLBridge in LLAppearanceMgr::updateCOF, llappearancemgr.cpp).
+    pub(crate) fn outfit_sync_worn(&self) -> std::collections::HashSet<uuid::Uuid> {
+        let mut worn = self.world.worn_attachment_items();
+        worn.remove(&self.bridge_runtime.item());
+        worn
+    }
+
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
         if !self.object_profile.retain_selection(&self.world, &mut cmd) {
             return;
@@ -2902,11 +2911,8 @@ impl App {
                             self.appearance_ui.saved_new = false;
                         }
                         if sync {
-                            let crate::world::appearance::CofSync { mut commands, unknown } = crate::world::appearance::sync_plan(
-                                &self.world.inventory,
-                                self.world.agent_id,
-                                &self.world.worn_attachment_items(),
-                            );
+                            let crate::world::appearance::CofSync { mut commands, unknown } =
+                                crate::world::appearance::sync_plan(&self.world.inventory, self.world.agent_id, &self.outfit_sync_worn());
                             for attachment in self.appearance_ui.attachments.drain(..) {
                                 crate::world::appearance::apply_attachment_override(&mut commands, attachment);
                             }

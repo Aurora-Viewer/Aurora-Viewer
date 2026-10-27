@@ -882,10 +882,13 @@ pub fn sync_plan(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> CofSync 
         }
     }
     if !detach.is_empty() || !attach.is_empty() || !unknown.is_empty() {
+        let wearing: Vec<Uuid> = attach.iter().map(|a| a.item_id).collect();
         log::info!(
-            "outfit: COF changed: wearing {}, taking off {}, {} to look up first",
+            "outfit: COF changed: wearing {} [{}], taking off {} [{}], {} to look up first",
             attach.len(),
+            super::outfit::names(inv, &wearing),
             detach.len(),
+            super::outfit::names(inv, &detach),
             unknown.len()
         );
     }

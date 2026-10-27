@@ -214,7 +214,7 @@ fn restore_settled(now: Instant, ready_at: Instant, last_arrival: Option<Instant
 }
 
 /// Item names for the log, quoted and comma separated.
-fn names(inv: &Inventory, ids: &[Uuid]) -> String {
+pub(super) fn names(inv: &Inventory, ids: &[Uuid]) -> String {
     ids.iter()
         .map(|id| format!("'{}'", inv.items.get(id).map(|it| it.name.as_str()).unwrap_or("?")))
         .collect::<Vec<_>>()
