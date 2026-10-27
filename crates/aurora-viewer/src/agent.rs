@@ -792,7 +792,7 @@ impl AgentState {
         AgentControls {
             control_flags: self.control_flags(input, cam.mouselook()),
             body_rotation: self.body_rotation(),
-            head_rotation: Quat::from_rotation_y(-self.pitch * 0.5),
+            head_rotation: cam.head_rotation(self),
             camera_center: cam.position,
             camera_at: at,
             camera_left: left,
