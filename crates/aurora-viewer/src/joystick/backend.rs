@@ -2,45 +2,71 @@
 //! HID layouts: FreeSpacenav's src/dev.c device table and PySpaceMouse's
 //! device specifications: reports 1/2 carry LE i16 translation/rotation,
 //! or report 1 carries all six axes; report 3 carries the button bitset.
+//!
+//! Nothing is enumerated or opened while the input is off and its
+//! preferences are closed: like LLViewerJoystick::init, called at start-up
+//! only with JoystickEnabled and by LLFloaterJoystick::postBuild
+//! (indra/newview/llappviewer.cpp, llfloaterjoystick.cpp). A HID scan asks
+//! every device for its strings, real USB requests that make some gaming
+//! mice reset (disconnect / reconnect) when repeated, so the scans only
+//! ever read the strings of 3D mice.
 
 use super::{AXES, Device, Snapshot};
 use parking_lot::Mutex;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicU8, Ordering},
 };
 use std::time::{Duration, Instant};
 
+/// What the frame needs from the devices.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum Use {
+    /// No controller library, no scan, no open device.
+    Off,
+    /// The preferences list the devices; 3D mice stay closed.
+    List,
+    /// The input is enabled.
+    On,
+}
+
 pub struct Backend {
     state: Arc<Mutex<Snapshot>>,
-    enabled: Arc<AtomicBool>,
+    mode: Arc<AtomicU8>,
 }
 
 impl Default for Backend {
     fn default() -> Self {
         let state = Arc::new(Mutex::new(Snapshot::default()));
-        let enabled = Arc::new(AtomicBool::new(false));
+        let mode = Arc::new(AtomicU8::new(Use::Off as u8));
         let weak = Arc::downgrade(&state);
-        let on = enabled.clone();
+        let wanted = mode.clone();
         if let Err(e) = std::thread::Builder::new().name("joystick-input".into()).spawn(move || {
-            let mut worker = Worker::new();
+            let mut worker = Worker::default();
             while let Some(shared) = weak.upgrade() {
-                let snapshot = worker.poll(on.load(Ordering::Relaxed));
+                let mode = match wanted.load(Ordering::Relaxed) {
+                    2 => Use::On,
+                    1 => Use::List,
+                    _ => Use::Off,
+                };
+                let snapshot = worker.poll(mode);
                 *shared.lock() = snapshot;
                 drop(shared);
-                std::thread::sleep(Duration::from_millis(8));
+                // Idle, only the mode is watched.
+                std::thread::sleep(Duration::from_millis(if mode == Use::Off { 100 } else { 8 }));
             }
         }) {
             log::warn!("joystick input worker: {e}");
             state.lock().error = e.to_string();
         }
-        Self { state, enabled }
+        Self { state, mode }
     }
 }
 
 impl Backend {
-    pub fn poll(&self, enabled: bool, latest: &mut Snapshot) {
-        self.enabled.store(enabled, Ordering::Relaxed);
+    pub fn poll(&self, mode: Use, latest: &mut Snapshot) {
+        self.mode.store(mode as u8, Ordering::Relaxed);
         if let Some(s) = self.state.try_lock() {
             latest.clone_from(&s);
         }
@@ -54,34 +80,111 @@ struct Hid {
     axis_at: [Instant; 2],
 }
 
+#[derive(Default)]
 struct Worker {
+    /// Started with the input or its preferences; dropping it stops the
+    /// polling thread gilrs-core runs on Windows.
     gilrs: Option<gilrs_core::Gilrs>,
+    /// Created at the first 3D mouse found, then kept: hidapi has no
+    /// context without a first unfiltered enumeration.
     hidapi: Option<hidapi::HidApi>,
+    started: bool,
     pads: std::collections::BTreeMap<usize, Device>,
     mice: Vec<Hid>,
-    scan_at: Instant,
+    scan_at: Option<Instant>,
     error: String,
 }
 
 impl Worker {
-    fn new() -> Self {
-        let mut error = Vec::new();
-        let gilrs = gilrs_core::Gilrs::new().map_err(|e| error.push(e.to_string())).ok();
-        let hidapi = hidapi::HidApi::new().map_err(|e| error.push(e.to_string())).ok();
-        for e in &error {
-            log::warn!("joystick backend: {e}");
-        }
-        Self {
-            gilrs,
-            hidapi,
-            pads: Default::default(),
-            mice: Vec::new(),
-            scan_at: Instant::now() - Duration::from_secs(2),
-            error: error.join("; "),
+    fn start(&mut self) {
+        self.started = true;
+        match gilrs_core::Gilrs::new() {
+            Ok(g) => self.gilrs = Some(g),
+            Err(e) => {
+                log::warn!("joystick backend: {e}");
+                self.error = e.to_string();
+            }
         }
     }
 
-    fn poll(&mut self, enabled: bool) -> Snapshot {
+    fn stop(&mut self) {
+        self.started = false;
+        self.gilrs = None;
+        self.pads.clear();
+        self.mice.clear();
+        self.scan_at = None;
+        self.error.clear();
+    }
+
+    /// Re-lists the 3D mice, asking nothing of the other HID devices.
+    fn scan(&mut self) {
+        let wanted = present_space_mice().unwrap_or_else(|| SPACE_MOUSE_VENDORS.map(|v| (v, 0)).to_vec());
+        if wanted.is_empty() {
+            self.mice.clear();
+            return;
+        }
+        if self.hidapi.is_none() {
+            // The one unfiltered enumeration of the session (hidapi's
+            // constructor always makes it), and only with a 3D mouse present.
+            match hidapi::HidApi::new() {
+                Ok(api) => self.hidapi = Some(api),
+                Err(e) => {
+                    log::warn!("joystick backend: {e}");
+                    self.error = e.to_string();
+                    return;
+                }
+            }
+        }
+        let Some(api) = self.hidapi.as_mut() else {
+            return;
+        };
+        let listed = api
+            .reset_devices()
+            .and_then(|()| wanted.iter().try_for_each(|&(vendor, product)| api.add_devices(vendor, product)));
+        if let Err(e) = listed {
+            log::debug!("SpaceMouse enumeration: {e}");
+            return;
+        }
+        self.mice.retain(|m| api.device_list().any(|d| d.path() == m.path.as_c_str()));
+        for d in api
+            .device_list()
+            .filter(|d| space_mouse(d.vendor_id(), d.product_id()) && d.usage_page() == 1 && d.usage() == 8)
+        {
+            if self.mice.iter().any(|m| m.path.as_c_str() == d.path()) {
+                continue;
+            }
+            // Persist a path hash, never the OS path or device serial.
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            d.path().hash(&mut hash);
+            let info = Device::new(
+                format!("ndof:{:04x}:{:04x}:{:x}", d.vendor_id(), d.product_id(), hash.finish()),
+                d.product_string().unwrap_or("SpaceMouse").to_owned(),
+                6,
+            );
+            self.mice.push(Hid {
+                path: d.path().to_owned(),
+                info,
+                handle: None,
+                axis_at: [Instant::now(); 2],
+            });
+        }
+    }
+
+    fn poll(&mut self, mode: Use) -> Snapshot {
+        if mode == Use::Off {
+            if self.started {
+                self.stop();
+            }
+            return Snapshot {
+                updated: Some(Instant::now()),
+                ..Snapshot::default()
+            };
+        }
+        if !self.started {
+            self.start();
+        }
+        let enabled = mode == Use::On;
         if let Some(g) = self.gilrs.as_mut() {
             // Keep native ordering stable; SpaceMouse is handled by HID only.
             for id in 0..g.last_gamepad_hint() {
@@ -126,40 +229,10 @@ impl Worker {
                 }
             }
         }
-        let scanning = self.scan_at.elapsed() >= Duration::from_secs(1);
+        let scanning = self.scan_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(1));
         if scanning {
-            self.scan_at = Instant::now();
-            if let Some(api) = self.hidapi.as_mut() {
-                match api.refresh_devices() {
-                    Ok(()) => {
-                        self.mice.retain(|m| api.device_list().any(|d| d.path() == m.path.as_c_str()));
-                        for d in api
-                            .device_list()
-                            .filter(|d| space_mouse(d.vendor_id(), d.product_id()) && d.usage_page() == 1 && d.usage() == 8)
-                        {
-                            if self.mice.iter().any(|m| m.path.as_c_str() == d.path()) {
-                                continue;
-                            }
-                            // Persist a path hash, never the OS path or device serial.
-                            use std::hash::{Hash, Hasher};
-                            let mut hash = std::collections::hash_map::DefaultHasher::new();
-                            d.path().hash(&mut hash);
-                            let info = Device::new(
-                                format!("ndof:{:04x}:{:04x}:{:x}", d.vendor_id(), d.product_id(), hash.finish()),
-                                d.product_string().unwrap_or("SpaceMouse").to_owned(),
-                                6,
-                            );
-                            self.mice.push(Hid {
-                                path: d.path().to_owned(),
-                                info,
-                                handle: None,
-                                axis_at: [Instant::now(); 2],
-                            });
-                        }
-                    }
-                    Err(e) => log::debug!("SpaceMouse enumeration: {e}"),
-                }
-            }
+            self.scan_at = Some(Instant::now());
+            self.scan();
         }
         for m in &mut self.mice {
             if !enabled {
@@ -230,6 +303,86 @@ impl Worker {
             error: self.error.clone(),
         }
     }
+}
+
+const SPACE_MOUSE_VENDORS: [u16; 2] = [0x046d, 0x256f];
+
+/// The 3D mice plugged in, read from the HID interface paths Windows
+/// lists, without opening any device. `None` where the paths cannot be
+/// read: the scan then filters by vendor (on Linux and macOS, hidapi reads
+/// the strings from the system's cache, not from the devices).
+fn present_space_mice() -> Option<Vec<(u16, u16)>> {
+    #[cfg(windows)]
+    match hid_interface_paths() {
+        Ok(paths) => {
+            let mut ids: Vec<_> = paths
+                .iter()
+                .filter_map(|p| path_ids(p))
+                .filter(|&(v, p)| space_mouse(v, p))
+                .collect();
+            ids.sort_unstable();
+            ids.dedup();
+            return Some(ids);
+        }
+        Err(e) => log::debug!("HID interface list: {e}"),
+    }
+    None
+}
+
+/// The present HID interfaces, as hidapi's own hid_enumerate lists them
+/// before opening each one (etc/hidapi/windows/hid.c).
+#[cfg(windows)]
+fn hid_interface_paths() -> Result<Vec<String>, String> {
+    use windows_sys::Win32::Devices::DeviceAndDriverInstallation::{
+        CM_GET_DEVICE_INTERFACE_LIST_PRESENT, CM_Get_Device_Interface_List_SizeW, CM_Get_Device_Interface_ListW, CR_BUFFER_SMALL,
+        CR_SUCCESS,
+    };
+    // GUID_DEVINTERFACE_HID (hidclass.h), without windows-sys' whole HID module.
+    const HID: windows_sys::core::GUID = windows_sys::core::GUID::from_u128(0x4d1e55b2_f16f_11cf_88cb_001111000030);
+    loop {
+        let mut len = 0u32;
+        // SAFETY: `len` and the GUID outlive the call; a null device id
+        // lists the interfaces of every device.
+        let cr = unsafe { CM_Get_Device_Interface_List_SizeW(&mut len, &HID, std::ptr::null(), CM_GET_DEVICE_INTERFACE_LIST_PRESENT) };
+        if cr != CR_SUCCESS {
+            return Err(format!("list size: CONFIGRET {cr}"));
+        }
+        let mut list = vec![0u16; len as usize];
+        // SAFETY: `list` holds the `len` UTF-16 units the call may write.
+        let cr =
+            unsafe { CM_Get_Device_Interface_ListW(&HID, std::ptr::null(), list.as_mut_ptr(), len, CM_GET_DEVICE_INTERFACE_LIST_PRESENT) };
+        match cr {
+            // A double-NUL-terminated list of NUL-terminated paths.
+            CR_SUCCESS => {
+                return Ok(list
+                    .split(|c| *c == 0)
+                    .filter(|p| !p.is_empty())
+                    .map(String::from_utf16_lossy)
+                    .collect());
+            }
+            // A device arrived between the two calls.
+            CR_BUFFER_SMALL => {}
+            _ => return Err(format!("list: CONFIGRET {cr}")),
+        }
+    }
+}
+
+/// Vendor and product of a HID interface path: `vid_256f&pid_c635` over
+/// USB, `vid&0002256f_pid&c63a` over Bluetooth (the vendor id prefixed by
+/// its source).
+fn path_ids(path: &str) -> Option<(u16, u16)> {
+    let path = path.to_ascii_lowercase();
+    let digits = |key: &str| {
+        let at = path.find(&format!("{key}_")).or_else(|| path.find(&format!("{key}&")))? + key.len() + 1;
+        let run = path[at..].bytes().take_while(u8::is_ascii_hexdigit).count();
+        (run >= 4).then(|| &path[at..at + run])
+    };
+    let vendor = digits("vid")?;
+    let product = digits("pid")?;
+    Some((
+        u16::from_str_radix(&vendor[vendor.len() - 4..], 16).ok()?,
+        u16::from_str_radix(&product[..4], 16).ok()?,
+    ))
 }
 
 fn normalize(value: i32, min: i32, max: i32) -> f32 {
@@ -329,5 +482,21 @@ mod tests {
         decode_hid(&mut d, &[3, 0]);
         assert_eq!(d.buttons, 0);
         assert!(!space_mouse(0x256f, 0xc650)); // CadMouse is an ordinary mouse.
+    }
+
+    #[test]
+    fn spacemouse_ids_from_usb_and_bluetooth_interface_paths() {
+        let usb = r"\\?\HID#VID_256F&PID_C635&MI_00#8&2a2c1f0b&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert_eq!(path_ids(usb), Some((0x256f, 0xc635)));
+        let classic =
+            r"\\?\HID#{00001124-0000-1000-8000-00805f9b34fb}_VID&0002256f_PID&c63a#9&1&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert_eq!(path_ids(classic), Some((0x256f, 0xc63a)));
+        let le = r"\\?\HID#{00001812-0000-1000-8000-00805f9b34fb}_Dev_VID&02256f_PID&c63a_REV&0100_d0a1#9&2&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        assert_eq!(path_ids(le), Some((0x256f, 0xc63a)));
+        // A gaming mouse is never a 3D mouse, and odd paths are skipped.
+        let mouse = path_ids(r"\\?\HID#VID_0DB0&PID_0B4F&MI_00#7&1&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}");
+        assert!(mouse.is_some_and(|(v, p)| !space_mouse(v, p)));
+        assert_eq!(path_ids(r"\\?\HID#ConvertedDevice&Col01#5&1&0&0000#{4d1e55b2}"), None);
+        assert_eq!(path_ids(r"\\?\HID#VID_25&PID_C635"), None);
     }
 }
