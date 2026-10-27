@@ -251,37 +251,109 @@ pub fn lod(model: &Model, options: LodOptions, cancel: &AtomicBool) -> Result<Mo
     Ok(reduced)
 }
 
+/// LLDAELoader::addVolumeFacesFromDomMesh: missing normals sum connected
+/// unit triangle normals at each authored vertex without changing indices.
+pub fn missing_normals(face: &mut Face) -> Result<(), AssetError> {
+    face.validate_geometry()?;
+    let mut sums = super::allocate(face.vertices.len(), Vec3::ZERO, "mesh normals memory")?;
+    for triangle in face.indices.as_chunks::<3>().0 {
+        let point = |i: u32| Vec3::from_array(face.vertices[i as usize].position);
+        let normal = (point(triangle[1]) - point(triangle[0]))
+            .cross(point(triangle[2]) - point(triangle[0]))
+            .normalize_or_zero();
+        for &index in triangle {
+            sums[index as usize] += normal;
+        }
+    }
+    for (vertex, sum) in face.vertices.iter_mut().zip(sums) {
+        vertex.normal = sum.normalize_or_zero().to_array();
+    }
+    Ok(())
+}
+
 pub fn normals(face: &mut Face, crease_degrees: f32) -> Result<(), AssetError> {
     if !crease_degrees.is_finite() || !(0.0..=180.0).contains(&crease_degrees) {
         return Err(AssetError::invalid("normal crease angle"));
     }
     use std::collections::HashMap;
     face.validate_geometry()?;
-    let mut by_position = HashMap::<[u32; 3], Vec<Vec3>>::new();
+    // LLModel::generateNormals skips faces whose faceted copy cannot use
+    // 16-bit indices, including the fully smooth setting.
+    if face.indices.len() > u16::MAX as usize {
+        return Ok(());
+    }
     let key = |p: [f32; 3]| p.map(|v| if v == 0.0 { 0 } else { v.to_bits() });
+    if crease_degrees == 180.0 {
+        // Keep authored vertex indices stable until Collada has associated
+        // controller weights. Dense indexed faces need one sum per position,
+        // rather than storing every adjacent triangle a second time.
+        let mut sums = HashMap::<[u32; 3], Vec3>::new();
+        for triangle in face.indices.as_chunks::<3>().0 {
+            let point = |i: u32| Vec3::from_array(face.vertices[i as usize].position);
+            let area = (point(triangle[1]) - point(triangle[0])).cross(point(triangle[2]) - point(triangle[0]));
+            for &index in triangle {
+                *sums.entry(key(face.vertices[index as usize].position)).or_default() += area;
+            }
+        }
+        for vertex in &mut face.vertices {
+            vertex.normal = sums
+                .get(&key(vertex.position))
+                .copied()
+                .unwrap_or(Vec3::ZERO)
+                .normalize_or_zero()
+                .to_array();
+        }
+        return Ok(());
+    }
+    let mut by_position = HashMap::<[u32; 3], Vec<(Vec3, Vec3)>>::new();
     for triangle in face.indices.as_chunks::<3>().0 {
         let point = |i: u32| Vec3::from_array(face.vertices[i as usize].position);
-        let n = (point(triangle[1]) - point(triangle[0]))
-            .cross(point(triangle[2]) - point(triangle[0]))
-            .normalize_or_zero();
+        let area = (point(triangle[1]) - point(triangle[0])).cross(point(triangle[2]) - point(triangle[0]));
+        let n = area.normalize_or_zero();
         for index in triangle {
-            by_position.entry(key(face.vertices[*index as usize].position)).or_default().push(n);
+            by_position
+                .entry(key(face.vertices[*index as usize].position))
+                .or_default()
+                .push((n, area));
         }
     }
     let threshold = crease_degrees.to_radians().cos();
-    for vertex in &mut face.vertices {
-        let original = Vec3::from_array(vertex.normal).normalize_or_zero();
-        if let Some(adjacent) = by_position.get(&key(vertex.position)) {
-            let reference = if original == Vec3::ZERO { adjacent[0] } else { original };
-            let n = adjacent
+    // LLModel::generateNormals facets first: one authored vertex may need
+    // different normals on opposite sides of a crease. UVs/weights survive.
+    let mut vertices = Vec::new();
+    let mut indices = Vec::with_capacity(face.indices.len());
+    let mut remap = HashMap::new();
+    for triangle in face.indices.as_chunks::<3>().0 {
+        let point = |i: u32| Vec3::from_array(face.vertices[i as usize].position);
+        let reference = (point(triangle[1]) - point(triangle[0]))
+            .cross(point(triangle[2]) - point(triangle[0]))
+            .normalize_or_zero();
+        for &index in triangle {
+            let mut vertex = face.vertices[index as usize].clone();
+            vertex.normal = by_position[&key(vertex.position)]
                 .iter()
-                .filter(|n| n.dot(reference) >= threshold - 0.000001)
-                .copied()
-                .fold(Vec3::ZERO, |sum, n| sum + n)
-                .normalize_or_zero();
-            vertex.normal = n.to_array();
+                .filter(|(normal, _)| normal.dot(reference) >= threshold - 0.000001)
+                .fold(Vec3::ZERO, |sum, (_, area)| sum + *area)
+                .normalize_or_zero()
+                .to_array();
+            let identity = (
+                key(vertex.position),
+                key(vertex.normal),
+                vertex.uv.map(f32::to_bits),
+                vertex.joints,
+                vertex.weights.map(f32::to_bits),
+            );
+            let next = vertices.len() as u32;
+            let mapped = *remap.entry(identity).or_insert_with(|| {
+                vertices.push(vertex);
+                next
+            });
+            indices.push(mapped);
         }
     }
+    face.vertices = vertices;
+    face.indices = indices;
+    face.validate()?;
     Ok(())
 }
 
@@ -306,7 +378,20 @@ fn geometry(model: &Model) -> Result<(Vec<Vector>, Vec<[u32; 3]>), AssetError> {
     Ok((vertices, triangles))
 }
 pub fn base_hull(model: &Model) -> Result<Hull, AssetError> {
-    let (vertices, _) = geometry(model)?;
+    // generateHulls needs positions only. Copying the triangle list here
+    // wastes substantial working memory for dense indexed source faces.
+    let mut vertices = Vec::new();
+    for face in &model.faces {
+        face.validate()?;
+        vertices.extend(
+            face.vertices
+                .iter()
+                .map(|v| Vector::new(v.position[0], v.position[1], v.position[2])),
+        );
+    }
+    if vertices.is_empty() || model.faces.iter().all(|face| face.indices.is_empty()) {
+        return Err(AssetError::invalid("empty physics geometry"));
+    }
     let (points, indices) = match try_convex_hull(&vertices) {
         Ok(hull) => hull,
         Err(_) => {

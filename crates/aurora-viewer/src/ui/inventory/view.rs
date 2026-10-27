@@ -1119,6 +1119,7 @@ mod tests {
             active_gestures: Default::default(),
             touchable: Default::default(),
             names: HashMap::new(),
+            ..Default::default()
         };
         (inv, facts)
     }

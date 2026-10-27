@@ -287,7 +287,9 @@ pub enum CtxAction {
         target: Uuid,
         offset: Vec3,
     },
-    Zoom(Vec3),
+    /// Camera on the clicked point; it follows the resident given, the one
+    /// clicked or wearing the clicked attachment (Tools.LookAtSelection "zoom").
+    Zoom(Vec3, Option<Uuid>),
     GoToAvatar(Uuid),
     FollowAvatar(Uuid),
     StopFollowing,
@@ -460,7 +462,7 @@ pub enum CtxAction {
     },
     /// People floater on a tab (0 nearby, 1 friends, 2 groups).
     OpenPeople(u8),
-    /// Camera on an avatar of a list (Avatar.ZoomIn).
+    /// Camera on an avatar of a list, following it (Avatar.ZoomIn).
     ZoomAvatar(Uuid),
     /// Teleport to where an avatar is (FSRadar teleport_to).
     TeleportToAvatar(Uuid),

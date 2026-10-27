@@ -13,7 +13,7 @@ impl App {
     /// One appearance editor at a time, as in the Legacy Viewer's single
     /// edit panel: false (and the other one asks first) while the other has
     /// unsaved changes or a save in flight.
-    fn close_shape_editor_for_physics(&mut self) -> bool {
+    pub(super) fn close_shape_editor_for_physics(&mut self) -> bool {
         if !self.shape_ui.open {
             return true;
         }
@@ -47,6 +47,9 @@ impl App {
     }
 
     pub(super) fn open_physics_editor(&mut self, item: uuid::Uuid) {
+        if !self.close_wearable_editor() {
+            return;
+        }
         if !self.close_shape_editor_for_physics() {
             self.appearance_ui.message = aurora_i18n::tr!("physics-other-editor").into();
             return;

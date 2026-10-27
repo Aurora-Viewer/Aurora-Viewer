@@ -16,6 +16,8 @@ pub struct Request {
     pub description: String,
     pub query: Arc<Vec<u8>>,
     pub resources: Arc<Vec<u8>>,
+    /// MeshUploadTimeOut, frozen with the mesh and quote; never sent on wire.
+    pub timeout_secs: u32,
 }
 impl Request {
     pub fn validate(&self) -> Result<(), Error> {
@@ -28,8 +30,7 @@ impl Request {
             || self.description.contains('\0')
             || self.query.is_empty()
             || self.resources.is_empty()
-            || self.query.len() > 256 * 1024 * 1024
-            || self.resources.len() > 256 * 1024 * 1024
+            || self.timeout_secs == 0
         {
             return Err(Error::Invalid);
         }
@@ -103,7 +104,7 @@ pub(crate) async fn quote(http: &reqwest::Client, cap: &str, permission: &str, r
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
         .body(request.query.as_ref().clone())
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(u64::from(request.timeout_secs)))
         .send()
         .await
         .map_err(|_| Error::Unavailable)?;
@@ -129,7 +130,7 @@ pub(crate) async fn upload(http: &reqwest::Client, uploader: String, owner: Uuid
         .header("Content-Type", "application/llsd+xml")
         .header("Accept", "application/llsd+xml")
         .body(request.resources.as_ref().clone())
-        .timeout(Duration::from_secs(120))
+        .timeout(Duration::from_secs(u64::from(request.timeout_secs)))
         .send()
         .await
         .map_err(|_| Error::Unknown)?;

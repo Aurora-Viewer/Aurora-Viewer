@@ -6,16 +6,20 @@ use crate::ui::area_search::{Action, Row};
 use crate::world::objects::{ObjKey, Object, ObjectStore};
 use aurora_net::build::{BuildCmd, ObjectProps};
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use uuid::Uuid;
 
 const PACKET: usize = 254;
 const IN_FLIGHT: usize = PACKET * 3;
 const TIMEOUT: Duration = Duration::from_secs(30);
+/// Between two touches of the menu's selection (FSAreaSearchTouchTimer).
+const TOUCH_SPACING: Duration = Duration::from_millis(200);
 
 #[derive(Default)]
 pub(super) struct Feed {
+    /// Touches waiting for their turn: when, which object.
+    touches: VecDeque<(Instant, Uuid)>,
     props: HashMap<Uuid, ObjectProps>,
     requests: HashMap<Uuid, (ObjKey, Instant)>,
     recent: HashMap<Uuid, Instant>,
@@ -34,10 +38,13 @@ impl Feed {
     fn reset(&mut self) {
         // Replies and reliable duplicates can arrive after closing or crossing.
         // Preserve their provenance and outstanding counts through the timeout.
+        // Touches already asked for are sent too, as the Legacy Viewer's timers.
         let requests = std::mem::take(&mut self.requests);
         let recent = std::mem::take(&mut self.recent);
+        let touches = std::mem::take(&mut self.touches);
         let last_request = self.last_request;
         *self = Self {
+            touches,
             requests,
             recent,
             last_request,
@@ -131,6 +138,7 @@ impl App {
         self.panels.chat = false;
         self.panels.minimap = false;
         self.area_search_ui.filters_open = mode == "filters";
+        self.area_search_ui.demo_menu = mode == "menu";
         self.area_search_ui.table.filters.parcel_only = mode == "parcel";
         self.area_search_ui.table.filters.sale = mode == "sale";
         if mode == "search" {
@@ -173,11 +181,13 @@ impl App {
     }
 
     pub(super) fn area_search_window(&mut self, ctx: &egui::Context, p: &crate::theme::Palette) {
+        // touches already asked for go on once the window is closed
+        self.area_search_touches(Instant::now());
         if !self.panels.area_search {
             if self.area_search_feed.seeded {
                 self.area_search_feed.reset();
                 self.area_search_ui.table.replace(Vec::new());
-                self.area_search_ui.selected = None;
+                self.area_search_ui.selection.clear();
             }
             if self
                 .area_search_feed
@@ -195,7 +205,7 @@ impl App {
         if self.area_search_feed.region != self.world.main_region {
             self.area_search_feed.reset();
             self.area_search_feed.region = self.world.main_region;
-            self.area_search_ui.selected = None;
+            self.area_search_ui.selection.clear();
         }
         if !self.area_search_feed.seeded {
             self.area_search_feed
@@ -218,16 +228,138 @@ impl App {
             self.area_search_snapshot(now);
         }
         let parcel_known = self.world.parcel.as_ref().is_some_and(|p| !p.bitmap.is_empty());
-        match self.area_search_ui.show(ctx, p, &mut self.panels.area_search, parcel_known) {
-            Some(Action::Inspect(id)) => self.inspect_object(id),
-            Some(Action::Zoom(id)) => {
-                if let Some(idx) = self.world.objects.index_of_uuid(&id)
-                    && let Some(xf) = Scene::object_transform(&self.world, idx, now, 0)
-                {
-                    self.on_ctx_action(ui::context::CtxAction::Zoom(xf.0));
+        let draw_distance = self.settings.draw_distance;
+        if let Some(action) = self
+            .area_search_ui
+            .show(ctx, p, &mut self.panels.area_search, parcel_known, draw_distance)
+        {
+            self.area_search_action(action, now);
+        }
+    }
+
+    /// FSPanelAreaSearchList::onContextMenuItemClick, through the actions
+    /// of the object menus (their confirmations and RLVa checks included).
+    fn area_search_action(&mut self, action: Action, now: Instant) {
+        use ui::context::CtxAction;
+        let position = |app: &Self, id: &Uuid| {
+            app.world
+                .objects
+                .index_of_uuid(id)
+                .and_then(|idx| Scene::object_transform(&app.world, idx, now, 0))
+                .map(|xf| xf.0)
+        };
+        match action {
+            Action::Inspect(ids) => self.inspect_objects(&ids),
+            Action::Zoom(id) => {
+                if let Some(pos) = position(self, &id) {
+                    self.on_ctx_action(CtxAction::Zoom(pos, None));
                 }
             }
-            None => {}
+            Action::ScriptInfo(ids) => {
+                for id in ids {
+                    self.on_ctx_action(CtxAction::ScriptInfo(id));
+                }
+            }
+            // FSAreaSearchTouchTimer: one every 0.2 s, in the selection's order
+            Action::Touch(ids) => {
+                let start = self
+                    .area_search_feed
+                    .touches
+                    .back()
+                    .map_or(now, |(t, _)| (*t + TOUCH_SPACING).max(now));
+                for (n, id) in ids.into_iter().enumerate() {
+                    self.area_search_feed.touches.push_back((start + TOUCH_SPACING * n as u32, id));
+                }
+            }
+            // sitOnObject: AgentRequestSit with no offset
+            Action::Sit(id) => self.on_ctx_action(CtxAction::Sit {
+                target: id,
+                offset: Vec3::ZERO,
+            }),
+            // gAgent.teleportViaLocation(getPositionGlobal())
+            Action::Teleport(id) => {
+                if let Some(pos) = position(self, &id) {
+                    self.teleport_render_pos(pos);
+                }
+            }
+            Action::Edit(ids) => {
+                self.area_search_select(&ids);
+                if !self.build.selection.is_empty() {
+                    self.build.open_build(crate::build::Tool::Edit);
+                    self.build.edit_mode = crate::build::EditMode::Move;
+                }
+                self.flush_build();
+            }
+            Action::Return(ids) => self.ask_return_objects(&ids),
+            Action::Delete(ids) => {
+                // LLSelectMgr::selectDelete's question, on all their linksets
+                let flags: Vec<u32> = ids
+                    .iter()
+                    .filter_map(|id| self.world.objects.index_of_uuid(id))
+                    .flat_map(|idx| crate::build::family(&self.world, context_menu::linkset_root(&self.world, idx)))
+                    .filter_map(|i| self.world.objects.get(i).map(|o| o.update_flags))
+                    .collect();
+                match ui::context::delete_warning(&flags) {
+                    Some(text) => self.delete_confirm = Some((ids, text)),
+                    None => self.delete_objects(&ids),
+                }
+            }
+            Action::Blacklist(ids) => {
+                for id in ids {
+                    self.derender(id, true);
+                }
+            }
+            Action::Buy(id) => self.on_ctx_action(CtxAction::Buy(id)),
+            // setFindOwnerText(gAgentUsername), then the search
+            Action::FilterMine => {
+                let name = self.world.social.name_of(&self.world.agent_id);
+                self.area_search_ui.table.filters.owner = name;
+                self.area_search_ui.reveal_filters = true;
+            }
+        }
+    }
+
+    fn area_search_select(&mut self, ids: &[Uuid]) {
+        let idxs: Vec<usize> = ids.iter().filter_map(|id| self.world.objects.index_of_uuid(id)).collect();
+        self.build.select_many(&mut self.world, &self.settings.build, &idxs);
+    }
+
+    /// Delete to the trash, confirmed: the objects of several rows together.
+    pub(super) fn delete_objects(&mut self, ids: &[Uuid]) {
+        self.area_search_select(ids);
+        self.build.delete(&mut self.world);
+        self.flush_build();
+    }
+
+    /// FSPanelAreaSearchList::touchObject when its turn comes: ObjectGrab
+    /// then ObjectDeGrab with an empty pick (LLPickInfo's defaults).
+    fn area_search_touches(&mut self, now: Instant) {
+        while let Some(&(at, id)) = self.area_search_feed.touches.front() {
+            if at > now {
+                break;
+            }
+            self.area_search_feed.touches.pop_front();
+            let Some(key) = self
+                .world
+                .objects
+                .index_of_uuid(&id)
+                .and_then(|idx| self.world.objects.get(idx))
+                .map(|o| o.key)
+            else {
+                continue;
+            };
+            let surface = aurora_net::TouchSurface::default();
+            self.send(NetCommand::ObjectGrab {
+                handle: key.region,
+                local_id: key.local_id,
+                offset: Vec3::ZERO,
+                surface,
+            });
+            self.send(NetCommand::ObjectRelease {
+                handle: key.region,
+                local_id: key.local_id,
+                surface,
+            });
         }
     }
 

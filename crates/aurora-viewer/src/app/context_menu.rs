@@ -461,6 +461,10 @@ impl App {
             CtxAction::Freeze(id) => self.ask_moderation(id, false),
             CtxAction::Eject(id) => self.ask_moderation(id, true),
             CtxAction::EditWorn(item) => {
+                if self.world.inventory.items.get(&item).is_some_and(crate::wearable_editor::supported) {
+                    self.open_wearable_editor(item);
+                    return;
+                }
                 if Some(item) == crate::shape_editor::worn_shape(&self.world) {
                     self.open_shape_editor(item);
                     return;
@@ -523,7 +527,10 @@ impl App {
                     });
                 }
             }
-            CtxAction::Zoom(p) => self.camera.zoom_to(p, &mut self.world.agent, &self.settings.camera),
+            CtxAction::Zoom(p, id) => {
+                let object = id.and_then(|id| self.zoom_focus_object(&id));
+                self.camera.zoom_to(p, object, &mut self.world.agent, &self.settings.camera);
+            }
             CtxAction::GoToAvatar(id) => self.travel_to_avatar(id, false),
             CtxAction::FollowAvatar(id) => self.travel_to_avatar(id, true),
             CtxAction::StopFollowing => self.stop_autopilot(true),
@@ -678,7 +685,7 @@ impl App {
                     .filter_map(|&i| self.world.objects.get(i).map(|o| o.update_flags))
                     .collect();
                 match ui::context::delete_warning(&prim_flags) {
-                    Some(text) => self.delete_confirm = Some((id, text)),
+                    Some(text) => self.delete_confirm = Some((vec![id], text)),
                     None => self.on_ctx_action(CtxAction::DeleteConfirmed(id)),
                 }
             }
@@ -775,8 +782,12 @@ impl App {
                 self.panels.people_tab = tab;
             }
             CtxAction::ZoomAvatar(id) => {
-                if let Some(p) = ui::context::avatar_position(&self.world, &id) {
-                    self.camera.zoom_to(p, &mut self.world.agent, &self.settings.camera);
+                // a drawn avatar is followed; one only known by its map
+                // position is a fixed point (handle_zoom_to_object)
+                if let Some(avatar) = self.zoom_focus_object(&id).filter(|o| o.1.avatar) {
+                    self.camera.zoom_avatar(avatar, &mut self.world.agent, &self.settings.camera);
+                } else if let Some(p) = ui::context::avatar_position(&self.world, &id) {
+                    self.camera.zoom_to(p, None, &mut self.world.agent, &self.settings.camera);
                 }
             }
             CtxAction::TeleportToAvatar(id) | CtxAction::ShowOnMap(id) => {
@@ -858,6 +869,13 @@ impl App {
                 self.history_ui.show_file(title, file);
             }
         }
+    }
+
+    /// The focus object a Zoom keeps the camera on (an attachment gives its
+    /// avatar), when `id` is in view.
+    fn zoom_focus_object(&self, id: &uuid::Uuid) -> Option<(uuid::Uuid, crate::camera::FocusObject)> {
+        let idx = self.world.objects.index_of_uuid(id)?;
+        crate::camera::pick_focus_object(&self.world, idx, Instant::now())
     }
 }
 

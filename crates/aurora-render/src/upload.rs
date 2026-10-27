@@ -148,6 +148,12 @@ impl std::fmt::Debug for Staged {
 }
 
 impl StagingPool {
+    /// Largest single upload. Producers can select a fitting mip chain
+    /// before writing, without a frame-thread fallback memcpy.
+    pub fn max_region_bytes(&self) -> u64 {
+        self.chunk_bytes
+    }
+
     /// `small`: a GPU with little memory (integrated, or under 4 GB).
     pub fn new(device: &wgpu::Device, small: bool) -> Arc<Self> {
         let (count, chunk_bytes) = if small { CHUNKS_SMALL } else { CHUNKS };

@@ -1,5 +1,6 @@
 //! egui user interface.
 
+pub mod about;
 pub mod ao;
 pub mod appearance;
 pub mod area_search;
@@ -42,6 +43,7 @@ pub mod fonts;
 pub mod friend_prompt;
 pub mod gestures;
 pub(crate) mod give_drop;
+pub mod grid_status;
 pub mod grids;
 pub mod group_profile;
 pub mod hover_height;
@@ -107,6 +109,7 @@ pub mod snapshot;
 pub mod sound_cues;
 pub(crate) mod spelling;
 pub mod staff;
+pub mod stream_title;
 pub(crate) mod text_menu;
 pub mod texture_library;
 pub mod texture_picker;
@@ -116,6 +119,7 @@ pub mod toolbar;
 pub mod update;
 pub mod viewfinder;
 pub mod voice_tag;
+pub mod wearable;
 pub mod web_view;
 pub mod widgets;
 
@@ -173,6 +177,15 @@ pub struct Panels {
     pub money_tracker: bool,
     /// "Bumps, pushes & hits" (Help menu): who bumped, pushed or hit us.
     pub bumps: bool,
+    /// "Grid status" (Help menu, toolbar): the grid's incidents.
+    pub grid_status: bool,
+    /// "About Aurora Viewer" (Help menu): the version, the system
+    /// information and the licences.
+    pub about: bool,
+    /// World › Stream title (kept in `audio.stream_title_window`), and its
+    /// history.
+    pub stream_title: bool,
+    pub stream_title_history: bool,
     /// The Controls window on its Camera tab (Firestorm's camera window
     /// with Preferences › Aurora), and on its Movement tab (the movement
     /// window).
@@ -222,6 +235,10 @@ impl Panels {
             asset_blacklist: false,
             money_tracker: false,
             bumps: false,
+            grid_status: false,
+            about: false,
+            stream_title: settings.audio.stream_title_window,
+            stream_title_history: false,
             camera_controls: false,
             movement_controls: false,
             nav_edit: None,

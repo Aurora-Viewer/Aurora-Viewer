@@ -59,7 +59,7 @@ pub fn rigged_model(lib: &AvatarLibrary) -> Model {
                     position: p.to_array(),
                     normal: Vec3::Z.to_array(),
                     uv: [0.0; 2],
-                    joints: [joint as u8, 0, 0, 0],
+                    joints: [joint as u16, 0, 0, 0],
                     weights: [1.0, 0.0, 0.0, 0.0],
                 }
             })
@@ -250,7 +250,15 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
     if frame == 620 {
         let objects = if matches!(
             mode,
-            "auto-rigged" | "auto-contact" | "auto-offset" | "auto-state" | "auto-pelvis" | "auto-stilt"
+            "auto-rigged"
+                | "auto-contact"
+                | "auto-offset"
+                | "auto-state"
+                | "auto-pelvis"
+                | "auto-stilt"
+                | "auto-ik"
+                | "auto-ik-moving"
+                | "auto-ik-others"
         ) {
             if let Err(error) = install_mesh(&world.avatar_lib, scene) {
                 log::warn!("demo auto hover: {error}");
@@ -261,9 +269,51 @@ pub fn tick(world: &mut crate::world::World, scene: &mut Scene, frame: u64, mode
             rigid_objects()
         };
         world.apply(NetEvent::ObjectUpdates { handle: HANDLE, objects });
+        if mode == "auto-ik-others" {
+            // An absolute pelvis animation replaces this mesh rest offset.
+            // Placement must preserve the visible posture across its switch.
+            let lib = world.avatar_lib.clone();
+            shift_pelvis(&lib, scene, Vec3::Z * 0.28);
+            hold_pelvis(world, scene);
+            let mut resident = super::action_avatar(false);
+            resident.local_id = 9001;
+            resident.full_id = super::DEMO_LOUP;
+            resident.name_values.clear();
+            let position = world.agent.position + Vec3::Y * 1.2;
+            let height = scene.automatic_hover_box_height(world).unwrap_or(1.9);
+            resident.position = position.with_z(super::floor_at(position.x, position.y) + height * 0.5);
+            resident.rotation = Quat::IDENTITY;
+            resident.velocity = Vec3::ZERO;
+            resident.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, super::floor_at(position.x, position.y) + 0.05));
+            let mut shoes = rigged_object();
+            shoes.local_id = LEFT + 20;
+            shoes.full_id = u(u128::from(LEFT + 20));
+            shoes.parent_id = resident.local_id;
+            world.apply(NetEvent::ObjectUpdates {
+                handle: HANDLE,
+                objects: vec![resident, shoes],
+            });
+            world.apply(NetEvent::AvatarAnimations {
+                avatar: super::DEMO_LOUP,
+                sources: Vec::new(),
+                anims: world.own_signals().iter().map(|signal| (signal.id, signal.sequence)).collect(),
+            });
+        }
         if matches!(mode, "auto-pelvis" | "auto-stilt") {
             hold_pelvis(world, scene);
         }
+    }
+    if mode == "auto-ik-others"
+        && frame >= 680
+        && let (Some(height), Some(hover)) = (scene.automatic_hover_box_height(world), scene.automatic_hover_base(world))
+        && let Some(resident) = world
+            .objects
+            .index_of_uuid(&super::DEMO_LOUP)
+            .and_then(|index| world.objects.get_mut(index))
+    {
+        // This synthetic resident uses the same shape and shoes as ours.
+        // Its simulator already supplies the correct height before IK.
+        resident.position.z = super::floor_at(resident.position.x, resident.position.y) + height * 0.5 + hover;
     }
     if mode == "auto-stilt" && matches!(frame, 720 | 840) {
         let length = if frame == 720 { 0.6 } else { 1.2 };

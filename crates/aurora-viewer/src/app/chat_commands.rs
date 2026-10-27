@@ -295,7 +295,7 @@ impl App {
     }
 
     /// teleportViaLocation to a render-space point, maybe in a neighbour.
-    fn teleport_render_pos(&mut self, pos: Vec3) {
+    pub(super) fn teleport_render_pos(&mut self, pos: Vec3) {
         let size = self.world.main().map_or(256.0, |r| r.heightmap.size_x as f32);
         if (0.0..size).contains(&pos.x) && (0.0..size).contains(&pos.y) {
             self.teleport_in_region(pos);

@@ -228,7 +228,7 @@ impl Asset {
                             .as_ref()
                             .ok_or_else(|| aurora_i18n::tr!("import-local-file-missing").to_owned())?;
                         let (scene, _) = files::read(path)
-                            .and_then(|bytes| files::mesh_scene(path, &bytes, self.meters, None))
+                            .and_then(|bytes| files::mesh_scene(path, &bytes, self.meters, None, prefs.mesh_model_limit))
                             .map_err(|error| error.to_string())?;
                         Some(Arc::new(scene))
                     } else {
@@ -245,7 +245,7 @@ impl Asset {
                 }
                 if let Some(path) = physics {
                     let (scene, _) = files::read(path)
-                        .and_then(|bytes| files::mesh_scene(path, &bytes, self.meters, None))
+                        .and_then(|bytes| files::mesh_scene(path, &bytes, self.meters, None, prefs.mesh_model_limit))
                         .map_err(|error| error.to_string())?;
                     draft.physics_file = Some(Arc::new(scene));
                     draft.physics_path = Some(path.clone());

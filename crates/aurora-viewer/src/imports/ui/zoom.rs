@@ -75,12 +75,18 @@ pub(super) fn show(ctx: &egui::Context, p: &Palette, imports: &mut Imports, acti
             let (mut area, foot) = widgets::above_footer(ui);
             let size = area.available_size();
             if let Some(model) = &entry.model {
-                aurora_render::preview::paint(
+                let pose = if matches!(entry.source, Some(Source::Mesh(_))) {
+                    entry.mesh_player.pose.clone()
+                } else {
+                    entry.player.pose.clone()
+                };
+                aurora_render::preview::paint_with_pose(
                     &mut area,
                     egui::Id::unique(("large_import_preview", id)),
                     model.clone(),
                     &mut entry.view,
                     size,
+                    pose,
                 );
             } else {
                 widgets::picture(&mut area, p, None, size, "cube-3d-sphere", "");

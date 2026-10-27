@@ -241,7 +241,7 @@ impl PathfindingUi {
                             .add_enabled(point.is_finite(), egui::Button::new(aurora_i18n::tr!("common-zoom-2")))
                             .clicked()
                         {
-                            super::request(ctx, super::CtxAction::Zoom(point));
+                            super::request(ctx, super::CtxAction::Zoom(point, None));
                         }
                     }
                     if ui.button(aurora_i18n::tr!("build-ui-general-copy-uuid")).clicked() {

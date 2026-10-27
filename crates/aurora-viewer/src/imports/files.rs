@@ -10,6 +10,12 @@ use sha2::{Digest, Sha256};
 use std::{fs::File, io::Read, path::Path};
 
 pub(super) fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
+    if path
+        .extension()
+        .is_some_and(|e| ["dae", "gltf", "glb"].iter().any(|ext| e.eq_ignore_ascii_case(ext)))
+    {
+        return read_mesh(path);
+    }
     let file = File::open(path).map_err(|_| AssetError::invalid("file cannot be opened"))?;
     let mut bytes = Vec::new();
     file.take(256 * 1024 * 1024 + 1)
@@ -18,6 +24,21 @@ pub(super) fn read(path: &Path) -> Result<Vec<u8>, AssetError> {
     if bytes.len() > 256 * 1024 * 1024 {
         return Err(AssetError::TooLarge("import file"));
     }
+    Ok(bytes)
+}
+
+fn read_mesh(path: &Path) -> Result<Vec<u8>, AssetError> {
+    let mut file = File::open(path).map_err(|_| AssetError::invalid("file cannot be opened"))?;
+    let size = file
+        .metadata()
+        .ok()
+        .and_then(|m| usize::try_from(m.len()).ok())
+        .ok_or(AssetError::TooLarge("mesh file"))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size)
+        .map_err(|_| AssetError::TooLarge("mesh file memory"))?;
+    file.read_to_end(&mut bytes).map_err(|_| AssetError::invalid("file read failed"))?;
     Ok(bytes)
 }
 
@@ -110,6 +131,7 @@ pub(super) fn mesh_scene(
     data: &[u8],
     assume_meters: bool,
     document: Option<Document>,
+    model_limit: u32,
 ) -> Result<(aurora_assets::import_mesh::Scene, HashMap<usize, LocalImage>), AssetError> {
     let root = path
         .parent()
@@ -119,8 +141,17 @@ pub(super) fn mesh_scene(
     let skeleton = aurora_assets::Skeleton::parse(include_bytes!("../../assets/character/avatar_skeleton.xml"))?;
     let mut images = HashMap::new();
     let scene = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("dae")) {
-        let mut scene = aurora_assets::import_mesh::collada::parse_with_meters(data, &skeleton, assume_meters)?;
+        let mut scene = aurora_assets::import_mesh::collada::parse_with_options(data, &skeleton, assume_meters, model_limit)?;
+        let used_images: HashSet<_> = scene
+            .used_materials()
+            .into_iter()
+            .filter_map(|i| scene.materials.get(i))
+            .flat_map(|m| m.images.into_iter().flatten())
+            .collect();
         for (index, uri) in &scene.image_uris {
+            if !used_images.contains(index) {
+                continue;
+            }
             match collada_image_path(&root, uri)
                 .and_then(|path| read(&path))
                 .and_then(|bytes| import_texture::decode_map(&bytes))
@@ -135,9 +166,9 @@ pub(super) fn mesh_scene(
     } else {
         let doc = match document {
             Some(doc) => doc,
-            None => Document::parse(data, |uri| relative(&root, uri))?,
+            None => Document::parse_mesh(data, |uri| read_mesh(&relative_path(&root, uri)?))?,
         };
-        let mut scene = aurora_assets::import_mesh::gltf::parse(&doc, &skeleton)?;
+        let mut scene = aurora_assets::import_mesh::gltf::parse_with_options(&doc, &skeleton, model_limit)?;
         for key in ["buffers", "images"] {
             for resource in doc.json[key].as_array().into_iter().flatten() {
                 if let Some(uri) = resource["uri"].as_str()
@@ -148,7 +179,8 @@ pub(super) fn mesh_scene(
                 }
             }
         }
-        for material in &scene.materials {
+        for index in scene.used_materials() {
+            let material = &scene.materials[index];
             for index in material.images.iter().flatten() {
                 if !images.contains_key(index) {
                     let result = doc.image(*index, |uri| relative(&root, uri)).and_then(|image| match image {
@@ -208,7 +240,7 @@ pub(super) fn load(
             .ok_or_else(|| AssetError::invalid("asset directory"))?
             .canonicalize()
             .map_err(|_| AssetError::invalid("asset directory"))?;
-        Some(Document::parse(&data, |uri| relative(&root, uri))?)
+        Some(Document::parse_mesh(&data, |uri| read_mesh(&relative_path(&root, uri)?))?)
     } else {
         None
     };
@@ -222,8 +254,16 @@ pub(super) fn load(
             }));
     let source = match extension.as_str() {
         "dae" | "gltf" | "glb" if choice == Choice::Mesh || detected_mesh => {
-            let (scene, images) = mesh_scene(path, &data, local && prefs.local_assume_meters, document.take())?;
+            let (scene, images) = mesh_scene(
+                path,
+                &data,
+                local && prefs.local_assume_meters,
+                document.take(),
+                prefs.mesh_model_limit,
+            )?;
             let mut draft = mesh::Draft::new(scene, images);
+            draft.lod_suffixes = prefs.mesh_suffixes.clone();
+            draft.upload_timeout = prefs.mesh_upload_timeout;
             draft.lods[3].path = Some(path.to_owned());
             draft.options.skin &= prefs.mesh_auto_weights;
             draft.preview_weights &= prefs.mesh_auto_preview_weights && draft.options.skin;
@@ -246,7 +286,9 @@ pub(super) fn load(
                 }
                 let candidate = path.with_file_name(format!("{stem}_{suffix}.{extension}"));
                 if candidate.is_file() {
-                    match read(&candidate).and_then(|data| mesh_scene(&candidate, &data, local && prefs.local_assume_meters, None)) {
+                    match read(&candidate)
+                        .and_then(|data| mesh_scene(&candidate, &data, local && prefs.local_assume_meters, None, prefs.mesh_model_limit))
+                    {
                         Ok((scene, _)) => {
                             if level < 4 {
                                 draft.lods[level].file = Some(Arc::new(scene));
@@ -567,6 +609,7 @@ impl Imports {
     }
     pub fn mesh_file(&mut self, id: Uuid, level: usize, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
         let meters = self.load_preferences.local_assume_meters && self.entries.iter().any(|e| e.id == id && e.local);
+        let model_limit = self.load_preferences.mesh_model_limit;
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
@@ -576,7 +619,7 @@ impl Imports {
                 .pick_file()
             {
                 let result = read(&path)
-                    .and_then(|data| mesh_scene(&path, &data, meters, None))
+                    .and_then(|data| mesh_scene(&path, &data, meters, None, model_limit))
                     .map(|(scene, images)| (Arc::new(scene), images, path))
                     .map_err(|e| e.to_string());
                 let _ = tx.send(Worker::MeshFile(id, level, result));
@@ -586,11 +629,12 @@ impl Imports {
     }
     pub fn mesh_file_path(&mut self, id: Uuid, path: PathBuf, jobs: &crate::scene::jobs::Jobs, ctx: &egui::Context) {
         let meters = self.load_preferences.local_assume_meters && self.entries.iter().any(|e| e.id == id && e.local);
+        let model_limit = self.load_preferences.mesh_model_limit;
         let tx = self.tx.clone();
         let wake = ctx.clone();
         jobs.execute(move || {
             let result = read(&path)
-                .and_then(|data| mesh_scene(&path, &data, meters, None))
+                .and_then(|data| mesh_scene(&path, &data, meters, None, model_limit))
                 .map(|(scene, images)| (Arc::new(scene), images, path))
                 .map_err(|e| e.to_string());
             let _ = tx.send(Worker::MeshFile(id, 8, result));
@@ -658,6 +702,7 @@ impl Imports {
             .entries
             .iter()
             .filter_map(|e| e.source.as_ref())
+            .filter(|source| !matches!(source, Source::Mesh(_)))
             .map(Source::retained_bytes)
             .sum::<usize>();
         let existing = self.entries.len();
@@ -691,6 +736,7 @@ impl Imports {
                         let size = loaded
                             .iter()
                             .filter_map(|e| e.source.as_ref())
+                            .filter(|source| !matches!(source, Source::Mesh(_)))
                             .map(Source::retained_bytes)
                             .sum::<usize>();
                         // Preserve a failed row instead of silently truncating

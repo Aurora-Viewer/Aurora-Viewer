@@ -16,6 +16,9 @@
 //! - `drift,x,y[,n]`: the same close-up, then a very slow Ctrl+Alt orbit
 //!   (a fiftieth of a pixel per frame) until frame 1200: edges that drift
 //!   steadily when the picture is exact, for comparing consecutive captures
+//! - `zoom-resident`: the People list's Zoom on the nearest standing resident
+//!   at frame 600, who then walks south from 660 to 760 and west until 860:
+//!   the camera keeps facing them all along
 //! - `tag`: left press on our own name tag at frame 600, drag (steer the
 //!   avatar, as when the avatar itself is held) until 660
 //! - `ml`: into mouselook at frame 600, out at 700
@@ -72,6 +75,10 @@ pub enum Step {
     /// The seat scenario's simulator messages for this frame.
     SitEvents,
     FollowEvents,
+    /// People › Near you double click on the demo resident (Avatar.ZoomIn).
+    ZoomResident,
+    /// Slide the demo resident by (x, y) metres, as if it walked.
+    MoveResident(f32, f32),
     Log,
 }
 
@@ -219,6 +226,19 @@ pub fn steps(spec: &str, frame: u64) -> Vec<Step> {
                     Step::Log,
                 ]),
                 _ => {}
+            }
+        }
+        "zoom-resident" => {
+            match frame {
+                600 => out.push(Step::ZoomResident),
+                // a 1.5 m walk sideways (south), then 1.2 m west, clear of
+                // the plaza's panels
+                660..=760 => out.push(Step::MoveResident(0.0, -0.015)),
+                761..=860 => out.push(Step::MoveResident(-0.012, 0.0)),
+                _ => {}
+            }
+            if matches!(frame, 600 | 630 | 700 | 760 | 820 | 900) {
+                out.push(Step::Log);
             }
         }
         "tag" => match frame {

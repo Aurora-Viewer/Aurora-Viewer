@@ -31,6 +31,9 @@ pub mod water;
 
 const HANDLE: u64 = (256000u64 << 32) | 256000;
 
+/// Help › About Aurora Viewer on one of its tabs (AURORA_DEMO_ABOUT).
+#[path = "demo_about.rs"]
+pub mod about;
 /// AURORA_DEMO_ARRIVAL: an arrival in a busy region, every asset downloaded.
 #[path = "demo_arrival.rs"]
 pub mod arrival;
@@ -94,6 +97,9 @@ pub mod geometry;
 /// Names and chat in the characters residents use (AURORA_DEMO_GLYPHS).
 #[path = "demo_glyphs.rs"]
 pub mod glyphs;
+/// The grid status feed and its button (AURORA_DEMO_GRID_STATUS).
+#[path = "demo_grid_status.rs"]
+pub mod grid_status;
 #[path = "demo_grounding.rs"]
 pub mod grounding;
 /// The demo group server (AURORA_DEMO_GROUP_PROFILE).
@@ -185,6 +191,10 @@ pub mod staff;
 /// (AURORA_DEMO_STREAM).
 #[path = "demo_stream.rs"]
 pub mod stream;
+/// The parcel radio's titles and the stream title window
+/// (AURORA_DEMO_STREAM_TITLE).
+#[path = "demo_stream_title.rs"]
+pub mod stream_title;
 /// Name plates in every state and at each distance (AURORA_DEMO_TAGS).
 #[path = "demo_tags.rs"]
 pub mod tags;
@@ -7597,6 +7607,8 @@ const MAT_MASK: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0002
 const MAT_EMISSIVE: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0003);
 const MAT_BUMPY: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0004);
 const MAT_BLEND: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0005);
+/// Mask with a cutoff of 0 (AURORA_DEMO_MASK_ZERO): every texel drawn.
+const MAT_MASK_ZERO: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0006);
 /// Glossy plate of AURORA_DEMO_SHIMMER: the bumps repeated many times.
 const MAT_SHIMMER: Uuid = Uuid::from_u128(0xDE40_3A70_0000_0000_0000_0000_0000_0020);
 const TEX_PICK_ZERO: Uuid = Uuid::from_u128(0xDE40_7E10_0000_0000_0000_0000_0000_0012);
@@ -7615,14 +7627,21 @@ fn panel_scale(k: usize, label: &str) -> Vec3 {
     }
 }
 
-/// (texture, legacy material, hover text) of the test panels.
+/// (texture, legacy material, hover text) of the test panels;
+/// AURORA_DEMO_MASK_ZERO=1 gives the holed one a Mask material with a
+/// cutoff of 0, drawn whole like the Legacy Viewer.
 fn alpha_panels() -> [(Uuid, Option<Uuid>, &'static str); 6] {
+    let holes = if std::env::var_os("AURORA_DEMO_MASK_ZERO").is_some() {
+        (TEX_HOLES, Some(MAT_MASK_ZERO), aurora_i18n::tr!("demo-mask-zero-cutoff"))
+    } else {
+        (TEX_HOLES, None, aurora_i18n::tr!("demo-auto-mask"))
+    };
     [
         (TEX_GRADIENT, None, aurora_i18n::tr!("demo-auto-blend")),
         (TEX_GRADIENT, Some(MAT_NONE), aurora_i18n::tr!("demo-alpha-mode-none")),
         (TEX_GRADIENT, Some(MAT_MASK), aurora_i18n::tr!("demo-mask-50-cutoff")),
         (TEX_GRADIENT, Some(MAT_EMISSIVE), aurora_i18n::tr!("common-emissive-mask")),
-        (TEX_HOLES, None, aurora_i18n::tr!("demo-auto-mask")),
+        holes,
         (BLANK_TEXTURE, Some(MAT_BUMPY), aurora_i18n::tr!("demo-normal-specular")),
     ]
 }
@@ -7858,6 +7877,14 @@ pub fn legacy_materials() -> Vec<(Uuid, crate::scene::legacy_mat::LegacyMaterial
             LegacyMaterial {
                 diffuse_alpha_mode: alpha_mode::MASK,
                 alpha_cutoff: 128,
+                ..base.clone()
+            },
+        ),
+        (
+            MAT_MASK_ZERO,
+            LegacyMaterial {
+                diffuse_alpha_mode: alpha_mode::MASK,
+                alpha_cutoff: 0,
                 ..base.clone()
             },
         ),

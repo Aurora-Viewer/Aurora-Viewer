@@ -396,11 +396,11 @@ fn list_part(
                 if action.sheet {
                     open_sheet(st, row.id);
                 }
-                // double click: the camera goes to the avatar, when it is
+                // double click: the camera goes to the avatar and follows it, when it is
                 // drawn (LLAvatarActions::zoomIn, FSPanelRadar)
                 if action.activate {
                     if row.loaded {
-                        context::request(ui.ctx(), CtxAction::Zoom(row.position + glam::Vec3::Z * 0.6));
+                        context::request(ui.ctx(), CtxAction::ZoomAvatar(row.id));
                     } else {
                         actions.push(PeopleAction::TooFarToZoom);
                     }
@@ -1036,7 +1036,6 @@ mod tests {
                     seen: 125.0,
                     range: Some(4.7),
                     loaded: true,
-                    position: glam::Vec3::ZERO,
                     left_behind: false,
                 };
                 let buttons = quick_actions(&world, &row);

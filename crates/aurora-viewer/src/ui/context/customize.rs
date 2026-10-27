@@ -556,14 +556,18 @@ mod tests {
         let facts = Facts::default();
         let entries = entries::world_menu(&m.target, &facts, Vec3::ZERO);
         let catalog = Catalog::new(&entries);
-        let zoom = catalog.entries.iter().find(|entry| matches!(entry.kind, layout::Kind::Action(i) if matches!(catalog.commands[i].kind, entries::Kind::Action(CtxAction::Zoom(_))))).expect("zoom");
+        let zoom = catalog.entries.iter().find(|entry| matches!(entry.kind, layout::Kind::Action(i) if matches!(catalog.commands[i].kind, entries::Kind::Action(CtxAction::Zoom(..))))).expect("zoom");
         let mut prefs = Preferences::default();
         profile(&mut prefs, scope(&m.target, &facts))
             .layout
             .placements
             .insert(zoom.id.clone(), layout::HIDDEN.into());
         let (rows, _) = radial_entries(&m, &facts, &entries, &prefs);
-        assert!(!rows.iter().any(|row| matches!(row.kind, entries::Kind::Action(CtxAction::Zoom(_)))));
+        assert!(
+            !rows
+                .iter()
+                .any(|row| matches!(row.kind, entries::Kind::Action(CtxAction::Zoom(..))))
+        );
         assert!(
             rows.iter()
                 .any(|row| matches!(row.kind, entries::Kind::Action(CtxAction::CustomizeMenu(_))))
@@ -581,7 +585,7 @@ mod tests {
         for entry in &catalog.entries {
             let layout::Kind::Action(index) = entry.kind else { continue };
             let slot = match catalog.commands[index].kind {
-                entries::Kind::Action(CtxAction::Zoom(_)) => 0,
+                entries::Kind::Action(CtxAction::Zoom(..)) => 0,
                 entries::Kind::Action(CtxAction::Edit(_)) => 7,
                 _ => continue,
             };
@@ -596,7 +600,7 @@ mod tests {
         let entries::Kind::Submenu(children) = &bar.kind else {
             panic!("bar submenu")
         };
-        assert!(matches!(children[0].kind, entries::Kind::Action(CtxAction::Zoom(_))));
+        assert!(matches!(children[0].kind, entries::Kind::Action(CtxAction::Zoom(..))));
         assert!(matches!(children[1].kind, entries::Kind::Action(CtxAction::Edit(_))));
     }
 

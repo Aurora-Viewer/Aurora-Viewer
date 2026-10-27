@@ -24,6 +24,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+mod about;
 mod ao;
 mod app_links;
 mod area_search;
@@ -67,6 +68,7 @@ mod gestures;
 mod give_demo;
 mod gpu_stall;
 mod graphics_start;
+mod grid_status;
 mod hover_height;
 mod hover_tips;
 mod hud_drag;
@@ -104,6 +106,7 @@ mod settings_backup;
 mod shape_editor;
 mod snapshot;
 mod social_menu_demo;
+mod stream_list;
 mod suggest_demo;
 mod task_notecards;
 mod teleport_lookup;
@@ -112,6 +115,7 @@ mod texture_library;
 mod texture_refresh;
 mod viewer_stats;
 mod viewfinder;
+mod wearable_editor;
 mod world_click_demo;
 mod worn_demo;
 
@@ -447,7 +451,9 @@ pub struct App {
     mic_was: bool,
     context_menu_was: bool,
     /// "Delete" waiting for a yes: (object, why it asks).
-    delete_confirm: Option<(uuid::Uuid, String)>,
+    /// The objects to delete once confirmed: one from a world menu, the
+    /// selected rows of the Area Search menu.
+    delete_confirm: Option<(Vec<uuid::Uuid>, String)>,
     /// "Freeze" / "Eject" waiting for an answer (app/land_moderation.rs).
     moderation_ask: Option<land_moderation::Ask>,
     /// The object menus' questions and script queue (app/object_menu.rs).
@@ -550,6 +556,16 @@ pub struct App {
     blacklist_ui: ui::blacklist::BlacklistUi,
     /// "Bumps, pushes & hits" (Help menu).
     bumps_ui: ui::bumps::BumpsUi,
+    /// Help › Grid status: the grid's feed (`app/grid_status.rs`), whether
+    /// its button stands on a toolbar, and whether the window was open
+    /// last frame.
+    grid_status: crate::grid_status::GridStatus,
+    grid_status_listed: bool,
+    grid_status_was_open: bool,
+    about: about::About,
+    /// The parcel radio's title and the ones before (World › Stream title).
+    stream_titles: crate::stream_title::StreamTitles,
+    stream_title_ui: ui::stream_title::StreamTitleUi,
     buy_currency_ui: ui::buy_currency::BuyCurrencyUi,
     /// The Pay window of a resident or a group (`ui/pay.rs`).
     pay_ui: ui::pay::PayUi,
@@ -767,6 +783,7 @@ pub struct App {
     shape_ui: crate::shape_editor::State,
     shape_camera: Option<Camera>,
     physics_ui: crate::physics_editor::State,
+    wearable_ui: crate::wearable_editor::State,
     /// Me › Avatar health and the customise animation.
     avatar_health: avatar_health::AvatarHealth,
     last_social_poll: Instant,
@@ -780,6 +797,8 @@ pub struct App {
     folders: folders::Folders,
     /// The settings backup being written or read (app/settings_backup.rs).
     settings_backup: settings_backup::Job,
+    /// The stream list being exported or imported (app/stream_list.rs).
+    stream_list: stream_list::Job,
     /// AURORA_CAPTURE: file, frames to capture (several: one file each,
     /// `<name>-<frame>.png`), quit after the last one.
     capture: Option<(Vec<(u64, std::path::PathBuf)>, bool)>,
@@ -905,6 +924,8 @@ fn apply_test_overrides(settings: &mut Settings) {
 }
 
 impl App {
+    // Growing editor state must not accumulate large return-value temporaries
+    // on the Windows main stack while the avatar library is being loaded.
     pub fn new() -> anyhow::Result<Box<App>> {
         // found on a background thread while the rest starts
         ui::fonts::fallback::start();
@@ -992,8 +1013,6 @@ impl App {
         scene.draw_distance = settings.draw_distance;
         scene.lod_factor = settings.lod_factor;
         let update_demo = ui::update::UpdateDemo::from_env(&settings);
-        // Main's event loop and this constructor otherwise keep several full
-        // application values live on Windows' small startup stack.
         Ok(Box::new(App {
             settings,
             disk_cache,
@@ -1207,6 +1226,12 @@ impl App {
             area_search_feed: Default::default(),
             blacklist_ui: Default::default(),
             bumps_ui: Default::default(),
+            grid_status: Default::default(),
+            grid_status_listed: false,
+            grid_status_was_open: false,
+            about: Default::default(),
+            stream_titles: Default::default(),
+            stream_title_ui: Default::default(),
             buy_currency_ui: Default::default(),
             pay_ui: Default::default(),
             money_tracker_ui: Default::default(),
@@ -1346,6 +1371,7 @@ impl App {
             shape_ui: Default::default(),
             shape_camera: None,
             physics_ui: Default::default(),
+            wearable_ui: Default::default(),
             avatar_health: Default::default(),
             last_social_poll: Instant::now(),
             last_input: Instant::now(),
@@ -1353,6 +1379,7 @@ impl App {
             neighbours_refused: false,
             folders: Default::default(),
             settings_backup: Default::default(),
+            stream_list: Default::default(),
             capture: std::env::var_os("AURORA_CAPTURE").map(|p| {
                 let frames = std::env::var("AURORA_CAPTURE_FRAMES").unwrap_or_default();
                 (
@@ -2406,6 +2433,7 @@ impl App {
         self.shape_ui = Default::default();
         self.shape_camera = None;
         self.physics_ui = Default::default();
+        self.wearable_ui = Default::default();
         self.reset_avatar_health();
         self.interactions = Default::default();
         self.screen = Screen::Login;
@@ -2720,6 +2748,9 @@ impl App {
                 self.settings.save();
             }
             let blender_shape = self.blender_shape_loaded(item, asset, &result);
+            if self.wearable_ui.loaded(&mut self.world, item, asset, &result) {
+                return;
+            }
             if self.physics_ui.loaded(&mut self.world, item, asset, &result) {
                 return;
             }
@@ -2741,6 +2772,9 @@ impl App {
             return;
         }
         if let NetEvent::WearableSaved { request, result } = ev {
+            if self.wearable_saved(request, &result) {
+                return;
+            }
             if self.physics_saved(request, &result) {
                 return;
             }
@@ -3433,6 +3467,27 @@ impl App {
                         if let Some(e) = self.world.apply(ev) {
                             self.on_app_event(e);
                         }
+                    }
+                }
+                Step::ZoomResident => {
+                    let me = self.world.agent.position;
+                    let nearest = self
+                        .world
+                        .objects
+                        .iter()
+                        .filter(|(_, o)| o.is_avatar() && o.parent_id == 0 && o.full_id != self.world.agent_id)
+                        .min_by(|a, b| a.1.position.distance(me).total_cmp(&b.1.position.distance(me)))
+                        .map(|(_, o)| o.full_id);
+                    match nearest {
+                        Some(id) => self.on_ctx_action(ui::context::CtxAction::ZoomAvatar(id)),
+                        None => log::warn!("demo camera: no standing resident to zoom on"),
+                    }
+                }
+                Step::MoveResident(x, y) => {
+                    if let Some(idx) = self.camera.focus_object_id().and_then(|id| self.world.objects.index_of_uuid(&id))
+                        && let Some(o) = self.world.objects.get_mut(idx)
+                    {
+                        o.position += glam::Vec3::new(x, y, 0.0);
                     }
                 }
                 Step::Log => self.demo_note(click_pick::DemoNote::Camera(self.frame_count)),
@@ -4835,6 +4890,16 @@ impl App {
             aurora_audio::StreamStatus::Playing { title } if !self.stream_url.is_empty() => title,
             _ => None,
         };
+        // the stream title window's (FSStreamTitleManager): the title now,
+        // empty once the stream stops; the demo's titles take its place
+        if !(self.demo && crate::demo::stream_title::scenario().is_some()) {
+            let now = if self.stream_url.is_empty() {
+                ""
+            } else {
+                title.as_deref().unwrap_or("")
+            };
+            self.stream_titles.update(now, self.settings.audio.stream_title_history as usize);
+        }
         if self.stream_url.is_empty() {
             self.stream_title_said = None;
         } else if let Some(title) = title.filter(|t| self.stream_title_said.as_ref() != Some(t)) {
@@ -4929,7 +4994,8 @@ impl App {
     }
 
     fn confirm_exit(&mut self, action: ui::exit::Action) {
-        if action != ui::exit::Action::Cancel && (!self.script_editors.prepare_exit() || !self.texture_library.prepare_exit(&self.egui_ctx))
+        if action != ui::exit::Action::Cancel
+            && (!self.close_wearable_editor() || !self.script_editors.prepare_exit() || !self.texture_library.prepare_exit(&self.egui_ctx))
         {
             self.exit_prompt.open = false;
             return;
@@ -6689,6 +6755,7 @@ impl App {
         images.extend(self.texture_library.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
+        images.extend(self.wearable_ui.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
         images.extend(self.favorite_images.drain());
         let overlays = self.world.rlva_overlay_frames(Instant::now());
@@ -7415,6 +7482,7 @@ impl App {
             return;
         };
         self.apply_local_imports(&mut gfx.renderer);
+        self.wearable_ui.preview.apply(&mut self.world, &mut self.scene, &mut gfx.renderer);
         self.update_blender_live(&mut gfx.renderer);
         let t_up = Instant::now();
         let (w, h) = gfx.renderer.size();
@@ -7791,6 +7859,7 @@ impl App {
             self.scene.ground_avatar_feet = self.settings.ground_avatar_feet;
             self.scene.ground_feet_while_moving = self.settings.ground_feet_while_moving;
             self.scene.ground_feet_max_height = self.settings.ground_feet_max_height;
+            self.scene.set_foot_scope_limit(self.settings.ground_feet_max_avatars);
             self.scene.body_physics = crate::scene::body_physics::Config {
                 enabled: self.settings.avatar_physics,
                 detail: self.settings.avatar_physics_detail,
@@ -7891,6 +7960,7 @@ impl App {
                 log::info!("demo animation edit: {} frozen skeletons", self.scene.paused_skeletons.len());
             }
             // poses first: attachments follow their bone in the same frame
+            self.scene.update_foot_scope(&self.world, cull, world_frame);
             let completed = self.scene.update_poses(&mut self.world, self.camera.position, world_frame);
             self.scene.set_auto_hover_second_life(matches!(
                 self.settings.grid,
@@ -9519,6 +9589,28 @@ impl App {
                 self.world.apply(event);
             }
         }
+        if self.demo
+            && let Some((tab, end)) = crate::demo::about::tab()
+        {
+            if self.frame_count == crate::demo::about::OPEN {
+                self.about.ui.open(&self.egui_ctx, tab, &mut self.panels.about);
+            }
+            // until the computer is read and the cards have their height
+            self.about.ui.scroll_to_end = end && self.frame_count.saturating_sub(crate::demo::about::OPEN) < 60;
+        }
+        if self.demo
+            && let Some(scenario) = crate::demo::stream_title::scenario()
+        {
+            let title = crate::demo::stream_title::title(self.frame_count, scenario);
+            self.stream_titles.update(title, self.settings.audio.stream_title_history as usize);
+            if self.frame_count == crate::demo::stream_title::OPEN {
+                self.settings.audio.stream_title_text_only = scenario.text_only;
+                ui::widgets::open_floater(&self.egui_ctx, ui::stream_title::WINDOW, &mut self.panels.stream_title);
+                if scenario.history {
+                    ui::widgets::open_floater(&self.egui_ctx, ui::stream_title::HISTORY, &mut self.panels.stream_title_history);
+                }
+            }
+        }
         if self.demo && crate::demo::collisions::mode().is_some() {
             for event in crate::demo::collisions::events(self.frame_count) {
                 self.world.apply(event);
@@ -10998,7 +11090,10 @@ impl App {
                 self.options_ui.open(ui::options::Page::Sound, 0);
             }
         }
+        self.poll_stream_list();
         match a.bar {
+            BarAction::ImportStreamList => self.import_stream_list(),
+            BarAction::ExportStreamList => self.export_stream_list(),
             BarAction::CheckUpdates => self.updater.check(self.net.runtime(), true),
             BarAction::ReportBug => self.open_issue_chooser(),
             BarAction::CopyVersion => self.copy_version(),
@@ -12457,6 +12552,16 @@ impl App {
                     .and_then(|r| r.info.as_ref())
                     .map(|i| ui::bars::maturity_name(i.sim_access))
                     .unwrap_or("");
+                // the conversations' thumbnails (#1134): the bars reserve
+                // their room, `thumbnails::show` draws them below
+                let thumbnails = if self.demo { ui::chat::thumbnails::demo_place() } else { None };
+                ui::chat::thumbnails::prepare(
+                    &mut self.chat_ui,
+                    &self.world,
+                    thumbnails.unwrap_or(self.settings.chat_thumbnails),
+                    self.settings.chat_thumbnails_flash,
+                    self.settings.reduce_motion,
+                );
                 let status = ui::bars::StatusInfo {
                     location_hidden: self.world.rlva.has("showloc"),
                     show_bug_report: if self.demo {
@@ -12469,6 +12574,7 @@ impl App {
                     ban_lines: self.settings.maps.ban_lines,
                     world_overlays: self.settings.world_overlays,
                     show_transparency: self.settings.debug.show_alpha,
+                    conversation_thumbnails: self.chat_ui.thumbnails.top_count(),
                     region: if self.world.rlva.has("showloc") {
                         aurora_i18n::tr!("rlva-hidden-region")
                     } else {
@@ -12693,6 +12799,30 @@ impl App {
                     t.buttons = Some(buttons);
                     demo_toolbar = Some(t);
                 }
+                // AURORA_DEMO_GRID_STATUS: the Grid status button at the end
+                // of the bottom bar, for this run only
+                if self.demo && crate::demo::grid_status::mode().is_some() {
+                    let layout = if classic_bars {
+                        layout.clone()
+                    } else {
+                        self.dock_layout.of(layout, autohide_chat_bar).clone()
+                    };
+                    let mut t = demo_toolbar
+                        .take()
+                        .unwrap_or_else(|| self.settings.toolbar.clone().unwrap_or_default());
+                    let mut buttons = t.buttons(&layout).to_vec();
+                    if let Some(c) = ui::toolbar::COMMANDS.iter().find(|c| c.id == "gridstatus")
+                        && !buttons.iter().any(|b| b.command == c.id)
+                    {
+                        buttons.push(ui::skin::ToolButton {
+                            icon: c.icon.into(),
+                            command: c.id.into(),
+                            tooltip: String::new(),
+                        });
+                    }
+                    t.buttons = Some(buttons);
+                    demo_toolbar = Some(t);
+                }
                 let toolbar_settings = match demo_toolbar.as_mut() {
                     Some(t) => t,
                     None => self.settings.toolbar.get_or_insert_default(),
@@ -12703,6 +12833,9 @@ impl App {
                 } else {
                     self.dock_layout.of(layout, autohide_chat_bar)
                 };
+                // the feed is polled while its button stands on a toolbar
+                // (LLFloaterGridStatus::checkGridStatusRSS, hasCommand)
+                self.grid_status_listed = toolbar_settings.location("gridstatus", bar_layout).is_some();
                 self.toolbar_ui.islands = !classic_bars;
                 self.chat_ui.keep_focus = self.settings.chat_keep_focus;
                 // the chat fields' suggestions (#980); the residents around
@@ -12813,6 +12946,17 @@ impl App {
                     area = room;
                 }
                 ui::layout::set_work_area(ui.ctx(), area);
+                ui::chat::thumbnails::show(
+                    ui,
+                    &p,
+                    &mut self.world,
+                    &mut self.chat_ui,
+                    &mut self.panels,
+                    &self.avatar_pics,
+                    &self.ui_images,
+                    area,
+                    chrome.top,
+                );
                 // the islands leave room between them, above and below: the
                 // windows move over the whole screen; the Legacy Viewer's
                 // bars are full width, the windows stay between them
@@ -13519,6 +13663,7 @@ impl App {
                     self.inventory_ui.merchant_requested = true;
                     self.send(NetCommand::RequestInventoryMerchant);
                 }
+                self.prepare_inventory_marketplace_commands();
                 for ia in ui::inventory::show(
                     &ctx,
                     &p,
@@ -13597,11 +13742,13 @@ impl App {
                     self.shape_action(action);
                 }
                 if !self.shape_ui.open
+                    && !self.wearable_ui.open
                     && let Some(camera) = self.shape_camera.take()
                 {
                     self.camera = camera;
                 }
                 self.physics_window(&ctx, &p);
+                self.wearable_window(&ctx, &p);
                 self.ao_window(&ctx, &p);
                 t = self.ui_parts.lap(Part::UiInventory, t);
                 let facts = self.context_facts();
@@ -13651,12 +13798,14 @@ impl App {
                     }
                 }
                 self.land_moderation_ui(&ctx, &p);
-                if let Some((id, text)) = self.delete_confirm.clone()
+                if let Some((ids, text)) = self.delete_confirm.clone()
                     && let Some(yes) = ui::context::delete_confirm(&ctx, &p, &text)
                 {
                     self.delete_confirm = None;
-                    if yes {
-                        ui::context::request(&ctx, ui::context::CtxAction::DeleteConfirmed(id));
+                    match ids.as_slice() {
+                        [id] if yes => ui::context::request(&ctx, ui::context::CtxAction::DeleteConfirmed(*id)),
+                        _ if yes => self.delete_objects(&ids),
+                        _ => {}
                     }
                 }
                 if let Some((region, _, dont_ask)) = self.place_confirm.as_mut()
@@ -13989,6 +14138,18 @@ impl App {
                 self.sound_explorer_window(&ctx, &p);
                 self.avatar_render_settings_window(&ctx, &p);
                 self.bumps_ui.show(&ctx, &p, &self.world, &mut self.panels.bumps);
+                self.grid_status_window(&ctx, &p);
+                let shown = self.stream_title_ui.show(
+                    &ctx,
+                    &p,
+                    &mut self.stream_titles,
+                    &mut self.settings.audio,
+                    &mut self.panels.stream_title,
+                    &mut self.panels.stream_title_history,
+                );
+                if shown.settings {
+                    self.settings.save();
+                }
                 ui::beacons::show(&ctx, &p, &mut self.panels.beacons, &mut self.settings);
                 if ui::owned_land::show(&ctx, &p, &mut self.world, &mut self.panels.owned_land) {
                     ui::widgets::open_floater(&ctx, "worldmap", &mut self.panels.world_map);
@@ -14298,6 +14459,7 @@ impl App {
                 self.panels.perf = open;
                 self.monitor_actions(monitor_actions);
                 self.dev_toolbox_window(&ctx, &p, renderer);
+                self.about_window(&ctx, &p, renderer);
                 let region = self.world.region_name();
                 let available = self.world.main_has_cap("SimConsoleAsync");
                 let rlva_actions = self.options_ui.rlva_tools.show(&ctx, &p, &self.world);
@@ -14369,6 +14531,7 @@ impl App {
                 self.draw_options(&ctx, &p, &mut a);
                 self.settings.show_chat = self.panels.chat;
                 self.settings.show_minimap = self.panels.minimap;
+                self.settings.audio.stream_title_window = self.panels.stream_title;
                 self.settings.show_people = self.panels.people;
                 self.settings.people_tab = self.panels.people_tab;
                 self.settings.show_inventory = self.panels.inventory;
@@ -15981,6 +16144,7 @@ impl ApplicationHandler for App {
                 }
             }
             self.demo_shape_editor();
+            self.demo_wearable_editor();
             if let Some(mode) = ui::widgets::demo::rez_mode() {
                 if mode != "1" && std::env::var_os("AURORA_DEMO_CAM").is_none() {
                     self.camera.demo_orbit(0.0, 0.6, Some(9.0), &self.settings.camera);
@@ -16249,6 +16413,15 @@ impl ApplicationHandler for App {
                 if !view.starts_with("offer") {
                     self.world.notifications = Default::default();
                 }
+                if view == "aurora-menu-textures-export"
+                    && let Some(mut snapshot) = self.world.inventory.items.get(&uuid::Uuid::from_u128(8104)).cloned()
+                {
+                    snapshot.id = uuid::Uuid::from_u128(8180);
+                    snapshot.asset_type = 15;
+                    snapshot.inv_type = 15;
+                    snapshot.name = format!("{} 2", snapshot.name);
+                    self.world.inventory.add_items(vec![snapshot]);
+                }
                 if let Some(id) = crate::world::inventory::demo::target(&view, &self.world.inventory) {
                     self.inventory_ui.show_original(&self.world.inventory, id);
                     if let Some(item) = self.world.inventory.items.get_mut(&id) {
@@ -16260,6 +16433,9 @@ impl ApplicationHandler for App {
                     }
                     if view == "uuid-multi" {
                         self.inventory_ui.selection.insert(uuid::Uuid::from_u128(8105));
+                    }
+                    if view == "aurora-menu-textures-export" {
+                        self.inventory_ui.selection.insert(uuid::Uuid::from_u128(8180));
                     }
                     if view.starts_with("aurora-menu-") {
                         self.inventory_ui

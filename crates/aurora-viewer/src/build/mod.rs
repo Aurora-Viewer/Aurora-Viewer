@@ -939,6 +939,31 @@ impl BuildTool {
         }
     }
 
+    /// Several objects selected at once, replacing the selection: the
+    /// Area Search menu's selectObjectAndFamily on each row, the first one
+    /// primary. Objects of another kind than the first (worn, HUD) are left
+    /// out, as LLSelectMgr keeps them in separate selections.
+    pub fn select_many(&mut self, world: &mut World, s: &BuildSettings, idxs: &[usize]) {
+        if self.replacement_active() {
+            return;
+        }
+        self.deselect_all(world);
+        self.selection_linked = s.edit_linked;
+        let kind = idxs.first().map(|&i| select_type(world, i));
+        let mut seen = std::collections::HashSet::new();
+        let units: Vec<ObjKey> = idxs
+            .iter()
+            .filter(|&&i| Some(select_type(world, i)) == kind)
+            .filter_map(|&i| Self::unit_of(world, i, s.edit_linked))
+            .filter(|u| seen.insert(*u))
+            .collect();
+        // one ObjectSelect per region and 254 prims (sendListToRegions)
+        for (handle, ids) in self.wire_ids(world, &units, self.selection_linked) {
+            self.send(BuildCmd::Select { handle, local_ids: ids });
+        }
+        self.selection = units;
+    }
+
     /// Right click on an object: select it like a click while the menu is
     /// open (LLToolPie::handleRightClickPick -> LLToolSelect::handleObjectSelection
     /// with temp_select). Returns whether something got selected.

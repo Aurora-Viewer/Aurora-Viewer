@@ -121,6 +121,15 @@ impl MediaEntry {
         }
     }
 
+    /// LLVOVolume::hasMediaPermission(MEDIA_PERM_INTERACT): may we navigate
+    /// this face to another page? Only navigation depends on it: clicks,
+    /// hover and wheel reach the page whatever it says (handleMediaClick).
+    /// The group bit is not checked yet.
+    pub fn may_navigate(&self, owner: bool) -> bool {
+        let bits = if owner { PERM_OWNER | PERM_ANYONE } else { PERM_ANYONE };
+        self.perms_interact & bits != 0
+    }
+
     /// LLMediaEntry::checkCandidateUrl: allowed by the whitelist (if on).
     /// Patterns are `[scheme://]host[/path]` with `*` wildcards; the host
     /// part matches the end of the URL's host (www.example.com ~ example.com).
@@ -411,6 +420,17 @@ mod tests {
         assert!(!e.check_url("https://a.foo.org/other"));
         e.whitelist_enable = false;
         assert!(e.check_url("http://anything"));
+    }
+
+    #[test]
+    fn interaction_permissions_gate_navigation() {
+        let mut e = MediaEntry::default();
+        assert!(e.may_navigate(true) && e.may_navigate(false));
+        e.perms_interact = PERM_OWNER;
+        assert!(e.may_navigate(true) && !e.may_navigate(false));
+        // a HUD page locked to its home page: nobody navigates it
+        e.perms_interact = 0;
+        assert!(!e.may_navigate(true) && !e.may_navigate(false));
     }
 
     #[test]

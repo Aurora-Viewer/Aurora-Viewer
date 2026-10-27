@@ -72,6 +72,85 @@ impl App {
                         _ => {}
                     }
                 }
+                if matches!(mode, "auto-ik" | "auto-ik-moving" | "auto-ik-others") {
+                    if self.frame_count == 600 {
+                        self.settings.ground_avatar_feet = true;
+                        self.settings.ground_feet_while_moving = mode == "auto-ik-moving";
+                        if mode == "auto-ik-others" {
+                            self.hover_height_ui.open = false;
+                            self.settings
+                                .render_exceptions
+                                .retain(|(id, _)| id != &crate::demo::DEMO_LOUP.to_string());
+                            self.settings.render_exceptions.push((crate::demo::DEMO_LOUP.to_string(), 2));
+                            self.camera.demo_orbit(1.0, 0.25, Some(6.0), &self.settings.camera);
+                        }
+                    }
+                    if mode == "auto-ik-others" {
+                        match self.frame_count {
+                            660 | 840 => self.settings.ground_avatar_feet = false,
+                            720 => self.settings.ground_avatar_feet = true,
+                            _ => {}
+                        }
+                    }
+                    match self.frame_count {
+                        720 => self.settings.auto_hover_height = false,
+                        840 => self.settings.auto_hover_height = true,
+                        _ => {}
+                    }
+                }
+                if matches!(mode, "auto-ik-perf" | "auto-ik-perf-off" | "auto-ik-budget") && self.frame_count == 600 {
+                    self.settings.ground_avatar_feet = mode != "auto-ik-perf-off";
+                    self.settings.ground_feet_while_moving = true;
+                    self.settings.ground_feet_max_height = crate::settings::DEFAULT_GROUND_FEET_HEIGHT;
+                    self.settings.auto_hover_height = false;
+                    self.settings.max_avatars = 100;
+                    self.settings.max_complexity = 0;
+                    self.settings.complexity_mode = 0;
+                    self.hover_height_ui.open = false;
+                    if mode == "auto-ik-budget" {
+                        self.settings.ground_feet_max_avatars = crate::settings::DEFAULT_GROUND_FEET_AVATARS;
+                    }
+                    let origin = self.world.agent.position;
+                    let residents: Vec<_> = self
+                        .world
+                        .objects
+                        .avatars()
+                        .filter(|(_, avatar)| {
+                            avatar.key.local_id >= 100_000
+                                && avatar.key.local_id < 125_600
+                                && (avatar.key.local_id - 100_000).is_multiple_of(64)
+                        })
+                        .map(|(index, avatar)| (index, (avatar.key.local_id - 100_000) / 64))
+                        .collect();
+                    for (index, serial) in residents {
+                        let angle = serial as f32 * 2.399_963_1;
+                        let radius = 5.0 + (serial % 8) as f32 * 1.5;
+                        let position = origin + glam::Vec3::new(angle.cos() * radius, angle.sin() * radius, 0.0);
+                        let floor = crate::demo::floor_at(position.x, position.y);
+                        if let Some(avatar) = self.world.objects.get_mut(index) {
+                            avatar.position = position.with_z(floor + 0.84);
+                            avatar.foot_plane = Some(glam::Vec4::new(0.0, 0.0, 1.0, floor + 0.05));
+                        }
+                    }
+                    self.camera.set_view(
+                        origin + glam::Vec3::new(-6.0, -2.0, 6.0),
+                        origin + glam::Vec3::new(12.0, 2.0, 0.0),
+                        &mut self.world.agent,
+                        &self.settings.camera,
+                    );
+                    log::info!(
+                        "foot IK benchmark ready: mode={mode} crowd={}",
+                        crate::demo::crowd_count().unwrap_or(0)
+                    );
+                }
+                if mode == "auto-ik-budget" {
+                    match self.frame_count {
+                        900 => self.settings.ground_feet_max_avatars = 0,
+                        1100 => self.settings.ground_feet_max_avatars = 12,
+                        1300 => self.settings.ground_feet_max_avatars = crate::settings::DEFAULT_GROUND_FEET_AVATARS,
+                        _ => {}
+                    }
+                }
                 // A separate ground height, then the sit shortcut: the avatar
                 // floats 0.5 m above its ground pose, and stands back at 0.
                 if mode == "sit-ground" {

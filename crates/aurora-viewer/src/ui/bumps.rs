@@ -152,6 +152,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn times_follow_daylight_saving_time() {
+        // 2026-10-26 19:00:05 UTC is 12:00:05 PDT, a week before the switch
+        assert_eq!(time_text(1_793_041_205), "12:00:05");
+        // 2026-11-01 09:00 UTC: 2:00 PDT becomes 1:00 PST
+        assert_eq!(time_text(1_793_523_599), "01:59:59");
+        assert_eq!(time_text(1_793_523_600), "01:00:00");
+    }
+
+    #[test]
     fn ctrl_and_shift_choose_several_rows() {
         let order: Vec<Key> = (1..=4).map(|n| (Uuid::from_u128(n), Kind::Bump)).collect();
         let mut ui = BumpsUi::default();

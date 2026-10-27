@@ -396,6 +396,7 @@ mod tests {
                                 active_gestures: Default::default(),
                                 touchable: Default::default(),
                                 names: Default::default(),
+                                ..Default::default()
                             },
                             &mut Vec::new(),
                         )
@@ -719,6 +720,7 @@ mod tests {
                 appearance_busy: false,
                 touchable: if touchable { HashSet::from([item]) } else { HashSet::new() },
                 names: Default::default(),
+                ..Default::default()
             };
             let mut actions = Vec::new();
             let mut open = true;
@@ -813,6 +815,7 @@ mod tests {
                 active_gestures: Default::default(),
                 touchable: Default::default(),
                 names: Default::default(),
+                ..Default::default()
             };
             let mut actions = Vec::new();
             let mut open = true;
@@ -907,6 +910,7 @@ mod tests {
                 active_gestures: Default::default(),
                 touchable: Default::default(),
                 names: Default::default(),
+                ..Default::default()
             };
             // These commands were dragged out of the icon submenu into text.
             let mut preferences = InventoryPreferences::default();

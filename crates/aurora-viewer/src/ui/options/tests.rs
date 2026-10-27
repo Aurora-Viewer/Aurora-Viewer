@@ -297,6 +297,7 @@ const BEFORE: &[&str] = &[
     "ground_avatar_feet",
     "ground_feet_while_moving",
     "ground_feet_max_height",
+    "ground_feet_max_avatars",
     "plates_hover_expand",
     "plates_friends_only_full",
     "plate_click",
@@ -453,6 +454,7 @@ fn the_moved_settings_reset_with_their_new_page() {
     s.synchronize_animations = true;
     s.ground_avatar_feet = true;
     s.ground_feet_max_height = 1.0;
+    s.ground_feet_max_avatars = 50;
     s.sort_received_items = true;
     s.received_items_since = 123;
     s.reduce_motion = true;
@@ -467,6 +469,7 @@ fn the_moved_settings_reset_with_their_new_page() {
     reset_page_settings(Page::Avatars, &mut s);
     assert!(!s.ground_avatar_feet);
     assert_eq!(s.ground_feet_max_height, 0.4);
+    assert_eq!(s.ground_feet_max_avatars, 5);
     assert!(s.audio.lip_sync);
     reset_page_settings(Page::Inventory, &mut s);
     assert!(!s.sort_received_items);

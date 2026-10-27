@@ -2,6 +2,9 @@
 //! LLModelPreview and LLMeshUploadThread (Firestorm, originally LGPL 2.1).
 
 pub(super) mod inspector;
+#[cfg(test)]
+mod parity_tests;
+pub(crate) mod preview;
 
 use super::*;
 use aurora_assets::{
@@ -82,6 +85,8 @@ pub struct Draft {
     pub physics_file: Option<Arc<Scene>>,
     pub physics_path: Option<PathBuf>,
     pub options: Options,
+    pub lod_suffixes: [String; 5],
+    pub upload_timeout: u32,
     pub prepared: Option<Arc<Prepared>>,
     pub quote: Option<aurora_net::inventory::mesh_upload::Quote>,
     pub quoted_at: Option<std::time::Instant>,
@@ -118,9 +123,15 @@ impl Draft {
                 .max(matrix.x_axis.truncate().length())
                 .max(matrix.y_axis.truncate().length())
                 .max(matrix.z_axis.truncate().length());
-            for x in [-0.5, 0.5] {
-                for y in [-0.5, 0.5] {
-                    for z in [-0.5, 0.5] {
+            let bounds = self
+                .scene
+                .normalized_bounds
+                .get(&instance.model)
+                .copied()
+                .unwrap_or([glam::Vec3::splat(-0.5), glam::Vec3::splat(0.5)]);
+            for x in [bounds[0].x, bounds[1].x] {
+                for y in [bounds[0].y, bounds[1].y] {
+                    for z in [bounds[0].z, bounds[1].z] {
                         let point = matrix.transform_point3(glam::Vec3::new(x, y, z));
                         min = min.min(point);
                         max = max.max(point);
@@ -143,7 +154,7 @@ impl Draft {
     pub fn from_shared(scene: Arc<Scene>, images: HashMap<usize, LocalImage>) -> Self {
         let triangles = scene.models.iter().map(Model::triangles).sum::<usize>();
         let skin = scene.models.iter().any(|m| m.skin.is_some());
-        Self {
+        let mut draft = Self {
             inspector: inspector::Inspector::new(&scene),
             scene,
             images,
@@ -161,6 +172,8 @@ impl Draft {
                 skin,
                 ..Default::default()
             },
+            lod_suffixes: Preferences::default().mesh_suffixes,
+            upload_timeout: 600,
             prepared: None,
             quote: None,
             quoted_at: None,
@@ -176,6 +189,15 @@ impl Draft {
             preview_weights: skin,
             show_joints: false,
             show_overrides: false,
+        };
+        draft.clamp_scale();
+        draft
+    }
+    /// LLModelPreview::rebuildUploadData clamps a newly loaded oversized
+    /// scene to the per-prim and linkset limits before calculating its fee.
+    pub fn clamp_scale(&mut self) {
+        if self.options.scale.is_finite() {
+            self.options.scale = self.options.scale.min(self.dimensions_and_limit().1).max(0.01);
         }
     }
     pub fn invalidate(&mut self) {
@@ -227,16 +249,81 @@ fn aligned(model: &Model, high: &Model) -> Model {
     model.size = high.size;
     model
 }
-fn match_model<'a>(scene: &'a Scene, high: &Model, index: usize, count: usize, faces: bool) -> Result<&'a Model, AssetError> {
-    let unique_name = scene.models.iter().filter(|m| m.name == high.name).count() == 1;
-    let model = scene
+fn file_model(draft: &Draft, scene: &Scene, index: usize, faces: bool, above: Option<&Model>) -> Result<Model, AssetError> {
+    let high = &draft.scene.models[index];
+    let name = |value: &str| {
+        let (base, copy) = value
+            .rsplit_once("_copy_")
+            .filter(|(_, suffix)| suffix.parse::<usize>().is_ok())
+            .map_or((value, None), |(base, suffix)| (base, Some(suffix)));
+        let base = draft
+            .lod_suffixes
+            .iter()
+            .filter(|suffix| !suffix.is_empty())
+            .find_map(|suffix| base.strip_suffix(&format!("_{suffix}")))
+            .unwrap_or(base);
+        copy.map_or_else(|| base.to_owned(), |suffix| format!("{base}_copy_{suffix}"))
+    };
+    let candidates: Vec<_> = scene
         .models
         .iter()
-        .find(|m| unique_name && m.name == high.name)
-        .or_else(|| (scene.models.len() == count).then(|| scene.models.get(index)).flatten())
-        .ok_or_else(|| AssetError::invalid("LOD model names/counts disagree"))?;
-    if faces && model.faces.len() != high.faces.len() {
-        return Err(AssetError::invalid("LOD material face counts disagree"));
+        .enumerate()
+        .filter(|(_, model)| model.submodel == high.submodel && name(&model.name) == name(&high.name))
+        .map(|(index, _)| index)
+        .collect();
+    let matched = if candidates.len() == 1 {
+        Some(candidates[0])
+    } else if scene.models.len() == draft.scene.models.len() {
+        Some(index)
+    } else if !faces {
+        scene.models.iter().position(|model| name(&model.name) == "default_physics_shape")
+    } else {
+        None
+    };
+    let Some(matched) = matched else {
+        if faces && high.submodel > 0 {
+            return Ok(above.unwrap_or(high).clone());
+        }
+        return Err(AssetError::invalid("LOD model names/counts disagree"));
+    };
+    let mut model = aligned(&scene.models[matched], high);
+    if !faces {
+        return Ok(model);
+    }
+    let bindings = |scene: &Scene, index: usize| {
+        scene.material_bindings.get(&index).cloned().unwrap_or_else(|| {
+            scene.models[index]
+                .faces
+                .iter()
+                .map(|face| {
+                    scene
+                        .materials
+                        .get(face.material)
+                        .map_or_else(|| format!("slot:{}", face.material), |material| material.name.clone())
+                })
+                .collect()
+        })
+    };
+    let expected = bindings(&draft.scene, index);
+    let found = bindings(scene, matched);
+    let mut available: Vec<_> = found.into_iter().zip(model.faces).map(|(name, face)| (name, Some(face))).collect();
+    model.faces = expected
+        .iter()
+        .enumerate()
+        .map(|(slot, name)| {
+            available
+                .iter_mut()
+                .find(|(candidate, face)| candidate == name && face.is_some())
+                .and_then(|(_, face)| face.take())
+                .unwrap_or_else(|| codec::Face {
+                    vertices: Vec::new(),
+                    indices: Vec::new(),
+                    material: high.faces[slot].material,
+                })
+        })
+        .collect();
+    if available.iter().any(|(_, face)| face.is_some()) {
+        return Err(AssetError::invalid("LOD materials are not a subset of High"));
     }
     Ok(model)
 }
@@ -305,12 +392,7 @@ fn hex_model(high: &Model) -> Model {
 
 pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
     let options = &draft.options;
-    if !options.scale.is_finite()
-        || options.scale < 0.01
-        || options.scale > draft.dimensions_and_limit().1
-        || draft.scene.models.is_empty()
-        || draft.scene.models.len() > 256
-        || draft.scene.instances.len() > 256
+    if !options.scale.is_finite() || options.scale < 0.01 || options.scale > draft.dimensions_and_limit().1 || draft.scene.models.is_empty()
     {
         return Err(AssetError::invalid("mesh scale or linkset size"));
     }
@@ -336,7 +418,7 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 let mut model = match spec.source {
                     LodSource::File => {
                         if let Some(scene) = &spec.file {
-                            aligned(match_model(scene, high, index, draft.scene.models.len(), true)?, high)
+                            file_model(draft, scene, index, true, lods.get(level + 1).and_then(Option::as_ref))?
                         } else if level == 3 {
                             high.clone()
                         } else {
@@ -396,19 +478,16 @@ pub fn prepare(draft: &Draft) -> Result<Prepared, AssetError> {
                 0..=3 => lods[options.physics_source as usize].clone(),
                 4 | 6 => Some(box_model(high)),
                 7 => Some(hex_model(high)),
-                5 | 8 => Some(aligned(
-                    match_model(
-                        draft
-                            .physics_file
-                            .as_deref()
-                            .ok_or_else(|| AssetError::invalid("physics file missing"))?,
-                        high,
-                        index,
-                        draft.scene.models.len(),
-                        false,
-                    )?,
-                    high,
-                )),
+                5 | 8 => Some(file_model(
+                    draft,
+                    draft
+                        .physics_file
+                        .as_deref()
+                        .ok_or_else(|| AssetError::invalid("physics file missing"))?,
+                    index,
+                    false,
+                    None,
+                )?),
                 _ => return Err(AssetError::invalid("physics source")),
             };
             if let Some(model) = &mut physics
@@ -522,16 +601,22 @@ pub fn request(
     let mut texture_list = Vec::new();
     let mut texture_info = Vec::new();
     let mut texture_index = HashMap::new();
+    let used_materials = draft.scene.used_materials();
     if draft.options.textures {
         if draft
             .scene
             .materials
             .iter()
-            .any(|m| m.images[0].is_some_and(|i| !draft.images.contains_key(&i)))
+            .enumerate()
+            .filter(|(index, _)| used_materials.contains(index))
+            .any(|(_, m)| m.images[0].is_some_and(|i| !draft.images.contains_key(&i)))
         {
             return Err(AssetError::invalid("mesh diffuse texture missing"));
         }
-        for material in &draft.scene.materials {
+        for (index, material) in draft.scene.materials.iter().enumerate() {
+            if !used_materials.contains(&index) {
+                continue;
+            }
             if let Some(index) = material.images[0]
                 && let Some(image) = draft.images.get(&index)
                 && !texture_index.contains_key(&image.key)
@@ -609,6 +694,7 @@ pub fn request(
         description: description.into(),
         query: Arc::new(aurora_llsd::to_xml(&query)),
         resources: Arc::new(aurora_llsd::to_xml(&resources)),
+        timeout_secs: draft.upload_timeout,
     })
 }
 
@@ -635,6 +721,7 @@ impl Imports {
         }
         draft.invalidate_quote();
         draft.inspector.clear();
+        draft.upload_timeout = self.load_preferences.mesh_upload_timeout.max(1);
         draft.inspector.push(aurora_i18n::tr!("import-log-calculating"), false);
         let request_id = Uuid::new_v4();
         let generation = entry.preview_generation;

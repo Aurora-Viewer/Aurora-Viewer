@@ -103,14 +103,20 @@ impl Default for Profile {
     fn default() -> Self {
         Self {
             layout: Layout {
-                placements: [("asset-uuid", TEXT), ("image", "children:organize"), ("move", "children:organize")]
-                    .map(|(id, zone)| (id.into(), zone.into()))
-                    .into(),
+                placements: [
+                    ("asset-uuid", TEXT),
+                    ("image", "children:organize"),
+                    ("move", "children:organize"),
+                    ("folder-uuid", HIDDEN),
+                ]
+                .map(|(id, zone)| (id.into(), zone.into()))
+                .into(),
                 orders: [
                     (
                         children("organize"),
                         [
                             "image",
+                            "copy-name",
                             "move",
                             "default-folder",
                             "group-selection",
@@ -135,8 +141,15 @@ impl Default for Profile {
                         [
                             "bar:top",
                             "restore",
+                            "recover-folder",
                             "original",
                             "open",
+                            "save-textures",
+                            "card-im",
+                            "card-offer-teleport",
+                            "card-request-teleport",
+                            "card-conference",
+                            "folder-im-all",
                             "about-landmark",
                             "copy-landmark-slurl",
                             "show-landmark-on-map",
@@ -145,11 +158,15 @@ impl Default for Profile {
                             "play-local",
                             "play-sound",
                             "apply-environment",
+                            "apply-parcel",
                             "gesture-active",
+                            "gesture-deactivate",
                             "gesture-play",
                             "edit-worn",
+                            "refresh-attachment-textures",
                             "touch-worn",
                             "attachments",
+                            "copy-outfit-list",
                             "separator:metadata",
                             "properties",
                             "bulk-permissions",
@@ -158,14 +175,19 @@ impl Default for Profile {
                             "asset-uuid",
                             "protect-folder",
                             "organize",
+                            "listing",
                             "separator:image",
                             "separator:folder-navigation",
                             "reload",
+                            "clean-broken-links",
+                            "show-main",
                             "show-window",
                             "open-window",
+                            "open-current",
                             "separator:purge",
                             "purge",
                             "empty-trash",
+                            "empty-lost-found",
                             "bar:bottom",
                         ]
                         .map(str::to_owned)
@@ -189,7 +211,39 @@ impl Profile {
     }
 
     fn customized(&self) -> bool {
-        self != &Self::default() && !(self.layout == Layout::default() && self.open.is_empty() && self.locked)
+        let mut baseline = Self::default();
+        for id in [
+            "folder-uuid",
+            "save-textures",
+            "card-im",
+            "card-offer-teleport",
+            "card-request-teleport",
+            "card-conference",
+            "folder-im-all",
+            "apply-parcel",
+            "gesture-deactivate",
+            "refresh-attachment-textures",
+            "copy-outfit-list",
+            "listing",
+            "clean-broken-links",
+            "show-main",
+            "open-current",
+            "empty-lost-found",
+            "recover-folder",
+            "copy-name",
+            "new-outfit",
+        ] {
+            let known = self.layout.placements.contains_key(id)
+                || self.layout.removed.contains(id)
+                || self.layout.orders.values().any(|order| order.iter().any(|key| key == id));
+            if !known {
+                baseline.layout.placements.remove(id);
+                for order in baseline.layout.orders.values_mut() {
+                    order.retain(|key| key != id);
+                }
+            }
+        }
+        self != &baseline && !(self.layout == Layout::default() && self.open.is_empty() && self.locked)
     }
 }
 
@@ -202,9 +256,65 @@ pub struct Preferences {
 
 impl Preferences {
     pub(crate) fn unify(&mut self) {
+        // Choose the pre-migration user arrangement before adding defaults;
+        // a previously blank profile must not become "customized" merely
+        // because the folder UUID is now hidden there.
+        if self.profiles.len() != 1 || !self.profiles.contains_key(SHARED) {
+            let profile = self
+                .profiles
+                .remove(SHARED)
+                .or_else(|| {
+                    let key = ["type:6", "folders"]
+                        .into_iter()
+                        .find(|key| self.profiles.get(*key).is_some_and(Profile::customized))
+                        .map(str::to_owned)
+                        .or_else(|| self.profiles.iter().find(|(_, p)| p.customized()).map(|(key, _)| key.clone()));
+                    key.and_then(|key| self.profiles.remove(&key))
+                })
+                .unwrap_or_default();
+            self.profiles.clear();
+            self.profiles.insert(SHARED.into(), profile);
+        }
         // Older saved arrangements have not seen these destination commands.
         // Insert them beside About without moving or restoring edited entries.
         for profile in self.profiles.values_mut() {
+            let known = |id: &str| {
+                profile.layout.placements.contains_key(id)
+                    || profile.layout.removed.contains(id)
+                    || profile.layout.orders.values().any(|order| order.iter().any(|key| key == id))
+            };
+            if !known("folder-uuid") {
+                profile.layout.placements.insert("folder-uuid".into(), HIDDEN.into());
+            }
+            for (id, after, zone) in [
+                ("save-textures", "open", TEXT),
+                ("card-im", "save-textures", TEXT),
+                ("card-offer-teleport", "card-im", TEXT),
+                ("card-request-teleport", "card-offer-teleport", TEXT),
+                ("card-conference", "card-request-teleport", TEXT),
+                ("folder-im-all", "card-conference", TEXT),
+                ("apply-parcel", "apply-environment", TEXT),
+                ("gesture-deactivate", "gesture-active", TEXT),
+                ("refresh-attachment-textures", "edit-worn", TEXT),
+                ("copy-outfit-list", "attachments", TEXT),
+                ("listing", "organize", TEXT),
+                ("clean-broken-links", "reload", TEXT),
+                ("show-main", "clean-broken-links", TEXT),
+                ("open-current", "open-window", TEXT),
+                ("empty-lost-found", "empty-trash", TEXT),
+                ("recover-folder", "restore", TEXT),
+                ("copy-name", "image", "children:organize"),
+            ] {
+                let known = profile.layout.placements.contains_key(id)
+                    || profile.layout.removed.contains(id)
+                    || profile.layout.orders.values().any(|order| order.iter().any(|key| key == id));
+                if !known
+                    && let Some(order) = profile.layout.orders.get_mut(zone)
+                    && let Some(index) = order.iter().position(|key| key == after)
+                {
+                    order.insert(index + 1, id.into());
+                }
+            }
             let mut after = "about-landmark";
             for id in ["copy-landmark-slurl", "show-landmark-on-map"] {
                 let known = profile.layout.placements.contains_key(id)
@@ -219,25 +329,6 @@ impl Preferences {
                 after = id;
             }
         }
-        if self.profiles.len() == 1 && self.profiles.contains_key(SHARED) {
-            return;
-        }
-        // Keep an existing shared layout, or the edited object layout from the
-        // workshop, then a different edited type. Never combine conflicting orders.
-        let profile = self
-            .profiles
-            .remove(SHARED)
-            .or_else(|| {
-                let key = ["type:6", "folders"]
-                    .into_iter()
-                    .find(|key| self.profiles.get(*key).is_some_and(Profile::customized))
-                    .map(str::to_owned)
-                    .or_else(|| self.profiles.iter().find(|(_, p)| p.customized()).map(|(key, _)| key.clone()));
-                key.and_then(|key| self.profiles.remove(&key))
-            })
-            .unwrap_or_default();
-        self.profiles.clear();
-        self.profiles.insert(SHARED.into(), profile);
     }
 }
 
@@ -818,6 +909,31 @@ impl Layout {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn folder_uuid_migration_starts_hidden_and_preserves_a_later_user_choice() {
+        let mut profile = Profile::default();
+        profile.layout.placements.remove("folder-uuid");
+        profile.layout.orders.get_mut(TEXT).expect("text order").rotate_left(3);
+        let orders = profile.layout.orders.clone();
+        let mut preferences = Preferences {
+            profiles: [(SHARED.into(), profile)].into(),
+        };
+        preferences.unify();
+        let profile = preferences.profiles.get_mut(SHARED).expect("shared profile");
+        assert_eq!(profile.layout.placements.get("folder-uuid").map(String::as_str), Some(HIDDEN));
+        assert_eq!(profile.layout.orders, orders);
+        profile.layout.placements.insert("folder-uuid".into(), TEXT.into());
+        preferences.unify();
+        assert_eq!(
+            preferences.profiles[SHARED]
+                .layout
+                .placements
+                .get("folder-uuid")
+                .map(String::as_str),
+            Some(TEXT)
+        );
+        assert_eq!(preferences.profiles[SHARED].layout.orders, orders);
+    }
+    #[test]
     fn saved_menus_gain_landmark_destinations_without_moving_customized_entries() {
         let mut profile = Profile::default();
         let order = profile.layout.orders.get_mut(TEXT).expect("text order");
@@ -958,15 +1074,57 @@ mod tests {
             profiles: [("type:6".into(), blank.clone()), ("folders".into(), edited.clone())].into(),
         };
         prefs.unify();
+        edited.layout.placements.insert("folder-uuid".into(), HIDDEN.into());
         assert_eq!(prefs.profiles[SHARED], edited);
         let mut prefs = Preferences {
             profiles: [(SHARED.into(), blank.clone()), ("folders".into(), edited)].into(),
         };
         prefs.unify();
+        let mut migrated_blank = blank;
+        migrated_blank.layout.placements.insert("folder-uuid".into(), HIDDEN.into());
         assert_eq!(
-            prefs.profiles[SHARED], blank,
+            prefs.profiles[SHARED], migrated_blank,
             "existing shared settings are never replaced by new defaults"
         );
+    }
+
+    #[test]
+    fn an_untouched_older_type_profile_does_not_displace_a_customized_folder_profile() {
+        let mut older = Profile::default();
+        let introduced = [
+            "folder-uuid",
+            "save-textures",
+            "card-im",
+            "card-offer-teleport",
+            "card-request-teleport",
+            "card-conference",
+            "folder-im-all",
+            "apply-parcel",
+            "gesture-deactivate",
+            "refresh-attachment-textures",
+            "copy-outfit-list",
+            "listing",
+            "clean-broken-links",
+            "show-main",
+            "open-current",
+            "empty-lost-found",
+            "recover-folder",
+            "copy-name",
+            "new-outfit",
+        ];
+        older.layout.placements.retain(|key, _| !introduced.contains(&key.as_str()));
+        for order in older.layout.orders.values_mut() {
+            order.retain(|key| !introduced.contains(&key.as_str()));
+        }
+        assert!(!older.customized());
+        let mut folders = older.clone();
+        folders.layout.placements.insert("copy".into(), TEXT.into());
+        let mut prefs = Preferences {
+            profiles: [("type:6".into(), older), ("folders".into(), folders)].into(),
+        };
+        prefs.unify();
+        assert_eq!(prefs.profiles[SHARED].layout.placements["copy"], TEXT);
+        assert_eq!(prefs.profiles[SHARED].layout.placements["folder-uuid"], HIDDEN);
     }
     fn action(id: &str, zone: &str) -> Entry {
         Entry {

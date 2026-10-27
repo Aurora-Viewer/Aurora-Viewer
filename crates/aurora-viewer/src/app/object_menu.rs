@@ -326,6 +326,17 @@ impl App {
     pub(super) fn ask_return(&mut self, id: Uuid) {
         let Some(idx) = self.world.objects.index_of_uuid(&id) else { return };
         self.build.click_select(&mut self.world, &self.settings.build, Some(idx), false);
+        self.ask_return_selection();
+    }
+
+    /// "Return" of the Area Search menu: every selected row together.
+    pub(super) fn ask_return_objects(&mut self, ids: &[Uuid]) {
+        let idxs: Vec<usize> = ids.iter().filter_map(|id| self.world.objects.index_of_uuid(id)).collect();
+        self.build.select_many(&mut self.world, &self.settings.build, &idxs);
+        self.ask_return_selection();
+    }
+
+    fn ask_return_selection(&mut self) {
         self.flush_build();
         // get_derezzable_objects(DRD_RETURN_TO_OWNER): roots that are not
         // attachments, all in one region (AcquireErrorObjectSpan)

@@ -62,6 +62,60 @@ interrupted/failed approaches never sit. Outfit category removal resolves the
 confirmed COF and current attachment points and uses the existing appearance
 policy, preserving body parts and RLVa removal restrictions.
 
+The application constructor returns its runtime state on the heap, avoiding
+large return-value temporaries on the Windows startup stack as editors grow.
+
+`ui/inventory/context_catalog/extra.rs` adds inventory commands to the shared
+customization catalogue without changing existing identities or placements.
+Folder UUID copying starts in the recoverable hidden area. Native document,
+contact, appearance, environment, texture export and Marketplace paths execute
+the commands after the menu returns; Marketplace menus share their eligibility
+and dispatch with `ui/marketplace_listings/commands.rs`.
+
+`wearable_editor.rs`, `wearable_editor/catalog.rs`, `ui/wearable.rs` and
+`app/wearable_editor.rs` edit the remaining body parts and system clothing.
+They retain complete wearable assets, texture slots and tint parameters,
+validate permissions and stale replies, share the appearance preview and
+save acknowledgement path, and preserve other clothing layers when replacing
+the saved item. The existing shape and physics editors remain separate.
+`wearable_editor/bake.rs` compiles avatar layer definitions and composites
+skin, clothing, tints and visibility masks on background workers.
+`wearable_editor/preview.rs` loads worn assets in bounded batches, requests
+only the affected regions' full-resolution source images, debounces edits,
+uploads through the renderer's staging pool and publishes a complete local
+generation. It pins the server bakes for cancellation and releases retired
+GPU slots. `wearable_editor/masks.rs` embeds the original character masks;
+preview textures never enter the inventory or replace server appearance.
+`aurora-assets/src/wearable.rs` preserves original texture text when unchanged
+and preserves metadata and future sections when textures are edited.
+
+Mesh import acceptance follows `LLDAELoader` / `LLGLTFLoader`: file size and
+retained mesh drafts have no additional fixed byte budget. Allocations and
+source bounds are checked; mesh LLSD section sizes retain their signed 32-bit
+wire limits. `import_mesh/gltf_skin.rs` caches complete node rest transforms,
+adapts bind matrices and missing skeletal intermediates to the SL skeleton,
+and applies the reference two-shoulder XY orientation detection. Rigged DAE
+bind frames remain authored; object-axis conversion is separate.
+Scenes retain source material symbols for authored LOD reordering and missing
+`NoGeometry` surfaces, and glTF node identities allow independent authored LODs
+for nodes sharing source geometry. Source palettes use 16-bit joint indices before glTF
+usage pruning; encoded weights retain the protocol's one-byte joint indices.
+The import defaults expose the generated-model allowance (768, divided across
+source meshes) and mesh transfer timeout (600 seconds). Geometry and timeout
+are frozen in the same quoted request. Quote confirmation time starts on receipt,
+independently of a long fee transfer. Texture payloads follow used instances.
+Flat axes retain the reference unit normalization scale; worker-cached actual
+normalized extents keep preview dimensions and scene-span checks accurate.
+After supported-joint filtering, unweighted source vertices inherit nearby
+valid influences in normalized space before model splitting. High and lower
+LODs consequently share the reference weight fallback in previews and uploads.
+`imports/mesh/preview.rs` owns an independent standard-standing animation
+controller per import. The shared animation streamer loads the reference
+asset; normal and enlarged canvases receive only updated joint palettes.
+Imported-position preview and joint-marker visibility are independent.
+Markers use the same animated pose, are deduplicated, and retain the reference
+1 mm radius (16 mm selected). Offline mesh demos seed the existing synthetic idle.
+
 Ready chat media replace raw URL text through `ui/chat/previews.rs` in every
 conversation style, while the stored message stays intact for history, search
 and copying. Preview hover actions expose Copy link and Open in browser with
@@ -236,7 +290,9 @@ Escape, Stop or closing the controller. A recovered pilot requires at least
 one metre of actual travel before another automatic recovery can be requested.
 
 `ui/area_search.rs` and `ui/area_search/table.rs` draw the native Area Search
-window and cache its filtered, sorted, virtualized object rows. `app/area_search.rs`
+window and cache its filtered, sorted, virtualized object rows;
+`ui/area_search/selection.rs` keeps its multiple row selection, which the
+right-click menu acts on through the object menus' actions. `app/area_search.rs`
 prepares live rezzed-object snapshots in parallel, resolves distinct owners,
 creators and groups, and reads full metadata using bounded select/deselect
 packets while preserving Build and Inspect selections. Metadata has a separate
@@ -1154,8 +1210,45 @@ excluded. The application supplies this context anew with every AO update.
 For large corrections, the body constraint keeps an upright source hip above
 its planted ankle so that the knee hinge cannot turn backward.
 
-Four shaped sole probes use the existing neutral shoe calibration. Source
-clearance with hysteresis distinguishes contact and flight, measured before
+`scene/foot_scope.rs` applies `Settings::ground_feet_max_avatars`, a saved
+0-100 budget defaulting to five other avatars. It reuses the main render
+frustum and a bounded nearest list measured from our avatar. Own placement
+is outside the budget; zero means self only. Remote calibration follows the
+same selection, and deselection uses the existing source-pose release without
+legacy fallback. Disabled/zero-height placement skips selection work.
+`AURORA_FOOT_IK_SCOPE=all|visible10` only overrides offline demos for historical
+A/B reproduction; a normal viewer always uses the saved limit.
+Selection and pose evaluation share the same world clock, including the
+held instant used while a photograph is drawn in tiles.
+
+Acquisition after an uncorrected or releasing pose starts from the visible
+correction over the current animation, captured before a new sole reference
+rebuilds the solver. Its first filter step has zero elapsed time. Terrain tilt
+and existing penetration ease over half a second; the permitted initial
+penetration decreases by elapsed time rather than a per-frame fraction.
+Ordinary acquired collision remains immediate. Pausing shifts the entry
+clock with the other placement clocks.
+
+Four shaped sole probes use the existing neutral shoe calibration.
+When an absolute pelvis track replaces a mesh rest translation, placement
+shifts its neutral clearance and body reference by the same origin change.
+Sole depth stays in the shaped rest frame; authored pelvis motion is retained.
+This prevents an already grounded pose from acquiring a crouch.
+The local avatar's sole geometry is measured whenever automatic height or
+Aurora foot placement needs it. Each other posed avatar has its own neutral
+shoe measurement, outfit signature and result channel in `RemoteSoles`.
+Remote inspections rotate through at most four avatars per frame, no more
+than once per 200 ms per avatar; decoding and vertex work stay on the job
+pool. Departed/unposed avatars, disabled placement and scene cleanup retire
+their caches. Animesh is excluded. Remote measurements never change hover
+settings and do not depend on our account's automatic-height capability.
+With automatic height disabled, calibration
+updates only the cached sole reference; it never previews or commits hover
+height. Toggling automatic height preserves that reference while foot
+placement remains enabled, so manual height and movement scope cannot make
+the shoes sink when placement resumes.
+
+Source clearance with hysteresis distinguishes contact and flight, measured before
 the render-space translation to retain submillimetre precision. Contact targets
 follow the support; a flying foot retains the source arc from its departure
 elevation, transitioning toward the landing elevation during descent. Collision
@@ -1167,7 +1260,7 @@ trajectories remain unchanged. Support tilt preserves authored heel/toe roll.
 
 A single height filter follows absolute world elevation, absorbing physical
 root-height changes before they reach the rendered body. Without any known
-support, source body motion passes through unchanged. Initial placement
+support, source body motion passes through unchanged. Cold initial placement
 starts at the valid support height. The common support
 height raises a body compressed over two higher supports; both contact-leg
 reach intervals bound its displacement within the configured height. Down-step anticipation acts
@@ -1723,9 +1816,13 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `dev_toolbox/`, `ui/dev_toolbox.rs` | The Dev Toolbox (Advanced › Dev Toolbox, Ctrl+Alt+D; the former Preferences › Debug page): every tool with its stable identifier (J2, L1, R3…), kind, icon and group, the layout the user arranges and its saved form (new tools join their group, removed ones stay out), the anonymisation of what is copied ("Avatar 1", "Me") and the header of a copy (`dev_toolbox/`); the window: target bar, groups dragged in Customize, "Send a diagnostic", the last warnings (`ui/dev_toolbox.rs`). The agents' guide is docs/DEV_TOOLBOX.md; `AURORA_DEMO_TOOLBOX` |
 | `cache_location.rs`, `app/folders.rs` | The cache and transcript folders chosen in the preferences (CacheLocation, InstantMessageLogPath): `cache_location.rs` reads the cache's choice from the settings file at startup, before anything uses the cache, and removes the previous cache when the folder changed (only the viewer's own folders); `app/folders.rs` runs the folder dialog off the frame, and moves the account's transcripts at once through `chat_log` |
 | `settings/backup.rs`, `app/settings_backup.rs`, `ui/options/backup.rs` | Back up and restore the settings (the Legacy Viewer's Backup tab), Preferences › Language and updates › Backup: `settings/backup.rs` is the one-file format (the settings without the login nor this PC's window, folders, devices and machine id, the windows' layout, the skin's JSON files, each account's preference files by a fixed list of names) and the restore that keeps this PC's values; `app/settings_backup.rs` runs the file dialogs, the reading and the writing off the frame, then puts back the layout, the skin and the accounts' files (not the logged-in account's); `ui/options/backup.rs` is the confirmation with the parts to restore, which swaps the settings as the undo of a reset does |
+| `settings/stream_list.rs`, `app/stream_list.rs` | Advanced › Media streams backup: the saved music streams (`audio.saved_streams`) to and from the Legacy Viewer's stream list file (its FSStreamList setting as pretty LLSD XML, `stream_list.xml`); `settings/stream_list.rs` writes and reads the format, `app/stream_list.rs` runs the file dialogs, the reading and the writing off the frame and tells the result in a notice |
 | `world/open_ims.rs` | The private conversations open at the end of a session, kept per account (`open_ims.xml`, FSLastOpenIMs) and reopened at login when FSRestoreOpenIMs is on |
 | `world/region_alerts.rs` | The region's script count change (SimStats, nearby chat) and simulator version change (AgentMovementComplete, a notice) alerts of Preferences › Alerts |
+| `ui/about.rs`, `ui/about/notice.rs`, `app/about.rs`, `system_info.rs` | Help › About Aurora Viewer (LLFloaterAbout): the banner with the logo, the version, the build and the project's links; the Info tab's cards (viewer, computer, graphics, location with RLVa @showloc, network), a click on a value copying it alone, and "Copy to clipboard" in English (`ui/about.rs`, the information gathered by `app/about.rs`); the Licences tab, NOTICE.md built into the viewer and read into cards (`ui/about/notice.rs`); the computer (OS, CPU, threads, memory and the viewer's share) read with sysinfo off the frame, shared with the Dev Toolbox's J4 (`system_info.rs`); `AURORA_DEMO_ABOUT` |
 | `world/collisions.rs`, `ui/bumps.rs` | Bumps, pushes and hits (MeanCollisionAlert): the last 20, one per resident and kind, newest first, the optional nearby chat line and report to the agent's scripts (`world/collisions.rs`), and the Help menu's "Bumps, pushes & hits" window with its copy and avatar menu (`ui/bumps.rs`, LLFloaterBump) |
+| `grid_status.rs`, `grid_status/tests.rs`, `ui/grid_status.rs`, `app/grid_status.rs`, `demo_grid_status.rs` | Help › Grid status and the toolbar's Grid status command (LLFloaterGridStatus): the grid's status feed (Second Life's Atom feed, an OpenSim grid's `OpenSimExtras` `GridStatusRSS`), fetched off the frame every 60 s while the command stands on a toolbar or the window is open, read as entries and updates (Atom or RSS 2.0, the status page's HTML), and the new or changed entries that flash the button (`grid_status.rs`); the native window listing them (`ui/grid_status.rs`); the polling, the flash and the window in the frame (`app/grid_status.rs`); the demo feed (`AURORA_DEMO_GRID_STATUS`) |
+| `stream_title.rs`, `ui/stream_title.rs` | World › Stream title (FSFloaterStreamTitle, FSStreamTitleManager): the parcel radio's title now and the titles played before, a new one kept when it differs from the last, at most `audio.stream_title_history` (`stream_title.rs`, fed by `App::update_audio`); the window with the sliding title and its History button, Aurora's text-only look laid over the world and dragged anywhere, and the history window with its selection, copy, Clear and maximum (`ui/stream_title.rs`) |
 | `movement/crouch_toggle.rs` | Crouch as a toggle (FSCrouchToggle): the Down key's latch, let go by a jump or flying |
 | `world/chat_log.rs`, `world/chat_log/`, `world/transcripts.rs` | Conversation history on disk, like Firestorm (LLLogChat, LLIMModel::logToFile). `chat_log/format.rs`: text of a line (`[YYYY/MM/DD HH:MM]  Name: text`, SLT time, following lines preceded by a space, `:` of a name written `%3A`) and its reading back; `names.rs`: file of each conversation (`chat`, legacy name of the resident, `<group> (group)`, dated conference), forbidden characters, reserved names of Windows, date in the names; `store.rs`: folder of an account on a grid (`accounts/<uuid>/chat_logs/<grid>`), `aurora-chatlog` thread that appends the lines (file opened, written and closed again for each batch, each task carrying its full path) and reads back the end of a file (LOG_RECALL_SIZE); `transcript.rs`: whole file for the History window, in pages of 100 messages, without keeping it in memory (index of the pages, page-by-page search); `chat_log.rs`: facade opened at login and closed at logout, settings. `transcripts.rs` links the conversations to the files: file name of a session, lines waiting for a name, history requested before the first write, history lines (`Origin::Log`, `Origin::ServerLog`) placed before the new ones, merge with the history of the group chat server, stable numbering of the lines for the view (`LineClock`) |
 | `ui/notifications.rs`, `ui/notification_center.rs`, `ui/notification_center/presence.rs`, `ui/friend_prompt.rs`, `world/notifications.rs`, `world/notification_history.rs` | Notifications: the list and its answers (`world/notifications.rs`, what leaves it recorded with its outcome), Firestorm's toasts and bell next to the wolf and the shared cards (`ui/notifications.rs`), Aurora's center (`ui/notification_center.rs`: cards unrolling from the bell at the right end of the top bar and folding back into it (with the islands exactly under the system and bell islands, `NotifUi::column`), "To do" and "History" tabs, paused bell in do not disturb; `presence.rs`: the friends' online / offline toasts at the place chosen in Preferences › Chat, laid out in the room the bars leave (`ui::layout::bars_room`) above the nearby chat lines, waiting at the top right while the cards or the list are out), chosen by Preferences › Aurora › Notifications; the history kept per account (`notification_history.json`, 30 days or 500 entries, written on a worker thread, read with the tolerant reader); `ui/friend_prompt.rs`: a friendship offer as a card in the middle of the screen instead of its toast (#465, Preferences › Chat › Toasts, on), answered through the same list |
@@ -1742,6 +1839,7 @@ Scripts use a shared editor (`ui/scripts.rs`, actions in `app/scripts.rs`) for i
 | `ui/chat/latest.rs` | The button back to the latest messages (#558), in every chat style: it fades in over the bottom of a conversation's lines once the reader is away from the end (`view.rs` keeps how far, and from which line the messages are new), says how many came in since, and puts the scroll offset past the end, where the scroll area sticks to it again. |
 | `ui/chat/popout.rs` | Conversations in their own windows (#717), in every chat style: "Detach" from the title bar or an entry's menu, "Attach to Conversations" from the window's title bar or the menu, the window's cross closing the conversation; the Preferences › Chat option that opens the conversations asked for (a name, a notification, a call) in their own window. Each window draws the pane of the Conversations window, its own state (conversation shown, keyboard, selection, emoji picker) swapped into `ChatUi` while it draws; it counts as a conversation in sight for the unread lines, the toasts and the sounds. Its controls take its window's ids (`popout::window`), its find fields its conversation's, and one emoji picker shows at a time: no id is used twice. |
 | `ui/chat/flash.rs` | The soft violet flash of a conversation's entry when a message comes in while another is shown (eight rises over four seconds, then a faint tint until read), shared by the column and the tabs; Preferences › Chat. |
+| `ui/chat/thumbnails.rs` | The thumbnails of the open conversations (the Legacy Viewer's IM chiclets, #1134): beside the chat bar (a glass island between the chat island and the dock, or in the Legacy bar; the bars reserve the room, `prepare` / `reserve`, then `show` draws them) or at the top right; picture, red unread counter, the flash of `flash.rs` with the Conversations button's mark, click to show or put away, the list's right-click menu, a "+N" square for those that do not fit; Preferences › Chat. |
 | `ui/chat/snooze.rs` | The duration asked before a group chat's snooze (Preferences › Chat, FSEnablePerGroupSnoozeDuration); the snooze itself, a group chat closed without leaving its session and its messages dropped until it ends, is in `world/groups.rs`. |
 | `ui/chat/reorder.rs` | In-memory presentation order of open conversations, shared by all chat styles; category-bound row dragging, insertion feedback, edge scrolling and cancellation. Does not reorder network sessions or move pinned entries. |
 | `ui/chat/previews/lightbox.rs`, `ui/chat/previews/clipboard.rs` | Picture enlargement (#806): a dependent layer clipped to the dimmed chat body, or an independent resizable floater kept when the chat closes. Shared fitted geometry, pointer-centered zoom, panning and bounded GIF frames; Escape/Ctrl+W close the overlay first and restore focus. Only an enlarged still requests up to 2048 pixels per side, decoded off the frame with the card's download/redirect policy; closing drops the request and detail textures, failed detail keeps the cached picture. Clipboard requests survive discarded UI passes. On Windows, one serial worker publishes a content-addressed PNG into the bounded viewer cache and offers CF_HDROP alongside bitmap/PNG formats, so Explorer can paste a file and image editors paste pixels. Source files survive closing the view/viewer until ordinary cache clearing; encoding and clipboard locks stay off the frame. Legacy chat retains text links. |

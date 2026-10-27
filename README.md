@@ -134,7 +134,9 @@ are planned or in progress: they are not in the viewer yet.
   materials are updated without the little stutters of a busy place.
 - **It holds on**: a network blip no longer logs you out (Aurora reconnects
   you right where you were), and a full video memory no longer freezes the
-  viewer.
+  viewer: Aurora stays within the video memory your graphics driver grants it.
+- **Your whole inventory, ready**: it loads in the background from login on,
+  so its folders are already filled when you open them.
 - **The right graphics card on a laptop**: on a PC with an integrated and a
   dedicated GPU, Aurora picks the dedicated one, and you can choose the card
   in Preferences, from the login screen on.
@@ -174,8 +176,10 @@ are planned or in progress: they are not in the viewer yet.
   follows each voice, and a resident's volume at the top of their menu.
 - **A well-behaved client.** Aurora speaks to the servers the way they
   expect: same messages, same request rates.
-- **Shape editing**, with 82 body and face controls, textured mesh previews
-  and saved copies; manual or automatic hover height keeps your feet grounded.
+- **Shape and clothing editing**, with 82 body and face controls, textured
+  mesh previews and saved copies; the editors of skin, hair, eyes, tattoos,
+  alphas and the nine clothing types, previewed on you before you save; and
+  manual or automatic hover height to keep your feet grounded.
 - **Gestures**, with a manager, an editor, chat triggers, shortcuts,
   animations and sounds; they keep their rhythm, and talk to your HUDs on
   negative channels too.
@@ -190,7 +194,13 @@ are planned or in progress: they are not in the viewer yet.
   scripted weapons and HUDs hear your clicks — even a scripted attachment
   worn under a mesh body.
 - **Little comforts**: walk backward without turning around, log back in
-  still flying, and animations pause while you edit an attachment.
+  still flying, Quickjump to jump and land without the animation delay,
+  animations that pause while you edit an attachment, and Help › Grid status
+  to see at once whether the grid has a known problem.
+- **Unbox in one click**: copy an object's contents into a new inventory
+  folder, or wear them straight away, replacing your outfit or adding to it.
+- **Sound Explorer**: find which object plays a sound, preview it, stop it or
+  block it.
 - **Run your land**: a complete Region / Estate window (people and bans,
   interventions, scripts and physics with Top scripts / Top colliders,
   environment, experiences, covenant, telehub and terrain), in the Aurora
@@ -203,7 +213,6 @@ are planned or in progress: they are not in the viewer yet.
   scripted outfits, furniture and experiences rely on (RLV 3.4.3 /
   RLVa 2.4.2). Off by default: turn it on in Preferences › Protections;
   turning it off releases every restriction at once ([details](docs/RLVA.md)).
-- <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **The clothing editors.**
 - <img src="docs/readme/pill-soon.svg" alt="Soon" height="18" align="absmiddle"> **PBR terrain.**
 
 ### A photo mode like a real camera
@@ -275,18 +284,28 @@ are planned or in progress: they are not in the viewer yet.
   history, the Inter font throughout and a redesigned performance window.
 - **Conversations made for today**: a Contacts tab, conversations you can
   reorder, group pictures, and nearby chat as cards with the speaker's
-  picture. Unread conversations flash softly, "is typing…" shows, an item
-  someone gives you appears as a card in their conversation, and dropping
-  inventory on a conversation gives it.
+  picture. Unread conversations flash softly, "is typing…" shows, and an item
+  someone gives you appears as a card in their conversation. A thumbnail per
+  open conversation waits beside the chat bar with its unread count, and
+  nearby chat can also rise in bubbles above the speakers' heads (off by
+  default).
+- **Give by dropping**: drop inventory on a conversation, a profile or the
+  resident's avatar in the world to give it.
 - **Conversations in their own windows**: pop a conversation out, or drag it
   out of the list; nearby chat can live in its own window too. The
   Conversations button flashes when something new arrives, and a right click
   keeps it quiet for nearby chat.
 - **Links that show what they point to**: pictures from Gyazo, Flickr,
-  Imgur, Lightshot and Reddit pages, and from your own cloud or gallery
-  (Nextcloud, Immich…) once listed in Preferences › Chat, a YouTube player that keeps each video's
-  shape and your volume, and `secondlife:///` links shown as names and places
-  in chat, dialogs and notifications.
+  Imgur, Lightshot and Reddit pages, Bluesky and X posts, and your own cloud
+  or gallery (Nextcloud, Immich…) once listed in Preferences › Chat; short
+  videos and a YouTube player that play in the conversation, keeping each
+  video's shape and your volume; animated WebP that move like GIFs; and
+  `secondlife:///` links shown as names and places in chat, dialogs and
+  notifications.
+- **Write with ease**: a spell checker with suggestions in the chat bars,
+  conversations and notecards, auto-replace (`brb`…) if you like, `@` to
+  mention someone in the conversation, names completed as you type, and `/`
+  in nearby chat to find and play a gesture.
 - **GIFs in the conversation**: a GIF picker next to the emoji button, with
   GIPHY and KLIPY. It appears once you add your own free key in
   Preferences › Chat › GIF.
@@ -314,9 +333,10 @@ are planned or in progress: they are not in the viewer yet.
   live preview, with LSL colouring for the code you share.
 - **An inventory that grows with you**: the familiar tree at its usual size;
   widen it and it becomes an explorer with a folder column, details and
-  filter chips. Coloured icons by item type, and a CMT button that shows your
-  rights, the next owner's, or both. Folders opened in their own window get
-  the same layout.
+  filter chips, with columns you resize and choose. Coloured icons by item
+  type, and a CMT button that shows your rights, the next owner's, or both.
+  A second inventory window opens beside the first to sort between faraway
+  folders, and folders opened in their own window get the same layout.
 - **Outfits at hand**: the outfit menu on the outfit folders, and a
   double-click in the inventory to put something on or take it off.
 - **One search for everything**: type once and residents, places, events,
@@ -359,6 +379,19 @@ are planned or in progress: they are not in the viewer yet.
 
 ### Only in Aurora
 
+- **Portals to walk through**: open a portal to a place, or drop a landmark
+  into the world, and walk, run or fly through it to teleport. Other Aurora
+  users see it too: your friends by default, everyone if you choose, and a
+  portal that appears on someone never pulls them in.
+- **Just your parcel, if you like**: hide what stands outside the current
+  parcel, everywhere or only on the parcels you list, with exceptions that
+  stay visible and options for neighbouring parcels of the same owner or
+  group.
+- **Immersive mode**: the whole interface hidden but the chat, for photos,
+  events or simply enjoying the world; two faint buttons bring back the name
+  tags or leave the mode.
+- **Aurora team and Linden Lab marks**: their name tags, lists, chat lines
+  and profiles show who works on Aurora and who works at Linden Lab.
 - **Link safety check**: web links in chat and profiles are marked trusted,
   unknown or dangerous, judged locally with nothing sent anywhere.
 - **Parcel permissions at a glance**: the icons show everything, green for
@@ -419,8 +452,10 @@ The texture memory budget is set automatically from the detected VRAM.
   experimental), graphics presets and per-section resets.
 - **Avatars** — skeleton and Bento animations blended like the Legacy Viewer,
   server bakes, rigged mesh, complexity limits, impostors and look-at;
-  a shape editor with textured mesh previews, manual and automatic hover
-  height, rebake, skeleton reset and animation controls; gestures with
+  a shape editor with textured mesh previews, skin, hair, eyes, tattoo,
+  alpha, universal and clothing editors with a local preview, manual and
+  automatic hover height, Quickjump, rebake, skeleton reset and animation
+  controls; gestures with
   playback, editing, chat triggers and shortcuts; mouselook zoom on the
   right button and script controls for weapons and HUDs; a built-in AO with
   swimming and water walking.
@@ -438,7 +473,8 @@ The texture memory budget is set automatically from the detected VRAM.
   for the objects rezzed around you, with filters and sortable results;
   a Sound Explorer with local previews, source camera and sound blocking;
   walk-through portals shared with other Aurora users, with friend/group
-  access and protection against portals appearing on top of someone.
+  access and protection against portals appearing on top of someone;
+  parcel content isolation, and a grid status window.
 - **Photos and camera** — a full-screen viewfinder with face autofocus, lens
   rings, focus peaking, a live histogram, exposure lock and a self-timer;
   snapshots up to 8K to disk, inventory or
@@ -452,8 +488,11 @@ The texture memory budget is set automatically from the detected VRAM.
   window, contact sets, blocking, notifications
   with history and friend/IM alerts, inventory offers in the conversation,
   a filter for object messages from elsewhere, conversations popped out into
-  their own windows, link previews, a GIF picker (your own GIPHY / KLIPY key)
-  and optional compact lines for automated messages; searchable conversation
+  their own windows, conversation thumbnails beside the chat bar, optional
+  chat bubbles above heads, picture, post and video link previews, a GIF
+  picker (your own GIPHY / KLIPY key), a spell checker, auto-replace,
+  `@` mentions and name and gesture completion, and optional compact lines
+  for automated messages; searchable conversation
   history kept on disk per account and grid in the Legacy Viewer's text
   format, and offline messages.
 - **Voice** — nearby WebRTC voice, one-to-one, group and conference calls,
@@ -466,13 +505,17 @@ The texture memory budget is set automatically from the detected VRAM.
   Top scripts / Top colliders, parcel script information, parcel / region
   environments, experience permission prompts and region restart alerts.
 - **Inventory and commerce** — Aurora's inventory window (tree, explorer and
-  details) or the Legacy one, inventory tools, dedicated Marketplace and
+  details) or the Legacy one, fetched whole in the background at login, a
+  second inventory window, resizable columns, giving by dropping on a
+  profile or an avatar, copying or wearing an object's contents, inventory
+  tools, dedicated Marketplace and
   listings windows, compact import launcher and per-type editors; sound
   waveform previews, trimming, gain and splitting.
 - **Interface** — flat Aurora theme, Inter font, Tabler icons, glass island bars,
   customizable bottom and side toolbars, classic layout options, Aurora
   search and Places windows, mini-map, world map, preferences and debug
-  overlays; double-click walk / run / teleport and content-rating controls
+  overlays; an immersive mode that keeps only the chat; Aurora team and
+  Linden Lab marks; double-click walk / run / teleport and content-rating controls
   for places and teleport offers; an Accessibility page, a high-contrast
   palette, custom interface colours and the OpenDyslexic font.
 - **Windows updates** — release checks, cancellable verified downloads,
@@ -489,7 +532,6 @@ completed work from features awaiting that validation.
 
 **Not there yet**
 
-- The clothing texture / colour editors.
 - Depth exports and 360° snapshots.
 - A macOS build: the code is portable but not validated.
 - Automatic installation of updates on Linux (the viewer points to the

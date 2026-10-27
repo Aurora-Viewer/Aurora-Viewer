@@ -287,6 +287,7 @@ pub fn start(imports: &mut Imports, jobs: &crate::scene::jobs::Jobs, ctx: &egui:
                                         draft.inspector = mesh::inspector::Inspector::new(&draft.scene);
                                         draft.options.skin = true;
                                         draft.options.joints = true;
+                                        draft.show_overrides = true;
                                         draft.preview_weights = true;
                                     }
                                     let section = match mode.as_str() {

@@ -607,7 +607,7 @@ fn fs_depth_mask(in: VsOut) {
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
     let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
-    if (a < max(rec.params.w, 0.01)) {
+    if (a < rec.params.w) {
         discard;
     }
 }
@@ -659,7 +659,7 @@ fn fs_depth_mask_normal(in: VsOut, @builtin(front_facing) front: bool) -> @locat
     let rec = records[in.record];
     portal_clip(rec, in.world_pos);
     let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
-    if (a < max(rec.params.w, 0.01)) {
+    if (a < rec.params.w) {
         discard;
     }
     return depth_normal(in.normal, front);
@@ -1328,8 +1328,15 @@ fn gbuffer(s: Shaded) -> vec4<f32> {
     return vec4<f32>(oct_encode(normalize(s.n)), s.roughness, s.metallic);
 }
 
+// The alpha tests of masked faces keep every texel at or above the cutoff,
+// as LL's materialF.glsl and pbropaqueF.glsl (`alpha < minimum_alpha`): a
+// cutoff of 0 draws the whole face, which creators use to show opaque a
+// texture whose alpha channel holds something else.
 fn mask_color(rec: DrawRecord, c: vec4<f32>) -> vec4<f32> {
-    let cutoff = max(rec.params.w, 0.01);
+    let cutoff = rec.params.w;
+    if (cutoff <= 0.0) {
+        return vec4<f32>(c.rgb, 1.0);
+    }
     if (!ALPHA_TO_COVERAGE) {
         if (c.a < cutoff) {
             discard;
@@ -1392,7 +1399,7 @@ fn fs_reflect(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec
         discard;
     }
     let s = shade(in, facing);
-    let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u && s.color.a < max(rec.params.w, 0.01);
+    let masked = (rec.flags.x & FLAG_ALPHA_MASK) != 0u && s.color.a < rec.params.w;
     if (reflection_clip(in.world_pos) || masked) {
         discard;
     }
@@ -1475,7 +1482,7 @@ fn fs_glow(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     let base = sample_tex(rec.tex.x, in.uv);
     var a: f32;
     if ((rec.flags.x & FLAG_PBR) != 0u) {
-        if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && base.a * rec.base_color.a < max(rec.params.w, 0.01)) {
+        if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && base.a * rec.base_color.a < rec.params.w) {
             discard;
         }
         let e = rec.emissive.rgb * srgb_to_linear(sample_tex(rec.tex.w, in.uv_e).rgb);
@@ -1619,7 +1626,7 @@ fn fs_pick(in: PickOut) -> @location(0) vec4<u32> {
         // (the level the scene samples: each texel of the target is a
         // pixel of the screen)
         let a = sample_tex(rec.tex.x, in.uv).a * rec.base_color.a;
-        if (a < max(rec.params.w, 0.01)) {
+        if (a < rec.params.w) {
             discard;
         }
     }
@@ -1916,7 +1923,7 @@ fn fs_impostor_g(in: SpriteOut) -> GOut {
 fn fs_impostor_capture(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let rec = records[in.record];
     let s = shade(in, front);
-    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && s.color.a < max(rec.params.w, 0.01)) {
+    if ((rec.flags.x & FLAG_ALPHA_MASK) != 0u && s.color.a < rec.params.w) {
         discard;
     }
     return vec4<f32>(s.color.rgb, 1.0);

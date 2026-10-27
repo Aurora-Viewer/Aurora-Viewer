@@ -12,7 +12,7 @@ mod conv_menu;
 pub(crate) mod docking;
 mod find;
 mod flash;
-pub use flash::{ButtonMenu, button_menu, nearby_flashes, nearby_out_of_sight};
+pub use flash::{ButtonFlash, ButtonMenu, button_menu, nearby_flashes, nearby_out_of_sight};
 mod gif_picker;
 mod head;
 mod header;
@@ -35,6 +35,7 @@ pub mod snooze;
 mod stage;
 pub mod suggest;
 mod thread;
+pub mod thumbnails;
 mod typing;
 mod view;
 mod workspace;
@@ -201,6 +202,9 @@ pub struct ChatUi {
     /// app; and what that menu asked for this frame.
     pub flash_nearby: bool,
     pub button_menu: Option<ButtonMenu>,
+    /// The thumbnails of the open conversations beside the chat bar or at
+    /// the top right (`thumbnails.rs`, #1134).
+    pub thumbnails: thumbnails::Thumbnails,
     /// The avatars in chat range and those of them who type, given every
     /// frame by the app (the radar) for the nearby chat.
     pub nearby_count: usize,
@@ -2567,7 +2571,8 @@ pub fn show(
     let enlarged = st.previews.enlarged();
     st.previews.lightbox_keys(ctx);
     st.reorder.begin(ctx, world);
-    let mut actions = Vec::new();
+    // what the thumbnails' menus asked, drawn with the bars before
+    let mut actions = std::mem::take(&mut st.thumbnails.actions);
     let mut friends = friends;
     let default = default_rect(super::layout::work_area(ctx));
     let opening_conversation = world.social.focus_im.is_some();

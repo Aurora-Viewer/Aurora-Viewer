@@ -1136,6 +1136,7 @@ mod tests {
                         active_gestures: Default::default(),
                         touchable: Default::default(),
                         names: Default::default(),
+                        ..Default::default()
                     },
                     &Default::default(),
                     &mut actions,
@@ -2117,6 +2118,7 @@ mod tests {
                             active_gestures: Default::default(),
                             touchable: Default::default(),
                             names: Default::default(),
+                            ..Default::default()
                         },
                         &Default::default(),
                         &mut Vec::new(),

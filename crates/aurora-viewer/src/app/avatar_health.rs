@@ -69,7 +69,7 @@ impl App {
     /// Viewer never enters customise mode for it. With the customise
     /// animation turned off (an Aurora choice), our avatar keeps its pose.
     pub(super) fn update_avatar_health(&mut self) {
-        let editing = self.shape_ui.open && !self.world.agent_id.is_nil() && self.settings.customize_animation;
+        let editing = (self.shape_ui.open || self.wearable_ui.open) && !self.world.agent_id.is_nil() && self.settings.customize_animation;
         if editing && !self.avatar_health.customizing {
             // changeCameraToCustomizeAvatar: "force stand up" first
             // (LLAgent::standUp, AGENT_CONTROL_STAND_UP)
@@ -87,10 +87,12 @@ impl App {
                 // frame our avatar again from the side it now faces
                 self.shape_ui.camera_pending = true;
             }
+            self.wearable_ui.camera_pending |= self.wearable_ui.open;
         }
         if self.avatar_health.turn_ends.is_some_and(|at| Instant::now() >= at) {
             self.avatar_health.turn_ends = None;
             self.shape_ui.camera_pending |= self.shape_ui.open;
+            self.wearable_ui.camera_pending |= self.wearable_ui.open;
         }
         if self.demo && self.frame_count == 600 {
             match std::env::var("AURORA_DEMO_AVATAR_HEALTH").as_deref() {

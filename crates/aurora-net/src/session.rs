@@ -853,6 +853,11 @@ impl Session<'_> {
                     let materials_max = (!max.is_undef()).then(|| max.as_u32());
                     let avatar_hover_height = v["AvatarHoverHeightEnabled"].as_bool();
                     let lsl_syntax_id = v["LSLSyntaxId"].as_uuid();
+                    // an OpenSim grid's status feed and page
+                    // (LFSimFeatureHandler::setSupportedFeatures)
+                    let extras = &v["OpenSimExtras"];
+                    let grid_status_feed = extras["GridStatusRSS"].to_string_value();
+                    let grid_status_page = extras["GridStatus"].to_string_value();
                     log::info!("SimulatorFeatures received: avatar hover height {avatar_hover_height}");
                     let _ = events.send(NetEvent::SimulatorFeatures {
                         handle,
@@ -861,6 +866,8 @@ impl Session<'_> {
                         materials_rate,
                         materials_max,
                         lsl_syntax_id,
+                        grid_status_feed,
+                        grid_status_page,
                     });
                 }
                 Err(_) => log::warn!("SimulatorFeatures unavailable after retries"),
