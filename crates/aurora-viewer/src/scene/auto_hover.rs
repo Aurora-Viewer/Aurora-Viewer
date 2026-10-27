@@ -2126,6 +2126,7 @@ mod tests {
                         lods: [Some((0, 4)); 4],
                         skin: None,
                         physics_convex: None,
+                        physics_mesh: None,
                         version: 1,
                     },
                     bytes: super::super::mesh_bytes::MeshBytes::whole(Arc::new(vec![0xff; 4])),

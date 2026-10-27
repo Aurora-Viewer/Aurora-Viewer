@@ -8282,6 +8282,11 @@ impl App {
             };
             self.scene.creation_preview.update(&mut gfx.renderer, preview);
             self.scene.creation_preview.append(&mut self.scene.lists);
+            let physics = crate::scene::physics_shapes::selection(&self.build, &self.world, &self.settings.build);
+            self.scene
+                .physics_shapes
+                .update(&mut gfx.renderer, &self.world, &mut self.scene.meshes, &physics);
+            self.scene.physics_shapes.append(&mut self.scene.lists);
             let huds_shown = self.huds_shown();
             self.scene.build_huds(&self.world, [hud_size.width, hud_size.height], huds_shown);
             self.frame_profile.lap(Lap::Lists);
@@ -10602,6 +10607,11 @@ impl App {
                     crate::build::demo::Step::MeshLod(level) => {
                         self.panels.chat = false;
                         self.build.set_inspected_mesh_lod(level);
+                    }
+                    crate::build::demo::Step::Physics(show, kind) => {
+                        self.settings.build.show_physics_shape = show;
+                        self.build.set_physics(&self.world, |p| p.shape_type = kind);
+                        self.flush_build();
                     }
                     crate::build::demo::Step::ReplaceBegin(contents) => {
                         self.build.begin_replacement(&self.world, &self.settings.build);
@@ -15948,12 +15958,18 @@ impl ApplicationHandler for App {
                 }
             }
             if std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| {
-                v.starts_with("faces") || v.starts_with("shared") || v.starts_with("mesh-inspector") || v.starts_with("invisible-")
+                v.starts_with("faces")
+                    || v.starts_with("shared")
+                    || v.starts_with("mesh-inspector")
+                    || v.starts_with("invisible-")
+                    || v.starts_with("physics")
             }) {
                 let invisible_manipulation = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("invisible-"));
                 let invisible = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-invisible,"));
                 let inspector = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector"));
+                let physics = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("physics"));
                 let complex = inspector
+                    || physics
                     || invisible_manipulation
                     || std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("faces-complex,"));
                 let mut events = if complex {
@@ -15975,7 +15991,10 @@ impl ApplicationHandler for App {
                     }
                 }
                 if complex && let Some(gfx) = &mut self.gfx {
-                    if inspector {
+                    if physics {
+                        let analysed = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("physics-analysed"));
+                        crate::scene::physics_shapes::install_demo(&mut self.scene.meshes, analysed);
+                    } else if inspector {
                         let empty = std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("mesh-inspector-cycle-empty"));
                         self.scene.install_demo_mesh_inspector(&mut gfx.renderer, empty);
                     } else {

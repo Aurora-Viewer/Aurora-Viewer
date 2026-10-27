@@ -796,6 +796,8 @@ struct Pipelines {
     /// Selection wireframes (SilhouetteParentColor / SilhouetteChildColor).
     select_root_wire: Option<wgpu::RenderPipeline>,
     creation_preview: wgpu::RenderPipeline,
+    physics_fill: wgpu::RenderPipeline,
+    physics_wire: Option<wgpu::RenderPipeline>,
     select_child_wire: Option<wgpu::RenderPipeline>,
     selection_mask: wgpu::RenderPipeline,
     ssr: Option<wgpu::RenderPipeline>,
@@ -2260,6 +2262,7 @@ struct Ranges {
     debug_yellow: (u64, u32),
     select_root: (u64, u32),
     creation_preview: (u64, u32),
+    physics_shapes: (u64, u32),
     select_child: (u64, u32),
     select_faces: (u64, u32),
     refl_water: (u64, u32),
@@ -3251,6 +3254,27 @@ impl Backend {
             )
         });
         let line_mode = device.features().contains(wgpu::Features::POLYGON_MODE_LINE);
+        let physics_fill = pipe(PipeDesc {
+            cull: Some(wgpu::Face::Back),
+            blend: Some(alpha_blend),
+            write_mask: wgpu::ColorWrites::COLOR,
+            depth_write: false,
+            depth_compare: wgpu::CompareFunction::GreaterEqual,
+            depth_bias: wgpu::DepthBiasState {
+                constant: 2,
+                slope_scale: 1.0,
+                clamp: 0.0,
+            },
+            constants: &[("debug_r", 0.15), ("debug_g", 0.8), ("debug_b", 0.35), ("debug_a", 0.5)],
+            ..base("selected physics shape", "vs_main", "fs_debug_flat")
+        });
+        let physics_wire = line_mode.then(|| {
+            debug(
+                "selected physics triangles",
+                &[("debug_r", 0.05), ("debug_g", 0.3), ("debug_b", 0.1), ("debug_a", 0.8)],
+                true,
+            )
+        });
         let select_root_wire = line_mode.then(|| {
             debug(
                 "select root wire",
@@ -3481,6 +3505,8 @@ impl Backend {
         );
         Pipelines {
             creation_preview,
+            physics_fill,
+            physics_wire,
             hud_opaque,
             hud_blend,
             hud_debug_red,
@@ -5606,6 +5632,7 @@ impl Backend {
         rg.debug_yellow = push(cpu, &lists.debug_yellow);
         rg.select_root = push(cpu, &lists.select_root);
         rg.creation_preview = push(cpu, &lists.creation_preview);
+        rg.physics_shapes = push(cpu, &lists.physics_shapes);
         rg.select_child = push(cpu, &lists.select_child);
         rg.select_faces = push(cpu, &lists.select_faces);
         let imp_ranges: Vec<((u64, u32), (u64, u32))> = imp_caps.iter().map(|c| (push(cpu, &c.opaque), push(cpu, &c.blend))).collect();
@@ -6683,6 +6710,10 @@ impl Backend {
             draw(pass, &self.pipelines.debug_blue, rg.debug_blue);
             draw(pass, &self.pipelines.debug_green, rg.debug_green);
             draw(pass, &self.pipelines.debug_yellow, rg.debug_yellow);
+            draw(pass, &self.pipelines.physics_fill, rg.physics_shapes);
+            if let Some(wire) = &self.pipelines.physics_wire {
+                draw(pass, wire, rg.physics_shapes);
+            }
             if let Some(wire) = &self.pipelines.select_child_wire {
                 draw(pass, wire, rg.select_child);
             }

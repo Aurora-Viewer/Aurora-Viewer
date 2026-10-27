@@ -24,6 +24,7 @@ pub mod j2k;
 pub mod llm;
 pub mod material;
 pub mod mesh;
+pub mod mesh_physics;
 pub mod skeleton;
 pub mod wearable;
 

@@ -69,6 +69,7 @@ pub enum Step {
     Focus(bool),
     Linked(bool),
     MeshLod(Option<u8>),
+    Physics(bool, u8),
     Wheel(f32),
     ReplaceBegin(bool),
     ReplacePick(usize),
@@ -363,6 +364,25 @@ pub fn steps(spec: &str, frame: u64, tool: &BuildTool, world: &World, s: &BuildS
                 vec![Step::ContentsSelection(parts[0] == "contents-rename-ready")]
             }
             260 if parts[0] != "contents-ready" => vec![Step::TakeTask(parts[0] == "contents-copy")],
+            _ => Vec::new(),
+        };
+    }
+    if parts[0].starts_with("physics") {
+        return match frame {
+            215 => vec![Step::Open(Tool::Edit, EditMode::Move, 2), Step::Linked(true)],
+            220 => object.into_iter().map(Step::Select).collect(),
+            227 => vec![Step::Focus(false), Step::CloseView],
+            245 => vec![Step::Physics(
+                parts[0] != "physics-off",
+                match parts[0] {
+                    "physics-convex" => 2,
+                    "physics-none" => 1,
+                    _ => 0,
+                },
+            )],
+            290 if parts[0] == "physics-cycle" => vec![Step::Physics(false, 0)],
+            320 if parts[0] == "physics-cycle" => vec![Step::Physics(true, 2)],
+            350 if parts[0] == "physics-cycle" => vec![Step::Physics(true, 0)],
             _ => Vec::new(),
         };
     }
