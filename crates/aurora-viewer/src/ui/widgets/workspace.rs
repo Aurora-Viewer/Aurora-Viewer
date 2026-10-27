@@ -463,6 +463,9 @@ pub(super) fn window_icon(id: &str) -> &'static str {
     if id.starts_with("build_tools") {
         return "box";
     }
+    if id == super::super::animation_explorer::WINDOW {
+        return "run";
+    }
     match id {
         "appearance" | "appearance_item_profile" => "shirt-filled",
         "conversations" | "contacts" => "messages-filled",

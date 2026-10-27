@@ -91,6 +91,7 @@ fn kind_label(kind: Kind) -> &'static str {
         Kind::Sound(2) => aurora_i18n::tr!("sound-explorer-rezzed"),
         Kind::Sound(4) => aurora_i18n::tr!("sound-explorer-gestures"),
         Kind::Sound(_) => aurora_i18n::tr!("sound-explorer-owner-sounds"),
+        Kind::Animation => aurora_i18n::tr!("inventory-kind-animation"),
     }
 }
 

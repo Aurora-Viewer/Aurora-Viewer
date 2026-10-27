@@ -221,6 +221,16 @@ name or UUID, and copies unique selected keys from the row menu. Its Blocked
 shortcut opens the separate People mute list; Ignore never derenders an object
 or adds a sound asset to the blacklist.
 
+`world/animation_log.rs` records the newest 100 motions that a source started
+on our avatar, from the AvatarAnimation source blocks (our own motions only
+while the window is open). `ui/animation_explorer.rs` owns the Animation
+explorer's table and stand-in avatar canvas; `app/animation_explorer.rs`
+names the sources, poses the stand-in on its own motion controller (the
+default body built by `imports::preview::dummy_avatar` on a worker) and
+applies stop, stop-and-revoke and blacklist. Animation entries of
+`world/derender.rs` (AT_ANIMATION) drop the motion from every avatar's
+signals and ask the simulator to stop it on ours.
+
 `world/portals.rs` owns bounded, immutable two-minute portal invitations and
 per-observer crossing gates. `aurora-net/src/bridge/portal.rs` validates their
 bounded base64/JSON wire format. Bridge 1.37 uses an owner-authenticated,

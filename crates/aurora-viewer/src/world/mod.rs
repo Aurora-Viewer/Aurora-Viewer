@@ -1,5 +1,6 @@
 //! Viewer-side world model fed by network events.
 
+pub mod animation_log;
 pub mod anti_spam;
 pub mod appearance;
 pub mod attention;
@@ -416,6 +417,8 @@ pub struct World {
     preview_server_motion: Option<PlayingAnimation>,
     /// Our animation sources, kept until the simulator stops the motion.
     animation_sources: HashMap<Uuid, HashSet<Uuid>>,
+    /// The motions sources started on our avatar (Animation explorer).
+    pub animation_log: animation_log::AnimationLog,
     /// Motions to stop after leaving a seat or losing a source (drained by app).
     pub animation_stops: Vec<Uuid>,
     /// Skeletons other avatars asked us to reset, with their animations or
@@ -681,6 +684,7 @@ impl World {
             animation_preview_clock: None,
             preview_server_motion: None,
             animation_sources: HashMap::new(),
+            animation_log: Default::default(),
             animation_stops: Vec::new(),
             skeleton_resets: Vec::new(),
             eep: eep_env::EnvSelector::default(),
@@ -2725,8 +2729,13 @@ impl World {
                 self.flush_online_notices();
                 None
             }
-            NetEvent::AvatarAnimations { avatar, anims, sources } => {
+            NetEvent::AvatarAnimations {
+                avatar,
+                mut anims,
+                mut sources,
+            } => {
                 let now = Instant::now();
+                self.drop_blacklisted_animations(avatar, &mut anims, &mut sources);
                 if avatar == self.agent_id {
                     log::info!("own animations: {} playing", anims.len());
                     self.agent.ground_sit = anims.iter().any(|(id, _)| *id == body::ANIM_SIT_GROUND_CONSTRAINED);
@@ -2738,8 +2747,12 @@ impl World {
                         !motions.is_empty()
                     });
                     for (source, (id, _)) in sources.into_iter().zip(&anims) {
-                        if !source.is_nil() && self.objects.index_of_uuid(&source).is_some() {
-                            self.animation_sources.entry(source).or_default().insert(*id);
+                        if !source.is_nil()
+                            && self.objects.index_of_uuid(&source).is_some()
+                            && self.animation_sources.entry(source).or_default().insert(*id)
+                        {
+                            // RecentAnimationList::addAnimation, on a new pair only
+                            self.animation_log.record(*id, source, source == self.agent_id, now);
                         }
                     }
                 }
@@ -4649,6 +4662,49 @@ impl World {
         }
     }
 
+    /// Whether `source` still plays `animation` on our avatar (the
+    /// explorer's "Still playing", AnimationExplorer::updateList).
+    pub fn animation_playing_from(&self, source: &Uuid, animation: &Uuid) -> bool {
+        self.animation_sources.get(source).is_some_and(|motions| motions.contains(animation))
+    }
+
+    /// process_avatar_animation's asset blacklist (FSAssetBlacklist,
+    /// indra/newview/llviewermessage.cpp): a blacklisted motion is never
+    /// played on an avatar, and a stop for it is sent for our own, so the
+    /// people around do not see it either. The source blocks stay aligned
+    /// with the motions they name. Animesh (ObjectAnimation) is left as is,
+    /// like the Legacy Viewer's process_object_animation.
+    fn drop_blacklisted_animations(&mut self, avatar: Uuid, anims: &mut Vec<(Uuid, i32)>, sources: &mut Vec<Uuid>) {
+        if self.derender.is_empty() || !anims.iter().any(|(id, _)| self.derender.animation_blocked(id)) {
+            return;
+        }
+        let animesh = self
+            .objects
+            .index_of_uuid(&avatar)
+            .and_then(|i| self.objects.get(i))
+            .is_some_and(|o| !o.is_avatar());
+        if animesh {
+            return;
+        }
+        let mut index = 0;
+        let mut kept_sources = Vec::with_capacity(sources.len());
+        anims.retain(|(id, _)| {
+            let i = index;
+            index += 1;
+            if self.derender.animation_blocked(id) {
+                if !self.animation_stops.contains(id) {
+                    self.animation_stops.push(*id);
+                }
+                return false;
+            }
+            if let Some(source) = sources.get(i) {
+                kept_sources.push(*source);
+            }
+            true
+        });
+        *sources = kept_sources;
+    }
+
     /// LLVOAvatarSelf::stopMotionFromSource and LLViewerObject::markDead
     /// (indra/newview/llvoavatarself.cpp / llviewerobject.cpp, LGPL 2.1).
     /// Request the simulator's stop; its animation signal remains authoritative.
@@ -5115,6 +5171,43 @@ mod motion_tests {
             objects: vec![avatar],
         });
         assert!(world.animation_stops.is_empty(), "repeated standing packet");
+    }
+
+    #[test]
+    fn animation_explorer_logs_new_sources_once_and_blacklisted_motions_never_play() {
+        let (mut world, _, _, root, linked) = seated_fixture();
+        let (sit, hands, blocked) = (Uuid::from_u128(71), Uuid::from_u128(72), Uuid::from_u128(73));
+        let signal = |world: &mut World, anims: Vec<(Uuid, i32)>, sources: Vec<Uuid>| {
+            world.apply(NetEvent::AvatarAnimations {
+                avatar: world.agent_id,
+                anims,
+                sources,
+            });
+        };
+        signal(&mut world, vec![(sit, 1), (hands, 1)], vec![root, linked]);
+        signal(&mut world, vec![(sit, 2), (hands, 2)], vec![root, linked]);
+        let logged: Vec<_> = world.animation_log.entries().map(|e| (e.animation, e.source)).collect();
+        assert_eq!(logged, [(sit, root), (hands, linked)], "a repeated packet is not a new start");
+        assert!(world.animation_playing_from(&root, &sit));
+        world.derender.add(
+            blocked,
+            derender::Entry {
+                name: String::new(),
+                region: String::new(),
+                kind: derender::Kind::Animation,
+                date: 0,
+                permanent: false,
+            },
+        );
+        // The blocked motion comes first: the sources of the others stay theirs.
+        signal(&mut world, vec![(blocked, 3), (sit, 3), (hands, 3)], vec![linked, root, linked]);
+        assert!(world.animations.get(&world.agent_id).is_some_and(|list| list.iter().all(|a| a.id != blocked)));
+        assert_eq!(world.animation_stops, [blocked], "the simulator is asked to stop it");
+        assert!(world.animation_playing_from(&root, &sit) && world.animation_playing_from(&linked, &hands));
+        assert!(!world.animation_playing_from(&linked, &blocked));
+        assert_eq!(world.animation_log.entries().count(), 2);
+        signal(&mut world, vec![(hands, 4)], vec![linked]);
+        assert!(!world.animation_playing_from(&root, &sit), "a stopped motion is no longer playing");
     }
 
     #[test]

@@ -646,48 +646,67 @@ fn build(
             }
         }
         Source::Animation { animation, .. } => {
-            let rig = &avatars.rig;
-            let mut inverse = rig.default_world_inv.clone();
-            inverse.push(glam::Mat4::IDENTITY);
-            let skin = Arc::new(aurora_render::preview::Skin {
-                joints: (0..inverse.len()).collect(),
-                rest: vec![glam::Mat4::IDENTITY; inverse.len()],
-                inverse_bind: inverse,
-            });
-            for part in avatars.parts.iter().filter(|p| p.name != "skirt") {
-                let mut vertices = part
-                    .vertices
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| {
-                        let weights = part.skin.get(i).copied().unwrap_or_default();
-                        Vertex {
-                            position: v.pos,
-                            normal: v.normal[..3]
-                                .try_into()
-                                .map(|a: [i8; 3]| a.map(|n| n as f32 / 127.0))
-                                .unwrap_or([0.0, 0.0, 1.0]),
-                            uv: [v.uv[0], 1.0 - v.uv[1]],
-                            joints: weights.joints.map(u32::from),
-                            weights: weights.weights.map(|w| f32::from(w) / 255.0),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                classic_morphs(&mut vertices, part.name, animation.hand_pose, &animation.emote_name);
-                parts.push(Part {
-                    diagnostic: false,
-                    vertices: vertices.into(),
-                    indices: part.indices.iter().map(|i| u32::from(*i)).collect::<Vec<_>>().into(),
-                    textures: std::array::from_fn(|_| None),
-                    material: Material::default(),
-                    skin: Some(skin.clone()),
-                });
-            }
+            parts = dummy_avatar_parts(avatars, animation.hand_pose, &animation.emote_name);
         }
         _ => {}
     }
     let (center, radius) = bounds(&parts);
     Ok(Model { parts, center, radius })
+}
+
+
+/// The preview's stand-in avatar: the default body meshes (no skirt),
+/// skinned to the default skeleton, with the hand pose and the emote of the
+/// animation shown (LLPreviewAnimation's dummy avatar,
+/// indra/newview/llfloaterbvhpreview.cpp, originally LGPL 2.1). The pose
+/// palette has one more matrix than the rig, the identity.
+pub(crate) fn dummy_avatar_parts(avatars: &crate::scene::avatar::AvatarLibrary, hand_pose: u32, emote: &str) -> Vec<Part> {
+    let mut parts = Vec::new();
+    let rig = &avatars.rig;
+    let mut inverse = rig.default_world_inv.clone();
+    inverse.push(glam::Mat4::IDENTITY);
+    let skin = Arc::new(aurora_render::preview::Skin {
+        joints: (0..inverse.len()).collect(),
+        rest: vec![glam::Mat4::IDENTITY; inverse.len()],
+        inverse_bind: inverse,
+    });
+    for part in avatars.parts.iter().filter(|p| p.name != "skirt") {
+        let mut vertices = part
+            .vertices
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let weights = part.skin.get(i).copied().unwrap_or_default();
+                Vertex {
+                    position: v.pos,
+                    normal: v.normal[..3]
+                        .try_into()
+                        .map(|a: [i8; 3]| a.map(|n| n as f32 / 127.0))
+                        .unwrap_or([0.0, 0.0, 1.0]),
+                    uv: [v.uv[0], 1.0 - v.uv[1]],
+                    joints: weights.joints.map(u32::from),
+                    weights: weights.weights.map(|w| f32::from(w) / 255.0),
+                }
+            })
+            .collect::<Vec<_>>();
+        classic_morphs(&mut vertices, part.name, hand_pose, emote);
+        parts.push(Part {
+            diagnostic: false,
+            vertices: vertices.into(),
+            indices: part.indices.iter().map(|i| u32::from(*i)).collect::<Vec<_>>().into(),
+            textures: std::array::from_fn(|_| None),
+            material: Material::default(),
+            skin: Some(skin.clone()),
+        });
+    }
+    parts
+}
+
+/// [`dummy_avatar_parts`] as a whole preview model.
+pub(crate) fn dummy_avatar(avatars: &crate::scene::avatar::AvatarLibrary, hand_pose: u32, emote: &str) -> Model {
+    let parts = dummy_avatar_parts(avatars, hand_pose, emote);
+    let (center, radius) = bounds(&parts);
+    Model { parts, center, radius }
 }
 
 impl Imports {

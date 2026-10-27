@@ -5854,6 +5854,8 @@ pub fn typing_animation() -> aurora_assets::Animation {
 }
 
 pub const IDLE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0001);
+/// AURORA_DEMO_ANIMATION_EXPLORER: a worn object's motion, stopped since.
+pub const EXPLORER_WAVE_ANIM: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0130);
 
 pub const ANIMESH_MESH: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0100);
 pub const ANIMESH_TEXTURE: Uuid = Uuid::from_u128(0xD0D0_A111_0000_0000_0000_0000_0000_0101);
