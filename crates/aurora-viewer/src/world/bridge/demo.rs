@@ -147,7 +147,7 @@ impl Demo {
                 && *index == 0
                 && *label == format!("auroraHello|{}", bridge.object) =>
             {
-                // Both scripts hear the same probe and answer it.
+                // All three scripts hear the same probe and answer it.
                 Some(
                     self.handshake(bridge, world)
                         .into_iter()

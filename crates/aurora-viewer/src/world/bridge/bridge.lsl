@@ -1,10 +1,10 @@
-// Aurora LSL Bridge v1.37. Movelock physics follow the Legacy Viewer's movelockMe
+// Aurora LSL Bridge v1.38. Movelock physics follow the Legacy Viewer's movelockMe
 // (EBEDD1D2-A320-43f5-88CF-DD47BBCA5DFB.lsltxt, originally LGPL 2.1).
 // Mono's 64 KB holds this compiled controller too, with little to spare: the
 // read-only queries run in query.lsl, so a busy region cannot halt Movelock
 // with a Stack-Heap Collision. Keep new services out of this script.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.37";
+string VERSION = "1.38";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -57,8 +57,8 @@ integer gCaptured;
 integer gReportedLock;
 integer gInitialized;
 integer gPermissionsReady;
-integer gConnected;
 integer gPaired;
+float gDiscoveryDeadline;
 vector gRunForce;
 vector gRunDirection;
 float gRunIntegral;
@@ -87,12 +87,12 @@ clearRun(integer reason) {
 
 bootStatus() {
     // No endpoint or authentication key in diagnostic status messages.
-    llOwnerSay("<auroraBridgeStatus>" + VERSION + "|" + FOLDER + "|" + (string)gPermissionsReady
+    if (gPaired) llOwnerSay("<auroraBridgeStatus>" + VERSION + "|" + FOLDER + "|" + (string)gPermissionsReady
         + "|" + (string)(gURL != "") + "</auroraBridgeStatus>");
 }
 
 announce() {
-    if (gHelloPending && gURL != "" && gPermissionsReady && (llGetPermissions() & PERMISSION_TAKE_CONTROLS)
+    if (gPaired && gHelloPending && gURL != "" && gPermissionsReady && (llGetPermissions() & PERMISSION_TAKE_CONTROLS)
         && llGetPermissionsKey() == gOwner) {
         gHelloPending = FALSE;
         llOwnerSay("<auroraBridge>" + VERSION + "|" + FOLDER + "|" + gURL + "|" + (string)gToken + "</auroraBridge>");
@@ -107,9 +107,11 @@ discover(integer channel, key sender, string message) {
     gNextHello = llGetTime() + 5.0;
     gHelloPending = TRUE;
     gPaired = TRUE;
+    gDiscoveryDeadline = 0.0;
     takeControls();
     announce();
     if (gHelloPending) bootStatus();
+    syncTimer();
 }
 
 syncControls() {
@@ -129,6 +131,7 @@ syncControls() {
 syncTimer() {
     if (gMode == 1 || gMode == 5) llSetTimerEvent(0.05);
     else if (gMode || gEnabled) llSetTimerEvent(0.1);
+    else if (gDiscoveryDeadline > 0.0) llSetTimerEvent(1.0);
     else if (gRetryURL) llSetTimerEvent(5.0);
     else llSetTimerEvent(0.0);
 }
@@ -581,7 +584,7 @@ string status() {
         // Mono's lowest free memory since start: the viewer logs the margin.
         + "|" + (string)llGetFreeMemory();
 }
-report() { llOwnerSay("<auroraMoveLock>" + status() + "</auroraMoveLock>"); }
+report() { if (gPaired && llGetAttached()) llOwnerSay("<auroraMoveLock>" + status() + "</auroraMoveLock>"); }
 setLock(integer yes) {
     if (yes == gLocked) return;
     gLocked = yes;
@@ -616,19 +619,27 @@ syncMotionLock() {
     } else syncLock();
 }
 requestURL() {
-    // Notify an already paired viewer once when the simulator replaces its
-    // endpoint, even before its first command: a region change right after
-    // the handshake must not leave it on the old region's URL. Otherwise
-    // wait for discovery, even on an unsupported viewer.
-    if (gConnected || gPaired) gHelloPending = TRUE;
+    // Only a viewer confirmed during this login may receive URL renewals.
+    // on_rez/initialize revoke saved pairing before another viewer can see it.
+    if (gPaired) gHelloPending = TRUE;
     llReleaseURL(gURL);
     gURL = "";
     gToken = llGenerateKey();
     gSequence = 0;
     gRetryURL = FALSE;
-    gConnected = FALSE;
     gURLRequest = llRequestSecureURL();
     syncTimer();
+}
+detachUnsupported() {
+    // Unlike the Legacy script's first owner-chat handshake, discovery is
+    // entirely viewer-initiated. Give cold login/inventory loading 60 seconds.
+    // PERMISSION_ATTACH is automatically granted on the wearer's attachment;
+    // check it before detaching to avoid a script error on the debug channel.
+    if (!gInitialized || !llGetAttached() || gPaired || gDiscoveryDeadline <= 0.0
+        || llGetTime() < gDiscoveryDeadline) return;
+    gDiscoveryDeadline = llGetTime() + 5.0;
+    if (llGetPermissionsKey() == gOwner && (llGetPermissions() & PERMISSION_ATTACH)) llDetachFromAvatar();
+    else llRequestPermissions(gOwner, PERMISSION_TAKE_CONTROLS | PERMISSION_TRACK_CAMERA | PERMISSION_ATTACH);
 }
 initialize() {
     // state_entry and attach can both arrive for the same rez. A second
@@ -638,6 +649,7 @@ initialize() {
     gPermissionsReady = FALSE;
     gHelloPending = FALSE;
     gPaired = FALSE;
+    gDiscoveryDeadline = llGetTime() + 60.0;
     gNextHello = 0.0;
     CONTROLS =CONTROL_FWD | CONTROL_BACK | CONTROL_LEFT | CONTROL_RIGHT | CONTROL_UP | CONTROL_DOWN;
     gOwner = llGetOwner();
@@ -654,9 +666,9 @@ initialize() {
     llSetVehicleType(VEHICLE_TYPE_NONE);
     gLocked = FALSE;
     llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_SIZE, <0.01,0.01,0.01>, PRIM_COLOR, ALL_SIDES, <1,1,1>, 0.0]);
-    // Request both together: a later request would replace the controls grant.
+    // Request all together: a later request would replace the controls grant.
     // Camera tracking is optional; Movelock still needs only TAKE_CONTROLS.
-    llRequestPermissions(gOwner, PERMISSION_TAKE_CONTROLS | PERMISSION_TRACK_CAMERA);
+    llRequestPermissions(gOwner, PERMISSION_TAKE_CONTROLS | PERMISSION_TRACK_CAMERA | PERMISSION_ATTACH);
     requestURL();
 }
 default {
@@ -664,11 +676,12 @@ default {
     attach(key wearer) {
         if (wearer) initialize();
         else {
+            gPaired = FALSE;
+            gDiscoveryDeadline = 0.0;
             gInitialized = FALSE;
             gPermissionsReady = FALSE;
             gEnabled = FALSE;
             gRetryURL = FALSE;
-            gConnected = FALSE;
             gHelloPending = FALSE;
             llListenRemove(gDiscoveryListener);
             gDiscoveryListener = 0;
@@ -686,9 +699,11 @@ default {
         // on_rez precedes attach. llResetScript here erases that queued
         // attach event before the simulator has finished attaching the prim.
         // Preserve the queue; attach starts a fresh URL/permission generation.
+        gPaired = FALSE;
+        gEnabled = FALSE;
+        gDiscoveryDeadline = 0.0;
         gInitialized = FALSE;
         gPermissionsReady = FALSE;
-        gConnected = FALSE;
         gHelloPending = FALSE;
         llListenRemove(gDiscoveryListener);
         gDiscoveryListener = 0;
@@ -700,6 +715,7 @@ default {
             takeControls();
             announce();
         }
+        detachUnsupported();
     }
     listen(integer channel, string name, key sender, string message) {
         discover(channel, sender, message);
@@ -730,6 +746,9 @@ default {
     changed(integer change) {
         if (change & CHANGED_OWNER) llResetScript();
         else if (gInitialized && llGetAttached() && (change & (CHANGED_REGION | CHANGED_REGION_START | CHANGED_TELEPORT))) {
+            // Pairing belongs to this login, not an endpoint. Duplicate region
+            // events must still renew a confirmed Aurora session without a new
+            // probe. Unpaired crossings retain the original detach deadline.
             setLock(FALSE);
             releaseMotion();
             syncControls();
@@ -742,6 +761,7 @@ default {
         }
     }
     timer() {
+        detachUnsupported();
         if (gRetryURL && llGetTime() >= gRetryAt) requestURL();
         applyMotion();
         if (gEnabled) {
@@ -765,11 +785,12 @@ default {
             gRetryURL = TRUE;
             gRetryAt = llGetTime() + 5.0;
             syncTimer();
-            if (gHelloPending) {
+            if (gPaired && gHelloPending) {
                 gHelloPending = FALSE;
                 llOwnerSay("<auroraBridgeError>url</auroraBridgeError>");
             }
         } else if (method == "POST") {
+            if (!gPaired) { llHTTPResponse(request, 403, "unpaired"); return; }
             // llGetHTTPHeader cannot read custom headers: authenticate the
             // bounded POST body instead (wiki.secondlife.com/wiki/LlGetHTTPHeader).
             // Read-only queries live in the separate query.lsl script.
@@ -784,7 +805,6 @@ default {
             if (llList2String(parts, 0) != "lock" || sequence <= 0) {
                 llHTTPResponse(request, 400, "invalid"); return;
             }
-            gConnected = TRUE;
             if (sequence > gSequence) {
                 gSequence = sequence;
                 gEnabled = llList2Integer(parts, 3) != 0;

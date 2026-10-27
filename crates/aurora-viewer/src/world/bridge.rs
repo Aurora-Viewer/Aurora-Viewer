@@ -18,7 +18,7 @@ const OLD_SUBFOLDER: &str = "Bridge";
 pub const NAME: &str = "#Aurora Bridge v1.0";
 // Stable inventory/script names let upgrades replace the existing controller
 // instead of wearing two bridges with competing physics.
-const VERSION: &str = "1.37";
+const VERSION: &str = "1.38";
 const DISCOVERY_CHANNEL: i32 = -184735219;
 const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 const ROCK: &str = "Rock - medium, round";
@@ -781,7 +781,7 @@ impl Bridge {
                     // like a silent one: the simulator may report it stopped.
                     self.query_watch.silent_since.get_or_insert(now);
                 }
-                if self.error.is_some() || self.query.is_none() {
+                if self.error.is_some() || self.query.is_none() || world.hand_contacts.relay.is_none() {
                     self.discover(world, now);
                 }
                 if !self.watch_silence(world, now) {

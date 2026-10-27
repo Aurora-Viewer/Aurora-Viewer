@@ -1725,6 +1725,21 @@ foreach ($script in 'bridge', 'query', 'ik') {
 }
 ```
 
+Execute their actual event handlers offline with
+`uv run scripts/test-bridge-lsl.py` (isolated Python 3.10/Lummao test runtime).
+The test covers silent startup/URL failures, exact owner/root discovery,
+login revocation, confirmed-session region renewal, 60-second self-detachment, permission checks,
+unpaired peer/HTTP traffic and resumed discovery. It mocks simulator APIs;
+it does not emulate Havok or measure the compiled Mono memory budget.
+
+For bridge 1.38 (#1168), let Aurora upgrade the existing attachment, then
+switch to another viewer without manually removing it. No bridge message
+should appear at login or after crossings/teleports; the bridge must detach
+after 60 seconds without Aurora discovery, even during repeated crossings.
+Reconnect with Aurora: the same inventory object must be worn automatically,
+all three services must recover, and Movelock, IK, script/object information,
+posing consent and portals must still work after crossings and teleports.
+
 Bridge 1.35 repairs four invalid unary `!` operations on keys in the query
 script's posing-consent paths. The human grid check is to let an existing
 attachment upgrade, confirm all three scripts are running, then request Script

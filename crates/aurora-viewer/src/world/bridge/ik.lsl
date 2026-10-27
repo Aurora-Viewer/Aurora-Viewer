@@ -1,6 +1,6 @@
 // Aurora bridge IK relay: regional event discovery, no periodic polling.
 // Separate Mono memory from movement and read-only bridge services.
-string VERSION = "1.37";
+string VERSION = "1.38";
 string FOLDER = "__FOLDER__";
 integer HELLO_CHANNEL = -184735219;
 integer CONTROL_CHANNEL = -190018106;
@@ -8,13 +8,18 @@ integer IK_CHANNEL = -190018107;
 key owner;
 key session;
 integer started;
+integer paired;
+float nextHello;
 float nextDiscovery;
 float window;
 integer received;
+integer helloListener;
+integer controlListener;
+integer relayListener;
 
 hello()
 {
-    if (llGetAttached())
+    if (paired && llGetAttached())
         llOwnerSay("<auroraBridgeIK>" + VERSION + "|" + FOLDER + "|" + (string)session + "</auroraBridgeIK>");
 }
 
@@ -23,12 +28,17 @@ initialize()
     owner = llGetOwner();
     session = llGenerateKey();
     started = FALSE;
+    paired = FALSE;
+    nextHello = 0.0;
     nextDiscovery = 0.0;
-    // This script resets on region changes, retiring queued old-region traffic.
-    llListen(HELLO_CHANNEL, "", owner, "auroraHello|" + (string)llGetKey());
-    llListen(CONTROL_CHANNEL, "", owner, "");
-    llListen(IK_CHANNEL, "", NULL_KEY, "");
-    hello();
+    window = 0.0;
+    received = 0;
+    llListenRemove(helloListener);
+    llListenRemove(controlListener);
+    llListenRemove(relayListener);
+    helloListener = llListen(HELLO_CHANNEL, "", owner, "auroraHello|" + (string)llGetKey());
+    controlListener = llListen(CONTROL_CHANNEL, "", owner, "");
+    relayListener = llListen(IK_CHANNEL, "", NULL_KEY, "");
 }
 
 default
@@ -37,7 +47,15 @@ default
     listen(integer channel, string name, key sender, string message)
     {
         if (!llGetAttached()) return;
-        if (channel == HELLO_CHANNEL && sender == owner) { hello(); return; }
+        if (channel == HELLO_CHANNEL && sender == owner
+            && message == "auroraHello|" + (string)llGetKey() && llGetTime() >= nextHello)
+        {
+            paired = TRUE;
+            nextHello = llGetTime() + 5.0;
+            hello();
+            return;
+        }
+        if (!paired) return;
         if (channel == CONTROL_CHANNEL && sender == owner)
         {
             list fields = llParseStringKeepNulls(message, ["|"], []);
@@ -78,7 +96,16 @@ default
     attach(key wearer) { if (wearer == llGetOwner()) llResetScript(); }
     changed(integer changes)
     {
-        if (changes & (CHANGED_OWNER | CHANGED_REGION | CHANGED_REGION_START)) llResetScript();
+        if (changes & CHANGED_OWNER) llResetScript();
+        else if (changes & (CHANGED_REGION | CHANGED_REGION_START))
+        {
+            // Retire old-region nonces and pending traffic without forgetting a
+            // viewer confirmed during this login. Login/attach always reset it.
+            integer confirmed = paired;
+            initialize();
+            paired = confirmed;
+            hello();
+        }
     }
     on_rez(integer parameter) { llResetScript(); }
 }

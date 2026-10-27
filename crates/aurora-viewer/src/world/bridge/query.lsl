@@ -1,10 +1,10 @@
-// Aurora LSL Bridge query and posing-consent services v1.37: the Legacy Viewer's getZOffsets
+// Aurora LSL Bridge query and posing-consent services v1.38: the Legacy Viewer's getZOffsets
 // and getScriptInfo equivalents (fsradar.cpp, fs_resources/EBEDD1D2-*.lsltxt,
 // originally LGPL 2.1). A separate script beside the movement controller:
 // Mono gives each script its own 64 KB, and a query can never halt Movelock.
 // It has its own HTTP-in URL and token, and never touches physics.
 string FOLDER = "__FOLDER__";
-string VERSION = "1.37";
+string VERSION = "1.38";
 string gURL;
 key gToken;
 key gURLRequest;
@@ -27,7 +27,7 @@ integer validKey(key value) {
 }
 
 announce() {
-    if (gURL != "") llOwnerSay("<auroraBridgeQuery>" + VERSION + "|" + FOLDER + "|" + gURL + "|" + (string)gToken + "</auroraBridgeQuery>");
+    if (gPaired && llGetAttached() && gURL != "") llOwnerSay("<auroraBridgeQuery>" + VERSION + "|" + FOLDER + "|" + gURL + "|" + (string)gToken + "</auroraBridgeQuery>");
 }
 requestURL() {
     llSetTimerEvent(0.0);
@@ -37,6 +37,8 @@ requestURL() {
     gURLRequest = llRequestSecureURL();
 }
 initialize() {
+    gPaired = FALSE;
+    gNextHello = 0.0;
     gOwner = llGetOwner();
     llListenRemove(gListener);
     // Same owner-filtered, root-addressed probe as the movement controller.
@@ -130,6 +132,8 @@ query(key request, string kind, string targets) {
 }
 
 default {
+    // Login restores script globals before attach; revoke old pairing at once.
+    on_rez(integer start) { gPaired = FALSE; }
     state_entry() { if (llGetAttached()) initialize(); }
     attach(key wearer) {
         if (wearer) initialize();
@@ -201,9 +205,10 @@ default {
             llOwnerSay("<auroraPose>" + (string)nonce + "|" + action + "|" + (string)peer + "</auroraPose>");
             return;
         }
-        if (!llGetAttached() || sender != gOwner || llGetTime() < gNextHello) return;
+        if (!llGetAttached() || channel != DISCOVERY_CHANNEL || sender != gOwner
+            || message != "auroraHello|" + (string)llGetKey() || llGetTime() < gNextHello) return;
         gNextHello = llGetTime() + 5.0;
-        // Once probed, a replaced URL is announced without waiting for the viewer.
+        // The grant may arrive after this probe, but never speak before it.
         gPaired = TRUE;
         announce();
     }
@@ -216,6 +221,7 @@ default {
         } else if (method == URL_REQUEST_DENIED) {
             if (request == gURLRequest) llSetTimerEvent(5.0);
         } else if (method == "POST") {
+            if (!gPaired) { llHTTPResponse(request, 403, "unpaired"); return; }
             // llGetHTTPHeader cannot read custom headers: authenticate the
             // bounded body, query|token|kind|targets, read in place.
             if (llStringLength(body) > 768 || llGetSubString(body, 0, 42) != "query|" + (string)gToken + "|") {
