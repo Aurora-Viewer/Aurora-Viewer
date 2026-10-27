@@ -23,11 +23,13 @@ impl App {
         self.panels.snapshot && self.photo_style() == PhotoWindowStyle::Aurora
     }
 
-    /// The HUDs show (and take clicks): Preferences' switch, and in the
-    /// viewfinder the photo's own, so that the screen shows what the photo
-    /// will hold.
+    /// The HUDs show (and take clicks): Preferences' switch and, in
+    /// immersive mode, its button (#1190); a HUD locked by RLVa keeps them
+    /// shown; in the viewfinder the photo's own, so that the screen shows
+    /// what the photo will hold.
     pub(super) fn huds_shown(&self) -> bool {
-        (self.settings.show_huds || self.world.rlva_has_locked_hud()) && (!self.viewfinder_on() || self.settings.snapshot.huds)
+        let wanted = self.settings.show_huds && (!self.interface.immersive || self.settings.immersive_huds);
+        (wanted || self.world.rlva_has_locked_hud()) && (!self.viewfinder_on() || self.settings.snapshot.huds)
     }
 
     fn vf_now(&self) -> f64 {
