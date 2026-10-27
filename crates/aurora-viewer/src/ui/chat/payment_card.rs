@@ -140,6 +140,9 @@ mod tests {
         let (world, line) = paid("Rent");
         let texts: Vec<_> = frame(&world, &line, false).into_iter().map(|t| t.source).collect();
         let all = texts.concat();
-        assert!(all.contains("Jane Doe") && all.contains(&amount_label(1500)) && all.contains("Rent"), "{texts:?}");
+        assert!(
+            all.contains("Jane Doe") && all.contains(&amount_label(1500)) && all.contains("Rent"),
+            "{texts:?}"
+        );
     }
 }

@@ -101,11 +101,7 @@ fn is_friend(world: &World, id: &Uuid) -> bool {
 pub fn keyword_color(line: &ChatLine) -> Option<Color32> {
     if matches!(
         line.kind,
-        ChatKind::Own
-            | ChatKind::Object(ChatType::Debug)
-            | ChatKind::Invite(_)
-            | ChatKind::InventoryOffer(_)
-            | ChatKind::Payment(_)
+        ChatKind::Own | ChatKind::Object(ChatType::Debug) | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_)
     ) {
         return None;
     }

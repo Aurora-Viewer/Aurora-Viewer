@@ -136,7 +136,8 @@ impl App {
             self.settings.payment_opens_conversation = mode == "friend";
             self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
             self.world.payment_received(&paid(1, DEMO_TESS, 20, "Payment"));
-            self.world.payment_received(&paid(2, DEMO_FRIEND, 250, aurora_i18n::tr!("demo-payment-boat")));
+            self.world
+                .payment_received(&paid(2, DEMO_FRIEND, 250, aurora_i18n::tr!("demo-payment-boat")));
             if self.world.social.has_session(&DEMO_FRIEND) {
                 self.chat_ui.open(DEMO_FRIEND);
             }
@@ -154,7 +155,8 @@ impl App {
             binary_bucket: Vec::new(),
             timestamp: 0,
         }));
-        self.world.payment_received(&paid(3, DEMO_NOVA, 1500, aurora_i18n::tr!("demo-payment-thanks")));
+        self.world
+            .payment_received(&paid(3, DEMO_NOVA, 1500, aurora_i18n::tr!("demo-payment-thanks")));
         self.world.payment_received(&paid(4, DEMO_NOVA, 75, "Payment"));
         self.chat_ui.open(DEMO_NOVA);
         if mode == "legacy" {
