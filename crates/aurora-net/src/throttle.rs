@@ -74,9 +74,31 @@ fn total(group: &Group) -> f32 {
     group.iter().sum()
 }
 
+/// The most a group is built for: `GROUP_KBPS`'s end, unless
+/// `AURORA_THROTTLE_MAX_KBPS=<n>` (6,000 to 50,000) raises it for a launch,
+/// to measure what a simulator sends when asked for more than the Legacy
+/// Viewer ever asks (with `AURORA_BANDWIDTH_KBPS` for the setting).
+fn group_max() -> f32 {
+    static MAX: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *MAX.get_or_init(|| {
+        let end = *GROUP_KBPS.end();
+        match std::env::var("AURORA_THROTTLE_MAX_KBPS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+        {
+            Some(n) if n.is_finite() => {
+                let n = n.clamp(end, 50_000.0);
+                log::info!("simulator bandwidth: up to {n:.0} kb/s asked (AURORA_THROTTLE_MAX_KBPS)");
+                n
+            }
+            _ => end,
+        }
+    })
+}
+
 /// The channels for a total of `kbps` (`LLViewerThrottle::getThrottleGroup`).
 pub fn group(kbps: f32) -> Group {
-    let kbps = kbps.clamp(*GROUP_KBPS.start(), *GROUP_KBPS.end());
+    let kbps = kbps.clamp(*GROUP_KBPS.start(), group_max());
     let above = PRESETS.iter().position(|p| total(p) > kbps);
     let (from, to) = match above {
         // (under the lowest preset: that one)
@@ -170,7 +192,7 @@ impl Throttle {
             if self.asked() > *GROUP_KBPS.start() {
                 self.fraction = (self.fraction - STEP).max(MIN_FRACTION);
             }
-        } else if lost <= EASE_LOSS && load < LOW_LOAD && self.asked() < *GROUP_KBPS.end() {
+        } else if lost <= EASE_LOSS && load < LOW_LOAD && self.asked() < group_max() {
             self.fraction = (self.fraction + STEP).min(MAX_FRACTION);
         }
         self.fraction != before

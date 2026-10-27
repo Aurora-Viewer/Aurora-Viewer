@@ -7524,6 +7524,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
+| `AURORA_THROTTLE_MAX_KBPS=<n>` | Most bandwidth asked from the simulator for this launch (6,000 by default, up to 50,000) |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
@@ -7621,7 +7622,11 @@ What the inventory must show with these scenarios:
   from 100 to 10,000. A session first asks its simulator for one and a
   half times the setting, 6,000 kb/s at most in all
   (`aurora-net/src/throttle.rs`): the default, 4,000, already asks for
-  that most, and 3,000 is Firestorm's default. To compare what a simulator
+  that most, and 3,000 is Firestorm's default.
+  `AURORA_THROTTLE_MAX_KBPS=<n>` (6,000 to 50,000) raises that most for
+  the launch, to measure what a simulator sends when asked for more than
+  the Legacy Viewer ever asks: 8,000 with a ceiling of 12,000 asks for
+  12,000. To compare what a simulator
   sends under two settings: on an arrival in a region that is not in the
   cache, read `udp in … pkt/s … kb/s` in the `net summary` lines, the
   `objects=` of `perf summary`, the `avatar … shown after` lines, and the
