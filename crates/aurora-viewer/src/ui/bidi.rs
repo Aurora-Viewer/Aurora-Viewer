@@ -52,6 +52,18 @@ pub fn rtl_paragraph(text: &str) -> bool {
 
 /// Lay `job` out like `fonts.layout_job`, in display order.
 pub fn layout(fonts: &mut FontsView<'_>, job: LayoutJob, base: Base) -> Visual {
+    lay_out(fonts, job, base, true)
+}
+
+/// [`layout`] for a caller that only paints the text.
+pub fn galley(ctx: &egui::Context, job: LayoutJob, base: Base) -> Arc<Galley> {
+    ctx.fonts_mut(|f| lay_out(f, job, base, false)).galley
+}
+
+/// `with_map`: also keep where each character went (its box), which a
+/// caller that only paints the text (every frame: name tags, floating
+/// text) does without.
+fn lay_out(fonts: &mut FontsView<'_>, job: LayoutJob, base: Base, with_map: bool) -> Visual {
     if !has_rtl(&job.text) {
         return Visual {
             galley: fonts.layout_job(job),
@@ -62,19 +74,13 @@ pub fn layout(fonts: &mut FontsView<'_>, job: LayoutJob, base: Base) -> Visual {
     let rows = visual_rows(&job, base, &mut measure);
     let (visual_job, pieces) = visual_job(&job, &rows);
     let galley = fonts.layout_job(visual_job);
-    let boxes = boxes(fonts, &job, &rows, &pieces, &galley);
-    Visual {
-        galley,
-        map: Some(Arc::new(Map {
-            boxes,
+    let map = with_map.then(|| {
+        Arc::new(Map {
+            boxes: boxes(fonts, &job, &rows, &pieces, &galley),
             len: job.text.chars().count(),
-        })),
-    }
-}
-
-/// [`layout`] for a caller that only paints the text.
-pub fn galley(ctx: &egui::Context, job: LayoutJob, base: Base) -> Arc<Galley> {
-    ctx.fonts_mut(|f| layout(f, job, base)).galley
+        })
+    });
+    Visual { galley, map }
 }
 
 /// `FontsView::layout_no_wrap` in display order, each paragraph in its own
@@ -131,6 +137,66 @@ impl Visual {
                 Rect::from_x_y_ranges(x..=x, b.rect.y_range())
             }
             None => self.galley.pos_from_cursor(egui::text::CCursor::new(at)),
+        }
+    }
+
+    /// The left edge of the characters `range` of the text on the row of
+    /// its first one, whatever their direction: where a picture before a
+    /// name goes. A rect of no width, relative to the galley.
+    pub fn left_edge(&self, range: Range<usize>) -> Rect {
+        let Some(map) = &self.map else {
+            return self.cursor_rect(range.start);
+        };
+        let drawn: Vec<&CharBox> = map
+            .boxes
+            .get(range.start.min(map.len)..range.end.min(map.len))
+            .unwrap_or_default()
+            .iter()
+            .filter(|b| b.rect.is_positive())
+            .collect();
+        let Some(first) = drawn.first() else {
+            return self.cursor_rect(range.start);
+        };
+        let x = drawn
+            .iter()
+            .filter(|b| (b.rect.min.y - first.rect.min.y).abs() < 0.5)
+            .map(|b| b.rect.min.x)
+            .fold(f32::INFINITY, f32::min);
+        Rect::from_x_y_ranges(x..=x, first.rect.y_range())
+    }
+
+    /// Paint the glyphs of the characters `range` of the text in `color`
+    /// (selected text), in `galley`, a copy of this one's.
+    pub fn tint(&self, galley: &mut Arc<Galley>, range: Range<usize>, color: egui::Color32) {
+        let rects = self.range_rects(Pos2::ZERO, range);
+        if rects.is_empty() {
+            return;
+        }
+        let galley = Arc::make_mut(galley);
+        for placed in galley.rows.iter_mut() {
+            let origin = placed.pos;
+            let row = Arc::make_mut(&mut placed.row);
+            let end = row.visuals.glyph_vertex_range.end as u32;
+            let starts: Vec<u32> = row.glyphs.iter().map(|g| g.first_vertex).collect();
+            for (i, g) in row.glyphs.iter().enumerate() {
+                let center = origin + Vec2::new(g.pos.x + g.advance_width * 0.5, 0.0);
+                if !rects
+                    .iter()
+                    .any(|r| r.x_range().contains(center.x) && r.y_range().contains(origin.y + row.size.y * 0.5))
+                {
+                    continue;
+                }
+                let to = starts.get(i + 1).copied().unwrap_or(end);
+                for v in row
+                    .visuals
+                    .mesh
+                    .vertices
+                    .get_mut(g.first_vertex as usize..to as usize)
+                    .unwrap_or_default()
+                {
+                    v.color = color;
+                }
+            }
         }
     }
 
@@ -224,6 +290,9 @@ struct Segment {
     /// The index in the original text of each character of `text`, in its
     /// order (`usize::MAX`: the overflow character).
     at: Vec<usize>,
+    /// By character of `text`: read from right to left (an odd level),
+    /// where its start is its right edge.
+    rtl: Vec<bool>,
     /// The section of the original job whose format it takes.
     section: usize,
     /// A right-to-left word: the shaper draws it reversed.
@@ -285,6 +354,7 @@ fn segments(row: &[RowChar]) -> Vec<Segment> {
             out.push(Segment {
                 text: word.iter().map(|c| c.c).collect(),
                 at: word.iter().map(|c| c.at).collect(),
+                rtl: word.iter().map(|c| c.level.is_rtl()).collect(),
                 section: ch.section,
                 word: true,
                 alone: false,
@@ -298,10 +368,12 @@ fn segments(row: &[RowChar]) -> Vec<Segment> {
             Some(last) if !alone && !last.word && !last.alone && last.section == ch.section => {
                 last.text.push(shown);
                 last.at.push(ch.at);
+                last.rtl.push(ch.level.is_rtl());
             }
             _ => out.push(Segment {
                 text: shown.to_string(),
                 at: vec![ch.at],
+                rtl: vec![ch.level.is_rtl()],
                 section: ch.section,
                 word: false,
                 alone,
@@ -462,7 +534,9 @@ fn elide(job: &LayoutJob, rows: &mut Vec<VisualRow>, measure: &mut dyn FnMut(&st
         return;
     }
     let mut dropped: Vec<usize> = Vec::new();
-    for row in rows.drain(wrap.max_rows.max(1)..) {
+    // too wide but not too many rows: none goes, the last one is cut
+    let keep = wrap.max_rows.max(1).min(rows.len());
+    for row in rows.drain(keep..) {
         dropped.extend(row.segments.iter().flat_map(|s| s.at.iter().copied()));
         dropped.extend(row.hidden);
     }
@@ -486,6 +560,7 @@ fn elide(job: &LayoutJob, rows: &mut Vec<VisualRow>, measure: &mut dyn FnMut(&st
         for s in last.segments.iter_mut() {
             if let Some(i) = s.at.iter().position(|&a| a == at) {
                 s.at.remove(i);
+                s.rtl.remove(i);
                 let mut text: Vec<char> = s.text.chars().collect();
                 text.remove(i);
                 s.text = text.into_iter().collect();
@@ -504,6 +579,7 @@ fn with_overflow(row: &VisualRow, overflow: char, section: usize) -> VisualRow {
     let seg = Segment {
         text: overflow.to_string(),
         at: vec![usize::MAX],
+        rtl: vec![row.rtl],
         section,
         word: false,
         alone: true,
@@ -551,15 +627,26 @@ fn visual_job(job: &LayoutJob, rows: &[VisualRow]) -> (LayoutJob, Vec<Vec<Range<
     let mut pieces = Vec::with_capacity(rows.len());
     for (r, row) in rows.iter().enumerate() {
         let mut ranges = Vec::with_capacity(row.segments.len());
+        // another section's lead (the room for a picture before a name) goes
+        // on the row of its first character, at the left of the section's
+        // leftmost segment there: in display order a right-to-left word's
+        // first character is on its right
+        let starts_here = |section: usize| {
+            let first = first_char(&job.sections[section]);
+            row.segments
+                .iter()
+                .filter(|s| s.section == section)
+                .any(|s| s.at.iter().any(|&at| char_starts.get(at).copied() == first))
+        };
         for (i, seg) in row.segments.iter().enumerate() {
             let source = &job.sections[seg.section];
-            // another section's lead stays before its first character
-            let starts_section = seg.at.iter().any(|&at| char_starts.get(at).copied() == first_char(source));
-            let lead = match (r, i) {
-                (0, 0) => indent,
-                _ if starts_section && !std::ptr::eq(source, &job.sections[0]) => source.leading_space,
-                _ => 0.0,
+            let leftmost = row.segments.iter().position(|s| s.section == seg.section) == Some(i);
+            let own = if seg.section != 0 && leftmost && starts_here(seg.section) {
+                source.leading_space
+            } else {
+                0.0
             };
+            let lead = own + if (r, i) == (0, 0) { indent } else { 0.0 };
             let start = out.text.len();
             out.text.push_str(&seg.text);
             out.sections.push(LayoutSection {
@@ -643,7 +730,7 @@ fn boxes(fonts: &mut FontsView<'_>, job: &LayoutJob, rows: &[VisualRow], pieces:
                 };
                 boxes[at] = CharBox {
                     rect: Rect::from_min_max(Pos2::new(x + min, top), Pos2::new(x + max, bottom)),
-                    rtl: seg.word || row.rtl,
+                    rtl: seg.rtl.get(k).copied().unwrap_or(row.rtl),
                 };
             }
             x += p.width;
@@ -786,5 +873,94 @@ mod tests {
             seen.dedup();
             assert_eq!(seen.len() + newlines, text.chars().count(), "{text:?}");
         }
+    }
+
+    #[test]
+    fn a_row_too_wide_with_fewer_rows_than_allowed_is_cut_without_panic() {
+        // one row, fewer than max_rows, too wide with the spaces it ends on
+        // (the last row keeps them): cut, not drained past its end
+        let mut j = job("ا    ");
+        j.wrap = TextWrapping {
+            max_width: 2.0,
+            max_rows: 5,
+            break_anywhere: true,
+            overflow_character: Some('…'),
+        };
+        let rows = visual_rows(&j, Base::Auto, &mut units);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert!(row_width(&j, &rows[0], &mut units) <= 2.0, "{rows:?}");
+    }
+
+    #[test]
+    fn latin_letters_in_a_right_to_left_row_are_read_from_the_left() {
+        let rows = visual_rows(&job("שלום Aurora"), Base::Auto, &mut units);
+        let latin = rows[0]
+            .segments
+            .iter()
+            .find(|s| s.text.starts_with("Aurora"))
+            .expect("the Latin run");
+        // the space after it is read from the right (level 1), the letters
+        // from the left (level 2)
+        assert_eq!(latin.rtl[..6], [false; 6]);
+        assert!(rows[0].segments.iter().filter(|s| s.word).all(|s| s.rtl.iter().all(|&r| r)));
+    }
+
+    /// A chat line: "x ", then a two-word right-to-left name with the room
+    /// for a picture before it, then its body.
+    fn named_line() -> (LayoutJob, Range<usize>) {
+        let mut j = LayoutJob::default();
+        j.append("x ", 0.0, TextFormat::default());
+        j.append(
+            "ذئب بنفسجي",
+            10.0,
+            TextFormat {
+                italics: true,
+                ..Default::default()
+            },
+        );
+        j.append(": hi", 0.0, TextFormat::default());
+        (j, 2..12)
+    }
+
+    #[test]
+    fn the_room_before_a_right_to_left_name_is_at_its_left() {
+        let (j, _) = named_line();
+        let rows = visual_rows(&j, Base::Ltr, &mut units);
+        let (out, _) = visual_job(&j, &rows);
+        let leads: Vec<(String, f32)> = out
+            .sections
+            .iter()
+            .map(|s| (out.text[s.byte_range.start.0..s.byte_range.end.0].to_owned(), s.leading_space))
+            .collect();
+        // the name's second word is drawn first: the room goes before it,
+        // not between the two words
+        assert_eq!(leads[1], ("بنفسجي".to_owned(), 10.0), "{leads:?}");
+        assert!(leads.iter().enumerate().all(|(i, l)| i == 1 || l.1 == 0.0), "{leads:?}");
+    }
+
+    #[test]
+    fn a_picture_goes_at_the_left_of_a_right_to_left_name() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let (j, name) = named_line();
+        let visual = ctx.fonts_mut(|f| layout(f, j, Base::Ltr));
+        let left = visual.left_edge(name.clone()).min.x;
+        let map = visual.map.as_ref().expect("reordered");
+        // the name starts after "x " and the room left for the picture
+        let after_x = map.boxes[1].rect.max.x;
+        assert!((left - after_x - 10.0).abs() < 0.5, "{left} after {after_x}");
+        assert!(map.boxes[name].iter().all(|b| b.rect.min.x >= left - 0.01));
+        // its first character, read first, is on its right
+        assert!(visual.cursor_rect(2).min.x > left + 1.0);
+    }
+
+    #[test]
+    fn a_paint_only_galley_keeps_no_boxes() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let painted = ctx.fonts_mut(|f| lay_out(f, job("مرحبا بك"), Base::Auto, false));
+        assert!(painted.map.is_none());
+        let full = ctx.fonts_mut(|f| layout(f, job("مرحبا بك"), Base::Auto));
+        assert_eq!(painted.galley.size(), full.galley.size());
     }
 }

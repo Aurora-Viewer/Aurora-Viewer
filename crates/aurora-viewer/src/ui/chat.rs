@@ -3357,7 +3357,8 @@ pub fn toasts(
                         // left before its name
                         if let Some((at, who)) = sender {
                             let side = pic_side(size);
-                            let c = visual.cursor_rect(at).translate(rect.min.to_vec2());
+                            // at the left of the name, whatever its direction
+                            let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(rect.min.to_vec2());
                             let r =
                                 egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
                             bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);

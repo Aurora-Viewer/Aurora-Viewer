@@ -302,7 +302,8 @@ fn compact_card<'a>(
         }
         // the cube in the room left before the name, on the capitals
         if let Some((at, _)) = sender {
-            let c = visual.cursor_rect(at).translate(origin.to_vec2());
+            // at the left of the name, whatever its direction
+            let c = visual.left_edge(name.clone().unwrap_or(at..at)).translate(origin.to_vec2());
             let middle = super::object_row::caps_middle(&painter, size, baseline);
             let r = egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, middle), egui::vec2(side, side));
             thread::paint_icon(&painter, "box", r.shrink(1.0), p.muted_dim);

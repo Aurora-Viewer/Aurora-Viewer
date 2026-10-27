@@ -274,11 +274,13 @@ pub fn label(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
     if ui.is_rect_visible(resp.rect) {
         if let Some(r) = selected.clone().filter(|_| visual.reordered()) {
             // the selection of a reordered text may be in several places of
-            // a row: its background, under the text
-            let bg = colors.map_or(ui.visuals().selection.bg_fill, |(bg, _)| bg);
-            for rect in visual.range_rects(pos, r) {
+            // a row: its background, under the text, then its letters in the
+            // selected text colour
+            let (bg, fg) = colors.unwrap_or((ui.visuals().selection.bg_fill, ui.visuals().selection.stroke.color));
+            for rect in visual.range_rects(pos, r.clone()) {
                 ui.painter().add(egui::Shape::rect_filled(rect, 0.0, bg));
             }
+            visual.tint(&mut galley, r, fg);
         } else if let Some(r) = selected {
             let mut visuals = ui.visuals().clone();
             if let Some((bg, fg)) = colors {
