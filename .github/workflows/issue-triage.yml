@@ -1,0 +1,52 @@
+name: Issue triage
+
+# An open issue carries the `triage` label until the project manager sets its
+# Priority (an issue field of the organisation; AGENTS.md section 15).
+# `field_added` fires when a field value is set or changed, `field_removed`
+# when it is cleared; `unlabeled` puts back a label removed before the
+# Priority was set. scripts/issue-triage.ps1 reads the issue again through
+# the API and applies the rule, with its exempt authors. The label changes
+# made with GITHUB_TOKEN start no other run. Run by hand without a number to
+# apply the rule to every open issue; a manual run is a dry run unless that
+# box is unticked.
+on:
+  issues:
+    types: [opened, reopened, field_added, field_removed, unlabeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number (empty for every open issue)
+        required: false
+        type: string
+      dry_run:
+        description: Print what would change, change nothing
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: issue-triage-${{ github.event.issue.number || inputs.issue || 'all' }}
+
+jobs:
+  triage:
+    if: github.event.action != 'unlabeled' || github.event.label.name == 'triage'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/issue-triage.ps1
+          sparse-checkout-cone-mode: false
+      - name: Triage label
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          $dry = $env:DRY_RUN -eq 'true'
+          if ($env:ISSUE) { ./scripts/issue-triage.ps1 -Issue ([int]$env:ISSUE) -DryRun:$dry }
+          else { ./scripts/issue-triage.ps1 -All -DryRun:$dry }

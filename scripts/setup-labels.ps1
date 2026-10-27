@@ -41,7 +41,9 @@ $labels = @(
     @{ Name = 'contact-group'; Color = 'C3C33F'; Desc = 'Contact Groups/Sets and related features' },
     @{ Name = 'inventory'; Color = 'AAAAAA'; Desc = 'Inventory window, folders and items' },
     @{ Name = 'build-tools'; Was = 'construction'; Color = 'FCD34D'; Desc = 'In-world building and editing tools' },
-    @{ Name = 'tooling'; Was = 'outillage'; Color = '6F7BA0'; Desc = 'GitHub repository, CI, scripts and development environment' }
+    @{ Name = 'tooling'; Was = 'outillage'; Color = '6F7BA0'; Desc = 'GitHub repository, CI, scripts and development environment' },
+    # issue tracking, set by the Issue triage workflow (scripts/issue-triage.ps1)
+    @{ Name = 'triage'; Color = 'FBBF24'; Desc = 'Waiting for the project manager to set its Priority' }
 )
 
 $existing = @(gh label list --repo $repo --limit 500 --json name --jq '.[].name')
