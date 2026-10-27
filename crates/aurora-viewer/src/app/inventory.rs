@@ -598,13 +598,13 @@ impl App {
                 self.world.inventory.apply(reply.contents);
                 self.world.inventory.created_folders(reply.folders);
                 if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| self.inventory_ui.pending_refresh.contains(&id)) {
-                    for cmd in crate::world::appearance::sync_commands(
-                        &self.world.inventory,
-                        self.world.agent_id,
-                        &self.world.worn_attachment_items(),
-                    ) {
+                    let sync = crate::world::appearance::sync_plan(&self.world.inventory, self.world.agent_id, &self.outfit_sync_worn());
+                    for cmd in sync.commands {
                         self.send(cmd);
                     }
+                    self.world
+                        .outfit
+                        .wear_when_known(sync.unknown, self.world.agent_id, std::time::Instant::now());
                 }
                 if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id))
                     && !self.inventory_ui.select_created_listing(&self.world.inventory, *id)

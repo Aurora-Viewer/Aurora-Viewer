@@ -300,6 +300,9 @@ pub struct World {
     /// The announced restart of the agent's region (region_restart.rs).
     pub region_restart: region_restart::Tracker,
     pub movement_complete: bool,
+    /// AURORA_DEMO_OUTFIT_RESTORE: the demo region answers the outfit
+    /// restore, which then starts without the inventory capability.
+    pub demo_outfit_region: bool,
     pub avatar_lib: Arc<AvatarLibrary>,
     /// Animated joint matrices (skeleton space, rest -> posed) of the avatars
     /// near the camera, so attachments follow their bone.
@@ -635,6 +638,7 @@ impl World {
             alerts: VecDeque::new(),
             region_restart: Default::default(),
             movement_complete: false,
+            demo_outfit_region: false,
             avatar_lib,
             teleporting: false,
             tp_show_progress: false,
@@ -1732,13 +1736,14 @@ impl World {
             .unwrap_or_default()
     }
 
-    /// Run the outfit restore; its network commands are left in
-    /// `self.outfit.commands`.
+    /// Run the outfit restore and the wears waiting for their items; its
+    /// network commands are left in `self.outfit.commands`.
     pub fn update_outfit(&mut self, second_life: bool, now: Instant) {
-        if self.outfit.is_done() {
+        if self.outfit.is_idle() {
             return;
         }
-        let ready = self.movement_complete && self.main().is_some_and(|r| r.caps.contains_key("FetchInventoryDescendents2"));
+        let ready = self.demo_outfit_region
+            || self.movement_complete && self.main().is_some_and(|r| r.caps.contains_key("FetchInventoryDescendents2"));
         let first_login = self
             .login
             .as_ref()
@@ -1753,6 +1758,28 @@ impl World {
             second_life,
         };
         self.outfit.update(inputs, now);
+    }
+
+    /// Tells the outfit restore which worn objects are taken off on
+    /// purpose (a detach sent by the resident, a script or RLVa).
+    pub fn note_outfit_command(&mut self, command: &aurora_net::NetCommand) {
+        match command {
+            aurora_net::NetCommand::DetachAttachments(items) => self.outfit.on_detach_requested(items),
+            aurora_net::NetCommand::DetachObject { handle, local_id } => {
+                if let Some(item) = self
+                    .objects
+                    .index_of(&objects::ObjKey {
+                        region: *handle,
+                        local_id: *local_id,
+                    })
+                    .and_then(|i| self.objects.get(i))
+                    .and_then(|o| o.attachment_item_id())
+                {
+                    self.outfit.on_detach_requested(&[item]);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// "Force appearance update (rebake)": the server side (see
@@ -4087,6 +4114,12 @@ impl World {
         // LGPL 2.1): temporary attachments have no inventory item, but their
         // root and linked scripts still own motions that must be stopped.
         self.stop_linkset_motions(idx);
+        if let Some(item) = item
+            && self.outfit.keeps_cof_link(item)
+        {
+            // the region replaced it during the login restore: worn again
+            return;
+        }
         if let Some(item) = item
             && let Some(change) = appearance::unlink_attachment(&mut self.inventory, item)
         {

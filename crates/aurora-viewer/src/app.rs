@@ -702,6 +702,7 @@ pub struct App {
     /// AURORA_DEMO_REZ_EFFECT: objects and an avatar appearing with the rez effect.
     rez_demo: Option<crate::demo::rez::RezDemo>,
     arrival_demo: Option<crate::demo::arrival::ArrivalDemo>,
+    outfit_restore_demo: Option<crate::demo::outfit_restore::OutfitRestoreDemo>,
     /// AURORA_DEMO_TEXREFRESH: "Refresh textures" on a stale cached texture.
     tex_refresh_demo: Option<crate::demo::tex_refresh::TexRefreshDemo>,
     /// AURORA_DEMO_SCULPT_MISSING: a sculpt whose map is missing.
@@ -1328,6 +1329,7 @@ impl App {
             stream_demo: None,
             rez_demo: None,
             arrival_demo: None,
+            outfit_restore_demo: None,
             tex_refresh_demo: None,
             sculpt_missing_demo: None,
             texture_missing_demo: None,
@@ -1424,6 +1426,15 @@ impl App {
         self.send_from(cmd, uuid::Uuid::nil());
     }
 
+    /// What a COF sync may take off: the worn objects but the Aurora
+    /// bridge, which the Legacy Viewer puts back into every replaced outfit
+    /// (FSLSLBridge in LLAppearanceMgr::updateCOF, llappearancemgr.cpp).
+    pub(crate) fn outfit_sync_worn(&self) -> std::collections::HashSet<uuid::Uuid> {
+        let mut worn = self.world.worn_attachment_items();
+        worn.remove(&self.bridge_runtime.item());
+        worn
+    }
+
     fn send_from(&mut self, mut cmd: NetCommand, actor: uuid::Uuid) {
         if !self.object_profile.retain_selection(&self.world, &mut cmd) {
             return;
@@ -1460,6 +1471,7 @@ impl App {
             self.world.objects.note_sent_transforms(*handle, updates, Instant::now());
         }
         self.world.rlva_note_attachment_command(&cmd, actor, Instant::now());
+        self.world.note_outfit_command(&cmd);
         self.world.rlva.note_sit_command(&cmd, actor);
         if self.world.rlva.enabled()
             && let NetCommand::RezAttachments(items) = &mut cmd
@@ -1589,6 +1601,11 @@ impl App {
             return;
         }
         if self.demo {
+            if let Some(demo) = &mut self.outfit_restore_demo
+                && demo.handle(&cmd, &mut self.world, Instant::now())
+            {
+                return;
+            }
             if let NetCommand::QuoteMesh { request, .. } = &cmd {
                 self.on_app_event(NetEvent::MeshQuoted {
                     request: *request,
@@ -2894,17 +2911,15 @@ impl App {
                             self.appearance_ui.saved_new = false;
                         }
                         if sync {
-                            let mut commands = crate::world::appearance::sync_commands(
-                                &self.world.inventory,
-                                self.world.agent_id,
-                                &self.world.worn_attachment_items(),
-                            );
+                            let crate::world::appearance::CofSync { mut commands, unknown } =
+                                crate::world::appearance::sync_plan(&self.world.inventory, self.world.agent_id, &self.outfit_sync_worn());
                             for attachment in self.appearance_ui.attachments.drain(..) {
                                 crate::world::appearance::apply_attachment_override(&mut commands, attachment);
                             }
                             for cmd in commands {
                                 self.send_from(cmd, actor);
                             }
+                            self.world.outfit.wear_when_known(unknown, self.world.agent_id, Instant::now());
                         }
                     }
                     Err(reason) => {
@@ -10263,6 +10278,13 @@ impl App {
         if let Some(demo) = &mut self.arrival_demo {
             demo.tick(self.frame_count, &mut self.world, &self.scene);
         }
+        if let Some(demo) = &mut self.outfit_restore_demo {
+            demo.tick(self.frame_count, &mut self.world, Instant::now());
+            if demo.restore_over(&self.world) {
+                self.panels.appearance = true;
+                self.appearance_ui.open(2, false);
+            }
+        }
         if let (Some(demo), Some(g)) = (&mut self.rez_demo, &mut self.gfx) {
             demo.tick(self.frame_count, &mut self.world, &mut self.scene, &mut g.renderer);
         }
@@ -16830,6 +16852,11 @@ impl ApplicationHandler for App {
             self.stream_demo = crate::demo::stream::StreamDemo::from_env();
             self.rez_demo = crate::demo::rez::RezDemo::from_env();
             self.arrival_demo = crate::demo::arrival::ArrivalDemo::from_env();
+            self.outfit_restore_demo = crate::demo::outfit_restore::OutfitRestoreDemo::from_env();
+            if let Some(demo) = &mut self.outfit_restore_demo {
+                demo.setup(&mut self.world);
+                self.panels.perf = false;
+            }
             self.tex_refresh_demo = crate::demo::tex_refresh::TexRefreshDemo::from_env();
             self.sculpt_missing_demo = crate::demo::sculpt::MissingMapDemo::from_env();
             self.texture_missing_demo = crate::demo::missing_texture::MissingTextureDemo::from_env();

@@ -140,6 +140,10 @@ pub mod object_im;
 /// The object menu scenario's objects (AURORA_DEMO_OBJECT_MENU).
 #[path = "demo_object_menu.rs"]
 pub mod object_menu;
+/// AURORA_DEMO_OUTFIT_RESTORE: the login restore of the outfit against a
+/// region that puts part of it back by itself.
+#[path = "demo_outfit_restore.rs"]
+pub mod outfit_restore;
 /// Place details of place links (AURORA_DEMO_PLACE).
 #[path = "demo_people.rs"]
 pub mod people;

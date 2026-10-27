@@ -854,32 +854,44 @@ pub fn unlink_attachment(inv: &mut Inventory, item: Uuid) -> Option<aurora_net::
     })
 }
 
-pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<NetCommand> {
+/// What a COF change asks of the region, as
+/// LLAppearanceMgr::updateAppearanceFromCOF: the commands to send now, and
+/// the objects the COF links to whose items the inventory does not know yet
+/// (a cold inventory cache), to wear once looked up
+/// (`OutfitRestore::wear_when_known`).
+#[derive(Debug, Default)]
+pub struct CofSync {
+    pub commands: Vec<NetCommand>,
+    pub unknown: Vec<Uuid>,
+}
+
+pub fn sync_plan(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> CofSync {
     let Some(cof) = cof(inv) else {
-        return Vec::new();
+        return CofSync::default();
     };
-    let objects: HashSet<_> = folder_links(inv, cof)
-        .into_iter()
-        .filter(|l| !l.folder && inv.items.get(&l.target).is_some_and(|it| it.asset_type == 6))
-        .map(|l| l.target)
-        .collect();
+    // the links to objects, with those whose item is not known yet: a worn
+    // object linked in the COF stays on even before its item is fetched
+    let objects: HashSet<_> = super::outfit::cof_objects(inv, cof).into_iter().collect();
     let detach: Vec<_> = worn.difference(&objects).copied().collect();
-    let attach: Vec<_> = objects
-        .difference(worn)
-        .filter_map(|id| inv.items.get(id))
-        .map(|it| AttachRequest {
-            item_id: it.id,
-            owner_id: if it.owner.is_nil() { agent } else { it.owner },
-            point: 0,
-            add: true,
-            flags: it.flags,
-            group_mask: it.group_mask,
-            everyone_mask: it.everyone_mask,
-            next_owner_mask: it.next_owner_mask,
-            name: it.name.clone(),
-            desc: it.desc.clone(),
-        })
-        .collect();
+    let mut unknown = Vec::new();
+    let mut attach = Vec::new();
+    for id in objects.difference(worn) {
+        match inv.items.get(id) {
+            Some(it) => attach.push(super::outfit::attach_request(it, agent)),
+            None => unknown.push(*id),
+        }
+    }
+    if !detach.is_empty() || !attach.is_empty() || !unknown.is_empty() {
+        let wearing: Vec<Uuid> = attach.iter().map(|a| a.item_id).collect();
+        log::info!(
+            "outfit: COF changed: wearing {} [{}], taking off {} [{}], {} to look up first",
+            attach.len(),
+            super::outfit::names(inv, &wearing),
+            detach.len(),
+            super::outfit::names(inv, &detach),
+            unknown.len()
+        );
+    }
     let mut commands = Vec::new();
     if !detach.is_empty() {
         commands.push(NetCommand::DetachAttachments(detach));
@@ -892,7 +904,12 @@ pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<
             cof_version: folder.info.version,
         });
     }
-    commands
+    CofSync { commands, unknown }
+}
+
+/// The commands of `sync_plan` alone (demo and tests: everything is known).
+pub fn sync_commands(inv: &Inventory, agent: Uuid, worn: &HashSet<Uuid>) -> Vec<NetCommand> {
+    sync_plan(inv, agent, worn).commands
 }
 
 /// Explicit attachment requests retain the chosen point and replace/add mode.
@@ -2053,6 +2070,45 @@ mod tests {
 
     /// `missing_targets` reads the links in place; it finds what the copied
     /// `folder_links` would: item links whose original is not there.
+    /// Replace outfit with a cold inventory cache: the COF links to objects
+    /// whose items are not fetched yet. A worn one stays on (it used to be
+    /// taken off), the others are left to look up, then worn.
+    #[test]
+    fn cof_sync_keeps_worn_objects_whose_items_are_not_known_yet() {
+        let mut inv = fixture();
+        let agent = Uuid::from_u128(1);
+        let cof = cof(&inv).expect("COF");
+        let (worn_unknown, unknown, foreign) = (Uuid::from_u128(950), Uuid::from_u128(951), Uuid::from_u128(952));
+        inv.add_items(
+            [(900, worn_unknown, 6), (901, unknown, 17)]
+                .into_iter()
+                .map(|(id, target, inv_type)| InvItem {
+                    id: Uuid::from_u128(id),
+                    parent: cof,
+                    asset_type: 24,
+                    inv_type,
+                    asset_id: target,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+        let sync = sync_plan(&inv, agent, &[worn_unknown, foreign].into_iter().collect());
+        assert_eq!(sync.unknown, vec![unknown]);
+        let detached: Vec<_> = sync
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                NetCommand::DetachAttachments(items) => Some(items.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        assert_eq!(detached, vec![foreign], "only what the COF does not link comes off");
+        assert!(!sync.commands.iter().any(
+            |c| matches!(c, NetCommand::RezAttachments(items) if items.iter().any(|a| a.item_id == unknown || a.item_id == worn_unknown))
+        ));
+    }
+
     #[test]
     fn missing_targets_are_the_item_links_without_their_original() {
         let mut inv = Inventory::default();

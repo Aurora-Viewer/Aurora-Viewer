@@ -1071,6 +1071,7 @@ build-ui-contents-no-modify = { " (pas de modification)" }
 build-ui-contents-no-transfer = { " (pas de transfert)" }
 ui-land-dialogs-it-will-include-a-simultaneous-group-contribution-from = { " Elle inclura une contribution simultanée au groupe de la part de '" }{ $value0 }'.
 demo-hud-touched = { " · Touché" }
+demo-outfit-rez-failed = La tentative de poser un objet a échoué.
 ui-avatar-picker-not-found = '{ $q }' pas trouvé
 cmdline-mod-is-not-a-valid-rand-min-max-expression-max = '{ $r }' n'est pas une expression valable pour RAND(min,max). MAX doit être supérieur à MIN, les deux dans une fourchette de -10000 à 10000.
 build-ui-floaters-this-page-does-not-meet-the-whitelist-criteria = (Cette page ne satisfait pas les critères de la liste blanche)

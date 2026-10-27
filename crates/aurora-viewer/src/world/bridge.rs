@@ -241,6 +241,10 @@ impl Bridge {
             world.apply_received(event, received)
         }
     }
+    /// The bridge's inventory item, nil before it is found or made.
+    pub fn item(&self) -> Uuid {
+        self.item
+    }
     pub fn folder(&self) -> Uuid {
         self.folder
     }
