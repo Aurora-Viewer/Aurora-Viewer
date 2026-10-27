@@ -127,7 +127,7 @@ mod tests {
         let (world, line) = paid("Thanks for the set!");
         let texts: Vec<_> = frame(&world, &line, true).into_iter().map(|t| t.source).collect();
         let title = aurora_i18n::tr!("world-payments-paid-you", name = "Jane Doe", amount = amount_label(1500));
-        assert!(texts.iter().any(|t| *t == title), "{texts:?}");
+        assert!(texts.contains(&title), "{texts:?}");
         assert!(texts.iter().any(|t| t.contains("Thanks for the set!")), "{texts:?}");
         // the simulator's "Payment" is no message
         let (world, line) = paid("Payment");
