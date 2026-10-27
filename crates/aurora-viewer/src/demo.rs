@@ -2362,6 +2362,10 @@ fn demo_profile(id: Uuid) -> aurora_net::AvatarProfile {
         p.fl_image = DEMO_FIRST_LIFE;
         p.fl_about = aurora_i18n::tr!("demo-nova-first-life").into();
     }
+    // AURORA_DEMO_PAY: the payee's card shows her picture (issue #1195)
+    if p.sl_image.is_nil() && id == DEMO_NOVA && std::env::var_os("AURORA_DEMO_PAY").is_some() {
+        p.sl_image = tags::picture_texture(2);
+    }
     // AURORA_DEMO_PROFILE: the residents of the scenarios have a picture
     // (and so a banner in the Aurora window)
     if p.sl_image.is_nil() && std::env::var_os("AURORA_DEMO_PROFILE").is_some() {

@@ -31,6 +31,7 @@ mod reorder;
 pub use reorder::Demo as ReorderDemo;
 pub(crate) mod select;
 mod sidebar;
+pub(crate) use sidebar::group_insignia;
 pub mod snooze;
 mod stage;
 pub mod suggest;

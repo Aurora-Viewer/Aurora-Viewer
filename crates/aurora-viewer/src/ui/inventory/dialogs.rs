@@ -21,7 +21,8 @@ pub(super) fn show(
         return;
     };
     if let EditDialog::Share(ids, resident) = &dialog {
-        if !share(ctx, p, icons, inv, prefs, facts, st.ui_id, ids, *resident, actions) {
+        let picture = facts.pictures.get(resident);
+        if !share(ctx, p, icons, inv, prefs, facts, picture, st.ui_id, ids, *resident, actions) {
             st.dialog = Some(dialog);
         }
         return;
@@ -415,6 +416,7 @@ fn share(
     inv: &Inventory,
     prefs: &InventoryPreferences,
     facts: &Facts,
+    picture: Option<&egui::TextureHandle>,
     ui_id: Uuid,
     ids: &[Uuid],
     resident: Uuid,
@@ -463,7 +465,7 @@ fn share(
         ui.set_width(360.0);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(36.0), egui::Sense::hover());
-            crate::ui::widgets::avatar_disc(ui, p, rect, None, name, false);
+            crate::ui::widgets::avatar_disc(ui, p, rect, picture, name, false);
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
