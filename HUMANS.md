@@ -96,17 +96,16 @@ a review or that left the queue.
   takes it. An agent that takes an issue assigns it to you and moves it to
   `In progress`; at the end it replies on the issue with the PR link and
   moves it to `Done`, to `Waiting Review` when the fix waits for your test or
-  the QA's, or to `Waiting for reporter` when it asked the reporter for
+  the QA's, or to `Waiting for user response` when it asked the reporter for
   something. `On hold` marks an issue paused on purpose, with a comment
   saying what unblocks it. Each PR names its issues (`Closes #<n>` or
   `Refs #<n>`), or says `No issue`. The agents move the Status with
   `scripts/issue-board.ps1`, which
   needs the `project` right on your `gh` account, once per machine:
-  `gh auth refresh -s project`. Every new issue gets the `triage` label
-  until the project manager sets its Priority (Issue triage workflow); the
-  issues opened by the authors listed in `scripts/issue-triage.ps1`
-  (`$Exempt`) skip it. Actions › Issue triage › Run workflow applies the rule
-  to every open issue, as a dry run unless you untick the box.
+  `gh auth refresh -s project`. Every new issue lands on the board in the
+  `Triage` Status (the board's "Auto-add to project" and "Item added to
+  project" workflows): the QA sorts it (type, areas, Priority) and moves it
+  to `Todo`. The agents never take an issue out of `Triage` on their own.
 - **Dependabot** opens dependency update PRs every week; an agent can check
   them for you, and merges them if you agree.
 - **The wiki** is generated: after each merge that touches a guide, a

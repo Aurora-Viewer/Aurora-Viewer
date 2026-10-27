@@ -6,10 +6,12 @@
     like the type) and the milestone; the agents only move the project's
     Status (AGENTS.md, section 15): In progress when they start; at the end
     Done, Waiting Review (the fix waits for the human's or the QA's
-    validation) or Waiting for reporter (a comment asked the reporter for
+    validation) or Waiting for user response (a comment asked the reporter for
     something); On hold, with a comment, when something outside the work
-    blocks it. An issue not on the project yet is added to it when its
-    Status is set.
+    blocks it. New issues land in Triage (the board's own workflows), which
+    the QA sorts to Todo: the agents never take an issue out of it on their
+    own. An issue not on the project yet is added to it when its Status is
+    set.
 
     Needs the project scope on the gh token, once per machine:
     gh auth refresh -s project
@@ -17,9 +19,10 @@
 .EXAMPLE
     ./scripts/issue-board.ps1 -Issue 623                         # Status, Priority, milestone
     ./scripts/issue-board.ps1 -Issue 623 -Status 'In progress'
-    ./scripts/issue-board.ps1 -Issue 623 -Status 'Waiting for reporter'
+    ./scripts/issue-board.ps1 -Issue 623 -Status 'Waiting for user response'
     ./scripts/issue-board.ps1 -Todo                              # open Todo issues, by priority
     ./scripts/issue-board.ps1 -List 'On hold'                    # open issues with that Status, by priority
+    ./scripts/issue-board.ps1 -List Triage                       # new issues the QA has not sorted yet
 #>
 param(
     [int]$Issue,
@@ -159,7 +162,7 @@ $q = 'mutation($p:ID!,$i:ID!,$f:ID!,$v:String!){updateProjectV2ItemFieldValue(in
 [void](Invoke-Graphql $q @{ p = $board.id; i = $s.Item.id; f = $board.status.id; v = $option.id })
 Show-IssueItem (Get-IssueItem)
 if ($option.name -eq 'Done' -and $s.Issue.state -eq 'OPEN') {
-    Write-Host '  The issue is still open: close it once resolved (AGENTS.md, section 15), or use Waiting Review / Waiting for reporter.' -ForegroundColor Yellow
+    Write-Host '  The issue is still open: close it once resolved (AGENTS.md, section 15), or use Waiting Review / Waiting for user response.' -ForegroundColor Yellow
 }
 if ($option.name -eq 'On hold') {
     Write-Host '  On hold needs a comment on the issue saying why and what unblocks it (AGENTS.md, section 15).' -ForegroundColor Yellow
