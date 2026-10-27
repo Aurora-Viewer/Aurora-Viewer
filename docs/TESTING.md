@@ -2911,10 +2911,11 @@ tests do not establish that this report uses an invalid joint or index.
   stayed a cloud for the 60 s of the limit (issue #121): invisible head
   bake (alpha layer), textured upper and lower body, a worn mesh that the
   asset server does not have (404) and a hat. It must appear about
-  3 s after its arrival, without a head and without the mesh, and the log
-  must contain "avatar … (own) shown after 3.0 s". Screenshots with
-  `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=240,1200`: cloud, then
-  avatar.
+  1 s after its arrival (its worn textures are all there; 3 s at most
+  otherwise), without a head and without the mesh, and the log must
+  contain "avatar … (own) shown after 1.0 s", then the time each part
+  completed. Screenshots with `AURORA_FPS_LIMIT=60` and
+  `AURORA_CAPTURE_FRAMES=240,1200`: the avatar is already shown at 240.
 - **`AURORA_DEMO_CLASSIC=1`**: the two avatars of the plaza become classic
   avatars, the system body with a skin bake whose alpha is soft in a band
   at the waist and cut by a row of holes (an alpha layer), and a hair bake
@@ -7491,7 +7492,8 @@ What the inventory must show with these scenarios:
 | `AURORA_LIST_INDEX=0` or `check` | Draw lists that walk all the objects as before, or check of their index |
 | `AURORA_TEXTURE_TODO=0` or `check` | Texture streaming that walks every texture as before, or check of its to-do list |
 | `AURORA_CPU_ATTACH=1` | Worn objects and rigged meshes placed by the sync, without the GPU anchors |
-| `AURORA_WORN_RANK=avatar` | Meshes worn by other avatars downloaded in the rank of their avatar, not their own size (off by default) |
+| `AURORA_WORN_RANK=own` | Meshes worn by other avatars downloaded in the rank of their own size, not their avatar's, as before |
+| `AURORA_FETCH_SLOTS=<n>` | Asset requests under way at once fixed for this launch (1 to 256), instead of following the link |
 | `AURORA_SYNC_SLICE=1` or `alt` | Scene sync by slice of all the objects, as before |
 | `AURORA_PENDING_PARK=0` | Every object waiting for its geometry asked about by the sync's round, as before |
 | `AURORA_SYNC_CHECK=1` | What the scene sync visits each frame |
@@ -7540,6 +7542,7 @@ What the inventory must show with these scenarios:
 | `AURORA_TEXTURE_SIZING=screen` | Textures sized by their object's diameter on screen times the repeats, as before the Legacy Viewer's sizing |
 | `AURORA_TEXTURE_SLOTS=<n>` | Size of the texture table, to test a full one |
 | `AURORA_BANDWIDTH_KBPS=<n>` | Bandwidth setting for this launch, without changing the Preferences |
+| `AURORA_THROTTLE_MAX_KBPS=<n>` | Most bandwidth asked from the simulator for this launch (6,000 by default, up to 50,000) |
 | `AURORA_LIGHT_TILES=0`, `alt` or `check` | Local lights without sorting by screen tile, or check of the sort |
 | `AURORA_PROBE_WALK=list`, `0`, `alt` or `check` | Reflection probes without sorting by screen tile, or check of the sort |
 | `AURORA_BLEND_EARLY_DISCARD=0` or `alt` | Invisible fragments of transparent faces lit before being discarded |
@@ -7637,7 +7640,11 @@ What the inventory must show with these scenarios:
   from 100 to 10,000. A session first asks its simulator for one and a
   half times the setting, 6,000 kb/s at most in all
   (`aurora-net/src/throttle.rs`): the default, 4,000, already asks for
-  that most, and 3,000 is Firestorm's default. To compare what a simulator
+  that most, and 3,000 is Firestorm's default.
+  `AURORA_THROTTLE_MAX_KBPS=<n>` (6,000 to 50,000) raises that most for
+  the launch, to measure what a simulator sends when asked for more than
+  the Legacy Viewer ever asks: 8,000 with a ceiling of 12,000 asks for
+  12,000. To compare what a simulator
   sends under two settings: on an arrival in a region that is not in the
   cache, read `udp in … pkt/s … kb/s` in the `net summary` lines, the
   `objects=` of `perf summary`, the `avatar … shown after` lines, and the
@@ -8130,13 +8137,14 @@ What the inventory must show with these scenarios:
   - In demo: `AURORA_DEMO_CROWD=52,200` with `AURORA_DEMO_ANIMESH=1` and
     `AURORA_DEMO_STREAM=6000,6000,leave` (19,500 objects, then 13,500),
     `AURORA_FPS_LIMIT=500`.
-- **`AURORA_WORN_RANK=avatar`**: anything worn by another avatar ranks in
-  the download queue with the avatar's radius (2.2 m) over its distance,
-  as the Legacy Viewer's `calculate_score` (llmeshrepository.cpp). By
-  default a worn mesh ranks by its own prim scale until its header says it
-  is rigged: with one request pool for every asset type, the avatar rank
-  let a crowd's worn meshes starve the scenery's textures in a cold-cache
-  arrival. To compare with
+- **`AURORA_WORN_RANK=own`**: by default anything worn by another avatar,
+  and the bakes of an avatar still loading, rank in the download queue
+  with the avatar's radius (2.2 m) over its distance, as the Legacy
+  Viewer's `calculate_score` (llmeshrepository.cpp) and
+  `addBakedTextureStats`. With `own`, a worn mesh ranks by its own prim
+  scale until its header says it is rigged, as before (the bakes keep the
+  avatar's rank). The avatars come sooner, the scenery's textures start a
+  little later. To compare with
   `AURORA_DEMO_ARRIVAL=<folder>,avatars=30,worn=6` (`demo arrival: worn`
   line), or on the grid in a crowd with a cold cache (the `attachments of`
   blocks 40 s after the arrival: `without geometry`).
