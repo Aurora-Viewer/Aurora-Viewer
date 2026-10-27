@@ -17176,6 +17176,17 @@ impl ApplicationHandler for App {
         }
     }
 
+    /// The window, its renderer and egui-winit's state go while the event
+    /// loop still lives: `run_app` drops the loop, and with it the Wayland
+    /// connection, before `main` drops the app. On Wayland the clipboard of
+    /// egui-winit (smithay-clipboard) keeps a worker thread on that
+    /// connection; dropped after it, the worker destroyed its objects on a
+    /// closed connection and every exit ended in a segmentation fault (before
+    /// the browsers' private profiles were cleaned up).
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.gfx = None;
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         // the digits of a Windows Alt code typed in a text field are kept
         // from it (alt_codes.rs); the character comes at Alt's release
