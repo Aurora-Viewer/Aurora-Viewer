@@ -84,6 +84,10 @@ pub(super) fn draw(
         super::offer_card::draw_card(ui, env, line, offer, indent);
         return;
     }
+    if let ChatKind::Payment(payment) = line.kind {
+        super::payment_card::draw_card(ui, env, line, payment, indent);
+        return;
+    }
     if line.kind == ChatKind::System {
         notice(ui, env, th, line, mark);
         return;

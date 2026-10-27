@@ -3896,6 +3896,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_BUY_PASS=sell\|none\|own` | The ground menu's "Buy access" on the plaza parcel |
 | `AURORA_DEMO_PAY=<mode>` | Demo balance and the Pay window of a resident or a group |
 | `AURORA_DEMO_MONEY_TRACKER=<mode>` | The money tracker on a session of payments, in either look |
+| `AURORA_DEMO_PAYMENT=card\|legacy\|friend\|off` | A resident's direct payment as a card in their conversation |
 | `AURORA_DEMO_LOGIN=<mode>` | Offline login screen and account carousel |
 | `AURORA_DEMO_LOGIN_SUBMIT=<frame>` | Press Log in of the open login form at that frame |
 | `AURORA_DEMO_LOGIN_WAIT=logout\|sudden\|refused` | A previous session of the demo account still on the grid: the login's countdown |
@@ -4145,6 +4146,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   "Copy 2 (CSV)". `undo`: two rows removed and the bar that puts them back.
   `empty`: nothing recorded yet. A resident paid with the Pay window during
   the demo is added as a paid gift while the tracker records.
+- **`AURORA_DEMO_PAYMENT=<mode>`**: a resident's direct payment as a card in
+  their conversation (#1198), the Conversations window in sight. `card`:
+  Tess's conversation open on her message, then two cards: "paid you
+  L$1,500" with "Thanks for the set!", and L$75 with no message (the
+  simulator's "Payment" is not shown). `legacy`: the same as two lines of
+  the legacy lines, the coin before the sentence. `friend`: no conversation
+  open; a friend's L$250 opens theirs on its card ("For the boat ride"), a
+  stranger's L$20 shows nowhere. `off`: the same with "Open a conversation for a
+  friend's payment" off: no conversation opens. Capture after frame 400, with `--language fr`
+  and `--language en`.
 - **`AURORA_DEMO_BUY_CURRENCY=<mode>`**: gives a balance of L$ 479 and opens
   "Buy L$". The purchase service is simulated (made-up rate): no real L$,
   no request sent. `click` opens nothing: click the balance in the top
