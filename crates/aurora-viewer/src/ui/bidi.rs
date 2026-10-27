@@ -27,14 +27,16 @@ use std::sync::Arc;
 use unicode_bidi::{BidiClass, Level, ParagraphBidiInfo, bidi_class};
 
 /// The direction of a paragraph.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Base {
     /// That of its first letter (rules P2 and P3): an Arabic sentence reads
     /// from the right, an English one with an Arabic word from the left.
     Auto,
-    /// Left to right whatever its letters: a line that starts with a
-    /// sender's name, its picture before it.
-    Ltr,
+    /// Left to right, the characters `range` (a sender's name, its picture
+    /// before it) isolated as between FSI and PDI (rules X5c, X6a): the name
+    /// stays first on the left in its own direction, and an Arabic message
+    /// after it is not reordered with it.
+    Sender(Range<usize>),
 }
 
 /// Whether egui would misplace part of `text`: a right-to-left letter or an
@@ -410,13 +412,47 @@ fn visual_rows(job: &LayoutJob, base: Base, measure: &mut dyn FnMut(&str, &Layou
     };
     for (p, para) in paragraphs.iter().enumerate() {
         let para_start = para.as_ptr() as usize - text.as_ptr() as usize;
+        let chars: Vec<(usize, char)> = para.char_indices().collect();
         let level = match base {
             Base::Auto => None,
-            Base::Ltr => Some(Level::ltr()),
+            Base::Sender(_) => Some(Level::ltr()),
         };
-        let info = ParagraphBidiInfo::new(para, level);
+        // the sender's name, in characters of this paragraph: the algorithm
+        // is given the paragraph with FSI and PDI around it (3 bytes each)
+        let isolated = match &base {
+            Base::Sender(r) if r.start >= char_at && r.start < r.end && r.start - char_at < chars.len() => {
+                Some(r.start - char_at..(r.end - char_at).min(chars.len()))
+            }
+            _ => None,
+        };
+        let shift = |k: usize| {
+            isolated
+                .as_ref()
+                .map_or(0, |r| 3 * (usize::from(k >= r.start) + usize::from(k >= r.end)))
+        };
+        let marked: String;
+        let analysed = match &isolated {
+            Some(r) => {
+                let mut m = String::with_capacity(para.len() + 6);
+                for (k, &(_, c)) in chars.iter().enumerate() {
+                    if k == r.start {
+                        m.push('\u{2068}');
+                    }
+                    if k == r.end {
+                        m.push('\u{2069}');
+                    }
+                    m.push(c);
+                }
+                if r.end == chars.len() {
+                    m.push('\u{2069}');
+                }
+                marked = m;
+                marked.as_str()
+            }
+            None => para,
+        };
+        let info = ParagraphBidiInfo::new(analysed, level);
         let rtl = info.paragraph_level.is_rtl();
-        let chars: Vec<(usize, char)> = para.char_indices().collect();
         // the width of a run of the paragraph's characters, section by
         // section (a section is shaped on its own)
         let mut width = |range: Range<usize>| -> f32 {
@@ -450,7 +486,8 @@ fn visual_rows(job: &LayoutJob, base: Base, measure: &mut dyn FnMut(&str, &Layou
             while soft && shown.end > shown.start && chars[shown.end - 1].1.is_whitespace() {
                 shown.end -= 1;
             }
-            let byte = |k: usize| chars.get(k).map_or(para.len(), |c| c.0);
+            // in the analysed text (the name's marks counted)
+            let byte = |k: usize| chars.get(k).map_or(para.len(), |c| c.0) + shift(k);
             let levels = if shown.is_empty() {
                 Vec::new()
             } else {
@@ -461,7 +498,7 @@ fn visual_rows(job: &LayoutJob, base: Base, measure: &mut dyn FnMut(&str, &Layou
                     c: chars[k].1,
                     at: char_at + k,
                     section: section_of(para_start + chars[k].0),
-                    level: levels[chars[k].0],
+                    level: levels[byte(k)],
                 })
                 .collect();
             rows.push(VisualRow {
@@ -808,7 +845,7 @@ mod tests {
     fn an_english_sentence_keeps_its_direction() {
         assert_eq!(shown(&job("Hi مرحبا بالعالم!"), Base::Auto), ["[Hi ][*بالعالم][ ][*مرحبا][!]"]);
         // a sender's name first: left to right even when the body is Arabic
-        assert_eq!(shown(&job("مرحبا!"), Base::Ltr), ["[*مرحبا][!]"]);
+        assert_eq!(shown(&job("مرحبا!"), Base::Sender(0..5)), ["[*مرحبا][!]"]);
         assert_eq!(shown(&job("مرحبا!"), Base::Auto), ["[!][*مرحبا]"]);
     }
 
@@ -928,9 +965,21 @@ mod tests {
     }
 
     #[test]
+    fn an_isolated_sender_stays_first_before_an_arabic_message() {
+        let text = "ذئب بنفسجي: مرحبا بكم";
+        // without isolation (no name) the name, the colon and the message
+        // are one right-to-left run: the name goes to the right end
+        assert_eq!(shown(&job(text), Base::Sender(0..0)), ["[*بكم][ ][*مرحبا][ :][*بنفسجي][ ][*ذئب]"]);
+        // isolated, the name comes first, in its own reading order
+        assert_eq!(shown(&job(text), Base::Sender(0..10)), ["[*بنفسجي][ ][*ذئب][: ][*بكم][ ][*مرحبا]"]);
+        // a Latin name and its Arabic message
+        assert_eq!(shown(&job("Bob: مرحبا"), Base::Sender(0..3)), ["[Bob: ][*مرحبا]"]);
+    }
+
+    #[test]
     fn the_room_before_a_right_to_left_name_is_at_its_left() {
-        let (j, _) = named_line();
-        let rows = visual_rows(&j, Base::Ltr, &mut units);
+        let (j, name) = named_line();
+        let rows = visual_rows(&j, Base::Sender(name), &mut units);
         let (out, _) = visual_job(&j, &rows);
         let leads: Vec<(String, f32)> = out
             .sections
@@ -948,7 +997,7 @@ mod tests {
         let ctx = egui::Context::default();
         let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
         let (j, name) = named_line();
-        let visual = ctx.fonts_mut(|f| layout(f, j, Base::Ltr));
+        let visual = ctx.fonts_mut(|f| layout(f, j, Base::Sender(name.clone())));
         let left = visual.left_edge(name.clone()).min.x;
         let map = visual.map.as_ref().expect("reordered");
         // the name starts after "x " and the room left for the picture

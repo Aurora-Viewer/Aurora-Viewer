@@ -3391,12 +3391,13 @@ pub fn toasts(
 }
 
 /// The direction of a chat line: from the left when it starts with its
-/// sender's name (the picture before it), else that of its first letter.
+/// sender's name (the picture before it), the name isolated so that an
+/// Arabic message does not carry it to the right end; else that of its
+/// first letter.
 fn bidi_base(name: &Option<std::ops::Range<usize>>) -> super::bidi::Base {
-    if name.is_some() {
-        super::bidi::Base::Ltr
-    } else {
-        super::bidi::Base::Auto
+    match name {
+        Some(range) => super::bidi::Base::Sender(range.clone()),
+        None => super::bidi::Base::Auto,
     }
 }
 
