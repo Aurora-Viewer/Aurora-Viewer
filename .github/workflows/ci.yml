@@ -122,7 +122,6 @@ jobs:
     # every test of every binary runs in one half and only one, whatever
     # modules are added later; a new module only moves the balance.
     name: tests (Windows, ${{ matrix.half }})
-    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -151,9 +150,12 @@ jobs:
         if: steps.changes.outputs.code == 'true' && (github.event_name != 'push' || matrix.half == 'interface')
         with:
           save-if: ${{ github.ref == 'refs/heads/main' && matrix.half == 'interface' }}
+      - name: Diagnose scene popup regressions
+        if: steps.changes.outputs.code == 'true' && github.event_name != 'push' && matrix.half == 'interface'
+        run: cargo test --profile ci --workspace --locked ui::context::toggle_tests -- --nocapture --test-threads 1
       - name: Tests (${{ matrix.half }})
         if: steps.changes.outputs.code == 'true' && github.event_name != 'push'
-        run: cargo test --profile ci --workspace --locked -- ${{ matrix.filter }}
+        run: cargo test --profile ci --workspace --locked -- ${{ matrix.filter }} --nocapture
       # main: build the tests without running them, for the cache only
       # (one half writes it, the other has nothing to do)
       - name: Build the tests (cache)

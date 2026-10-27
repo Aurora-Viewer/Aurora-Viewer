@@ -3,20 +3,6 @@
 use super::*;
 use crate::ui::widgets::elide_tests::{Frames, Text};
 
-fn on_ui_test_thread(test: impl FnOnce() + Send + 'static) {
-    // Unoptimized CI retains much larger egui frames for each nested popup.
-    // Size this test-only stack explicitly and propagate every assertion.
-    let name = std::thread::current().name().unwrap_or("scene-popup-test").to_owned();
-    let worker = std::thread::Builder::new()
-        .name(name)
-        .stack_size(8 * 1024 * 1024)
-        .spawn(test)
-        .expect("start scene popup test thread");
-    if let Err(panic) = worker.join() {
-        std::panic::resume_unwind(panic);
-    }
-}
-
 struct Harness {
     frames: Frames,
     p: Palette,
@@ -131,193 +117,185 @@ impl Harness {
 
 #[test]
 fn scene_render_choices_keep_the_popup_and_submenu_open_with_live_selection() {
-    on_ui_test_thread(|| {
-        let mut h = Harness::new();
+    let mut h = Harness::new();
+    h.warm();
+    h.hover("ui-context-display-options");
+    let keys = [
+        "ui-context-always-show-full-detail",
+        "ui-context-never-fully-render",
+        "ui-context-display-according-to-your-preferences",
+    ];
+    for (key, mode) in keys.into_iter().zip([2, 1, 0]) {
+        let actions = h.click(key);
+        assert!(
+            matches!(&actions[..], [CtxAction::SetRender(id, value)] if *id == Uuid::from_u128(7) && *value == mode),
+            "{actions:?}"
+        );
+        h.facts.render = mode;
         h.warm();
-        h.hover("ui-context-display-options");
-        let keys = [
-            "ui-context-always-show-full-detail",
-            "ui-context-never-fully-render",
-            "ui-context-display-according-to-your-preferences",
-        ];
-        for (key, mode) in keys.into_iter().zip([2, 1, 0]) {
-            let actions = h.click(key);
-            assert!(
-                matches!(&actions[..], [CtxAction::SetRender(id, value)] if *id == Uuid::from_u128(7) && *value == mode),
-                "{actions:?}"
-            );
-            h.facts.render = mode;
-            h.warm();
-            for (option, value) in keys.into_iter().zip([2, 1, 0]) {
-                h.at(option); // The child stays visible without reopening it.
-                assert_eq!(h.check(option), Some(value == mode));
-            }
+        for (option, value) in keys.into_iter().zip([2, 1, 0]) {
+            h.at(option); // The child stays visible without reopening it.
+            assert_eq!(h.check(option), Some(value == mode));
         }
-        // A normal command in that same submenu still closes the whole menu.
-        assert!(matches!(
-            &h.click("ui-context-show-textures")[..],
-            [CtxAction::ShowAvatarTextures(_)]
-        ));
-        h.frame(Vec::new());
-        assert!(h.menu.is_none());
-    });
+    }
+    // A normal command in that same submenu still closes the whole menu.
+    assert!(matches!(
+        &h.click("ui-context-show-textures")[..],
+        [CtxAction::ShowAvatarTextures(_)]
+    ));
+    h.frame(Vec::new());
+    assert!(h.menu.is_none());
 }
 
 #[test]
 fn scene_disturbance_toggles_keep_submenus_open_and_labels_stable() {
-    on_ui_test_thread(|| {
-        let mut h = Harness::new();
-        h.warm();
-        h.hover("ui-context-disturbance");
-        for blocked in [true, false] {
-            assert!(matches!(&h.click("common-ignore")[..], [CtxAction::ToggleBlock(_)]));
-            h.facts.blocked = blocked;
-            assert!(matches!(
-                &h.click("common-block-particles")[..],
-                [CtxAction::ToggleOwnerParticleFilter(_)]
-            ));
-            h.facts.particles_blocked = blocked;
-            for (key, flag) in [
-                ("ui-context-block-worn-sounds", 1),
-                ("ui-context-block-rezzed-sounds", 2),
-                ("ui-context-block-gesture-sounds", 4),
-            ] {
-                let actions = h.click(key);
-                assert!(
-                    matches!(&actions[..], [CtxAction::SetOwnerSoundBlock { owner, flag: value, blocked: value_on }] if *owner == Uuid::from_u128(7) && *value == flag && *value_on == blocked),
-                    "{actions:?}"
-                );
-                if blocked {
-                    h.facts.sound_blocks |= flag;
-                } else {
-                    h.facts.sound_blocks &= !flag;
-                }
-                h.warm();
-                h.at(key);
-                assert_eq!(h.check(key), Some(blocked));
+    let mut h = Harness::new();
+    h.warm();
+    h.hover("ui-context-disturbance");
+    for blocked in [true, false] {
+        assert!(matches!(&h.click("common-ignore")[..], [CtxAction::ToggleBlock(_)]));
+        h.facts.blocked = blocked;
+        assert!(matches!(
+            &h.click("common-block-particles")[..],
+            [CtxAction::ToggleOwnerParticleFilter(_)]
+        ));
+        h.facts.particles_blocked = blocked;
+        for (key, flag) in [
+            ("ui-context-block-worn-sounds", 1),
+            ("ui-context-block-rezzed-sounds", 2),
+            ("ui-context-block-gesture-sounds", 4),
+        ] {
+            let actions = h.click(key);
+            assert!(
+                matches!(&actions[..], [CtxAction::SetOwnerSoundBlock { owner, flag: value, blocked: value_on }] if *owner == Uuid::from_u128(7) && *value == flag && *value_on == blocked),
+                "{actions:?}"
+            );
+            if blocked {
+                h.facts.sound_blocks |= flag;
+            } else {
+                h.facts.sound_blocks &= !flag;
             }
             h.warm();
-            assert_eq!(h.check("common-ignore"), Some(blocked));
-            assert_eq!(h.check("common-block-particles"), Some(blocked));
+            h.at(key);
+            assert_eq!(h.check(key), Some(blocked));
         }
-        h.click_at(egui::pos2(1200.0, 850.0));
-        h.frame(Vec::new());
-        assert!(h.menu.is_none(), "outside clicks still dismiss the hierarchy");
-    });
+        h.warm();
+        assert_eq!(h.check("common-ignore"), Some(blocked));
+        assert_eq!(h.check("common-block-particles"), Some(blocked));
+    }
+    h.click_at(egui::pos2(1200.0, 850.0));
+    h.frame(Vec::new());
+    assert!(h.menu.is_none(), "outside clicks still dismiss the hierarchy");
 }
 
 #[test]
 fn scene_toggles_in_nested_custom_groups_keep_every_level_open() {
-    on_ui_test_thread(|| {
-        let mut h = Harness::new();
-        // Nest the ordinary Disturbance group inside another scene group using
-        // the actual inventory arrangement resolver rather than a fake popup.
-        let m = h.menu.as_ref().expect("menu");
-        let available = entries::world_menu(&m.target, &h.facts, m.point);
-        let catalog = customize::Catalog::new(&available);
-        let profile = h
-            .prefs
-            .profiles
-            .entry("scene:avatar".into())
-            .or_insert_with(|| crate::ui::inventory::menu_layout::Profile {
-                layout: Default::default(),
-                open: Default::default(),
-                locked: true,
-            });
-        assert!(profile.layout.create_group(
-            &catalog.entries,
-            "Nested options",
-            crate::ui::inventory::menu_layout::Direction::Horizontal,
-            None
+    let mut h = Harness::new();
+    // Nest the ordinary Disturbance group inside another scene group using
+    // the actual inventory arrangement resolver rather than a fake popup.
+    let m = h.menu.as_ref().expect("menu");
+    let available = entries::world_menu(&m.target, &h.facts, m.point);
+    let catalog = customize::Catalog::new(&available);
+    let profile = h
+        .prefs
+        .profiles
+        .entry("scene:avatar".into())
+        .or_insert_with(|| crate::ui::inventory::menu_layout::Profile {
+            layout: Default::default(),
+            open: Default::default(),
+            locked: true,
+        });
+    assert!(profile.layout.create_group(
+        &catalog.entries,
+        "Nested options",
+        crate::ui::inventory::menu_layout::Direction::Horizontal,
+        None
+    ));
+    let group = profile.layout.groups.keys().next().expect("custom group").clone();
+    let disturbance = catalog
+        .entries
+        .iter()
+        .find(|e| e.label == aurora_i18n::tr!("ui-context-disturbance"))
+        .expect("disturbance");
+    profile
+        .layout
+        .placements
+        .insert(disturbance.id.clone(), crate::ui::inventory::menu_layout::children(&group));
+    profile.locked = true;
+    h.warm();
+    let at = h
+        .texts
+        .iter()
+        .find(|t| t.source == "Nested options")
+        .expect("custom group")
+        .rect
+        .center();
+    h.frame(vec![egui::Event::PointerMoved(at)]);
+    for _ in 0..35 {
+        h.frame(Vec::new());
+    }
+    h.hover("ui-context-disturbance");
+    for _ in 0..2 {
+        assert!(matches!(
+            &h.click("common-block-particles")[..],
+            [CtxAction::ToggleOwnerParticleFilter(_)]
         ));
-        let group = profile.layout.groups.keys().next().expect("custom group").clone();
-        let disturbance = catalog
-            .entries
-            .iter()
-            .find(|e| e.label == aurora_i18n::tr!("ui-context-disturbance"))
-            .expect("disturbance");
-        profile
-            .layout
-            .placements
-            .insert(disturbance.id.clone(), crate::ui::inventory::menu_layout::children(&group));
-        profile.locked = true;
+        h.facts.particles_blocked = !h.facts.particles_blocked;
         h.warm();
-        let at = h
-            .texts
-            .iter()
-            .find(|t| t.source == "Nested options")
-            .expect("custom group")
-            .rect
-            .center();
-        h.frame(vec![egui::Event::PointerMoved(at)]);
-        for _ in 0..35 {
-            h.frame(Vec::new());
-        }
-        h.hover("ui-context-disturbance");
-        for _ in 0..2 {
-            assert!(matches!(
-                &h.click("common-block-particles")[..],
-                [CtxAction::ToggleOwnerParticleFilter(_)]
-            ));
-            h.facts.particles_blocked = !h.facts.particles_blocked;
-            h.warm();
-            h.at("common-block-particles");
-        }
-        // Escape still closes the parent and all its children.
-        h.frame(vec![egui::Event::Key {
-            key: egui::Key::Escape,
-            physical_key: None,
-            pressed: true,
-            repeat: false,
-            modifiers: Default::default(),
-        }]);
-        assert!(h.menu.is_none());
-    });
+        h.at("common-block-particles");
+    }
+    // Escape still closes the parent and all its children.
+    h.frame(vec![egui::Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+    assert!(h.menu.is_none());
 }
 
 #[test]
 fn named_particle_emitters_target_their_own_object_and_owner_without_closing() {
-    on_ui_test_thread(|| {
-        let mut h = Harness::new();
-        h.facts.particle_sources = vec![ParticleMenuSource {
-            object: Uuid::from_u128(21),
-            owner: Uuid::from_u128(31),
-            name: "Smoke source".into(),
-            clicked: false,
-            object_blocked: false,
-            owner_blocked: false,
-        }];
+    let mut h = Harness::new();
+    h.facts.particle_sources = vec![ParticleMenuSource {
+        object: Uuid::from_u128(21),
+        owner: Uuid::from_u128(31),
+        name: "Smoke source".into(),
+        clicked: false,
+        object_blocked: false,
+        owner_blocked: false,
+    }];
+    h.warm();
+    h.hover("ui-context-disturbance");
+    h.hover("scene-particles-menu");
+    let at = h
+        .texts
+        .iter()
+        .find(|t| t.source == "Smoke source")
+        .expect("source name")
+        .rect
+        .center();
+    h.frame(vec![egui::Event::PointerMoved(at)]);
+    for _ in 0..35 {
+        h.frame(Vec::new());
+    }
+    for blocked in [true, false] {
+        let actions = h.click("scene-particles-block-object");
+        assert!(
+            matches!(&actions[..], [CtxAction::SetParticleBlock { id, owner: false, blocked: value }] if *id == Uuid::from_u128(21) && *value == blocked),
+            "{actions:?}"
+        );
+        h.facts.particle_sources[0].object_blocked = blocked;
         h.warm();
-        h.hover("ui-context-disturbance");
-        h.hover("scene-particles-menu");
-        let at = h
-            .texts
-            .iter()
-            .find(|t| t.source == "Smoke source")
-            .expect("source name")
-            .rect
-            .center();
-        h.frame(vec![egui::Event::PointerMoved(at)]);
-        for _ in 0..35 {
-            h.frame(Vec::new());
-        }
-        for blocked in [true, false] {
-            let actions = h.click("scene-particles-block-object");
-            assert!(
-                matches!(&actions[..], [CtxAction::SetParticleBlock { id, owner: false, blocked: value }] if *id == Uuid::from_u128(21) && *value == blocked),
-                "{actions:?}"
-            );
-            h.facts.particle_sources[0].object_blocked = blocked;
-            h.warm();
-            let actions = h.click("scene-particles-block-owner");
-            assert!(
-                matches!(&actions[..], [CtxAction::SetParticleBlock { id, owner: true, blocked: value }] if *id == Uuid::from_u128(31) && *value == blocked),
-                "{actions:?}"
-            );
-            h.facts.particle_sources[0].owner_blocked = blocked;
-            h.warm();
-            h.at("scene-particles-block-object");
-            h.at("scene-particles-block-owner");
-        }
-    });
+        let actions = h.click("scene-particles-block-owner");
+        assert!(
+            matches!(&actions[..], [CtxAction::SetParticleBlock { id, owner: true, blocked: value }] if *id == Uuid::from_u128(31) && *value == blocked),
+            "{actions:?}"
+        );
+        h.facts.particle_sources[0].owner_blocked = blocked;
+        h.warm();
+        h.at("scene-particles-block-object");
+        h.at("scene-particles-block-owner");
+    }
 }
