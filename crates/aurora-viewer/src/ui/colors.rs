@@ -101,7 +101,7 @@ fn is_friend(world: &World, id: &Uuid) -> bool {
 pub fn keyword_color(line: &ChatLine) -> Option<Color32> {
     if matches!(
         line.kind,
-        ChatKind::Own | ChatKind::Object(ChatType::Debug) | ChatKind::Invite(_) | ChatKind::InventoryOffer(_)
+        ChatKind::Own | ChatKind::Object(ChatType::Debug) | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_)
     ) {
         return None;
     }
@@ -120,7 +120,7 @@ pub fn chat_color(line: &ChatLine, world: &World) -> Color32 {
     let k = get();
     let v = match line.kind {
         ChatKind::Own => k.chat_mine,
-        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) => k.chat_system,
+        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => k.chat_system,
         ChatKind::ObjectIm => k.chat_object_im,
         ChatKind::Object(t) => match t {
             ChatType::Debug => k.chat_errors,

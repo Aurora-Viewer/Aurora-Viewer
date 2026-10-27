@@ -577,6 +577,10 @@ pub struct Settings {
     /// The money tracker records the payments even while it is closed
     /// (FSAlwaysTrackPayments, off by default).
     pub always_track_payments: bool,
+    /// Preferences › Chat › Conversations: a friend's direct payment opens
+    /// their conversation on its card (#1198); a payment from anyone else
+    /// shows there only when it is open. On by default.
+    pub payment_opens_conversation: bool,
     /// Mini-map and world map options (Firestorm MiniMap* / Map* settings).
     pub maps: MapSettings,
     /// "Search": last tab, rating boxes and land limits.
@@ -1601,6 +1605,7 @@ impl Default for Settings {
             confirm_payments: true,
             payment_confirm_threshold: 200,
             always_track_payments: false,
+            payment_opens_conversation: true,
             maps: MapSettings::default(),
             search: Default::default(),
             show_people: true,

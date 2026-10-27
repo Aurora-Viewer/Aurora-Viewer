@@ -130,6 +130,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-send-typing-hint"),
                     &field!(send_typing_state),
                 );
+                // a direct payment's card in the payer's conversation (#1198)
+                cx.toggle(
+                    tr!("ui-options-payment-opens-conversation"),
+                    tr!("ui-options-payment-opens-conversation-hint"),
+                    &field!(payment_opens_conversation),
+                );
                 // the tab of a conversation with news flashes
                 // (FSFloaterIMContainer::startFlashingTab), in violet and softly
                 cx.toggle(

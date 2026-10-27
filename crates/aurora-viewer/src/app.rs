@@ -2550,6 +2550,7 @@ impl App {
         } = ev
         {
             self.record_money(&ev);
+            self.world.payment_received(&ev);
             self.pay_ui.on_transaction(success, kind, dest, description);
             return;
         }
@@ -7374,6 +7375,7 @@ impl App {
         self.world.script_debug.owner_say = self.settings.script_editor.owner_say_debug;
         self.world.received_items.enabled = self.settings.sort_received_items;
         self.world.inventory_offers.show_accepted = self.settings.show_accepted_in_inventory;
+        self.world.payments.open_for_friends = self.settings.payment_opens_conversation;
         self.world.received_items.enabled_since = self.settings.received_items_since;
         if self.demo
             && self.frame_count == 700
@@ -10412,6 +10414,7 @@ impl App {
             self.demo_buy_pass();
             self.demo_pay();
             self.demo_money_tracker();
+            self.demo_payment();
         }
         // AURORA_DEMO_LOOKAT=1: our eye tracking on (cursor on the left of
         // the window, moving), Violet Wolf looks at a point north of him;

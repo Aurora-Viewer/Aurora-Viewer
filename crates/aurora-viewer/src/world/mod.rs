@@ -62,6 +62,7 @@ pub mod outfit_folders;
 pub mod parcel_visibility;
 pub mod parked;
 pub mod particle_filters;
+pub mod payments;
 pub mod place_details;
 pub mod place_snapshots;
 pub mod pointat;
@@ -155,18 +156,24 @@ pub enum ChatKind {
     /// The card of a resident's inventory offer (`inventory_offers.rs`), by
     /// its offer: never written to the transcript either.
     InventoryOffer(u64),
+    /// The card of a resident's direct payment to us (`payments.rs`), by
+    /// its payment: its text is written to the transcript by itself.
+    Payment(u64),
 }
 
 impl ChatKind {
     /// A notice of the viewer rather than someone's message: it stands
     /// apart from the groups of messages.
     pub fn is_notice(self) -> bool {
-        matches!(self, ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_))
+        matches!(
+            self,
+            ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_)
+        )
     }
 
-    /// A card with its own buttons (an invitation, an offer).
+    /// A card (an invitation, an offer with their buttons, a payment).
     pub fn is_card(self) -> bool {
-        matches!(self, ChatKind::Invite(_) | ChatKind::InventoryOffer(_))
+        matches!(self, ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_))
     }
 
     /// Not sent by a person: what an object or a script says (its owner-say
@@ -462,6 +469,8 @@ pub struct World {
     pub teleport_invites: teleport_invites::TeleportInvites,
     /// Residents' inventory offers, as cards in their conversations.
     pub inventory_offers: inventory_offers::InventoryOffers,
+    /// Residents' direct payments, as cards in their conversations.
+    pub payments: payments::Payments,
     /// The content rating chosen during the session and its sync with the
     /// server.
     pub maturity: maturity::MaturityPreference,
@@ -723,6 +732,7 @@ impl World {
             notifications: notifications::Notifications::default(),
             teleport_invites: teleport_invites::TeleportInvites::default(),
             inventory_offers: inventory_offers::InventoryOffers::default(),
+            payments: payments::Payments::default(),
             maturity: maturity::MaturityPreference::default(),
             set_home: home::SetHome::default(),
             user_info: user_info::UserInfoState::default(),

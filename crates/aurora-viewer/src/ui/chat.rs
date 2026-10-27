@@ -25,6 +25,7 @@ mod line_menu;
 mod members;
 mod object_row;
 mod offer_card;
+mod payment_card;
 mod popout;
 pub mod previews;
 mod reorder;
@@ -528,7 +529,7 @@ fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
         ChatKind::Own => p.violet_pale,
         ChatKind::Local(_) => p.ink,
         ChatKind::Object(_) | ChatKind::ObjectIm => p.teal.gamma_multiply(0.85),
-        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) => p.muted,
+        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => p.muted,
         ChatKind::Im => p.violet_light,
     }
 }
@@ -884,7 +885,7 @@ fn line_job(
     };
     // (before the name, after it, body)
     let (before, after, body) = match line.kind {
-        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) => ("", "", &line.text[..]),
+        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => ("", "", &line.text[..]),
         _ if emote => ("", "", &line.text[3..]),
         _ if body_only => ("", "", &line.text[..]),
         ChatKind::Im => ("[IM] ", ": ", &line.text[..]),
@@ -1748,7 +1749,7 @@ pub(crate) fn line_body(line: &crate::world::ChatLine, name: &str) -> (String, b
 /// places, names and mentions as shown.
 fn shown_text(world: &World, line: &crate::world::ChatLine, name: &str) -> String {
     let body = match line.kind {
-        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) => line.text.clone(),
+        ChatKind::System | ChatKind::Invite(_) | ChatKind::InventoryOffer(_) | ChatKind::Payment(_) => line.text.clone(),
         _ => line_body(line, name).0,
     };
     let text: String = segments(&body)
@@ -2206,6 +2207,10 @@ pub(crate) fn draw_line(ui: &mut egui::Ui, env: &mut LineEnv, line: &crate::worl
     }
     if let ChatKind::InventoryOffer(offer) = line.kind {
         offer_card::draw_line(ui, env, line, offer);
+        return;
+    }
+    if let ChatKind::Payment(payment) = line.kind {
+        payment_card::draw_line(ui, env, line, payment);
         return;
     }
     if object_row::compact_in(line, env) {
