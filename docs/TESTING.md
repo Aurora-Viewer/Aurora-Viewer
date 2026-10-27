@@ -3907,7 +3907,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
-| `AURORA_DEMO_GLYPHS=1\|2\|rtl` | Names, titles and chat in extended characters (system fonts); `rtl`: right-to-left text |
+| `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
@@ -4861,8 +4861,18 @@ failure. Grid validation and any paid upload are performed by the human.
   words they hold; in the transcript, a message read from the right starts
   at the right edge, its link and its emoji in reading order, a wrapped line
   goes on on the row below from the right; a drag selects and Ctrl+C copies
-  in reading order. The Arabic and Hebrew letters need a system font that
-  has them (on Linux, DejaVu Sans or Noto Sans Arabic / Hebrew).
+  in reading order. The residents' display names are known before they
+  talk, so each line carries its sender's complete name ("ذئب بنفسجي
+  (glyph1)"); in a message header, a name read from the right has its first
+  word on the right. `rtl2`: the lines in reverse order, the two-word Arabic
+  and Hebrew names among the six the chat bar shows; with
+  `AURORA_DEMO_BARS=legacy AURORA_DEMO_CHAT_LINES=legacy` the Conversations
+  window stays closed and the lines show above the chat bar in the one-line
+  look, the sender's picture inside the line: what to see, the picture
+  first, then the whole name in its own order (never under the picture,
+  never split by a gap), then the colon and the message. The Arabic and
+  Hebrew letters need a system font that has them (on Linux, DejaVu Sans or
+  Noto Sans Arabic / Hebrew).
 - **`AURORA_DEMO_CONV_REORDER=1|hold|out|nearby`**: with
   `AURORA_DEMO_CONV=aurora` (also `aurora:compact`, `aurora:narrow` or
   `legacy`), synthetic pointer events drag the first conversation after the

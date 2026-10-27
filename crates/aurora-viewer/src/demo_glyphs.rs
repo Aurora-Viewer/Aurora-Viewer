@@ -7,7 +7,8 @@
 //!
 //! `AURORA_DEMO_GLYPHS=rtl`: the same scene in right-to-left text (Arabic,
 //! Hebrew, mixed with English, numbers, brackets, a link, a long line), read
-//! in its order (`ui::bidi`).
+//! in its order (`ui::bidi`); `rtl2` with the chat lines in reverse order,
+//! the two-word Arabic and Hebrew names among the last lines.
 
 use super::{HANDLE, IDLE_ANIM, floor_at, prim, shape, te};
 use aurora_net::NetEvent;
@@ -131,11 +132,11 @@ pub struct Mode {
 }
 
 /// `AURORA_DEMO_GLYPHS=1`, `2` for the chat lines in reverse order, `rtl`
-/// for right-to-left text.
+/// for right-to-left text, `rtl2` for both.
 pub fn scenario() -> Option<Mode> {
     std::env::var("AURORA_DEMO_GLYPHS").ok().map(|v| Mode {
-        reversed: v.trim() == "2",
-        rtl: v.trim() == "rtl",
+        reversed: matches!(v.trim(), "2" | "rtl2"),
+        rtl: matches!(v.trim(), "rtl" | "rtl2"),
     })
 }
 
@@ -213,6 +214,29 @@ pub fn events(mode: Mode) -> Vec<NetEvent> {
     if mode.reversed {
         lines.reverse();
     }
+    // right to left: the display names known before the residents talk, as
+    // those of residents nearby on the grid are, so that each line carries
+    // its sender's complete name ("ذئب بنفسجي (glyph1)"), above the chat bar
+    // too, the picture before it
+    if mode.rtl {
+        events.push(NetEvent::DisplayNames {
+            names: samples(true)
+                .iter()
+                .enumerate()
+                .map(|(k, sample)| aurora_net::AvatarNameData {
+                    id: id(k),
+                    username: legacy_first(k).to_lowercase(),
+                    display_name: sample.display_name.into(),
+                    legacy_first: legacy_first(k),
+                    legacy_last: "Resident".into(),
+                    is_default: false,
+                    next_update: 0.0,
+                })
+                .collect(),
+            bad_ids: Vec::new(),
+            max_age: None,
+        });
+    }
     events.extend(lines);
     let p = start + ahead * 5.0 + right * 1.9;
     objects.push(prim(
@@ -280,6 +304,13 @@ mod tests {
         .collect();
         assert_eq!(lines, RTL_SAMPLES.iter().map(|s| s.chat).collect::<Vec<_>>());
         assert!(RTL_SAMPLES.len() <= 8, "two rows of four");
+        // their display names come before their lines
+        let events = events(Mode { reversed: true, rtl: true });
+        let names = events
+            .iter()
+            .position(|e| matches!(e, NetEvent::DisplayNames { names, .. } if names.len() == RTL_SAMPLES.len()));
+        let first_line = events.iter().position(|e| matches!(e, NetEvent::Chat(_)));
+        assert!(names.is_some_and(|n| first_line.is_some_and(|l| n < l)), "names before lines");
         assert!(RTL_SAMPLES.iter().all(|s| crate::ui::bidi::has_rtl(s.chat)));
     }
 

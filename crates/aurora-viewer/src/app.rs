@@ -16818,7 +16818,9 @@ impl ApplicationHandler for App {
                         self.on_app_event(e);
                     }
                 }
-                self.panels.chat = true;
+                // closed with AURORA_DEMO_CHAT_LINES, whose lines show above
+                // the chat bar with the Conversations window closed
+                self.panels.chat = crate::demo::chat_lines_scenario().is_none();
                 self.panels.people = false;
                 self.panels.inventory = false;
                 self.panels.minimap = false;
