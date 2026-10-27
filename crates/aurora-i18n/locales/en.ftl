@@ -11580,6 +11580,8 @@ build-material-diffuse-tint = Diffuse tint
 build-material-specular-tint = Specular tint
 build-material-base-tint = Base tint
 build-material-emissive-tint = Emissive tint
+build-material-tint-needs-specular = Apply a specular map to edit this tint.
+build-material-tint-needs-pbr = Apply a PBR material to every selected face to edit these tints.
 
 blender-live-title = LiveMesh
 blender-live-invalid-source = Invalid or duplicate live object identifier.
