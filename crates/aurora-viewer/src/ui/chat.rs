@@ -1506,7 +1506,7 @@ pub(crate) fn chat_text_marked(
         return;
     }
     let k = super::colors::get();
-    super::emoji::text_rows(ui, size, |ui| {
+    super::emoji::text_rows_in(ui, size, super::bidi::rtl_paragraph(text), |ui| {
         for s in segs {
             match s {
                 Seg::Text(t) => marked_run(ui, emoji, t, size, color, italics, mark),
@@ -3347,7 +3347,9 @@ pub fn toasts(
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
                         }
-                        let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+                        let base = bidi_base(&name);
+                        let visual = ui.ctx().fonts_mut(|f| super::bidi::layout(f, job, base));
+                        let galley = visual.galley.clone();
                         let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
                         let painter = ui.painter();
                         painter.galley(rect.min, galley.clone(), p.ink);
@@ -3355,7 +3357,7 @@ pub fn toasts(
                         // left before its name
                         if let Some((at, who)) = sender {
                             let side = pic_side(size);
-                            let c = galley.pos_from_cursor(egui::text::CCursor::new(at)).translate(rect.min.to_vec2());
+                            let c = visual.cursor_rect(at).translate(rect.min.to_vec2());
                             let r =
                                 egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, c.center().y), egui::vec2(side, side));
                             bubble_sender(painter, p, pics, wanted_pics, r, &who, line, alpha);
@@ -3364,12 +3366,12 @@ pub fn toasts(
                         // conversations' (Firestorm's toast links it)
                         if pills
                             && let Some(range) = name
-                            && let Some(r) = range_rects(&galley, rect.min, range).first().copied()
+                            && let Some(r) = visual.range_rects(rect.min, range).first().copied()
                         {
                             names.push((r, line));
                         }
                         let col = color_for(line.kind, p).gamma_multiply(alpha);
-                        line_extras(ui, p, world, &galley, rect.min, size, alpha, badges, line_links, col, &mut links);
+                        line_extras(ui, p, world, &visual, rect.min, size, alpha, badges, line_links, col, &mut links);
                     });
                 if glass && let Some(slot) = slot {
                     let rect = bubble.response.rect;
@@ -3387,6 +3389,16 @@ pub fn toasts(
     }
 }
 
+/// The direction of a chat line: from the left when it starts with its
+/// sender's name (the picture before it), else that of its first letter.
+fn bidi_base(name: &Option<std::ops::Range<usize>>) -> super::bidi::Base {
+    if name.is_some() {
+        super::bidi::Base::Ltr
+    } else {
+        super::bidi::Base::Auto
+    }
+}
+
 /// What a laid-out chat line carries besides its text: the badge of each
 /// link painted over its invisible glyph, the regions of the places shown
 /// asked when unknown, and each link's rects (`links`), for their click
@@ -3396,7 +3408,7 @@ fn line_extras(
     ui: &egui::Ui,
     p: &Palette,
     world: &World,
-    galley: &egui::Galley,
+    visual: &super::bidi::Visual,
     origin: egui::Pos2,
     size: f32,
     alpha: f32,
@@ -3407,7 +3419,7 @@ fn line_extras(
 ) {
     let painter = ui.painter();
     for (at, badge) in badges {
-        let Some(g) = range_rects(galley, origin, at..at + 1).first().copied() else {
+        let Some(g) = visual.range_rects(origin, at..at + 1).first().copied() else {
             continue;
         };
         let b = egui::Rect::from_center_size(g.center(), egui::vec2(size, size));
@@ -3434,7 +3446,7 @@ fn line_extras(
         }
     }
     for (range, link) in line_links {
-        for r in range_rects(galley, origin, range) {
+        for r in visual.range_rects(origin, range) {
             links.push((r, link.clone(), col));
         }
     }

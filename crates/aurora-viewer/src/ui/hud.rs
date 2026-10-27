@@ -226,13 +226,11 @@ pub fn draw_attachments(ctx: &egui::Context, world: &World, scene: &Scene) {
             continue;
         };
         let c = o.text_color;
-        painter.text(
-            point,
-            egui::Align2::CENTER_BOTTOM,
-            world.rlva_hover_privacy.apply(&o.text).as_ref(),
-            egui::FontId::proportional(12.0 * scale),
-            Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]),
-        );
+        let color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
+        let text = world.rlva_hover_privacy.apply(&o.text).into_owned();
+        let galley = super::bidi::no_wrap(ctx, text, egui::FontId::proportional(12.0 * scale), color);
+        let rect = egui::Align2::CENTER_BOTTOM.anchor_size(point, galley.size());
+        painter.galley(rect.min, galley, color);
     }
 }
 
@@ -641,7 +639,7 @@ pub fn draw(
         // measure
         let galleys: Vec<_> = lines
             .iter()
-            .map(|(t, c, s)| painter.layout_no_wrap(t.clone(), FontId::proportional(*s), c.gamma_multiply(fade)))
+            .map(|(t, c, s)| super::bidi::no_wrap(painter.ctx(), t.clone(), FontId::proportional(*s), c.gamma_multiply(fade)))
             .collect();
         let total_h: f32 = galleys.iter().map(|g| g.size().y).sum();
         let max_w = galleys.iter().map(|g| g.size().x).fold(0.0, f32::max);
@@ -711,12 +709,13 @@ pub fn draw(
             if !is_avatar {
                 // drop shadow (LLFontGL::DROP_SHADOW)
                 let a = g.job.sections.first().map(|s| s.format.color.a()).unwrap_or(255);
-                let shadow = painter.layout_no_wrap(
-                    g.job.text.clone(),
-                    g.job.sections.first().map(|s| s.format.font_id.clone()).unwrap_or_default(),
+                // the same galley in black: a right-to-left line is in
+                // sections that a plain copy of its text would lose
+                painter.galley_with_override_text_color(
+                    rect.min + egui::vec2(1.0, 1.0),
+                    g.clone(),
                     Color32::from_black_alpha((a as f32 * 0.7) as u8),
                 );
-                painter.galley(rect.min + egui::vec2(1.0, 1.0), shadow, Color32::PLACEHOLDER);
             }
             // every line was laid out with its own color: nothing to fall back on
             painter.galley(rect.min, g, Color32::PLACEHOLDER);

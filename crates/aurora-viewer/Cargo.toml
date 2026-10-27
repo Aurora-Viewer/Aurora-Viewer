@@ -71,6 +71,11 @@ sha2 = "0.11.0"
 # pure Rust, MPL-2.0
 spellbook = "0.4.2"
 ttf-parser = "0.25.1"
+# Right-to-left text in reading order (ui/bidi.rs): the Unicode Bidirectional
+# Algorithm and its mirrored brackets, unicode-rs crates (unicode-bidi is
+# already in the tree through url), MIT/Apache-2.0.
+unicode-bidi = "0.3.18"
+unicode-bidi-mirroring = "0.4.0"
 uuid = { version = "1.27.0", features = ["v4"] }
 wgpu = "30.0.1"
 winit = "0.30"

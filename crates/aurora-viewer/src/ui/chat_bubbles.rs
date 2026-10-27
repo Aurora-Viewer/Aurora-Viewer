@@ -153,7 +153,7 @@ pub fn layout(painter: &egui::Painter, p: &Palette, world: &World, frame: &Frame
             max_rows: room - used,
             ..Default::default()
         };
-        let galley = painter.layout_job(job);
+        let galley = super::bidi::galley(painter.ctx(), job, super::bidi::Base::Auto);
         used += galley.rows.len().max(1);
         rows.push(galley);
     }

@@ -300,7 +300,7 @@ fn native_action_markers_wrap_and_are_clickable_in_console_lines_and_bubbles() {
                             ui,
                             &p,
                             &world,
-                            &galley,
+                            &crate::ui::bidi::Visual::plain(galley.clone()),
                             origin,
                             14.0,
                             1.0,

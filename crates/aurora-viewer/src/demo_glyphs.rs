@@ -4,6 +4,10 @@
 //! Hebrew, emoji…), and a prim with such a hover text. Everything the
 //! embedded fonts lack must come from the system's fonts
 //! (`ui::fonts::fallback`) instead of showing squares.
+//!
+//! `AURORA_DEMO_GLYPHS=rtl`: the same scene in right-to-left text (Arabic,
+//! Hebrew, mixed with English, numbers, brackets, a link, a long line), read
+//! in its order (`ui::bidi`).
 
 use super::{HANDLE, IDLE_ANIM, floor_at, prim, shape, te};
 use aurora_net::NetEvent;
@@ -66,13 +70,78 @@ pub const SAMPLES: &[Sample] = &[
     },
 ];
 
+/// `AURORA_DEMO_GLYPHS=rtl`: what right-to-left text puts to the test.
+pub const RTL_SAMPLES: &[Sample] = &[
+    Sample {
+        title: "فريق أورورا",
+        display_name: "ذئب بنفسجي",
+        chat: "مرحبا بالعالم! 😀 كيف حالكم اليوم؟",
+    },
+    Sample {
+        title: "חברי אורורה",
+        display_name: "זאב סגול",
+        chat: "שלום עולם, מה שלומכם היום?",
+    },
+    // an English sentence keeps its direction, the Arabic in it reads from the right
+    Sample {
+        title: "VIP عضو",
+        display_name: "Luna القمر",
+        chat: "I love this place, شكرا جزيلا for the party!",
+    },
+    Sample {
+        title: "Aurora Viewer",
+        display_name: "ليلى",
+        chat: "الحفلة الساعة 8:30 مساءً في المنطقة رقم 42 (الطابق الثاني)",
+    },
+    Sample {
+        title: "الأرقام",
+        display_name: "سارة",
+        chat: "الأرقام العربية: ١٢٣٤ و ٥٦٧٨",
+    },
+    Sample {
+        title: "דניאל",
+        display_name: "Dani דני",
+        chat: "ברוכים הבאים ל-Aurora Viewer, תהנו!",
+    },
+    Sample {
+        title: "رسالة طويلة",
+        display_name: "عمر",
+        chat: "هذه رسالة طويلة جدا لاختبار التفاف النص على عدة أسطر في نافذة المحادثة وفي فقاعات الدردشة فوق الصورة الرمزية",
+    },
+    Sample {
+        title: "رابط",
+        display_name: "نور",
+        chat: "زوروا موقعنا https://example.com وشاهدوا الصور",
+    },
+];
+
 /// llSetText of the scenario's prim.
 pub const HOVER_TEXT: &str = "llSetText ✿ 東京 ღ 𝓗𝓸𝓿𝓮𝓻\n░▒▓ → ★ ♛";
 
-/// `AURORA_DEMO_GLYPHS=1`, or `2` for the chat lines in reverse order:
-/// Some(reversed).
-pub fn scenario() -> Option<bool> {
-    std::env::var("AURORA_DEMO_GLYPHS").ok().map(|v| v.trim() == "2")
+/// The prim's llSetText in right-to-left text.
+pub const RTL_HOVER_TEXT: &str = "مرحبا بكم في المتجر\nالسعر: 250 L$\nשלום לכולם";
+
+/// How the scenario runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mode {
+    /// The chat lines in reverse order (the chat window shows the last few).
+    pub reversed: bool,
+    /// Right-to-left text instead.
+    pub rtl: bool,
+}
+
+/// `AURORA_DEMO_GLYPHS=1`, `2` for the chat lines in reverse order, `rtl`
+/// for right-to-left text.
+pub fn scenario() -> Option<Mode> {
+    std::env::var("AURORA_DEMO_GLYPHS").ok().map(|v| Mode {
+        reversed: v.trim() == "2",
+        rtl: v.trim() == "rtl",
+    })
+}
+
+/// The residents of the scenario's mode.
+fn samples(rtl: bool) -> &'static [Sample] {
+    if rtl { RTL_SAMPLES } else { SAMPLES }
 }
 
 fn id(k: usize) -> Uuid {
@@ -85,14 +154,15 @@ fn legacy_first(k: usize) -> String {
 
 /// The scenario's resident behind this id: (legacy first name, sample).
 pub fn resident(avatar: &Uuid) -> Option<(String, &'static Sample)> {
-    let k = (0..SAMPLES.len()).find(|k| id(*k) == *avatar)?;
-    Some((legacy_first(k), &SAMPLES[k]))
+    let samples = samples(scenario().is_some_and(|m| m.rtl));
+    let k = (0..samples.len()).find(|k| id(*k) == *avatar)?;
+    Some((legacy_first(k), &samples[k]))
 }
 
 /// The residents in two rows in front of the start position, facing it, each
 /// saying its line (last resident first with `reversed`: the chat window
 /// shows the last few lines); the prim with the hover text on the right.
-pub fn events(reversed: bool) -> Vec<NetEvent> {
+pub fn events(mode: Mode) -> Vec<NetEvent> {
     let boxp = shape(LL_PCODE_PATH_LINE, LL_PCODE_PROFILE_SQUARE, 100, 0, 0);
     // start position and view direction of the demo (see `events`)
     let (start, ahead) = (Vec3::new(132.0, 126.0, 0.0), Vec3::new(0.8, 0.4, 0.0).normalize());
@@ -104,7 +174,7 @@ pub fn events(reversed: bool) -> Vec<NetEvent> {
     let mut objects = Vec::new();
     let mut events = Vec::new();
     let mut lines = Vec::new();
-    for (k, sample) in SAMPLES.iter().enumerate() {
+    for (k, sample) in samples(mode.rtl).iter().enumerate() {
         let (far, slot) = (k % 2 == 1, (k / 2) % 4);
         let p = start + ahead * if far { 11.5 } else { 7.5 } + right * if far { FAR[slot] } else { NEAR[slot] };
         let mut a = prim(
@@ -140,7 +210,7 @@ pub fn events(reversed: bool) -> Vec<NetEvent> {
             message: sample.chat.into(),
         }));
     }
-    if reversed {
+    if mode.reversed {
         lines.reverse();
     }
     events.extend(lines);
@@ -153,7 +223,7 @@ pub fn events(reversed: bool) -> Vec<NetEvent> {
         boxp,
         te([0.55, 0.36, 0.96, 1.0], 1, false, 0.0),
         ExtraParams::default(),
-        HOVER_TEXT,
+        if mode.rtl { RTL_HOVER_TEXT } else { HOVER_TEXT },
     ));
     events.insert(0, NetEvent::ObjectUpdates { handle: HANDLE, objects });
     events
@@ -165,7 +235,10 @@ mod tests {
 
     #[test]
     fn every_resident_has_an_avatar_a_name_and_a_line() {
-        let events = events(false);
+        let events = events(Mode {
+            reversed: false,
+            rtl: false,
+        });
         let Some(NetEvent::ObjectUpdates { objects, .. }) = events.first() else {
             panic!("objects first");
         };
@@ -178,7 +251,7 @@ mod tests {
             assert!(avatar.name_values.ends_with(sample.title));
         }
         let lines = |reversed| -> Vec<String> {
-            super::events(reversed)
+            super::events(Mode { reversed, rtl: false })
                 .into_iter()
                 .filter_map(|e| match e {
                     NetEvent::Chat(c) => Some(c.message),
@@ -191,6 +264,23 @@ mod tests {
         backward.reverse();
         assert_eq!(forward, backward);
         assert!(resident(&super::super::DEMO_LOUP).is_none());
+    }
+
+    #[test]
+    fn the_right_to_left_scene_says_its_own_lines() {
+        let lines: Vec<String> = events(Mode {
+            reversed: false,
+            rtl: true,
+        })
+        .into_iter()
+        .filter_map(|e| match e {
+            NetEvent::Chat(c) => Some(c.message),
+            _ => None,
+        })
+        .collect();
+        assert_eq!(lines, RTL_SAMPLES.iter().map(|s| s.chat).collect::<Vec<_>>());
+        assert!(RTL_SAMPLES.len() <= 8, "two rows of four");
+        assert!(RTL_SAMPLES.iter().all(|s| crate::ui::bidi::has_rtl(s.chat)));
     }
 
     #[test]

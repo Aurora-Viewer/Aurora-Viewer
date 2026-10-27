@@ -283,7 +283,9 @@ fn compact_card<'a>(
             sender,
             name,
         } = line_job(line, p, world, want_names, WIDTH - 18.0 - lead, size, false, JobLook::Compact);
-        let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+        let base = super::bidi_base(&name);
+        let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
+        let galley = visual.galley.clone();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(lead + galley.size().x, galley.size().y), egui::Sense::hover());
         let mut painter = ui.painter().clone();
         painter.multiply_opacity(fade);
@@ -300,18 +302,18 @@ fn compact_card<'a>(
         }
         // the cube in the room left before the name, on the capitals
         if let Some((at, _)) = sender {
-            let c = galley.pos_from_cursor(egui::text::CCursor::new(at)).translate(origin.to_vec2());
+            let c = visual.cursor_rect(at).translate(origin.to_vec2());
             let middle = super::object_row::caps_middle(&painter, size, baseline);
             let r = egui::Rect::from_center_size(egui::pos2(c.min.x - 2.0 - side * 0.5, middle), egui::vec2(side, side));
             thread::paint_icon(&painter, "box", r.shrink(1.0), p.muted_dim);
         }
         if let Some(range) = name
-            && let Some(r) = super::range_rects(&galley, origin, range).first().copied()
+            && let Some(r) = visual.range_rects(origin, range).first().copied()
         {
             names.push((r, line));
         }
         let col = crate::ui::colors::keyword_color(line).unwrap_or(p.muted).gamma_multiply(fade);
-        line_extras(ui, p, world, &galley, origin, size, fade, badges, line_links, col, links);
+        line_extras(ui, p, world, &visual, origin, size, fade, badges, line_links, col, links);
     }
 }
 
@@ -364,9 +366,12 @@ fn body(
         job,
         links: line_links,
         badges,
+        name,
         ..
     } = line_job(line, p, world, want_names, width, TEXT, false, JobLook::Body);
-    let galley = ui.ctx().fonts_mut(|f| f.layout_job(job));
+    let base = super::bidi_base(&name);
+    let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
+    let galley = visual.galley.clone();
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(fade);
@@ -374,7 +379,7 @@ fn body(
     let col = crate::ui::colors::keyword_color(line)
         .unwrap_or_else(|| color_for(line.kind, p))
         .gamma_multiply(fade);
-    line_extras(ui, p, world, &galley, rect.min, TEXT, fade, badges, line_links, col, links);
+    line_extras(ui, p, world, &visual, rect.min, TEXT, fade, badges, line_links, col, links);
 }
 
 #[cfg(test)]

@@ -121,15 +121,28 @@ fn read_font(path: &Path) -> Option<&'static [u8]> {
 /// `interact_size.y` tall (26 in the theme), which made a line with an
 /// emoji taller than one without.
 pub fn text_rows<R>(ui: &mut egui::Ui, size: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    text_rows_in(ui, size, false, add)
+}
+
+/// `text_rows` for a text that reads from right to left (`rtl`): its pieces
+/// (runs of text, links, pictures) are placed from the right edge, so that
+/// they come in reading order.
+pub fn text_rows_in<R>(ui: &mut egui::Ui, size: f32, rtl: bool, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let row = ui.fonts_mut(|f| f.row_height(&egui::FontId::proportional(size)));
     let before = ui.spacing().interact_size.y;
     ui.spacing_mut().interact_size.y = row;
-    let out = ui
-        .horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
-            add(ui)
-        })
-        .inner;
+    let rows = |ui: &mut egui::Ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 1.0);
+        add(ui)
+    };
+    let out = if rtl {
+        // (Ui::horizontal_wrapped's own size, the other way)
+        let size = egui::vec2(ui.available_size_before_wrap().x, row);
+        let layout = egui::Layout::right_to_left(egui::Align::Center).with_main_wrap(true);
+        ui.allocate_ui_with_layout(size, layout, rows).inner
+    } else {
+        ui.horizontal_wrapped(rows).inner
+    };
     ui.spacing_mut().interact_size.y = before;
     out
 }
@@ -275,11 +288,17 @@ impl Emoji {
             if italics {
                 rt = rt.italics();
             }
-            // (in a conversation, its selection is the conversation's)
-            super::chat::select::label(ui, rt);
+            // (in a conversation, its selection is the conversation's; a
+            // text read from the right starts at the right edge)
+            if super::bidi::rtl_paragraph(text) {
+                text_rows_in(ui, size, true, |ui| super::chat::select::label(ui, rt));
+            } else {
+                super::chat::select::label(ui, rt);
+            }
             return;
         }
-        text_rows(ui, size, |ui| self.inline(ui, text, size, color, italics));
+        let rtl = super::bidi::rtl_paragraph(text);
+        text_rows_in(ui, size, rtl, |ui| self.inline(ui, text, size, color, italics));
     }
 
     /// Text with color emoji added to the current (wrapping) layout.
