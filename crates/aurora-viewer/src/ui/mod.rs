@@ -28,6 +28,7 @@ pub mod colors;
 pub mod contacts;
 pub mod context;
 pub mod controls;
+pub mod crosshair;
 pub mod debug_overlay;
 pub mod dev_toolbox;
 pub mod display_name;

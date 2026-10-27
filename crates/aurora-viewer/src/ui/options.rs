@@ -256,6 +256,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "spelling" => row(Page::Chat, 6, tr!("ui-options-spelling-on")),
         "auto-replace" => row(Page::Chat, 6, tr!("ui-options-auto-replace-on")),
         "gifs" => row(Page::Chat, 0, tr!("ui-options-gifs-show")),
+        "crosshair" => row(Page::Camera, 2, tr!("ui-options-crosshair-image")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         _ => None,
     };
@@ -401,6 +402,9 @@ pub struct OptionsUi {
     /// Preferences › Chat › Spelling: the auto-replace list shown, the
     /// keyword being typed, the file dialogs.
     spelling_page: pages::spelling::SpellingPage,
+    /// Preferences › Camera › Mouselook: the crosshair's picture being
+    /// chosen in the file dialog.
+    crosshair_dialog: Option<std::sync::mpsc::Receiver<std::path::PathBuf>>,
     /// Shortcut or gesture waiting for its next input, captured by the app.
     pub capture: Option<Capture>,
     capture_modifier: Option<winit::keyboard::KeyCode>,
