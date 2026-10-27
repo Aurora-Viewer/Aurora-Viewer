@@ -51,7 +51,7 @@ fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submen
             },
             |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
-                    ui.menu_button(aurora_i18n::tr!("common-build"), |ui| build_menu(ui, &p, &mut action, ""));
+                    ui.menu_button(aurora_i18n::tr!("common-build"), |ui| build_menu(ui, &p, &mut action, "", false));
                     ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| {
                         contents_menu(ui, &p, &mut panels, &mut action, true, false)
                     });

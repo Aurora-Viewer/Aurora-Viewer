@@ -24,6 +24,8 @@ use egui::{Color32, RichText, Vec2};
 pub enum BarAction {
     IkEdit,
     Poser,
+    /// Build › Edit particles (Object.EditParticles).
+    EditParticles,
     Portals,
     CheckUpdates,
     ReportBug,
@@ -238,6 +240,9 @@ pub struct StatusInfo<'a> {
     pub interface_hidden: bool,
     pub interface_keys: String,
     pub ik_keys: String,
+    /// Build › Edit particles applies: an object we own is selected
+    /// (Object.EnableEditParticles).
+    pub edit_particles: bool,
     pub health: HealthMenu,
     pub hover_tips: HoverTipsMenu,
     pub world_overlays: crate::world::beacons::Overlays,
@@ -1021,7 +1026,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         }
     });
     menu::submenu(ui, p, "box", aurora_i18n::tr!("common-build"), true, |ui| {
-        build_menu(ui, p, action, &st.ik_keys);
+        build_menu(ui, p, action, &st.ik_keys, st.edit_particles);
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
         contents_menu(ui, p, panels, action, st.marketplace, st.motd);
@@ -1199,7 +1204,7 @@ fn health_menu(ui: &mut egui::Ui, p: &Palette, h: &HealthMenu) {
     });
 }
 
-fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str) {
+fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &str, edit_particles: bool) {
     if menu::item(ui, p, "wand", aurora_i18n::tr!("poser-title")) {
         *action = BarAction::Poser;
     }
@@ -1216,8 +1221,22 @@ fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &
             *action = BarAction::Build(mode);
         }
     }
-    // menu_viewer.xml: Build › Object › Edit Particles (the particle editor)
-    menu::todo(ui, p, "sparkles-filled", aurora_i18n::tr!("ui-bars-edit-particles"));
+    // menu_viewer.xml: Build › Object › Edit Particles, greyed out until an
+    // object we own is selected (LLEnableEditParticleSource)
+    if menu::item_tip(
+        ui,
+        p,
+        "sparkles-filled",
+        aurora_i18n::tr!("ui-bars-edit-particles"),
+        edit_particles,
+        if edit_particles {
+            ""
+        } else {
+            aurora_i18n::tr!("particle-editor-menu-tip")
+        },
+    ) {
+        *action = BarAction::EditParticles;
+    }
     menu::separator(ui, p);
     if menu::item(ui, p, "file-upload-filled", aurora_i18n::tr!("import-menu")) {
         *action = BarAction::Import;

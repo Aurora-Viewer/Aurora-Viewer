@@ -32,6 +32,7 @@ mod attention;
 mod avatar_render_settings;
 mod bridge;
 mod movelock;
+mod particle_editor;
 mod portals;
 mod poser;
 mod sound_explorer;
@@ -372,6 +373,9 @@ pub struct App {
     autopilot: Option<crate::autopilot::AutoPilot>,
     follow_ui: ui::follow::FollowUi,
     portal_ui: ui::portals::PortalUi,
+    /// Build › Edit particles (ParticleEditor).
+    particle_editor: crate::build::ui::particles::ParticleEditor,
+    particle_inject: particle_editor::Inject,
     portal_drop: Option<portals::landmark::Pending>,
     portal_journey: Option<portals::Journey>,
     /// A peer contains a full World; keep it off the Windows startup stack.
@@ -1215,6 +1219,8 @@ impl App {
             hover_height_ui: Default::default(),
             follow_ui: Default::default(),
             portal_ui: Default::default(),
+            particle_editor: Default::default(),
+            particle_inject: Default::default(),
             portal_drop: None,
             portal_journey: None,
             portal_demo_peer: None,
@@ -2371,6 +2377,8 @@ impl App {
         self.hover_height_ui = Default::default();
         self.follow_ui = Default::default();
         self.portal_ui = Default::default();
+        self.particle_editor = Default::default();
+        self.particle_inject = Default::default();
         self.portal_drop = None;
         self.portal_journey = None;
         self.portal_demo_peer = None;
@@ -2581,6 +2589,9 @@ impl App {
             if self.physics_created(&item) {
                 return;
             }
+            let Some(item) = self.particle_script_created(item) else {
+                return;
+            };
             let gesture = item.asset_type == 21;
             let id = item.id;
             if self.create_landmark_ui.created(id, item.parent, item.asset_type) {
@@ -2688,6 +2699,10 @@ impl App {
         }
         if let NetEvent::InventoryEdited { request, result } = ev {
             if self.texture_library_result(request, &result) {
+                return;
+            }
+            if self.particle_inject.owns(request) {
+                self.particle_folder_created(request, result);
                 return;
             }
             if self.gesture_metadata_result(request, &result) {
@@ -2824,6 +2839,10 @@ impl App {
             return;
         }
         if let NetEvent::ScriptSaved { request, target, result } = ev {
+            if self.particle_inject.owns(request) {
+                self.particle_script_uploaded(request, result);
+                return;
+            }
             self.script_saved(request, target, result);
             return;
         }
@@ -5759,6 +5778,11 @@ impl App {
             self.sample_build_color();
             return true;
         }
+        if self.particle_editor.picking {
+            self.left_down = true;
+            self.particle_target_pick();
+            return true;
+        }
         if !self.build.open
             || self.alt
             || (self.hud_drag_requested() && self.huds_shown() && self.scene.hud_move_pick(&self.world, self.cursor_pos).is_some())
@@ -6788,6 +6812,8 @@ impl App {
         images.extend(self.texture_library.wanted_images.drain());
         images.extend(self.worldmap_ui.wanted_images.drain());
         images.extend(self.env_editor.wanted_images.drain());
+        images.extend(self.particle_editor.wanted_images.drain());
+        images.extend(self.particle_editor.picker.wanted_images.drain());
         images.extend(self.wearable_ui.wanted_images.drain());
         images.extend(self.day_editor.wanted_images.drain());
         images.extend(self.favorite_images.drain());
@@ -8618,6 +8644,7 @@ impl App {
             let max_particles = self.settings.max_particles as usize;
             let mut out = std::mem::take(&mut self.scene.lists.particles);
             let scene = &mut self.scene;
+            scene.particles.set_preview(self.particle_editor.preview());
             scene.particles.update(
                 &mut gfx.renderer,
                 &mut scene.textures,
@@ -9222,7 +9249,7 @@ impl App {
             full.platform_output.cursor_icon = cursor;
             full.platform_output.cursor_image = self.cursors.inventory_drag(cursor);
         }
-        if (self.color_pipette() || self.report_abuse.picking) && !ctx.is_pointer_over_egui() {
+        if (self.color_pipette() || self.report_abuse.picking || self.particle_editor.picking) && !ctx.is_pointer_over_egui() {
             full.platform_output.cursor_icon = egui::CursorIcon::Crosshair;
             full.platform_output.cursor_image = self.cursors.pipette();
         }
@@ -10467,6 +10494,9 @@ impl App {
                 );
             }
         }
+        if self.demo {
+            self.particle_editor_demo();
+        }
         // AURORA_DEMO_BUILD="mode,x,y[,part,dx,dy]": build tools script (build/demo.rs)
         if self.demo
             && let Ok(v) = std::env::var("AURORA_DEMO_BUILD")
@@ -11167,6 +11197,7 @@ impl App {
             BarAction::BlenderLive => {
                 ui::widgets::open_floater(&self.egui_ctx, "blender_live", &mut self.blender_live.open);
             }
+            BarAction::EditParticles => self.open_particle_editor(),
             BarAction::ShowHuds(visible) => self.set_show_huds(visible),
             BarAction::HudZoom(zoom) => self.world.hud_zoom = zoom.clamp(0.1, 1.0),
             BarAction::None => {}
@@ -12745,6 +12776,7 @@ impl App {
                         .as_ref()
                         .map(|b| b.label())
                         .unwrap_or_default(),
+                    edit_particles: self.particle_editor_target().is_some(),
                     health: self.health_menu(),
                     hover_tips: ui::bars::HoverTipsMenu {
                         enabled: self.settings.hover_tips.enabled,
@@ -14205,6 +14237,7 @@ impl App {
                 self.follow_window(&ctx, &p);
                 self.portals_window(&ctx, &p);
                 self.report_abuse_ui(&ctx, &p);
+                self.particle_editor_window(&ctx, &p);
                 let hover_enabled = self.world.hover_height_available();
                 let automatic_base = self.scene.automatic_hover_base(&self.world);
                 if self.hover_height_ui.show(

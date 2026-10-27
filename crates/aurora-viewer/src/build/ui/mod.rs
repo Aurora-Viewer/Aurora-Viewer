@@ -23,6 +23,7 @@ mod notecards;
 pub use notecards::{loaded as layout_notecard_loaded, saved as layout_notecard_saved};
 mod mesh;
 mod object;
+pub(crate) mod particles;
 mod replace;
 mod texture;
 mod texture_preview;
