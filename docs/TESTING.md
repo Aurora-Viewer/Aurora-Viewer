@@ -292,7 +292,10 @@ says), with the depth of field on at f/1.8 in AF-S on the Avatar area;
 words joined by `-` add to it: `essential` or `hidden` the display level,
 `menu`, `help` or `drawer` a panel open, `mf` or `afc` the focus mode
 (`mf` focused by hand at 3.3 m, the sharp edges outlined by the focus
-peaking), `point` the Point area, `pad` the camera pad shown, `timer` the
+peaking), `point` the Point area, `sharp` the aperture ring on All sharp (the
+window's depth of field off), `prefsdof` Preferences › Graphics › Depth of
+field on at f/1 and 100 mm (with `sharp`, the view stays sharp: the
+Preferences' blur never comes back under the photo mode), `pad` the camera pad shown, `timer` the
 2 s self-timer, `ael` AE-L on, `frozen` the world frozen (the dock's
 snowflake: two captures some frames apart show the avatars, the
 particles, the water and the animated textures at the same instant, the
@@ -359,7 +362,9 @@ refusing a photo too big.
 `dof` opens the window with its depth of field on (f/1.4, focused by hand
 at 3.3 m, the own avatar), `full-dof` the full-frame view with the aperture
 in its strip: the view, the preview and the photos are blurred, while
-Preferences › Graphics › Depth of field stays off.
+Preferences › Graphics › Depth of field stays off. `prefs-dof` turns
+Preferences › Graphics › Depth of field on (f/1, 100 mm) and leaves the window's own off
+(All sharp): the view, the preview and the photos stay sharp.
 `quality` opens the window with its "Photo quality" on: the log gives
 `photo quality: on (draw distance 512 m, shadows 4, LOD 4, MSAA 8x)` and the saved
 settings keep the user's own values (`draw_distance` unchanged in

@@ -246,6 +246,10 @@ struct DemoPhoto {
     /// AURORA_DEMO_SNAPSHOT=dof | full-dof: the window's depth of field on,
     /// f/1.4, focused by hand on the own avatar (3.3 m).
     dof: bool,
+    /// AURORA_DEMO_SNAPSHOT=prefs-dof (or the viewfinder's prefsdof): the
+    /// Preferences' depth of field on; prefs-dof leaves the window's at
+    /// All sharp.
+    prefs_dof: bool,
     /// AURORA_DEMO_SNAPSHOT=quality: the window with its photo quality on.
     quality: bool,
     /// The photo mode's look for the run (classic, panel, full…,
@@ -271,6 +275,8 @@ struct DemoViewfinder {
     point: bool,
     focus: bool,
     shoot: bool,
+    /// The aperture ring on All sharp (the window's depth of field off).
+    sharp: bool,
     /// The camera pad, the self-timer (2 s), AE-L, the controls on hover
     /// or hidden.
     pad: bool,
@@ -2132,7 +2138,7 @@ LUT_3D_SIZE {n}
 
     /// AURORA_DEMO_SNAPSHOT=open | full[-<W>x<H> proportions, e.g. full-4x5] |
     /// save:<W>x<H>[:png|jpg|bmp][:<folder>] | inventory… | profile[-fail] |
-    /// dof | full-dof | classic
+    /// dof | full-dof | prefs-dof | classic | viewfinder[-<words>]
     /// (AURORA_DEMO_SNAPSHOT_FRAME, 700 by default): the window at frame
     /// 600, the photo saved, sent or posted at that frame.
     fn photo_demo(&mut self, renderer: &Renderer) {
@@ -2212,6 +2218,7 @@ LUT_3D_SIZE {n}
                     point: has("point"),
                     focus: has("focus"),
                     shoot: has("shoot"),
+                    sharp: has("sharp"),
                     pad: has("pad"),
                     timer: has("timer"),
                     ael: has("ael"),
@@ -2249,7 +2256,8 @@ LUT_3D_SIZE {n}
                 inventory,
                 profile: kind.starts_with("profile"),
                 postcard: kind.starts_with("postcard"),
-                dof: kind.ends_with("dof"),
+                dof: kind.ends_with("dof") && kind != "prefs-dof",
+                prefs_dof: kind == "prefs-dof" || words.contains(&"prefsdof"),
                 quality: kind.ends_with("quality"),
                 light: kind == "light",
                 style,
@@ -2297,6 +2305,16 @@ LUT_3D_SIZE {n}
                     distance: 3.3,
                 };
             }
+            if demo.prefs_dof {
+                // a strong lens (its defaults, f/9 at 50 mm, hardly blur
+                // the viewfinder's wide view), the window's own at All
+                // sharp (the viewfinder's words below decide for it): the
+                // view must stay sharp
+                self.settings.dof.enabled = true;
+                self.settings.dof.f_number = 1.0;
+                self.settings.dof.focal_length = 100.0;
+                self.settings.snapshot.dof.enabled = false;
+            }
             if demo.profile {
                 self.snapshots.ui.destination = Destination::Profile;
                 self.snapshots.ui.caption = aurora_i18n::tr!("demo-photo-caption").to_owned();
@@ -2309,7 +2327,7 @@ LUT_3D_SIZE {n}
             if let Some(v) = &demo.viewfinder {
                 let s = &mut self.settings.snapshot;
                 s.viewfinder.display = v.display;
-                s.dof.enabled = true;
+                s.dof.enabled = !v.sharp;
                 s.dof.f_number = 1.8;
                 s.dof.focus = v.focus_mode.unwrap_or(crate::dof::PhotoFocus::Click);
                 if v.focus_mode == Some(crate::dof::PhotoFocus::Manual) {

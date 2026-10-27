@@ -96,9 +96,10 @@ pub enum PhotoFocus {
 }
 
 /// The photo window's depth of field: its own aperture and focus, applied
-/// to the view only while the window is open and the switch is on, so the
-/// preview, the photos and the view agree. The Preferences' setting is
-/// never changed: the window closed, the view follows it again.
+/// to the view only while the window is open, so the preview, the photos
+/// and the view agree. Its switch off ("All sharp") is sharp: the
+/// Preferences' blur does not come back under it (#1162). The Preferences'
+/// setting is never changed: the window closed, the view follows it again.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PhotoDof {
@@ -138,11 +139,12 @@ impl PhotoDof {
         };
     }
 
-    /// The Preferences' lens with the photo's aperture and focus: on, also
-    /// while editing (the window says so), and a manual distance when asked.
+    /// The Preferences' lens with the photo's aperture and focus: on or off
+    /// as the window's switch says, also while editing (the window says
+    /// so), and a manual distance when asked.
     pub fn applied(&self, global: &Settings) -> (Settings, Option<f32>) {
         let s = Settings {
-            enabled: true,
+            enabled: self.enabled,
             in_edit: true,
             f_number: self.f_number,
             focus: match self.focus {
@@ -349,6 +351,18 @@ mod tests {
             (global.focal_length, global.max_coc, global.quality)
         );
         assert!(!global.enabled);
+        // the window at All sharp keeps the view sharp, even with the
+        // Preferences' own on: one depth of field, never two (#1162)
+        let prefs_on = Settings {
+            enabled: true,
+            ..Settings::default()
+        };
+        let sharp = PhotoDof {
+            enabled: false,
+            ..photo.clone()
+        };
+        assert!(!sharp.applied(&prefs_on).0.enabled);
+        assert!(photo.applied(&prefs_on).0.enabled);
         let click = PhotoDof {
             focus: PhotoFocus::Click,
             ..photo.clone()
