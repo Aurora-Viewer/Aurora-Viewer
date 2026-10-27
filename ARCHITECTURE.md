@@ -2569,7 +2569,7 @@ What our avatar wears on its body is edited in the same way: `build/mod.rs` dist
 
 The HUD faces turned away from the screen are rejected in `fs_hud`, before any colour or depth write. The `DOUBLE_SIDED` material flag keeps the explicit glTF exception without breaking the order of the translucent faces. HUD picking follows the same triangle winding and the double-sided materials / overrides; the invisible back faces do not intercept the visible buttons.
 
-The HUD projection and lists are part of the copy of the frame packet (`DrawLists::copy_from`): the render thread owns its own copy while the main thread keeps the projection for picking.
+The HUD projection and lists are part of the copy of the frame packet (`DrawLists::copy_from`): the render thread owns its own copy while the main thread keeps the projection for picking. `HudView::screen_bounds` projects the normal screen rectangle for the editing outline in `app/hud_drag.rs`, using the same zoom and physical viewport as the HUDs and converting to egui points once. `BuildTool::sync_hud_zoom` tracks the HUD editing selection and restores 100% on deselection, a world/body selection, removal or closing Build; changing between HUDs preserves the zoom. Explicit World > HUDs zoom outside editing stays independent of this transition.
 
 The world menus share a model of entries in `ui/context/entries.rs`
 (actions, rights, submenus, check marks). `ui/menu.rs` draws the existing list;

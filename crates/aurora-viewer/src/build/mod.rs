@@ -454,6 +454,8 @@ pub struct BuildTool {
     pub grab_mode: GrabMode,
     /// Selected units (linksets, or prims with "Edit linked"), latest first.
     pub selection: Vec<ObjKey>,
+    /// Whether the last frame edited HUDs; leaving that selection resets view zoom.
+    hud_editing: bool,
     /// Last world pick, retained in the object's frame while it moves.
     point_pick: Option<(ObjKey, glam::DVec3)>,
     /// "Select face" mode: the faces chosen on each selected prim (missing
@@ -529,6 +531,7 @@ impl Default for BuildTool {
             focus_mode: FocusMode::Zoom,
             grab_mode: GrabMode::Move,
             selection: Vec::new(),
+            hud_editing: false,
             point_pick: None,
             faces: HashMap::new(),
             last_face: None,
@@ -824,6 +827,7 @@ impl BuildTool {
         self.grab_up();
         self.deselect_all(world);
         self.faces.clear();
+        self.sync_hud_zoom(world);
         s.edit_linked = false;
         self.focus_mode = FocusMode::Zoom;
         self.grab_mode = GrabMode::Move;
@@ -1056,6 +1060,17 @@ impl BuildTool {
             .and_then(|key| world.objects.index_of(key))
             .and_then(|idx| crate::scene::Scene::object_transform(world, idx, Instant::now(), 0))
             .is_some_and(|(_, _, hud)| hud)
+    }
+
+    /// LLSelectMgr::updateSelectionCenter / resetAgentHUDZoom
+    /// (indra/newview/llselectmgr.cpp): leaving HUD editing restores 100%.
+    /// Track the transition so World > HUDs zoom still works outside editing.
+    pub fn sync_hud_zoom(&mut self, world: &mut World) {
+        let editing = self.open && self.hud_selected(world);
+        if self.hud_editing && !editing {
+            world.hud_zoom = 1.0;
+        }
+        self.hud_editing = editing;
     }
 
     /// The space of the selection (LLObjectSelection::getSelectType).
@@ -1475,14 +1490,13 @@ impl BuildTool {
         self.advance_bulk_permissions(world, now);
         self.advance_link(world, now);
         self.update_material_preview(world, s);
-        if !self.open {
-            return;
-        }
-        if self.replacement_active() {
+        if !self.open || self.replacement_active() {
+            self.sync_hud_zoom(world);
             return;
         }
         self.prune(world, now);
         self.pick_up_created(world, s);
+        self.sync_hud_zoom(world);
         self.refresh_costs(world);
         // the reference grid follows its objects
         self.grid_objects.retain(|k| world.objects.index_of(k).is_some());

@@ -7968,6 +7968,10 @@ impl App {
                 Some(spec) => spec.width as f32 / spec.height.max(1) as f32,
                 None => hud_size.width as f32 / hud_size.height.max(1) as f32,
             };
+            if self.build.hud_selected(&self.world) && !self.huds_shown() {
+                self.build.deselect_all(&self.world);
+            }
+            self.build.sync_hud_zoom(&mut self.world);
             self.refresh_local_huds();
             let drag_view =
                 self.scene.lists.hud_view.map(|view| {
@@ -7991,9 +7995,7 @@ impl App {
                 h as f32,
                 self.egui_ctx.pixels_per_point(),
             );
-            if self.build.hud_selected(&self.world) && !self.huds_shown() {
-                self.build.deselect_all(&self.world);
-            } else if self.build.tool == crate::build::Tool::Edit
+            if self.build.tool == crate::build::Tool::Edit
                 && self.build.hud_selected(&self.world)
                 && let Some(view) = drag_view
             {
@@ -12993,6 +12995,7 @@ impl App {
                 }
                 t = self.ui_parts.lap(Part::UiBars, t);
                 // overlays
+                self.draw_hud_view_bounds(&ctx);
                 self.draw_hud_scale(&ctx);
                 self.ik_editor.sync_build(
                     &self.world,
