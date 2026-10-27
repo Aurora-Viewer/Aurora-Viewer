@@ -5264,7 +5264,6 @@ build-ui-general-multiple-selection = Multiple selection
 build-mod-selection-too-far-away-deselected = Selection too far away: deselected
 world-inventory-actions-empty-selection = Empty selection.
 ui-avatar-picker-select = Select
-ui-appearance-select-this-outfit = Select this outfit
 ui-land-environment-select-environment = Select environment
 build-ui-tools-select-previous-part-or-face-ctrl = Select previous part or face (Ctrl+,)
 build-ui-tools-select-next-part-or-face-ctrl = Select next part or face (Ctrl+.)
