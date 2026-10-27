@@ -456,12 +456,20 @@ fn material_tint(
     target: super::ColorTarget,
     rgb: [f32; 3],
     enabled: bool,
+    disabled_hint: &str,
 ) {
     let label_width = ui.available_width() * 0.5;
-    row(ui, p, label, label_width, |ui| {
-        let size = egui::vec2((ui.available_width() - 2.0).max(24.0), 26.0);
-        let response = super::common::color_swatch_sized(ui, p, rgb, "", size, enabled);
-        tool.color_swatch_response(world, env, target, rgb, response);
+    ui.add_enabled_ui(enabled, |ui| {
+        row(ui, p, label, label_width, |ui| {
+            let size = egui::vec2((ui.available_width() - 2.0).max(24.0), 26.0);
+            let response = super::common::color_swatch_sized(ui, p, rgb, "", size, enabled);
+            let response = if disabled_hint.is_empty() {
+                response
+            } else {
+                response.on_disabled_hover_text(disabled_hint)
+            };
+            tool.color_swatch_response(world, env, target, rgb, response);
+        });
     });
 }
 
@@ -721,6 +729,17 @@ fn pbr(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut World, 
                 target,
                 color.map(super::common::linear_to_srgb),
                 editable,
+                aurora_i18n::tr!("build-material-tint-needs-pbr"),
+            );
+        }
+        if !editable {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("build-material-tint-needs-pbr"))
+                        .size(super::common::SMALL)
+                        .color(p.muted),
+                )
+                .wrap(),
             );
         }
         glow(ui, p, tool, world, sel);
@@ -884,6 +903,7 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             super::ColorTarget::Diffuse,
             col.unwrap_or([1.0; 3]),
             editable,
+            "",
         );
         let label_width = ui.available_width() * 0.5;
         let field_width = (ui.available_width() - label_width - ui.spacing().item_spacing.x - 16.0).max(54.0);
@@ -1008,7 +1028,18 @@ fn blinn_phong(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut
             super::ColorTarget::Specular,
             rgb,
             editable && spec.is_some(),
+            aurora_i18n::tr!("build-material-tint-needs-specular"),
         );
+        if spec.is_none() {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(aurora_i18n::tr!("build-material-tint-needs-specular"))
+                        .size(super::common::SMALL)
+                        .color(p.muted),
+                )
+                .wrap(),
+            );
+        }
         if spec.is_some() {
             let (gl, gl_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.specular_exp).unwrap_or(51)));
             let (env_i, env_mixed) = same(legacy.iter().map(|m| m.as_ref().map(|m| m.env_intensity).unwrap_or(0)));

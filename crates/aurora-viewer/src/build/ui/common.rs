@@ -340,14 +340,21 @@ pub fn color_swatch_sized(ui: &mut egui::Ui, p: &Palette, rgb: [f32; 3], caption
         let response = ui
             .add_enabled_ui(enabled, |ui| {
                 let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-                ui.painter()
-                    .rect_filled(rect, ui.visuals().window_corner_radius, crate::ui::color_picker::color(rgb));
+                let fill = if ui.is_enabled() {
+                    crate::ui::color_picker::color(rgb)
+                } else {
+                    p.field
+                };
+                ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, fill);
                 ui.painter().rect_stroke(
                     rect,
                     ui.visuals().window_corner_radius,
                     egui::Stroke::new(1.0, if response.hovered() { p.violet } else { p.raised }),
                     egui::StrokeKind::Inside,
                 );
+                if !ui.is_enabled() {
+                    crate::ui::sheet::icon_at(ui, "lock-filled", rect.center(), 14.0, p.muted);
+                }
                 response.on_hover_text(aurora_i18n::tr!("color-picker-open"))
             })
             .inner;

@@ -1079,6 +1079,10 @@ Object 125 also checks the built-in white diffuse image. On the grid, assign
 White, Transparent and Default in turn: the first is white, the second shows a
 checkerboard, and Default displays its texture even when already resident or
 loaded from cache. Check PBR material factors/texture overrides update its preview.
+On object 125, the specular tint must show a lock and its missing-map hint;
+switch to PBR to see both tints locked with the missing-material hint.
+Applying a specular map or PBR material must restore the corresponding colour
+controls. Check both languages; PBR factors remain editable without colour maps.
 
 For selected-object display switching, keep `AURORA_DEMO_PBR_OVERRIDE=1` and
 `AURORA_DEMO_BUILD=move,object:151`. Compare `texture:bp+folded` with

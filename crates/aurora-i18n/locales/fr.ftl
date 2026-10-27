@@ -11576,6 +11576,8 @@ build-material-diffuse-tint = Teinte diffuse
 build-material-specular-tint = Teinte spéculaire
 build-material-base-tint = Teinte de base
 build-material-emissive-tint = Teinte émissive
+build-material-tint-needs-specular = Appliquez une texture spéculaire pour modifier cette teinte.
+build-material-tint-needs-pbr = Appliquez un matériau PBR à chaque face sélectionnée pour modifier ces teintes.
 
 blender-live-title = LiveMesh
 blender-live-invalid-source = Identifiant d’objet live invalide ou en double.
