@@ -324,6 +324,8 @@ pub struct App {
     sent_fov: f32,
     /// The system cursor hidden and locked by mouselook or a camera drag.
     cursor_hold: cursor_hold::CursorHold,
+    /// Alt held in mouselook: the cursor given back, the view still.
+    alt_cursor: cursor_hold::AltCursor,
     numeric_drag: ui::numeric_drag::NumericDrag,
     /// Right-click menu of the text fields (Cut, Copy, Paste…).
     text_menu: ui::text_menu::TextMenu,
@@ -1093,6 +1095,7 @@ impl App {
             right_drag: false,
             sent_fov: crate::camera::DEFAULT_FOV,
             cursor_hold: Default::default(),
+            alt_cursor: Default::default(),
             numeric_drag: Default::default(),
             text_menu: Default::default(),
             alt: false,
@@ -3345,7 +3348,7 @@ impl App {
     fn camera_tool_hover(&self, ctx: &egui::Context) -> Option<crate::camera::ToolMode> {
         use crate::camera::ToolMode;
         let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus;
-        let alt_gr = self.down.contains(&Input::key(KeyCode::AltRight)) && !self.down.contains(&Input::key(KeyCode::AltLeft));
+        let alt_gr = self.alt_gr_alone();
         if !matches!(self.screen, Screen::World)
             || self.mouse_mode != MouseMode::None
             || self.camera.mouselook()
@@ -3384,7 +3387,10 @@ impl App {
         }
         let s = self.settings.mouse_sensitivity;
         if self.camera.mouselook() {
-            self.camera.look(dx, dy, s, &mut self.world.agent);
+            // Alt held: the grab tool has the free cursor, the view stays
+            if !self.alt_cursor.free() {
+                self.camera.look(dx, dy, s, &mut self.world.agent);
+            }
         } else if self.mouse_mode != MouseMode::None {
             // LLToolCamera: steering is the zoom tool on our avatar
             let focus_tool = self.build.open && self.build.tool == crate::build::Tool::Focus && !self.ctrl && !self.shift;
@@ -7294,7 +7300,8 @@ impl App {
         if self.in_world() {
             self.session_heartbeat(now);
         }
-        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_hold.held() {
+        self.mouselook_alt_cursor();
+        if !self.exit_prompt.open && self.camera.mouselook() && self.focused && !self.cursor_hold.held() && !self.alt_cursor.free() {
             self.set_mouselook_grab(true);
         }
         // a photo drawn in several frames: from its second part on, the
@@ -13285,11 +13292,14 @@ impl App {
                 if self.camera.mouselook() {
                     let c = ctx.content_rect().center();
                     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::unique("xhair")));
-                    // LLToolGun::draw: in the middle of the world view
-                    let demo = ui::crosshair::demo(&self.settings.crosshair);
-                    let crosshair = demo.as_ref().unwrap_or(&self.settings.crosshair);
-                    let picture = ui::crosshair::picture(&ctx, crosshair);
-                    ui::crosshair::draw(&painter, c, crosshair, picture.as_ref());
+                    // LLToolGun::draw: in the middle of the world view; the
+                    // grab tool that Alt brings draws none
+                    if !self.alt_cursor.free() {
+                        let demo = ui::crosshair::demo(&self.settings.crosshair);
+                        let crosshair = demo.as_ref().unwrap_or(&self.settings.crosshair);
+                        let picture = ui::crosshair::picture(&ctx, crosshair);
+                        ui::crosshair::draw(&painter, c, crosshair, picture.as_ref());
+                    }
                     if self.settings.camera.show_mouselook_instructions {
                         // LLViewerWindow::drawMouselookInstructions: the way
                         // out, half transparent above the bottom bar (the
@@ -17248,6 +17258,8 @@ impl ApplicationHandler for App {
                 self.build.reset_selection_wheel();
                 self.focused = false;
                 self.down.clear();
+                // (the release of a button held when the focus goes never comes)
+                self.alt_cursor.left_button(false);
                 self.alt = false;
                 self.ctrl = false;
                 self.shift = false;
@@ -17477,6 +17489,9 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.last_input = Instant::now();
+                if *button == MouseButton::Left {
+                    self.alt_cursor.left_button(*state == ElementState::Pressed);
+                }
                 if self.exit_prompt.open {
                     return;
                 }

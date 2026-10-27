@@ -57,9 +57,9 @@ pub(super) enum Click {
     World,
     /// Right click: the menu of what is under the cursor.
     Menu,
-    /// Left press in mouselook that no script took: touch at the crosshair
-    /// (app/script_clicks.rs).
-    Gun,
+    /// Left press in mouselook that no script took: touch at the crosshair,
+    /// or under the cursor Alt freed (app/script_clicks.rs).
+    Gun { at_cursor: bool },
 }
 
 /// What follows a click that waits for its depth, kept in order.
@@ -311,7 +311,7 @@ impl App {
             }
             Click::World => self.world_press(),
             Click::Menu => self.world_menu(),
-            Click::Gun => self.gun_press(),
+            Click::Gun { at_cursor } => self.gun_press(at_cursor),
         }
         self.clicks.running = None;
     }
@@ -377,7 +377,10 @@ impl App {
         let ticket = g.renderer.request_pick(x, y);
         // LLToolCamera::handleMouseDown: displayed surfaces, including the
         // transparency overlay. Posed geometry avoids an attachment's bind pose.
-        let camera = self.alt || self.object_view || (self.build.open && self.build.tool == crate::build::Tool::Focus);
+        // (Alt in mouselook frees the cursor for the grab tool, not the camera.)
+        let camera = (self.alt && !matches!(click, Click::Gun { .. }))
+            || self.object_view
+            || (self.build.open && self.build.tool == crate::build::Tool::Focus);
         let mode = if camera {
             aurora_render::DrawnMode::Visible
         } else {
@@ -605,13 +608,15 @@ impl App {
         }
         match note {
             DemoNote::Camera(frame) => log::info!(
-                "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2}, right orbit={}, menu={}, down={})",
+                "demo camera f{frame}: {} (mouse {:?}, agent yaw {:.2}, right orbit={}, menu={}, down={}, cursor held={}, alt free={})",
                 self.camera.describe(),
                 self.mouse_mode,
                 self.world.agent.yaw,
                 self.right_gesture.orbit,
                 self.context_menu.is_some(),
-                self.input.down
+                self.input.down,
+                self.cursor_hold.held(),
+                self.alt_cursor.free()
             ),
             DemoNote::Action(mode) => log::info!(
                 "demo action click: {mode}; dialog={}, seated={}, contents={}, parcel_playing={}, parcel_paused={}, selected={:?}, focus={:?}, media_url={}",
