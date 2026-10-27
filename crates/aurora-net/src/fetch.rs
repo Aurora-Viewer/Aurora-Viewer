@@ -607,7 +607,11 @@ async fn dispatcher(
         tokio::spawn(async move {
             stats.http_in_flight.fetch_add(1, Ordering::Relaxed);
             let timed = kind.and_then(probe::HttpRequest::start);
-            let _bake = if is_bake(&req.url) { bakes.acquire_owned().await.ok() } else { None };
+            let _bake = if is_bake(&req.url) {
+                bakes.acquire_owned().await.ok()
+            } else {
+                None
+            };
             let result = do_fetch(&http, &req, policy, &sem, permit, &stats, Some(&paced)).await;
             ended.notify_one();
             stats.http_in_flight.fetch_sub(1, Ordering::Relaxed);
@@ -690,7 +694,11 @@ async fn attempt(http: &reqwest::Client, req: &FetchRequest, attempts: u32, pace
     let ttfb = sent.elapsed();
     if let Some(p) = paced {
         // (a refusal for load slows the pace; other statuses are answers)
-        p.answer(if status == 429 || status == 503 { Answer::Refused } else { Answer::Headers(ttfb) });
+        p.answer(if status == 429 || status == 503 {
+            Answer::Refused
+        } else {
+            Answer::Headers(ttfb)
+        });
     }
     if classify_status(status) != StatusClass::Success {
         probe::host_response(&host, status, ttfb, 0);
@@ -831,7 +839,9 @@ mod tests {
         assert!(is_bake(
             "https://bake-texture.example/texture/0d7b2c3e-0000-0000-0000-000000000001/head/9a1c0000-0000-0000-0000-000000000002"
         ));
-        assert!(!is_bake("https://asset-cdn.example/?texture_id=9a1c0000-0000-0000-0000-000000000002"));
+        assert!(!is_bake(
+            "https://asset-cdn.example/?texture_id=9a1c0000-0000-0000-0000-000000000002"
+        ));
         assert!(!is_bake("https://asset-cdn.example/?mesh_id=9a1c0000-0000-0000-0000-000000000002"));
     }
 
