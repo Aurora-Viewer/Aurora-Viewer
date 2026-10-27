@@ -4112,14 +4112,16 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
   synthetic traffic, and no media process runs.
 
 - **`AURORA_DEMO_PAY=<mode>`**: gives a balance of L$ 1,000 and opens the
-  Pay window, Tess as the payee, in the look of Preferences › Aurora › Pay
-  window. A payment only moves the demo balance (no L$, no request sent).
+  Pay window, Tess as the payee (her profile picture on the card), in the
+  look of Preferences › Aurora › Pay window. A payment only moves the demo
+  balance (no L$, no request sent).
   `resident`: L$ 25 typed, Pay sends it and the window says it was sent.
   `empty`: no amount typed (the field's "0" hint, in the figures' size).
   `short`: L$ 1,500, the band with Buy L$ and Pay greyed out. `confirm`:
   L$ 500, the confirmation asked above the threshold (Preferences ›
   Payments). `sent`: the end of a payment, with its message. `group`: the
-  demo group as the payee, without a message field. An object's payment
+  Northern Wolves group as the payee (its insignia on the card), without a
+  message field. An object's payment
   is `AURORA_DEMO_ACTIONS=pay`.
 - **`AURORA_DEMO_MONEY_TRACKER=<mode>`**: opens Me › Money tracker on twelve
   made-up transactions of the last 75 minutes (tips through an object,

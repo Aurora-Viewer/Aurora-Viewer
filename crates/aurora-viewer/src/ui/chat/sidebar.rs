@@ -85,7 +85,7 @@ fn sections(world: &World) -> impl Iterator<Item = Section> {
 /// The insignia of a group conversation's group: our membership's, else
 /// the group profile the viewer last received (a group we are not in);
 /// None when it has none, the `users-group` glyph then.
-pub(super) fn group_insignia(world: &World, id: &Uuid) -> Option<Uuid> {
+pub(crate) fn group_insignia(world: &World, id: &Uuid) -> Option<Uuid> {
     let set = |i: Uuid| (!i.is_nil()).then_some(i);
     world
         .groups

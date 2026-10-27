@@ -19,6 +19,7 @@ use crate::theme::Palette;
 use crate::world::World;
 use aurora_net::NetCommand;
 use egui::{Align, Layout, RichText, Sense, Vec2};
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -88,7 +89,15 @@ pub struct PayUi {
     /// A payment to an object waiting for its confirmation in Firestorm's
     /// look (PayConfirmation): the amount and the object's name.
     pub object_confirm: Option<(i32, String)>,
+    /// The payee's profile picture (a resident) or insignia (a group), asked
+    /// of the app while the Aurora look draws it.
+    pub wanted_pics: HashSet<Uuid>,
+    pub wanted_images: HashSet<Uuid>,
 }
+
+/// Textures by id: the profile pictures by avatar, the UI images by asset
+/// (a group's insignia).
+type Pictures<'a> = (&'a HashMap<Uuid, egui::TextureHandle>, &'a HashMap<Uuid, egui::TextureHandle>);
 
 /// The amount typed, if it is a positive number (LLFloaterPay::onKeystroke).
 fn parse_amount(text: &str) -> Option<i32> {
@@ -198,6 +207,7 @@ impl PayUi {
         ctx: &egui::Context,
         p: &Palette,
         world: &World,
+        pics: Pictures,
         classic: bool,
         confirm: bool,
         threshold: i32,
@@ -210,7 +220,7 @@ impl PayUi {
             if classic {
                 self.show_classic(ctx, p, world, confirm, threshold, &mut actions);
             } else {
-                self.show_aurora(ctx, p, world, confirm, threshold, &mut actions);
+                self.show_aurora(ctx, p, world, pics, confirm, threshold, &mut actions);
             }
         }
         actions
@@ -225,15 +235,31 @@ impl PayUi {
         }
     }
 
+    /// The payee's picture: a resident's profile picture, a group's
+    /// insignia; asked of the app until it is there (initials meanwhile).
+    fn payee_picture<'a>(&mut self, world: &World, (avatars, images): Pictures<'a>) -> Option<&'a egui::TextureHandle> {
+        let payee = self.payee.as_ref()?;
+        if payee.group {
+            let insignia = crate::ui::chat::group_insignia(world, &payee.id)?;
+            self.wanted_images.insert(insignia);
+            images.get(&insignia)
+        } else {
+            self.wanted_pics.insert(payee.id);
+            avatars.get(&payee.id)
+        }
+    }
+
     fn show_aurora(
         &mut self,
         ctx: &egui::Context,
         p: &Palette,
         world: &World,
+        pics: Pictures,
         confirm: bool,
         threshold: i32,
         actions: &mut Vec<PayAction>,
     ) {
+        let picture = self.payee_picture(world, pics);
         let Some(payee) = self.payee.as_mut() else { return };
         if let Stage::Sending { amount, since } = payee.stage
             && since.elapsed() > ANSWER_WAIT
@@ -266,9 +292,9 @@ impl PayUi {
             card(ui, p, |ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::splat(40.0), Sense::hover());
                 if payee.group {
-                    widgets::avatar_picture(ui, p, rect, None, &name, false);
+                    widgets::avatar_picture(ui, p, rect, picture, &name, false);
                 } else {
-                    widgets::avatar_disc(ui, p, rect, None, &name, false);
+                    widgets::avatar_disc(ui, p, rect, picture, &name, false);
                 }
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
@@ -1142,6 +1168,22 @@ mod tests {
         pay.on_transaction(false, TRANS_GIFT, to, "Refused");
         pay.on_balance(100);
         assert_eq!(pay.payee.as_ref().unwrap().stage, Stage::Failed("Refused".into()));
+    }
+
+    #[test]
+    fn the_payee_picture_is_asked_of_the_app() {
+        // issue #1195: the card showed the initials, its picture never asked for
+        let world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        let (avatars, images) = (HashMap::new(), HashMap::new());
+        let mut pay = PayUi::default();
+        let id = Uuid::from_u128(1);
+        pay.open(id, false);
+        assert!(pay.payee_picture(&world, (&avatars, &images)).is_none());
+        assert!(pay.wanted_pics.contains(&id));
+        // a group with no insignia known asks for nothing
+        pay.open(Uuid::from_u128(2), true);
+        assert!(pay.payee_picture(&world, (&avatars, &images)).is_none());
+        assert!(pay.wanted_images.is_empty());
     }
 
     #[test]

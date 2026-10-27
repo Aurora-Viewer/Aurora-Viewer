@@ -157,7 +157,7 @@ fn uri_destinations_restore_on_explicit_open_and_stay_minimized_otherwise() {
                                     experience_profile::show(ctx, &p, &mut world);
                                 }
                                 Destination::Pay => {
-                                    pay.show(ctx, &p, &world, classic, true, 0);
+                                    pay.show(ctx, &p, &world, (&HashMap::new(), &HashMap::new()), classic, true, 0);
                                 }
                                 Destination::Report => {
                                     report.show(ctx, &p, &mut world, "Second Life");

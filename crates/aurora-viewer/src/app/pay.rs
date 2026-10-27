@@ -37,7 +37,8 @@ impl App {
                 a.object_confirm = Some(Some(amount));
             }
         }
-        for action in self.pay_ui.show(ctx, p, &self.world, classic, confirm, threshold) {
+        let pics = (&self.avatar_pics, &self.ui_images);
+        for action in self.pay_ui.show(ctx, p, &self.world, pics, classic, confirm, threshold) {
             match action {
                 PayAction::Send(cmd) => self.send(*cmd),
                 PayAction::BuyCurrency(missing) => {
@@ -58,7 +59,8 @@ impl App {
         };
         self.world.apply(NetEvent::Balance(1000));
         match mode.as_str() {
-            "group" => self.pay_ui.demo(crate::demo::group::shown_group(), "group"),
+            // the group with an insignia
+            "group" => self.pay_ui.demo(crate::demo::DEMO_GROUP2, "group"),
             mode => self.pay_ui.demo(crate::demo::DEMO_NOVA, mode),
         }
         self.panels.perf = false;

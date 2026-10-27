@@ -205,6 +205,8 @@ pub struct Facts {
     /// Worn objects that handle touches (enable_attachment_touch).
     pub touchable: HashSet<Uuid>,
     pub names: std::collections::HashMap<Uuid, String>,
+    /// The profile picture of the residents the dialogs show.
+    pub pictures: std::collections::HashMap<Uuid, egui::TextureHandle>,
     pub online: HashSet<Uuid>,
     pub parcel_environment: bool,
 }
@@ -246,6 +248,7 @@ impl Facts {
             appearance_busy,
             touchable: world.touchable_attachment_items(),
             names: Default::default(),
+            pictures: Default::default(),
             online: world
                 .social
                 .friends
@@ -479,6 +482,8 @@ pub struct InventoryUi {
     pub content_save: Option<(Uuid, Vec<u8>, String)>,
     pub close_after_save: bool,
     pub wanted_images: HashSet<Uuid>,
+    /// Residents whose profile picture the give confirmation wants.
+    pub wanted_pics: HashSet<Uuid>,
     pub playing: Option<(Uuid, bool)>,
     pub animation_stats: Option<(Uuid, AnimationStats)>,
     pub animation_description: Option<(Uuid, String)>,
@@ -1687,6 +1692,7 @@ pub fn show(
     open: &mut bool,
     appearance_busy: bool,
     images: &std::collections::HashMap<Uuid, egui::TextureHandle>,
+    pics: &std::collections::HashMap<Uuid, egui::TextureHandle>,
     script_settings: &super::scripts::settings::ScriptSettings,
     classic: bool,
 ) -> Vec<InvAction> {
@@ -1730,13 +1736,20 @@ pub fn show(
         }
     }
     property_names(st, world, &mut facts.names);
-    // the give confirmation names its resident
+    // the give confirmation names its resident and shows their picture,
+    // asked of the app (issue #1197)
+    let mut wanted = Vec::new();
     for state in std::iter::once(&*st).chain(st.windows.iter().map(|w| &*w.state)) {
         if let Some(EditDialog::Share(_, resident)) = &state.dialog {
             world.social.want_name(*resident);
             facts.names.insert(*resident, world.social.name_of(resident));
+            wanted.push(*resident);
+            if let Some(t) = pics.get(resident) {
+                facts.pictures.insert(*resident, t.clone());
+            }
         }
     }
+    st.wanted_pics.extend(wanted);
     // Aurora's details of the selection name its creator and owner.
     if !classic && *open {
         let residents = st
@@ -2075,6 +2088,7 @@ mod tests {
                         &mut open,
                         false,
                         &images,
+                        &Default::default(),
                         &scripts,
                         classic,
                     );
@@ -2143,6 +2157,7 @@ mod tests {
                         &mut open,
                         false,
                         &images,
+                        &Default::default(),
                         &scripts,
                         classic,
                     );

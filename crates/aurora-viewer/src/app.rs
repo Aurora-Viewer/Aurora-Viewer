@@ -6756,6 +6756,8 @@ impl App {
         wanted.extend(self.land_ui.wanted_pics.drain());
         wanted.extend(self.region_ui.wanted_pics.drain());
         wanted.extend(self.money_tracker_ui.wanted_pics.drain());
+        wanted.extend(self.pay_ui.wanted_pics.drain());
+        wanted.extend(self.inventory_ui.wanted_pics.drain());
         for agent in wanted {
             if self.avatar_pics.contains_key(&agent) {
                 continue;
@@ -6813,6 +6815,7 @@ impl App {
         images.extend(self.buy_land_ui.wanted_images.drain());
         images.extend(self.contacts_ui.wanted_images.drain());
         images.extend(self.chat_ui.wanted_images.drain());
+        images.extend(self.pay_ui.wanted_images.drain());
         images.extend(self.people_ui.wanted_images.drain());
         images.extend(self.contacts_people_ui.wanted_images.drain());
         images.extend(self.build.ui.wanted_images.drain());
@@ -13818,6 +13821,7 @@ impl App {
                     &mut open,
                     self.appearance_ui.pending.is_some(),
                     &self.ui_images,
+                    &self.avatar_pics,
                     &self.settings.script_editor,
                     // the inventory scenarios were written for the Legacy window,
                     // but for Aurora's own

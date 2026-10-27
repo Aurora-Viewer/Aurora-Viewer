@@ -58,6 +58,7 @@ fn double_click_opens_a_texture_preview_and_both_sources_drag_the_actual_item() 
                     false,
                     &images,
                     &Default::default(),
+                    &Default::default(),
                     true,
                 );
                 for action in &pass {
