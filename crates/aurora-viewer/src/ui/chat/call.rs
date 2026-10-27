@@ -120,7 +120,7 @@ pub(super) fn strip(
                         && action_button(
                             ui,
                             p,
-                            "user-plus",
+                            super::head::ADD_PEOPLE_ICON,
                             aurora_i18n::tr!("ui-call-add"),
                             ActionKind::Flat,
                             egui::vec2(0.0, 24.0),

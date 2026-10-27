@@ -1215,6 +1215,7 @@ common-add = Add
 common-add-to-contact-set = Add to contact set
 common-add-to-favorites = Add to favorites
 ui-chat-add-friend-coming-soon = Add friend (coming soon)
+ui-chat-add-friend = Add this resident as a friend
 ui-land-sound-add-the-music-stream-url-to-the-saved-streams = Add the music stream URL to the saved streams list
 ui-contacts-add-or-remove-a-group-from-favorites = Add or remove a group from favorites
 ui-appearance-add-more = Add more…
