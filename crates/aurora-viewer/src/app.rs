@@ -11328,6 +11328,7 @@ impl App {
             BarAction::ToggleInterface => self.toggle_interface(),
             BarAction::HideInterface => self.interface.set_hidden(&self.egui_ctx, true),
             BarAction::ToggleImmersive => self.toggle_immersive(),
+            BarAction::ImmersiveHuds(visible) => self.set_immersive_huds(visible),
             BarAction::HoverTips(menu) => {
                 let tips = &mut self.settings.hover_tips;
                 tips.enabled = menu.enabled;
@@ -11417,21 +11418,48 @@ impl App {
                 .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
             return;
         }
+        if visible {
+            if self.hud_drag.is_some() {
+                self.on_left_release();
+            }
+            self.release_object_hold();
+        } else {
+            self.leave_huds();
+        }
+        self.settings.show_huds = visible;
+        self.settings.save();
+    }
+
+    /// The HUDs about to go: a HUD drag or hold ends, and the focus of HUD
+    /// media.
+    fn leave_huds(&mut self) {
         if self.hud_drag.is_some() {
             self.on_left_release();
         }
         self.release_object_hold();
-        self.settings.show_huds = visible;
-        self.settings.save();
-        if !visible {
-            self.scene.lists.hud_view = None;
-            self.media.unfocus();
+        self.scene.lists.hud_view = None;
+        self.media.unfocus();
+    }
+
+    /// The immersive mode's HUDs button (#1190): as Show HUDs, a HUD locked
+    /// by RLVa keeps them shown; the choice is saved.
+    fn set_immersive_huds(&mut self, visible: bool) {
+        if !visible && self.world.rlva_has_locked_hud() {
+            self.world
+                .system_notice(aurora_i18n::tr!("rlva-blocked"), crate::world::notice_topics::Topic::Warning);
+            return;
         }
+        if !visible {
+            self.leave_huds();
+        }
+        self.settings.immersive_huds = visible;
+        self.settings.save();
     }
 
     /// Immersive mode (#859): nothing in mouselook, as Show User Interface;
     /// no question first (asked for by its own button); on, its button or
-    /// the shortcut of Show User Interface leaves it.
+    /// the shortcut of Show User Interface leaves it. Its HUDs hidden
+    /// (#1190), entering it is leaving them.
     fn toggle_immersive(&mut self) {
         if self.camera.mouselook() {
             return;
@@ -11439,6 +11467,9 @@ impl App {
         if self.interface.immersive {
             self.interface.set_hidden(&self.egui_ctx, false);
         } else {
+            if !self.settings.immersive_huds && !self.world.rlva_has_locked_hud() {
+                self.leave_huds();
+            }
             self.interface.set_immersive(&self.egui_ctx);
         }
     }
@@ -13307,19 +13338,22 @@ impl App {
                     }
                 }
                 if self.interface.immersive && !self.camera.mouselook() {
-                    match ui::interface::immersive_buttons(&ctx, &p, self.settings.immersive_name_tags) {
+                    let huds = self.settings.show_huds.then_some(self.settings.immersive_huds);
+                    match ui::interface::immersive_buttons(&ctx, &p, self.settings.immersive_name_tags, huds) {
                         Some(ui::interface::ImmersiveAction::Leave) => a.bar = BarAction::ToggleImmersive,
                         Some(ui::interface::ImmersiveAction::NameTags(on)) => {
                             self.settings.immersive_name_tags = on;
                             self.settings.save();
                         }
+                        Some(ui::interface::ImmersiveAction::Huds(on)) => a.bar = BarAction::ImmersiveHuds(on),
                         None => {}
                     }
                 }
                 // AURORA_DEMO_BARS=hidden / peek: hidden at frame 600 (asked
                 // first with Firestorm's bars); `immersive`: Conversations
                 // opened at frame 300, immersive mode at 600 (`immersivetags`:
-                // the name tags shown, not saved)
+                // the name tags shown, `immersivehuds`: the HUDs hidden, not
+                // saved)
                 if demo_hidden.is_some() && ctx.cumulative_frame_nr() == 600 && !self.interface.hidden {
                     a.bar = BarAction::ToggleInterface;
                 }
@@ -13328,6 +13362,7 @@ impl App {
                         300 => ui::widgets::open_floater(&ctx, "conversations", &mut self.panels.chat),
                         600 if !self.interface.hidden => {
                             self.settings.immersive_name_tags = ui::bars::demo::get().immersive_tags;
+                            self.settings.immersive_huds = !ui::bars::demo::get().immersive_no_huds;
                             a.bar = BarAction::ToggleImmersive;
                         }
                         _ => {}

@@ -76,6 +76,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "database-import",
     "deselect",
     "device-desktop-analytics",
+    "device-desktop-off",
     "dimensions",
     "door-enter",
     "door-exit",

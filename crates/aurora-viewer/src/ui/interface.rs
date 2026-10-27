@@ -12,9 +12,11 @@
 //! Immersive mode (#859, an Aurora addition: the Legacy Viewer has none) is
 //! the same hidden interface with the chat kept: the conversation windows
 //! stay, the chat lines and the chat bar (Enter) as when hidden; no edge
-//! brings the bars back, no hint: two small glass buttons in the top right
+//! brings the bars back, no hint: small glass buttons in the top right
 //! corner, faint until hovered, show or hide the avatars' name tags (hidden
-//! by default, `immersive_name_tags`) and leave it.
+//! by default, `immersive_name_tags`), the HUDs (#1190: shown by default,
+//! `immersive_huds`; no button while Show HUDs hides them anyway) and leave
+//! it.
 
 use super::bars::islands::{HEIGHT, MARGIN};
 use crate::theme::Palette;
@@ -248,16 +250,20 @@ pub enum ImmersiveAction {
     Leave,
     /// The avatars' name tags shown or hidden.
     NameTags(bool),
+    /// The HUDs shown or hidden.
+    Huds(bool),
 }
 
 /// The immersive mode's buttons, square, as high as the islands, in the top
 /// right corner at their margin, faint until one is hovered: the name tags
-/// (`name_tags`: shown now), then the way out.
-pub fn immersive_buttons(ctx: &egui::Context, p: &Palette, name_tags: bool) -> Option<ImmersiveAction> {
+/// (`name_tags`: shown now), the HUDs (`huds`: shown now; None while Show
+/// HUDs hides them anyway, no button then), then the way out.
+pub fn immersive_buttons(ctx: &egui::Context, p: &Palette, name_tags: bool, huds: Option<bool>) -> Option<ImmersiveAction> {
     let screen = ctx.content_rect();
     let size = Vec2::splat(HEIGHT);
+    let count = if huds.is_some() { 3.0 } else { 2.0 };
     let rect = Rect::from_min_max(
-        Pos2::new(screen.right() - 2.0 * (MARGIN + HEIGHT), screen.top() + MARGIN),
+        Pos2::new(screen.right() - count * (MARGIN + HEIGHT), screen.top() + MARGIN),
         Pos2::new(screen.right() - MARGIN, screen.top() + MARGIN + HEIGHT),
     );
     let hot = ctx.pointer_hover_pos().is_some_and(|at| rect.contains(at));
@@ -280,6 +286,23 @@ pub fn immersive_buttons(ctx: &egui::Context, p: &Palette, name_tags: bool) -> O
                     .clicked()
                 {
                     action = Some(ImmersiveAction::NameTags(!name_tags));
+                }
+                if let Some(huds) = huds {
+                    let (icon, label, tint) = if huds {
+                        (
+                            "device-desktop-filled",
+                            aurora_i18n::tr!("ui-bars-immersive-hide-huds"),
+                            p.violet_light,
+                        )
+                    } else {
+                        ("device-desktop-off", aurora_i18n::tr!("ui-bars-immersive-show-huds"), p.ink)
+                    };
+                    if super::widgets::glass_action_icon(ui, p, icon, label, size, tint)
+                        .on_hover_text(label)
+                        .clicked()
+                    {
+                        action = Some(ImmersiveAction::Huds(!huds));
+                    }
                 }
                 let label = aurora_i18n::tr!("ui-bars-immersive-leave");
                 if super::widgets::glass_action_icon(ui, p, "minimize", label, size, p.ink)

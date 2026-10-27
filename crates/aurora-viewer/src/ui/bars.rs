@@ -134,6 +134,8 @@ pub enum BarAction {
     HideInterface,
     /// Immersive mode (#859): the interface hidden but the chat.
     ToggleImmersive,
+    /// The HUDs shown or hidden in immersive mode (#1190).
+    ImmersiveHuds(bool),
     /// World › World tooltips: the three checks, as they are now.
     HoverTips(HoverTipsMenu),
     WorldOverlays(crate::world::beacons::Overlays),

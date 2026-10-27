@@ -856,6 +856,9 @@ pub struct Settings {
     /// The avatars' name tags in immersive mode (#859): off by default, its
     /// button beside the one that leaves it.
     pub immersive_name_tags: bool,
+    /// The HUDs in immersive mode (#1190): shown by default, as Show HUDs
+    /// leaves them, its button beside the name tags'.
+    pub immersive_huds: bool,
     /// Firestorm's traffic indicator (ShowNetStats, off by default): a
     /// small curve of the network in the system island.
     pub show_net_stats: bool,
@@ -1704,6 +1707,7 @@ impl Default for Settings {
             system_island: SystemIsland::default(),
             confirm_hide_interface: true,
             immersive_name_tags: false,
+            immersive_huds: true,
             show_net_stats: false,
             classic_people: false,
             classic_restart_alert: false,
