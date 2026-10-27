@@ -3,7 +3,7 @@
 
 use super::App;
 use crate::agent::MoveInput;
-use crate::joystick::{Backend, Controller, Motion, Snapshot};
+use crate::joystick::{Backend, Controller, Motion, Snapshot, Use};
 use std::time::Instant;
 
 #[derive(Default)]
@@ -82,9 +82,15 @@ impl App {
     }
 
     pub(super) fn poll_joystick(&mut self, dt: f32) {
-        self.joystick
-            .backend
-            .poll(self.settings.joystick.enabled, &mut self.joystick.snapshot);
+        let mode = if self.settings.joystick.enabled {
+            Use::On
+        } else if self.panels.settings && self.options_ui.page == crate::ui::options::Page::Controls && self.options_ui.tab != 0 {
+            // The joystick tab lists the devices to choose from.
+            Use::List
+        } else {
+            Use::Off
+        };
+        self.joystick.backend.poll(mode, &mut self.joystick.snapshot);
         self.joystick_demo();
         if self.camera.flycam.is_none() {
             self.joystick.active = false;

@@ -6,7 +6,7 @@
 mod backend;
 pub mod flycam;
 
-pub use backend::Backend;
+pub use backend::{Backend, Use};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
