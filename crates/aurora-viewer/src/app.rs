@@ -15008,6 +15008,9 @@ impl ApplicationHandler for App {
                 if value == "avatars/1:group-titles" {
                     self.settings.group_titles = crate::world::names::GroupTitles::AllExceptMine;
                 }
+                if value == "inventory:recent-period" {
+                    self.settings.inventory.recent_hours = 7 * 24;
+                }
                 // the confirmation of a restore, for a backup of the demo's
                 // own profile
                 if value.split(':').nth(1) == Some("restore") {

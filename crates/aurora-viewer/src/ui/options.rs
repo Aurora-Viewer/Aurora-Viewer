@@ -257,6 +257,7 @@ pub fn demo(st: &mut OptionsUi, value: &str) {
         "auto-replace" => row(Page::Chat, 6, tr!("ui-options-auto-replace-on")),
         "gifs" => row(Page::Chat, 0, tr!("ui-options-gifs-show")),
         "crosshair" => row(Page::Camera, 2, tr!("ui-options-crosshair-image")),
+        "recent" | "recent-period" => row(Page::Inventory, 0, tr!("ui-inventory-recent-period")),
         "animations" | "animations-sync" => row(Page::Aurora, 2, tr!("ui-options-aurora-animation-clock")),
         _ => None,
     };

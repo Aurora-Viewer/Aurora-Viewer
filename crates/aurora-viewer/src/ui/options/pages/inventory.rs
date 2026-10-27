@@ -33,6 +33,16 @@ pub fn page(cx: &mut Cx) {
     cx.group(tr!("common-display"), |cx| {
         cx.toggle(tr!("ui-inventory-controls-show-library"), "", &field!(inventory.show_library));
         cx.toggle(tr!("ui-inventory-controls-recent-tab"), "", &field!(inventory.show_recent));
+        let off = !cx.s.inventory.show_recent;
+        cx.subs(off, |cx| {
+            // the choice and its days and hours: too long for one column
+            cx.wide().row(
+                tr!("ui-inventory-recent-period"),
+                tr!("ui-inventory-recent-period-help"),
+                &field!(inventory.recent_hours),
+                |ui, s| crate::ui::inventory::recent_period(ui, &mut s.inventory.recent_hours),
+            );
+        });
         cx.toggle(tr!("ui-inventory-controls-worn-tab"), "", &field!(inventory.show_worn));
         cx.toggle(tr!("ui-inventory-controls-favorites-tab"), "", &field!(inventory.show_favorites));
         cx.toggle(

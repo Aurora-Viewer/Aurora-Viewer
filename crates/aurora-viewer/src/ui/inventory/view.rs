@@ -298,6 +298,10 @@ pub struct InventoryPreferences {
     pub double_click_add_clothes: bool,
     pub filter_defaults: Filters,
     pub last_logout: i64,
+    /// How far back the Recent tab goes, in hours; 0: since the last logout.
+    /// The Recent Items panel's own filter keeps its "Since Logoff" or its
+    /// days and hours between sessions (LLPanelMainInventory, filters.xml).
+    pub recent_hours: u32,
     pub warn_task_move: bool,
     pub warn_scripted_task_move: bool,
     /// The rights Aurora's rows show (its "CMT" menu).
@@ -332,6 +336,7 @@ impl Default for InventoryPreferences {
             double_click_add_clothes: false,
             filter_defaults: Filters::default(),
             last_logout: 0,
+            recent_hours: 0,
             warn_task_move: true,
             warn_scripted_task_move: true,
             rights: Default::default(),
@@ -389,10 +394,16 @@ impl InventoryPreferences {
     }
 }
 
-/// Where "Recent" starts: the last logout, or a day ago (refreshed once a
-/// minute) before the first one.
+/// The longest Recent period: the 10000 days of spin_days_ago
+/// (floater_inventory_view_finder.xml), plus a day of hours.
+pub const RECENT_HOURS_MAX: u32 = 10_000 * 24 + 23;
+
+/// Where "Recent" starts: the period chosen, else the last logout, or a day
+/// ago before the first one (relative dates refreshed once a minute).
 pub(super) fn recent_cutoff(prefs: &InventoryPreferences, time: i64) -> i64 {
-    if prefs.last_logout > 0 {
+    if prefs.recent_hours > 0 {
+        time / 60 * 60 - i64::from(prefs.recent_hours.min(RECENT_HOURS_MAX)) * 3600
+    } else if prefs.last_logout > 0 {
         prefs.last_logout
     } else {
         time / 60 * 60 - 86400
@@ -1385,6 +1396,29 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(search(&inv, &facts, &prefs, &filters, 0), [id(11), id(10)]);
+    }
+
+    #[test]
+    fn recent_period_replaces_the_last_logout() {
+        let now = 10 * 86400 + 30;
+        let week = InventoryPreferences {
+            last_logout: 200,
+            recent_hours: 7 * 24,
+            ..Default::default()
+        };
+        assert_eq!(recent_cutoff(&week, now), 3 * 86400);
+        let since_logout = InventoryPreferences {
+            recent_hours: 0,
+            ..week.clone()
+        };
+        assert_eq!(recent_cutoff(&since_logout, now), 200);
+        let first_launch = InventoryPreferences::default();
+        assert_eq!(recent_cutoff(&first_launch, now), 9 * 86400);
+        // the Recent tab of the search follows the period: both items are
+        // within the last hour of the fixture's clock (1000 s)
+        let (inv, facts) = fixture();
+        let hour = InventoryPreferences { recent_hours: 1, ..week };
+        assert_eq!(search(&inv, &facts, &hour, &Filters::default(), 2), [id(11), id(10)]);
     }
 
     #[test]

@@ -26,6 +26,7 @@ mod context_catalog;
 pub(crate) mod context_customize;
 pub(crate) mod context_notecards;
 mod controls;
+pub(crate) use controls::recent_period;
 mod delete;
 pub(crate) mod menu_layout;
 pub use delete::demo_events as delete_demo_events;
