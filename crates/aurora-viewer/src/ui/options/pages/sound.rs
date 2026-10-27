@@ -296,7 +296,9 @@ fn interface_sounds(cx: &mut Cx) {
                 ch
             });
         }
-        // the 41 sounds one by one, behind the cog
+        // every sound one by one, behind the cog; the three conversation
+        // sounds too, for their asset (their mode above says when they
+        // play), as the UI sounds panel lists them with their own UUID
         cx.row(
             tr!("ui-options-per-sound-choices"),
             tr!("ui-options-per-sound-choices-help"),
@@ -304,10 +306,7 @@ fn interface_sounds(cx: &mut Cx) {
             |_, _| false,
         );
         cx.subs(false, |cx| {
-            for e in CATALOG
-                .iter()
-                .filter(|e| !e.sound.caller_gated() || e.sound == UiSound::TrackerBeacon)
-            {
+            for e in CATALOG.iter() {
                 let hint = tr!(
                     "extra-uisnd-sound-asset-empty-no-sound-playmodeuisnd",
                     value0 = e.name.to_string(),
@@ -326,10 +325,20 @@ fn interface_sounds(cx: &mut Cx) {
                     },
                 };
                 cx.wide().keywords(e.name).row_with((e.label)(), &hint, &t, |ui, s, st, _| {
-                    let mut on = ui_sound_plays(s, e.sound);
-                    let mut ch = widgets::switch(ui, &p, &mut on).changed();
-                    if ch {
-                        set_ui_sound_plays(s, e.sound, on);
+                    let mut ch = false;
+                    if e.sound.caller_gated() && e.sound != UiSound::TrackerBeacon {
+                        // played by its mode, not a switch: the switch's room
+                        // kept, so that the asset lines up with the others'
+                        ui.scope(|ui| {
+                            ui.set_invisible();
+                            widgets::switch(ui, &p, &mut true);
+                        });
+                    } else {
+                        let mut on = ui_sound_plays(s, e.sound);
+                        ch = widgets::switch(ui, &p, &mut on).changed();
+                        if ch {
+                            set_ui_sound_plays(s, e.sound, on);
+                        }
                     }
                     let u = &mut s.audio.ui;
                     let text = st.ui_sound_text.entry(e.name).or_insert_with(|| uuid_text(u.uuid(e.sound)));
