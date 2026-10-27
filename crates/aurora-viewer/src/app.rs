@@ -16220,6 +16220,9 @@ impl ApplicationHandler for App {
             }
             if let Ok(view) = std::env::var("AURORA_DEMO_APPEARANCE") {
                 crate::world::appearance::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                if view.starts_with("folders") {
+                    crate::world::outfit_folders::seed_demo(&mut self.world.inventory, self.world.agent_id);
+                }
                 if matches!(view.as_str(), "gallery-fit" | "gallery-fill") {
                     ui::appearance::demo_previews(&self.egui_ctx, &mut self.world.inventory, &mut self.ui_images);
                     self.settings.appearance_fill_previews = view == "gallery-fill";
@@ -16237,7 +16240,7 @@ impl ApplicationHandler for App {
                 self.panels.perf = false;
                 self.appearance_ui.open(
                     match view.as_str() {
-                        "outfits" | "multi-outfits" => 1,
+                        "outfits" | "multi-outfits" | "folders-outfits" => 1,
                         "worn" | "save" => 2,
                         _ => 0,
                     },

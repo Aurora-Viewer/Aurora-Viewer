@@ -4,13 +4,14 @@
 use super::{icons, menu, widgets};
 use crate::{
     theme::Palette,
-    world::{World, appearance as model},
+    world::{World, appearance as model, outfit_folders::Entry},
 };
 use aurora_net::inventory::InvItem;
 use egui::{RichText, Vec2};
 use model::Action;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+mod folders;
 mod gallery;
 pub(crate) mod items;
 mod selection;
@@ -33,6 +34,8 @@ pub struct AppearanceUi {
     flash: Option<(Uuid, f64)>,
     selected_item: Option<Uuid>,
     pub save_as: Option<String>,
+    /// The folder of My Outfits Save as puts the new outfit in.
+    save_in: Option<Uuid>,
     select_name: bool,
     adding: bool,
     add_search: String,
@@ -46,6 +49,11 @@ pub struct AppearanceUi {
     pub message: String,
     requested_items: HashSet<Uuid>,
     gallery: gallery::State,
+    folders: folders::State,
+    /// The groups of My Outfits closed in the list and the gallery, and a
+    /// count of their changes for `shown`.
+    closed_groups: HashSet<Uuid>,
+    closed_version: u64,
     pub wanted_images: HashSet<Uuid>,
     /// What `prepare` walked at the last inventory change.
     prepared: Option<Prepared>,
@@ -109,12 +117,18 @@ struct Prepared {
     missing: HashMap<Uuid, ((i32, usize), Vec<Uuid>)>,
 }
 
-/// The outfits of My Outfits that match the filter, in display order.
+/// The groups and outfits of My Outfits that match the filter, in display
+/// order, without what closed groups hide.
 struct Shown {
     generation: u64,
     search: String,
     reverse: bool,
+    closed: u64,
+    order: crate::world::outfit_folders::Order,
+    entries: Vec<crate::world::outfit_folders::Entry>,
     outfits: Vec<Uuid>,
+    /// The outfits matching the filter, those of closed groups included.
+    total: usize,
 }
 
 impl AppearanceUi {
@@ -145,6 +159,7 @@ impl AppearanceUi {
         }
         self.editing = false;
         self.adding = false;
+        self.open_groups_of(inv, id);
         if !self.shown_outfits(inv).contains(&id) {
             self.search.clear();
         }
@@ -251,6 +266,11 @@ impl AppearanceUi {
             .unwrap_or_else(|| aurora_i18n::tr!("ui-appearance-new-outfit").into());
         self.save_as = Some(name.chars().take(63).collect());
         self.select_name = true;
+        // beside the outfit it comes from: a variant goes in the same group
+        self.save_in = model::base(inv)
+            .and_then(|id| inv.folders.get(&id))
+            .map(|f| f.info.parent)
+            .filter(|parent| crate::world::outfit_folders::container(inv, *parent));
     }
 
     /// Keeps the outfits loaded and asks for the originals their links
@@ -311,40 +331,58 @@ impl AppearanceUi {
         self.filter_requests(model::fetch_items(missing, agent))
     }
 
-    /// The outfits of My Outfits matching the filter, sorted by name, built
-    /// again only when the inventory, the filter or the order changed.
+    /// The outfits shown, in display order: those of My Outfits and of its
+    /// groups matching the filter, without those of closed groups.
     fn shown_outfits(&mut self, inv: &crate::world::inventory::Inventory) -> Vec<Uuid> {
-        if let Some(shown) = &self.shown
-            && shown.generation == inv.generation
-            && shown.search == self.search
-            && shown.reverse == self.reverse_sort
-        {
-            return shown.outfits.clone();
-        }
-        let needle = self.search.trim().to_lowercase();
-        let my = model::system_folder(inv, model::FT_MY_OUTFITS);
-        let mut named: Vec<(String, Uuid)> = my
-            .and_then(|id| inv.folders.get(&id))
-            .into_iter()
-            .flat_map(|f| &f.children)
-            .filter_map(|id| inv.folders.get(id))
-            .filter(|f| f.info.type_default == model::FT_OUTFIT)
-            .map(|f| (f.info.name.to_lowercase(), f.info.id))
-            .filter(|(name, _)| name.contains(&needle))
-            .collect();
-        named.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut outfits: Vec<_> = named.into_iter().map(|(_, id)| id).collect();
-        if self.reverse_sort {
-            outfits.reverse();
-        }
-        self.outfit_selection.retain(&outfits);
-        self.shown = Some(Shown {
-            generation: inv.generation,
-            search: self.search.clone(),
-            reverse: self.reverse_sort,
-            outfits: outfits.clone(),
+        self.shown(inv).outfits.clone()
+    }
+
+    /// The groups and outfits shown (`world/outfit_folders.rs::tree`),
+    /// built again only when the inventory, the filter, the order or a
+    /// group's open state changed. A filter shows every group open.
+    fn shown(&mut self, inv: &crate::world::inventory::Inventory) -> &Shown {
+        use crate::world::outfit_folders::{Order, tree};
+        // the gallery shows a group's section before its subgroups'
+        let order = if self.tab == 0 { Order::Gallery } else { Order::List };
+        let fresh = self.shown.as_ref().is_some_and(|shown| {
+            shown.generation == inv.generation
+                && shown.search == self.search
+                && shown.reverse == self.reverse_sort
+                && shown.closed == self.closed_version
+                && shown.order == order
         });
-        outfits
+        if !fresh {
+            let needle = self.search.trim().to_lowercase();
+            let tree = tree(inv, &needle, self.reverse_sort, order);
+            let total = tree.iter().filter(|e| !e.group).count();
+            let mut entries = Vec::with_capacity(tree.len());
+            let mut hidden_below = None;
+            for entry in tree {
+                if hidden_below.is_some_and(|depth| entry.depth > depth) {
+                    continue;
+                }
+                hidden_below = (entry.group && needle.is_empty() && self.closed_groups.contains(&entry.id)).then_some(entry.depth);
+                entries.push(entry);
+            }
+            let outfits: Vec<_> = entries.iter().filter(|e| !e.group).map(|e| e.id).collect();
+            self.outfit_selection.retain(&outfits);
+            self.shown = Some(Shown {
+                generation: inv.generation,
+                search: self.search.clone(),
+                reverse: self.reverse_sort,
+                closed: self.closed_version,
+                order,
+                entries,
+                outfits,
+                total,
+            });
+        }
+        self.shown.as_ref().expect("built above")
+    }
+
+    /// Whether a group shows open: always while filtering.
+    fn group_open(&self, id: Uuid) -> bool {
+        !self.search.trim().is_empty() || !self.closed_groups.contains(&id)
     }
 
     pub fn prepare_contents(
@@ -410,12 +448,10 @@ const FLASH_SECONDS: f64 = 1.6;
 /// layout settles (`AppearanceUi::reveal_located`).
 const LOCATE_FRAMES: u8 = 12;
 
-/// The current outfit when the gallery and the list can show it: a
-/// folder of My Outfits, as `shown_outfits` lists them.
+/// The current outfit when the gallery and the list can show it: an
+/// outfit of My Outfits or of one of its groups, as `shown_outfits` lists them.
 fn locatable(inv: &crate::world::inventory::Inventory) -> Option<Uuid> {
-    let id = model::base(inv)?;
-    let my = inv.folders.get(&model::system_folder(inv, model::FT_MY_OUTFITS)?)?;
-    my.children.contains(&id).then_some(id)
+    model::base(inv).filter(|id| crate::world::outfit_folders::in_my_outfits(inv, *id))
 }
 
 fn icon(ui: &mut egui::Ui, name: &str, size: f32, color: egui::Color32) {
@@ -526,12 +562,48 @@ fn item_menu(response: &egui::Response, p: &Palette, it: &InvItem, actions: &mut
     });
 }
 
+/// The heading of a gallery section: a group's path ("Beach › Night"),
+/// or, with no `group`, the outfits outside any group.
+fn gallery_heading(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    world: &World,
+    st: &mut AppearanceUi,
+    group: Option<Uuid>,
+    count: usize,
+    actions: &mut Vec<Action>,
+) {
+    let inv = &world.inventory;
+    let title = group.map_or_else(
+        || aurora_i18n::tr!("ui-appearance-folders-other").to_string(),
+        |id| crate::world::outfit_folders::path(inv, id),
+    );
+    let open = group.map(|id| st.group_open(id));
+    let response = folders::header(ui, p, &title, count, open, 0);
+    ui.add_space(4.0);
+    match group {
+        Some(id) => {
+            if response.clicked() && st.search.trim().is_empty() {
+                st.toggle_group(id);
+            }
+            folders::group_menu(&response, p, world, st, id, actions);
+        }
+        None => {
+            menu::context_menu(&response, p, |ui| folders::new_folder_item(ui, p, inv, st));
+        }
+    }
+}
+
+/// The gallery: the outfits by section once My Outfits has groups. A
+/// group's section comes when its own outfits do; a closed or empty group
+/// shows its heading alone, to be opened or used.
 #[allow(clippy::too_many_arguments)]
 fn gallery(
     ui: &mut egui::Ui,
     p: &Palette,
     world: &World,
     st: &mut AppearanceUi,
+    entries: &[Entry],
     outfits: &[Uuid],
     current: Option<Uuid>,
     actions: &mut Vec<Action>,
@@ -548,91 +620,125 @@ fn gallery(
     // drawn (a taller font in a name).
     st.rows.check(ui);
     let view = ui.clip_rect();
+    let grouped = entries.iter().any(|e| e.group);
     let mut pitch = None;
-    for pair in outfits.chunks(columns) {
-        if let Some(pitch) = pitch {
-            let height = pitch + st.rows.gallery.get(&pair[0]).copied().unwrap_or(0.0);
-            let located = st.locate.is_some_and(|id| pair.contains(&id));
-            if !located && !in_sight(ui.cursor().top(), height, view) {
-                skip_row(ui, height);
-                continue;
-            }
-        }
-        let top = ui.cursor().top();
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            for id in pair {
-                let Some(folder) = world.inventory.folders.get(id) else {
-                    continue;
-                };
-                ui.vertical(|ui| {
-                    ui.set_width(width);
-                    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, width * 0.88), egui::Sense::click());
-                    st.select_outfit(&response, *id, outfits);
-                    let selected = st.outfit_selection.contains(*id);
-                    ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
-                    ui.painter().rect_stroke(
-                        rect,
-                        ui.visuals().window_corner_radius,
-                        egui::Stroke::new(1.0, if selected { p.violet } else { p.raised }),
-                        egui::StrokeKind::Inside,
+    let mut section: Option<Option<Uuid>> = None;
+    let mut at = 0;
+    while at < entries.len() {
+        let entry = entries[at];
+        if entry.group {
+            let open = st.group_open(entry.id);
+            if !open || entry.outfits == 0 {
+                gallery_heading(ui, p, world, st, Some(entry.id), entry.outfits, actions);
+                section = Some(Some(entry.id));
+                if open {
+                    ui.label(
+                        RichText::new(aurora_i18n::tr!("ui-appearance-folders-empty"))
+                            .size(12.0)
+                            .color(p.muted),
                     );
-                    let image = folder.info.thumbnail;
-                    if !image.is_nil() {
-                        st.wanted_images.insert(image);
-                    }
-                    if let Some(t) = images.get(&image) {
-                        let (image_rect, uv) = preview_rects(rect.shrink(3.0), t.size_vec2(), st.fill_previews);
-                        ui.painter().image(t.id(), image_rect, uv, widgets::PICTURE_TINT);
-                    } else if let Some(t) = icons::global("hanger-2-filled") {
-                        ui.painter().image(
-                            t.id(),
-                            egui::Rect::from_center_size(rect.center(), Vec2::splat(width * 0.55)),
-                            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            p.violet_light,
-                        );
-                    }
-                    st.reveal_located(ui, *id, rect, egui::Align::Center);
-                    let flash = st.flash(ui, *id);
-                    if flash > 0.0 {
-                        let radius = ui.visuals().window_corner_radius;
-                        ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.3 * flash));
+                    ui.add_space(8.0);
+                }
+            }
+            at += 1;
+            continue;
+        }
+        // the outfits of one folder follow one another, after its groups
+        let end = at + entries[at..].iter().take_while(|e| !e.group && e.depth == entry.depth).count();
+        let folder = (entry.depth > 0)
+            .then(|| world.inventory.folders.get(&entry.id).map(|f| f.info.parent))
+            .flatten();
+        if grouped && section != Some(folder) {
+            gallery_heading(ui, p, world, st, folder, end - at, actions);
+            section = Some(folder);
+        }
+        let run: Vec<Uuid> = entries[at..end].iter().map(|e| e.id).collect();
+        at = end;
+        for pair in run.chunks(columns) {
+            if let Some(pitch) = pitch {
+                let height = pitch + st.rows.gallery.get(&pair[0]).copied().unwrap_or(0.0);
+                let located = st.locate.is_some_and(|id| pair.contains(&id));
+                if !located && !in_sight(ui.cursor().top(), height, view) {
+                    skip_row(ui, height);
+                    continue;
+                }
+            }
+            let top = ui.cursor().top();
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                for id in pair {
+                    let Some(folder) = world.inventory.folders.get(id) else {
+                        continue;
+                    };
+                    ui.vertical(|ui| {
+                        ui.set_width(width);
+                        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, width * 0.88), egui::Sense::click());
+                        st.select_outfit(&response, *id, outfits);
+                        let selected = st.outfit_selection.contains(*id);
+                        ui.painter().rect_filled(rect, ui.visuals().window_corner_radius, p.field);
                         ui.painter().rect_stroke(
                             rect,
-                            radius,
-                            egui::Stroke::new(2.0, p.violet_light.gamma_multiply(flash)),
+                            ui.visuals().window_corner_radius,
+                            egui::Stroke::new(1.0, if selected { p.violet } else { p.raised }),
                             egui::StrokeKind::Inside,
                         );
-                    }
-                    if response.double_clicked() && !ui.input(|i| i.modifiers.any()) {
-                        st.open_outfit(*id);
-                    }
-                    gallery::context_menu(&response, p, world, st, *id, actions, true);
-                    let current = current == Some(*id);
-                    let color = if current { p.violet_light } else { p.ink };
-                    let font_id = egui::FontId::proportional(12.0);
-                    let galley = outfit_label(ui, &folder.info.name, current, font_id.clone(), color, width);
-                    let response = ui.add(egui::Label::new(galley.clone()));
-                    if current && ui.is_rect_visible(response.rect) {
-                        if let Some(offset) = widgets::faux_bold_offset(ui) {
-                            let name = egui::WidgetText::from(RichText::new(&folder.info.name).font(font_id).color(color)).into_galley(
-                                ui,
-                                Some(egui::TextWrapMode::Truncate),
-                                galley.size().x,
-                                egui::TextStyle::Body,
-                            );
-                            let clip = response.rect.intersect(ui.clip_rect());
-                            ui.painter().with_clip_rect(clip).galley(response.rect.min + offset, name, color);
+                        let image = folder.info.thumbnail;
+                        if !image.is_nil() {
+                            st.wanted_images.insert(image);
                         }
-                        worn_tag(ui, p, response.rect.left() + galley.size().x, response.rect.center().y);
-                    }
-                });
-            }
-        });
-        ui.add_space(12.0);
-        let height = ui.cursor().top() - top;
-        let first = *pitch.get_or_insert(height);
-        st.rows.gallery.insert(pair[0], height - first);
+                        if let Some(t) = images.get(&image) {
+                            let (image_rect, uv) = preview_rects(rect.shrink(3.0), t.size_vec2(), st.fill_previews);
+                            ui.painter().image(t.id(), image_rect, uv, widgets::PICTURE_TINT);
+                        } else if let Some(t) = icons::global("hanger-2-filled") {
+                            ui.painter().image(
+                                t.id(),
+                                egui::Rect::from_center_size(rect.center(), Vec2::splat(width * 0.55)),
+                                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                                p.violet_light,
+                            );
+                        }
+                        st.reveal_located(ui, *id, rect, egui::Align::Center);
+                        let flash = st.flash(ui, *id);
+                        if flash > 0.0 {
+                            let radius = ui.visuals().window_corner_radius;
+                            ui.painter().rect_filled(rect, radius, p.violet.gamma_multiply(0.3 * flash));
+                            ui.painter().rect_stroke(
+                                rect,
+                                radius,
+                                egui::Stroke::new(2.0, p.violet_light.gamma_multiply(flash)),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        if response.double_clicked() && !ui.input(|i| i.modifiers.any()) {
+                            st.open_outfit(*id);
+                        }
+                        gallery::context_menu(&response, p, world, st, *id, actions, true);
+                        let current = current == Some(*id);
+                        let color = if current { p.violet_light } else { p.ink };
+                        let font_id = egui::FontId::proportional(12.0);
+                        let galley = outfit_label(ui, &folder.info.name, current, font_id.clone(), color, width);
+                        let response = ui.add(egui::Label::new(galley.clone()));
+                        if current && ui.is_rect_visible(response.rect) {
+                            if let Some(offset) = widgets::faux_bold_offset(ui) {
+                                let name = egui::WidgetText::from(RichText::new(&folder.info.name).font(font_id).color(color)).into_galley(
+                                    ui,
+                                    Some(egui::TextWrapMode::Truncate),
+                                    galley.size().x,
+                                    egui::TextStyle::Body,
+                                );
+                                let clip = response.rect.intersect(ui.clip_rect());
+                                ui.painter().with_clip_rect(clip).galley(response.rect.min + offset, name, color);
+                            }
+                            worn_tag(ui, p, response.rect.left() + galley.size().x, response.rect.center().y);
+                        }
+                    });
+                }
+            });
+            ui.add_space(12.0);
+            let height = ui.cursor().top() - top;
+            let first = *pitch.get_or_insert(height);
+            st.rows.gallery.insert(pair[0], height - first);
+        }
     }
 }
 
@@ -708,11 +814,27 @@ fn worn_tag(ui: &egui::Ui, p: &Palette, name_end: f32, center_y: f32) {
     );
 }
 
+/// A group's header in the list: a click opens or closes it, a right click
+/// opens its menu.
+fn list_group(ui: &mut egui::Ui, p: &Palette, world: &World, st: &mut AppearanceUi, entry: &Entry, actions: &mut Vec<Action>) {
+    let Some(f) = world.inventory.folders.get(&entry.id) else {
+        return;
+    };
+    let response = folders::header(ui, p, &f.info.name, entry.outfits, Some(st.group_open(entry.id)), entry.depth);
+    row_gap(ui);
+    if response.clicked() && st.search.trim().is_empty() {
+        st.toggle_group(entry.id);
+    }
+    folders::group_menu(&response, p, world, st, entry.id, actions);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn outfit_list(
     ui: &mut egui::Ui,
     p: &Palette,
     world: &World,
     st: &mut AppearanceUi,
+    entries: &[Entry],
     outfits: &[Uuid],
     current: Option<Uuid>,
     actions: &mut Vec<Action>,
@@ -727,7 +849,12 @@ fn outfit_list(
     let remeasure = st.rows.check(ui);
     let known_open = st.list_open.take().filter(|_| !remeasure);
     let mut open_now = HashSet::new();
-    for id in outfits {
+    for entry in entries {
+        if entry.group {
+            list_group(ui, p, world, st, entry, actions);
+            continue;
+        }
+        let id = &entry.id;
         let Some(f) = world.inventory.folders.get(id) else {
             continue;
         };
@@ -743,120 +870,129 @@ fn outfit_list(
             continue;
         }
         let top = ui.cursor().top();
-        let is_current = current == Some(*id);
-        let font_id = egui::TextStyle::Button.resolve(ui.style());
-        // the header's own room for its title: past the caret, 4 px short of the end
-        let width = ui.available_width() - ui.spacing().indent - 4.0;
-        let galley = outfit_label(ui, &f.info.name, is_current, font_id.clone(), p.ink, width);
-        let reveal = st.reveal_outfit == Some(*id);
-        let default_open = st.outfit_selection.focus == Some(*id);
-        let forced = reveal.then_some(true).or_else(|| {
-            // Modifier selection must leave the accordion's open state alone.
-            ui.input(|i| i.modifiers.shift || i.modifiers.ctrl || i.modifiers.command)
-                .then(|| known_open.as_ref().is_some_and(|open| open.contains(id)))
-        });
-        let highlight = ui.painter().add(egui::Shape::Noop);
-        // The headers take the inventory's row height; their body keeps the
-        // window's own sizes (buttons, labels).
-        let interact = ui.spacing().interact_size.y;
-        ui.spacing_mut().interact_size.y = super::inventory::AURORA_ROW_HEIGHT;
-        let response = widgets::collapsing_forced(ui, p, ("outfit", id), galley.clone(), default_open, forced, |ui| {
-            ui.spacing_mut().interact_size.y = interact;
-            if ui
-                .selectable_label(
-                    st.outfit_selection.contains(*id),
-                    aurora_i18n::tr!("ui-appearance-select-this-outfit"),
-                )
-                .clicked()
-            {
-                st.outfit_selection.click(*id, outfits, ui.input(|i| i.modifiers), false);
-                st.selected_item = None;
-            }
-            let mut links = model::folder_links(&world.inventory, *id);
-            links.sort_by_key(|l| l.name.to_lowercase());
-            for link in links.iter().filter(|l| !l.folder) {
-                if let Some(it) = world.inventory.items.get(&link.target) {
-                    ui.push_id(("outfit_item", id, it.id), |ui| {
-                        let response = row(
-                            ui,
-                            p,
-                            it,
-                            "",
-                            st.selected_item == Some(it.id) && st.outfit_selection.focus == Some(*id),
-                            worn.get(&it.id).map(String::as_str),
-                        );
-                        if response.clicked() || response.secondary_clicked() {
-                            st.outfit_selection.single(*id);
-                            st.selected_item = Some(it.id);
+        // an outfit of a group stands below its header; every outfit row is
+        // one child `Ui`, the one automatic id `skip_row` leaves
+        let mut room = ui.available_rect_before_wrap();
+        room.min.x += entry.depth as f32 * ui.spacing().indent;
+        let open = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(room), |ui| {
+                let is_current = current == Some(*id);
+                let font_id = egui::TextStyle::Button.resolve(ui.style());
+                // the header's own room for its title: past the caret, 4 px short of the end
+                let width = ui.available_width() - ui.spacing().indent - 4.0;
+                let galley = outfit_label(ui, &f.info.name, is_current, font_id.clone(), p.ink, width);
+                let reveal = st.reveal_outfit == Some(*id);
+                let default_open = st.outfit_selection.focus == Some(*id);
+                let forced = reveal.then_some(true).or_else(|| {
+                    // Modifier selection must leave the accordion's open state alone.
+                    ui.input(|i| i.modifiers.shift || i.modifiers.ctrl || i.modifiers.command)
+                        .then(|| known_open.as_ref().is_some_and(|open| open.contains(id)))
+                });
+                let highlight = ui.painter().add(egui::Shape::Noop);
+                // The headers take the inventory's row height; their body keeps the
+                // window's own sizes (buttons, labels).
+                let interact = ui.spacing().interact_size.y;
+                ui.spacing_mut().interact_size.y = super::inventory::AURORA_ROW_HEIGHT;
+                let response = widgets::collapsing_forced(ui, p, ("outfit", id), galley.clone(), default_open, forced, |ui| {
+                    ui.spacing_mut().interact_size.y = interact;
+                    if ui
+                        .selectable_label(
+                            st.outfit_selection.contains(*id),
+                            aurora_i18n::tr!("ui-appearance-select-this-outfit"),
+                        )
+                        .clicked()
+                    {
+                        st.outfit_selection.click(*id, outfits, ui.input(|i| i.modifiers), false);
+                        st.selected_item = None;
+                    }
+                    let mut links = model::folder_links(&world.inventory, *id);
+                    links.sort_by_key(|l| l.name.to_lowercase());
+                    for link in links.iter().filter(|l| !l.folder) {
+                        if let Some(it) = world.inventory.items.get(&link.target) {
+                            ui.push_id(("outfit_item", id, it.id), |ui| {
+                                let response = row(
+                                    ui,
+                                    p,
+                                    it,
+                                    "",
+                                    st.selected_item == Some(it.id) && st.outfit_selection.focus == Some(*id),
+                                    worn.get(&it.id).map(String::as_str),
+                                );
+                                if response.clicked() || response.secondary_clicked() {
+                                    st.outfit_selection.single(*id);
+                                    st.selected_item = Some(it.id);
+                                }
+                                items::context_menu(&response, p, world, st, *id, it, actions);
+                            });
+                            row_gap(ui);
+                        } else {
+                            ui.label(RichText::new(&link.name).size(12.0).color(p.muted));
                         }
-                        items::context_menu(&response, p, world, st, *id, it, actions);
+                    }
+                    if links.is_empty() {
+                        ui.label(
+                            RichText::new(if model::loaded(&world.inventory, *id) {
+                                aurora_i18n::tr!("ui-appearance-empty-outfit")
+                            } else {
+                                aurora_i18n::tr!("common-loading-2")
+                            })
+                            .color(p.muted),
+                        );
+                    }
+                    ui.horizontal(|ui| {
+                        if widgets::flat_button(ui, p, aurora_i18n::tr!("common-wear")).clicked() {
+                            actions.push(if st.outfit_selection.contains(*id) {
+                                st.wear_selection(outfits, false)
+                            } else {
+                                Action::Wear(*id, false)
+                            });
+                        }
+                        if widgets::flat_button(ui, p, aurora_i18n::tr!("common-add")).clicked() {
+                            actions.push(if st.outfit_selection.contains(*id) {
+                                st.wear_selection(outfits, true)
+                            } else {
+                                Action::Wear(*id, true)
+                            });
+                        }
                     });
-                    row_gap(ui);
-                } else {
-                    ui.label(RichText::new(&link.name).size(12.0).color(p.muted));
+                });
+                ui.spacing_mut().interact_size.y = interact;
+                st.select_outfit(&response.header, *id, outfits);
+                st.reveal_located(ui, *id, response.header.rect, egui::Align::Min);
+                let flash = st.flash(ui, *id);
+                if st.outfit_selection.contains(*id) || flash > 0.0 {
+                    ui.painter().set(
+                        highlight,
+                        egui::Shape::rect_filled(
+                            response.header.rect,
+                            ui.visuals().window_corner_radius,
+                            p.violet.gamma_multiply(0.25 + 0.45 * flash),
+                        ),
+                    );
                 }
-            }
-            if links.is_empty() {
-                ui.label(
-                    RichText::new(if model::loaded(&world.inventory, *id) {
-                        aurora_i18n::tr!("ui-appearance-empty-outfit")
-                    } else {
-                        aurora_i18n::tr!("common-loading-2")
-                    })
-                    .color(p.muted),
-                );
-            }
-            ui.horizontal(|ui| {
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-wear")).clicked() {
-                    actions.push(if st.outfit_selection.contains(*id) {
-                        st.wear_selection(outfits, false)
-                    } else {
-                        Action::Wear(*id, false)
-                    });
+                gallery::context_menu(&response.header, p, world, st, *id, actions, false);
+                if is_current && ui.is_rect_visible(response.header.rect) {
+                    let rect = response.header.rect;
+                    let left = rect.left() + ui.spacing().indent;
+                    if let Some(offset) = widgets::faux_bold_offset(ui) {
+                        let pos = egui::pos2(left, rect.center().y - galley.size().y * 0.5);
+                        let name = outfit_label(ui, &f.info.name, false, font_id, p.ink, galley.size().x);
+                        ui.painter().galley(pos + offset, name, p.ink);
+                    }
+                    worn_tag(ui, p, left + galley.size().x, rect.center().y);
                 }
-                if widgets::flat_button(ui, p, aurora_i18n::tr!("common-add")).clicked() {
-                    actions.push(if st.outfit_selection.contains(*id) {
-                        st.wear_selection(outfits, true)
-                    } else {
-                        Action::Wear(*id, true)
-                    });
+                if reveal && response.body.is_some() {
+                    response.header.scroll_to_me(Some(egui::Align::Min));
+                    st.reveal_outfit = None;
                 }
-            });
-        });
-        ui.spacing_mut().interact_size.y = interact;
+                response.body.is_some()
+            })
+            .inner;
         // closed headers follow one another at the inventory's row pitch
-        if response.body.is_none() {
+        if !open {
             row_gap(ui);
         }
-        st.select_outfit(&response.header, *id, outfits);
-        st.reveal_located(ui, *id, response.header.rect, egui::Align::Min);
-        let flash = st.flash(ui, *id);
-        if st.outfit_selection.contains(*id) || flash > 0.0 {
-            ui.painter().set(
-                highlight,
-                egui::Shape::rect_filled(
-                    response.header.rect,
-                    ui.visuals().window_corner_radius,
-                    p.violet.gamma_multiply(0.25 + 0.45 * flash),
-                ),
-            );
-        }
-        gallery::context_menu(&response.header, p, world, st, *id, actions, false);
-        if is_current && ui.is_rect_visible(response.header.rect) {
-            let rect = response.header.rect;
-            let left = rect.left() + ui.spacing().indent;
-            if let Some(offset) = widgets::faux_bold_offset(ui) {
-                let pos = egui::pos2(left, rect.center().y - galley.size().y * 0.5);
-                let name = outfit_label(ui, &f.info.name, false, font_id, p.ink, galley.size().x);
-                ui.painter().galley(pos + offset, name, p.ink);
-            }
-            worn_tag(ui, p, left + galley.size().x, rect.center().y);
-        }
-        if reveal && response.body.is_some() {
-            response.header.scroll_to_me(Some(egui::Align::Min));
-            st.reveal_outfit = None;
-        }
-        if response.body.is_some() {
+        if open {
             open_now.insert(*id);
         } else {
             let height = ui.cursor().top() - top;
@@ -1157,7 +1293,13 @@ pub fn show(
             .unwrap_or_else(|| aurora_i18n::tr!("common-current-outfit").into());
         let dirty = model::dirty(inv);
         let count = world.worn_attachment_items().len();
-        let outfits = st.shown_outfits(inv);
+        if let Some(id) = st.reveal_outfit {
+            st.open_groups_of(inv, id);
+        }
+        let (entries, outfits, total) = {
+            let shown = st.shown(inv);
+            (shown.entries.clone(), shown.outfits.clone(), shown.total)
+        };
         ui.set_width(ui.available_width());
         if st.editing {
             ui.horizontal(|ui| {
@@ -1307,15 +1449,15 @@ pub fn show(
                                 worn_list(ui, p, world, st, &mut actions, true);
                             } else {
                                 match st.tab {
-                                    0 => gallery(ui, p, world, st, &outfits, base, &mut actions, images, list_width),
-                                    1 => outfit_list(ui, p, world, st, &outfits, base, &mut actions),
+                                    0 => gallery(ui, p, world, st, &entries, &outfits, base, &mut actions, images, list_width),
+                                    1 => outfit_list(ui, p, world, st, &entries, &outfits, base, &mut actions),
                                     _ => {
                                         ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-items-to-wear")).color(p.muted));
                                         worn_list(ui, p, world, st, &mut actions, false);
                                     }
                                 }
                             }
-                            if !st.editing && st.tab < 2 && outfits.is_empty() {
+                            if !st.editing && st.tab < 2 && entries.is_empty() {
                                 ui.label(RichText::new(aurora_i18n::tr!("ui-appearance-no-outfits-to-display")).color(p.muted));
                             }
                         });
@@ -1398,6 +1540,9 @@ pub fn show(
                     );
                     menu::separator(ui, p);
                 }
+                if !st.editing && st.tab < 2 {
+                    folders::new_folder_item(ui, p, &world.inventory, st);
+                }
                 if menu::item(ui, p, "refresh", aurora_i18n::tr!("ui-appearance-refresh")) {
                     st.refresh(&mut world.inventory);
                 }
@@ -1408,7 +1553,7 @@ pub fn show(
             });
             if !st.editing && st.tab < 2 {
                 ui.label(
-                    RichText::new(aurora_i18n::tr!("outfit-count", count = outfits.len()))
+                    RichText::new(aurora_i18n::tr!("outfit-count", count = total))
                         .size(11.0)
                         .color(p.muted),
                 );
@@ -1488,6 +1633,7 @@ pub fn show(
                 }
                 st.select_name = false;
             }
+            save_in(ui, &world.inventory, st);
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -1497,7 +1643,15 @@ pub fn show(
                 if action_button_if(ui, p, "check", aurora_i18n::tr!("common-ok"), ActionKind::Primary, size, valid).clicked()
                     || (valid && enter)
                 {
-                    actions.push(Action::Save(Some(name.trim().into())));
+                    actions.push(
+                        match st
+                            .save_in
+                            .filter(|id| crate::world::outfit_folders::is_group(&world.inventory, *id))
+                        {
+                            Some(parent) => Action::SaveIn(name.trim().into(), parent),
+                            None => Action::Save(Some(name.trim().into())),
+                        },
+                    );
                     close = true;
                 }
                 if action_button(ui, p, "x", aurora_i18n::tr!("common-cancel"), ActionKind::Flat, size).clicked() {
@@ -1509,7 +1663,41 @@ pub fn show(
     }
     items::profile(ctx, p, world, st, &mut actions);
     gallery::dialogs(ctx, p, world, st, images, &mut actions);
+    folders::dialogs(ctx, p, world, st, &mut actions);
     actions
+}
+
+/// "Save in": the folder of My Outfits that takes the new outfit, offered
+/// once My Outfits has groups. An Aurora addition: the Legacy Viewer saves
+/// every new outfit at the top of My Outfits (LLAppearanceMgr::makeNewOutfitLinks).
+fn save_in(ui: &mut egui::Ui, inv: &crate::world::inventory::Inventory, st: &mut AppearanceUi) {
+    let targets = crate::world::outfit_folders::targets(inv);
+    if targets.len() < 2 {
+        return;
+    }
+    let name = |id: Uuid, depth: usize| {
+        if depth == 0 {
+            aurora_i18n::tr!("common-my-outfits").to_string()
+        } else {
+            inv.folders.get(&id).map(|f| f.info.name.clone()).unwrap_or_default()
+        }
+    };
+    let chosen = targets.iter().find(|(id, _)| Some(*id) == st.save_in).or(targets.first()).copied();
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(aurora_i18n::tr!("ui-appearance-folders-save-in"));
+        egui::ComboBox::from_id_salt("outfit_save_in")
+            .width(ui.available_width())
+            .selected_text(chosen.map(|(id, depth)| name(id, depth)).unwrap_or_default())
+            .show_ui(ui, |ui| {
+                for (id, depth) in &targets {
+                    let label = format!("{}{}", "   ".repeat(*depth), name(*id, *depth));
+                    if ui.selectable_label(chosen.is_some_and(|(c, _)| c == *id), label).clicked() {
+                        st.save_in = Some(*id);
+                    }
+                }
+            });
+    });
 }
 
 /// `AURORA_DEMO_OUTFITS=<count>,scroll`: from frame 700 the wheel scrolls
@@ -1717,7 +1905,22 @@ mod tests {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 ui.set_width(430.0);
                 if view == 0 {
-                    outfit_list(ui, &palette, &world, &mut st, &[folder], model::base(&world.inventory), &mut vec![]);
+                    let entry = Entry {
+                        id: folder,
+                        depth: 0,
+                        group: false,
+                        outfits: 0,
+                    };
+                    outfit_list(
+                        ui,
+                        &palette,
+                        &world,
+                        &mut st,
+                        &[entry],
+                        &[folder],
+                        model::base(&world.inventory),
+                        &mut vec![],
+                    );
                 } else {
                     worn_list(ui, &palette, &world, &mut st, &mut vec![], view == 2);
                 }
@@ -2231,6 +2434,54 @@ mod tests {
         );
     }
 
+    /// A closed group hides its outfits from the list, the selection and
+    /// the ranges; a filter shows every group open; locating the worn outfit
+    /// opens the groups that hold it.
+    #[test]
+    fn closed_groups_hide_their_outfits_until_a_filter_or_a_locate() {
+        let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
+        model::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        crate::world::outfit_folders::seed_demo(&mut world.inventory, Uuid::from_u128(1));
+        let (beach, night, club) = (Uuid::from_u128(741), Uuid::from_u128(742), Uuid::from_u128(740));
+        let mut st = AppearanceUi {
+            tab: 1,
+            ..Default::default()
+        };
+        assert_eq!(st.shown_outfits(&world.inventory).len(), 8);
+        st.outfit_selection.single(Uuid::from_u128(747));
+        st.toggle_group(beach);
+        let shown = st.shown_outfits(&world.inventory);
+        assert_eq!(shown.len(), 6);
+        assert!(!shown.contains(&Uuid::from_u128(746)) && !shown.contains(&Uuid::from_u128(747)));
+        assert!(
+            st.outfit_selection.ordered(&shown).is_empty(),
+            "the hidden outfit leaves the selection"
+        );
+        let entries = &st.shown(&world.inventory).entries;
+        assert!(entries.iter().any(|e| e.id == beach) && !entries.iter().any(|e| e.id == night));
+        assert_eq!(st.shown(&world.inventory).total, 8, "the count keeps them");
+        st.search = "night".into();
+        assert_eq!(st.shown_outfits(&world.inventory), vec![Uuid::from_u128(747)]);
+        st.search.clear();
+        // the worn outfit moves into Night, inside the closed Beach
+        let worn = model::base(&world.inventory).expect("worn outfit");
+        world.inventory.folders.get_mut(&worn).expect("worn").info.parent = night;
+        world.inventory.folders.get_mut(&night).expect("night").children.push(worn);
+        let my = model::system_folder(&world.inventory, model::FT_MY_OUTFITS).expect("My Outfits");
+        world
+            .inventory
+            .folders
+            .get_mut(&my)
+            .expect("My Outfits")
+            .children
+            .retain(|id| *id != worn);
+        world.inventory.generation += 1;
+        st.toggle_group(club);
+        st.locate_current(&world.inventory);
+        assert!(st.group_open(beach) && st.group_open(night) && !st.group_open(club));
+        assert!(st.shown_outfits(&world.inventory).contains(&worn));
+    }
+
     fn wardrobe(count: usize) -> World {
         let mut world = World::new(std::sync::Arc::new(crate::scene::avatar::AvatarLibrary::load()));
         world.agent_id = crate::demo::DEMO_AGENT;
@@ -2517,6 +2768,7 @@ mod tests {
         let world = wardrobe(200);
         let mut st = AppearanceUi::default();
         let outfits = st.shown_outfits(&world.inventory);
+        let entries = st.shown(&world.inventory).entries.clone();
         let base = model::base(&world.inventory);
         let mut run = |clip: Option<egui::Rect>| {
             let mut height = 0.0;
@@ -2526,7 +2778,18 @@ mod tests {
                     ui.set_clip_rect(clip);
                 }
                 let top = ui.cursor().top();
-                gallery(ui, &palette, &world, &mut st, &outfits, base, &mut vec![], &HashMap::new(), 560.0);
+                gallery(
+                    ui,
+                    &palette,
+                    &world,
+                    &mut st,
+                    &entries,
+                    &outfits,
+                    base,
+                    &mut vec![],
+                    &HashMap::new(),
+                    560.0,
+                );
                 height = ui.cursor().top() - top;
             });
             output.textures_delta.clear();
@@ -2558,6 +2821,7 @@ mod tests {
             ..Default::default()
         };
         let outfits = st.shown_outfits(&world.inventory);
+        let entries = st.shown(&world.inventory).entries.clone();
         st.outfit_selection.single(outfits[150]);
         let base = model::base(&world.inventory);
         let everything = egui::Rect::from_min_max(egui::pos2(0.0, -1e6), egui::pos2(560.0, 1e6));
@@ -2567,7 +2831,7 @@ mod tests {
                 ui.set_width(560.0);
                 ui.set_clip_rect(clip);
                 let top = ui.cursor().top();
-                outfit_list(ui, &palette, &world, &mut st, &outfits, base, &mut vec![]);
+                outfit_list(ui, &palette, &world, &mut st, &entries, &outfits, base, &mut vec![]);
                 height = ui.cursor().top() - top;
             });
             output.textures_delta.clear();

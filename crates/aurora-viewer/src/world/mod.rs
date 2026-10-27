@@ -56,6 +56,7 @@ pub mod object_im_filter;
 pub mod objects;
 pub mod open_ims;
 pub mod outfit;
+pub mod outfit_folders;
 pub mod parcel_visibility;
 pub mod parked;
 pub mod particle_filters;

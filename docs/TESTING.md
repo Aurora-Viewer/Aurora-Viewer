@@ -6568,7 +6568,7 @@ unit tests, the real requests by a grid test. The menu itself:
 `AURORA_DEMO_DOUBLECLICK=menu,<y>` with the height of the Avatar health row
 opens its submenu.
 
-**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|worn|save|edit|menu|duplicates`**
+**`AURORA_DEMO_APPEARANCE=gallery|gallery-fit|gallery-fill|outfits|multi-gallery|multi-outfits|folders|folders-outfits|worn|save|edit|menu|duplicates`**
 — opens Appearance with four synthetic outfits:
 
 - `gallery`: the gallery (the right click includes rename, favourites, image
@@ -6588,6 +6588,18 @@ opens its submenu.
   replacement has no single saved base; use Save as to save the combination.
   Conflicting body parts use the last selected outfit in display order,
   following `LLAppearanceMgr::filterWearableItems`.
+- `folders` / `folders-outfits`: the gallery or the list with outfit
+  folders in My Outfits: "Beach" (one outfit and a "Night" subfolder with
+  one), "Club" (two outfits) and an empty "Spring". The list shows them as
+  collapsible rows (a click closes or opens one, in the gallery too), the
+  gallery as sections ("Beach", "Beach › Night", "Club", "Spring", then
+  "Other outfits"). Right-click an outfit for **Move to folder** (My
+  Outfits, the folders, a new folder taking it at once; the folder holding
+  it checked), a folder for New folder, Rename folder, Move to folder and
+  Delete folder (greyed on a folder holding the worn outfit). The gear
+  menu has New folder, Save as has **Save in**. In the default window:
+  `AURORA_DEMO_POINTER="106,411,r"` (Club Black, list) opens the outfit
+  menu, `"89,386,r"` the Club folder's, capture at frame 380;
 - `outfits`: the list of outfits; `worn`: the worn items. A right click on
   an outfit's header opens the outfit menu: `AURORA_DEMO_POINTER="82,372,r"`
   (Neurolab) or `"90,397,r"` (the worn outfit) in the default window, capture

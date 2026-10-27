@@ -12170,3 +12170,19 @@ about-hidden-rlva = Hidden by RLVa
 about-ping = Ping
 about-packet-loss = Packet loss
 about-bandwidth = Bandwidth
+ui-appearance-folders-new = New folder…
+ui-appearance-folders-rename = Rename folder…
+ui-appearance-folders-delete = Delete folder
+ui-appearance-folders-delete-confirm = { $count ->
+    [0] Move the folder "{ $name }" to trash?
+    [one] Move the folder "{ $name }" and its outfit to trash?
+   *[other] Move the folder "{ $name }" and its { $count } outfits to trash?
+    }
+ui-appearance-folders-holds-current = This folder holds the outfit you are wearing.
+ui-appearance-folders-move = Move to folder
+ui-appearance-folders-other = Other outfits
+ui-appearance-folders-empty = Empty folder
+ui-appearance-folders-save-in = Save in
+world-outfit-folders-cannot-move-here = It cannot be moved into this folder.
+world-outfit-folders-already-there = It is already in this folder.
+world-outfit-folders-too-deep = Outfit folders go no deeper than four levels.

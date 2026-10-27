@@ -840,6 +840,11 @@ impl App {
             }
             return;
         }
+        // the groups of My Outfits are plain inventory folders
+        if let crate::world::appearance::Action::Folders(change) = action {
+            self.apply_inventory_action(crate::ui::inventory::InvAction::Edit(change));
+            return;
+        }
         if self.appearance_ui.pending.is_some() {
             return;
         }
@@ -860,7 +865,10 @@ impl App {
             }
             return;
         }
-        self.appearance_ui.saved_new = matches!(&action, crate::world::appearance::Action::Save(Some(_)));
+        self.appearance_ui.saved_new = matches!(
+            &action,
+            crate::world::appearance::Action::Save(Some(_)) | crate::world::appearance::Action::SaveIn(..)
+        );
         let attachments = crate::world::appearance::attachments_for_action(&self.world.inventory, self.world.agent_id, &action);
         match crate::world::appearance::plan(&self.world.inventory, action, &self.world.worn_attachment_points()) {
             Ok((change, sync)) => {
