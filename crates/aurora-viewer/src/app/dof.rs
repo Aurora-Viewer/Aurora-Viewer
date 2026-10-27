@@ -58,10 +58,11 @@ impl App {
             }
             return Some(dof::lens(&s, d, fov_y, height, window_height, debug));
         }
-        // the photo window's lens while it is open and on, else the
-        // Preferences' (never changed by the window)
+        // the photo window's lens while it is open, off included (its All
+        // sharp is sharp, not the Preferences' blur), else the Preferences'
+        // (never changed by the window)
         let photo = &self.settings.snapshot.dof;
-        let (s, manual) = if self.panels.snapshot && photo.enabled {
+        let (s, manual) = if self.panels.snapshot {
             photo.applied(&self.settings.dof)
         } else {
             (self.settings.dof.clone(), None)
