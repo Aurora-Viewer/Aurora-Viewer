@@ -300,7 +300,7 @@ impl MarketplaceData {
     /// isUpdating: only listing and version folders show it.
     pub fn is_updating(&self, inv: &Inventory, root: Uuid, folder: Uuid) -> bool {
         let depth = depth(inv, root, folder);
-        if !(1..=2).contains(&depth) {
+        if depth < 1 {
             return false;
         }
         self.pending.contains(&root) || self.pending.contains(&nested_parent(inv, folder, depth))

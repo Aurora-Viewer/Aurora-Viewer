@@ -12,6 +12,98 @@ fn id(n: u128) -> Uuid {
 const ROOT: u128 = 1;
 const LISTINGS_ROOT: u128 = 2;
 
+#[test]
+fn clipboard_copies_normalize_only_the_copies_and_moves_keep_stock_rules() {
+    let inv = inventory();
+    let worn = HashSet::new();
+    let root = id(LISTINGS_ROOT);
+    let change = validate::paste_plan(&inv, root, id(10), &[id(201)], true, &worn).expect("copy into listing");
+    assert_eq!(change.copies.len(), 1);
+    assert_eq!(change.copies[0].item, id(201));
+    assert!(
+        change.operations.iter().any(
+            |op| matches!(op, Operation::Folder { id: folder, parent, .. } if *folder == change.copies[0].parent && *parent == id(10))
+        )
+    );
+    assert!(
+        !change
+            .operations
+            .iter()
+            .any(|op| matches!(op, Operation::Patch { id: source, .. } if *source == id(201)))
+    );
+    assert_eq!(inv.items[&id(201)].parent, id(20));
+
+    // A folder with loose copyable items becomes a listing/version pair,
+    // without the fixing audit moving the source's children.
+    let mut inv = inventory();
+    inv.remove(&[id(202)]);
+    let change = validate::paste_plan(&inv, root, root, &[id(20)], true, &worn).expect("copy normalized folder");
+    assert_eq!(change.copies.len(), 1);
+    let version = change.copies[0].parent;
+    let listing = change
+        .operations
+        .iter()
+        .find_map(|op| match op {
+            Operation::Folder { id, parent, .. } if *id == version => Some(*parent),
+            _ => None,
+        })
+        .expect("version");
+    assert!(
+        change
+            .operations
+            .iter()
+            .any(|op| matches!(op, Operation::Folder { id, parent, .. } if *id == listing && *parent == root)),
+        "{change:?}"
+    );
+    assert!(
+        !change
+            .operations
+            .iter()
+            .any(|op| matches!(op, Operation::Patch { id: item, .. } if [id(20), id(201)].contains(item)))
+    );
+
+    let inv = inventory();
+    assert!(validate::paste_plan(&inv, root, id(12), &[id(202)], true, &worn).is_err());
+    let copied = validate::paste_plan(&inv, root, root, &[id(20)], true, &worn).expect("copyable contents only");
+    assert_eq!(copied.copies.len(), 1);
+    assert_eq!(copied.copies[0].item, id(201));
+    assert!(validate::paste_plan(&inv, root, id(13), &[id(201)], false, &worn).is_err());
+    let change = validate::paste_plan(&inv, root, id(12), &[id(202)], false, &worn).expect("move stock item");
+    assert!(
+        change
+            .operations
+            .iter()
+            .any(|op| matches!(op, Operation::Folder { type_default, .. } if *type_default == STOCK))
+    );
+    assert!(crate::world::inventory::actions::paste(&inv, &[id(201)], id(12), false, true, &HashSet::new(), &worn).is_err());
+
+    // Copying an unfinished listing must normalize the clone alone, even
+    // when its source is already below the Marketplace root.
+    let mut inv = inventory();
+    let mut folder = inv.folders[&id(20)].info.clone();
+    folder.parent = root;
+    inv.server_updated(vec![folder], Vec::new());
+    let copied = validate::paste_plan(&inv, root, root, &[id(20)], true, &worn).expect("copy an unfinished listing");
+    assert_eq!(copied.copies.len(), 1);
+    assert!(
+        !copied
+            .operations
+            .iter()
+            .any(|op| matches!(op, Operation::Patch { id: source, .. } if [id(20), id(201), id(202)].contains(source)))
+    );
+}
+
+#[test]
+fn pending_listing_updates_cover_items_and_stock_descendants() {
+    let inv = inventory();
+    let mut data = merchant_with(&inv, vec![listing(1, 10, 11, true, 3)]);
+    data.activate_listing(&inv, id(LISTINGS_ROOT), id(10), false);
+    for n in [10, 11, 12, 13, 101, 104] {
+        assert!(data.is_updating(&inv, id(LISTINGS_ROOT), id(n)), "{n}");
+    }
+    assert!(!data.is_updating(&inv, id(LISTINGS_ROOT), id(201)));
+}
+
 /// My Inventory (1) › Marketplace listings (2) › listing (10) › versions
 /// (11, 12); the stock folder 13 in version 11 holds three no-copy items.
 fn inventory() -> Inventory {

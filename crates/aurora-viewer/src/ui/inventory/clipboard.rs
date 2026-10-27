@@ -89,6 +89,14 @@ pub(super) fn paste(
     actions: &mut Vec<InvAction>,
 ) {
     let cut = st.cut && !links;
+    if !links && crate::world::marketplace::root(inv).is_some_and(|root| rules::under(inv, to, root)) {
+        actions.push(InvAction::MarketplacePaste {
+            to,
+            ids: st.clipboard.clone(),
+            copy: !cut,
+        });
+        return;
+    }
     match rules::paste(inv, &st.clipboard, to, cut, links, &prefs.protected, &facts.worn) {
         Ok(change) => {
             st.consume_clipboard = cut;

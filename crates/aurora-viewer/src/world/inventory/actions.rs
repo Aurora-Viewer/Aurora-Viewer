@@ -49,7 +49,7 @@ pub fn mutable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
         && !protected.iter().any(|p| under(inv, id, *p))
 }
 pub fn movable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
-    mutable(inv, id, protected) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47))
+    mutable(inv, id, protected) && inv.folders.get(&id).is_none_or(|f| matches!(f.info.type_default, -1 | 47 | 54))
 }
 pub fn renameable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
     mutable(inv, id, protected)
@@ -59,11 +59,11 @@ pub fn renameable(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool 
                     .get(&id)
                     .is_some_and(|it| it.owner_mask & MODIFY != 0 && !matches!(it.asset_type, 2 | 24 | 25))
             },
-            |f| matches!(f.info.type_default, -1 | 47),
+            |f| matches!(f.info.type_default, -1 | 47 | 54),
         )
 }
 pub fn destination(inv: &Inventory, id: Uuid, protected: &HashSet<Uuid>) -> bool {
-    inv.folders.contains_key(&id) && mutable(inv, id, protected) && !in_type(inv, id, 14) && !in_type(inv, id, 48) && !in_type(inv, id, 53)
+    inv.folders.contains_key(&id) && mutable(inv, id, protected) && !in_type(inv, id, 14) && !in_type(inv, id, 48)
 }
 pub fn original(inv: &Inventory, mut id: Uuid) -> Option<Uuid> {
     // Most rows are no link: answer them without the cycle guard's set
@@ -214,6 +214,9 @@ pub fn move_selection(
         }
         push_move(inv, id, to, &mut change)?;
     }
+    if let Some(root) = crate::world::marketplace::root(inv).filter(|root| under(inv, to, *root)) {
+        return crate::world::marketplace::validate::drop_plan(inv, root, to, ids, worn);
+    }
     Ok(change)
 }
 fn copy_one(inv: &Inventory, id: Uuid, to: Uuid, change: &mut Mutation, visited: &mut HashSet<Uuid>) -> Result<(), String> {
@@ -276,6 +279,17 @@ pub fn paste(
 ) -> Result<Mutation, String> {
     if ids.is_empty() || !destination(inv, to, protected) {
         return Err(aurora_i18n::tr!("world-inventory-actions-the-clipboard-is-empty-or-the-folder-is-protected").into());
+    }
+    if let Some(root) = crate::world::marketplace::root(inv).filter(|root| under(inv, to, *root)) {
+        if links {
+            return Err(aurora_i18n::tr!("marketplace-reason-linked").into());
+        }
+        if cut {
+            // Preserve the inventory's protection checks before the Marketplace
+            // validator prepares its version and stock hierarchy.
+            move_selection(inv, ids, to, protected, worn)?;
+        }
+        return crate::world::marketplace::validate::paste_plan(inv, root, to, ids, !cut, worn);
     }
     if cut {
         return move_selection(inv, ids, to, protected, worn);

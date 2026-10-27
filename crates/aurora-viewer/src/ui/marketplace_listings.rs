@@ -7,7 +7,7 @@
 //! LLFloaterMarketplaceValidation, originally LGPL 2.1.
 
 use super::icons::Icons;
-use super::inventory::{FolderDrag, InvDrag, tree};
+use super::inventory::{FolderDrag, InvDrag, listings::Panel, tree};
 use super::widgets::{self, ActionKind, Floater, Modal};
 use crate::theme::Palette;
 use crate::world::inventory::actions::{request_tree, under};
@@ -51,21 +51,45 @@ pub enum Action {
     CreateRoot,
     /// Inventory changes: a drop, the fixes of an audit, a new folder.
     Edit(Mutation),
+    Paste {
+        change: Mutation,
+        cut: bool,
+    },
     /// A Marketplace page, in the Marketplace window.
     OpenMarketplace(String),
     /// A page outside the Marketplace, in the system browser.
     OpenExternal(String),
     /// An alert for the notifications: title, text and a link.
-    Notify { text: String, url: Option<String> },
+    Notify {
+        text: String,
+        url: Option<String>,
+    },
 }
 
 /// A choice the merchant confirms first.
 #[derive(Debug, Clone)]
 enum Confirm {
     /// ConfirmMerchantMoveInventory or ConfirmMerchantActiveChange.
-    Drop { dest: Uuid, ids: Vec<Uuid>, active: bool },
+    Drop {
+        dest: Uuid,
+        ids: Vec<Uuid>,
+        active: bool,
+    },
     /// ConfirmMerchantUnlist: associating a listed listing.
-    Associate { folder: Uuid, id: i32 },
+    Associate {
+        folder: Uuid,
+        id: i32,
+    },
+    Inventory {
+        change: Mutation,
+        cut: bool,
+    },
+    Paste {
+        to: Uuid,
+        ids: Vec<Uuid>,
+        copy: bool,
+        active: bool,
+    },
 }
 
 #[derive(Default)]
@@ -75,7 +99,6 @@ pub struct ListingsUi {
     tab: usize,
     filter: String,
     expanded: HashSet<Uuid>,
-    selected: Option<Uuid>,
     /// LLFloaterMarketplaceValidation: the lines of the last audit.
     audit: Option<Vec<Message>>,
     audit_open: bool,
@@ -87,6 +110,7 @@ pub struct ListingsUi {
     root_requested: bool,
     reconciled: u64,
     demo_audited: bool,
+    demo_menu: Option<Uuid>,
 }
 
 /// isInActiveFolder: an object inside the version folder of a listed listing.
@@ -210,7 +234,8 @@ impl ListingsUi {
         }
     }
 
-    pub fn show(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn show(
         &mut self,
         ctx: &egui::Context,
         p: &Palette,
@@ -218,21 +243,50 @@ impl ListingsUi {
         inv: &mut Inventory,
         worn: &HashSet<Uuid>,
         home: Option<&str>,
+        panel: &mut Panel<'_>,
     ) -> Vec<Action> {
         let mut actions = Vec::new();
         if !self.open {
             return actions;
         }
+        panel.begin();
+        self.expanded.extend(panel.reveal());
         let work = super::layout::work_area(ctx);
         let size = DEFAULT_SIZE.min(work.size() - Vec2::splat(2.0 * super::layout::GAP)).max(MIN_SIZE);
         let default = Rect::from_min_size((work.center() - size * 0.5).round(), size);
         let mut floater = Floater::new(WINDOW, aurora_i18n::tr!("marketplace-listings-title"), default.min, default.size());
         floater.min_size = MIN_SIZE;
         let mut open = self.open;
-        floater.show(ctx, p, &mut open, |ui| self.contents(ui, p, icons, inv, worn, home, &mut actions));
+        floater.show(ctx, p, &mut open, |ui| {
+            self.contents(ui, p, icons, inv, worn, home, panel, &mut actions)
+        });
         self.open = open;
-        self.dialogs(ctx, p, inv, worn, &mut actions);
+        if !open {
+            panel.begin();
+        }
+        self.dialogs(ctx, p, inv, worn, &panel.prefs.protected, &mut actions);
         self.audit_window(ctx, p);
+        if let Some(id) = self.demo_menu {
+            let mut open = true;
+            super::menu::popup_at(
+                ctx,
+                egui::Id::unique("listings_demo_menu"),
+                work.center() - Vec2::new(20.0, 180.0),
+                &mut open,
+                p,
+                |ui| {
+                    panel
+                        .state
+                        .marketplace_commands
+                        .insert(id, self.inventory_commands(inv, mp::root(inv).unwrap_or_default(), id));
+                    panel.menu(ui, p, inv, id);
+                },
+            );
+            if !open {
+                self.demo_menu = None;
+            }
+        }
+        panel.finish(ctx, inv);
         actions
     }
 
@@ -246,6 +300,7 @@ impl ListingsUi {
         inv: &mut Inventory,
         worn: &HashSet<Uuid>,
         home: Option<&str>,
+        panel: &mut Panel<'_>,
         actions: &mut Vec<Action>,
     ) {
         let merchant = self.data.is_merchant();
@@ -292,8 +347,8 @@ impl ListingsUi {
             ];
             widgets::tabs(ui, p, &mut self.tab, &labels);
             ui.add_space(6.0);
-            let count = self.listings_tree(ui, p, icons, inv, worn, root, actions);
-            self.footer(ui, p, inv, worn, root, home, count, actions);
+            let count = self.listings_tree(ui, p, icons, inv, worn, root, panel, actions);
+            self.footer(ui, p, inv, worn, root, home, panel, count, actions);
             return;
         }
         match status {
@@ -339,6 +394,7 @@ impl ListingsUi {
         inv: &mut Inventory,
         worn: &HashSet<Uuid>,
         root: Uuid,
+        panel: &mut Panel<'_>,
         actions: &mut Vec<Action>,
     ) -> usize {
         let tab = TABS[self.tab.min(3)];
@@ -364,6 +420,7 @@ impl ListingsUi {
         let count = listings.len();
         let list_h = tree::height(ui);
         let zone = tree::frame(ui, p, |ui| {
+            panel.focus(ui, list_h);
             tree::scroll(ui, list_h).show(ui, |ui| {
                 tree::spacing(ui);
                 if !any {
@@ -383,7 +440,7 @@ impl ListingsUi {
                     ui.label(RichText::new(text).color(p.muted));
                 }
                 for id in listings {
-                    self.folder_tree(ui, p, icons, inv, worn, root, id, 1, &filter, actions);
+                    self.folder_tree(ui, p, icons, inv, worn, root, id, 1, &filter, panel, actions);
                 }
                 if root_drop && any {
                     ui.add_space(6.0);
@@ -395,6 +452,7 @@ impl ListingsUi {
                 }
             });
         });
+        panel.shortcuts(ui, inv, root);
         if root_drop {
             self.drop_target(ui, p, &zone.response, inv, worn, root, root, actions);
         } else if zone.response.contains_pointer()
@@ -417,6 +475,7 @@ impl ListingsUi {
         worn: &HashSet<Uuid>,
         root: Uuid,
         home: Option<&str>,
+        panel: &mut Panel<'_>,
         count: usize,
         actions: &mut Vec<Action>,
     ) {
@@ -434,7 +493,9 @@ impl ListingsUi {
                     refresh: vec![root, id],
                     ..Default::default()
                 }));
-                self.selected = Some(id);
+                panel.state.selected = Some(id);
+                panel.state.selection.clear();
+                panel.state.selection.insert(id);
             }
             // onAuditButtonClicked: the whole listings, nothing changed
             if widgets::icon_button(ui, p, "clipboard-text-filled", aurora_i18n::tr!("marketplace-listings-audit"), true) {
@@ -467,6 +528,7 @@ impl ListingsUi {
         id: Uuid,
         depth: i32,
         filter: &str,
+        panel: &mut Panel<'_>,
         actions: &mut Vec<Action>,
     ) {
         tree::spacing(ui);
@@ -480,7 +542,8 @@ impl ListingsUi {
         let open = self.expanded.contains(&id) || !filter.is_empty();
         let active = self.data.activation_state(id) && depth == 1;
         let label = row_label(&name, &badges(&self.data, inv, root, id), p);
-        let selected = self.selected == Some(id);
+        let selected = panel.state.selection.contains(&id);
+        let mut renaming = false;
         let response = ui
             .horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -499,20 +562,31 @@ impl ListingsUi {
                 tree::icon(ui, icons, icon, p, tint);
                 // getLabelStyle: bold while listed
                 let bold = active.then(|| ui.painter().layout_no_wrap(name.clone(), tree::font(), p.ink));
-                tree::label(ui, label, selected, egui::Sense::click_and_drag(), bold)
+                renaming = panel.rename(ui, p, inv, id);
+                if renaming {
+                    ui.response()
+                } else {
+                    tree::label(ui, label, selected, egui::Sense::click_and_drag(), bold)
+                }
             })
             .inner;
-        if depth >= 1 {
+        if !renaming {
             response.dnd_set_drag_payload(FolderDrag(id));
+            panel.interact(ui, inv, id, &response);
+            if response.double_clicked() {
+                self.toggle(id);
+            }
+            self.drop_target(ui, p, &response, inv, worn, root, id, actions);
+            super::menu::context_menu(&response, p, |ui| {
+                panel.state.marketplace_commands.insert(id, self.inventory_commands(inv, root, id));
+                let pending = panel.state.pending;
+                if self.data.is_updating(inv, root, id) {
+                    panel.state.pending = Some(Uuid::nil());
+                }
+                panel.menu(ui, p, inv, id);
+                panel.state.pending = pending;
+            });
         }
-        if response.clicked() || response.secondary_clicked() {
-            self.selected = Some(id);
-        }
-        if response.double_clicked() {
-            self.toggle(id);
-        }
-        self.drop_target(ui, p, &response, inv, worn, root, id, actions);
-        super::menu::context_menu(&response, p, |ui| self.folder_menu(ui, p, inv, worn, root, id, depth, actions));
         if !open {
             return;
         }
@@ -528,7 +602,7 @@ impl ListingsUi {
             children.sort();
             let empty = children.is_empty() && inv.folders.get(&id).is_none_or(|f| f.items.is_empty());
             for (_, child) in children {
-                self.folder_tree(ui, p, icons, inv, worn, root, child, depth + 1, filter, actions);
+                self.folder_tree(ui, p, icons, inv, worn, root, child, depth + 1, filter, panel, actions);
             }
             let items: Vec<Uuid> = inv.folders.get(&id).map(|f| f.items.clone()).unwrap_or_default();
             for item in items {
@@ -541,7 +615,8 @@ impl ListingsUi {
                 if let Some(permissions) = super::inventory::permissions::Permissions::inventory(inv, item) {
                     permissions.append_suffix(ui, &mut label, p);
                 }
-                let selected = self.selected == Some(item);
+                let selected = panel.state.selection.contains(&item);
+                let mut renaming = false;
                 let response = ui
                     .horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
@@ -552,13 +627,31 @@ impl ListingsUi {
                             p,
                             Some(super::inventory::item_icon_color(it.asset_type, it.inv_type, p)),
                         );
-                        tree::label(ui, label, selected, egui::Sense::click_and_drag(), None)
+                        renaming = panel.rename(ui, p, inv, item);
+                        if renaming {
+                            ui.response()
+                        } else {
+                            tree::label(ui, label, selected, egui::Sense::click_and_drag(), None)
+                        }
                     })
                     .inner;
-                response.dnd_set_drag_payload(InvDrag(item));
-                if response.clicked() {
-                    self.selected = Some(item);
+                if renaming {
+                    continue;
                 }
+                response.dnd_set_drag_payload(InvDrag(item));
+                panel.interact(ui, inv, item, &response);
+                super::menu::context_menu(&response, p, |ui| {
+                    panel
+                        .state
+                        .marketplace_commands
+                        .insert(item, self.inventory_commands(inv, root, item));
+                    let pending = panel.state.pending;
+                    if self.data.is_updating(inv, root, item) {
+                        panel.state.pending = Some(Uuid::nil());
+                    }
+                    panel.menu(ui, p, inv, item);
+                    panel.state.pending = pending;
+                });
                 // a drop on an item goes to its folder
                 self.drop_target(ui, p, &response, inv, worn, root, id, actions);
             }
@@ -579,25 +672,6 @@ impl ListingsUi {
         }
     }
 
-    /// The marketplace entries of the folder menu, by listing depth.
-    #[allow(clippy::too_many_arguments)]
-    fn folder_menu(
-        &mut self,
-        ui: &mut egui::Ui,
-        p: &Palette,
-        inv: &Inventory,
-        worn: &HashSet<Uuid>,
-        root: Uuid,
-        id: Uuid,
-        _depth: i32,
-        actions: &mut Vec<Action>,
-    ) {
-        for option in self.inventory_commands(inv, root, id) {
-            if super::menu::item_if(ui, p, option.command.icon(), option.command.label(), option.enabled) {
-                self.inventory_command(inv, worn, root, id, option.command, actions);
-            }
-        }
-    }
     /// marketplace_create_listing: an audit, then one that fixes, then the
     /// listing.
     fn create_listing(&mut self, inv: &Inventory, worn: &HashSet<Uuid>, root: Uuid, id: Uuid, actions: &mut Vec<Action>) {
@@ -724,7 +798,16 @@ impl ListingsUi {
     }
 
     /// The confirmations and LLFloaterAssociateListing.
-    fn dialogs(&mut self, ctx: &egui::Context, p: &Palette, inv: &Inventory, worn: &HashSet<Uuid>, actions: &mut Vec<Action>) {
+    #[allow(clippy::too_many_arguments)]
+    fn dialogs(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Palette,
+        inv: &Inventory,
+        worn: &HashSet<Uuid>,
+        protected: &HashSet<Uuid>,
+        actions: &mut Vec<Action>,
+    ) {
         let Some(root) = mp::root(inv) else {
             self.confirm = None;
             self.associate = None;
@@ -732,8 +815,10 @@ impl ListingsUi {
         };
         if let Some(confirm) = self.confirm.clone() {
             let text = match &confirm {
-                Confirm::Drop { active: true, .. } => aurora_i18n::tr!("marketplace-confirm-active-change"),
-                Confirm::Drop { .. } => aurora_i18n::tr!("marketplace-confirm-move"),
+                Confirm::Drop { active: true, .. } | Confirm::Paste { active: true, .. } | Confirm::Inventory { .. } => {
+                    aurora_i18n::tr!("marketplace-confirm-active-change")
+                }
+                Confirm::Drop { .. } | Confirm::Paste { .. } => aurora_i18n::tr!("marketplace-confirm-move"),
                 Confirm::Associate { .. } => aurora_i18n::tr!("marketplace-confirm-unlist"),
             };
             let mut answer = None;
@@ -784,6 +869,8 @@ impl ListingsUi {
                             let source = self.data.listing_folder(id);
                             self.data.associate_listing(inv, folder, source, id);
                         }
+                        Confirm::Inventory { change, cut } => actions.push(Action::Paste { change, cut }),
+                        Confirm::Paste { to, ids, copy, .. } => self.paste_inventory(inv, worn, protected, to, &ids, copy, true, actions),
                     }
                 }
             }
@@ -898,6 +985,10 @@ impl ListingsUi {
 
     pub fn demo_expand(&mut self, ids: &[Uuid]) {
         self.expanded.extend(ids.iter().copied());
+    }
+
+    pub fn demo_menu(&mut self, id: Uuid) {
+        self.demo_menu = Some(id);
     }
 }
 
@@ -1016,6 +1107,58 @@ mod tests {
                 .iter()
                 .any(|request| matches!(request, aurora_net::slm::SlmRequest::Update { .. }))
         );
+    }
+
+    #[test]
+    fn item_rows_only_edit_the_listing_and_active_structural_changes_ask_first() {
+        let inv = demo_inventory();
+        let mut ui = merchant(&inv);
+        let root = mp::root(&inv).expect("listings root");
+        let item = Uuid::from_u128(8_400_102);
+        let commands = ui.inventory_commands(&inv, root, item);
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command, Command::Edit);
+        let change =
+            crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "name" => "Renamed" }).expect("name edit");
+        assert!(ui.guard_inventory_change(&inv, change, false).is_some());
+        let change = crate::world::inventory::actions::patch(&inv, item, aurora_llsd::llsd_map! { "parent_id" => inv.root }).expect("move");
+        assert!(ui.guard_inventory_change(&inv, change, false).is_none());
+        assert!(matches!(ui.confirm, Some(Confirm::Inventory { .. })));
+        assert!(ui.open);
+    }
+
+    #[test]
+    fn clipboard_confirmation_rechecks_protection_and_does_not_consume_a_refused_cut() {
+        let inv = demo_inventory();
+        let mut ui = merchant(&inv);
+        let item = Uuid::from_u128(8_400_102);
+        let worn = HashSet::new();
+        let mut actions = Vec::new();
+        ui.paste_inventory(&inv, &worn, &HashSet::new(), demo::HOODIE_V2, &[item], true, false, &mut actions);
+        assert!(actions.is_empty());
+        assert!(matches!(
+            ui.confirm,
+            Some(Confirm::Paste {
+                active: true,
+                copy: true,
+                ..
+            })
+        ));
+        ui.confirm = None;
+        ui.paste_inventory(
+            &inv,
+            &worn,
+            &HashSet::from([demo::HOODIE_V2]),
+            demo::HOODIE_V2,
+            &[item],
+            false,
+            true,
+            &mut actions,
+        );
+        assert!(actions.iter().all(|action| !matches!(action, Action::Paste { .. })));
+        actions.clear();
+        ui.paste_inventory(&inv, &worn, &HashSet::new(), demo::HOODIE_V1, &[item], true, false, &mut actions);
+        assert!(matches!(actions.as_slice(), [Action::Paste { cut: false, .. }]));
     }
 
     #[test]

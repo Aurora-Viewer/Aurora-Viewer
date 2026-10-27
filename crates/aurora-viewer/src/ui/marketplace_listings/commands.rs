@@ -78,6 +78,91 @@ impl Command {
 }
 
 impl ListingsUi {
+    /// LLFolderBridge::pasteFromClipboard: validate again after confirmation,
+    /// since stock, permissions or the clipboard may have changed meanwhile.
+    #[allow(clippy::too_many_arguments)]
+    pub fn paste_inventory(
+        &mut self,
+        inv: &Inventory,
+        worn: &HashSet<Uuid>,
+        protected: &HashSet<Uuid>,
+        to: Uuid,
+        ids: &[Uuid],
+        copy: bool,
+        confirmed: bool,
+        actions: &mut Vec<Action>,
+    ) {
+        let Some(root) = mp::root(inv) else { return };
+        if !self.data.is_merchant()
+            || self.data.fetch() != Fetch::Done
+            || self.data.is_updating(inv, root, to)
+            || ids.iter().any(|id| self.data.is_updating(inv, root, *id))
+        {
+            return;
+        }
+        let change = match crate::world::inventory::actions::paste(inv, ids, to, !copy, false, protected, worn) {
+            Ok(change) => change,
+            Err(reason) => {
+                self.message = reason.clone();
+                actions.push(notify(&reason));
+                return;
+            }
+        };
+        let active = in_active_folder(&self.data, inv, root, to) || (!copy && ids.iter().any(|id| self.affects_active(inv, root, *id)));
+        if !confirmed && (active || ids.iter().any(|id| mp::depth(inv, root, *id) < 0)) {
+            self.open = true;
+            self.confirm = Some(Confirm::Paste {
+                to,
+                ids: ids.to_vec(),
+                copy,
+                active,
+            });
+        } else {
+            actions.push(Action::Paste { change, cut: !copy });
+        }
+    }
+
+    fn affects_active(&self, inv: &Inventory, root: Uuid, id: Uuid) -> bool {
+        in_active_folder(&self.data, inv, root, id) || (self.data.is_listed(id) && self.data.activation_state(id))
+    }
+
+    /// Confirm structural edits to an active listing from any inventory panel,
+    /// including Delete, Move to default folder and Create folder from selection.
+    pub fn guard_inventory_change(&mut self, inv: &Inventory, change: Mutation, cut: bool) -> Option<Mutation> {
+        let Some(root) = mp::root(inv) else { return Some(change) };
+        if change.operations.iter().any(|operation| {
+            let id = match operation {
+                Operation::Folder { parent, .. } | Operation::Links { parent, .. } => *parent,
+                Operation::Patch { id, .. } | Operation::Delete { id, .. } | Operation::Purge(id) => *id,
+            };
+            self.data.is_updating(inv, root, id)
+        }) {
+            return None;
+        }
+        let mut affected = Vec::new();
+        for operation in &change.operations {
+            match operation {
+                Operation::Folder { parent, .. } => affected.push(*parent),
+                Operation::Patch { id, body, .. } if body.has("parent_id") => {
+                    affected.extend([*id, body["parent_id"].as_uuid()]);
+                }
+                Operation::Delete { id, .. } | Operation::Purge(id) => affected.push(*id),
+                _ => {}
+            }
+        }
+        affected.extend(change.copies.iter().map(|copy| copy.parent));
+        if affected.iter().any(|id| self.data.is_updating(inv, root, *id)) {
+            return None;
+        }
+        if affected.iter().any(|id| self.affects_active(inv, root, *id)) {
+            self.open = true;
+            self.confirm = Some(Confirm::Inventory { change, cut });
+            None
+        } else {
+            Some(change)
+        }
+    }
+
     pub fn inventory_commands(&self, inv: &Inventory, root: Uuid, id: Uuid) -> Vec<OptionState> {
         let depth = mp::depth(inv, root, id);
         if depth < 1 || root.is_nil() {
@@ -92,7 +177,7 @@ impl ListingsUi {
                 enabled: enabled && !updating && loaded,
             })
         };
-        if depth == 1 {
+        if depth == 1 && inv.folders.contains_key(&id) {
             let listed = self.data.is_listed(id);
             let version = self.data.version_folder(id);
             let live = self.data.activation_state(id);
@@ -104,7 +189,7 @@ impl ListingsUi {
             add(Command::Disassociate, listed);
             add(Command::Refresh, listed);
         }
-        if depth == 2 {
+        if depth == 2 && inv.folders.contains_key(&id) {
             let parent = inv.folders.get(&id).map_or(Uuid::nil(), |folder| folder.info.parent);
             if self.data.is_listed(parent) {
                 add(Command::Activate, !self.data.is_version_folder(id));

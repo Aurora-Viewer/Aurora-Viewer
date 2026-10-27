@@ -6330,7 +6330,7 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   at start on it, the menu entry shows, and a link to an address under it
   opens in the window instead of the system browser. Without it the demo
   has no Marketplace (the entry is hidden, as on a grid without one).
-- **`AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit`**:
+- **`AURORA_DEMO_MARKETPLACE_LISTINGS=merchant|not-merchant|error|audit|menu-listing|menu-version|menu-item`**:
   Me › Marketplace listings open at start, answered by an SLM server
   simulated in the viewer (nothing is sent). `merchant` (any other
   value too) adds sample listings to the inventory: a listed hoodie with
@@ -6342,6 +6342,12 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   be updated" alert). `not-merchant`: Firestorm's explanation and the
   link to open a store. `error`: the connection error with its reason.
   `audit`: `merchant`, with the audit window of every listing open.
+  `menu-listing`, `menu-version`, `menu-item`: the shared inventory context
+  menu open on a listed folder, its active version or an object in it.
+  Check rename (including F2), properties, image, folder protection/reload,
+  folder windows, shared copy/cut/paste, links, delete, grouping and favourites.
+  Changes to an active listing ask for confirmation; paste checks sale
+  permissions, stock compatibility and hierarchy limits again when confirmed.
 - **`AURORA_DEMO_PLACE_WINDOW=1`**: with `AURORA_DEMO_PLACE`, the separate
   place windows instead of "Places" ("Landmarks and place
   profiles" option, not saved).

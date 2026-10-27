@@ -739,7 +739,7 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
             share,
             Command::Share(ids.clone()),
         );
-        if all || folder.is_some_and(|f| matches!(f.info.type_default, -1 | 47) && !f.library) {
+        if all || folder.is_some_and(|f| matches!(f.info.type_default, -1 | 47 | 54) && !f.library) {
             c.add(
                 "protect-folder",
                 TEXT,
@@ -960,6 +960,9 @@ fn build_mode(inv: &Inventory, id: Uuid, st: &InventoryUi, prefs: &InventoryPref
         c.slot("delete", 7);
     }
     extra::build(&mut c, inv, id, st, prefs, facts, all);
+    if !all {
+        super::listings::restrict(&mut c, inv, id, st);
+    }
     c
 }
 
@@ -1209,17 +1212,9 @@ pub(super) fn execute(
         Command::Move(id) => st.begin_move_to(id),
         Command::Paste(id, link) => clipboard::paste(inv, id, link, st, prefs, facts, actions),
         Command::Original(id) => st.show_original(inv, id),
+        Command::Links(id) if st.ui_id == super::listings::PANEL => actions.push(InvAction::FindLinks(id)),
         Command::Links(id) => {
-            st.search.clear();
-            if st.saved_filters.is_none() {
-                st.saved_filters = Some(st.filters.clone());
-            }
-            st.filters.links = super::view::Links::Only;
-            st.filters.always_folders = false;
-            st.filters_initialized = true;
-            st.links_filter = Some(id);
-            st.fetch_all = true;
-            st.tab = 0;
+            st.find_links(id);
         }
         Command::Replace(id) => {
             st.dialog = Some(EditDialog::ReplaceLinks(id, None));

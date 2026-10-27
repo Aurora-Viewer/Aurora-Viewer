@@ -8770,6 +8770,7 @@ impl App {
                 || self.chat_ui.demo_reorder.is_some()
                 || std::env::var_os("AURORA_DEMO_EMOJI_CODES").is_some()
                 || std::env::var("AURORA_DEMO_OBJECT_MENU").is_ok_and(|mode| mode.starts_with("customize"))
+                || std::env::var("AURORA_DEMO_MARKETPLACE_LISTINGS").is_ok_and(|mode| mode.starts_with("menu-"))
                 || std::env::var("AURORA_DEMO_INVENTORY").is_ok_and(|v| {
                     matches!(
                         v.as_str(),
