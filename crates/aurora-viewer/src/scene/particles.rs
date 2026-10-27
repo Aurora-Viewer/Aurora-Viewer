@@ -20,6 +20,7 @@ struct Source {
     /// Loading cloud of an avatar (not an object's particle system).
     cloud: bool,
     owner: Uuid,
+    object: Uuid,
 }
 
 /// Captured at the press, before asynchronous object-depth readback. Retain
@@ -27,6 +28,7 @@ struct Source {
 #[derive(Clone, Copy, Debug)]
 pub struct ParticleHit {
     pub source: Uuid,
+    pub object: Uuid,
     pub owner: Uuid,
     pub point: Vec3,
     pub distance: f32,
@@ -93,6 +95,7 @@ fn cloud_data(avatar: Uuid) -> ps::PartSysData {
 #[derive(Default)]
 pub struct ParticleManager {
     sources: HashMap<Uuid, Source>,
+    property_owners: HashMap<Uuid, Uuid>,
     seed: u64,
     /// The frame's instances in source order, and their back to front
     /// order (reused).
@@ -117,6 +120,13 @@ fn far_first_key(distance_sq: f32, index: usize) -> u64 {
 }
 
 impl ParticleManager {
+    pub fn on_properties(&mut self, props: &[aurora_net::build::ObjectProps]) {
+        for props in props {
+            if !props.owner_id.is_nil() {
+                self.property_owners.insert(props.object_id, props.owner_id);
+            }
+        }
+    }
     /// LLViewerObject::isParticleSource excludes expired emitters even
     /// while their last particles are fading and their PSBlock is retained.
     pub fn beacon_source(&self, id: &Uuid) -> bool {
@@ -143,6 +153,7 @@ impl ParticleManager {
                     slot: 0,
                     cloud: true,
                     owner: Uuid::nil(),
+                    object: *id,
                 },
             );
         }
@@ -165,19 +176,40 @@ impl ParticleManager {
         self.sources.get(id).map(|s| s.ps.data())
     }
 
+    pub fn emitter(&self, object: Uuid) -> Option<Uuid> {
+        self.sources
+            .values()
+            .find(|s| s.object == object && !s.cloud && (s.ps.is_emitting() || !s.ps.particles().is_empty()))
+            .map(|s| s.owner)
+    }
+
+    pub(crate) fn owner_particle_count(&self, owner: Uuid) -> usize {
+        self.sources
+            .values()
+            .filter(|s| !s.cloud && s.owner == owner)
+            .map(|s| s.ps.particles().len())
+            .sum()
+    }
+
     /// The particle a right click lands on (LLPipeline::
     /// lineSegmentIntersectParticle, LLVOPartGroup::lineSegmentIntersect):
     /// the source object of the nearest live particle the ray `origin` +
     /// t·`dir` crosses for t in 0..`max`. Use particle_vs geometry, including
     /// velocity-aligned quads and ribbons. Clouds/HUD particles are excluded.
+    #[cfg(test)]
     pub fn pick(&self, ray: (Vec3, Vec3), view: (Vec3, Vec3, Vec3), max: f32) -> Option<ParticleHit> {
+        self.pick_all(ray, view, max).into_iter().next()
+    }
+
+    pub fn pick_all(&self, ray: (Vec3, Vec3), view: (Vec3, Vec3, Vec3), max: f32) -> Vec<ParticleHit> {
         let (origin, dir) = ray;
-        let dir = dir.try_normalize()?;
-        let mut best: Option<ParticleHit> = None;
+        let Some(dir) = dir.try_normalize() else { return Vec::new() };
+        let mut hits = Vec::new();
         for (id, s) in &self.sources {
             if s.cloud {
                 continue;
             }
+            let mut best: Option<ParticleHit> = None;
             for p in s.ps.particles() {
                 if p.flags & ps::LL_PART_HUD != 0 {
                     continue;
@@ -189,14 +221,22 @@ impl ParticleManager {
                 if t <= max && best.is_none_or(|hit| t < hit.distance) {
                     best = Some(ParticleHit {
                         source: *id,
+                        object: s.object,
                         owner: s.owner,
                         point: origin + dir * t,
                         distance: t,
                     });
                 }
             }
+            if let Some(hit) = best {
+                hits.push(hit);
+            }
         }
-        best
+        hits.sort_by(|a, b| a.distance.total_cmp(&b.distance).then_with(|| a.source.cmp(&b.source)));
+        let mut objects = std::collections::HashSet::new();
+        hits.retain(|hit| objects.insert(hit.object));
+        hits.truncate(128);
+        hits
     }
 
     /// Release every source (region change, logout).
@@ -205,6 +245,7 @@ impl ParticleManager {
             textures.release(&s.texture);
         }
         self.live = 0;
+        self.property_owners.clear();
     }
 
     /// Apply object updates, simulate and build the sorted instance list.
@@ -218,6 +259,7 @@ impl ParticleManager {
         eye: Vec3,
         max_particles: usize,
         draw_distance: f32,
+        filters: &crate::world::particle_filters::ParticleFilters,
         out: &mut Vec<ParticleInstance>,
         parts: &mut Parts,
     ) {
@@ -230,6 +272,11 @@ impl ParticleManager {
         world.objects.take_particle_changes(&mut changed);
         changed.sort_unstable();
         for &idx in &changed {
+            let object = world
+                .objects
+                .get(crate::build::root_of(world, idx))
+                .map(|o| o.full_id)
+                .unwrap_or_default();
             let Some(o) = world.objects.get_mut_untracked(idx) else {
                 continue;
             };
@@ -254,6 +301,7 @@ impl ParticleManager {
                             slot,
                             cloud: false,
                             owner: o.owner_id,
+                            object,
                         },
                     );
                 }
@@ -277,8 +325,24 @@ impl ParticleManager {
         let mut dead = Vec::new();
         for (id, s) in self.sources.iter_mut() {
             let idx = world.objects.index_of_uuid(id);
+            if let Some(object) = idx
+                .and_then(|i| world.objects.get(crate::build::root_of(world, i)))
+                .map(|o| o.full_id)
+            {
+                s.object = object;
+            }
             if let Some(owner) = idx.and_then(|i| world.objects.get(i)).map(|o| o.owner_id).filter(|id| !id.is_nil()) {
                 s.owner = owner;
+            } else if let Some(owner) = self.property_owners.get(id).or_else(|| self.property_owners.get(&s.object)) {
+                s.owner = *owner;
+            }
+            let blocked = filters.hides(s.object, s.owner)
+                || world.particles_blocked(&s.owner)
+                || idx.is_some_and(|idx| !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx));
+            if blocked {
+                // Clear existing particles too, even if the emitter has gone
+                // out of view. Local filters must take effect immediately.
+                s.ps.clear_particles();
             }
             let transform = idx.and_then(|i| Scene::object_transform(world, i, now, 0));
             let Some((pos, rot, hud)) = transform else {
@@ -315,16 +379,6 @@ impl ParticleManager {
             };
             // sources beyond the draw distance, or of a blocked owner
             // (LLViewerPartSourceScript, flagParticles), keep simulating but do not emit
-            let blocked = idx
-                .and_then(|i| world.objects.get(i))
-                .is_some_and(|o| world.particles_blocked(&o.owner_id))
-                || idx.is_some_and(|idx| !world.parcel_object_visible(idx) || !crate::snapshot::isolate::object_visible(world, idx));
-            if blocked {
-                // what they already sent goes at once: the Legacy Viewer
-                // lets it live out its age, which a block from the menu
-                // should not wait for
-                s.ps.clear_particles();
-            }
             if blocked || pos.distance(eye) > draw_distance {
                 let mut none = 0;
                 s.update(dt, &ctx, &mut none, world);
@@ -491,6 +545,7 @@ mod tests {
             slot: 0,
             cloud: false,
             owner: Uuid::from_u128(71),
+            object: Uuid::from_u128(72),
         };
         source.ps.update_with_wind(
             0.0,
@@ -586,6 +641,22 @@ mod tests {
     }
 
     #[test]
+    fn particle_pick_collects_distinct_emitters_and_deduplicates_linked_sources() {
+        let mut manager = ParticleManager::default();
+        for (id, object) in [(1, 11), (2, 22), (3, 11)] {
+            let mut source = pick_source(0, glam::Vec2::splat(2.0), Vec3::ZERO);
+            source.object = Uuid::from_u128(object);
+            manager.sources.insert(Uuid::from_u128(id), source);
+        }
+        let hits = manager.pick_all((Vec3::ZERO, Vec3::X), (Vec3::ZERO, Vec3::NEG_Y, Vec3::Z), 20.0);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(
+            hits.iter().map(|h| h.object).collect::<Vec<_>>(),
+            [Uuid::from_u128(11), Uuid::from_u128(22)]
+        );
+    }
+
+    #[test]
     fn particle_beacons_exclude_clouds_and_expired_sources_with_live_particles() {
         let id = Uuid::from_u128(682);
         let mut manager = ParticleManager::default();
@@ -605,6 +676,7 @@ mod tests {
                 slot: 0,
                 cloud: false,
                 owner: Uuid::nil(),
+                object: Uuid::from_u128(72),
             },
         );
         let mut budget = 1;
@@ -665,6 +737,7 @@ mod tests {
             slot: 0,
             cloud: false,
             owner: Uuid::nil(),
+            object: Uuid::from_u128(72),
         };
         let ctx = SourceContext {
             pos: Vec3::new(24.0, 8.0, 20.0),

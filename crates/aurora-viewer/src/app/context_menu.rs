@@ -26,7 +26,7 @@ impl App {
         if let Some((idx, point, _)) = self.scene.hud_edit_pick(&self.world, (x, y)) {
             // (a HUD does not need the depth of the world behind it)
             let ray = self.gfx.as_ref().and_then(|g| g.renderer.cursor_ray(x, y));
-            self.object_menu_pick(Some(idx), ray, None, false);
+            self.object_menu_pick(Some(idx), ray, Vec::new(), false);
             return Some((Some(idx), point));
         }
         let picked = self.click_pick()?;
@@ -53,16 +53,17 @@ impl App {
                 None => hit.map(|p| (target, p)),
             },
         };
-        let particle = picked
-            .particle
-            .filter(|p| ray.is_some_and(|ray| p.before_surface(ray, surface.map(|(_, point)| point))));
+        let particles: Vec<_> = picked
+            .particles
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .copied()
+            .filter(|p| ray.is_some_and(|ray| p.before_surface(ray, surface.map(|(_, point)| point))))
+            .collect();
         let particle_only = surface.is_none();
-        let (object, point) = surface.or_else(|| {
-            particle
-                .filter(|p| !p.owner.is_nil() && p.owner != self.world.agent_id)
-                .map(|p| (None, p.point))
-        })?;
-        self.object_menu_pick(object, ray, particle, particle_only);
+        let (object, point) = surface.or_else(|| particles.first().map(|p| (None, p.point)))?;
+        self.object_menu_pick(object, ray, particles, particle_only);
         Some((object, point))
     }
 
@@ -126,6 +127,7 @@ impl App {
         if let Target::Avatar { id, own: false, .. } = target {
             self.moderation_menu_opened(id);
         }
+        self.request_particle_source_names();
         if self.clicks.scripted() || self.demo && std::env::var_os("AURORA_DEMO_ACTIONS").is_some() {
             log::info!("demo menu: {target:?}");
         }
@@ -168,7 +170,7 @@ impl App {
             edit_linked: self.settings.build.edit_linked,
             property_lines: self.settings.world_overlays.property_lines,
             voice: self.settings.audio.voice_enabled,
-            particle_owner: self.object_menu.particle_owner.filter(|o| *o != w.agent_id),
+            particle_sources: self.particle_menu_sources(),
             particle_only: self.object_menu.particle_only,
             ..Facts::default()
         };
@@ -191,7 +193,7 @@ impl App {
                     .and_then(|idx| Some((*self.scene.avatar_complexity.get(id)?, self.scene.too_complex.contains(&idx))));
                 f.render = self.settings.render_exception(id);
                 f.blocked = w.is_avatar_blocked(id);
-                f.particles_blocked = w.particles_blocked(id);
+                f.particles_blocked = self.settings.particle_filters.blocked(*id, true);
                 f.sound_blocks = w.derender.owner_sound_flags(*id);
                 f.contact_sets = w.contact_sets.set_names();
                 f.friend = w.social.friends.iter().any(|fr| fr.id == *id);
@@ -596,10 +598,10 @@ impl App {
                 let target = target.map_or(Target::Everyone, Target::Resident);
                 self.send(NetCommand::ModerateVoice { target, mute });
             }
-            CtxAction::ToggleParticleMute(id) => {
-                let name = self.world.legacy_name(&id).unwrap_or_else(|| self.world.social.name_of(&id));
-                if let Err(e) = self.world.toggle_particle_block(id, &name) {
-                    self.world.system_message(e);
+            CtxAction::ToggleOwnerParticleFilter(id) => {
+                let blocked = !self.settings.particle_filters.blocked(id, true);
+                if self.settings.particle_filters.set(id, true, blocked) {
+                    self.settings.save();
                 }
             }
             CtxAction::SetOwnerSoundBlock { owner, flag, blocked } => self.set_owner_sound_block(owner, flag, blocked),
@@ -728,7 +730,11 @@ impl App {
                     self.ask_drop(key);
                 }
             }
-            CtxAction::BlockParticleOwner(owner) => self.block_particle_owner(owner),
+            CtxAction::SetParticleBlock { id, owner, blocked } => {
+                if self.settings.particle_filters.set(id, owner, blocked) {
+                    self.settings.save();
+                }
+            }
             CtxAction::AttachmentFavorite(item) => self.attachment_favorite(item),
             CtxAction::EditLinkedParts(on) => {
                 self.build.set_edit_linked(&mut self.world, &mut self.settings.build, on);

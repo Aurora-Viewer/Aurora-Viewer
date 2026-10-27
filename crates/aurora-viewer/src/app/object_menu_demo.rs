@@ -1,6 +1,6 @@
 //! AURORA_DEMO_OBJECT_MENU: the object menu entries on offline objects
 //! (demo_object_menu.rs): the bell's menu, a script action and its window,
-//! Return, Put on, Block particle owner, Link and Take multiple on a kept
+//! Return, Put on, owner particle filtering, Link and Take multiple on a kept
 //! selection, Drop of the worn backpack (with AURORA_DEMO_WORN=1).
 use super::*;
 use crate::demo::object_menu::{self as fixture, BELL, CRATE, SPARKLES};
@@ -126,7 +126,11 @@ impl App {
                     }),
                     "return" | "return-yes" => bell.map(CtxAction::Return),
                     "wear" => bell.map(|id| CtxAction::Wear { id, point: 6, add: true }),
-                    "particle-block" => self.object_menu.particle_owner.map(CtxAction::BlockParticleOwner),
+                    "particle-block" => self.object_menu.particle_owner.map(|id| CtxAction::SetParticleBlock {
+                        id,
+                        owner: true,
+                        blocked: !self.settings.particle_filters.blocked(id, true),
+                    }),
                     "drop" => Some(CtxAction::Drop(key(crate::demo::worn::ROOT))),
                     _ => None,
                 };
@@ -157,10 +161,16 @@ impl App {
             900 => {
                 let lines = self.object_menu_queue_lines();
                 log::info!(
-                    "demo object menu result: mode={mode}, bell={}, particle owner={:?}, blocked={}, queue={lines:?}",
+                    "demo object menu result: mode={mode}, bell={}, particle owner={:?}, blocked={}, muted={}, live owner particles={}, queue={lines:?}",
                     if id_of(self, BELL).is_some() { "in the world" } else { "gone" },
                     self.object_menu.particle_owner,
-                    self.object_menu.particle_owner.is_some_and(|o| self.world.mutes.is_muted_id(&o)),
+                    self.object_menu
+                        .particle_owner
+                        .is_some_and(|id| self.settings.particle_filters.blocked(id, true)),
+                    self.object_menu.particle_owner.is_some_and(|id| self.world.mutes.is_muted_id(&id)),
+                    self.object_menu
+                        .particle_owner
+                        .map_or(0, |id| self.scene.particles.owner_particle_count(id)),
                 );
             }
             _ => {}
@@ -170,6 +180,11 @@ impl App {
     /// The bell, the crate and the particles in a row across the view,
     /// 5 m ahead of the avatar where the camera looks.
     fn object_menu_fixture(&mut self) {
+        if matches!(fixture::mode(), Some("particle" | "particle-block")) {
+            self.settings.particle_filters.set(crate::demo::DEMO_NOVA, true, false);
+            let name = self.world.social.name_of(&crate::demo::DEMO_NOVA);
+            self.world.unblock(crate::demo::DEMO_NOVA, &name, 0);
+        }
         let forward = self.camera.forward().with_z(0.0).normalize_or(Vec3::X);
         let side = Vec3::new(forward.y, -forward.x, 0.0);
         let center = self.world.agent.position + forward * 5.0;

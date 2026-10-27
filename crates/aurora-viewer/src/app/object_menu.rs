@@ -1,6 +1,6 @@
 //! The object menu entries that take more than one message: "Return",
-//! "Drop", "Put on", the script actions of a selection, "Block particle
-//! owner", the favorites of our attachments, "Take multiple" and "Link",
+//! "Drop", "Put on", the script actions of a selection, particle filters,
+//! the favorites of our attachments, "Take multiple" and "Link",
 //! and the right click's own surface for "Touch" (menu_object.xml,
 //! menu_attachment_self.xml; handlers of indra/newview/llviewermenu.cpp,
 //! originally LGPL 2.1).
@@ -29,11 +29,12 @@ pub(super) struct ObjectMenu {
     confirm: Option<(Confirm, bool)>,
     /// The script action under way and its window.
     queue: Option<ScriptQueue>,
-    /// Picked with the right click: the owner of the particle in front
-    /// (LLPickInfo::mParticleOwnerID) and the touched surface of the object
-    /// (the SurfaceInfo of send_ObjectGrab_message).
+    /// Nearest captured owner, retained for the offline pick diagnostic.
     pub particle_owner: Option<Uuid>,
     pub particle_only: bool,
+    /// Distinct emitting linksets under the original right click.
+    pub particle_hits: Vec<crate::scene::particles::ParticleHit>,
+    /// SurfaceInfo of send_ObjectGrab_message, using the original click ray.
     touch: Option<(ObjKey, aurora_net::TouchSurface)>,
 }
 
@@ -49,18 +50,108 @@ enum Confirm {
 }
 
 impl App {
+    pub(super) fn particle_menu_sources(&self) -> Vec<ui::context::ParticleMenuSource> {
+        use std::collections::BTreeMap;
+        let w = &self.world;
+        let picked = self
+            .context_menu
+            .as_ref()
+            .and_then(|m| match m.target {
+                ui::context::Target::Object { full_id, .. } => w.objects.index_of_uuid(&full_id),
+                ui::context::Target::Attachment { key } => w.objects.index_of(&key),
+                ui::context::Target::Avatar { attachment: Some(id), .. } => w.objects.index_of_uuid(&id),
+                _ => None,
+            })
+            .and_then(|idx| w.objects.get(crate::build::root_of(w, idx)))
+            .map(|o| (o.full_id, o.owner_id));
+        let mut sources = BTreeMap::new();
+        if let Some((object, owner)) = picked
+            && (self.scene.particles.emitter(object).is_some() || self.settings.particle_filters.blocked(object, false))
+        {
+            let owner = if owner.is_nil() {
+                self.scene.particles.emitter(object).unwrap_or(owner)
+            } else {
+                owner
+            };
+            sources.insert(object, (owner, true));
+        }
+        // Bound dynamic menu/name work independently of the particle budget.
+        // Hits are captured nearest first and remain stable while filtering.
+        for hit in self.object_menu.particle_hits.iter().take(128) {
+            sources.entry(hit.object).or_insert((hit.owner, false));
+        }
+        let mut result: Vec<_> = sources
+            .into_iter()
+            .filter(|(id, _)| !id.is_nil())
+            .map(|(object, (owner, clicked))| {
+                let props = self.build.props.get(&object).or_else(|| self.interactions.props.get(&object));
+                let owner = if owner.is_nil() {
+                    props.map(|p| p.owner_id).unwrap_or(owner)
+                } else {
+                    owner
+                };
+                let name = props
+                    .map(|p| p.name.clone())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| aurora_i18n::tr!("scene-particles-unknown-object", id = object.to_string()[..8].to_string()));
+                ui::context::ParticleMenuSource {
+                    object,
+                    owner,
+                    name,
+                    clicked,
+                    object_blocked: self.settings.particle_filters.blocked(object, false),
+                    owner_blocked: self.settings.particle_filters.blocked(owner, true),
+                }
+            })
+            .collect();
+        result.sort_by_key(|s| (!s.clicked, s.object));
+        result
+    }
+
+    pub(super) fn request_particle_source_names(&mut self) {
+        let mut requested = std::collections::HashSet::new();
+        let objects: Vec<_> = self
+            .object_menu
+            .particle_hits
+            .iter()
+            .take(128)
+            .filter_map(|hit| {
+                let id = hit.object;
+                if !requested.insert(id)
+                    || self
+                        .build
+                        .props
+                        .get(&id)
+                        .or_else(|| self.interactions.props.get(&id))
+                        .is_some_and(|p| !p.name.is_empty())
+                {
+                    return None;
+                }
+                self.world
+                    .objects
+                    .index_of_uuid(&id)
+                    .and_then(|i| self.world.objects.get(i))
+                    .map(|o| (o.key.region, id))
+            })
+            .collect();
+        for (handle, object) in objects {
+            self.send(NetCommand::RequestObjectProperties { handle, object });
+        }
+    }
+
     /// The right click opened the menu on `target`: what the entries of
     /// the object menus read from the pick itself.
     pub(super) fn object_menu_pick(
         &mut self,
         picked: Option<usize>,
         ray: Option<(Vec3, Vec3)>,
-        particle: Option<crate::scene::particles::ParticleHit>,
+        particles: Vec<crate::scene::particles::ParticleHit>,
         particle_only: bool,
     ) {
         let m = &mut self.object_menu;
         m.particle_owner = None;
         m.particle_only = particle_only;
+        m.particle_hits.clear();
         m.touch = None;
         let Some((origin, dir)) = ray else {
             return;
@@ -69,7 +160,8 @@ impl App {
         // none in front of a HUD
         let hud = picked.is_some_and(|i| self.scene.gpu.get(i).is_some_and(|g| g.hud));
         if !hud {
-            m.particle_owner = particle.map(|hit| hit.owner).filter(|owner| !owner.is_nil());
+            m.particle_owner = particles.first().map(|hit| hit.owner).filter(|owner| !owner.is_nil());
+            m.particle_hits = particles;
         }
         if let Some(idx) = picked
             && let Some(o) = self.world.objects.get(idx)
@@ -438,21 +530,6 @@ impl App {
             self.build.deselect_all(&self.world);
         }
         self.flush_build();
-    }
-
-    /// Particle.Mute: the particle owner blocked, or unblocked when they
-    /// already are; a new block shows the block list (showPanelAndSelect).
-    pub(super) fn block_particle_owner(&mut self, owner: Uuid) {
-        let name = self.world.legacy_name(&owner).unwrap_or_else(|| self.world.social.name_of(&owner));
-        let blocked = self.world.mutes.is_muted_id(&owner);
-        match self.world.toggle_block_avatar(owner, &name) {
-            Err(e) => self.world.system_notice(e, crate::world::notice_topics::Topic::Items),
-            Ok(()) if !blocked => {
-                self.panels.people = true;
-                self.panels.people_tab = crate::ui::people::TAB_BLOCKED;
-            }
-            Ok(()) => {}
-        }
     }
 
     /// Object.SetFavorite on the item our attachment comes from.

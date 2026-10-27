@@ -115,7 +115,7 @@ impl Builder {
 pub(super) fn world_menu(target: &Target, f: &Facts, point: Vec3) -> Vec<Entry> {
     let mut entries = Builder::default();
     if f.particle_only {
-        particle_owner_item(&mut entries, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+        particles_submenu(&mut entries, f);
         return entries.0;
     }
     if f.object.local_preview {
@@ -139,6 +139,9 @@ pub(super) fn world_menu(target: &Target, f: &Facts, point: Vec3) -> Vec<Entry> 
         } => attachment_other_menu(&mut entries, f, *id, *attachment, point),
         Target::Avatar { id, .. } => avatar_menu(&mut entries, f, *id, point),
         Target::Ground => land_menu(&mut entries, f, point),
+    }
+    if matches!(target, Target::Avatar { own: true, .. }) {
+        particles_submenu(&mut entries, f);
     }
     entries.0
 }
@@ -288,7 +291,7 @@ fn object_menu(ui: &mut Builder, f: &Facts, key: ObjKey, id: Uuid, offset: Vec3,
         );
         ui.separator();
         derender_items(ui, id, aurora_i18n::tr!("ui-context-derender"), true);
-        particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+        particles_submenu(ui, f);
     });
     ui.separator();
     ui.item(
@@ -337,15 +340,52 @@ fn touch_label(o: &super::ObjectFacts) -> &str {
     }
 }
 
-/// "Block particle owner" (Particle.Mute, EnableMuteParticle): the owner
-/// of the particle the right click landed on, when it is not us.
-fn particle_owner_item(ui: &mut Builder, f: &Facts, label: &str) {
-    ui.item_if(
-        "sparkles-filled",
-        label,
-        f.particle_owner.is_some(),
-        CtxAction::BlockParticleOwner(f.particle_owner.unwrap_or_default()),
-    );
+/// Contextual particle controls: direct entries for the clicked emitter,
+/// named child groups for every other emitter intersected by the same click.
+fn particles_submenu(ui: &mut Builder, f: &Facts) {
+    if f.particle_sources.is_empty() {
+        return;
+    }
+    ui.submenu("sparkles-filled", aurora_i18n::tr!("scene-particles-menu"), true, |ui| {
+        for source in f.particle_sources.iter().filter(|s| s.clicked) {
+            particle_filter_items(ui, source);
+        }
+        if f.particle_sources.iter().any(|s| s.clicked) && f.particle_sources.iter().any(|s| !s.clicked) {
+            ui.separator();
+        }
+        for source in f.particle_sources.iter().filter(|s| !s.clicked) {
+            ui.submenu("box", &source.name, true, |ui| particle_filter_items(ui, source));
+        }
+    });
+}
+
+fn particle_filter_items(ui: &mut Builder, source: &super::ParticleMenuSource) {
+    for (id, owner, checked, label) in [
+        (
+            source.object,
+            false,
+            source.object_blocked,
+            aurora_i18n::tr!("scene-particles-block-object"),
+        ),
+        (
+            source.owner,
+            true,
+            source.owner_blocked,
+            aurora_i18n::tr!("scene-particles-block-owner"),
+        ),
+    ] {
+        ui.check(
+            "sparkles-filled",
+            label,
+            checked,
+            !id.is_nil(),
+            CtxAction::SetParticleBlock {
+                id,
+                owner,
+                blocked: !checked,
+            },
+        );
+    }
 }
 
 /// "Put on" (menu_object.xml Put On): Wear, Add, and the attachment points
@@ -542,7 +582,7 @@ fn attachment_self_menu(ui: &mut Builder, f: &Facts, key: ObjKey) {
             aurora_i18n::tr!("ui-context-derender-temporarily"),
             !f.object.id.is_nil(),
         );
-        particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-block-particle-owner"));
+        particles_submenu(ui, f);
     });
     ui.item(
         "photo-filled",
@@ -764,9 +804,10 @@ fn avatar_groups(ui: &mut Builder, f: &Facts, id: Uuid, attachment: Option<Uuid>
             aurora_i18n::tr!("common-block-particles"),
             f.particles_blocked,
             true,
-            CtxAction::ToggleParticleMute(id),
+            CtxAction::ToggleOwnerParticleFilter(id),
         );
         sound_block_items(ui, f, id);
+        particles_submenu(ui, f);
     });
 }
 
@@ -1047,25 +1088,98 @@ fn land_menu(ui: &mut Builder, f: &Facts, point: Vec3) {
         CtxAction::SetPropertyLines(!f.property_lines),
     );
     ui.separator();
-    particle_owner_item(ui, f, aurora_i18n::tr!("ui-context-ignore-particle-owner"));
+    particles_submenu(ui, f);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn particle_source(object: u128, owner: u128, name: &str, clicked: bool) -> super::super::ParticleMenuSource {
+        super::super::ParticleMenuSource {
+            object: Uuid::from_u128(object),
+            owner: Uuid::from_u128(owner),
+            name: name.into(),
+            clicked,
+            object_blocked: false,
+            owner_blocked: false,
+        }
+    }
+
     #[test]
-    fn a_particle_over_sky_has_its_owner_command_without_unrelated_land_actions() {
-        let owner = Uuid::from_u128(71);
+    fn particles_show_primary_controls_and_distinct_named_intersected_emitters() {
+        for target in [
+            object_target(),
+            Target::Ground,
+            Target::Attachment {
+                key: ObjKey { region: 1, local_id: 42 },
+            },
+            Target::Avatar {
+                id: Uuid::from_u128(4),
+                own: false,
+                attachment: None,
+            },
+        ] {
+            let mut facts = Facts {
+                particle_sources: vec![
+                    particle_source(1, 10, "Clicked emitter", true),
+                    particle_source(2, 20, "Smoke", false),
+                    particle_source(3, 30, "Sparkles", false),
+                ],
+                ..Default::default()
+            };
+            facts.particle_sources[1].object_blocked = true;
+            facts.particle_sources[2].owner_blocked = true;
+            let entries = rows(world_menu(&target, &facts, Vec3::ZERO));
+            assert!(
+                !entries
+                    .iter()
+                    .any(|e| e.label == aurora_i18n::tr!("ui-context-ignore-particle-owner"))
+            );
+            let menu = entries
+                .iter()
+                .find(|e| e.label == aurora_i18n::tr!("scene-particles-menu"))
+                .expect("Particles");
+            let Kind::Submenu(children) = &menu.kind else { panic!("submenu") };
+            assert!(
+                matches!(children[0].kind, Kind::Action(CtxAction::SetParticleBlock { id, owner: false, blocked: true }) if id == Uuid::from_u128(1))
+            );
+            assert!(
+                matches!(children[1].kind, Kind::Action(CtxAction::SetParticleBlock { id, owner: true, blocked: true }) if id == Uuid::from_u128(10))
+            );
+            for (name, object, owner) in [("Smoke", 2, 20), ("Sparkles", 3, 30)] {
+                let entry = children.iter().find(|e| e.label == name).expect("named emitter");
+                let Kind::Submenu(actions) = &entry.kind else {
+                    panic!("source submenu")
+                };
+                assert_eq!(actions.len(), 2);
+                assert!(
+                    matches!(actions[0].kind, Kind::Action(CtxAction::SetParticleBlock { id, owner: false, .. }) if id == Uuid::from_u128(object))
+                );
+                assert!(
+                    matches!(actions[1].kind, Kind::Action(CtxAction::SetParticleBlock { id, owner: true, .. }) if id == Uuid::from_u128(owner))
+                );
+                assert_eq!(actions[0].checked, Some(object == 2));
+                assert_eq!(actions[1].checked, Some(object == 3));
+            }
+        }
+        assert!(
+            !rows(world_menu(&object_target(), &Facts::default(), Vec3::ZERO))
+                .iter()
+                .any(|e| e.label == aurora_i18n::tr!("scene-particles-menu"))
+        );
+    }
+
+    #[test]
+    fn particles_over_sky_show_only_the_particle_menu() {
         let facts = Facts {
-            particle_owner: Some(owner),
+            particle_sources: vec![particle_source(1, 10, "Smoke", false)],
             particle_only: true,
             ..Default::default()
         };
-        let menu = world_menu(&Target::Ground, &facts, Vec3::new(10.0, 0.0, 20.0));
-        assert_eq!(menu.len(), 1);
-        assert!(menu[0].enabled);
-        assert!(matches!(menu[0].kind, Kind::Action(CtxAction::BlockParticleOwner(id)) if id == owner));
+        let entries = world_menu(&Target::Ground, &facts, Vec3::ZERO);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].label, aurora_i18n::tr!("scene-particles-menu"));
     }
 
     #[test]
@@ -1593,31 +1707,14 @@ mod tests {
     }
 
     #[test]
-    fn the_particle_owner_and_the_animesh_skeleton_rows() {
-        let owner = Uuid::from_u128(77);
+    fn particle_menus_preserve_animesh_skeleton_actions() {
         let mut f = Facts::default();
-        let menu = |f: &Facts| world_menu(&object_target(), f, Vec3::ZERO);
-        assert!(!row(menu(&f), "ui-context-ignore-particle-owner").enabled);
-        // no reset skeleton on a prim that drives no skeleton
-        assert!(!labels(&menu(&f)).contains(&aurora_i18n::text("ui-context-reset-skeleton").to_string()));
-        f.particle_owner = Some(owner);
         f.object.animesh = Some(ID);
-        let block = row(menu(&f), "ui-context-ignore-particle-owner");
-        assert!(block.enabled && matches!(block.kind, Kind::Action(CtxAction::BlockParticleOwner(o)) if o == owner));
-        assert!(matches!(
-            row(menu(&f), "ui-context-reset-skeleton").kind,
-            Kind::Action(CtxAction::ResetSkeleton { avatar, animations: false }) if avatar == ID
-        ));
-        // the land menu blocks the same owner
-        let land = row(world_menu(&Target::Ground, &f, Vec3::ZERO), "ui-context-ignore-particle-owner");
-        assert!(land.enabled);
-        // and our attachments' menu
-        let key = ObjKey { region: 1, local_id: 42 };
-        let att = row(
-            world_menu(&Target::Attachment { key }, &f, Vec3::ZERO),
-            "ui-context-block-particle-owner",
+        f.particle_sources.push(particle_source(1, 10, "Emitter", true));
+        let entries = world_menu(&object_target(), &f, Vec3::ZERO);
+        assert!(
+            matches!(row(entries, "ui-context-reset-skeleton").kind, Kind::Action(CtxAction::ResetSkeleton { avatar, animations: false }) if avatar == ID)
         );
-        assert!(att.enabled);
     }
 
     #[test]
@@ -1706,7 +1803,7 @@ mod tests {
             let row = find(world_menu(&target, &f, Vec3::ZERO), "common-block-particles");
             assert!(row.enabled);
             assert_eq!(row.checked, Some(blocked));
-            assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleParticleMute(i)) if i == id));
+            assert!(matches!(row.kind, Kind::Action(CtxAction::ToggleOwnerParticleFilter(i)) if i == id));
         }
     }
 }

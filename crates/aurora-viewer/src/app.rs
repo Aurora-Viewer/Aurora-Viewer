@@ -2862,6 +2862,7 @@ impl App {
                 self.world.ik_targets.on_properties(&props);
                 self.report_abuse_properties(&props);
                 self.world.on_hud_properties(&props);
+                self.scene.particles.on_properties(&props);
                 self.interactions.on_properties(&props);
                 self.object_profile.on_properties(&props);
                 let props = self.area_search_build_properties(props, &area_reads);
@@ -8504,6 +8505,7 @@ impl App {
                 self.camera.position,
                 max_particles,
                 self.settings.draw_distance,
+                &self.settings.particle_filters,
                 &mut out,
                 &mut scene.parts,
             );

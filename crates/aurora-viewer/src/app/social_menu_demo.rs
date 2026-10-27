@@ -13,6 +13,9 @@ impl App {
             return;
         };
         match (self.frame_count, step) {
+            (600, Step::Particles) => {
+                self.settings.particle_filters.set(RESIDENT, true, false);
+            }
             (600, Step::Menu) | (720, Step::Particles) => self.demo_menu_of(RESIDENT),
             (600, Step::Picker | Step::Invite) => self.on_ctx_action(CtxAction::InviteToGroup(RESIDENT)),
             (640, Step::Invite) => self.group_profile_ui.invite.demo_choose(crate::demo::DEMO_GROUP1),
@@ -28,10 +31,10 @@ impl App {
                 self.panels.people_tab = ui::people::TAB_SETS;
             }
             (700, Step::Particles) => {
-                self.on_ctx_action(CtxAction::ToggleParticleMute(RESIDENT));
+                self.on_ctx_action(CtxAction::ToggleOwnerParticleFilter(RESIDENT));
                 log::info!(
                     "demo social menu: particles of {RESIDENT} blocked: {}",
-                    self.world.particles_blocked(&RESIDENT)
+                    self.settings.particle_filters.blocked(RESIDENT, true)
                 );
             }
             (600, Step::Card) => self.on_ctx_action(CtxAction::GiveCallingCard(RESIDENT)),

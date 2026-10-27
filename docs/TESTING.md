@@ -1890,28 +1890,35 @@ amber particles another resident owns stand in a row 5 m ahead, where the
 camera looks. At frame 700 the right click opens the menu of the bell
 (`list`: "Ring the bell" and "Lie down" as labels, Return enabled, the
 script actions and Put on in their submenus), or lands on the particles
-(`particle`: the menu of what is behind, with "Ignore particle owner"
-enabled). Particle clicks retain the source/owner sampled at the press while
+(`particle`: the menu of what is behind, with contextual Particles controls).
+Particle clicks retain all intersected sources/owners sampled at the press while
 object depth is read asynchronously. Velocity-aligned quads and ribbons use
-the displayed geometry; particles against the sky expose the particle command
-alone, with no land actions. At frame 740: `scripts` chooses Reset scripts (the "modify
+the displayed geometry; particles against the sky expose only the Particles
+submenu. At frame 740: `scripts` chooses Reset scripts (the "modify
 scripts" question), `scripts-run` answers it yes (the Reset progress
 window lists the bell's script, then "Done."); `return` / `return-yes`
 choose Return (the question; answered yes, the bell goes); `wear` chooses
 Put on ▸ Attach to ▸ Right Arm ▸ Right Hand: the avatar walks to the bell,
 then attaches it (it leaves the world: the demo has no item to wear it
-from); `particle-block` blocks the particles' owner: People opens on the
-Blocked tab with Nova Exemple. `link` selects the crate and the bell in
+from); `particle-block` filters the particles' owner locally without muting
+the resident. Particles exposes the clicked emitter directly and other
+intersected emitting linksets under their object names, with independent
+object/owner choices; unknown names resolve asynchronously from properties.
+Avatar > Disturbance > Block particles shares the owner filter. Verify that
+chat, voice, sounds and avatar rendering stay unchanged, toggles stay open,
+and rules survive reopening/restart. `link` selects the crate and the bell in
 the build tools at frame 650: the menu then has Link enabled (Object ▸)
 and "Take multiple ▸" instead of Take. `drop`, with `AURORA_DEMO_WORN=1`,
 opens the worn backpack's menu and chooses Drop (the question). The log
 writes `demo object menu: <action>` and, at frame 900, `demo object menu
-result: …` (bell in the world or gone, particle owner, block, queue
-lines). Capture with `AURORA_FPS_LIMIT=60` at frames 760 (menus), 780
-(questions), 800 (queue window, block list) and 1000 (wear); a submenu
+result: …` (bell in the world or gone, particle owner, filter, mute state,
+remaining owner particles and queue lines). After `particle-block`, expect
+`blocked=true`, `muted=false` and `live owner particles=0`.
+Capture with `AURORA_FPS_LIMIT=60` at frames 760 (menus), 780
+(questions), 800 (queue window, filtered particles) and 1000 (wear); a submenu
 opens under `AURORA_DEMO_POINTER` (one point every 60 frames from frame
 300: the eighth point is at frame 720). Our attachments' menu (favorites,
-Drop, Block particle owner) is `AURORA_DEMO_WORN=menu`.
+Drop, particle filters) is `AURORA_DEMO_WORN=menu`.
 
 
 ## HUDs
@@ -6105,7 +6112,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   file is left as it was. `particles`: capture 690 shows the fountain's
   particles; "Block particles" at frame 700 makes them go at once, and the
   menu opened at frame 720 shows the entry checked (capture 780); the log
-  says `demo social menu: particles of … blocked: true`. `card`: "Give my
+  says `demo social menu: particles of … blocked: true`. This uses the same
+  independent local owner filter as the contextual Particles submenu, with
+  no mute entry or effect on the resident's avatar or communications. `card`: "Give my
   calling card" at frame 600: "You have offered a calling card to …", then
   the demo server accepts it, "Your calling card was accepted." (capture
   640). `card-offer`: the wolf offers us his calling card at frame 600,

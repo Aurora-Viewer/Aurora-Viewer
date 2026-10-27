@@ -510,6 +510,7 @@ pub struct Settings {
     pub use_pie_menu: bool,
     /// Independent arrangements for land, objects, avatars, attachments and HUDs.
     pub world_context_menus: crate::ui::context::Preferences,
+    pub particle_filters: crate::world::particle_filters::ParticleFilters,
     /// Windows snap to each other and to the edges while they are moved or
     /// resized (Firestorm SnapEnabled, on).
     pub snap_windows: bool,
@@ -1521,6 +1522,7 @@ impl Default for Settings {
             ui_scale: 1.0,
             use_pie_menu: false,
             world_context_menus: Default::default(),
+            particle_filters: Default::default(),
             snap_windows: true,
             windows_stop_left: true,
             windows_stop_right: true,

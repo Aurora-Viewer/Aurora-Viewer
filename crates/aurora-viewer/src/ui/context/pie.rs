@@ -522,7 +522,7 @@ mod tests {
             let root = layout(&target, &entries);
             let path = locate(&root, &|action| {
                 if mode == 3 {
-                    matches!(action, CtxAction::ToggleParticleMute(_))
+                    matches!(action, CtxAction::ToggleOwnerParticleFilter(_))
                 } else {
                     matches!(action, CtxAction::SetRender(_, value) if *value == mode)
                 }
@@ -544,7 +544,7 @@ mod tests {
             assert_eq!(menu.as_ref().expect("checkable keeps menu open").pie_path, parent);
             let actions = super::super::take_requests(&ctx);
             if mode == 3 {
-                assert!(matches!(&actions[..], [CtxAction::ToggleParticleMute(_)]), "{actions:?}");
+                assert!(matches!(&actions[..], [CtxAction::ToggleOwnerParticleFilter(_)]), "{actions:?}");
                 facts.particles_blocked = !facts.particles_blocked;
             } else {
                 assert!(

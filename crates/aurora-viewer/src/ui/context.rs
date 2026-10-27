@@ -193,7 +193,7 @@ pub struct Facts {
     /// Rendering exception: 0 normal, 1 never fully, 2 always fully.
     pub render: u8,
     pub blocked: bool,
-    /// Their particles are blocked (LLMute::flagParticles).
+    /// The independent owner particle filter is enabled.
     pub particles_blocked: bool,
     /// Asset blacklist owner categories: 1 worn, 2 rezzed, 4 gesture.
     pub sound_blocks: u8,
@@ -204,10 +204,9 @@ pub struct Facts {
     pub edit_linked: bool,
     /// ShowPropertyLines, shared with the World menu and terrain editor.
     pub property_lines: bool,
-    /// The owner of the particle under the right click
-    /// (LLPickInfo::mParticleOwnerID), when it is not us.
-    pub particle_owner: Option<Uuid>,
-    /// A particle over the sky: show the particle command without land actions.
+    /// The clicked emitter and distinct emitters whose particles crossed the click.
+    pub particle_sources: Vec<ParticleMenuSource>,
+    /// A particle over the sky: show only the Particles submenu.
     pub particle_only: bool,
     /// "Put on ▸ Attach" and "Attach HUD" (LLVOAvatarSelf::buildMenus).
     pub attach_points: Vec<AttachChoice>,
@@ -225,6 +224,16 @@ pub struct Facts {
 
     /// "Freeze" / "Eject" of the avatar, and whether the eject may ban.
     pub moderation: crate::world::land_moderation::Rights,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParticleMenuSource {
+    pub object: Uuid,
+    pub owner: Uuid,
+    pub name: String,
+    pub clicked: bool,
+    pub object_blocked: bool,
+    pub owner_blocked: bool,
 }
 
 /// One attachment point of "Put on ▸ Attach" or "Attach HUD".
@@ -341,9 +350,8 @@ pub enum CtxAction {
     /// Mute or unmute a resident (or everyone, None) in nearby voice for
     /// everyone, as its moderator (LLFloaterIMContainer::moderateVoice).
     ModerateVoice(Option<Uuid>, bool),
-    /// Block / unblock only a resident's particles (LLMute::flagParticles,
-    /// as the block list's "Block particles").
-    ToggleParticleMute(Uuid),
+    /// Toggle the local owner particle filter, without creating a mute entry.
+    ToggleOwnerParticleFilter(Uuid),
     /// One persistent owner category in the sound blacklist (ON blocks it).
     SetOwnerSoundBlock {
         owner: Uuid,
@@ -429,9 +437,12 @@ pub enum CtxAction {
     /// "Drop" one of our attachments (Attachment.Drop): asked first
     /// (AttachmentDrop), then ObjectDrop.
     Drop(ObjKey),
-    /// "Block particle owner" (Particle.Mute): the owner of the particle
-    /// under the right click.
-    BlockParticleOwner(Uuid),
+    /// Local particle-only filtering, independent of mute/derender.
+    SetParticleBlock {
+        id: Uuid,
+        owner: bool,
+        blocked: bool,
+    },
     /// "Add to / Remove from favorites" of our attachment's inventory item
     /// (Object.SetFavorite).
     AttachmentFavorite(Uuid),

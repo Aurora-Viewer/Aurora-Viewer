@@ -24,6 +24,13 @@ the rendered billboard, velocity-aligned quad or ribbon; cached source owners
 survive emitter removal. `app/context_menu.rs` checks the captured hit against
 foreground depth and can open a particle-only menu against the sky. Touch and
 particle metadata use the original click ray, not the camera after readback.
+Clicks retain an Arc-backed list of up to 128 distinct emitting linksets.
+Context facts combine those with the clicked emitter and current object names:
+Particles exposes object/owner filters and named children for other emitters.
+`world/particle_filters.rs`, stored in `Settings::particle_filters`, keeps both
+rule sets independent of mutes, derender and sound blocking. The particle
+simulation applies them without affecting avatars or other communication;
+Avatar > Disturbance > Block particles controls that same owner rule.
 Scene reset clears only the current profile. `context/notecards.rs` validates
 bounded versioned snapshots of all seven scene profiles, reuses the inventory's
 COPY-aware picker and native transfers, and applies only correlated successful

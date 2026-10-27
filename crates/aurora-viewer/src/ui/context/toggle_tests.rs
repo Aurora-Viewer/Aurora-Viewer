@@ -155,7 +155,10 @@ fn scene_disturbance_toggles_keep_submenus_open_and_labels_stable() {
     for blocked in [true, false] {
         assert!(matches!(&h.click("common-ignore")[..], [CtxAction::ToggleBlock(_)]));
         h.facts.blocked = blocked;
-        assert!(matches!(&h.click("common-block-particles")[..], [CtxAction::ToggleParticleMute(_)]));
+        assert!(matches!(
+            &h.click("common-block-particles")[..],
+            [CtxAction::ToggleOwnerParticleFilter(_)]
+        ));
         h.facts.particles_blocked = blocked;
         for (key, flag) in [
             ("ui-context-block-worn-sounds", 1),
@@ -233,7 +236,10 @@ fn scene_toggles_in_nested_custom_groups_keep_every_level_open() {
     }
     h.hover("ui-context-disturbance");
     for _ in 0..2 {
-        assert!(matches!(&h.click("common-block-particles")[..], [CtxAction::ToggleParticleMute(_)]));
+        assert!(matches!(
+            &h.click("common-block-particles")[..],
+            [CtxAction::ToggleOwnerParticleFilter(_)]
+        ));
         h.facts.particles_blocked = !h.facts.particles_blocked;
         h.warm();
         h.at("common-block-particles");
@@ -247,4 +253,49 @@ fn scene_toggles_in_nested_custom_groups_keep_every_level_open() {
         modifiers: Default::default(),
     }]);
     assert!(h.menu.is_none());
+}
+
+#[test]
+fn named_particle_emitters_target_their_own_object_and_owner_without_closing() {
+    let mut h = Harness::new();
+    h.facts.particle_sources = vec![ParticleMenuSource {
+        object: Uuid::from_u128(21),
+        owner: Uuid::from_u128(31),
+        name: "Smoke source".into(),
+        clicked: false,
+        object_blocked: false,
+        owner_blocked: false,
+    }];
+    h.warm();
+    h.hover("ui-context-disturbance");
+    h.hover("scene-particles-menu");
+    let at = h
+        .texts
+        .iter()
+        .find(|t| t.source == "Smoke source")
+        .expect("source name")
+        .rect
+        .center();
+    h.frame(vec![egui::Event::PointerMoved(at)]);
+    for _ in 0..35 {
+        h.frame(Vec::new());
+    }
+    for blocked in [true, false] {
+        let actions = h.click("scene-particles-block-object");
+        assert!(
+            matches!(&actions[..], [CtxAction::SetParticleBlock { id, owner: false, blocked: value }] if *id == Uuid::from_u128(21) && *value == blocked),
+            "{actions:?}"
+        );
+        h.facts.particle_sources[0].object_blocked = blocked;
+        h.warm();
+        let actions = h.click("scene-particles-block-owner");
+        assert!(
+            matches!(&actions[..], [CtxAction::SetParticleBlock { id, owner: true, blocked: value }] if *id == Uuid::from_u128(31) && *value == blocked),
+            "{actions:?}"
+        );
+        h.facts.particle_sources[0].owner_blocked = blocked;
+        h.warm();
+        h.at("scene-particles-block-object");
+        h.at("scene-particles-block-owner");
+    }
 }
