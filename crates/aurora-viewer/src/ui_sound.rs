@@ -68,6 +68,17 @@ pub enum UiSound {
     WindowOpen,
 }
 
+/// The sounds of the radar's alerts.
+pub const RADAR_SOUNDS: [UiSound; 7] = [
+    UiSound::RadarChatEnter,
+    UiSound::RadarChatLeave,
+    UiSound::RadarDrawEnter,
+    UiSound::RadarDrawLeave,
+    UiSound::RadarRegionEnter,
+    UiSound::RadarRegionLeave,
+    UiSound::RadarAgeAlert,
+];
+
 /// Catalog entry: Firestorm setting name (without `UISnd`), localized label,
 /// default UUID and default `PlayModeUISnd<name>`.
 pub struct Entry {
@@ -310,6 +321,19 @@ impl UiSoundSettings {
         mode.plays(m.new_session, focused).then_some(sound)
     }
 
+    /// Every alert of the radar plays its sound.
+    pub fn radar_sounds(&self) -> bool {
+        RADAR_SOUNDS.into_iter().all(|s| self.plays(s))
+    }
+
+    /// Turn the seven alert sounds of the radar on or off at once (the entry
+    /// of the radar's options menu; one by one in the preferences).
+    pub fn set_radar_sounds(&mut self, on: bool) {
+        for s in RADAR_SOUNDS {
+            self.set_plays(s, on);
+        }
+    }
+
     /// The sounds loaded at login (init_audio preloads the UI sounds).
     pub fn preload(&self) -> Vec<Uuid> {
         let mut v: Vec<Uuid> = CATALOG.iter().map(|e| self.uuid(e.sound)).filter(|id| !id.is_nil()).collect();
@@ -367,6 +391,20 @@ mod tests {
         assert_eq!(s.resolve(S::RadarRegionEnter, false), None);
         assert_eq!(s.resolve(S::RadarAgeAlert, true), Some(NEARBY_CHAT));
         assert_eq!(S::RadarRegionLeave.entry().name, "RadarSimLeave");
+    }
+
+    #[test]
+    fn the_radar_sounds_at_once() {
+        let mut s = UiSoundSettings::default();
+        assert!(!s.radar_sounds());
+        s.set_plays(S::RadarChatEnter, true);
+        // one of seven is not all of them
+        assert!(!s.radar_sounds());
+        s.set_radar_sounds(true);
+        assert!(s.radar_sounds());
+        assert!(RADAR_SOUNDS.iter().all(|r| s.resolve(*r, false) == Some(NEARBY_CHAT)));
+        s.set_radar_sounds(false);
+        assert!(s.play.is_empty());
     }
 
     #[test]

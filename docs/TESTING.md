@@ -3804,7 +3804,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_RESIZE=<mode>[,<window>]` | Resize marks of a window: corner or edge hovered, corner or edge dragged or swept in and out |
 | `AURORA_DEMO_EXIT=<mode>` | Exit modal and offline choices |
 | `AURORA_DEMO_UI=<tab>` | Opens People (tab), the inventory and the chat |
-| `AURORA_DEMO_RADAR=1`, `tp`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, Friends tab, Groups tab, a group's profile |
+| `AURORA_DEMO_RADAR=1`, `tp`, `walk`, `friends`, `groups` or `profile` | People window: radar, radar after a teleport, a resident who comes and goes, Friends tab, Groups tab, a group's profile |
 | `AURORA_DEMO_PEOPLE=<mode>[:width]` | People scenarios, including nearby/friends lists and contact-set visual editors |
 | `AURORA_DEMO_PEOPLE_FILTER=<text>` | Initial name filter for a People demo scenario |
 | `AURORA_DEMO_ANTI_SPAM=1` | Synthetic offer, script prompt and sound floods with Protections controls |
@@ -5759,14 +5759,21 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   for the session: an offer and a request arrive, nothing is shown (each
   sender gets the automatic answer). The demo writes transcripts only with
   `AURORA_DEMO_CHATLOG`.
-- **`AURORA_DEMO_RADAR=1|tp|friends|groups|profile`**: the People window.
+- **`AURORA_DEMO_RADAR=1|tp|walk|friends|groups|profile`**: the People window.
   `1`: residents at every range in "Near you" (with
   `AURORA_DEMO_TAGS=1`, those of the name plates, several of whom have a
   profile picture). `tp`: three more residents in a region 10 km away, which
   the demo leaves "by teleport" at frame 600; with
   `AURORA_FPS_LIMIT=60`, they are greyed out at frame 780 and removed from the
-  list at frame 1400. `friends` and `groups`: these tabs. `profile`: the
-  Groups tab and the "Group Profile" window of the first group.
+  list at frame 1400. `walk`: the residents of `1`, and one more who
+  enters the region every 30 s (from the 10th second of the session),
+  60 m east of us, walks up to 6 m by the 20th second and back to 60 m,
+  then leaves the region: turn on the alerts of the radar's options menu
+  (and their "Radar: …" sounds in Preferences › Sound and voice) to see,
+  hear and send to scripts each crossing of the region, the draw distance
+  and the chat range, in and out. `friends` and `groups`: these tabs.
+  `profile`: the Groups tab and the "Group Profile" window of the first
+  group.
 - **`AURORA_DEMO_PEOPLE=visuals|visuals-stack|visuals-legacy`**: open the Family set's visual editor with a live plate preview. Family supplies a pink background and names, while the higher-priority Shop supplies a gold border and star badge replacing the friend heart. The same resident belongs to both, with a non-friend included. `visuals-stack` shows both set icons; `visuals-legacy` keeps classic world tags unchanged. Change priority, colour, switches, icon, preferred size and the global icon mode; inspect the live preview and world plates. Close the editor to inspect the nearby/friends/set lists, chat and minimap. Reduced plates still expand on hover; distance and crowd rules still apply. Demo sets remain in memory.
 
   For assignment, drag a resident's name from the chat, or a row from People, onto a real set pill or the selected set's member pane. The resident is added without leaving their other sets; internal pseudo-sets do not accept drops, and an inventory drag is left for its original destination. Close the editor to inspect the resolved world plate; change priority to check that one set can supply the border while another supplies the name/background. With `AURORA_DEMO_PROFILE=wolf:compact`, the profile shows the selected set badges side by side.

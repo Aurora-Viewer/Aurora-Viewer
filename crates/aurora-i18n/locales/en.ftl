@@ -8049,6 +8049,7 @@ radar-opt-region-leave = Leaving the region
 radar-opt-age-alert = Age alert
 radar-opt-age-days = Threshold (days)
 radar-opt-show-blocked = Show the block list
+radar-opt-sounds = Play a sound for the alerts
 radar-opt-enter-scripts = Report entries to scripts
 radar-opt-leave-scripts = Report exits to scripts
 radar-chat-enter = entered chat range ({ $distance } m).

@@ -516,6 +516,8 @@ pub struct App {
     demo_friend_join_flight: Option<(Instant, bool)>,
     /// AURORA_DEMO_RADAR=tp: the radar starts in another region.
     demo_radar_tp: bool,
+    /// AURORA_DEMO_RADAR=walk: a resident comes and goes.
+    demo_radar_walk: bool,
     /// Destination of the teleport being started (teleport screen).
     tp_dest: Option<String>,
     /// Window moved / resized: its normal geometry is recorded once settled.
@@ -1195,6 +1197,7 @@ impl App {
             demo_friend_join_target: None,
             demo_friend_join_flight: None,
             demo_radar_tp: false,
+            demo_radar_walk: false,
             tp_dest: None,
             geom_changed: None,
             frame_start: Instant::now(),
@@ -5225,6 +5228,10 @@ impl App {
         // arrival on
         if !self.in_world() || self.world.teleporting || !self.radar.due(now) {
             return;
+        }
+        if self.demo_radar_walk {
+            let walk = crate::demo::radar_walk(self.world.agent.position, now);
+            self.world.apply(walk);
         }
         let mut seen = if self.world.rlva.has("shownearby") {
             Vec::new()
@@ -13598,6 +13605,9 @@ impl App {
                     );
                     mini.extend(acts);
                 };
+                // the radar's menu shows and sets the seven alert sounds of
+                // the preferences at once
+                self.settings.radar.alert_sounds = self.settings.audio.ui.radar_sounds();
                 let people_before = (self.settings.radar.clone(), self.settings.friends_list.clone());
                 let mut radar = ui::people::RadarData {
                     radar: &self.radar,
@@ -13622,6 +13632,9 @@ impl App {
                     &mut people_map,
                     !self.settings.classic_people && !(self.demo && crate::demo::people::legacy()),
                 );
+                if self.settings.radar.alert_sounds != people_before.0.alert_sounds {
+                    self.settings.audio.ui.set_radar_sounds(self.settings.radar.alert_sounds);
+                }
                 if people_before != (self.settings.radar.clone(), self.settings.friends_list.clone()) {
                     self.settings.save();
                 }
@@ -15273,12 +15286,13 @@ impl ApplicationHandler for App {
                 // (nothing over the rows of plates)
                 self.panels.people = false;
             }
-            // AURORA_DEMO_RADAR=1|tp|friends|groups|profile: residents around
-            // for the radar of People (tp: with the ones of a region a
-            // teleport just left), or its friends / groups tab (profil: with
-            // the profile of a group)
+            // AURORA_DEMO_RADAR=1|tp|walk|friends|groups|profile: residents
+            // around for the radar of People (tp: with the ones of a region a
+            // teleport just left; walk: with one who comes and goes), or its
+            // friends / groups tab (profil: with the profile of a group)
             if let Ok(v) = std::env::var("AURORA_DEMO_RADAR") {
                 self.demo_radar_tp = v == "tp";
+                self.demo_radar_walk = v == "walk";
                 for ev in crate::demo::radar_events(self.demo_radar_tp) {
                     self.world.apply(ev);
                 }

@@ -154,6 +154,12 @@ pub struct RadarSettings {
     pub draw_leave: bool,
     pub region_enter: bool,
     pub region_leave: bool,
+    /// The seven UISndRadar* sounds all play: a mirror of the preferences
+    /// (set by the app each frame, written back when the menu changes it),
+    /// not a setting of its own. An Aurora entry: the Legacy Viewer sets
+    /// them one by one in Preferences › Chat › Radar only.
+    #[serde(skip)]
+    pub alert_sounds: bool,
     /// RadarEnterChannelAlert / RadarLeaveChannelAlert: the arrivals and
     /// departures sent to our scripts on `script_channel`
     /// (RadarAlertChannel, a setting the Legacy Viewer does not show either).
@@ -191,6 +197,7 @@ impl Default for RadarSettings {
             draw_leave: false,
             region_enter: false,
             region_leave: false,
+            alert_sounds: false,
             enter_scripts: false,
             leave_scripts: false,
             script_channel: crate::world::radar::SCRIPT_ALERT_CHANNEL,
@@ -756,6 +763,7 @@ pub(super) fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut RadarSettings
             s.toasts = true;
         }
     });
+    menu::toggle(ui, p, "volume", aurora_i18n::tr!("radar-opt-sounds"), &mut s.alert_sounds);
     // one icon per range, the same as the radar's (eye: drawn, bubble:
     // chat, pin: region)
     menu::toggle(ui, p, "eye-filled", aurora_i18n::tr!("radar-opt-draw-enter"), &mut s.draw_enter);

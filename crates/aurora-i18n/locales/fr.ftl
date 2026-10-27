@@ -8042,6 +8042,7 @@ radar-opt-region-leave = Sorties de la région
 radar-opt-age-alert = Alerte d'âge
 radar-opt-age-days = Seuil (jours)
 radar-opt-show-blocked = Afficher la liste des bloqués
+radar-opt-sounds = Jouer un son pour les alertes
 radar-opt-enter-scripts = Signaler les entrées aux scripts
 radar-opt-leave-scripts = Signaler les sorties aux scripts
 radar-chat-enter = est entré(e) à portée du chat ({ $distance } m).

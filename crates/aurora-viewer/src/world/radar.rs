@@ -711,6 +711,38 @@ mod tests {
     }
 
     #[test]
+    fn the_demo_walker_crosses_every_range_in_and_out() {
+        use crate::demo::{RADAR_WALKER, radar_walk};
+        let me = Vec3::new(132.0, 126.0, 33.0);
+        let mut radar = Radar::default();
+        let mut crossings = Vec::new();
+        for t in 0..=31 {
+            let aurora_net::NetEvent::CoarseLocations { positions, .. } = radar_walk(me, f64::from(t)) else {
+                panic!("the walk is a list of coarse locations");
+            };
+            let seen = positions
+                .into_iter()
+                .map(|(id, position)| Sighting {
+                    id,
+                    position,
+                    ..at(0, HERE, 0.0)
+                })
+                .collect();
+            let events = radar.sweep(seen, me, Some(HERE), &HashMap::new(), 96.0, f64::from(t));
+            crossings.extend(events.into_iter().filter(|e| e.avatar() == RADAR_WALKER).map(|e| match e {
+                Event::RegionEnter(..) => "region in",
+                Event::DrawEnter(..) => "draw in",
+                Event::ChatEnter(..) => "chat in",
+                Event::ChatLeave(_) => "chat out",
+                Event::DrawLeave(_) => "draw out",
+                Event::RegionLeave(_) => "region out",
+                Event::AgeAlert(..) => "age",
+            }));
+        }
+        assert_eq!(crossings, ["draw in", "region in", "chat in", "chat out", "draw out", "region out"]);
+    }
+
+    #[test]
     fn every_event_has_its_sound() {
         use crate::ui_sound::UiSound as S;
         assert_eq!(Event::RegionEnter(id(1), None).sound(), S::RadarRegionEnter);

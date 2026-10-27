@@ -2224,16 +2224,7 @@ pub const RADAR_LEFT_REGION: u64 = ((256000u64 + 40 * 256) << 32) | 256000;
 pub fn radar_events(left_behind: bool) -> Vec<NetEvent> {
     let mut events = vec![NetEvent::CoarseLocations {
         handle: HANDLE,
-        positions: vec![
-            (DEMO_LOUP, Vec3::new(134.0, 132.0, 24.0)),
-            (DEMO_NOVA, Vec3::new(150.0, 140.0, 24.0)),
-            (DEMO_TESS, Vec3::new(96.0, 150.0, 28.0)),
-            (DEMO_LONG_NAME, Vec3::new(146.0, 132.0, 24.0)),
-            (DEMO_WIDE_NAME, Vec3::new(120.0, 150.0, 24.0)),
-            (u(100), Vec3::new(20.0, 240.0, 60.0)),
-            // no altitude: its range is unknown
-            (u(101), Vec3::new(200.0, 60.0, 0.0)),
-        ],
+        positions: radar_residents(),
     }];
     if left_behind {
         events.push(NetEvent::CoarseLocations {
@@ -2246,6 +2237,41 @@ pub fn radar_events(left_behind: bool) -> Vec<NetEvent> {
         });
     }
     events
+}
+
+fn radar_residents() -> Vec<(Uuid, Vec3)> {
+    vec![
+        (DEMO_LOUP, Vec3::new(134.0, 132.0, 24.0)),
+        (DEMO_NOVA, Vec3::new(150.0, 140.0, 24.0)),
+        (DEMO_TESS, Vec3::new(96.0, 150.0, 28.0)),
+        (DEMO_LONG_NAME, Vec3::new(146.0, 132.0, 24.0)),
+        (DEMO_WIDE_NAME, Vec3::new(120.0, 150.0, 24.0)),
+        (u(100), Vec3::new(20.0, 240.0, 60.0)),
+        // no altitude: its range is unknown
+        (u(101), Vec3::new(200.0, 60.0, 0.0)),
+    ]
+}
+
+/// Seconds of one visit of the AURORA_DEMO_RADAR=walk resident.
+const RADAR_WALK_CYCLE: f64 = 30.0;
+/// The AURORA_DEMO_RADAR=walk resident (`u(105)`).
+pub const RADAR_WALKER: Uuid = Uuid::from_u128(0xD0D0_0000_0000_0000_0000_0000_0000_0069);
+
+/// AURORA_DEMO_RADAR=walk: the residents of `radar_events`, and one more who
+/// arrives in the region every thirty seconds 60 m from `me`, walks up to
+/// 6 m and back, then leaves: every alert of the radar in turn (region,
+/// draw distance, chat range, in and out), with its sound and its messages
+/// to scripts. `t` is in seconds.
+pub fn radar_walk(me: Vec3, t: f64) -> NetEvent {
+    let mut positions = radar_residents();
+    let phase = t % RADAR_WALK_CYCLE;
+    // away for the first third, then 60 m → 6 m → 60 m
+    if phase >= RADAR_WALK_CYCLE / 3.0 {
+        let half = RADAR_WALK_CYCLE / 3.0;
+        let d = 6.0 + 54.0 * ((phase - 2.0 * half).abs() / half) as f32;
+        positions.push((RADAR_WALKER, me + Vec3::new(d, 0.0, 0.0)));
+    }
+    NetEvent::CoarseLocations { handle: HANDLE, positions }
 }
 
 /// AgentProfile reply of the demo residents (AURORA_DEMO_PROFILE).
