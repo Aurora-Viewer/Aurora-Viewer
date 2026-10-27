@@ -43,6 +43,7 @@ enum Column {
     Priority,
 }
 
+#[derive(Default)]
 pub struct AnimationExplorer {
     /// Newest first.
     pub rows: Vec<Row>,
@@ -52,18 +53,6 @@ pub struct AnimationExplorer {
     pub no_owned: bool,
     pub view: View,
     sort: Option<(Column, bool)>,
-}
-
-impl Default for AnimationExplorer {
-    fn default() -> Self {
-        Self {
-            rows: Vec::new(),
-            selected: None,
-            no_owned: false,
-            view: View::default(),
-            sort: None,
-        }
-    }
 }
 
 const WEIGHTS: [f32; 3] = [0.5, 0.3, 0.2];
