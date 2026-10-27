@@ -16,6 +16,7 @@ mod focus;
 pub(crate) mod follow;
 pub mod free;
 mod mouselook_zoom;
+pub mod presets;
 mod settings;
 
 pub use focus::FocusObject;
@@ -1870,7 +1871,9 @@ fn avatar_frame(world: &World, s: &CameraSettings, now: Instant) -> AvatarFrame 
     }
 }
 
-fn focus_object_geom(world: &World, id: &Uuid, now: Instant) -> Option<FocusObject> {
+/// Where object `id` is and how it is turned (render space), unless it
+/// is a HUD.
+pub fn focus_object_geom(world: &World, id: &Uuid, now: Instant) -> Option<FocusObject> {
     let idx = world.objects.index_of_uuid(id)?;
     let o = world.objects.get(idx)?;
     let (position, rotation, hud) = Scene::object_transform_unshifted(world, idx, now)?;

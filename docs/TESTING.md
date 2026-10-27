@@ -260,6 +260,7 @@ the background still applies outside screenshots.
 | `AURORA_DEMO_ISOLATE=own\|pick[-panel][-opaque][-keep]` | The photo's isolation: our avatar alone on an empty background, or chosen with a click |
 | `AURORA_DEMO_PHOTO_LOOK=<look>[+<look>…][:<percent>][:compare][:panel][:tab=…][:search=…][:set=…]` | The photo's looks stacked (Legacy, Aurora or a LUT), the chosen one's strength and settings, the before / after line, the filter panel |
 | `AURORA_DEMO_CONTROLS=camera\|movement\|compact\|classic\|free\|free-compact` | The Controls window open on a tab, Firestorm's two windows, or driving the photo window's free camera |
+| `AURORA_DEMO_CAMERA_PRESETS=save\|apply\|object\|pick[-…]` | The viewfinder's camera presets: saved on the avatar, a place and an object, applied, or the object chosen in the scene |
 
 `AURORA_DEMO_JOYSTICK`: at frame 600, injects a synthetic eight-axis
 controller through the production input path, without connecting a device
@@ -415,6 +416,21 @@ filter. With `viewfinder`, the whole frame shows the filter live; with
 is drawn with it (`Posterize` with `AURORA_DEMO_SNAPSHOT_TILE=1024`: the 15
 tiles share the histogram curves, no seam along their borders). Capture
 from frame 700.
+
+`AURORA_DEMO_CAMERA_PRESETS` (with `AURORA_DEMO_SNAPSHOT=viewfinder`, steps
+joined by `-`): the presets panel opens at frame 600. `save` saves three
+presets at 610: "Close up" (on the avatar, the position only), "Plaza" (the
+place, the lens and the light) and "Bench" (the object nearest the avatar,
+every part); the log gives `camera preset saved: …` with the parts kept and
+the camera's position. `apply` turns the camera away at 620 and applies
+"Plaza" at 660: the log gives the camera at 700 at the position it was saved
+at, and a capture from frame 720 shows the first view again (capture at 640
+for the view turned away). `object` applies "Bench" instead. `pick` chooses
+the anchor object in the scene: the panel on Object, the pointer at the
+middle of the window, 70 % down, from 630 and a click there at 640 (the log
+gives `camera preset: anchor object <id>`); capture at 636 for the choosing
+button lit. The presets are saved in the demo profile's settings, like the
+Controls window's.
 
 `AURORA_DEMO_CONTROLS` opens the Controls window at frame 600: `camera` on
 its Camera tab (joysticks, zoom, the four views, object view, mouselook,

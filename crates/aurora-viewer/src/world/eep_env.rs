@@ -831,6 +831,18 @@ impl EnvSelector {
         (!m.is_empty()).then_some(Llsd::Map(m))
     }
 
+    /// A local environment kept by a camera preset (`saved_local`), chosen
+    /// as one from the lists: it replaces the local one and is kept for the
+    /// next session like any choice.
+    pub fn apply_saved(&mut self, data: &Llsd) {
+        if self.rlva_locked {
+            return;
+        }
+        self.clear_local();
+        self.restore_local(data);
+        self.local_dirty = true;
+    }
+
     /// Restore the last session's local environment (loadFromSettings): the
     /// day first, then the fixed sky and water.
     pub fn restore_local(&mut self, data: &Llsd) {
@@ -1579,5 +1591,26 @@ mod tests {
         // shared: nothing to keep
         next.clear_local();
         assert!(next.saved_local().is_none());
+    }
+
+    #[test]
+    fn a_camera_preset_light_replaces_the_local_environment_and_is_kept() {
+        let mut sel = region_selector();
+        sel.capture_personal();
+        sel.edit_personal(|s| {
+            s.gamma = 2.5;
+            true
+        });
+        let preset = sel.saved_local().expect("personal sky");
+        // later, a water was chosen: the preset's light comes back whole
+        let mut now = region_selector();
+        now.request_local(WATER, SettingsKind::Water);
+        now.on_settings(WATER, Some(water_asset(8.0)));
+        now.take_local_dirty();
+        now.apply_saved(&preset);
+        assert!(now.take_local_dirty(), "a choice: kept for the next session");
+        assert!((now.frame(&input(1.0)).0.gamma - 2.5).abs() < 1e-6);
+        assert_eq!(now.local_view().sky, ListShown::Personal);
+        assert_ne!(now.local_view().water, ListShown::Item(WATER));
     }
 }
