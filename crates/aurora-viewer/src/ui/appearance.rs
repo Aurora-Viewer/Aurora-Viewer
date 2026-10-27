@@ -895,16 +895,32 @@ fn outfit_list(
                 ui.spacing_mut().interact_size.y = super::inventory::AURORA_ROW_HEIGHT;
                 let response = widgets::collapsing_forced(ui, p, ("outfit", id), galley.clone(), default_open, forced, |ui| {
                     ui.spacing_mut().interact_size.y = interact;
-                    if ui
-                        .selectable_label(
-                            st.outfit_selection.contains(*id),
-                            aurora_i18n::tr!("ui-appearance-select-this-outfit"),
-                        )
-                        .clicked()
-                    {
-                        st.outfit_selection.click(*id, outfits, ui.input(|i| i.modifiers), false);
-                        st.selected_item = None;
-                    }
+                    // The header selects, like the Legacy Viewer's accordion tab
+                    // (LLOutfitsList); the body opens on what to do with the
+                    // outfit, replacing first, as its Wear button does
+                    // (LLPanelOutfitsInventory::onWearButtonClick, "replaceoutfit").
+                    ui.horizontal_wrapped(|ui| {
+                        use widgets::{ActionKind, action_button};
+                        let size = Vec2::new(0.0, 24.0);
+                        for (icon, label, kind, append) in [
+                            (
+                                "shirt-filled",
+                                aurora_i18n::tr!("ui-appearance-gallery-replace-your-outfit"),
+                                ActionKind::Primary,
+                                false,
+                            ),
+                            ("plus", aurora_i18n::tr!("common-add"), ActionKind::Flat, true),
+                        ] {
+                            if action_button(ui, p, icon, label, kind, size).clicked() {
+                                actions.push(if st.outfit_selection.contains(*id) {
+                                    st.wear_selection(outfits, append)
+                                } else {
+                                    Action::Wear(*id, append)
+                                });
+                            }
+                        }
+                    });
+                    ui.add_space(2.0);
                     let mut links = model::folder_links(&world.inventory, *id);
                     links.sort_by_key(|l| l.name.to_lowercase());
                     for link in links.iter().filter(|l| !l.folder) {
@@ -939,22 +955,6 @@ fn outfit_list(
                             .color(p.muted),
                         );
                     }
-                    ui.horizontal(|ui| {
-                        if widgets::flat_button(ui, p, aurora_i18n::tr!("common-wear")).clicked() {
-                            actions.push(if st.outfit_selection.contains(*id) {
-                                st.wear_selection(outfits, false)
-                            } else {
-                                Action::Wear(*id, false)
-                            });
-                        }
-                        if widgets::flat_button(ui, p, aurora_i18n::tr!("common-add")).clicked() {
-                            actions.push(if st.outfit_selection.contains(*id) {
-                                st.wear_selection(outfits, true)
-                            } else {
-                                Action::Wear(*id, true)
-                            });
-                        }
-                    });
                 });
                 ui.spacing_mut().interact_size.y = interact;
                 st.select_outfit(&response.header, *id, outfits);
