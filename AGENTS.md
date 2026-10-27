@@ -389,7 +389,8 @@ change to the interface:
     open in it; the script says so, just run it again once the folder is
     free). If the task came from an issue, **close it on the board** before
     handing back (section 15, "End of the work"): reply on the issue with
-    the PR link, Status `Done`, `Waiting Review` or `Waiting for reporter`.
+    the PR link, Status `Done`, `Waiting Review` or `Waiting for user
+    response`.
     Then **tell the human**: link of the merged
     PR, what changed, the state of the issue, and what is left to test on the
     grid if anything. If the session stops before
@@ -715,14 +716,15 @@ stands:
 
 | Status | Meaning | Set by |
 |---|---|---|
-| `Todo` | not started | the project manager; an agent that hands back unfinished work |
+| `Triage` | new, not sorted yet: waits for the QA to check its type, areas and Priority | the board itself, for every issue added to it |
+| `Todo` | not started | the QA or the project manager, once sorted; an agent that hands back unfinished work |
 | `In progress` | actively worked on | the agent that takes the issue |
 | `On hold` | paused on purpose, until something named in a comment unblocks it | an agent or the project manager |
-| `Waiting for reporter` | waiting for the reporter or another outside person: information, a file, a reproduction, a test | the agent that asked for it |
+| `Waiting for user response` | waiting for an answer from the reporter or another user: information, a file, a reproduction, a test | the agent that asked for it |
 | `Waiting Review` | fix merged or ready, waiting for the human's or the QA's validation (🟡 in TASKS.md) | the agent, at the end of the work |
 | `Done` | resolved and closed | the agent, or GitHub after `Closes #<n>` |
 
-- **`Waiting for reporter`**: as soon as a comment asks the reporter (or
+- **`Waiting for user response`**: as soon as a comment asks the reporter (or
   another outside person) for something: details, a screenshot, a
   reproduction, a test of a build or of the next release ("please confirm
   on the next release"). When they answer, move it back to `In progress`
@@ -746,9 +748,9 @@ your human asks what to take next, propose from the board, highest priority
 first, the `1.0 Release` milestone before the rest:
 
 ```powershell
-./scripts/issue-board.ps1 -Todo                        # open Todo issues, by priority
-./scripts/issue-board.ps1 -List 'Waiting for reporter' # open issues with that Status, by priority
-./scripts/issue-board.ps1 -Issue <n>                   # Status, Priority, milestone of one issue
+./scripts/issue-board.ps1 -Todo                             # open Todo issues, by priority
+./scripts/issue-board.ps1 -List 'Waiting for user response' # open issues with that Status, by priority
+./scripts/issue-board.ps1 -Issue <n>                        # Status, Priority, milestone of one issue
 ./scripts/issue-board.ps1 -Issue <n> -Status 'In progress'
 ```
 
@@ -758,21 +760,20 @@ token: if it says so, give your human `gh auth refresh -s project`, to run
 once in their terminal (it opens GitHub to grant the right; never ask for a
 token). Run it alone, with no `cd` or `;`, like the `gh issue` commands.
 
-**The `triage` label** marks an open issue whose Priority the project
-manager has not set yet. The Issue triage workflow
-(`.github/workflows/issue-triage.yml`, `scripts/issue-triage.ps1`) puts it
-on every new issue and removes it as soon as a Priority is set; it puts it
-back if someone removes it before that. The issues opened by the authors
-listed in the script (`$Exempt`) never get it.
+**The `Triage` Status** is the QA's sorting list. Two built-in workflows
+of the board fill it: "Auto-add to project" adds every new issue of the
+repository, and "Item added to project" sets its Status to `Triage`. The
+QA (and the project manager) sort it: type, areas and Priority, then
+`Todo`, or a reasoned close (duplicate, out of scope). There is no
+`triage` label.
 
-- **Never add or remove `triage` yourself**, and never set a Priority to
-  make it go: the label is the project manager's to-do list.
-- An issue in triage can still be read, typed, labelled and answered (the
-  rules above). Do not propose it as the next work while it has no
-  Priority; work on it when your human asks for it directly.
-- A label that looks out of step with the Priority: run the workflow by
-  hand (`gh workflow run issue-triage.yml -f issue=<n> -f dry_run=false`),
-  or tell your human.
+- **Never move an issue out of `Triage` on your own**, and never set a
+  Priority to get it out: the list is the QA's.
+- An issue in `Triage` can still be read, typed, labelled and answered
+  (the rules above). Do not propose it as the next work; when your human
+  asks you to work on it directly, take it as usual (`In progress`).
+- `./scripts/issue-board.ps1 -List Triage` lists it, highest priority
+  first.
 
 **Find the issue of your task.** A task does not have to start from an issue
 for one to exist: the gap may already be filed, alone or as the sub-issue of
@@ -825,7 +826,7 @@ both are done:
     not have followed);
   - `Waiting Review` when the fix is merged or ready and waits for your
     human's validation or a grid test (🟡 in TASKS.md);
-  - `Waiting for reporter` when your comment asks the reporter for
+  - `Waiting for user response` when your comment asks the reporter for
     information, a file or a test, including a test of the next release;
   - `On hold` when the work is blocked by something outside it, with a
     comment saying what unblocks it (above).
@@ -877,8 +878,8 @@ both are done:
   decided by the human before closing.
 - **Missing information, unreadable attachment, problem not reproduced or
   partial fix**: keep the issue open, say in a comment what is missing and
-  set its Status to `Waiting for reporter` when the reporter has to answer,
-  `On hold` when something else blocks it (above). A lack
+  set its Status to `Waiting for user response` when the reporter has to
+  answer, `On hold` when something else blocks it (above). A lack
   of reply and a mere hypothesis are not enough to close it. If new evidence
   invalidates the resolution, reopen it (`gh issue reopen`), explain why and
   resume the triage.
