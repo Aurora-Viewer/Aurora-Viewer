@@ -5769,9 +5769,9 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   enters the region every 30 s (from the 10th second of the session),
   60 m east of us, walks up to 6 m by the 20th second and back to 60 m,
   then leaves the region: turn on the alerts of the radar's options menu
-  (and their "Radar: …" sounds in Preferences › Sound and voice) to see,
-  hear and send to scripts each crossing of the region, the draw distance
-  and the chat range, in and out. `friends` and `groups`: these tabs.
+  (and "Play a sound for the alerts") to see, hear and send to scripts
+  each crossing of the region, the draw distance and the chat range, in
+  and out; add `AURORA_DEMO_SOUND=1` to hear the sounds. `friends` and `groups`: these tabs.
   `profile`: the Groups tab and the "Group Profile" window of the first
   group.
 - **`AURORA_DEMO_PEOPLE=visuals|visuals-stack|visuals-legacy`**: open the Family set's visual editor with a live plate preview. Family supplies a pink background and names, while the higher-priority Shop supplies a gold border and star badge replacing the friend heart. The same resident belongs to both, with a non-friend included. `visuals-stack` shows both set icons; `visuals-legacy` keeps classic world tags unchanged. Change priority, colour, switches, icon, preferred size and the global icon mode; inspect the live preview and world plates. Close the editor to inspect the nearby/friends/set lists, chat and minimap. Reduced plates still expand on hover; distance and crowd rules still apply. Demo sets remain in memory.
