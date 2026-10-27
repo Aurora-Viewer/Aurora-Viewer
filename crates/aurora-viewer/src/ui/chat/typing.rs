@@ -143,10 +143,14 @@ impl LocalTyping {
 
 /// A text of the nearby chat that shows us typing: something to say on
 /// channel 0, not a `/` command or channel, nor an emote unless
-/// `during_emote` ("/me " or "/me'", FSTypeDuringEmote).
-pub fn says_aloud(text: &str, during_emote: bool) -> bool {
+/// `during_emote` ("/me " or "/me'", FSTypeDuringEmote). With
+/// `colon_emote` (AllowMUpose), any line that starts with ":" counts as an
+/// emote, smileys included, like the Legacy Viewer's keystroke rule
+/// (FSNearbyChat::handleChatBarKeystroke).
+pub fn says_aloud(text: &str, during_emote: bool, colon_emote: bool) -> bool {
     let text = text.trim_start();
     match text.strip_prefix('/') {
+        None if colon_emote && text.starts_with(':') => during_emote,
         None => !text.is_empty(),
         Some(rest) => {
             during_emote
@@ -269,16 +273,22 @@ mod tests {
     /// emote setting; never a channel or a command.
     #[test]
     fn says_aloud_follows_the_chat_bar_keystroke_rule() {
-        assert!(says_aloud("hello", false));
-        assert!(says_aloud("  hi", false));
-        assert!(!says_aloud("", false));
-        assert!(!says_aloud("   ", false));
-        assert!(!says_aloud("/5 open", true));
-        assert!(!says_aloud("/me waves", false));
-        assert!(says_aloud("/me waves", true));
-        assert!(says_aloud("/ME's here", true));
-        assert!(!says_aloud("/me", true));
-        assert!(!says_aloud("/mesh", true));
-        assert!(!says_aloud("/é", true));
+        assert!(says_aloud("hello", false, false));
+        assert!(says_aloud("  hi", false, false));
+        assert!(!says_aloud("", false, false));
+        assert!(!says_aloud("   ", false, false));
+        assert!(!says_aloud("/5 open", true, false));
+        assert!(!says_aloud("/me waves", false, false));
+        assert!(says_aloud("/me waves", true, false));
+        assert!(says_aloud("/ME's here", true, false));
+        assert!(!says_aloud("/me", true, false));
+        assert!(!says_aloud("/mesh", true, false));
+        assert!(!says_aloud("/é", true, false));
+        // ":" as "/me": an emote, a smiley too; plain text without the option
+        assert!(says_aloud(":waves", false, false));
+        assert!(!says_aloud(":waves", false, true));
+        assert!(!says_aloud(" :)", false, true));
+        assert!(says_aloud(":waves", true, true));
+        assert!(says_aloud("hello :)", false, true));
     }
 }

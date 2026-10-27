@@ -187,6 +187,7 @@ const BEFORE: &[&str] = &[
     "chat_keep_focus",
     "chat_gesture_autocomplete",
     "chat_name_prediction",
+    "colon_emote",
     "chat_mention_autocomplete",
     "autohide_chat_bar",
     "chat_toast_seconds",

@@ -10998,6 +10998,10 @@ impl App {
     /// command (FSCmdLine) or a line sent on its channel.
     fn send_local_chat(&mut self, mut c: ui::chat::OutgoingChat) {
         if c.channel == 0 {
+            // the MU* pose first, then the gesture (FSNearbyChat::sendChat)
+            if self.settings.colon_emote {
+                ui::chat::colon_emote(&mut c.message);
+            }
             let (revised, gesture) = self.gesture_state.manager.revise(&c.message);
             c.message = revised;
             if let Some(id) = gesture {
@@ -11019,6 +11023,7 @@ impl App {
     /// drawn (`ChatUi::local_typing_update`).
     fn update_local_typing(&mut self) {
         self.chat_ui.type_during_emote = self.settings.type_during_emote;
+        self.chat_ui.colon_emote = self.settings.colon_emote;
         if !self.world.rlva.can_send_typing_start() {
             self.stop_local_typing();
             return;
@@ -11126,7 +11131,11 @@ impl App {
         for id in a.gestures {
             self.gesture_play(id, None);
         }
-        for (to, text) in a.ims {
+        for (to, mut text) in a.ims {
+            // ":" as "/me" in the conversations too (FSFloaterIM::sendMsg)
+            if self.settings.colon_emote {
+                ui::chat::colon_emote(&mut text);
+            }
             let text = ui::emoji::expand_shortcodes(&text);
             if self.world.is_group_session(&to) {
                 self.world.send_session_im(to, &text);
