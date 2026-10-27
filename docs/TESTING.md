@@ -2009,9 +2009,13 @@ grid.
   the common editing view. Five notches forwards return to the normal
   global view (frame 900). The camera and the
   local factors are kept during the global zoom. Direct held-key movement
-  and local resizing stay disabled while build tools are open. Frames 920
-  and 940 close editing, then select a world object: the wheel is no longer intercepted
-  by the HUDs. Suggested screenshots: 750,790,850,910.
+  and local resizing stay disabled while build tools are open. The screen
+  outline follows the zoomed projection. Frames 910,930,950 zoom out again
+  before closing editing (920), selecting a world object (940), then
+  selecting another HUD (960) and clearing the selection (970). Closing or
+  leaving the HUD selection restores 100%; switching HUDs retains the zoom.
+  Logs report each reset and confirm that the wheel is no longer intercepted
+  outside HUD editing. Suggested screenshots: 750,790,905,925,945,965,980.
 - `faces`, `faces-turned`: nine HUD panels with a single visible face —
   columns front / back / explicitly double-sided PBR material, rows
   opaque / translucent / masked. The back column must stay empty;

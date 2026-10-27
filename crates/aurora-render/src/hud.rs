@@ -44,11 +44,39 @@ impl HudView {
             Vec3::X,
         )
     }
+
+    /// The 100% screen rectangle projected into the zoomed view, in pixels.
+    pub fn screen_bounds(self) -> [f32; 4] {
+        let left = self.width * (1.0 - self.zoom) * 0.5;
+        let top = self.height * (1.0 - self.zoom) * 0.5;
+        [left, top, self.width - left, self.height - top]
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screen_bounds_follow_the_projected_normal_screen_after_resize_and_zoom() {
+        for size in [[1600, 900], [900, 1600], [3200, 1800]] {
+            for zoom in [0.1, 0.5, 0.8, 1.0] {
+                let view = HudView::new(size, zoom, -1.0, 1.0);
+                let bounds = view.screen_bounds();
+                let aspect = view.width / view.height;
+                for (point, expected) in [
+                    (Vec3::new(0.0, aspect * 0.5, 0.5), [bounds[0], bounds[1]]),
+                    (Vec3::new(0.0, -aspect * 0.5, -0.5), [bounds[2], bounds[3]]),
+                ] {
+                    let clip = view.matrix() * point.extend(1.0);
+                    let pixel = [(clip.x + 1.0) * view.width * 0.5, (1.0 - clip.y) * view.height * 0.5];
+                    for axis in 0..2 {
+                        assert!((pixel[axis] - expected[axis]).abs() < 0.001);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn projection_and_picking_agree_after_resize_and_zoom() {

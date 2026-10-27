@@ -13,6 +13,7 @@ impl App {
     }
     /// Own the wheel before media or camera, even on a no-modify/locked HUD.
     pub(super) fn on_hud_scroll(&mut self, steps: f32) -> bool {
+        self.build.sync_hud_zoom(&mut self.world);
         if !self.settings.show_huds
             || self.camera.mouselook()
             || !matches!(self.screen, Screen::World)
@@ -24,7 +25,7 @@ impl App {
             if !self.build.open || !self.build.hud_selected(&self.world) {
                 return false;
             }
-            // LLAgentCamera::handleScrollWheel / cameraZoomIn (Firestorm,
+            // LLAgentCamera::handleScrollWheel / cameraZoomIn (Legacy Viewer,
             // originally LGPL 2.1): a HUD selection zooms the entire HUD view.
             // No hit under the cursor is needed; local scale profiles stay intact.
             if self.hud_drag.is_none() && !self.build.manip.dragging() && self.interactions.held.is_none() {
@@ -101,6 +102,22 @@ impl App {
                 self.world.dirty_hud(root);
             }
         }
+    }
+
+    /// render_ui_2d (indra/newview/llviewerdisplay.cpp): the normal screen
+    /// shrinks with the common HUD projection, revealing offscreen attachments.
+    pub(super) fn draw_hud_view_bounds(&self, ctx: &egui::Context) {
+        if !self.huds_shown() || !self.build.open || !self.build.hud_selected(&self.world) {
+            return;
+        }
+        let Some(view) = self.scene.lists.hud_view.filter(|view| view.zoom < 1.0) else {
+            return;
+        };
+        let [left, top, right, bottom] = view.screen_bounds();
+        let ppp = ctx.pixels_per_point();
+        let rect = egui::Rect::from_min_max(egui::pos2(left / ppp, top / ppp), egui::pos2(right / ppp, bottom / ppp));
+        ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::unique("hud_view_bounds")))
+            .rect_stroke(rect, 0.0, egui::Stroke::new(1.0, self.palette.ink), egui::StrokeKind::Inside);
     }
 
     pub(super) fn draw_hud_scale(&self, ctx: &egui::Context) {
@@ -339,13 +356,23 @@ impl App {
                     self.world.hud_scale(root) == scale
                 );
             }
+        } else if self.frame_count == 910 || self.frame_count == 930 || self.frame_count == 950 {
+            self.build.open_build(crate::build::Tool::Edit);
+            self.build.click_select(&mut self.world, &self.settings.build, Some(root), false);
+            self.on_hud_scroll(-5.0);
+            log::info!(
+                "demo HUD view before transition: frame={}, view_zoom={:.3}",
+                self.frame_count,
+                self.world.hud_zoom
+            );
         } else if self.frame_count == 920 {
             self.build.close(&mut self.world, &mut self.settings.build);
             let before = self.world.hud_zoom;
             let handled = self.on_hud_scroll(-1.0);
             log::info!(
-                "demo HUD view outside edit: handled={handled}, view_unchanged={}",
-                self.world.hud_zoom == before
+                "demo HUD view outside edit: handled={handled}, view_unchanged={}, reset={}",
+                self.world.hud_zoom == before,
+                self.world.hud_zoom == 1.0
             );
         } else if self.frame_count == 940 {
             let ground = self.world.objects.iter().find_map(|(idx, _)| {
@@ -355,12 +382,21 @@ impl App {
             });
             self.build.open_build(crate::build::Tool::Edit);
             self.build.click_select(&mut self.world, &self.settings.build, ground, false);
-            let before = self.world.hud_zoom;
             let handled = self.on_hud_scroll(-1.0);
             log::info!(
-                "demo HUD view with world selection: handled={handled}, view_unchanged={}",
-                self.world.hud_zoom == before
+                "demo HUD view with world selection: handled={handled}, reset={}",
+                self.world.hud_zoom == 1.0
             );
+        } else if self.frame_count == 960 {
+            let next = self.world.objects.index_of_uuid(&crate::demo::hud::object(32, false).full_id);
+            let before = self.world.hud_zoom;
+            self.build.click_select(&mut self.world, &self.settings.build, next, false);
+            self.build.sync_hud_zoom(&mut self.world);
+            log::info!("demo HUD view with another HUD: view_unchanged={}", self.world.hud_zoom == before);
+        } else if self.frame_count == 970 {
+            self.build.deselect_all(&self.world);
+            self.build.sync_hud_zoom(&mut self.world);
+            log::info!("demo HUD view with empty selection: reset={}", self.world.hud_zoom == 1.0);
         }
     }
 
@@ -538,7 +574,7 @@ fn hud_metadata_commands(world: &mut World, selected: &[usize], now: Instant) ->
     commands
 }
 
-/// Firestorm's wheel factor with winit's opposite scroll sign; same bounds
+/// Legacy Viewer's wheel factor with winit's opposite scroll sign; same bounds
 /// as Aurora's World > HUDs view zoom controls (never a per-object resize).
 fn hud_view_zoom(zoom: f32, steps: f32) -> f32 {
     if !steps.is_finite() {
