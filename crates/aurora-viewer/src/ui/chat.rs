@@ -231,6 +231,8 @@ pub struct ChatUi {
     /// An emote shows us typing in the nearby chat too (FSTypeDuringEmote,
     /// Preferences › Chat), given every frame by the app.
     pub type_during_emote: bool,
+    /// ":" stands for "/me" (AllowMUpose), given every frame by the app.
+    pub colon_emote: bool,
     /// Our typing in the nearby chat, and what its fields did this frame.
     local_typing: typing::LocalTyping,
     local_field: typing::LocalField,
@@ -503,6 +505,22 @@ pub fn parse_channel(text: &str) -> (i32, String) {
         }
     }
     (0, text.to_owned())
+}
+
+/// A MU* pose as an emote, when ":" stands for "/me" (AllowMUpose):
+/// ":waves" becomes "/me waves" and ":'s here" "/me's here". A line of three
+/// bytes or less, or a colon followed by a digit, a punctuation mark or a
+/// space (":)", ":3", ": "), stays as it is: the smileys are kept.
+/// Port of FSCommon::applyMuPose (indra/newview/fscommon.cpp, originally
+/// LGPL 2.1), applied like it on channel 0 and in the conversations.
+pub fn colon_emote(text: &mut String) {
+    let with = match text.strip_prefix(':').and_then(|rest| rest.chars().next()) {
+        _ if text.len() <= 3 => return,
+        Some('\'') => "/me",
+        Some(c) if !(c.is_ascii_digit() || c.is_ascii_punctuation() || c.is_ascii_whitespace()) => "/me ",
+        _ => return,
+    };
+    text.replace_range(..1, with);
 }
 
 fn color_for(kind: ChatKind, p: &Palette) -> Color32 {
@@ -3151,7 +3169,7 @@ fn classic_pane(
         sent,
     });
     if st.selected.is_none() {
-        let said = typing::says_aloud(&draft, st.type_during_emote);
+        let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote);
         st.local_field(&resp, said, sent);
     }
     if !draft.is_empty() {
@@ -3747,7 +3765,7 @@ pub(crate) fn bar_input(
     // Modified Enter does not surrender egui's single-line field focus.
     let enter = !focusing && (resp.has_focus() || resp.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.alt);
     // Enter, even on an empty bar, ends the typing (sendChat → stopTyping)
-    let said = typing::says_aloud(&st.input, st.type_during_emote);
+    let said = typing::says_aloud(&st.input, st.type_during_emote, st.colon_emote);
     st.local_field(&resp, said, enter);
     if enter {
         resp.surrender_focus();
@@ -4413,6 +4431,26 @@ mod tests {
         assert_eq!(parse_channel("/5-3"), (5, "-3".into()), "the sign only before the digits");
         assert_eq!(parse_channel("/-"), (0, "/-".into()));
         assert_eq!(parse_channel("/--5 x"), (0, "/--5 x".into()));
+    }
+
+    /// ":" as "/me" (FSCommon::applyMuPose): poses and possessives become
+    /// emotes, smileys and short lines stay as they are.
+    #[test]
+    fn colon_emote_follows_the_mu_pose_rule() {
+        let pose = |text: &str| {
+            let mut text = text.to_owned();
+            colon_emote(&mut text);
+            text
+        };
+        assert_eq!(pose(":waves"), "/me waves");
+        assert_eq!(pose(":'s here"), "/me's here");
+        assert_eq!(pose(":été là"), "/me été là", "a letter beyond ASCII is a pose");
+        for kept in [":)", ":-) hi", ":3 cute", ": spaced", ":D!", ":ab", "hello :waves", "/me waves", ""] {
+            assert_eq!(pose(kept), kept);
+        }
+        // more than three bytes, as the Legacy Viewer counts them
+        assert_eq!(pose(":abc"), "/me abc");
+        assert_eq!(pose(":'s"), ":'s");
         assert_eq!(parse_channel("/hudping"), (0, "/hudping".into()));
     }
 

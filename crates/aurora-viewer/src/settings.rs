@@ -629,6 +629,9 @@ pub struct Settings {
     /// three letters (FSChatbarNamePrediction; on, the human's choice of
     /// 2026-10-26, where the Legacy Viewer leaves it off).
     pub chat_name_prediction: bool,
+    /// ":" at the start of a line is "/me", in the nearby chat and the
+    /// conversations (AllowMUpose, off; #1202): ":waves" is "Name waves".
+    pub colon_emote: bool,
     /// `@` in a chat field lists the residents of the conversation to mention
     /// (FSUseChatMentionAutoComplete, on).
     pub chat_mention_autocomplete: bool,
@@ -1628,6 +1631,7 @@ impl Default for Settings {
             chat_keep_focus: true,
             chat_gesture_autocomplete: true,
             chat_name_prediction: true,
+            colon_emote: false,
             chat_mention_autocomplete: true,
             autohide_chat_bar: false,
             show_contacts_tab: true,

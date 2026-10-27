@@ -58,6 +58,12 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     tr!("ui-options-name-prediction-hint"),
                     &field!(chat_name_prediction),
                 );
+                // AllowMUpose (off), #1202
+                cx.toggle(
+                    tr!("ui-options-colon-emote"),
+                    tr!("ui-options-colon-emote-hint"),
+                    &field!(colon_emote),
+                );
                 cx.toggle(
                     tr!("ui-options-mention-autocomplete"),
                     tr!("ui-options-mention-autocomplete-hint"),

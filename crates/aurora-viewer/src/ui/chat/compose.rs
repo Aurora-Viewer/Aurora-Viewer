@@ -262,7 +262,7 @@ pub(super) fn show(
                 sent,
             });
             if local {
-                let said = typing::says_aloud(&draft, st.type_during_emote);
+                let said = typing::says_aloud(&draft, st.type_during_emote, st.colon_emote);
                 st.local_field(&resp, said, sent);
             }
             if !draft.is_empty() {
