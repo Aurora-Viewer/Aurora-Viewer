@@ -44,7 +44,6 @@ const SNAP_ARROW_SCALE: f32 = 0.7;
 const SCALE_HALF_LIFE: f32 = 0.07;
 const DRAG_SLOP_PX: f32 = 2.0;
 /// MaxDragDistance (LimitDragDistance on).
-const MAX_DRAG_DISTANCE: f32 = 48.0;
 /// LLManipRotate constants.
 const RING_PX: f32 = 100.0;
 const SNAP_ANGLE: f32 = 5.625;
@@ -260,7 +259,7 @@ impl Manip {
             && d.mode == EditMode::Move
             && !s.follow_edit_object
             && !d.edge_pan_blocked
-            && d.delta.length() < MAX_DRAG_DISTANCE * 0.95;
+            && s.drag_limit().is_none_or(|max| d.delta.length() < max * 0.95);
         let pan = d.edge_pan.update(cam, cursor, d.pivot + d.delta, motion, dt, active);
         // The solver runs with the translated camera in this same frame.
         // Predict its matching object pose when projecting the grab offset.
@@ -516,7 +515,7 @@ impl Manip {
             return;
         };
         let cam = p.cam;
-        if f.pivot.distance(cam.eye) > super::MAX_SELECT_DISTANCE + 64.0 {
+        if s.select_limit().is_some_and(|max| f.pivot.distance(cam.eye) > max + 64.0) {
             return;
         }
         let drag = self.drag.as_ref().filter(|d| d.started);
@@ -1301,7 +1300,7 @@ fn drag_update(
         Part::Arrow(i) => {
             let Some(hit) = ray_plane(o, dir, d.pivot, d.normal) else { return };
             let rel = hit - d.start_hit;
-            if rel.length() > MAX_DRAG_DISTANCE {
+            if s.drag_limit().is_some_and(|max| rel.length() > max) {
                 return;
             }
             d.edge_pan_blocked = false;
@@ -1325,7 +1324,7 @@ fn drag_update(
         Part::Plane(i) => {
             let Some(hit) = ray_plane(o, dir, d.pivot, d.normal) else { return };
             let mut rel = hit - d.start_hit;
-            if rel.length() > MAX_DRAG_DISTANCE {
+            if s.drag_limit().is_some_and(|max| rel.length() > max) {
                 return;
             }
             d.edge_pan_blocked = false;

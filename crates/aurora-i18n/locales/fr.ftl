@@ -11661,6 +11661,9 @@ contact-visual-icon-39 = Identité
 # Personal construction layout
 build-layout-settings = Réglages de construction
 build-layout-ruler = Réglages de la règle
+build-layout-distances = Limites de distance
+build-ui-floaters-limit-select-distance = Limiter la distance de sélection (mètres)
+build-ui-floaters-limit-drag-distance = Limiter la distance de déplacement (mètres)
 build-layout-hidden = Options masquées
 build-layout-organize = Organiser les options…
 build-layout-finish = Terminer l’organisation

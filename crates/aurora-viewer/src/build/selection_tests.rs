@@ -204,7 +204,7 @@ fn seated_linkset_selection_excludes_avatars_and_their_body_and_hud_attachments(
         assert_eq!(select_type(&world, child), SelectType::World);
         for clicked in [root, child] {
             tool.click_select(&mut world, &settings, Some(clicked), false);
-            tool.prune(&world, now);
+            tool.prune(&world, &settings, now);
             assert_eq!(tool.selection, [root_key]);
             assert_eq!(tool.highlighted(&world), [(root, true), (child, false)]);
             assert_eq!(tool.linkset_prims(&world), [root, child]);
@@ -306,7 +306,7 @@ fn confirmed_link_reconciles_selection_colors_and_packet_order() {
     assert_eq!(highlighted.len(), 2);
     assert_eq!(highlighted.iter().filter(|(_, root)| *root).count(), 1);
     tool.advance_link(&mut world, Instant::now());
-    tool.prune(&world, Instant::now());
+    tool.prune(&world, &settings, Instant::now());
     assert_eq!(selected(&tool), [99871]);
     assert!(tool.pending_link.is_none());
     let root = object(&world, 99871);
@@ -639,4 +639,45 @@ fn select_many_takes_each_linkset_once_in_one_message_and_leaves_attachments_out
     let mut sent = selects[0].clone();
     sent.sort_unstable();
     assert_eq!(sent, [950, 951, 99614]);
+}
+
+#[test]
+fn far_selection_stays_unless_the_select_distance_is_limited() {
+    let (mut world, mut tool, mut settings) = fixture();
+    let idx = object(&world, 99610);
+    tool.click_select(&mut world, &settings, Some(idx), false);
+    let key = tool.selection.clone();
+    assert_eq!(key.len(), 1);
+    let home = world.agent.position;
+    world.agent.position = home + Vec3::X * (MAX_SELECT_DISTANCE + 50.0);
+    // LimitSelectDistance is off by default: nothing is deselected
+    tool.prune(&world, &settings, Instant::now());
+    assert_eq!(tool.selection, key);
+    // on, LLSelectMgr::updateSelectionCenter deselects past MaxSelectDistance
+    settings.limit_select_distance = true;
+    settings.max_select_distance = MAX_SELECT_DISTANCE + 100.0;
+    tool.prune(&world, &settings, Instant::now());
+    assert_eq!(tool.selection, key);
+    settings.max_select_distance = 20.0;
+    tool.prune(&world, &settings, Instant::now());
+    assert!(tool.selection.is_empty());
+    assert_eq!(tool.status, aurora_i18n::tr!("build-mod-selection-too-far-away-deselected"));
+}
+
+#[test]
+fn distance_limits_follow_their_switches_and_stay_in_range() {
+    let mut s = BuildSettings::default();
+    assert_eq!(s.select_limit(), None);
+    assert_eq!(s.drag_limit(), Some(MAX_DRAG_DISTANCE));
+    s.limit_select_distance = true;
+    assert_eq!(s.select_limit(), Some(MAX_SELECT_DISTANCE));
+    s.max_select_distance = 5000.0;
+    assert_eq!(s.select_limit(), Some(1024.0));
+    s.max_select_distance = f32::NAN;
+    assert_eq!(s.select_limit(), Some(MAX_SELECT_DISTANCE));
+    s.limit_drag_distance = false;
+    assert_eq!(s.drag_limit(), None);
+    // older settings files read the new fields' defaults
+    let old: BuildSettings = serde_json::from_str("{}").unwrap();
+    assert!(!old.limit_select_distance && old.limit_drag_distance);
 }

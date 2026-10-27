@@ -2,7 +2,7 @@
 //! shape on rayon; pointer motion only updates one GPU placement record.
 //! Uses the loading shader's own HOLOGRAM mode, independently of Rez::enabled.
 
-use crate::build::{BuildSettings, MAX_PRIM_SCALE, MAX_SELECT_DISTANCE, MIN_PRIM_SCALE, shapes};
+use crate::build::{BuildSettings, MAX_PRIM_SCALE, MIN_PRIM_SCALE, shapes};
 use crate::world::World;
 use aurora_render::{DrawCmd, DrawLists, DrawRecord, MeshAlloc, Renderer, rez_mode};
 use crossbeam_channel::{Receiver, TryRecvError};
@@ -24,7 +24,11 @@ impl Placement {
     /// LLToolPlacer's shape, orientation and size; the simulator still
     /// decides the final placement from ObjectAdd's unchanged surface ray.
     pub fn new(world: &World, settings: &BuildSettings, point: Vec3) -> Option<Self> {
-        if !point.is_finite() || point.distance(world.agent.position) > MAX_SELECT_DISTANCE {
+        if !point.is_finite()
+            || settings
+                .select_limit()
+                .is_some_and(|max| point.distance(world.agent.position) > max)
+        {
             return None;
         }
         crate::build::BuildTool::region_at(world, point)?;
@@ -219,7 +223,13 @@ mod tests {
         }
         let settings = BuildSettings::default();
         assert!(Placement::new(&world, &settings, Vec3::NAN).is_none());
-        assert!(Placement::new(&world, &settings, point + Vec3::X * (MAX_SELECT_DISTANCE + 10.0)).is_none());
+        // unlimited by default; LimitSelectDistance refuses a far surface
+        let far = point + Vec3::X * (crate::build::MAX_SELECT_DISTANCE + 10.0);
+        let limited = BuildSettings {
+            limit_select_distance: true,
+            ..settings.clone()
+        };
+        assert!(Placement::new(&world, &limited, far).is_none());
         let settings = BuildSettings {
             create_shape: shapes::shapes().len(),
             ..settings

@@ -5,7 +5,7 @@
 //! contents permissions (LLFloaterBulkPermission), an item's properties,
 //! the texture picker and the confirmations (notifications.xml).
 
-use super::common::{check, label, row, section, small, spin, spin_i, text};
+use super::common::{check, label, row, section, small, spin, spin_i, spin_with_min_decimals, text};
 use super::{Confirm, Env};
 use crate::build::{BuildSettings, BuildTool};
 use crate::media::entry::MediaEntry;
@@ -100,6 +100,41 @@ pub(super) fn ruler_controls(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettin
                 .step_by(0.05),
         );
     });
+}
+
+/// The Build 1 preferences' "Limit select distance" and "Limit drag
+/// distance" (panel_preferences_firestorm.xml): a switch and its distance in
+/// metres, greyed while the switch is off.
+pub(super) fn distance_controls(ui: &mut egui::Ui, p: &Palette, s: &mut BuildSettings) {
+    let label_width = (ui.available_width() - 80.0).max(30.0);
+    for (limit, distance, text) in [
+        (
+            &mut s.limit_select_distance,
+            &mut s.max_select_distance,
+            aurora_i18n::tr!("build-ui-floaters-limit-select-distance"),
+        ),
+        (
+            &mut s.limit_drag_distance,
+            &mut s.max_drag_distance,
+            aurora_i18n::tr!("build-ui-floaters-limit-drag-distance"),
+        ),
+    ] {
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(
+                Vec2::new(label_width, 20.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_width(label_width);
+                    if let Some(v) = check(ui, p, *limit, false, text, true) {
+                        *limit = v;
+                    }
+                },
+            );
+            ui.add_enabled_ui(*limit, |ui| {
+                spin_with_min_decimals(ui, distance, 1.0, crate::build::DISTANCE_LIMIT_RANGE, 3, 70.0, false, 0);
+            });
+        });
+    }
 }
 
 /// LLFloaterObjectWeights ("Advanced").

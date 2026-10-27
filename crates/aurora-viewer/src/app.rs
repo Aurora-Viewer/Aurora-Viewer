@@ -5750,6 +5750,7 @@ impl App {
                     view.ray(self.cursor_pos.0, self.cursor_pos.1),
                     true,
                     self.settings.build.select_probes,
+                    self.settings.build.select_limit(),
                 )
             })
             .unwrap_or_default();
@@ -5759,7 +5760,13 @@ impl App {
                 .as_ref()
                 .and_then(|g| g.renderer.cursor_ray(self.cursor_pos.0, self.cursor_pos.1))
         {
-            hits = self.scene.edit_ray_hits(&self.world, ray, false, self.settings.build.select_probes);
+            hits = self.scene.edit_ray_hits(
+                &self.world,
+                ray,
+                false,
+                self.settings.build.select_probes,
+                self.settings.build.select_limit(),
+            );
         }
         self.build.cycle_under_cursor(&mut self.world, &self.settings.build, &hits, steps);
         self.flush_build();
@@ -5848,7 +5855,13 @@ impl App {
             let ray = self.build.cam.ray(x, y);
             let target = self
                 .scene
-                .edit_ray_hits(&self.world, ray, false, self.settings.build.select_probes)
+                .edit_ray_hits(
+                    &self.world,
+                    ray,
+                    false,
+                    self.settings.build.select_probes,
+                    self.settings.build.select_limit(),
+                )
                 .first()
                 .copied();
             (None, target, ray)
