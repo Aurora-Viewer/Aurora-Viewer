@@ -3766,6 +3766,21 @@ impl App {
             Action::SitGround => self.sit_stand_shortcut(),
             Action::Mouselook => self.toggle_mouselook(),
             Action::CameraControls => self.panels.camera_controls = !self.panels.camera_controls,
+            Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault => {
+                if self.world.rlva.camera_owner().is_none() {
+                    let aspect = self.view_aspect();
+                    let factor = match action {
+                        Action::LensZoomIn => Some(1.0 / 1.2),
+                        Action::LensZoomOut => Some(1.2),
+                        _ => None,
+                    };
+                    self.settings.camera.fov =
+                        crate::camera::zoom_lens(self.settings.camera.fov, factor, aspect, self.world.rlva.camera_fov_limits(aspect));
+                    if !self.demo {
+                        self.settings.save();
+                    }
+                }
+            }
             Action::ResetCamera => {
                 if !self.photo_escape() {
                     self.reset_camera_view();
@@ -17265,10 +17280,27 @@ impl ApplicationHandler for App {
                 if ke.state == ElementState::Pressed
                     && matches!(ke.physical_key, PhysicalKey::Code(code) if self.chat_bar_passes_key(code))
         );
+        // Keep a lens shortcut out of egui: Ctrl+0 otherwise also resets
+        // the interface scale at the end of the frame.
+        let lens_shortcut = matches!(
+            &event,
+            WindowEvent::KeyboardInput { event: ke, .. }
+                if ke.state == ElementState::Pressed
+                    && matches!(ke.physical_key, PhysicalKey::Code(code)
+                        if matches!(self.settings.keybinds.triggered(&Input::key(code), self.mods()),
+                            Some(Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault))
+                            && (!(self.egui_ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(&self.egui_ctx))
+                                || shortcut_while_typing(true, self.ctrl, self.alt, code, true)))
+        ) && self.in_world()
+            && self.options_ui.capture.is_none()
+            && !self.exit_prompt.open
+            && self.profile_ui.focused_web().is_none()
+            && self.search_ui.focused_web().is_none()
+            && self.media.focus.is_none();
         let Some(g) = self.gfx.as_mut() else {
             return;
         };
-        let resp = if chat_pass {
+        let resp = if chat_pass || lens_shortcut {
             egui_winit::EventResponse {
                 consumed: false,
                 repaint: true,
@@ -17433,6 +17465,7 @@ impl ApplicationHandler for App {
                         self.gesture_state.manager.release(Some(key));
                     }
                     if pressed
+                        && !lens_shortcut
                         && !build_shortcut.is_some_and(|s| s.takes_gesture_key(self.build.open))
                         && (!ke.repeat || gesture_key.is_some_and(crate::gestures::Manager::repeat_triggers))
                         && !typing

@@ -3,8 +3,8 @@
 //! presets and the phototools offsets. The page's reset also brings the
 //! live view back behind the avatar (`OptionsResult::reset_camera`).
 
+use super::super::COMBO_W;
 use super::super::cx::{Cx, Nothing, field, fields};
-use super::super::{COMBO_W, slider};
 use crate::camera::{CameraPreset, CameraSettings, DEFAULT_FOV, FOV_RANGE};
 use egui::RichText;
 
@@ -118,7 +118,18 @@ pub fn page(cx: &mut Cx, tab: usize) {
                     |ui, s| {
                         let c = &mut s.camera;
                         let mut deg = c.fov.to_degrees();
-                        let ch = slider(ui, &mut deg, FOV_RANGE.start().to_degrees()..=FOV_RANGE.end().to_degrees(), "°");
+                        // Keyboard zoom can go beyond the preference slider's
+                        // narrower range; merely displaying it must not clamp it.
+                        ui.spacing_mut().slider_width = super::super::SLIDER_W;
+                        let ch = ui
+                            .add(
+                                egui::Slider::new(&mut deg, FOV_RANGE.start().to_degrees()..=FOV_RANGE.end().to_degrees())
+                                    .suffix("°")
+                                    .custom_parser(aurora_i18n::parse_number)
+                                    .trailing_fill(true)
+                                    .clamping(egui::SliderClamping::Edits),
+                            )
+                            .changed();
                         if ch {
                             c.fov = deg.to_radians();
                         }

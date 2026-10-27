@@ -214,6 +214,19 @@ impl CameraShot {
     }
 }
 
+/// LLZoomer (indra/newview/llviewermenu.cpp) changes the saved default lens,
+/// bounded by LLCamera::getMinView/getMaxView and any RLVa limits.
+pub fn zoom_lens(fov: f32, factor: Option<f32>, aspect: f32, limits: Option<(f32, f32)>) -> f32 {
+    let aspect = if aspect.is_finite() && aspect > 0.0 { aspect } else { 1.0 };
+    let low = (5.0f32.to_radians() / aspect.min(1.0)).min(175.0f32.to_radians());
+    let high = (175.0f32.to_radians() / aspect.max(1.0)).max(low);
+    let (low, high) = limits.map_or((low, high), |(a, b)| {
+        let a = a.clamp(low, high);
+        (a, b.clamp(a, high))
+    });
+    factor.map_or(DEFAULT_FOV, |factor| fov * factor).clamp(low, high)
+}
+
 impl CameraSettings {
     /// The view of `shot` (Firestorm loads the preset's offsets).
     pub fn apply_shot(&mut self, shot: &CameraShot) {
@@ -260,11 +273,34 @@ impl CameraSettings {
         }
         let fix = |v: f32, lo: f32, hi: f32, def: f32| if v.is_finite() { v.clamp(lo, hi) } else { def };
         self.offset_scale = fix(self.offset_scale, 0.5, 3.0, d.offset_scale);
-        self.fov = fix(self.fov, *FOV_RANGE.start(), *FOV_RANGE.end(), d.fov);
+        self.fov = fix(self.fov, 5.0f32.to_radians(), 175.0f32.to_radians(), d.fov);
         self.mouselook_zoom_fov = super::mouselook_zoom::sanitize(self.mouselook_zoom_fov);
         self.zoom_time = fix(self.zoom_time, 0.0, 4.0, d.zoom_time);
         self.smoothing = fix(self.smoothing, 0.0, 9.0, d.smoothing);
         self.dynamic_strength = fix(self.dynamic_strength, 0.0, 30.0, d.dynamic_strength);
         self
+    }
+}
+
+#[cfg(test)]
+mod lens_zoom_tests {
+    use super::*;
+
+    #[test]
+    fn lens_steps_reset_and_respect_window_and_script_limits() {
+        let wide = 16.0 / 9.0;
+        let inside = zoom_lens(DEFAULT_FOV, Some(1.0 / 1.2), wide, None);
+        assert!((inside - DEFAULT_FOV / 1.2).abs() < 1e-6);
+        assert!((zoom_lens(inside, Some(1.2), wide, None) - DEFAULT_FOV).abs() < 1e-6);
+        assert_eq!(zoom_lens(inside, None, wide, None), DEFAULT_FOV);
+        assert_eq!(zoom_lens(0.001, Some(1.0), wide, None), 5.0f32.to_radians());
+        assert_eq!(zoom_lens(10.0, Some(1.0), wide, None), 175.0f32.to_radians() / wide);
+        assert_eq!(zoom_lens(0.001, Some(1.0), 0.5, None), 10.0f32.to_radians());
+        assert_eq!(zoom_lens(DEFAULT_FOV, None, wide, Some((0.3, 0.7))), 0.7);
+        let saved = CameraSettings {
+            fov: 5.0f32.to_radians(),
+            ..Default::default()
+        };
+        assert_eq!(saved.sanitized().fov, 5.0f32.to_radians());
     }
 }

@@ -178,7 +178,7 @@ pub fn sanitize(list: &mut Vec<CameraShot>) {
         }
         if let Some(lens) = &mut shot.lens {
             lens.fov = if lens.fov.is_finite() {
-                lens.fov.clamp(*super::FOV_RANGE.start(), *super::FOV_RANGE.end())
+                lens.fov.clamp(5.0f32.to_radians(), 175.0f32.to_radians())
             } else {
                 super::DEFAULT_FOV
             };
@@ -333,7 +333,7 @@ mod tests {
         // nothing left to hold the camera but the lens: no anchor
         assert_eq!(s.anchor, None);
         let lens = s.lens.as_ref().unwrap();
-        assert_eq!(lens.fov, *super::super::FOV_RANGE.end());
+        assert_eq!(lens.fov, 175.0f32.to_radians());
         assert_eq!(lens.exposure, None);
         assert!(s.light.is_none());
     }

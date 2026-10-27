@@ -305,6 +305,10 @@ pub enum Action {
     /// The Controls window, on its Camera tab (Firestorm's View › Camera
     /// Controls).
     CameraControls,
+    /// Change the viewing angle (Legacy Viewer View.ZoomIn / Out / Default).
+    LensZoomIn,
+    LensZoomOut,
+    LensZoomDefault,
     /// Firestorm camera keys (spin_around_cw / ccw, spin_over / under,
     /// move_forward / backward, pan_*).
     CamOrbitCw,
@@ -432,6 +436,9 @@ pub fn sections() -> &'static Vec<(&'static str, Vec<(Action, &'static str)>)> {
                     (Action::ResetCamera, aurora_i18n::tr!("keybinds-return-to-avatar")),
                     (Action::Flycam, aurora_i18n::tr!("joystick-flycam")),
                     (Action::CameraControls, aurora_i18n::tr!("controls-camera-title")),
+                    (Action::LensZoomIn, aurora_i18n::tr!("keybinds-lens-zoom-in")),
+                    (Action::LensZoomOut, aurora_i18n::tr!("keybinds-lens-zoom-out")),
+                    (Action::LensZoomDefault, aurora_i18n::tr!("keybinds-lens-zoom-default")),
                     (Action::CamOrbitCw, aurora_i18n::tr!("keybinds-orbit-clockwise")),
                     (Action::CamOrbitCcw, aurora_i18n::tr!("keybinds-orbit-counterclockwise")),
                     (Action::CamOrbitOver, aurora_i18n::tr!("keybinds-move-above")),
@@ -624,6 +631,12 @@ impl KeyBindings {
             (Action::ResetCamera, [k(K::Escape), None]),
             (Action::Flycam, [kalt(K::KeyF, false, true), None]),
             (Action::CameraControls, [kmod(K::KeyC, true, true), None]),
+            (Action::LensZoomIn, [kmod(K::Digit0, true, false), kmod(K::Numpad0, true, false)]),
+            (Action::LensZoomOut, [kmod(K::Digit8, true, false), kmod(K::Numpad8, true, false)]),
+            (
+                Action::LensZoomDefault,
+                [kmod(K::Digit9, true, false), kmod(K::Numpad9, true, false)],
+            ),
             (Action::CamOrbitCw, [kalt(K::ArrowLeft, false, false), None]),
             (Action::CamOrbitCcw, [kalt(K::ArrowRight, false, false), None]),
             (Action::CamOrbitOver, [kalt(K::PageUp, false, false), kalt(K::ArrowUp, true, false)]),
@@ -1535,6 +1548,29 @@ mod tests {
         }
         assert!(chat_bar_held_moves(&Input::key(KeyCode::PageUp), true));
         assert!(!chat_bar_held_moves(&Input::key(KeyCode::KeyW), false));
+    }
+
+    #[test]
+    fn lens_shortcuts_are_added_to_old_settings_and_can_be_rebound() {
+        let mut kb = KeyBindings::default();
+        kb.map
+            .retain(|(a, _)| !matches!(a, Action::LensZoomIn | Action::LensZoomOut | Action::LensZoomDefault));
+        let mut kb = kb.sanitized();
+        let ctrl = Mods {
+            ctrl: true,
+            ..Default::default()
+        };
+        for (row, pad, action) in [
+            (KeyCode::Digit0, KeyCode::Numpad0, Action::LensZoomIn),
+            (KeyCode::Digit8, KeyCode::Numpad8, Action::LensZoomOut),
+            (KeyCode::Digit9, KeyCode::Numpad9, Action::LensZoomDefault),
+        ] {
+            assert_eq!(kb.triggered(&Input::key(row), ctrl), Some(action));
+            assert_eq!(kb.triggered(&Input::key(pad), ctrl), Some(action));
+            assert_eq!(kb.triggered(&Input::key(row), Mods::default()), None);
+        }
+        kb.set(Action::LensZoomIn, 0, None);
+        assert_eq!(kb.sanitized().get(Action::LensZoomIn)[0], None);
     }
 
     #[test]
