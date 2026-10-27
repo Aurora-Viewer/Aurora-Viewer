@@ -329,6 +329,9 @@ pub struct World {
     /// Objects already reported by a diagnostic (logged once).
     diag_reported: HashSet<Uuid>,
     pub events_this_frame: usize,
+    /// The login answer's `message` (LLAgent::mMOTD), trimmed: Contents ›
+    /// Message of the day writes it again to the nearby chat.
+    pub motd: String,
     pub balance: Option<i32>,
     /// m² of land the account holds (MoneyBalanceReply SquareMetersCommitted,
     /// LLStatusBar::getSquareMetersCommitted).
@@ -636,6 +639,7 @@ impl World {
             outfit: Default::default(),
             diag_reported: HashSet::new(),
             events_this_frame: 0,
+            motd: String::new(),
             balance: None,
             land_committed: 0,
             land_credit: 0,
