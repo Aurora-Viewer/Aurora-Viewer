@@ -203,6 +203,11 @@ impl ClickWait {
         self.pending.is_some()
     }
 
+    /// The click is run again, its depth in hand.
+    pub(super) fn replaying(&self) -> bool {
+        self.in_hand.is_some()
+    }
+
     /// AURORA_DEMO_CLICKS is making the clicks.
     pub(super) fn scripted(&self) -> bool {
         self.demo.spec().is_some()

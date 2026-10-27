@@ -811,6 +811,14 @@ pub struct Settings {
     /// A name plate under the pointer shows full while it stays there (on
     /// by default).
     pub plates_hover_expand: bool,
+    /// Preferences › Just for fun (off by default, #1112): a plate wobbles
+    /// like a jelly each time the pointer reaches it, and overshoots when it
+    /// grows (`ui/nameplate/fidget.rs`).
+    pub plates_jiggle: bool,
+    /// Preferences › Just for fun (off by default, #1114): the clicks on
+    /// each plate are counted, and a combo shows a counter
+    /// (`ui/nameplate/combo.rs`).
+    pub plates_click_combo: bool,
     pub plate_click: PlateClick,
     pub plate_shift_click: PlateClick,
     pub plate_ctrl_click: PlateClick,
@@ -1723,6 +1731,8 @@ impl Default for Settings {
             camera_shots: Vec::new(),
             plates_friends_only_full: false,
             plates_hover_expand: true,
+            plates_jiggle: false,
+            plates_click_combo: false,
             plate_click: PlateClick::Nothing,
             plate_shift_click: PlateClick::Nothing,
             plate_ctrl_click: PlateClick::Nothing,

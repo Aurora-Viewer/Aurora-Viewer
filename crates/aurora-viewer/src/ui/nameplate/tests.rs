@@ -1140,3 +1140,182 @@ fn a_full_plate_lights_up_and_bounces_under_the_pointer() {
     frame(&ctx, &mut plates, &tags, 4.2);
     assert_eq!(plates.entries[&id].hover, 1.0);
 }
+
+#[test]
+fn a_kicked_spring_swings_then_comes_to_rest() {
+    let mut s = fidget::Spring::default();
+    s.kick(100.0, 280.0);
+    let mut peak = 0.0f32;
+    let mut crossed = false;
+    for _ in 0..120 {
+        s.step(1.0 / 60.0, 26.0, 0.2);
+        peak = peak.max(s.x);
+        crossed |= s.x < 0.0;
+    }
+    assert!(peak > 2.0, "{peak}");
+    assert!(crossed, "it swings back past its rest");
+    assert!(s.still(), "{s:?}");
+    // a slow frame does not make it explode
+    let mut slow = fidget::Spring::default();
+    slow.kick(100.0, 280.0);
+    slow.step(0.25, 26.0, 0.2);
+    assert!(slow.x.abs() < 10.0 && slow.v.abs() < 280.0, "{slow:?}");
+}
+
+#[test]
+fn kicks_in_a_row_add_up_within_a_bound() {
+    let mut s = fidget::Spring::default();
+    s.pump(95.0, 280.0);
+    s.step(0.02, 26.0, 0.2);
+    let once = s.v.abs();
+    s.pump(95.0, 280.0);
+    assert!(s.v.abs() > once, "pumped the way it goes");
+    for _ in 0..20 {
+        s.pump(95.0, 280.0);
+    }
+    assert!(s.v.abs() <= 280.0);
+    // the wobble's surface stays within its stretch
+    let mut w = fidget::Wobble::default();
+    for _ in 0..50 {
+        w.enter();
+        w.step(0.005);
+    }
+    let grow = w.grow();
+    assert!(grow.x.abs() <= 16.0 && grow.y.abs() <= 16.0, "{grow:?}");
+    assert!(!w.still());
+}
+
+#[test]
+fn a_growing_plate_goes_past_its_size_and_settles() {
+    assert_eq!(fidget::overshoot(0.0), 0.0);
+    assert!((fidget::overshoot(1.0) - 1.0).abs() < 1e-6);
+    let peak = (0..=100).map(|i| fidget::overshoot(i as f32 / 100.0)).fold(0.0, f32::max);
+    assert!(peak > 1.08 && peak < 1.2, "{peak}");
+    assert!(grows(Level::Compact, Level::Full) && grows(Level::Far, Level::Compact));
+    assert!(!grows(Level::Full, Level::Compact) && !grows(Level::Full, Level::Full));
+}
+
+#[test]
+fn a_jiggly_plate_wobbles_each_time_the_pointer_comes_back() {
+    let ctx = egui::Context::default();
+    let mut plates = Plates {
+        jiggle: true,
+        ..Plates::default()
+    };
+    let tags = [tag(1, 4.0, content())];
+    let id = Uuid::from_u128(1);
+    frame(&ctx, &mut plates, &tags, 1.0);
+    assert!(plates.entries[&id].wobble.still());
+    // in, out and in again within the hover's linger: a kick each time in
+    let mut t = 1.0;
+    for _ in 0..3 {
+        plates.hovered = Some(id);
+        t += 0.05;
+        frame(&ctx, &mut plates, &tags, t);
+        assert!(!plates.entries[&id].wobble.still());
+        plates.hovered = None;
+        t += 0.05;
+        frame(&ctx, &mut plates, &tags, t);
+    }
+    // no bounce of the plain plates on top of the jelly
+    assert_eq!(plates.entries[&id].bounced, f64::NEG_INFINITY);
+    // it settles
+    for i in 1..200 {
+        frame(&ctx, &mut plates, &tags, t + i as f64 * 0.02);
+    }
+    assert!(plates.entries[&id].wobble.still());
+    // "Reduce animations" keeps it still
+    plates.still = true;
+    plates.hovered = Some(id);
+    frame(&ctx, &mut plates, &tags, 10.0);
+    assert!(plates.entries[&id].wobble.still());
+}
+
+#[test]
+fn five_quick_clicks_start_a_combo_that_fades_after_a_pause() {
+    let mut c = combo::Combo::default();
+    for i in 0..4 {
+        assert_eq!(c.click(i as f64 * 0.3, i + 1, false), combo::Hit::Counted);
+        assert_eq!(c.alpha(i as f64 * 0.3), 0.0, "no counter before five");
+    }
+    assert_eq!(c.click(1.2, 5, false), combo::Hit::Started);
+    assert_eq!(c.alpha(1.2), 1.0);
+    for i in 6..=9 {
+        assert_eq!(c.click(1.2 + i as f64 * 0.1, i, false), combo::Hit::Counted);
+    }
+    assert_eq!(c.click(2.2, 10, false), combo::Hit::Milestone);
+    assert_eq!(c.streak(), 10);
+    // the pause: still out, fading, then gone
+    assert!(c.alive(2.2 + combo::HOLD));
+    assert!(c.alpha(2.2 + combo::HOLD - 0.25) < 1.0);
+    assert_eq!(c.alpha(2.2 + combo::HOLD + 0.01), 0.0);
+    // a click after it starts a new run
+    assert_eq!(c.click(10.0, 11, false), combo::Hit::Counted);
+    assert_eq!(c.streak(), 1);
+}
+
+#[test]
+fn slow_clicks_count_without_a_combo() {
+    let mut c = combo::Combo::default();
+    // within the hold of each other, but five take more than five seconds
+    for i in 0..5 {
+        assert_eq!(c.click(i as f64 * 1.4, i + 1, false), combo::Hit::Counted);
+    }
+    assert_eq!(c.alpha(5.6), 0.0);
+    // a round hundred in all is a milestone once the counter is out
+    let mut c = combo::Combo::default();
+    for i in 0..4 {
+        c.click(i as f64 * 0.1, 96 + i, false);
+    }
+    assert_eq!(c.click(0.4, 100, false), combo::Hit::Milestone);
+    assert!(combo::milestone(25) && combo::milestone(300) && !combo::milestone(26) && !combo::milestone(150));
+}
+
+#[test]
+fn a_click_counts_on_a_plate_on_screen_and_presses_it() {
+    let ctx = egui::Context::default();
+    let mut plates = Plates {
+        click_combo: true,
+        ..Plates::default()
+    };
+    let id = Uuid::from_u128(1);
+    assert_eq!(plates.click(id, 0.5), None, "no plate, no click");
+    frame(&ctx, &mut plates, &[tag(1, 4.0, content())], 1.0);
+    assert_eq!(plates.click(id, 1.1), Some(combo::Hit::Counted));
+    assert_eq!(plates.tally.get(id), 1);
+    assert!(!plates.entries[&id].wobble.still(), "pressed in");
+    for i in 0..4 {
+        plates.click(id, 1.2 + i as f64 * 0.1);
+    }
+    assert_eq!(plates.tally.get(id), 5);
+    // the counter is drawn while the combo lasts
+    let (_, shapes) = frame(&ctx, &mut plates, &[tag(1, 4.0, content())], 1.6);
+    let mut texts = Vec::new();
+    walk(&shapes, &mut |s| {
+        if let egui::Shape::Text(t) = s {
+            texts.push(t.galley.text().to_owned());
+        }
+    });
+    assert!(texts.iter().any(|t| t == "5"), "{texts:?}");
+}
+
+#[test]
+fn the_click_counts_are_kept_by_resident() {
+    let mut counts = HashMap::new();
+    counts.insert(Uuid::from_u128(7), 42);
+    counts.insert(Uuid::from_u128(9), 1);
+    let bytes = combo::encode(&counts).expect("encoded");
+    assert_eq!(combo::decode(&bytes).expect("decoded"), counts);
+    // a key that is not an avatar id is left out, the others stay
+    let mixed = br#"{"nope": 3, "00000000-0000-0000-0000-000000000007": 4}"#;
+    assert_eq!(combo::decode(mixed).expect("decoded").get(&Uuid::from_u128(7)), Some(&4));
+    assert!(combo::decode(b"[1, 2]").is_err());
+}
+
+#[test]
+fn a_streak_heats_up_then_holds() {
+    assert_eq!(combo::fervor(combo::START as u32), 0.0);
+    assert!(combo::fervor(10) > 0.0 && combo::fervor(10) < combo::fervor(30));
+    assert_eq!(combo::fervor(60), 1.0);
+    assert_eq!(combo::fervor(5000), 1.0);
+}

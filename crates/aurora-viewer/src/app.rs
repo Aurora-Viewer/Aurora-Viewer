@@ -3891,6 +3891,10 @@ impl App {
             }
             return;
         }
+        // the click combo counts the press once, not again with the depth
+        if !self.clicks.replaying() && self.plate_combo_press() {
+            return;
+        }
         let Some(picked) = self.click_pick() else {
             return;
         };

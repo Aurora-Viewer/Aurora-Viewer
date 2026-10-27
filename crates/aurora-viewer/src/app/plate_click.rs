@@ -22,6 +22,25 @@ fn demo_pointer() -> Option<(egui::Pos2, bool)> {
     })
 }
 
+/// `AURORA_DEMO_PLATE_JIGGLE=1`: jiggly plates for this run (not saved),
+/// the pointer of `AURORA_DEMO_PLATE_HOVER` going in and out of its plate
+/// every `DEMO_JIGGLE_FRAMES` frames from frame 600 to 700.
+fn demo_jiggle() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("AURORA_DEMO_PLATE_JIGGLE").is_ok_and(|v| v.trim() == "1"))
+}
+const DEMO_JIGGLE_FRAMES: u64 = 8;
+
+/// `AURORA_DEMO_PLATE_COMBO=<clicks>`: the click combo for this run (not
+/// saved), and that many clicks on the plate under the pointer of
+/// `AURORA_DEMO_PLATE_HOVER`, one every `DEMO_COMBO_FRAMES` frames, the
+/// last at frame 700.
+fn demo_combo() -> Option<u64> {
+    static CLICKS: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *CLICKS.get_or_init(|| std::env::var("AURORA_DEMO_PLATE_COMBO").ok()?.trim().parse().ok())
+}
+const DEMO_COMBO_FRAMES: u64 = 4;
+
 /// `AURORA_DEMO_PLATE_CLICK=profile|im|tp|menu`: the action for this run,
 /// without saving it.
 fn demo_action() -> Option<PlateClick> {
@@ -109,7 +128,8 @@ impl App {
         if self.demo
             && let Some((pointer, _)) = demo_pointer()
         {
-            return Some(pointer);
+            let away = demo_jiggle() && (600..700).contains(&self.frame_count) && (self.frame_count / DEMO_JIGGLE_FRAMES).is_multiple_of(2);
+            return (!away).then_some(pointer);
         }
         let free = matches!(self.screen, Screen::World)
             && self.mouse_mode == MouseMode::None
@@ -129,6 +149,11 @@ impl App {
         self.plates.hovered = self.plate_hover;
         self.plates.expand_on_hover = self.settings.plates_hover_expand;
         self.plates.still = self.settings.reduce_motion;
+        self.plates.jiggle = self.settings.plates_jiggle || (self.demo && demo_jiggle());
+        self.plates.click_combo = self.combo_on();
+        if self.plates.click_combo {
+            self.plates.tally.open(self.world.agent_id);
+        }
         if self.demo
             && self.frame_count == DEMO_CLICK_FRAME
             && demo_pointer().is_some_and(|(_, click)| click)
@@ -139,6 +164,42 @@ impl App {
                 self.run_plate_click(idx);
             }
         }
+        if self.demo
+            && let Some(clicks) = demo_combo().filter(|n| *n > 0)
+            && let Some(first) = DEMO_CLICK_FRAME.checked_sub((clicks - 1) * DEMO_COMBO_FRAMES)
+            && (first..=DEMO_CLICK_FRAME).contains(&self.frame_count)
+            && (self.frame_count - first).is_multiple_of(DEMO_COMBO_FRAMES)
+        {
+            self.plate_combo_press();
+        }
+    }
+
+    /// The click combo is on: the setting, or the demo's.
+    fn combo_on(&self) -> bool {
+        self.settings.plates_click_combo || (self.demo && demo_combo().is_some())
+    }
+
+    /// A left press on a plate with the click combo on (Preferences › Just
+    /// for fun): counted at once, from the plates of the last frame as the
+    /// pointer's light is, without waiting for the depth. Without a click
+    /// action, the click is the combo's alone: no touch, no double click
+    /// walking or teleporting there. Not with a modifier (camera, grab and
+    /// the modified actions keep it), nor while the build tools are open.
+    pub(super) fn plate_combo_press(&mut self) -> bool {
+        if !self.combo_on() || self.classic_name_tags() || self.build.open || self.alt || self.ctrl || self.shift || self.object_view {
+            return false;
+        }
+        let Some(id) = self.plate_hover else {
+            return false;
+        };
+        let now = self.egui_ctx.input(|i| i.time);
+        let Some(hit) = self.plates.click(id, now) else {
+            return false;
+        };
+        if self.demo {
+            log::info!("demo plate combo: {id} {hit:?}, {} in all", self.plates.tally.get(id));
+        }
+        self.plate_click_action() == PlateClick::Nothing
     }
 
     /// The hand of a clickable object over a plate that acts.
