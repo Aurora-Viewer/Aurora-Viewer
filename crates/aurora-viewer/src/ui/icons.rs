@@ -50,6 +50,7 @@ const OUTLINE: &[(&str, &[u8])] = svg_list!(
     "bulb-off",
     "cake",
     "camera-cog",
+    "camera-off",
     "chart-line",
     "check",
     "chevron-down",

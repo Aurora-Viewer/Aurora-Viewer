@@ -2070,6 +2070,11 @@ impl Settings {
         if std::mem::take(&mut self.former_hide_own_group_title) {
             self.group_titles = crate::world::names::GroupTitles::AllExceptMine;
         }
+        // the shutter's switch of the interface sounds became the photos'
+        // own ("Quiet snapshots"): a shutter turned off there stays off
+        if self.audio.ui.play.remove("Snapshot") == Some(false) {
+            self.snapshot.sound = false;
+        }
         if self.settings_version < 2 {
             // new defaults: 96 m draw distance, LOD factor 2
             self.draw_distance = 96.0;
@@ -2721,6 +2726,28 @@ mod tests {
                 assert_eq!(reloaded.sanitized().group_titles, expected);
             }
         }
+    }
+
+    #[test]
+    fn a_shutter_turned_off_in_the_interface_sounds_stays_quiet() {
+        let fresh: super::Settings = serde_json::from_str("{}").expect("fresh settings");
+        assert!(
+            fresh.sanitized().snapshot.sound,
+            "the shutter sounds by default, like the Legacy Viewer"
+        );
+        for (play, sound) in [(false, false), (true, true)] {
+            let old: super::Settings = serde_json::from_value(serde_json::json!({
+                "audio": { "ui": { "play": { "Snapshot": play, "Click": false } } },
+            }))
+            .expect("former shutter switch");
+            let migrated = old.sanitized();
+            assert_eq!(migrated.snapshot.sound, sound);
+            assert!(!migrated.audio.ui.play.contains_key("Snapshot"), "one switch is left");
+            assert_eq!(migrated.audio.ui.play.get("Click"), Some(&false), "the other sounds are kept");
+        }
+        let quiet: super::Settings =
+            serde_json::from_value(serde_json::json!({ "snapshot": { "sound": false } })).expect("quiet snapshots");
+        assert!(!quiet.sanitized().snapshot.sound);
     }
 
     #[test]

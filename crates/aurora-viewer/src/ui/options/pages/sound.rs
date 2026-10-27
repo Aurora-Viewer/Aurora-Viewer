@@ -209,6 +209,23 @@ fn volumes(cx: &mut Cx) {
     });
 }
 
+/// A sound's play switch. The shutter's is the photos' own setting, as the
+/// Legacy Viewer's UISndSnapshot row is PlayModeUISndSnapshot inverted
+/// (fspanelpreferenceuisounds.cpp): one switch for "Quiet snapshots".
+fn ui_sound_plays(s: &crate::settings::Settings, sound: crate::ui_sound::UiSound) -> bool {
+    match sound {
+        crate::ui_sound::UiSound::Snapshot => s.snapshot.sound,
+        _ => s.audio.ui.plays(sound),
+    }
+}
+
+fn set_ui_sound_plays(s: &mut crate::settings::Settings, sound: crate::ui_sound::UiSound, on: bool) {
+    match sound {
+        crate::ui_sound::UiSound::Snapshot => s.snapshot.sound = on,
+        _ => s.audio.ui.set_plays(sound, on),
+    }
+}
+
 /// Each sound on / off, its asset and a preview, the IM modes and the L$
 /// threshold.
 fn interface_sounds(cx: &mut Cx) {
@@ -300,21 +317,21 @@ fn interface_sounds(cx: &mut Cx) {
                 let t = Custom {
                     path: "audio.ui",
                     modified: move |s: &crate::settings::Settings, d: &crate::settings::Settings| {
-                        s.audio.ui.plays(sound) != d.audio.ui.plays(sound) || s.audio.ui.uuid(sound) != d.audio.ui.uuid(sound)
+                        ui_sound_plays(s, sound) != ui_sound_plays(d, sound) || s.audio.ui.uuid(sound) != d.audio.ui.uuid(sound)
                     },
                     reset: move |s: &mut crate::settings::Settings, d: &crate::settings::Settings| {
-                        let (on, id) = (d.audio.ui.plays(sound), d.audio.ui.uuid(sound));
-                        s.audio.ui.set_plays(sound, on);
+                        let (on, id) = (ui_sound_plays(d, sound), d.audio.ui.uuid(sound));
+                        set_ui_sound_plays(s, sound, on);
                         s.audio.ui.set_uuid(sound, id);
                     },
                 };
                 cx.wide().keywords(e.name).row_with((e.label)(), &hint, &t, |ui, s, st, _| {
-                    let u = &mut s.audio.ui;
-                    let mut on = u.plays(e.sound);
+                    let mut on = ui_sound_plays(s, e.sound);
                     let mut ch = widgets::switch(ui, &p, &mut on).changed();
                     if ch {
-                        u.set_plays(e.sound, on);
+                        set_ui_sound_plays(s, e.sound, on);
                     }
+                    let u = &mut s.audio.ui;
                     let text = st.ui_sound_text.entry(e.name).or_insert_with(|| uuid_text(u.uuid(e.sound)));
                     let parsed = parse_uuid_text(text);
                     let edit = ui.add(

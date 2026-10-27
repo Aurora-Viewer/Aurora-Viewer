@@ -144,7 +144,7 @@ impl App {
 
     /// One of our own animations started or stopped on the simulator; the
     /// demo has none, so it plays here at once (as the gestures' do).
-    fn own_animation(&mut self, anim: Uuid, start: bool) {
+    pub(super) fn own_animation(&mut self, anim: Uuid, start: bool) {
         if self.demo {
             let motions = self.world.animations.entry(self.world.agent_id).or_default();
             motions.retain(|a| a.id != anim);

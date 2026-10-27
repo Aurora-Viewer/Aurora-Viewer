@@ -22,6 +22,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+/// The avatar raising its camera (ANIM_AGENT_SNAPSHOT, llanimationstates.cpp).
+const ANIM_AGENT_SNAPSHOT: Uuid = Uuid::from_u128(0xeae8905b_271a_99e2_4c0e_31106afd100c);
 /// Long side of the preview image.
 const PREVIEW_SIDE: u32 = 720;
 /// The preview follows the camera once it has been still this long.
@@ -859,10 +861,16 @@ impl App {
         free / per_pixel
     }
 
+    /// LLViewerWindow::playSnapshotAnimAndSound: the snapshot animation and
+    /// the shutter (UISndSnapshot) as a SoundTrigger, both seen and heard by
+    /// everyone around; "Quiet snapshots" (PlayModeUISndSnapshot, the
+    /// setting off) skips the two.
     fn photo_shutter(&mut self) {
-        if self.settings.snapshot.sound {
-            self.play_ui_sound(UiSound::Snapshot);
+        if !self.settings.snapshot.sound {
+            return;
         }
+        self.own_animation(ANIM_AGENT_SNAPSHOT, true);
+        self.send_sound_trigger(self.settings.audio.ui.uuid(UiSound::Snapshot));
     }
 
     fn photo_save(&mut self, size: (u32, u32), rgba: Vec<u8>, chosen: Option<PathBuf>, cutout: bool) {

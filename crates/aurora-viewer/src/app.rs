@@ -11288,6 +11288,11 @@ impl App {
                 self.settings.save();
                 log::info!("quickjump: {}", self.settings.quickjump);
             }
+            BarAction::ToggleQuietSnapshots => {
+                self.settings.snapshot.sound = !self.settings.snapshot.sound;
+                self.settings.save();
+                log::info!("quiet snapshots: {}", !self.settings.snapshot.sound);
+            }
             BarAction::ToggleWaterWalk => self.toggle_water_walk(),
             BarAction::ToggleSwimming => self.toggle_swimming(),
             BarAction::MoveLockOptions => self.movelock_ui.open = true,
@@ -12607,6 +12612,7 @@ impl App {
                     local_env: self.world.eep.has_local(),
                     double_click: self.double_click_action(),
                     quickjump: self.settings.quickjump,
+                    quiet_snapshots: !self.settings.snapshot.sound,
                     parcel_landmark,
                     can_set_home: self.world.can_set_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),

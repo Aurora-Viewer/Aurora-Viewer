@@ -4,8 +4,9 @@
 //! panel_preferences_chat.xml; kept by the grid, `world/user_info.rs`),
 //! "Only friends and groups can call or IM me" and the objects' messages
 //! from elsewhere (`world/object_im_filter.rs`), what we send of where we
-//! look (the Legacy Viewer's "Privacy › LookAt"), what the scripts learn of
-//! us and the content we see.
+//! look (the Legacy Viewer's "Privacy › LookAt"), whether our photos are
+//! heard around ("Quiet snapshots"), what the scripts learn of us and the
+//! content we see.
 
 use super::super::cx::{Cx, Nothing, field};
 use super::super::{maturity_choice, toggle};
@@ -200,6 +201,22 @@ pub(super) fn page(cx: &mut Cx) {
                 " m",
             );
         });
+    });
+    // Advanced › Quiet Snapshots of the Legacy Viewer (PlayModeUISndSnapshot):
+    // no shutter heard around nor snapshot animation seen
+    cx.group(tr!("ui-options-privacy-photos"), |cx| {
+        let p = cx.p;
+        cx.keywords("PlayModeUISndSnapshot").row(
+            tr!("photo-quiet-snapshots"),
+            tr!("photo-quiet-snapshots-hint"),
+            &field!(snapshot.sound),
+            |ui, s| {
+                let mut quiet = !s.snapshot.sound;
+                let changed = toggle(ui, &p, &mut quiet);
+                s.snapshot.sound = !quiet;
+                changed
+            },
+        );
     });
     cx.group(tr!("ui-options-scripts-and-content"), |cx| {
         cx.toggle(tr!("language-share"), tr!("language-share-help"), &field!(language_is_public));
