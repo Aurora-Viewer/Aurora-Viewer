@@ -219,6 +219,37 @@ impl App {
         }
     }
 
+    pub(super) fn submit_inventory_change(&mut self, mut change: aurora_net::inventory::operations::Mutation) {
+        if self.inventory_ui.pending.is_some() {
+            self.inventory_ui.consume_clipboard = false;
+            return;
+        }
+        if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| change.refresh.contains(&id))
+            && self.appearance_ui.pending.is_some()
+        {
+            self.inventory_ui.message = aurora_i18n::tr!("app-inventory-wait-for-the-outfit-update-before-replacing-its-links").into();
+            return;
+        }
+        let request = Uuid::new_v4();
+        change.defer_folder_contents = true;
+        log::info!(
+            "inventory mutation: {} operations, {} item copies",
+            change.operations.len(),
+            change.copies.len()
+        );
+        self.inventory_ui.begin_mutation(request, &change);
+        self.inventory_ui.pending_refresh.clone_from(&change.refresh);
+        self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
+            if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
+                Some(*id)
+            } else {
+                None
+            }
+        });
+        self.inventory_ui.message.clear();
+        self.send(NetCommand::EditInventory { request, change });
+    }
+
     pub(super) fn apply_inventory_action(&mut self, action: InvAction) {
         if let InvAction::Share { resident, .. } = &action
             && !self.world.rlva.allows("share", &resident.to_string())
@@ -239,35 +270,12 @@ impl App {
                 }
             }
             InvAction::TakeTask(request) => self.take_task_inventory(*request),
-            InvAction::Edit(mut change) => {
-                if self.inventory_ui.pending.is_some() {
-                    return;
+            InvAction::Edit(change) => {
+                let cut = std::mem::take(&mut self.inventory_ui.consume_clipboard);
+                if let Some(change) = self.listings_ui.guard_inventory_change(&self.world.inventory, change, cut) {
+                    self.inventory_ui.consume_clipboard = cut;
+                    self.submit_inventory_change(change);
                 }
-                if crate::world::appearance::cof(&self.world.inventory).is_some_and(|id| change.refresh.contains(&id))
-                    && self.appearance_ui.pending.is_some()
-                {
-                    self.inventory_ui.message =
-                        aurora_i18n::tr!("app-inventory-wait-for-the-outfit-update-before-replacing-its-links").into();
-                    return;
-                }
-                let request = Uuid::new_v4();
-                change.defer_folder_contents = true;
-                log::info!(
-                    "inventory mutation: {} operations, {} item copies",
-                    change.operations.len(),
-                    change.copies.len()
-                );
-                self.inventory_ui.begin_mutation(request, &change);
-                self.inventory_ui.pending_refresh.clone_from(&change.refresh);
-                self.inventory_ui.created_selection = change.operations.iter().find_map(|op| {
-                    if let aurora_net::inventory::operations::Operation::Folder { id, .. } = op {
-                        Some(*id)
-                    } else {
-                        None
-                    }
-                });
-                self.inventory_ui.message.clear();
-                self.send(NetCommand::EditInventory { request, change });
             }
             InvAction::Create { parent, kind, name } => {
                 if rules::destination(&self.world.inventory, parent, &self.settings.inventory.protected) {
@@ -461,6 +469,11 @@ impl App {
                 self.inventory_ui.show_original(&self.world.inventory, item);
                 ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
             }
+            InvAction::FindLinks(item) => {
+                self.inventory_ui.find_links(item);
+                ui::widgets::open_floater(&self.egui_ctx, "inventory", &mut self.panels.inventory);
+            }
+            InvAction::MarketplacePaste { to, ids, copy } => self.paste_marketplace_inventory(to, ids, copy),
             InvAction::ExportTextures { items, png } => self.texture_library.begin_exports(&self.egui_ctx, &self.world, items, png),
             InvAction::WearLibrary { item, replace, point } => self.wear_copy_at(item, replace, point),
             InvAction::WearSelection { items, replace, point } => self.wear_selection(items, replace, point),
@@ -593,7 +606,9 @@ impl App {
                         self.send(cmd);
                     }
                 }
-                if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id)) {
+                if let Some(id) = self.inventory_ui.created_selection.and_then(|id| reply.created.get(&id))
+                    && !self.inventory_ui.select_created_listing(&self.world.inventory, *id)
+                {
                     self.inventory_ui.show_original(&self.world.inventory, *id);
                     self.inventory_ui.begin_rename(&self.world.inventory, *id);
                 }

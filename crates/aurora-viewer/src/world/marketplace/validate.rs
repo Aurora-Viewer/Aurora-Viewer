@@ -13,7 +13,7 @@ use super::STOCK;
 use crate::world::inventory::Inventory;
 use crate::world::inventory::actions::{COPY, TRANSFER};
 use aurora_llsd::llsd_map;
-use aurora_net::inventory::operations::{Mutation, Operation};
+use aurora_net::inventory::operations::{CopyItem, Mutation, Operation};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
@@ -135,6 +135,7 @@ pub struct Tree<'a> {
     root: Uuid,
     nodes: HashMap<Uuid, Node>,
     item_parent: HashMap<Uuid, Uuid>,
+    copies: HashMap<Uuid, Uuid>,
     created: HashSet<Uuid>,
     change: Mutation,
 }
@@ -147,6 +148,7 @@ impl<'a> Tree<'a> {
             root,
             nodes: HashMap::new(),
             item_parent: HashMap::new(),
+            copies: HashMap::new(),
             created: HashSet::new(),
             change: Mutation::default(),
         }
@@ -169,6 +171,66 @@ impl<'a> Tree<'a> {
         self.nodes.get(&id)
     }
 
+    fn source(&self, id: Uuid) -> Uuid {
+        self.copies.get(&id).copied().unwrap_or(id)
+    }
+
+    fn item(&self, id: Uuid) -> Option<&aurora_net::inventory::InvItem> {
+        self.inv.items.get(&self.source(id))
+    }
+
+    fn copyable(&self, id: Uuid) -> bool {
+        copyable(self.inv, self.source(id))
+    }
+
+    fn sellable(&self, id: Uuid) -> Result<(), String> {
+        sellable(self.inv, self.source(id), self.worn)
+    }
+
+    fn copy_item(&mut self, item: Uuid, to: Uuid) -> Result<(), String> {
+        if !self.copyable(item) {
+            return Err(aurora_i18n::tr!("world-inventory-actions-the-selection-contains-a-no-copy-item").into());
+        }
+        let id = Uuid::new_v4();
+        self.copies.insert(id, self.source(item));
+        self.node(to);
+        if let Some(node) = self.nodes.get_mut(&to) {
+            node.items.push(id);
+        }
+        self.item_parent.insert(id, to);
+        self.change.refresh.push(to);
+        Ok(())
+    }
+
+    fn copy_folder(&mut self, folder: Uuid, to: Uuid, seen: &mut HashSet<Uuid>) -> Result<Uuid, String> {
+        if !seen.insert(folder)
+            || self
+                .inv
+                .folders
+                .get(&folder)
+                .is_none_or(|f| f.state != crate::world::inventory::FetchState::Fetched)
+        {
+            return Err(aurora_i18n::tr!("world-inventory-actions-load-all-subfolders-before-copying-this-folder").into());
+        }
+        let name = self.name(folder);
+        let kind = self.kind(folder);
+        let copy = self.create(to, kind, &name);
+        // These are source categories to audit, rather than wrappers the
+        // audit itself just produced (which its recursive walk skips).
+        self.created.remove(&copy);
+        for child in self.children(folder) {
+            self.copy_folder(child, copy, seen)?;
+        }
+        for item in self.items(folder) {
+            // copy_inventory_category with move_no_copy_items=false leaves
+            // stock in the original folder when copying a category.
+            if self.copyable(item) {
+                self.copy_item(item, copy)?;
+            }
+        }
+        Ok(copy)
+    }
+
     fn is_folder(&mut self, id: Uuid) -> bool {
         self.node(id).is_some()
     }
@@ -177,7 +239,7 @@ impl<'a> Tree<'a> {
         if let Some(n) = self.node(id) {
             return n.name.clone();
         }
-        self.inv.items.get(&id).map(|it| it.name.clone()).unwrap_or_default()
+        self.item(id).map(|it| it.name.clone()).unwrap_or_default()
     }
 
     fn kind(&mut self, id: Uuid) -> i32 {
@@ -199,7 +261,7 @@ impl<'a> Tree<'a> {
         self.item_parent
             .get(&id)
             .copied()
-            .or_else(|| self.inv.items.get(&id).map(|it| it.parent))
+            .or_else(|| self.item(id).map(|it| it.parent))
             .unwrap_or_default()
     }
 
@@ -303,7 +365,7 @@ impl<'a> Tree<'a> {
 
     fn counts(&mut self, folders: &[Uuid], items: &[Uuid]) -> (usize, usize) {
         let stock_folders = folders.iter().filter(|f| self.kind(**f) == STOCK).count();
-        let copyables = items.iter().filter(|i| copyable(self.inv, **i)).count();
+        let copyables = items.iter().filter(|i| self.copyable(**i)).count();
         (copyables + stock_folders, items.len() - copyables)
     }
 
@@ -313,13 +375,14 @@ impl<'a> Tree<'a> {
         if self.kind(folder) != STOCK {
             return true;
         }
-        let Some(it) = self.inv.items.get(&item) else { return false };
+        let Some(it) = self.item(item) else { return false };
         if it.owner_mask & COPY != 0 {
             return false;
         }
-        match self.items(folder).first().and_then(|first| self.inv.items.get(first)) {
+        let (kind, next) = (it.inv_type, it.next_owner_mask);
+        match self.items(folder).first().and_then(|first| self.item(*first)) {
             None => true,
-            Some(first) => first.inv_type == it.inv_type && first.next_owner_mask == it.next_owner_mask,
+            Some(first) => first.inv_type == kind && first.next_owner_mask == next,
         }
     }
 
@@ -329,7 +392,7 @@ impl<'a> Tree<'a> {
         if !self.accepts(dest, item) {
             return Err(aurora_i18n::tr!("marketplace-reason-mixed-stock").into());
         }
-        sellable(self.inv, item, self.worn)?;
+        self.sellable(item)?;
         let mut item_count = if in_stock { 0 } else { bundle };
         let mut stock_count = if in_stock { bundle } else { 0 };
         let mut folder_count = 0;
@@ -343,7 +406,7 @@ impl<'a> Tree<'a> {
             item_count += items_n;
             stock_count += stock_n;
             folder_count += folders.len();
-            if !copyable(self.inv, item) && !in_stock {
+            if !self.copyable(item) && !in_stock {
                 folder_count += 1;
             }
         }
@@ -400,7 +463,7 @@ impl<'a> Tree<'a> {
         }
         if check_items {
             for item in items {
-                sellable(self.inv, item, self.worn)?;
+                self.sellable(item)?;
             }
         }
         Ok(())
@@ -410,7 +473,7 @@ impl<'a> Tree<'a> {
     pub fn permissions_for_sale(&mut self, folder: Uuid) -> Result<(), String> {
         let (_, items) = self.descendants(folder);
         for item in items {
-            sellable(self.inv, item, self.worn)?;
+            self.sellable(item)?;
         }
         Ok(())
     }
@@ -458,11 +521,13 @@ impl<'a> Tree<'a> {
             n.items.push(item);
         }
         self.item_parent.insert(item, to);
-        self.change.operations.push(Operation::Patch {
-            id: item,
-            folder: false,
-            body: llsd_map! { "parent_id" => to },
-        });
+        if !self.copies.contains_key(&item) {
+            self.change.operations.push(Operation::Patch {
+                id: item,
+                folder: false,
+                body: llsd_map! { "parent_id" => to },
+            });
+        }
         self.change.refresh.extend([from, to]);
     }
 
@@ -511,6 +576,16 @@ impl<'a> Tree<'a> {
 
     pub fn into_change(self) -> Mutation {
         let mut change = self.change;
+        for (id, source) in self.copies {
+            if let Some(item) = self.inv.items.get(&source) {
+                change.copies.push(CopyItem {
+                    item: source,
+                    owner: item.owner,
+                    parent: self.item_parent.get(&id).copied().unwrap_or_default(),
+                    name: String::new(),
+                });
+            }
+        }
         let mut seen = HashSet::new();
         change.refresh.retain(|id| !id.is_nil() && seen.insert(*id));
         change
@@ -574,7 +649,7 @@ impl<'a> Tree<'a> {
         let mut groups: BTreeMap<u32, Vec<Uuid>> = BTreeMap::new();
         let mut bad_items = false;
         for item in &items {
-            if let Err(reason) = sellable(self.inv, *item, self.worn) {
+            if let Err(reason) = self.sellable(*item) {
                 bad_items = true;
                 if fix {
                     let text = aurora_i18n::tr!("marketplace-check-error", name = self.name(*item), reason = reason);
@@ -582,7 +657,7 @@ impl<'a> Tree<'a> {
                 }
                 continue;
             }
-            let it = &self.inv.items[item];
+            let Some(it) = self.item(*item) else { continue };
             let key = if it.owner_mask & COPY != 0 {
                 COPYABLE_KEY
             } else {
@@ -671,9 +746,9 @@ impl<'a> Tree<'a> {
             }
             for item in &items {
                 let item_name = self.name(*item);
-                let text = if let Err(reason) = sellable(self.inv, *item, self.worn) {
+                let text = if let Err(reason) = self.sellable(*item) {
                     aurora_i18n::tr!("marketplace-check-error", name = item_name, reason = reason)
-                } else if !copyable(self.inv, *item) && kind != STOCK {
+                } else if !self.copyable(*item) && kind != STOCK {
                     aurora_i18n::tr!("marketplace-check-stock-item", name = item_name)
                 } else if depth == 1 {
                     aurora_i18n::tr!("marketplace-check-unwrapped", name = item_name)
@@ -729,12 +804,35 @@ pub fn validate(inv: &Inventory, root: Uuid, folder: Uuid, fix: bool, depth: i32
     report
 }
 
+/// LLInvFVBridge::addMarketplaceContextMenuOptions: a new child folder
+/// must fit the version's folder count and depth, and cannot be stock's child.
+pub fn can_create_folder(inv: &Inventory, root: Uuid, dest: Uuid) -> bool {
+    let worn = HashSet::new();
+    let mut tree = Tree::new(inv, root, &worn);
+    let depth = tree.depth(dest);
+    if !(0..=MAX_FOLDER_DEPTH + 1).contains(&depth) || tree.kind(dest) == STOCK {
+        return false;
+    }
+    if depth >= 2 {
+        let version = super::nested_parent(inv, dest, depth - 1);
+        return tree.descendants(version).0.len() < MAX_FOLDER_COUNT;
+    }
+    true
+}
+
 /// What dragging inventory into the listings does: the checks of
 /// LLFolderBridge::dragItemIntoFolder / dragCategoryIntoFolder, then
 /// move_item_to_marketplacelistings (the folders an item needs) or
 /// move_folder_to_marketplacelistings (the move, then an audit that fixes the
-/// destination). Dragging always moves, like Firestorm.
+/// destination). Dragging always moves, like the Legacy Viewer.
 pub fn drop_plan(inv: &Inventory, root: Uuid, dest: Uuid, ids: &[Uuid], worn: &HashSet<Uuid>) -> Result<Mutation, String> {
+    paste_plan(inv, root, dest, ids, false, worn)
+}
+
+/// LLFolderBridge::pasteFromClipboard: copy or move with the same limits,
+/// stock wrappers and fixing audit as a drop. Copies remain virtual until the
+/// hierarchy is final, so normalization can never move an original item.
+pub fn paste_plan(inv: &Inventory, root: Uuid, dest: Uuid, ids: &[Uuid], copy: bool, worn: &HashSet<Uuid>) -> Result<Mutation, String> {
     if root.is_nil() {
         return Err(aurora_i18n::tr!("marketplace-error-not-merchant").into());
     }
@@ -751,9 +849,10 @@ pub fn drop_plan(inv: &Inventory, root: Uuid, dest: Uuid, ids: &[Uuid], worn: &H
     } else {
         tree.first_descendant_of(root, dest).or(Some(dest))
     };
+    let ids = crate::world::inventory::actions::roots(inv, ids);
     let bundle = ids.len();
     let mut audit = Vec::new();
-    for id in ids {
+    for id in &ids {
         if *id == root || tree.below(dest, *id) {
             return Err(aurora_i18n::tr!("marketplace-reason-cannot-move-root").into());
         }
@@ -762,15 +861,20 @@ pub fn drop_plan(inv: &Inventory, root: Uuid, dest: Uuid, ids: &[Uuid], worn: &H
             if !matches!(kind, -1 | STOCK) {
                 return Err(aurora_i18n::tr!("marketplace-error-not-accepted").into());
             }
-            tree.can_move_folder(master, dest, *id, bundle, true, false)?;
+            tree.can_move_folder(master, dest, *id, bundle, true, copy)?;
             tree.permissions_for_sale(*id)?;
             if tree.kind(dest) == STOCK {
                 return Err(aurora_i18n::tr!("marketplace-error-not-accepted").into());
             }
-            tree.move_folder(*id, dest);
-            audit.push(dest);
+            if copy {
+                let copied = tree.copy_folder(*id, dest, &mut HashSet::new())?;
+                audit.push(copied);
+            } else {
+                tree.move_folder(*id, dest);
+                audit.push(dest);
+            }
         } else {
-            tree.can_move_item(master, dest, *id, bundle, false)?;
+            tree.can_move_item(master, dest, *id, bundle, copy)?;
             let name = tree.name(*id);
             let mut to = dest;
             if dest_depth == 0 {
@@ -782,7 +886,11 @@ pub fn drop_plan(inv: &Inventory, root: Uuid, dest: Uuid, ids: &[Uuid], worn: &H
             if !copyable(inv, *id) && tree.kind(to) != STOCK {
                 to = tree.create(to, STOCK, &name);
             }
-            tree.move_item(*id, to);
+            if copy {
+                tree.copy_item(*id, to)?;
+            } else {
+                tree.move_item(*id, to);
+            }
         }
     }
     let mut report = Report {

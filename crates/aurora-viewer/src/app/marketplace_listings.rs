@@ -18,7 +18,7 @@ impl App {
             .into_iter()
             .chain(self.inventory_ui.windows.iter().filter_map(|window| window.state.selected))
             .collect();
-        if ids.iter().any(|id| mp::depth(&self.world.inventory, root, *id) > 0) {
+        if ids.iter().any(|id| mp::depth(&self.world.inventory, root, *id) >= 0) {
             if self.listings_ui.data.initialize() {
                 self.send(NetCommand::RequestMerchantStatus);
             }
@@ -44,6 +44,10 @@ impl App {
         for action in actions {
             match action {
                 Action::Edit(change) => self.apply_inventory_action(InvAction::Edit(change)),
+                Action::Paste { change, cut } => {
+                    self.inventory_ui.consume_clipboard = cut;
+                    self.submit_inventory_change(change);
+                }
                 Action::OpenMarketplace(url) => self.marketplace_ui.open(Some(url)),
                 Action::OpenExternal(url) => self.egui_ctx.open_url(egui::OpenUrl::new_tab(url)),
                 Action::Notify { text, url } => self.marketplace_alert(text, url),
@@ -72,6 +76,20 @@ impl App {
         }
         if self.demo {
             self.demo_marketplace_seed();
+        }
+        // Use the application's frame clock: egui's count starts later
+        // than the demo and its capture/loading clock.
+        if self.demo && self.frame_count >= 680 {
+            let mode = std::env::var("AURORA_DEMO_MARKETPLACE_LISTINGS").unwrap_or_default();
+            let menu = match mode.as_str() {
+                "menu-listing" => Some(demo::HOODIE),
+                "menu-version" => Some(demo::HOODIE_V2),
+                "menu-item" => Some(uuid::Uuid::from_u128(8_400_102)),
+                _ => None,
+            };
+            if let Some(id) = menu {
+                self.listings_ui.demo_menu(id);
+            }
         }
         if self.demo && std::env::var("AURORA_DEMO_MARKETPLACE_LISTINGS").is_ok_and(|v| v == "audit") {
             let worn = self.worn_items();
@@ -118,9 +136,30 @@ impl App {
         }
         let worn = self.worn_items();
         let home = self.marketplace_home();
-        let actions = self
-            .listings_ui
-            .show(ctx, p, &self.skin.icons, &mut self.world.inventory, &worn, home.as_deref());
+        let preferences = self.settings.inventory.clone();
+        let mut window = self.inventory_ui.take_listings_panel();
+        let facts = ui::inventory::Facts::from_world(&self.world, self.appearance_ui.pending.is_some());
+        let mut panel = ui::inventory::listings::Panel {
+            state: &mut window.state,
+            prefs: &mut self.settings.inventory,
+            facts: &facts,
+            actions: Vec::new(),
+        };
+        let actions = self.listings_ui.show(
+            ctx,
+            p,
+            &self.skin.icons,
+            &mut self.world.inventory,
+            &worn,
+            home.as_deref(),
+            &mut panel,
+        );
+        let inventory_actions = std::mem::take(&mut panel.actions);
+        self.inventory_ui.put_listings_panel(window);
+        self.inventory_ui.preferences_dirty |= self.settings.inventory != preferences;
+        for action in inventory_actions {
+            self.apply_inventory_action(action);
+        }
         for action in actions {
             match action {
                 Action::CreateRoot => {
@@ -137,7 +176,11 @@ impl App {
                         ..Default::default()
                     }));
                 }
-                Action::Edit(change) => self.apply_inventory_action(InvAction::Edit(change)),
+                Action::Edit(change) => self.submit_inventory_change(change),
+                Action::Paste { change, cut } => {
+                    self.inventory_ui.consume_clipboard = cut;
+                    self.submit_inventory_change(change);
+                }
                 Action::OpenMarketplace(url) => self.marketplace_ui.open(Some(url)),
                 Action::OpenExternal(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
                 Action::Notify { text, url } => self.marketplace_alert(text, url),
@@ -145,6 +188,31 @@ impl App {
         }
         if !self.inventory_ui.message.is_empty() && self.listings_ui.message.is_empty() {
             self.listings_ui.message.clone_from(&self.inventory_ui.message);
+        }
+    }
+
+    pub(super) fn paste_marketplace_inventory(&mut self, to: uuid::Uuid, ids: Vec<uuid::Uuid>, copy: bool) {
+        let worn = self.worn_items();
+        let mut actions = Vec::new();
+        self.listings_ui.paste_inventory(
+            &self.world.inventory,
+            &worn,
+            &self.settings.inventory.protected,
+            to,
+            &ids,
+            copy,
+            false,
+            &mut actions,
+        );
+        for action in actions {
+            match action {
+                Action::Paste { change, cut } => {
+                    self.inventory_ui.consume_clipboard = cut;
+                    self.submit_inventory_change(change);
+                }
+                Action::Notify { text, url } => self.marketplace_alert(text, url),
+                _ => {}
+            }
         }
     }
 
@@ -171,7 +239,7 @@ impl App {
         slm.seeded = true;
         demo::seed(&mut self.world.inventory, self.world.agent_id);
         self.listings_ui
-            .demo_expand(&[demo::HOODIE, demo::POSTER, demo::POSTER_VERSION, demo::LANTERN]);
+            .demo_expand(&[demo::HOODIE, demo::HOODIE_V2, demo::POSTER, demo::POSTER_VERSION, demo::LANTERN]);
         self.open_marketplace_listings();
     }
 

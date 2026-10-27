@@ -34,6 +34,7 @@ mod document;
 pub(crate) mod drag;
 mod embedded;
 mod keyboard;
+pub(crate) mod listings;
 mod markdown;
 pub use markdown::View as NotecardView;
 mod move_to;
@@ -173,6 +174,12 @@ pub enum InvAction {
     },
     RefreshAttachment(Uuid),
     ShowMain(Uuid),
+    FindLinks(Uuid),
+    MarketplacePaste {
+        to: Uuid,
+        ids: Vec<Uuid>,
+        copy: bool,
+    },
     Marketplace(Uuid, crate::ui::marketplace_listings::Command),
     Profile(Uuid),
     ThumbnailCopied(Uuid),
@@ -681,6 +688,19 @@ impl InventoryUi {
         };
         ids.sort();
         ids
+    }
+
+    pub(crate) fn find_links(&mut self, id: Uuid) {
+        self.search.clear();
+        if self.saved_filters.is_none() {
+            self.saved_filters = Some(self.filters.clone());
+        }
+        self.filters.links = view::Links::Only;
+        self.filters.always_folders = false;
+        self.filters_initialized = true;
+        self.links_filter = Some(id);
+        self.fetch_all = true;
+        self.tab = 0;
     }
     /// The list is the flattened result tree, drawn row by row in sight only
     /// (`search_scroll`): a search or a filter, and every tab but the plain
@@ -1673,7 +1693,17 @@ pub fn show(
     st.focus_search = *open && (st.focus_search || !st.was_open);
     // What is worn, the attachment points and the names are read for the
     // windows and dialogs that show them, not every frame while closed.
-    let shown = *open || st.dialog.is_some() || st.move_to.is_some() || !st.windows.is_empty() || st.demo_menu.is_some();
+    let shown = *open
+        || st.dialog.is_some()
+        || st.move_to.is_some()
+        || st.demo_menu.is_some()
+        || st.windows.iter().any(|w| {
+            w.id != listings::PANEL
+                || w.state.dialog.is_some()
+                || w.state.move_to.is_some()
+                || w.state.thumbnail.item.is_some()
+                || w.state.bulk_permissions.active()
+        });
     let mut facts = if shown {
         Facts::from_world(world, appearance_busy)
     } else {
@@ -1822,8 +1852,13 @@ pub fn show(
             continue;
         }
         w.state.ui_id = w.id;
+        if w.id == listings::PANEL && w.state.fetch_all {
+            fetch_whole_inventory(&mut world.inventory, &mut w.state);
+        }
         w.state.focus_search = w.open && (w.state.focus_search || !w.state.was_open);
-        w.state.visible.clear();
+        if w.id != listings::PANEL {
+            w.state.visible.clear();
+        }
         w.state.clipboard.clone_from(&st.clipboard);
         w.state.cut = st.cut;
         w.state.pending = st.pending;
@@ -1912,7 +1947,9 @@ pub fn show(
             w.state.view = Default::default();
         }
         bulk_permissions::show(ctx, p, &mut world.inventory, &mut w.state, prefs, world.agent_id, &mut actions);
-        finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
+        if w.id != listings::PANEL {
+            finish_hidden_rename(&world.inventory, &mut w.state, prefs, &mut actions);
+        }
         controls::dialogs(ctx, p, &mut w.state, prefs);
         context_catalog::process_deferred(&mut world.inventory, &mut w.state, prefs, &facts);
         dialogs::show(ctx, p, icons, &world.inventory, &mut w.state, prefs, &facts, images, &mut actions);
@@ -1953,13 +1990,16 @@ pub fn show(
         }
         st.consume_clipboard |= w.state.consume_clipboard;
         w.state.consume_clipboard = false;
-        w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+        if w.id != listings::PANEL {
+            w.state.menu_editor.finish_inventory_frame(ctx, &mut prefs.context_menus);
+        }
         spawned.append(&mut w.state.windows);
     }
     // Documents and confirmations outlive the inventory window which opened
     // them, just like the main inventory's auxiliary floaters.
     windows.retain(|w| {
-        w.open
+        w.id == listings::PANEL
+            || w.open
             || w.state.preview.is_some()
             || w.state.dialog.is_some()
             || w.state.move_to.is_some()
