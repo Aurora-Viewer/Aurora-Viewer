@@ -12319,3 +12319,7 @@ particle-editor-folder-failed = No inventory folder was found for the new script
 particle-editor-upload-failed = The particle script could not be saved: { $reason }
 particle-editor-object-gone = The object is gone: the script stays in your inventory.
 particle-editor-inject-timeout = The grid did not answer: the script was not put into the object.
+
+keybinds-lens-zoom-in = Narrow viewing angle
+keybinds-lens-zoom-out = Widen viewing angle
+keybinds-lens-zoom-default = Reset viewing angle

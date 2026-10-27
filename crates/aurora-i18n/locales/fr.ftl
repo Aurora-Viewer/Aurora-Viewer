@@ -12315,3 +12315,7 @@ particle-editor-folder-failed = Aucun dossier d’inventaire n’a été trouvé
 particle-editor-upload-failed = Le script de particules n’a pas pu être enregistré : { $reason }
 particle-editor-object-gone = L’objet a disparu : le script reste dans votre inventaire.
 particle-editor-inject-timeout = La grille n’a pas répondu : le script n’a pas été mis dans l’objet.
+
+keybinds-lens-zoom-in = Réduire l’angle de vue
+keybinds-lens-zoom-out = Élargir l’angle de vue
+keybinds-lens-zoom-default = Réinitialiser l’angle de vue
