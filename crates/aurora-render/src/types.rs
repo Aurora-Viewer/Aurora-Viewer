@@ -1119,6 +1119,13 @@ pub struct FrameParams {
     pub far: f32,
     pub fov_y: f32,
     pub time: f32,
+    /// The instant the rez effects and the portal swirl are drawn at
+    /// (`AnimClock`): held for a photo in tiles, else None for now.
+    pub anim_at: Option<std::time::Instant>,
+    /// The instant the animated textures are drawn at: held for a photo
+    /// in tiles and while the photo mode freezes the world (whose objects
+    /// still rez in as the camera finds them), else None for now.
+    pub tex_anim_at: Option<std::time::Instant>,
     pub sun_dir: Vec3,
     pub sun_visible: f32,
     pub sun_color: Vec3,

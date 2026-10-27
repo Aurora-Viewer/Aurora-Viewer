@@ -587,6 +587,28 @@ pub struct ObjectStore {
     motion_rates: HashMap<RegionHandle, f32>,
     /// Slots whose object has a correction fading (`expire_corrections`).
     correcting: Vec<usize>,
+    /// The photo mode's frozen world (`hold_poses`): where the objects that
+    /// move are kept drawn.
+    held: Option<HeldPoses>,
+}
+
+/// The world frozen at an instant (issue #1154; LLPipeline::updateMove
+/// returns at once under FreezeTime, indra/newview/pipeline.cpp, originally
+/// LGPL 2.1): the objects keep the place they were drawn at, whatever the
+/// simulator reports meanwhile. Reports are still applied, so the world
+/// is current again as soon as it thaws.
+struct HeldPoses {
+    at: Instant,
+    poses: HashMap<ObjKey, HeldPose>,
+}
+
+/// An object's place when the world froze, in its parent's coordinates.
+#[derive(Debug, Clone, Copy)]
+struct HeldPose {
+    /// The parent it was drawn in: seated or unseated since, the pose
+    /// means nothing in the new frame and the object goes where it is.
+    parent_id: u32,
+    pose: (Vec3, Quat),
 }
 
 impl ObjectStore {
@@ -659,7 +681,75 @@ impl ObjectStore {
     /// Where an object is drawn at `now`, in its parent's (or its region's)
     /// coordinates.
     pub fn predicted(&self, o: &Object, now: Instant) -> (Vec3, Quat) {
-        o.predicted(now, self.motion_time(o.key.region))
+        self.held_pose(o)
+            .unwrap_or_else(|| o.predicted(now, self.motion_time(o.key.region)))
+    }
+
+    /// Freeze the objects at `at` (the photo mode's frozen world): those
+    /// that move now are kept where they are drawn, the others as soon as a
+    /// report would move them; `extra` adds poses known elsewhere (our own
+    /// avatar, which the agent places). HUDs are the interface and go on.
+    pub fn hold_poses(&mut self, at: Instant, extra: impl IntoIterator<Item = (ObjKey, (Vec3, Quat))>) {
+        let mut poses = HashMap::new();
+        for (idx, o) in self.iter() {
+            if o.has_motion() && !self.worn_on_hud(idx) {
+                let pose = o.predicted(at, self.motion_time(o.key.region));
+                poses.insert(
+                    o.key,
+                    HeldPose {
+                        parent_id: o.parent_id,
+                        pose,
+                    },
+                );
+            }
+        }
+        for (key, pose) in extra {
+            if let Some(o) = self.index_of(&key).and_then(|idx| self.get(idx)) {
+                let parent_id = o.parent_id;
+                poses.insert(key, HeldPose { parent_id, pose });
+            }
+        }
+        log::info!("world frozen: {} moving objects held", poses.len());
+        self.held = Some(HeldPoses { at, poses });
+    }
+
+    /// Thaw the world: every object held is drawn where it is now (the
+    /// Legacy Viewer's drawables move to their objects at once).
+    pub fn release_poses(&mut self) {
+        let Some(held) = self.held.take() else {
+            return;
+        };
+        for key in held.poses.keys() {
+            if let Some(&idx) = self.by_key.get(key) {
+                self.touch(idx);
+            }
+        }
+        log::info!("world thawed: {} objects released", held.poses.len());
+    }
+
+    /// The place `o` is held at while the world is frozen.
+    pub fn held_pose(&self, o: &Object) -> Option<(Vec3, Quat)> {
+        let held = self.held.as_ref()?.poses.get(&o.key)?;
+        (held.parent_id == o.parent_id).then_some(held.pose)
+    }
+
+    /// A report is about to change `idx` while the world is frozen: the
+    /// place it was drawn at is kept first.
+    fn hold_before_report(&mut self, idx: usize) {
+        let Some(at) = self.held.as_ref().map(|h| h.at) else {
+            return;
+        };
+        let Some(o) = self.get(idx) else {
+            return;
+        };
+        if self.held.as_ref().is_some_and(|h| h.poses.contains_key(&o.key)) || self.worn_on_hud(idx) {
+            return;
+        }
+        let (key, parent_id) = (o.key, o.parent_id);
+        let pose = o.predicted(at, self.motion_time(o.key.region));
+        if let Some(held) = &mut self.held {
+            held.poses.insert(key, HeldPose { parent_id, pose });
+        }
     }
 
     /// End the corrections that have faded: the objects that do not move
@@ -697,6 +787,7 @@ impl ObjectStore {
     /// from that moment, and the gap it opens is measured with where the
     /// object was drawn for that same moment.
     pub fn apply_terse_at(&mut self, idx: usize, t: &TerseUpdate, received: Option<Instant>) {
+        self.hold_before_report(idx);
         let now = received.unwrap_or_else(Instant::now);
         let Some(region) = self.get(idx).map(|o| o.key.region) else {
             return;
@@ -718,6 +809,7 @@ impl ObjectStore {
     /// Apply a full update to an object already known. `moved_frame`: its
     /// parent changed, so its coordinates are not those it was drawn in.
     fn apply_full(&mut self, idx: usize, region: RegionHandle, u: ObjectUpdate, moved_frame: bool, received: Option<Instant>) {
+        self.hold_before_report(idx);
         let now = received.unwrap_or_else(Instant::now);
         let clock = self.report_clock(region, received);
         let hud = self.worn_on_hud(idx);
@@ -1712,6 +1804,55 @@ mod tests {
         s.take_touched(&mut touched);
         assert_eq!(touched, [idx]);
         near(drawn(&s, at(701)), Vec3::X * 2.0);
+    }
+
+    #[test]
+    fn a_frozen_world_keeps_every_object_where_it_was_drawn() {
+        let mut s = ObjectStore::default();
+        let mut walker = update(10, AVATAR, "");
+        walker.velocity = Vec3::X * 3.0;
+        let walker = s.upsert(1, walker);
+        let door = s.upsert(1, update(20, PRIM, ""));
+        let mut chair = update(30, PRIM, "");
+        chair.position = Vec3::Y * 4.0;
+        s.upsert(1, chair);
+        s.advance_motion(1, 1.0);
+        let at = Instant::now();
+        let own = (ObjKey { region: 1, local_id: 40 }, (Vec3::ONE, Quat::IDENTITY));
+        s.upsert(1, update(40, AVATAR, ""));
+        s.hold_poses(at, [own]);
+        let drawn = |s: &ObjectStore, idx: usize| s.predicted(s.get(idx).expect("object"), at).0;
+        let own_idx = s.index_of(&own.0).expect("own avatar");
+        // the walker stops where it was drawn, its clock running on
+        near(drawn(&s, walker), Vec3::X * 3.0);
+        s.advance_motion(1, 2.0);
+        near(drawn(&s, walker), Vec3::X * 3.0);
+        // our avatar is held where the agent placed it
+        near(drawn(&s, own_idx), Vec3::ONE);
+        // reports still arrive: the door opens, the walker turns back, and
+        // neither moves on screen
+        s.apply_terse(door, &terse(20, Vec3::Z * 2.0, Vec3::ZERO));
+        s.apply_terse(walker, &terse(10, Vec3::X * 9.0, Vec3::X * -3.0));
+        near(drawn(&s, door), Vec3::ZERO);
+        near(drawn(&s, walker), Vec3::X * 3.0);
+        assert_eq!(s.get(door).expect("door").position, Vec3::Z * 2.0);
+        // sitting meanwhile: the held place means nothing on the seat
+        let mut seated = update(10, AVATAR, "");
+        seated.parent_id = 30;
+        seated.position = Vec3::Z * 0.5;
+        s.upsert(1, seated);
+        near(drawn(&s, walker), Vec3::Z * 0.5);
+        // thawed: everything is where the simulator says, and the scene
+        // places the objects that were held again
+        let mut touched = Vec::new();
+        s.take_touched(&mut touched);
+        s.release_poses();
+        touched.clear();
+        s.take_touched(&mut touched);
+        touched.sort_unstable();
+        assert_eq!(touched, [walker, door, own_idx]);
+        let later = at + Duration::from_secs(1);
+        near(s.predicted(s.get(door).expect("door"), later).0, Vec3::Z * 2.0);
     }
 
     #[test]

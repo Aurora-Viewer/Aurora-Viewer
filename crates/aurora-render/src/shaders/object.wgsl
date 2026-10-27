@@ -322,7 +322,7 @@ fn te_uv(uv: vec2<f32>, rec: DrawRecord) -> vec2<f32> {
 
 // ------------------------------------------------------ texture animation
 // llSetTextureAnim, evaluated per vertex from the renderer clock (`clock`:
-// ms, sub-ms fraction bits; Frame / ShadowParams anim_clock). A line-by-line
+// ms, sub-ms fraction bits; Frame / ShadowParams anim_clock.zw). A line-by-line
 // copy of aurora-render/src/tex_anim.rs (clock_counter, frame_from_counter),
 // the port of LLViewerTextureAnim::animateTextures
 // (indra/newview/llviewertextureanim.cpp, LGPL 2.1) and of the texture matrix
@@ -494,7 +494,7 @@ fn vs_main(in: VsIn) -> VsOut {
     if (animated) {
         // texture animation first (PBR: before each map's KHR transform,
         // textureUtilV.glsl texture_transform)
-        st = tex_anim_st(st, rec, frame.anim_clock.xy);
+        st = tex_anim_st(st, rec, frame.anim_clock.zw);
     }
     if (animated && (rec.flags.x & FLAG_PBR) == 0u) {
         // the animation includes the texture entry transform; normal and
@@ -1601,7 +1601,7 @@ fn vs_pick(in: VsIn) -> PickOut {
     out.clip = frame.eye_view_proj * ep;
     let st = face_st(in, rec);
     out.st = st;
-    out.uv = diffuse_uv(st, rec, frame.anim_clock.xy);
+    out.uv = diffuse_uv(st, rec, frame.anim_clock.zw);
     out.record = in.instance;
     out.world_pos = ep.xyz + frame.eye.xyz;
     return out;
@@ -1664,7 +1664,7 @@ struct ShadowOut {
 
 struct ShadowParams {
     vp: mat4x4<f32>,
-    anim_clock: vec4<u32>,  // texture animation clock, as Frame's
+    anim_clock: vec4<u32>,  // the animation clocks, as Frame's
 };
 
 @group(3) @binding(0) var<uniform> shadow_params: ShadowParams;
@@ -1675,7 +1675,7 @@ fn vs_shadow(in: VsIn) -> ShadowOut {
     let wp = skinned_model(rec, in) * vec4<f32>(vertex_position(rec, in), 1.0);
     var out: ShadowOut;
     out.clip = shadow_params.vp * wp;
-    out.uv = diffuse_uv(face_st(in, rec), rec, shadow_params.anim_clock.xy);
+    out.uv = diffuse_uv(face_st(in, rec), rec, shadow_params.anim_clock.zw);
     out.record = in.instance;
     out.world_pos = wp.xyz;
     return out;

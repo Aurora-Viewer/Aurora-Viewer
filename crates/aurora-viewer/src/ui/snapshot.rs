@@ -31,6 +31,9 @@ pub struct SnapshotUi {
     pub full_frame: bool,
     /// The photo is taken and shown still until saved or released.
     pub freeze: bool,
+    /// The world holds still while the camera moves (never saved: the
+    /// photo mode's end thaws it).
+    pub freeze_world: bool,
     /// Where "Take the photo" sends it (the disk each time the viewer
     /// starts: a photo that costs L$ is never one by surprise).
     pub destination: Destination,
@@ -637,6 +640,15 @@ impl SnapshotUi {
                     self.freeze = on;
                     out.push(Action::Freeze(on));
                 }
+            },
+        );
+        row(
+            ui,
+            p,
+            aurora_i18n::tr!("photo-freeze-world"),
+            Some(aurora_i18n::tr!("photo-freeze-world-hint")),
+            |ui| {
+                widgets::switch(ui, p, &mut self.freeze_world);
             },
         );
         row(

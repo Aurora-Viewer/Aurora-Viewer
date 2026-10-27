@@ -292,7 +292,10 @@ words joined by `-` add to it: `essential` or `hidden` the display level,
 `menu`, `help` or `drawer` a panel open, `mf` or `afc` the focus mode
 (`mf` focused by hand at 3.3 m, the sharp edges outlined by the focus
 peaking), `point` the Point area, `pad` the camera pad shown, `timer` the
-2 s self-timer, `ael` AE-L on, `hover` or `nocontrols` the on-screen controls
+2 s self-timer, `ael` AE-L on, `frozen` the world frozen (the dock's
+snowflake: two captures some frames apart show the avatars, the
+particles, the water and the animated textures at the same instant, the
+log gives `world frozen: <n> moving objects held`), `hover` or `nocontrols` the on-screen controls
 on hover or hidden (the lens ring and the AF choices show otherwise), `tilt`
 the camera rolled 20° clockwise (the level turns the other way, along the
 horizon), `tilt90` a quarter turn (the AF frame over a head keeps its size,

@@ -1481,7 +1481,8 @@ pub(crate) struct Backend {
     frame_index: u64,
     /// Texture animation clock (tex_anim.rs) and its value for this frame.
     anim_clock: crate::tex_anim::AnimClock,
-    anim_now: [u32; 2],
+    /// (x, y the effects' clock, z, w the animated textures')
+    anim_now: [u32; 4],
     /// `shadow_cull::path` bits of the frame being drawn.
     shadow_path: u32,
     /// Inverse view-projection of the last rendered frame (picking).
@@ -2806,7 +2807,7 @@ impl Backend {
             prev_view_proj: None,
             frame_index: 0,
             anim_clock,
-            anim_now: [0, 0],
+            anim_now: [0; 4],
             shadow_path: crate::shadow_cull::path::NEW,
             last_inv_vp: Mat4::IDENTITY,
             msaa_supported,
@@ -4559,7 +4560,7 @@ impl Backend {
             u.eye_view_proj = u.view_proj;
         }
         u.camera_pos = camera_pos.extend(f.time).to_array();
-        u.anim_clock = [self.anim_now[0], self.anim_now[1], 0, 0];
+        u.anim_clock = self.anim_now;
         u.sun_dir = f.sun_dir.normalize_or(Vec3::Z).extend(f.sun_visible).to_array();
         u.sun_color = f.sun_color.extend(1.0).to_array();
         u.sky_zenith = f.sky_zenith.extend(1.0).to_array();
@@ -4938,8 +4939,10 @@ impl Backend {
         }
         prof.mark("resources");
 
-        // one texture animation time for every pass of the frame
-        self.anim_now = self.anim_clock.now(Instant::now());
+        // one animation time for every pass of the frame
+        let effects = self.anim_clock.now(f.anim_at.unwrap_or_else(Instant::now));
+        let textures = f.tex_anim_at.map_or(effects, |at| self.anim_clock.now(at));
+        self.anim_now = [effects[0], effects[1], textures[0], textures[1]];
         self.shadow_path = crate::shadow_cull::current_path();
         let (cascades, splits) = self.cascade_matrices(f);
         let unjittered_vp = f.proj * f.view;
@@ -5303,7 +5306,7 @@ impl Backend {
             let Some(m) = m else { continue };
             let u = ShadowU {
                 vp: m.to_cols_array_2d(),
-                anim_clock: [self.anim_now[0], self.anim_now[1], 0, 0],
+                anim_clock: self.anim_now,
             };
             self.queue.write_buffer(&self.shadow_buffers[i], 0, bytemuck::bytes_of(&u));
         }
