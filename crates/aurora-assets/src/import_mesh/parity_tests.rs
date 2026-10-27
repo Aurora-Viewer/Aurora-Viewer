@@ -392,6 +392,59 @@ fn mesh_import_parity_missing_weights_search_other_faces_in_normalized_space() {
 }
 
 #[test]
+fn mesh_import_parity_dae_coincident_layers_share_the_last_source_weights() {
+    // Synthetic onion layer: the same triangle twice in one geometry, each
+    // copy weighted to its own joint. LLDAELoader keys the weights by
+    // position, so both copies take the later source vertices' list.
+    let document = r##"<COLLADA><asset><unit meter="1"/><up_axis>Z_UP</up_axis></asset>
+<library_geometries><geometry id="g" name="layers"><mesh>
+<source id="g-pos"><float_array count="18">0 0 0 1 0 0 0 1 0 0 0 0 1 0 0 0 1 0</float_array><technique_common><accessor count="6" stride="3"/></technique_common></source>
+<vertices id="g-verts"><input semantic="POSITION" source="#g-pos"/></vertices>
+<triangles count="2"><input semantic="VERTEX" source="#g-verts"/><p>0 1 2 3 4 5</p></triangles></mesh></geometry></library_geometries>
+<library_controllers><controller id="g-skin"><skin source="#g">
+<source id="g-joints"><Name_array count="2">mPelvis mHead</Name_array></source>
+<source id="g-bind"><float_array count="32">1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1</float_array><technique_common><accessor count="2" stride="16"/></technique_common></source>
+<source id="g-weights"><float_array count="1">1</float_array><technique_common><accessor count="1" stride="1"/></technique_common></source>
+<joints><input semantic="JOINT" source="#g-joints"/><input semantic="INV_BIND_MATRIX" source="#g-bind"/></joints>
+<vertex_weights count="6"><input semantic="JOINT" source="#g-joints" offset="0"/><input semantic="WEIGHT" source="#g-weights" offset="1"/><vcount>1 1 1 1 1 1</vcount><v>0 0 0 0 0 0 1 0 1 0 1 0</v></vertex_weights>
+</skin></controller></library_controllers>
+<library_visual_scenes><visual_scene id="scene"><node name="body"><instance_controller url="#g-skin"/></node></visual_scene></library_visual_scenes><scene><instance_visual_scene url="#scene"/></scene></COLLADA>"##;
+    let scene = collada::parse(document.as_bytes(), &skeleton()).expect("layered DAE");
+    let model = &scene.models[0];
+    assert_eq!(model.skin.as_ref().expect("skin").names, ["mPelvis", "mHead"]);
+    let vertices: Vec<_> = model.faces.iter().flat_map(|face| &face.vertices).collect();
+    assert!(!vertices.is_empty());
+    assert!(vertices.iter().all(|v| v.joints[0] == 1 && v.weights == [1.0, 0.0, 0.0, 0.0]));
+}
+
+#[test]
+fn mesh_import_parity_near_positions_take_the_first_weights_within_epsilon() {
+    let vertex = |position: [f32; 3], joint: u16, weight: f32| Vertex {
+        position,
+        normal: [0.0, 0.0, 1.0],
+        uv: [0.0; 2],
+        joints: [joint, 0, 0, 0],
+        weights: [weight, 0.0, 0.0, 0.0],
+    };
+    let mut faces = vec![Face {
+        vertices: vec![
+            vertex([0.1 + 4e-6, 0.0, 0.0], 3, 1.0),
+            vertex([0.1, 0.0, 0.0], 2, 1.0),
+            vertex([0.1, 0.0, 2e-5], 4, 1.0),
+            vertex([0.1, 5e-6, 0.0], 0, 0.0),
+            vertex([0.4, 0.0, 0.0], 0, 0.0),
+        ],
+        indices: vec![0, 1, 2, 2, 3, 4],
+        material: 0,
+    }];
+    skin::share_weights(&mut faces, Vec3::ZERO, Vec3::ONE);
+    let joints: Vec<_> = faces[0].vertices.iter().map(|v| (v.joints[0], v.weights[0])).collect();
+    // Lowest LLVector3 within 1e-5 wins; beyond it each keeps its own,
+    // and an isolated unweighted vertex is left to complete_weights.
+    assert_eq!(joints, [(2, 1.0), (2, 1.0), (4, 1.0), (2, 1.0), (0, 0.0)]);
+}
+
+#[test]
 fn mesh_import_parity_gltf_high_repairs_vertices_whose_only_joint_is_unsupported() {
     // Entirely synthetic: a triangle, one standard joint and one helper.
     let rig = skeleton();
