@@ -310,6 +310,37 @@ impl UiSoundSettings {
         Some(self.uuid(s)).filter(|id| !id.is_nil())
     }
 
+    /// The mode of a conversation sound (None for the other sounds).
+    fn im_mode_of(&self, s: UiSound) -> Option<ImSoundMode> {
+        match s {
+            S::NewIncomingImSession => Some(self.im_mode),
+            S::NewIncomingGroupImSession => Some(self.group_mode),
+            S::NewIncomingConfImSession => Some(self.conf_mode),
+            _ => None,
+        }
+    }
+
+    /// The switch of a conversation sound in the per-sound list: on unless
+    /// its mode is Mute (None for the other sounds).
+    pub fn im_plays(&self, s: UiSound) -> Option<bool> {
+        self.im_mode_of(s).map(|m| m != ImSoundMode::Mute)
+    }
+
+    /// Turned off, the mode becomes Mute; turned back on, the default mode
+    /// (the Legacy Viewer's row is the mode combo, the rows above here). A
+    /// switch already in that state keeps the chosen mode.
+    pub fn set_im_plays(&mut self, s: UiSound, on: bool) {
+        let mode = match s {
+            S::NewIncomingImSession => &mut self.im_mode,
+            S::NewIncomingGroupImSession => &mut self.group_mode,
+            S::NewIncomingConfImSession => &mut self.conf_mode,
+            _ => return,
+        };
+        if (*mode != ImSoundMode::Mute) != on {
+            *mode = if on { ImSoundMode::default() } else { ImSoundMode::Mute };
+        }
+    }
+
     /// The sound of a conversation message, if its mode plays it
     /// (LLIMMgr::addMessage).
     pub fn im_sound(&self, m: ImMessage, focused: bool) -> Option<UiSound> {
@@ -443,5 +474,30 @@ mod tests {
         assert!(M::NotFocused.plays(false, false));
         assert!(!M::NotFocused.plays(false, true));
         assert!(!M::Mute.plays(true, false));
+    }
+
+    #[test]
+    fn im_switch_is_the_mode() {
+        let mut s = UiSoundSettings::default();
+        assert_eq!(s.im_plays(S::NewIncomingImSession), Some(true));
+        assert_eq!(s.im_plays(S::Alert), None);
+        s.group_mode = ImSoundMode::EveryMessage;
+        // on stays on: the chosen mode is kept
+        s.set_im_plays(S::NewIncomingGroupImSession, true);
+        assert_eq!(s.group_mode, ImSoundMode::EveryMessage);
+        s.set_im_plays(S::NewIncomingImSession, false);
+        assert_eq!(s.im_mode, ImSoundMode::Mute);
+        let m = ImMessage {
+            kind: ImKind::Private,
+            session: Uuid::nil(),
+            new_session: true,
+        };
+        assert_eq!(s.im_sound(m, false), None);
+        s.set_im_plays(S::NewIncomingImSession, true);
+        assert_eq!(s.im_mode, ImSoundMode::NewSession);
+        assert_eq!(s.im_sound(m, false), Some(S::NewIncomingImSession));
+        // the other sounds have no mode
+        s.set_im_plays(S::Alert, false);
+        assert!(s.play.is_empty());
     }
 }

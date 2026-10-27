@@ -211,17 +211,19 @@ fn volumes(cx: &mut Cx) {
 
 /// A sound's play switch. The shutter's is the photos' own setting, as the
 /// Legacy Viewer's UISndSnapshot row is PlayModeUISndSnapshot inverted
-/// (fspanelpreferenceuisounds.cpp): one switch for "Quiet snapshots".
+/// (fspanelpreferenceuisounds.cpp): one switch for "Quiet snapshots". A
+/// conversation sound's is its mode (Never or not).
 fn ui_sound_plays(s: &crate::settings::Settings, sound: crate::ui_sound::UiSound) -> bool {
     match sound {
         crate::ui_sound::UiSound::Snapshot => s.snapshot.sound,
-        _ => s.audio.ui.plays(sound),
+        _ => s.audio.ui.im_plays(sound).unwrap_or_else(|| s.audio.ui.plays(sound)),
     }
 }
 
 fn set_ui_sound_plays(s: &mut crate::settings::Settings, sound: crate::ui_sound::UiSound, on: bool) {
     match sound {
         crate::ui_sound::UiSound::Snapshot => s.snapshot.sound = on,
+        _ if s.audio.ui.im_plays(sound).is_some() => s.audio.ui.set_im_plays(sound, on),
         _ => s.audio.ui.set_plays(sound, on),
     }
 }
@@ -296,7 +298,9 @@ fn interface_sounds(cx: &mut Cx) {
                 ch
             });
         }
-        // the 41 sounds one by one, behind the cog
+        // every sound one by one, behind the cog; the three conversation
+        // sounds too, with their asset, as the UI sounds panel lists them
+        // (their switch turns their mode above to Never and back)
         cx.row(
             tr!("ui-options-per-sound-choices"),
             tr!("ui-options-per-sound-choices-help"),
@@ -304,10 +308,7 @@ fn interface_sounds(cx: &mut Cx) {
             |_, _| false,
         );
         cx.subs(false, |cx| {
-            for e in CATALOG
-                .iter()
-                .filter(|e| !e.sound.caller_gated() || e.sound == UiSound::TrackerBeacon)
-            {
+            for e in CATALOG.iter() {
                 let hint = tr!(
                     "extra-uisnd-sound-asset-empty-no-sound-playmodeuisnd",
                     value0 = e.name.to_string(),
