@@ -122,6 +122,54 @@ struct State {
     reported: bool,
     /// Progress shown so far (it never goes back when more parts arrive).
     shown: f32,
+    /// When each part was last complete (the `shown after` log line).
+    timeline: Timeline,
+}
+
+/// When each kind of part of a loading avatar became complete, in seconds
+/// since it was first seen, for the `shown after` log line: which part
+/// held it back. A part that goes missing again (a worn object arriving
+/// later, a new appearance) is cleared and marked again when it completes.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct Timeline {
+    /// Required bakes defined: the appearance has come.
+    appearance: Option<f32>,
+    /// Bakes downloaded.
+    bakes: Option<f32>,
+    /// As many worn objects as the simulator lists have come.
+    worn: Option<f32>,
+    /// Geometry of what it wears built.
+    geometry: Option<f32>,
+    /// Textures on what it wears shown (not waited for): (shown, total) at
+    /// the last frame before it showed.
+    textures: Option<f32>,
+    textures_count: (usize, usize),
+    /// Nothing missing any more: the delay before showing starts.
+    ready: Option<f32>,
+}
+
+impl Timeline {
+    fn mark(at: &mut Option<f32>, done: bool, t: f32) {
+        if !done {
+            *at = None;
+        } else if at.is_none() {
+            *at = Some(t);
+        }
+    }
+
+    fn describe(&self) -> String {
+        let at = |t: Option<f32>| t.map_or_else(|| "not yet".to_owned(), |t| format!("{t:.1} s"));
+        let (tex, tex_total) = self.textures_count;
+        format!(
+            "appearance {}, bakes {}, worn objects {}, geometry {}, ready {}, worn textures {} ({tex} of {tex_total})",
+            at(self.appearance),
+            at(self.bakes),
+            at(self.worn),
+            at(self.geometry),
+            at(self.ready),
+            at(self.textures),
+        )
+    }
 }
 
 /// One frame of an avatar's loading state.
@@ -153,6 +201,7 @@ impl State {
             all_came: false,
             reported: false,
             shown: 0.0,
+            timeline: Timeline::default(),
         }
     }
 
@@ -303,10 +352,11 @@ impl Scene {
     /// the Legacy Viewer, but they are part of what shows) and the worn
     /// objects the simulator lists (`announced`) that have not come yet.
     /// Every part counts, so the bar moves as they come instead of
-    /// waiting at its last step for a part it did not count.
-    fn avatar_load_progress(&self, world: &World, idx: usize, announced: usize) -> f32 {
+    /// waiting at its last step for a part it did not count. Also the
+    /// textures on what it wears: (shown or unavailable, total).
+    fn avatar_load_progress(&self, world: &World, idx: usize, announced: usize) -> (f32, usize, usize) {
         let Some(av) = world.objects.get(idx) else {
-            return 0.0;
+            return (0.0, 0, 0);
         };
         let (mut done, mut total) = (0.0f32, 0.0f32);
         for (te, name, _) in avatar::BAKES {
@@ -348,14 +398,17 @@ impl Scene {
                 textures.extend(g.faces.iter().map(|f| f.tex_id).filter(|t| !t.is_nil()));
             }
         }
+        let mut shown_textures = 0;
         for t in &textures {
             total += BAR_TEXTURE;
             if self.textures.is_loaded(t) || self.textures.is_unavailable(t) {
                 done += BAR_TEXTURE;
+                shown_textures += 1;
             }
         }
         total += BAR_GEOMETRY * announced.saturating_sub(worn) as f32;
-        if total <= 0.0 { 1.0 } else { done / total }
+        let progress = if total <= 0.0 { 1.0 } else { done / total };
+        (progress, shown_textures, textures.len())
     }
 
     /// Whether nothing of an avatar is missing (its bakes downloaded, what
@@ -427,6 +480,15 @@ impl Scene {
             let announced = if own { 0 } else { world.announced_attachments(&id) };
             let (done, total, missing) = self.avatar_load_parts(world, idx, Some(&mut hurry));
             let t = s.tick(now, worn, announced, missing.is_empty());
+            let appearance = !missing.contains(&Missing::Appearance);
+            let tl = &mut s.timeline;
+            Timeline::mark(&mut tl.appearance, appearance, t.waited);
+            let bakes = appearance && !missing.iter().any(|m| matches!(m, Missing::Bake(..)));
+            Timeline::mark(&mut tl.bakes, bakes, t.waited);
+            Timeline::mark(&mut tl.worn, !t.waiting, t.waited);
+            let geometry = !missing.iter().any(|m| matches!(m, Missing::Geometry(_)));
+            Timeline::mark(&mut tl.geometry, geometry, t.waited);
+            Timeline::mark(&mut tl.ready, !t.still, t.waited);
             // (for the log: ours has no list to compare with)
             let listed = || if own { String::new() } else { format!(" of {announced} listed") };
             let own = if own { " (own)" } else { "" };
@@ -445,20 +507,30 @@ impl Scene {
                 // shown by the time limit: what it was waiting for is the
                 // cause to look at
                 log::warn!(
-                    "avatar {id}{own} shown by the {MAX_WAIT:.0} s limit after {:.1} s: {done}/{total} parts, worn objects {worn}{} (waited for: {}), still missing [{}]",
+                    "avatar {id}{own} shown by the {MAX_WAIT:.0} s limit after {:.1} s: {done}/{total} parts, worn objects {worn}{} (waited for: {}), still missing [{}]; {}",
                     t.waited,
                     listed(),
                     t.waiting,
-                    self.describe_missing(world, &missing)
+                    self.describe_missing(world, &missing),
+                    s.timeline.describe()
                 );
             } else if t.first_show {
-                log::info!("avatar {id}{own} shown after {:.1} s, worn objects {worn}{}", t.waited, listed());
+                // (the timeline tells which part held it back)
+                log::info!(
+                    "avatar {id}{own} shown after {:.1} s, worn objects {worn}{}; {}",
+                    t.waited,
+                    listed(),
+                    s.timeline.describe()
+                );
             }
             if !t.loaded && !s.shown_once {
                 // what has come of its parts, weighted; the last bit is the
                 // delay before showing (it fills as the avatar is about to
                 // show)
-                let parts = self.avatar_load_progress(world, idx, announced);
+                let (parts, tex, tex_total) = self.avatar_load_progress(world, idx, announced);
+                let tl = &mut s.timeline;
+                tl.textures_count = (tex, tex_total);
+                Timeline::mark(&mut tl.textures, tex == tex_total, t.waited);
                 let delay = if t.still { 0.0 } else { t.delay };
                 let p = parts * BAR_PARTS + (1.0 - BAR_PARTS) * delay;
                 s.shown = s.shown.max(p.min(0.99));
@@ -492,6 +564,25 @@ mod tests {
 
     fn secs(s: f32) -> Duration {
         Duration::from_secs_f32(s)
+    }
+
+    #[test]
+    fn timeline_keeps_the_last_completion() {
+        let mut tl = Timeline::default();
+        Timeline::mark(&mut tl.geometry, false, 0.5);
+        assert_eq!(tl.geometry, None);
+        Timeline::mark(&mut tl.geometry, true, 1.0);
+        Timeline::mark(&mut tl.geometry, true, 1.5);
+        assert_eq!(tl.geometry, Some(1.0));
+        // a worn object arriving later: missing again, then complete later
+        Timeline::mark(&mut tl.geometry, false, 2.0);
+        Timeline::mark(&mut tl.geometry, true, 2.5);
+        assert_eq!(tl.geometry, Some(2.5));
+        tl.textures_count = (3, 4);
+        let line = tl.describe();
+        assert!(line.contains("geometry 2.5 s"), "{line}");
+        assert!(line.contains("bakes not yet"), "{line}");
+        assert!(line.contains("worn textures not yet (3 of 4)"), "{line}");
     }
 
     #[test]
