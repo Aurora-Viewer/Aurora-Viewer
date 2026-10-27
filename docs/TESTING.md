@@ -1045,6 +1045,18 @@ when unfocused") is ignored during a screenshot.
 
 ### Details
 
+`AURORA_DEMO_BUILD=physics,object:99621` selects an encoded ring mesh with a
+separate triangular collision surface. `physics-analysed` uses two convex
+decomposition hulls; `physics-convex` shows the single base hull; `physics-none`
+and `physics-off` leave no collision overlay. `physics-cycle` switches the eye
+off, on with Convex hull, then back to Prim. Use `object:99620` for the torus
+prim instead. The Features section opens to physics. Compare the translucent
+green surfaces and dark triangle edges, then toggle the eye repeatedly, change
+shape type, select a linked child, move/rotate/scale it and close construction.
+Only the selected collision shape should appear; materials, picking and shadows
+must stay unchanged. Human grid validation covers uploaded analysed/unanalysed
+meshes, linked parts, None, flexible prims, HUDs and re-opening the inspector.
+
 `AURORA_DEMO_BUILD_SIZE` sets the compact construction window's initial dimensions
 once for reproducible captures; normal sessions restore saved geometry. There is
 one presentation at every width. The initial request is 350 by 820; the visible icons and expanded transform area

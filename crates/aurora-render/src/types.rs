@@ -460,6 +460,9 @@ pub struct DrawLists {
     /// Local creation hologram: depth tested, without writing pick depth,
     /// casting shadows or entering reflections / probes.
     pub creation_preview: Vec<DrawCmd>,
+    /// Collision shapes of the build selection, depth tested without
+    /// affecting world depth, picking, shadows or reflections.
+    pub physics_shapes: Vec<DrawCmd>,
     pub opaque_two_sided: Vec<DrawCmd>,
     pub mask: Vec<DrawCmd>,
     pub mask_two_sided: Vec<DrawCmd>,
@@ -587,6 +590,7 @@ impl DrawLists {
         self.portal_clipping = src.portal_clipping;
         self.opaque.clone_from(&src.opaque);
         self.creation_preview.clone_from(&src.creation_preview);
+        self.physics_shapes.clone_from(&src.physics_shapes);
         self.opaque_two_sided.clone_from(&src.opaque_two_sided);
         self.mask.clone_from(&src.mask);
         self.mask_two_sided.clone_from(&src.mask_two_sided);
@@ -631,6 +635,7 @@ impl DrawLists {
         self.portal_clipping = false;
         self.opaque.clear();
         self.creation_preview.clear();
+        self.physics_shapes.clear();
         self.opaque_two_sided.clear();
         self.mask.clear();
         self.mask_two_sided.clear();
@@ -674,6 +679,7 @@ impl DrawLists {
             + self.terrain.len()
             + self.opaque.len()
             + self.creation_preview.len()
+            + self.physics_shapes.len()
             + self.opaque_two_sided.len()
             + self.mask.len()
             + self.mask_two_sided.len()
@@ -1577,6 +1583,7 @@ mod tests {
         scene.hud_debug_blue.push(cmd(24));
         scene.terrain.push(cmd(1));
         scene.creation_preview.push(cmd(25));
+        scene.physics_shapes.push(cmd(26));
         scene.blend.extend([cmd(7), cmd(8), cmd(9)]);
         scene.blend_glow.extend([false, true, false]);
         scene.blend_depth = 1;
@@ -1624,6 +1631,7 @@ mod tests {
         assert_eq!(packet.hud_debug_red[0].record, 23);
         assert_eq!(packet.hud_debug_blue[0].record, 24);
         assert_eq!(packet.creation_preview[0].record, 25);
+        assert_eq!(packet.physics_shapes[0].record, 26);
         assert_eq!(packet.blend.iter().map(|c| c.record).collect::<Vec<_>>(), [7, 8, 9]);
         assert_eq!(packet.blend_glow, [false, true, false]);
         assert_eq!(packet.blend_depth, 1);
@@ -1644,6 +1652,8 @@ mod tests {
         assert!(scene.hud_opaque.is_empty());
         assert!(scene.hud_debug_red.is_empty());
         assert!(scene.creation_preview.is_empty());
+        assert!(scene.physics_shapes.is_empty());
+        assert_eq!(packet.physics_shapes[0].record, 26);
         assert_eq!(packet.creation_preview[0].record, 25);
         assert!(scene.hud_debug_blue.is_empty());
         assert!(scene.select_faces.is_empty());
@@ -1652,6 +1662,10 @@ mod tests {
         assert_eq!(packet.hud_opaque[0].record, 20);
         assert!(packet.gpu.is_some());
         packet.copy_from(&scene);
+        assert!(
+            packet.physics_shapes.is_empty(),
+            "Disabling physics display clears reused frame packets"
+        );
         assert!(
             packet.creation_preview.is_empty(),
             "A reused packet must not retain a hidden creation hologram"

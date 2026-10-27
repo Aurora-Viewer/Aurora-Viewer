@@ -162,7 +162,8 @@ pub fn show(ui: &mut egui::Ui, p: &Palette, tool: &mut BuildTool, world: &mut Wo
         }
     });
     let physics = aurora_i18n::tr!("build-ui-features-physics-shape-type");
-    collapsing(ui, p, "attributes_physics", physics, false, |ui| {
+    let demo_physics = env.demo && std::env::var("AURORA_DEMO_BUILD").is_ok_and(|v| v.starts_with("physics"));
+    collapsing(ui, p, "attributes_physics", physics, demo_physics, |ui| {
         label(ui, p, aurora_i18n::tr!("build-ui-features-physics-shape-type"));
         let phys = tool.physics.get(&key.local_id).copied();
         ui.horizontal(|ui| {

@@ -45,6 +45,7 @@ pub struct MeshHeader {
     pub lods: [Option<(usize, usize)>; 4],
     pub skin: Option<(usize, usize)>,
     pub physics_convex: Option<(usize, usize)>,
+    pub physics_mesh: Option<(usize, usize)>,
     pub version: i32,
 }
 
@@ -109,6 +110,7 @@ pub fn parse_mesh_header(data: &[u8]) -> Result<MeshHeader, AssetError> {
         lods,
         skin: range("skin"),
         physics_convex: range("physics_convex"),
+        physics_mesh: range("physics_mesh"),
         version,
     })
 }
@@ -151,7 +153,7 @@ pub(crate) fn inflate_capped(input: &[u8]) -> Result<Vec<u8>, AssetError> {
 }
 
 /// `LLUZipHelper::unzip_llsd`: inflate then parse binary LLSD.
-fn unzip_llsd(section: &[u8]) -> Result<Llsd, AssetError> {
+pub(crate) fn unzip_llsd(section: &[u8]) -> Result<Llsd, AssetError> {
     let raw = inflate_capped(section)?;
     let (v, _) = aurora_llsd::from_binary(&raw).map_err(|e| llsd_err(e, "mesh section llsd"))?;
     Ok(v)

@@ -100,6 +100,7 @@ struct MeshEntry {
     /// asked again much later, and not expected meanwhile.
     gone: bool,
     wanted_lods: HashSet<u8>,
+    wanted_physics: bool,
     building: HashSet<u8>,
     /// Listed in `MeshStreamer::todo`.
     queued: bool,
@@ -143,6 +144,8 @@ impl MeshEntry {
         let skin = h.skin.filter(|_| self.skin.is_none() && !self.skin_bad);
         skin.into_iter()
             .chain(self.wanted_lods.iter().filter_map(|&lod| self.lod_block(lod)))
+            .chain(self.wanted_physics.then_some(h.physics_convex).flatten())
+            .chain(self.wanted_physics.then_some(h.physics_mesh).flatten())
             .filter(|b| !self.bytes.holds(*b))
             .collect()
     }
@@ -328,6 +331,16 @@ impl MeshStreamer {
         Self::attend(&mut self.todo, id, e);
     }
 
+    /// Fetch collision blocks only while the build inspector needs them.
+    pub fn want_physics(&mut self, id: Uuid, wanted: bool) {
+        let e = self.entries.entry(id).or_default();
+        e.wanted_physics = wanted;
+        if wanted && e.stage == Stage::Unwanted {
+            e.stage = Stage::ToFetch;
+        }
+        Self::attend(&mut self.todo, id, e);
+    }
+
     /// An object using a mesh covers `px` pixels on screen (`own`: worn by
     /// our avatar). Its downloads still waiting move up to the nearest user;
     /// ours go in the urgent lane.
@@ -364,6 +377,7 @@ impl MeshStreamer {
             return;
         };
         e.wanted_lods.clear();
+        e.wanted_physics = false;
         e.px = 0.0;
         e.own = false;
         for (key, _) in e.inflight.drain(..) {
@@ -453,6 +467,7 @@ impl MeshStreamer {
                     lods: [Some((0, 1)); 4],
                     skin: None,
                     physics_convex: None,
+                    physics_mesh: None,
                     version: 1,
                 }),
                 stage: Stage::Known,
@@ -1475,6 +1490,29 @@ mod tests {
     }
 
     const CAP: Option<&str> = Some("https://assets.example/cap");
+
+    #[test]
+    fn physics_shape_blocks_are_requested_only_while_inspecting_without_forcing_visual_lods() {
+        let asset = super::super::physics_shapes::demo_asset(false).unwrap();
+        let header = aurora_assets::parse_mesh_header(&asset).unwrap();
+        let id = Uuid::from_u128(778);
+        let mut streamer = mesh_streamer();
+        streamer.entries.insert(
+            id,
+            MeshEntry {
+                header: Some(header.clone()),
+                stage: Stage::Known,
+                ..Default::default()
+            },
+        );
+        assert!(streamer.entries[&id].missing().is_empty());
+        streamer.want_physics(id, true);
+        let entry = &streamer.entries[&id];
+        assert!(entry.wanted_lods.is_empty());
+        assert_eq!(entry.missing(), [header.physics_convex.unwrap(), header.physics_mesh.unwrap()]);
+        streamer.want_physics(id, false);
+        assert!(streamer.entries[&id].missing().is_empty());
+    }
 
     #[test]
     fn a_mesh_download_follows_its_nearest_user_and_goes_with_the_last() {

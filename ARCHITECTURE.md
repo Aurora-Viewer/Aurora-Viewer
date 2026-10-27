@@ -1,5 +1,15 @@
 # Aurora Viewer architecture
 
+`scene/physics_shapes.rs` connects the build inspector's saved physics eye to
+selected collision geometry. Mesh header ranges include `physics_mesh` and
+`physics_convex`; the mesh streamer fetches these only while inspecting.
+`aurora-assets/src/mesh_physics.rs` decodes quantized base/decomposition hulls.
+Rayon prepares parametric prims, convex hulls and collision triangles once per
+shape/scale/type; dedicated GPU draw lists add translucent surfaces and edges
+without changing visual LODs, world depth, picking, shadows or reflections.
+None, flexible prims, HUDs and unknown simulator shape types are excluded.
+Traditional sculpt physics remains undisplayed, as in the reference editor.
+
 `world/bridge.rs` inspects an existing attachment before writing scripts.
 The `Verify` phase requires matching controller, query and IK replies from the
 selected worn root, current region, folder and protocol version. A current
