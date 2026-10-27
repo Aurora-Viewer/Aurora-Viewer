@@ -52,7 +52,9 @@ fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submen
             |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button(aurora_i18n::tr!("common-build"), |ui| build_menu(ui, &p, &mut action, ""));
-                    ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| contents_menu(ui, &p, &mut panels, true));
+                    ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| {
+                        contents_menu(ui, &p, &mut panels, &mut action, true, false)
+                    });
                 });
             },
         );
@@ -101,12 +103,14 @@ fn import_menu_is_in_build_and_requests_the_chooser_toggle_without_a_type_submen
     }
 }
 
-/// The Legacy Viewer's Content entries Aurora does not do yet are listed
-/// greyed (#670), L$ market data only on a grid with a Marketplace
-/// (GridCheck "secondlife").
+/// The Legacy Viewer's Content entries (#1116, #1117, #1121): L$ market data
+/// only on a grid with a Marketplace (GridCheck "secondlife"), the pages
+/// opened through the links' usual path, and Message of the day writing the
+/// login message again, greyed out when the grid sent none.
 #[test]
-fn contents_menu_lists_the_legacy_content_entries_greyed() {
-    for marketplace in [true, false] {
+fn contents_menu_opens_the_legacy_content_pages_and_the_message_of_the_day() {
+    use crate::ui::context::{CtxAction, take_requests};
+    for (marketplace, motd) in [(true, true), (false, false)] {
         let ctx = egui::Context::default();
         let theme = crate::theme::Theme::default();
         theme.apply(&ctx, 1.0);
@@ -115,6 +119,7 @@ fn contents_menu_lists_the_legacy_content_entries_greyed() {
         let mut time = 0.0;
         let mut frame = |events| {
             time += 0.2;
+            let mut action = BarAction::None;
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0))),
@@ -125,24 +130,46 @@ fn contents_menu_lists_the_legacy_content_entries_greyed() {
                 |ui| {
                     egui::MenuBar::new().ui(ui, |ui| {
                         ui.menu_button(aurora_i18n::tr!("common-contents"), |ui| {
-                            contents_menu(ui, &p, &mut panels, marketplace)
+                            contents_menu(ui, &p, &mut panels, &mut action, marketplace, motd)
                         });
                     });
                 },
             );
             output.textures_delta.clear();
-            output
+            (output, action)
         };
-        let contents = text_position(&frame(Vec::new()), aurora_i18n::tr!("common-contents"));
-        for pressed in [true, false] {
-            frame(click_events(contents, pressed));
+        let contents = text_position(&frame(Vec::new()).0, aurora_i18n::tr!("common-contents"));
+        // opens the menu, clicks `label` in it, and gives what it asked for
+        let mut click = |label: &str| {
+            for pressed in [true, false] {
+                frame(click_events(contents, pressed));
+            }
+            for _ in 0..4 {
+                frame(Vec::new());
+            }
+            let (output, _) = frame(Vec::new());
+            assert_eq!(has_text(&output, aurora_i18n::tr!("ui-bars-market-data")), marketplace);
+            let at = text_position(&output, label);
+            frame(click_events(at, true));
+            let (_, action) = frame(click_events(at, false));
+            for _ in 0..2 {
+                frame(vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }]);
+            }
+            (action, take_requests(&ctx))
+        };
+        let (_, asked) = click(aurora_i18n::tr!("ui-bars-script-library"));
+        assert!(matches!(&asked[..], [CtxAction::OpenUrl(url)] if url == SCRIPT_LIBRARY));
+        if marketplace {
+            let (_, asked) = click(aurora_i18n::tr!("ui-bars-market-data"));
+            assert!(matches!(&asked[..], [CtxAction::OpenUrl(url)] if url == LINDEX_MARKET));
         }
-        for _ in 0..4 {
-            frame(Vec::new());
-        }
-        let output = frame(Vec::new());
-        assert_eq!(has_text(&output, aurora_i18n::tr!("ui-bars-market-data")), marketplace);
-        assert!(has_text(&output, aurora_i18n::tr!("ui-bars-script-library")));
-        assert!(has_text(&output, aurora_i18n::tr!("ui-bars-message-of-the-day")));
+        let (action, _) = click(aurora_i18n::tr!("ui-bars-message-of-the-day"));
+        assert_eq!(matches!(action, BarAction::MessageOfTheDay), motd);
     }
 }

@@ -1063,6 +1063,8 @@ mod tests {
             can_set_home: false,
             release_notes: false,
             region_console: false,
+            motd: false,
+            grid_help: None,
             classic_bars: false,
             islands: IslandsLook {
                 stretch,

@@ -34,6 +34,9 @@ pub enum BarAction {
     ReportAbuse,
     /// Help › Server release notes (LLFloaterAbout's release notes link).
     ServerReleaseNotes,
+    /// Contents › Message of the day: the login message again in the
+    /// nearby chat (Advanced.ToggleHUDInfo "motd").
+    MessageOfTheDay,
     /// Same import chooser toggle as the configurable Import shortcut.
     Import,
     /// Advanced › Media streams backup (Streamlist.xml_import / xml_export).
@@ -199,6 +202,11 @@ pub struct StatusInfo<'a> {
     /// console, estate managers).
     pub release_notes: bool,
     pub region_console: bool,
+    /// The grid sent a message at login (Contents › Message of the day).
+    pub motd: bool,
+    /// The help page of the grid info (OpenSim), with the grid's name:
+    /// Help › Knowledge base shows only with one.
+    pub grid_help: Option<GridHelp>,
     /// Firestorm's full-width bars (Preferences › Aurora) instead of the
     /// islands.
     pub classic_bars: bool,
@@ -232,6 +240,14 @@ pub struct StatusInfo<'a> {
     /// The conversations' thumbnails at the top right (#1134): how many,
     /// 0 for none (`thumbnails::reserve_top`).
     pub conversation_thumbnails: usize,
+}
+
+/// Help › Knowledge base, the Legacy Viewer's "[CURRENT_GRID] Help": the
+/// grid's name (at the right end of the row) and its help page.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridHelp {
+    pub grid: String,
+    pub url: String,
 }
 
 /// World › World tooltips: the Legacy Viewer's Show Tips, Show Land
@@ -1003,7 +1019,7 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
         build_menu(ui, p, action, &st.ik_keys);
     });
     menu::submenu(ui, p, "briefcase-filled", aurora_i18n::tr!("common-contents"), true, |ui| {
-        contents_menu(ui, p, panels, st.marketplace);
+        contents_menu(ui, p, panels, action, st.marketplace, st.motd);
     });
     if advanced {
         menu::submenu(ui, p, "adjustments-filled", aurora_i18n::tr!("common-advanced"), true, |ui| {
@@ -1054,9 +1070,19 @@ fn main_menus(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, st: &StatusIn
     }
     menu::submenu(ui, p, "help-circle-filled", aurora_i18n::tr!("common-help"), true, |ui| {
         // menu_viewer.xml: the viewer's wiki and the grid's help first, then
-        // Check Grid status before the reports
-        menu::todo(ui, p, "book-filled", aurora_i18n::tr!("ui-bars-wiki"));
-        menu::todo(ui, p, "article-filled", aurora_i18n::tr!("ui-bars-knowledge-base"));
+        // Check Grid status before the reports. The wiki is the project's
+        // own, without the Legacy Viewer's F1 (the favourites' key here).
+        // The grid's help shows only when the grid info gives a help page
+        // (update_grid_help, llviewermenu.cpp).
+        use super::context::{CtxAction, request};
+        if menu::item(ui, p, "book-filled", aurora_i18n::tr!("ui-bars-wiki")) {
+            request(ui.ctx(), CtxAction::OpenUrl(crate::links::WIKI.into()));
+        }
+        if let Some(help) = &st.grid_help
+            && menu::item_detail(ui, p, "article-filled", aurora_i18n::tr!("ui-bars-knowledge-base"), &help.grid)
+        {
+            request(ui.ctx(), CtxAction::OpenUrl(help.url.clone()));
+        }
         menu::separator(ui, p);
         let grid_status = aurora_i18n::tr!("toolbar-command-grid-status");
         let tower = "building-broadcast-tower-filled";
@@ -1191,11 +1217,22 @@ fn build_menu(ui: &mut egui::Ui, p: &Palette, action: &mut BarAction, ik_keys: &
     }
 }
 
+/// LindenXchange and Script Library of menu_viewer.xml (PromptShowURL).
+const LINDEX_MARKET: &str = "https://secondlife.com/my/lindex/market.php";
+const SCRIPT_LIBRARY: &str = "https://wiki.secondlife.com/wiki/LSL_Library";
+
 /// Inventory and gestures, then the entries of the Legacy Viewer's Content
 /// menu that Aurora's World menu does not hold already (Search and SL
 /// Marketplace are there). L$ Market Data shows on the Second Life grids
 /// only (GridCheck "secondlife"), as the Marketplace.
-fn contents_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, marketplace: bool) {
+///
+/// The pages go through the links' usual path (`CtxAction::OpenUrl`): the
+/// Legacy Viewer's WebLaunchExternalTarget question is Aurora's link check,
+/// which lets the well-known sites through and asks for the others.
+/// Message of the day is greyed out when the grid sent none, instead of
+/// writing an empty line.
+fn contents_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, action: &mut BarAction, marketplace: bool, motd: bool) {
+    use super::context::{CtxAction, request};
     flip_window(
         ui,
         p,
@@ -1208,12 +1245,16 @@ fn contents_menu(ui: &mut egui::Ui, p: &Palette, panels: &mut Panels, marketplac
         super::widgets::toggle_floater(ui.ctx(), "gestures", &mut panels.gestures);
     }
     menu::separator(ui, p);
-    if marketplace {
-        menu::todo(ui, p, "chart-candle-filled", aurora_i18n::tr!("ui-bars-market-data"));
+    if marketplace && menu::item(ui, p, "chart-candle-filled", aurora_i18n::tr!("ui-bars-market-data")) {
+        request(ui.ctx(), CtxAction::OpenUrl(LINDEX_MARKET.into()));
     }
-    menu::todo(ui, p, "code", aurora_i18n::tr!("ui-bars-script-library"));
+    if menu::item(ui, p, "code", aurora_i18n::tr!("ui-bars-script-library")) {
+        request(ui.ctx(), CtxAction::OpenUrl(SCRIPT_LIBRARY.into()));
+    }
     menu::separator(ui, p);
-    menu::todo(ui, p, "message-filled", aurora_i18n::tr!("ui-bars-message-of-the-day"));
+    if menu::item_if(ui, p, "message-filled", aurora_i18n::tr!("ui-bars-message-of-the-day"), motd) {
+        *action = BarAction::MessageOfTheDay;
+    }
 }
 
 /// Draw a (white mask) icon tinted, centered in `rect`.

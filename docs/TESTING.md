@@ -3956,6 +3956,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_TP_CONFIRM=<origin>` | Teleport confirmation on screen |
 | `AURORA_DEMO_SEARCH=<tab>[:text]` | "Search" on a tab (or Aurora's "all" chip), search done |
 | `AURORA_DEMO_SEARCH_WEB=<page>` | Page loaded by the Web tab of "Search" in demo |
+| `AURORA_DEMO_GRID_HELP=<page>` | Help › Knowledge base shown, opening this page |
 | `AURORA_DEMO_MARKETPLACE=<page>` | Marketplace window open at start on this page |
 | `AURORA_DEMO_MARKETPLACE_LISTINGS=<mode>` | Marketplace listings window open on a simulated SLM server |
 | `AURORA_DEMO_BAN=1` | Ban lines |
@@ -6378,6 +6379,10 @@ Human grid validation: remember MFA for account A and B, restart the viewer, the
   reload and the address). Without it the Web tab of the demo loads
   nothing: the search page of the grid is only opened once
   connected.
+- **`AURORA_DEMO_GRID_HELP=<page>`**: Help › Knowledge base shows in demo
+  as on an OpenSim grid whose grid info gives this help page, with the
+  page's host as the grid's name at the right end of the row. Without it
+  the entry is hidden, as on Second Life.
 - **`AURORA_DEMO_MARKETPLACE=<page>`**: World › SL Marketplace stands for
   this page in demo (a local `file:///…` page is enough): the window opens
   at start on it, the menu entry shows, and a link to an address under it

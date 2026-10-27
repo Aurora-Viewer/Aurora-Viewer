@@ -159,6 +159,8 @@ fn status(classic: bool) -> StatusInfo<'static> {
         can_set_home: false,
         release_notes: false,
         region_console: false,
+        motd: false,
+        grid_help: None,
         classic_bars: classic,
         islands: IslandsLook {
             stretch: true,

@@ -3121,8 +3121,9 @@ impl App {
                 self.loading_frac = 0.0;
                 self.loading_target = 0.0;
                 self.loading_stage = aurora_i18n::tr!("common-connecting-to-region").into();
-                if !l.message.trim().is_empty() {
-                    self.world.system_message(l.message.trim().to_owned());
+                l.message.trim().clone_into(&mut self.world.motd);
+                if !self.world.motd.is_empty() {
+                    self.world.system_message(self.world.motd.clone());
                 }
                 self.world.system_message(aurora_i18n::tr!(
                     "app-welcome-2",
@@ -11112,6 +11113,8 @@ impl App {
             BarAction::CopyVersion => self.copy_version(),
             BarAction::ReportAbuse => self.open_report_abuse(crate::report_abuse::ReportTarget::Nothing),
             BarAction::ServerReleaseNotes => self.send(NetCommand::ServerReleaseNotes),
+            // FSCommon::report_to_nearby_chat(gAgent.mMOTD)
+            BarAction::MessageOfTheDay => self.world.system_message(self.world.motd.clone()),
             BarAction::Import => {
                 self.imports.toggle_launcher(&self.egui_ctx);
                 self.egui_ctx.request_repaint();
@@ -11565,6 +11568,23 @@ impl App {
             },
             loading: state != Some(FetchState::Fetched),
         }
+    }
+
+    /// Help › Knowledge base: the help page of the grid info of an OpenSim
+    /// grid, none on Second Life (update_grid_help, llviewermenu.cpp).
+    /// AURORA_DEMO_GRID_HELP=<page>: a page of the tester's choice in demo,
+    /// named after its host.
+    fn grid_help(&self) -> Option<ui::bars::GridHelp> {
+        if self.demo {
+            let url = std::env::var("AURORA_DEMO_GRID_HELP").ok().filter(|u| !u.trim().is_empty())?;
+            let grid = crate::grids::authority(&url)?;
+            return Some(ui::bars::GridHelp { grid, url });
+        }
+        let grid = crate::grids::active(&self.settings)?;
+        (!grid.help.trim().is_empty()).then(|| ui::bars::GridHelp {
+            grid: grid.name.clone(),
+            url: grid.help.trim().to_owned(),
+        })
     }
 
     /// Firestorm's bars or the islands, and how the islands are set: the
@@ -12621,6 +12641,8 @@ impl App {
                     can_set_home: self.world.can_set_home(),
                     release_notes: self.world.main_has_cap("ServerReleaseNotes"),
                     region_console: self.world.main_has_cap("SimConsoleAsync"),
+                    motd: !self.world.motd.is_empty(),
+                    grid_help: self.grid_help(),
                     marketplace: self.marketplace_home().is_some()
                         || (self.demo && crate::world::marketplace::demo::Mode::from_env().is_some()),
                     parcel_icons: match (self.world.main().and_then(|r| r.info.as_ref()), self.world.parcel.as_deref()) {
