@@ -1694,7 +1694,8 @@ mod tests {
             }
             let mut output = egui::FullOutput::default();
             for _ in 0..4 {
-                output = ctx.run_ui(
+                // This layout/input test has no renderer to apply texture deltas.
+                output = crate::ui::login::test_output(ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
                         ..Default::default()
@@ -1702,7 +1703,7 @@ mod tests {
                     |ui| {
                         show(ui.ctx(), &p, &mut current, &facts, false, &mut prefs, &mut customization);
                     },
-                );
+                ));
             }
             let volume = text_rect(&output.shapes, "100 %").expect("volume");
             let profile = text_rect(&output.shapes, aurora_i18n::tr!("common-view-profile")).expect("profile");
@@ -1716,7 +1717,7 @@ mod tests {
             for (at, is_mute) in [(slider, false), (mute, true)] {
                 take_requests(&ctx);
                 for pressed in [true, false] {
-                    let _ = ctx.run_ui(
+                    let _ = crate::ui::login::test_output(ctx.run_ui(
                         egui::RawInput {
                             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 900.0))),
                             events: vec![
@@ -1733,7 +1734,7 @@ mod tests {
                         |ui| {
                             show(ui.ctx(), &p, &mut current, &facts, false, &mut prefs, &mut customization);
                         },
-                    );
+                    ));
                 }
                 let actions = take_requests(&ctx);
                 if is_mute {
