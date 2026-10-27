@@ -1009,6 +1009,43 @@ mod tests {
     }
 
     #[test]
+    fn the_cursor_before_a_latin_word_in_a_hebrew_line_is_on_its_left() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let visual = ctx.fonts_mut(|f| layout(f, job("שלום Aurora"), Base::Auto));
+        let map = visual.map.as_ref().expect("reordered");
+        // "A" (5) is read from the left: the cursor before it is on its left
+        // edge, the one after "a" (11, the end) on the right edge of "a"
+        assert_eq!(visual.cursor_rect(5).min.x, map.boxes[5].rect.min.x);
+        assert_eq!(visual.cursor_rect(10).min.x, map.boxes[10].rect.min.x);
+        // "ש" (0) is read from the right
+        assert_eq!(visual.cursor_rect(0).min.x, map.boxes[0].rect.max.x);
+        // a click on the left half of "A" puts the cursor before it
+        let a = map.boxes[5].rect;
+        assert_eq!(visual.cursor_at(Vec2::new(a.min.x + 0.2, a.center().y)), 5);
+    }
+
+    #[test]
+    fn selected_right_to_left_text_takes_the_selected_color() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let visual = ctx.fonts_mut(|f| layout(f, job("שלום Aurora"), Base::Auto));
+        let mut galley = visual.galley.clone();
+        let red = egui::Color32::RED;
+        visual.tint(&mut galley, 5..11, red);
+        let colored = |g: &Galley| {
+            g.rows
+                .iter()
+                .flat_map(|r| r.row.visuals.mesh.vertices.iter())
+                .filter(|v| v.color == red)
+                .count()
+        };
+        assert_eq!(colored(&visual.galley), 0, "the shared galley is left alone");
+        // the six letters of "Aurora", four vertices each, nothing more
+        assert_eq!(colored(&galley), 6 * 4);
+    }
+
+    #[test]
     fn a_paint_only_galley_keeps_no_boxes() {
         let ctx = egui::Context::default();
         let _ = ctx.run_ui(egui::RawInput::default(), |_| {});

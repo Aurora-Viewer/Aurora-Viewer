@@ -3347,7 +3347,7 @@ pub fn toasts(
                         for s in job.sections.iter_mut() {
                             s.format.color = s.format.color.gamma_multiply(alpha);
                         }
-                        let base = bidi_base(&name);
+                        let base = bidi_base(&name, &line.from);
                         let visual = ui.ctx().fonts_mut(|f| super::bidi::layout(f, job, base));
                         let galley = visual.galley.clone();
                         let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
@@ -3391,14 +3391,20 @@ pub fn toasts(
 }
 
 /// The direction of a chat line: from the left when it starts with its
-/// sender's name (the picture before it), the name isolated so that an
-/// Arabic message does not carry it to the right end; else that of its
-/// first letter.
-fn bidi_base(name: &Option<std::ops::Range<usize>>) -> super::bidi::Base {
-    match name {
-        Some(range) => super::bidi::Base::Sender(range.clone()),
-        None => super::bidi::Base::Auto,
-    }
+/// sender's name `from` (the picture before it), the display name isolated
+/// so that an Arabic message does not carry it to the right end, and the
+/// username of a complete name ("ذئب بنفسجي (glyph1)") left after it; else
+/// that of its first letter.
+fn bidi_base(name: &Option<std::ops::Range<usize>>, from: &str) -> super::bidi::Base {
+    let Some(range) = name else {
+        return super::bidi::Base::Auto;
+    };
+    // a username is Latin: " (glyph1)" at the end is not the display name's
+    let display = match from.strip_suffix(')').and_then(|f| f.rfind(" (").map(|i| (i, &f[i + 2..]))) {
+        Some((i, username)) if username.is_ascii() => from[..i].chars().count(),
+        _ => from.chars().count(),
+    };
+    super::bidi::Base::Sender(range.start..range.start + display.min(range.len()))
 }
 
 /// What a laid-out chat line carries besides its text: the badge of each
@@ -3775,6 +3781,16 @@ pub(crate) fn bar_input(
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_chat_line_isolates_its_sender_s_display_name() {
+        use crate::ui::bidi::Base;
+        // the username of a complete name stays after the display name
+        assert_eq!(bidi_base(&Some(4..23), "ذئب بنفسجي (glyph1)"), Base::Sender(4..14));
+        assert_eq!(bidi_base(&Some(0..10), "ذئب بنفسجي"), Base::Sender(0..10));
+        // brackets of the display name itself are part of it
+        assert_eq!(bidi_base(&Some(0..8), "ليلى (٢)"), Base::Sender(0..8));
+        assert_eq!(bidi_base(&None, "ذئب"), Base::Auto);
+    }
     #[test]
     fn gesture_chat_remembers_a_shifted_slash_until_its_own_release() {
         let ctx = egui::Context::default();

@@ -283,7 +283,7 @@ fn compact_card<'a>(
             sender,
             name,
         } = line_job(line, p, world, want_names, WIDTH - 18.0 - lead, size, false, JobLook::Compact);
-        let base = super::bidi_base(&name);
+        let base = super::bidi_base(&name, &line.from);
         let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
         let galley = visual.galley.clone();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(lead + galley.size().x, galley.size().y), egui::Sense::hover());
@@ -370,7 +370,7 @@ fn body(
         name,
         ..
     } = line_job(line, p, world, want_names, width, TEXT, false, JobLook::Body);
-    let base = super::bidi_base(&name);
+    let base = super::bidi_base(&name, &line.from);
     let visual = ui.ctx().fonts_mut(|f| crate::ui::bidi::layout(f, job, base));
     let galley = visual.galley.clone();
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
