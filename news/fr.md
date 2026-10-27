@@ -26,6 +26,19 @@ Une ligne vide commence un nouveau paragraphe.
 
 # Actualités d'Aurora Viewer
 
+## 2026-10-27 — Aurora 0.8.1 : les avatars sortent plus vite du nuage
+Les téléchargements suivent votre connexion : dans une région chargée, les avatars sortent du nuage environ trois fois plus vite, déjà texturés, et la région se charge deux fois plus vite avec un cache vide. Votre tenue arrive complète : chaque attachement est porté à la connexion et à chaque changement de tenue.
+[En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.1)
+
+## 2026-10-27 — Figez le monde, gardez vos prises de vue
+Dans le mode photo, figez le monde : chaque avatar, animation et objet en mouvement s'immobilise pendant que votre caméra reste libre. Enregistrez toute une prise de vue en préréglage de caméra (sa position, l'objectif, les filtres et la lumière) et retrouvez-la en un clic. Le déclencheur s'entend désormais autour de vous, comme dans le Legacy Viewer, sauf si vous choisissez les photos discrètes.
+
+## 2026-10-27 — Pour les créateurs
+Construire › Modifier les particules façonne un effet de particules sur votre prim, en direct, et y place le script correspondant. Monde › Explorateur d'animations montre qui joue une animation sur vous, la prévisualise, et l'arrête ou la bloque. Et les menus du clic droit des objets, du terrain, des avatars, des attachements et des HUD s'organisent maintenant à votre goût.
+
+## 2026-10-27 — Aussi dans la 0.8.1
+Maintenez Alt en vue subjective pour libérer le curseur, et choisissez votre réticule. L'arabe et l'hébreu se lisent désormais de droite à gauche, et un paiement en L$ s'affiche en carte dans la conversation de celui qui paie. Rangez vos tenues dans des dossiers depuis l'Apparence. Le mode immersif peut masquer vos HUD, et Alt+Maj+H les montre ou les masque partout. Avec RLVa activé, le nombre d'images par seconde ne chute plus, les souris gamer restent connectées, et Linux se ferme proprement sous Wayland.
+
 ## 2026-10-26 — Aurora 0.8.0 : des filtres et des effets pour vos photos
 Le mode photo gagne 66 filtres et effets visibles en direct dans le viseur : les 30 filtres du Legacy Viewer et 36 effets propres à Aurora, du grain argentique à la VHS, plus vos propres LUT .cube. Empilez-en jusqu'à six, chacun avec ses réglages, et comparez avant et après. Isolez votre avatar, ou les avatars et objets que vous cliquez, sur fond transparent : un PNG prêt à l'emploi.
 [En savoir plus](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.0)

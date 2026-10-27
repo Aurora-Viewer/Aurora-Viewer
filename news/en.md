@@ -26,6 +26,19 @@ An empty line starts a new paragraph.
 
 # Aurora Viewer news
 
+## 2026-10-27 — Aurora 0.8.1: avatars out of the cloud sooner
+Downloads now keep pace with your connection: in a busy region, avatars come out of the cloud about three times sooner, already textured, and the region loads about twice as fast with an empty cache. Your own outfit arrives whole: every attachment is worn at login and at each outfit change.
+[Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.1)
+
+## 2026-10-27 — Freeze the world, save your shots
+In the photo mode, freeze the world: every avatar, animation and moving thing holds still while your camera stays free. Save a whole shot as a camera preset (where the camera stands, the lens, the filters and the light) and bring it back in one click. The shutter is now heard around you, as in the Legacy Viewer, unless you choose quiet snapshots.
+
+## 2026-10-27 — For builders
+Build › Edit particles shapes a particle effect on your prim, live, and puts the matching script into it. World › Animation explorer shows who plays an animation on you, previews it, and stops or blocks it. And the right-click menus of objects, land, avatars, attachments and HUDs can now be arranged as you like.
+
+## 2026-10-27 — Also in 0.8.1
+Hold Alt in mouselook to free the cursor, and pick your crosshair. Arabic and Hebrew now read right to left, and an L$ payment shows as a card in the payer's conversation. Group your outfits in folders in Appearance. Immersive mode can hide your HUDs, and Alt+Shift+H shows or hides them anywhere. With RLVa on, the frame rate no longer drops, gaming mice stay connected, and Linux closes cleanly under Wayland.
+
 ## 2026-10-26 — Aurora 0.8.0: filters and effects for your photos
 The photo mode gets 66 filters and effects that show live in the viewfinder: the Legacy Viewer's 30 filters and 36 of Aurora's own, from film grain to VHS, plus your own .cube LUTs. Stack up to six, each with its own sliders, and compare before and after. Isolate your avatar, or the avatars and objects you click, on a transparent background: a PNG ready to use.
 [Read more](https://github.com/Aurora-Viewer/Aurora-Viewer/releases/tag/v0.8.0)
