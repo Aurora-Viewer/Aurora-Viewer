@@ -2460,7 +2460,7 @@ impl Session<'_> {
                         list.len() + self.attach_queue.len()
                     );
                 }
-                self.attach_queue.push(list);
+                self.attach_queue.push(list, Instant::now());
                 self.send_queued_attachment(Instant::now());
             }
             NetCommand::DetachObject { handle, local_id } => {
@@ -3616,7 +3616,8 @@ impl Session<'_> {
                 transition::step_once("first objects", || "first object update of the region (ObjectUpdate)".to_string());
             }
             let objects: Vec<_> = m.object_data.iter().filter_map(objects::parse_full).collect();
-            self.attach_queue.observe(objects.iter().map(|o| o.name_values.as_str()));
+            self.attach_queue
+                .observe(objects.iter().map(|o| o.name_values.as_str()), Instant::now());
             self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
             crate::probe::objects(crate::probe::ObjectKind::Full, objects.len());
             if !objects.is_empty() {
@@ -3648,7 +3649,8 @@ impl Session<'_> {
                     Some(u)
                 })
                 .collect();
-            self.attach_queue.observe(objects.iter().map(|o| o.name_values.as_str()));
+            self.attach_queue
+                .observe(objects.iter().map(|o| o.name_values.as_str()), Instant::now());
             self.sh.stats.objects_full.fetch_add(objects.len() as u64, Ordering::Relaxed);
             crate::probe::objects(crate::probe::ObjectKind::Compressed, objects.len());
             if !objects.is_empty() {
@@ -3706,6 +3708,8 @@ impl Session<'_> {
             self.sh.stats.object_cache_misses.fetch_add(misses.len() as u64, Ordering::Relaxed);
             crate::probe::objects(crate::probe::ObjectKind::Cached, m.object_data.len());
             crate::probe::objects(crate::probe::ObjectKind::CacheHit, hits.len());
+            self.attach_queue
+                .observe(hits.iter().map(|o| o.name_values.as_str()), Instant::now());
             crate::probe::objects(crate::probe::ObjectKind::CacheMiss, misses.len());
             if !hits.is_empty() {
                 emit(
