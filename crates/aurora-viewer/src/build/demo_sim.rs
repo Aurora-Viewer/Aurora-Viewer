@@ -6,7 +6,8 @@ use crate::world::World;
 use aurora_llsd::{Llsd, llsd_map};
 use aurora_net::NetEvent;
 use aurora_net::build::{BuildCmd, ObjectProps, PhysicsParams, TaskItem, perm, perm_field};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 /// Creator of the demo objects (a demo resident).
@@ -20,6 +21,22 @@ pub struct DemoSim {
     running: HashMap<(Uuid, Uuid), (bool, bool)>,
     pending_running: HashMap<(Uuid, Uuid), bool>,
     physics: HashMap<Uuid, PhysicsParams>,
+    /// The reports of transform edits held for a round trip
+    /// (`AURORA_DEMO_BUILD_ECHO`), with when they arrive.
+    late_echoes: VecDeque<(Instant, NetEvent)>,
+}
+
+/// `AURORA_DEMO_BUILD_ECHO=<ms>`: the demo answers a transform edit that
+/// long after it was sent, like a simulator a round trip away (issue #1193).
+fn echo_delay() -> Option<Duration> {
+    static DELAY: std::sync::OnceLock<Option<Duration>> = std::sync::OnceLock::new();
+    *DELAY.get_or_init(|| {
+        std::env::var("AURORA_DEMO_BUILD_ECHO")
+            .ok()
+            .and_then(|ms| ms.trim().parse::<u64>().ok())
+            .filter(|&ms| ms > 0)
+            .map(Duration::from_millis)
+    })
 }
 
 fn demo_item(object: Uuid, n: u128, name: &str, asset_type: i8, inv_type: i8) -> TaskItem {
@@ -183,6 +200,17 @@ impl DemoSim {
     }
 
     /// Events a simulator would send back for a build command.
+    /// The held reports whose round trip is over at `now`, in order.
+    pub fn arrived(&mut self, now: Instant) -> Vec<NetEvent> {
+        let mut out = Vec::new();
+        while self.late_echoes.front().is_some_and(|(at, _)| *at <= now) {
+            if let Some((_, ev)) = self.late_echoes.pop_front() {
+                out.push(ev);
+            }
+        }
+        out
+    }
+
     pub fn reply(&mut self, world: &World, c: &BuildCmd) -> Vec<NetEvent> {
         match c {
             BuildCmd::Add(p) => vec![NetEvent::ObjectUpdates {
@@ -235,7 +263,14 @@ impl DemoSim {
                     }
                     objects.push(o);
                 }
-                vec![NetEvent::ObjectUpdates { handle: *handle, objects }]
+                let echo = NetEvent::ObjectUpdates { handle: *handle, objects };
+                match echo_delay() {
+                    Some(delay) => {
+                        self.late_echoes.push_back((Instant::now() + delay, echo));
+                        Vec::new()
+                    }
+                    None => vec![echo],
+                }
             }
             BuildCmd::Delink { handle, local_ids } => {
                 let mut objects = Vec::new();

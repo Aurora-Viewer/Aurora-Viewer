@@ -16,6 +16,7 @@ pub mod chat_log;
 pub mod collisions;
 pub mod contact_sets;
 pub mod derender;
+pub mod edit_echo;
 pub mod eep;
 pub mod eep_env;
 pub mod env;
@@ -1232,7 +1233,8 @@ impl World {
     /// the time dilation of its simulator, slowing to a stop when its
     /// circuit goes silent. A region without a simulator in `sims` (the
     /// offline demo, a region parked or just announced) runs at full rate.
-    /// Corrections that have faded end here.
+    /// Corrections that have faded end here, and so do the waits of our
+    /// transform edits for their answer (edit_echo.rs).
     pub fn advance_motion(&mut self, now: Instant, sims: &[aurora_net::stats::SimulatorMotion]) {
         let dt = now.saturating_duration_since(self.motion_tick).as_secs_f64();
         self.motion_tick = now;
@@ -1245,6 +1247,7 @@ impl World {
             self.objects.note_motion_tick(now, handle, rate);
         }
         self.objects.expire_corrections(now);
+        self.objects.expire_sent_edits(now);
     }
 
     /// Freeze the world at `at` for a photo, or thaw it (issue #1154,

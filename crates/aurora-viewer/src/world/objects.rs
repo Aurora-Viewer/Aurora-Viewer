@@ -1,8 +1,10 @@
 //! Object store: every prim, mesh and avatar known to the viewer.
 
+use super::edit_echo::{SentEdits, Transform};
 use super::motion::{self, Correction};
 use crate::fast_hash::FastMap;
 use aurora_net::RegionHandle;
+use aurora_net::build::TransformUpdate;
 use aurora_net::objects::{ObjectUpdate, ParticleUpdate, TerseUpdate, TextureAnim};
 use aurora_prim::{ExtraParams, TextureEntry, VolumeParams};
 use glam::{Quat, Vec3, Vec4};
@@ -481,6 +483,21 @@ impl Object {
         self.extrapolates() || self.correction.is_some()
     }
 
+    /// Put back the values of our own edit over a report of an earlier one
+    /// (edit_echo.rs), or show the simulator's once the wait ends.
+    fn keep_sent(&mut self, t: Transform) {
+        if let Some(p) = t.position {
+            self.position = p;
+        }
+        if let Some(r) = t.rotation {
+            self.rotation = r;
+        }
+        if let Some(s) = t.scale {
+            self.scale = s;
+        }
+        self.render.needs_records = true;
+    }
+
     /// A report was applied at `now`: stamp it with its region's clock and,
     /// when it left the object where `drawn` says it was not, let the gap
     /// fade. True when a correction started.
@@ -590,6 +607,9 @@ pub struct ObjectStore {
     /// The photo mode's frozen world (`hold_poses`): where the objects that
     /// move are kept drawn.
     held: Option<HeldPoses>,
+    /// Our transform edits waiting for the report that answers them: the
+    /// reports of earlier sends do not show (edit_echo.rs).
+    sent_edits: SentEdits,
 }
 
 /// The world frozen at an instant (issue #1154; LLPipeline::updateMove
@@ -752,6 +772,49 @@ impl ObjectStore {
         }
     }
 
+    /// Our transform edits sent to `region` (MultipleObjectUpdate): their
+    /// values wait for the report that answers them (edit_echo.rs). The
+    /// prims of a stretched linkset are moved and scaled by the simulator
+    /// too: the values the build tools gave them locally wait as well.
+    pub fn note_sent_transforms(&mut self, region: RegionHandle, updates: &[TransformUpdate], now: Instant) {
+        for u in updates {
+            let key = ObjKey {
+                region,
+                local_id: u.local_id,
+            };
+            let sent = Transform {
+                position: u.position,
+                rotation: u.rotation,
+                scale: u.scale,
+            };
+            self.sent_edits.note(key, sent, now);
+            if !(u.linked && u.scale.is_some()) {
+                continue;
+            }
+            let children = self.children.get(&key).cloned().unwrap_or_default();
+            for c in children {
+                let Some(o) = self.get(c) else { continue };
+                let child = Transform {
+                    position: Some(o.position),
+                    rotation: None,
+                    scale: Some(o.scale),
+                };
+                self.sent_edits.note(o.key, child, now);
+            }
+        }
+    }
+
+    /// End the waits of our transform edits that got no answer: the
+    /// simulator refused or limited them, its last report shows now.
+    pub fn expire_sent_edits(&mut self, now: Instant) {
+        for (key, late) in self.sent_edits.expire(now) {
+            let Some(&idx) = self.by_key.get(&key) else { continue };
+            if let Some(o) = self.get_mut(idx) {
+                o.keep_sent(late);
+            }
+        }
+    }
+
     /// End the corrections that have faded: the objects that do not move
     /// otherwise are still again, at the place of their last report, and
     /// the scene hears of it.
@@ -789,11 +852,17 @@ impl ObjectStore {
     pub fn apply_terse_at(&mut self, idx: usize, t: &TerseUpdate, received: Option<Instant>) {
         self.hold_before_report(idx);
         let now = received.unwrap_or_else(Instant::now);
-        let Some(region) = self.get(idx).map(|o| o.key.region) else {
+        let Some(key) = self.get(idx).map(|o| o.key) else {
             return;
         };
-        let clock = self.report_clock(region, received);
+        let clock = self.report_clock(key.region, received);
         let hud = self.worn_on_hud(idx);
+        let reported = Transform {
+            position: Some(t.position),
+            rotation: Some(t.rotation),
+            scale: None,
+        };
+        let sent = self.sent_edits.filter(key, reported, now);
         let Some(o) = self.get_mut(idx) else {
             return;
         };
@@ -801,6 +870,9 @@ impl ObjectStore {
         // cube flip instantly in the Legacy Viewer, with no fade.
         let drawn = (!hud).then(|| o.predicted(now, clock));
         o.apply_terse(t);
+        if let Some(sent) = sent {
+            o.keep_sent(sent);
+        }
         if o.stamp_motion(clock, now, drawn) && !self.correcting.contains(&idx) {
             self.correcting.push(idx);
         }
@@ -813,12 +885,30 @@ impl ObjectStore {
         let now = received.unwrap_or_else(Instant::now);
         let clock = self.report_clock(region, received);
         let hud = self.worn_on_hud(idx);
+        let key = ObjKey {
+            region,
+            local_id: u.local_id,
+        };
+        let sent = if moved_frame {
+            self.sent_edits.forget(&key);
+            None
+        } else {
+            let reported = Transform {
+                position: Some(u.position),
+                rotation: Some(u.rotation),
+                scale: Some(u.scale),
+            };
+            self.sent_edits.filter(key, reported, now)
+        };
         let Some(o) = self.get_mut(idx) else {
             return;
         };
         let drawn = (!moved_frame && !hud).then(|| o.predicted(now, clock));
         o.apply_full(u);
         o.parent_region = region;
+        if let Some(sent) = sent {
+            o.keep_sent(sent);
+        }
         if o.stamp_motion(clock, now, drawn) && !self.correcting.contains(&idx) {
             self.correcting.push(idx);
         }
@@ -1740,6 +1830,65 @@ mod tests {
 
     fn near(a: Vec3, b: Vec3) {
         assert!(a.distance(b) < 1e-3, "{a:?} != {b:?}");
+    }
+
+    #[test]
+    fn reports_of_earlier_stretches_do_not_shake_the_stretched_linkset() {
+        let mut s = ObjectStore::default();
+        let root = s.upsert(1, update(5, PRIM, ""));
+        let mut child = update(6, PRIM, "");
+        child.parent_id = 5;
+        child.position = Vec3::X * 0.5;
+        child.scale = Vec3::splat(0.5);
+        let child_idx = s.upsert(1, child.clone());
+        // the build tools stretch the linkset twice as big, locally
+        s.get_mut(root).expect("root").scale = Vec3::splat(2.0);
+        let c = s.get_mut(child_idx).expect("child");
+        c.position = Vec3::X;
+        c.scale = Vec3::ONE;
+        let stretch = |size: f32| TransformUpdate {
+            local_id: 5,
+            position: Some(Vec3::ZERO),
+            rotation: None,
+            scale: Some(Vec3::splat(size)),
+            linked: true,
+            uniform: true,
+        };
+        let now = Instant::now();
+        s.note_sent_transforms(1, &[stretch(2.0)], now);
+        let shown = |s: &ObjectStore, idx: usize| {
+            let o = s.get(idx).expect("object");
+            (s.predicted(o, Instant::now()).0, o.scale)
+        };
+        // the simulator's report of an earlier send, for the root and its prim
+        let mut late = update(5, PRIM, "");
+        late.scale = Vec3::splat(1.5);
+        s.upsert(1, late);
+        let mut late_child = child.clone();
+        late_child.position = Vec3::X * 0.75;
+        late_child.scale = Vec3::splat(0.75);
+        s.upsert(1, late_child);
+        assert_eq!(shown(&s, root), (Vec3::ZERO, Vec3::splat(2.0)));
+        assert_eq!(shown(&s, child_idx), (Vec3::X, Vec3::ONE));
+        assert!(s.get(child_idx).expect("child").correction.is_none());
+        // the answers to the last send: nothing waits any more
+        let mut answer = update(5, PRIM, "");
+        answer.scale = Vec3::splat(2.0);
+        s.upsert(1, answer);
+        let mut answer_child = child.clone();
+        answer_child.position = Vec3::X * 1.0001;
+        answer_child.scale = Vec3::ONE;
+        s.upsert(1, answer_child);
+        s.upsert(1, child);
+        assert_eq!(shown(&s, child_idx).1, Vec3::splat(0.5));
+        // a refused stretch: the simulator's size shows once the wait ends
+        s.note_sent_transforms(1, &[stretch(3.0)], now);
+        let mut refused = update(5, PRIM, "");
+        refused.scale = Vec3::splat(2.0);
+        s.upsert(1, refused);
+        assert_eq!(shown(&s, root).1, Vec3::splat(3.0));
+        s.expire_sent_edits(now + std::time::Duration::from_secs(3));
+        assert_eq!(shown(&s, root).1, Vec3::splat(2.0));
     }
 
     #[test]

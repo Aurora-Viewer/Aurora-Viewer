@@ -1456,6 +1456,9 @@ impl App {
         if let NetCommand::GroupTitleUpdate { group, role } = &cmd {
             self.world.group_data.title_sent(*group, *role);
         }
+        if let NetCommand::Build(aurora_net::build::BuildCmd::Transform { handle, updates }) = &cmd {
+            self.world.objects.note_sent_transforms(*handle, updates, Instant::now());
+        }
         self.world.rlva_note_attachment_command(&cmd, actor, Instant::now());
         self.world.rlva.note_sit_command(&cmd, actor);
         if self.world.rlva.enabled()
@@ -5571,6 +5574,12 @@ impl App {
         // Exercise the real depth pick after the renderer is back in self.gfx.
         if !self.demo {
             return;
+        }
+        // AURORA_DEMO_BUILD_ECHO: transform reports a round trip late
+        for ev in self.build_demo.arrived(Instant::now()) {
+            if let Some(e) = self.world.apply(ev) {
+                self.on_app_event(e);
+            }
         }
         self.demo_script_steps();
         self.world_click_demo_steps();
