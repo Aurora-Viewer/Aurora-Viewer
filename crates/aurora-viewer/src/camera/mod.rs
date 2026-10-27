@@ -1779,6 +1779,22 @@ impl Camera {
         glam::Quat::from_axis_angle(direction, self.roll) * view_reference_up(direction)
     }
 
+    /// LLAgent::getHeadRotation (indra/newview/llagent.cpp, LGPL 2.1): a
+    /// complete orientation, not a pitch offset. Outside mouselook use the
+    /// avatar object's facing, independent of camera orbit and body lag.
+    /// Seated orientations are local to the seat in AgentUpdate.
+    pub fn head_rotation(&self, agent: &AgentState) -> Quat {
+        let rotation = if self.mouselook() {
+            let at = self.forward();
+            let left = self.view_up().cross(at).normalize_or(Vec3::Y);
+            let up = at.cross(left).normalize_or(Vec3::Z);
+            Quat::from_mat3(&glam::Mat3::from_cols(at, left, up))
+        } else {
+            self.avatar.rotation.unwrap_or_else(|| agent.body_rotation())
+        };
+        self.avatar.seat.map_or(rotation, |seat| (seat.inverse() * rotation).normalize())
+    }
+
     /// The view panned by `right` and `up` metres across the screen.
     pub fn pan_offset(&self, right: f32, up: f32) -> Vec3 {
         let forward = self.forward();
@@ -2198,6 +2214,71 @@ mod tests {
         cam.start_free(&mut w.agent, &s);
         cam.on_teleport_arrival(&s);
         assert!(cam.free().is_none());
+    }
+
+    #[test]
+    fn agent_update_head_rotation_keeps_heading_in_third_person() {
+        let settings = CameraSettings::default();
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        for yaw in [-3.5, -1.46, 0.73, 1.8, 3.5] {
+            world.agent.yaw = yaw;
+            world.agent.pitch = 0.6;
+            settle(&mut camera, &mut world, &settings);
+            let controls = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+            assert!(controls.head_rotation.dot(world.agent.body_rotation()).abs() > 0.99999);
+            camera.orbit_drag(100.0, 60.0, 1.0, &mut world.agent);
+            settle(&mut camera, &mut world, &settings);
+            let orbited = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+            assert!(orbited.head_rotation.dot(controls.head_rotation).abs() > 0.99999);
+            assert_eq!(orbited.control_flags & aurora_net::control::MOUSELOOK, 0);
+        }
+    }
+
+    #[test]
+    fn agent_update_head_rotation_tracks_full_mouselook_aim() {
+        let settings = CameraSettings::default();
+        let mut world = world_at(Vec3::new(128.0, 128.0, 25.0));
+        let mut camera = Camera::default();
+        camera.change_to_mouselook(&mut world.agent, &settings, false);
+        for (yaw, pitch) in [(-2.7, -0.9), (0.7, 0.6), (2.4, 1.4), (0.0, 0.0)] {
+            world.agent.yaw = yaw;
+            world.agent.pitch = pitch;
+            settle(&mut camera, &mut world, &settings);
+            let controls = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+            assert!((controls.head_rotation * Vec3::X).abs_diff_eq(camera.forward(), 1e-5));
+            assert!(controls.head_rotation.is_normalized());
+            assert_ne!(controls.control_flags & aurora_net::control::MOUSELOOK, 0);
+        }
+        camera.change_to_default(&mut world.agent, &settings);
+        world.agent.yaw = 1.1;
+        settle(&mut camera, &mut world, &settings);
+        let controls = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+        assert!(controls.head_rotation.dot(world.agent.body_rotation()).abs() > 0.99999);
+    }
+
+    #[test]
+    fn agent_update_head_rotation_is_relative_to_the_rotating_seat() {
+        let settings = CameraSettings::default();
+        let mut world = hover_world(true);
+        let avatar = world.objects.index_of_uuid(&world.agent_id).unwrap();
+        let parent = world.objects.parent_of(world.objects.get(avatar).unwrap()).unwrap();
+        let local = Quat::from_rotation_z(-0.6) * Quat::from_rotation_x(0.2);
+        world.objects.get_mut(avatar).unwrap().rotation = local;
+        let mut camera = Camera::default();
+        for yaw in [-1.2, 0.8, 2.5] {
+            let seat = Quat::from_rotation_z(yaw) * Quat::from_rotation_y(0.7);
+            world.objects.get_mut(parent).unwrap().rotation = seat;
+            camera.change_to_default(&mut world.agent, &settings);
+            settle(&mut camera, &mut world, &settings);
+            let controls = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+            assert!(controls.head_rotation.dot(local).abs() > 0.99999);
+            camera.change_to_mouselook(&mut world.agent, &settings, false);
+            camera.look(75.0, -40.0, 1.0, &mut world.agent);
+            settle(&mut camera, &mut world, &settings);
+            let controls = world.agent.controls(&crate::agent::MoveInput::default(), &camera, 128.0);
+            assert!((seat * controls.head_rotation * Vec3::X).abs_diff_eq(camera.forward(), 1e-5));
+        }
     }
 
     #[test]
