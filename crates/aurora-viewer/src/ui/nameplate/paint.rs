@@ -36,15 +36,15 @@ const BADGE_OPACITY: f32 = 0.9;
 
 /// What every plate of a frame shares.
 pub(super) struct Env<'a> {
-    painter: &'a egui::Painter,
-    p: &'a Palette,
+    pub painter: &'a egui::Painter,
+    pub p: &'a Palette,
     icons: &'a crate::ui::icons::Icons,
-    now: f64,
-    pixels_per_point: f32,
-    semibold: egui::FontFamily,
+    pub now: f64,
+    pub pixels_per_point: f32,
+    pub semibold: egui::FontFamily,
     /// The plate's own color, opaque: halfway from the night blue of the
     /// brand to the bars' color.
-    tint: Color32,
+    pub tint: Color32,
     /// Changes with the skin's colors: what was built with others is rebuilt.
     skin: u64,
 }
@@ -69,6 +69,11 @@ impl<'a> Env<'a> {
                 hasher.finish()
             },
         }
+    }
+
+    /// The icon `name`, from the skin or the viewer's own.
+    pub fn icon(&self, name: &str) -> Option<egui::TextureHandle> {
+        self.icons.get(name).cloned().or_else(|| crate::ui::icons::global(name))
     }
 }
 
@@ -157,13 +162,17 @@ pub(super) struct State {
     /// The level it is leaving, `progress` (0 to 1) of the way.
     pub from: Option<Level>,
     pub progress: f32,
+    /// How far its size has gone: `progress`, or past 1 and back for a
+    /// jiggly plate that grows (`fidget::overshoot`).
+    pub size_progress: f32,
     pub halo: Option<Halo>,
     /// 1: over the blurred world; 0: tinted only.
     pub glass: f32,
     /// 1 under the pointer: a lighter surface and border.
     pub hover: f32,
-    /// Points the surface grows on each side in its bounce (`bounce_grow`).
-    pub grow: f32,
+    /// Points the surface grows on each side, across and up, in its bounce
+    /// (`bounce_grow`) or its wobble (`fidget::Wobble`).
+    pub grow: Vec2,
     /// Preferences › "Reduce animations": a team member's light holds still.
     pub still: bool,
 }
@@ -305,8 +314,9 @@ fn readable_name(mut name: Color32, background: Color32, ink: Color32) -> Color3
     name
 }
 
-/// Draw the plate of `tag` and return its rectangle.
-pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache) -> Rect {
+/// Draw the plate of `tag` and return its rectangle, and its surface as
+/// drawn (moved by its bounce).
+pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache) -> (Rect, Rect) {
     let c = &tag.content;
     let t = aurora::time(env.now, st.still);
     let to = face(env, st.level, c, t);
@@ -314,7 +324,7 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
     let far = |level: Level| if level == Level::Far { 1.0 } else { 0.0 };
     let (size, farness) = match &from {
         Some((level, f)) => (
-            f.layout.size + (to.layout.size - f.layout.size) * st.progress,
+            f.layout.size + (to.layout.size - f.layout.size) * st.size_progress,
             far(*level) + (far(st.level) - far(*level)) * st.progress,
         ),
         None => (to.layout.size, far(st.level)),
@@ -327,6 +337,7 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
     // the bounce moves the surface alone, on whole pixels too; the plate
     // keeps its rectangle for the pointer, which does not chase the bounce
     let grow = (st.grow * ppp).round() / ppp;
+    let surface = rect.expand2(grow);
     // a staff member's light rises from behind the plate, its border over it
     let look = c.mark.map(Look::new);
     let light = |build: &dyn Fn(&mut Mesh)| {
@@ -335,12 +346,12 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
         env.painter.add(Shape::mesh(mesh));
     };
     if let Some(look) = look {
-        light(&|mesh| look.above(mesh, env.p, rect.expand(grow), ppp, t, alpha));
+        light(&|mesh| look.above(mesh, env.p, surface, ppp, t, alpha));
     }
-    background(env, rect.expand(grow), st, alpha, farness, c, &mut cache.surface);
+    background(env, surface, st, alpha, farness, c, &mut cache.surface);
     if let Some(look) = look {
         let width = (2.0 * SCALE).max(1.0 / ppp);
-        light(&|mesh| look.border(mesh, env.p, rect.expand(grow), ppp, t, alpha, width, SCALE));
+        light(&|mesh| look.border(mesh, env.p, surface, ppp, t, alpha, width, SCALE));
     }
     match from {
         None => contents(env, env.painter, rect, &to, tag, alpha, &mut cache.marks),
@@ -352,7 +363,7 @@ pub(super) fn plate(env: &Env<'_>, tag: &Tag<'_>, st: &State, cache: &mut Cache)
             contents(env, &painter, rect, &to, tag, alpha * st.progress, &mut cache.marks);
         }
     }
-    rect
+    (rect, surface)
 }
 
 /// The blur of the world, then the surface, its border, its shadow and
@@ -485,7 +496,7 @@ pub(super) fn voice_light(p: &Palette, halo: Halo, plain: Color32, height: f32) 
     }
 }
 
-const WHOLE: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+pub(super) const WHOLE: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
 
 /// Part of a picture that fills a square without stretching it.
 pub(super) fn cover(size: [usize; 2]) -> Rect {

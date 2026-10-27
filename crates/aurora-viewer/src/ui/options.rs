@@ -62,10 +62,11 @@ pub enum Page {
     Commands,
     System,
     Network,
+    Fun,
 }
 
 impl Page {
-    pub const ALL: [Page; 19] = [
+    pub const ALL: [Page; 20] = [
         Page::Aurora,
         Page::Graphics,
         Page::Camera,
@@ -85,6 +86,7 @@ impl Page {
         Page::Commands,
         Page::System,
         Page::Network,
+        Page::Fun,
     ];
 
     /// Its name in `AURORA_DEMO_OPTIONS`.
@@ -109,6 +111,7 @@ impl Page {
             Page::Commands => "commands",
             Page::System => "system",
             Page::Network => "network",
+            Page::Fun => "fun",
         }
     }
 
@@ -133,6 +136,7 @@ impl Page {
             Page::Commands => aurora_i18n::tr!("ui-options-commands"),
             Page::System => aurora_i18n::tr!("ui-options-page-system"),
             Page::Network => aurora_i18n::tr!("ui-options-network-and-cache"),
+            Page::Fun => aurora_i18n::tr!("ui-options-fun"),
         }
     }
 
@@ -158,6 +162,7 @@ impl Page {
             Page::Commands => aurora_i18n::tr!("ui-options-about-commands"),
             Page::System => aurora_i18n::tr!("ui-options-about-system"),
             Page::Network => aurora_i18n::tr!("ui-options-about-network"),
+            Page::Fun => aurora_i18n::tr!("ui-options-about-fun"),
         }
     }
 
@@ -182,6 +187,7 @@ impl Page {
             Page::Commands => "square-rounded-chevron-right-filled",
             Page::System => "world-filled",
             Page::Network => "cloud-data-connection-filled",
+            Page::Fun => "confetti-filled",
         }
     }
 
@@ -194,6 +200,7 @@ impl Page {
             Page::Layout => Some(aurora_i18n::tr!("common-interface")),
             Page::Controls => Some(aurora_i18n::tr!("ui-options-controls")),
             Page::System => Some(aurora_i18n::tr!("ui-options-section-system")),
+            Page::Fun => Some(aurora_i18n::tr!("ui-options-section-extras")),
             _ => None,
         }
     }

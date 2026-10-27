@@ -10,6 +10,7 @@ pub mod chat;
 pub mod commands;
 pub mod confirmations;
 pub mod controls;
+pub mod fun;
 pub mod graphics;
 pub mod inventory;
 pub mod joystick;
@@ -111,5 +112,6 @@ pub fn draw(cx: &mut Cx, page: Page, tab: usize) {
         Page::Commands => commands::page(cx),
         Page::System => system::page(cx),
         Page::Network => network::page(cx),
+        Page::Fun => fun::page(cx),
     }
 }

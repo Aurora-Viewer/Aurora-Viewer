@@ -17,10 +17,13 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub(crate) mod aurora;
+pub(crate) mod combo;
+mod fidget;
 mod linden;
 pub(crate) mod mark;
 mod mesh;
 mod paint;
+pub(crate) mod playground;
 #[cfg(test)]
 mod tests;
 
@@ -339,10 +342,11 @@ pub fn preview(ui: &mut egui::Ui, p: &Palette, appearance: std::sync::Arc<crate:
         level,
         from: None,
         progress: 1.0,
+        size_progress: 1.0,
         halo: None,
         glass: 0.0,
         hover: 0.0,
-        grow: 0.0,
+        grow: Vec2::ZERO,
         still: false,
     };
     paint::plate(&env, &tag, &state, &mut paint::Cache::default());
@@ -802,6 +806,9 @@ struct Entry {
     hovered: bool,
     /// When its last bounce started.
     bounced: f64,
+    /// Its jelly (Preferences › Just for fun), and its click combo.
+    wobble: fidget::Wobble,
+    combo: combo::Combo,
     picture_asked: bool,
     seen: f64,
     /// Its geometry, kept while its state does not change.
@@ -855,12 +862,42 @@ pub struct Plates {
     /// Preferences › "Reduce animations": a hovered plate lights up without
     /// bouncing.
     pub still: bool,
+    /// Preferences › Just for fun › "Jiggly name plates" (`fidget.rs`).
+    pub jiggle: bool,
+    /// Preferences › Just for fun › "Click combo counter" (`combo.rs`), and
+    /// the clicks counted for each resident.
+    pub click_combo: bool,
+    pub tally: combo::Tally,
+    /// The plate under the pointer last frame, without the linger: each
+    /// time the pointer reaches a jiggly plate it wobbles.
+    pointer_was: Option<Uuid>,
     /// The plate whose voice goes to the log (`level_log`): our own.
     pub probe: Option<Uuid>,
     level_probe: LevelProbe,
 }
 
+/// Whether a plate going from `from` to `to` grows.
+fn grows(from: Level, to: Level) -> bool {
+    let rank = |level| match level {
+        Level::Far => 0,
+        Level::Compact => 1,
+        Level::Full => 2,
+    };
+    rank(to) > rank(from)
+}
+
 impl Plates {
+    /// A click on `id`'s plate at `now`, for the click combo: counted,
+    /// and the plate pressed in. None when it has no plate on screen.
+    pub fn click(&mut self, id: Uuid, now: f64) -> Option<combo::Hit> {
+        let entry = self.entries.get_mut(&id)?;
+        let total = self.tally.add(id, now);
+        if !self.still {
+            entry.wobble.press();
+        }
+        Some(entry.combo.click(now, total, self.still))
+    }
+
     /// Draw `tags` (far first, the last one on top) and report the rectangle
     /// of each plate, which takes the clicks like its avatar.
     pub fn paint(
@@ -886,6 +923,14 @@ impl Plates {
             self.hover_seen = Some((id, now));
         }
         let hover = self.hover_seen.filter(|&(_, seen)| hover_holds(seen, now)).map(|(id, _)| id);
+        // the plates the pointer has just reached and left, for the jelly
+        let jiggle = self.jiggle && !self.still;
+        let (entered, left) = if self.hovered != self.pointer_was {
+            (self.hovered, self.pointer_was)
+        } else {
+            (None, None)
+        };
+        self.pointer_was = self.hovered;
         let mut rank = 0;
         for (i, tag) in tags.iter().enumerate().rev() {
             let previous = self.entries.get(&tag.id).map(|e| e.level);
@@ -913,6 +958,8 @@ impl Plates {
                 hover: 0.0,
                 hovered: false,
                 bounced: f64::NEG_INFINITY,
+                wobble: fidget::Wobble::default(),
+                combo: combo::Combo::default(),
                 picture_asked: false,
                 seen: now,
                 cache: paint::Cache::default(),
@@ -920,10 +967,23 @@ impl Plates {
             let dt = (now - entry.seen).clamp(0.0, 0.25) as f32;
             entry.seen = now;
             if level != entry.level {
+                if jiggle && grows(entry.level, level) {
+                    entry.wobble.expand();
+                }
                 entry.from = entry.level;
                 entry.level = level;
                 entry.changed = now;
             }
+            if jiggle && entered == Some(tag.id) {
+                entry.wobble.enter();
+            } else if jiggle && left == Some(tag.id) {
+                entry.wobble.leave();
+            }
+            if self.still {
+                entry.wobble = fidget::Wobble::default();
+            }
+            entry.wobble.step(dt);
+            entry.combo.step(dt);
             match tag.voice {
                 Some((raw, speaking)) => entry.voice.update_raw(raw, speaking, dt),
                 None => entry.voice = VoiceEnvelope::default(),
@@ -939,7 +999,8 @@ impl Plates {
                 (entry.glass - step).max(0.0)
             };
             let hovered = hover == Some(tag.id);
-            if hovered && !entry.hovered && !self.still {
+            // a jiggly plate has its jelly instead of the bounce
+            if hovered && !entry.hovered && !self.still && !jiggle {
                 entry.bounced = now;
             }
             entry.hovered = hovered;
@@ -949,19 +1010,36 @@ impl Plates {
             } else {
                 (entry.hover - step).max(0.0)
             };
-            let progress = ((now - entry.changed) / LEVEL_EASE).clamp(0.0, 1.0) as f32;
+            // a jiggly plate that grows goes past its size and comes back
+            let ease = if jiggle { fidget::EASE } else { LEVEL_EASE };
+            let progress = ((now - entry.changed) / ease).clamp(0.0, 1.0) as f32;
+            let smooth = progress * progress * (3.0 - 2.0 * progress);
+            let grow = if self.still {
+                Vec2::ZERO
+            } else {
+                Vec2::splat(bounce_grow(now - entry.bounced)) + entry.wobble.grow()
+            };
             let state = paint::State {
                 level: entry.level,
                 from: (progress < 1.0).then_some(entry.from),
-                progress: progress * progress * (3.0 - 2.0 * progress),
+                progress: smooth,
+                size_progress: if jiggle && grows(entry.from, entry.level) {
+                    fidget::overshoot(progress)
+                } else {
+                    smooth
+                },
                 halo: entry.voice.halo(),
                 glass: entry.glass,
                 hover: entry.hover * entry.hover * (3.0 - 2.0 * entry.hover),
-                grow: if self.still { 0.0 } else { bounce_grow(now - entry.bounced) },
+                grow,
                 still: self.still,
             };
             aurora_render::world_label_at(painter.ctx(), Some(tag.at));
-            placed(tag.id, paint::plate(&env, tag, &state, &mut entry.cache), tag.at);
+            let (rect, surface) = paint::plate(&env, tag, &state, &mut entry.cache);
+            placed(tag.id, rect, tag.at);
+            if self.click_combo && entry.combo.busy(now) {
+                combo::paint(&env, surface, &entry.combo, self.tally.get(tag.id), tag.fade, self.still);
+            }
             if entry.level == Level::Full && matches!(tag.picture, Picture::Wanted) {
                 waiting.push(tag.id);
             }
@@ -979,5 +1057,6 @@ impl Plates {
         (self.levels, self.glass, self.waiting) = (levels, glass, waiting);
         // avatars that left the screen
         self.entries.retain(|_, e| now - e.seen < 5.0);
+        self.tally.save_when_idle(now);
     }
 }

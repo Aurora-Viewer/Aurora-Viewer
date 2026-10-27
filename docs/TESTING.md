@@ -7065,6 +7065,8 @@ What the inventory must show with these scenarios:
 | `AURORA_DEMO_NAME_TAGS=<mode>` | Offline self/friend/other tag visibility and temporary-mode scenarios |
 | `AURORA_DEMO_PLATE_HOVER=x,y[,click]` | Pointer held at x, y for the name plates, and a click there at frame 700 |
 | `AURORA_DEMO_PLATE_CLICK=profile`, `im`, `tp` or `menu` | "Click on a plate" for this run, without saving it |
+| `AURORA_DEMO_PLATE_JIGGLE=1` | "Jiggly name plates" for this run, the hover pointer going in and out of its plate |
+| `AURORA_DEMO_PLATE_COMBO=<clicks>` | "Click combo counter" for this run, and that many clicks on the hovered plate |
 
 ### Details
 
@@ -7216,6 +7218,20 @@ What the inventory must show with these scenarios:
     avatar's menu. For example, with `AURORA_DEMO_TAGS=voice`, `580,316` is
     Orion's plate and `198,334` Nova's pill once the friends-only option is on
     (`AURORA_DEMO_FRIEND_PLATES=1`).
+  - Preferences › Just for fun (#1112, #1114), with
+    `AURORA_DEMO_PLATE_HOVER=x,y` on a plate: `AURORA_DEMO_PLATE_JIGGLE=1`
+    turns "Jiggly name plates" on for the run (not saved) and takes the
+    pointer off the plate and back every 8 frames from frame 600 to 700: a
+    capture at frame 600 to 700 catches the plate squashed or stretched and
+    the pill overshooting as it grows. `AURORA_DEMO_PLATE_COMBO=<clicks>`
+    turns "Click combo counter" on for the run and clicks the plate that many
+    times, one every 4 frames, the last at frame 700 (`demo plate combo` in
+    the log, with the resident's total): from five clicks the counter is out
+    of the plate's bottom right corner with its "+1", at ten the burst and
+    "×10" float up; it fades 2.5 s after the last click. The totals are kept
+    in the demo profile (`accounts/<id>/plate-clicks.json`), so they grow
+    from one run to the next. `AURORA_DEMO_OPTIONS=fun` opens the page and
+    its sample plate.
   - The pictures are generated gradients (`demo_tags::picture_pixels`),
     requested as on the grid: profile, then texture, at most four per
     second, the nearest first; our avatar and La Brume have the same one.
