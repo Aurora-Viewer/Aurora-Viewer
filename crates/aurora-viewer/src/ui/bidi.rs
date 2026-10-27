@@ -805,6 +805,16 @@ mod tests {
         text.chars().count() as f32
     }
 
+    /// A context with its fonts loaded by a first pass, whose font atlas
+    /// upload is dropped on purpose (epaint asserts that a `TexturesDelta`
+    /// is never dropped unapplied).
+    fn fonts_ctx() -> egui::Context {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        ctx
+    }
+
     /// The rows as egui is given them: each segment between brackets, a
     /// word marked with `*`.
     fn shown(job: &LayoutJob, base: Base) -> Vec<String> {
@@ -994,8 +1004,7 @@ mod tests {
 
     #[test]
     fn a_picture_goes_at_the_left_of_a_right_to_left_name() {
-        let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let ctx = fonts_ctx();
         let (j, name) = named_line();
         let visual = ctx.fonts_mut(|f| layout(f, j, Base::Sender(name.clone())));
         let left = visual.left_edge(name.clone()).min.x;
@@ -1010,8 +1019,7 @@ mod tests {
 
     #[test]
     fn the_cursor_before_a_latin_word_in_a_hebrew_line_is_on_its_left() {
-        let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let ctx = fonts_ctx();
         let visual = ctx.fonts_mut(|f| layout(f, job("שלום Aurora"), Base::Auto));
         let map = visual.map.as_ref().expect("reordered");
         // "A" (5) is read from the left: the cursor before it is on its left
@@ -1027,8 +1035,7 @@ mod tests {
 
     #[test]
     fn selected_right_to_left_text_takes_the_selected_color() {
-        let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let ctx = fonts_ctx();
         let visual = ctx.fonts_mut(|f| layout(f, job("שלום Aurora"), Base::Auto));
         let mut galley = visual.galley.clone();
         let red = egui::Color32::RED;
@@ -1047,8 +1054,7 @@ mod tests {
 
     #[test]
     fn a_paint_only_galley_keeps_no_boxes() {
-        let ctx = egui::Context::default();
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let ctx = fonts_ctx();
         let painted = ctx.fonts_mut(|f| lay_out(f, job("مرحبا بك"), Base::Auto, false));
         assert!(painted.map.is_none());
         let full = ctx.fonts_mut(|f| layout(f, job("مرحبا بك"), Base::Auto));
