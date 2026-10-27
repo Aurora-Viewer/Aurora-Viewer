@@ -16934,15 +16934,17 @@ impl ApplicationHandler for App {
                     self.world.apply(ev);
                 }
             }
-            // AURORA_DEMO_GLYPHS=1|2: residents named and talking in the
+            // AURORA_DEMO_GLYPHS=1|2|rtl: residents named and talking in the
             // characters of the grid's display names (system fallback fonts)
-            if let Some(reversed) = crate::demo::glyphs::scenario() {
-                for ev in crate::demo::glyphs::events(reversed) {
+            if let Some(mode) = crate::demo::glyphs::scenario() {
+                for ev in crate::demo::glyphs::events(mode) {
                     if let Some(e) = self.world.apply(ev) {
                         self.on_app_event(e);
                     }
                 }
-                self.panels.chat = true;
+                // closed with AURORA_DEMO_CHAT_LINES, whose lines show above
+                // the chat bar with the Conversations window closed
+                self.panels.chat = crate::demo::chat_lines_scenario().is_none();
                 self.panels.people = false;
                 self.panels.inventory = false;
                 self.panels.minimap = false;

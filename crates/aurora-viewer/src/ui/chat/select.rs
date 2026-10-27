@@ -18,6 +18,7 @@
 //!   sender ("[12:34] Name: text", Firestorm's transcript lines), then the
 //!   selected text; the lines out of sight give the text they would show.
 
+use crate::ui::bidi::{self, Visual};
 use egui::{Pos2, Rect};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -135,7 +136,7 @@ impl Selection {
 enum Shape {
     Galley {
         pos: Pos2,
-        galley: Arc<egui::Galley>,
+        visual: Visual,
     },
     /// A link, a name, an emoji: selected whole.
     Atom(Rect),
@@ -152,7 +153,7 @@ struct Piece {
 impl Piece {
     fn rect(&self) -> Rect {
         match &self.shape {
-            Shape::Galley { pos, galley } => galley.rect.translate(pos.to_vec2()),
+            Shape::Galley { pos, visual } => visual.galley.rect.translate(pos.to_vec2()),
             Shape::Atom(r) => *r,
         }
     }
@@ -160,7 +161,7 @@ impl Piece {
     /// The character of the piece nearest to `pos`.
     fn at(&self, pos: Pos2) -> usize {
         match &self.shape {
-            Shape::Galley { pos: origin, galley } => self.start + galley.cursor_from_pos(pos - *origin).index.0.min(self.len),
+            Shape::Galley { pos: origin, visual } => self.start + visual.cursor_at(pos - *origin).min(self.len),
             Shape::Atom(r) => self.start + if pos.x < r.center().x { 0 } else { self.len },
         }
     }
@@ -249,13 +250,19 @@ pub fn label(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
     if CURRENT.with_borrow(Option::is_none) {
         return ui.add(egui::Label::new(text).wrap().selectable(true));
     }
-    let (pos, mut galley, resp) = egui::Label::new(text).wrap().selectable(false).layout_in_ui(ui);
-    let len = galley.text().chars().count();
+    let shown = text.text().to_owned();
+    let (pos, visual, resp) = if bidi::has_rtl(&shown) {
+        bidi_label(ui, text)
+    } else {
+        let (pos, galley, resp) = egui::Label::new(text).wrap().selectable(false).layout_in_ui(ui);
+        (pos, Visual::plain(galley), resp)
+    };
+    let len = shown.chars().count();
     let (start, selected, colors) = CURRENT.with_borrow_mut(|c| {
         let c = c.as_mut().expect("a line is being drawn");
         let start = c.chars;
         c.chars += len;
-        c.text.push_str(galley.text());
+        c.text.push_str(&shown);
         let selected = c
             .selected
             .clone()
@@ -263,8 +270,18 @@ pub fn label(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
             .filter(|r| r.start < r.end);
         (start, selected, c.colors)
     });
+    let mut galley = visual.galley.clone();
     if ui.is_rect_visible(resp.rect) {
-        if let Some(r) = selected {
+        if let Some(r) = selected.clone().filter(|_| visual.reordered()) {
+            // the selection of a reordered text may be in several places of
+            // a row: its background, under the text, then its letters in the
+            // selected text colour
+            let (bg, fg) = colors.unwrap_or((ui.visuals().selection.bg_fill, ui.visuals().selection.stroke.color));
+            for rect in visual.range_rects(pos, r.clone()) {
+                ui.painter().add(egui::Shape::rect_filled(rect, 0.0, bg));
+            }
+            visual.tint(&mut galley, r, fg);
+        } else if let Some(r) = selected {
             let mut visuals = ui.visuals().clone();
             if let Some((bg, fg)) = colors {
                 visuals.selection.bg_fill = bg;
@@ -281,11 +298,50 @@ pub fn label(ui: &mut egui::Ui, text: egui::RichText) -> egui::Response {
             c.pieces.push(Piece {
                 start,
                 len,
-                shape: Shape::Galley { pos, galley },
+                shape: Shape::Galley { pos, visual },
             });
         }
     });
     resp
+}
+
+/// `Label::layout_in_ui` for a text with right-to-left characters, in
+/// display order (`bidi`): in a wrapping row of widgets it starts after the
+/// previous one and goes on on the rows below, as a label does.
+fn bidi_label(ui: &mut egui::Ui, text: egui::RichText) -> (Pos2, Visual, egui::Response) {
+    let job = egui::WidgetText::from(text).into_layout_job(ui.style(), egui::FontSelection::Default, ui.text_valign());
+    let mut job = Arc::unwrap_or_clone(job);
+    let sense = egui::Sense::hover();
+    let available = ui.available_width();
+    if ui.layout().main_dir() == egui::Direction::LeftToRight && ui.layout().main_wrap() && available.is_finite() {
+        // (Label::layout_in_ui's own rules for a wrapping layout)
+        job.wrap.max_width = available;
+        job.first_row_min_height = ui.cursor().height();
+        job.halign = egui::Align::Min;
+        job.justify = false;
+        if let Some(first) = job.sections.first_mut() {
+            first.leading_space = available - ui.available_size_before_wrap().x;
+        }
+        let visual = ui.fonts_mut(|f| bidi::layout(f, job, bidi::Base::Auto));
+        let pos = egui::pos2(ui.max_rect().left(), ui.cursor().top());
+        let mut rows = visual.galley.rows.iter();
+        let first = rows.next().map_or(Rect::NOTHING, |r| r.rect_without_leading_space());
+        let mut response = ui.allocate_rect(first.translate(pos.to_vec2()), sense);
+        for row in rows {
+            response |= ui.allocate_rect(row.rect().translate(pos.to_vec2()), sense);
+        }
+        return (pos, visual, response);
+    }
+    job.wrap.max_width = available;
+    job.halign = ui.layout().horizontal_placement();
+    let visual = ui.fonts_mut(|f| bidi::layout(f, job, bidi::Base::Auto));
+    let (rect, response) = ui.allocate_exact_size(visual.galley.size(), egui::Sense::hover());
+    let pos = match visual.galley.job.halign {
+        egui::Align::LEFT => rect.left_top(),
+        egui::Align::Center => rect.center_top(),
+        egui::Align::RIGHT => rect.right_top(),
+    };
+    (pos, visual, response)
 }
 
 /// Before a piece selected whole (a link, a name, an emoji): its place

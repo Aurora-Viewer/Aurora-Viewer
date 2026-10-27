@@ -11,6 +11,7 @@ pub mod avatar_picker;
 pub mod avatar_render_settings;
 pub mod backdrop;
 pub mod bars;
+pub mod bidi;
 pub mod blacklist;
 pub mod bumps;
 pub mod sound_explorer;

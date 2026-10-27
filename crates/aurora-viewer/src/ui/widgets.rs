@@ -119,8 +119,24 @@ pub(crate) fn paint_elided(ui: &egui::Ui, text: &str, left_center: egui::Pos2, w
 }
 
 fn elided_galley(ui: &egui::Ui, text: impl Into<egui::WidgetText>, max_width: f32) -> std::sync::Arc<egui::Galley> {
-    text.into()
-        .into_galley(ui, Some(egui::TextWrapMode::Truncate), max_width.max(0.0), egui::TextStyle::Body)
+    let text = text.into();
+    if !super::bidi::has_rtl(text.text()) {
+        return text.into_galley(ui, Some(egui::TextWrapMode::Truncate), max_width.max(0.0), egui::TextStyle::Body);
+    }
+    // a right-to-left name (an Arabic display name in a message header) in
+    // reading order: its first word on the right, cut at its left end
+    let job = text.into_layout_job(ui.style(), egui::TextStyle::Body.into(), ui.text_valign());
+    let mut cut = std::sync::Arc::unwrap_or_clone(job);
+    let whole = cut.clone();
+    cut.wrap = egui::text::TextWrapping::truncate_at_width(max_width.max(0.0));
+    let mut galley = super::bidi::galley(ui.ctx(), cut, super::bidi::Base::Auto);
+    if galley.elided {
+        // the tooltip of a cut label shows its galley's job: as egui's own
+        // cut galleys do, it holds the whole text (here in display order)
+        let whole = super::bidi::galley(ui.ctx(), whole, super::bidi::Base::Auto);
+        std::sync::Arc::make_mut(&mut galley).job = whole.job.clone();
+    }
+    galley
 }
 
 /// The bold names of LLFontGL's BOLD style (worn items, the current

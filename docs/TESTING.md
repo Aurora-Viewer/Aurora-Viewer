@@ -3948,7 +3948,7 @@ before (`amis`, `groupes`, `repere`, `historique`…) are still accepted.
 | `AURORA_DEMO_EXPERIENCE=1\|auto\|profile\|blocked\|walk\|arrive` | Experiences asking: a door to click, a pad to walk into, a parcel greeter on arrival |
 | `AURORA_DEMO_CONTACTS=<tab>` | Contacts tab of Conversations |
 | `AURORA_DEMO_CHATLOG=<mode>` | Conversation history: files, search, History window, offline IMs |
-| `AURORA_DEMO_GLYPHS=1` | Names, titles and chat in extended characters (system fonts) |
+| `AURORA_DEMO_GLYPHS=1\|2\|rtl\|rtl2` | Names, titles and chat in extended characters (system fonts); `rtl`, `rtl2`: right-to-left text |
 | `AURORA_DEMO_EMOJI_PICKER=1\|<text>` | Conversations open on the emoji picker, a text in the input field |
 | `AURORA_DEMO_EMOJI_CODES=<text>` | Conversations input holding a text with the keyboard: emoji code suggestions |
 | `AURORA_DEMO_SPELLING=1\|menu\|replace` | Misspelled words underlined in the chat bar and Conversations; their suggestions; auto-replace while typing |
@@ -4886,13 +4886,37 @@ failure. Grid validation and any paid upload are performed by the human.
   What to see: no square in the labels, the floating text,
   the chat and its list; all the characters of a line sitting on the same
   baseline. Compare with `AURORA_FONT_FALLBACK=0` (squares everywhere
-  except Cyrillic, Greek, emojis and a few symbols). Visible limits: Arabic and
-  Hebrew words are well formed, but those of a sentence follow one another
-  from left to right; flags, skin tones and ZWJ sequences not composed; emojis
+  except Cyrillic, Greek, emojis and a few symbols). Visible limits: flags,
+  skin tones and ZWJ sequences not composed; emojis
   monochrome outside the chat. On a system without the expected fonts
   (see `ui/fonts/fallback.rs`, verified on Windows 11), the squares
   remain for the missing scripts; the log lists the fonts
   found (`system fallback fonts: …`).
+- **`AURORA_DEMO_GLYPHS=rtl`**: the same scene in right-to-left text
+  (`ui/bidi.rs`): an Arabic sentence with an emoji, a Hebrew one, an English
+  sentence with Arabic in it, Arabic with times, numbers and brackets,
+  Arabic-Indic digits, Hebrew with "Aurora Viewer" in it, a long Arabic line
+  that wraps, an Arabic line with a link; Arabic and Hebrew names and titles,
+  Arabic floating text on the cube. What to see: in the name tags, the
+  transcript, the chat bar and the bubbles, the first word of an Arabic or
+  Hebrew sentence on the right and the words read from right to left; an
+  English sentence still from the left with its Arabic words read from the
+  right; "8:30", "42" and "١٢٣٤" read from the left; brackets around the
+  words they hold; in the transcript, a message read from the right starts
+  at the right edge, its link and its emoji in reading order, a wrapped line
+  goes on on the row below from the right; a drag selects and Ctrl+C copies
+  in reading order. The residents' display names are known before they
+  talk, so each line carries its sender's complete name ("ذئب بنفسجي
+  (glyph1)"); in a message header, a name read from the right has its first
+  word on the right. `rtl2`: the lines in reverse order, the two-word Arabic
+  and Hebrew names among the six the chat bar shows; with
+  `AURORA_DEMO_BARS=legacy AURORA_DEMO_CHAT_LINES=legacy` the Conversations
+  window stays closed and the lines show above the chat bar in the one-line
+  look, the sender's picture inside the line: what to see, the picture
+  first, then the whole name in its own order (never under the picture,
+  never split by a gap), then the colon and the message. The Arabic and
+  Hebrew letters need a system font that has them (on Linux, DejaVu Sans or
+  Noto Sans Arabic / Hebrew).
 - **`AURORA_DEMO_CONV_REORDER=1|hold|out|nearby`**: with
   `AURORA_DEMO_CONV=aurora` (also `aurora:compact`, `aurora:narrow` or
   `legacy`), synthetic pointer events drag the first conversation after the

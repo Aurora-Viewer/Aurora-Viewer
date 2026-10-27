@@ -201,7 +201,7 @@ fn line(env: &Env<'_>, text: &str, format: TextFormat, max_width: f32) -> Arc<Ga
     job.break_on_newline = false;
     // a long name ends with "…"; the full one is everywhere else
     job.wrap = TextWrapping::truncate_at_width(max_width);
-    env.painter.layout_job(job)
+    crate::ui::bidi::galley(env.painter.ctx(), job, crate::ui::bidi::Base::Auto)
 }
 
 fn face(env: &Env<'_>, level: Level, c: &Content, t: f32) -> Face {

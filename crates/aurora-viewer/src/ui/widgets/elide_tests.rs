@@ -230,3 +230,38 @@ fn cut_label_shows_the_whole_text_on_hover() {
         assert!(!cut || tooltip_shown(&texts, name), "{name:?}");
     }
 }
+
+/// A two-word Arabic display name, as the message headers show it.
+const ARABIC: &str = "ذئب بنفسجي";
+
+#[test]
+fn a_right_to_left_name_reads_from_the_right() {
+    let mut frames = Frames::new();
+    let texts = frames.run(Vec::new(), |ui| {
+        ui.add(elided_label(ui, ARABIC, 300.0));
+    });
+    // egui is given the words in display order: the first one on the right
+    assert!(
+        texts.iter().any(|t| t.source == "بنفسجي ذئب" && !t.cut),
+        "{:?}",
+        texts.iter().map(|t| &t.source).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_cut_right_to_left_name_shows_whole_on_hover() {
+    let mut frames = Frames::new();
+    let mut label = egui::Rect::NOTHING;
+    let name = format!("{ARABIC} {ARABIC} {ARABIC} {ARABIC}");
+    let texts = frames.run(Vec::new(), |ui| label = row(ui, 120.0, &name).1);
+    assert!(texts.iter().any(|t| t.cut && t.shown.contains('…')), "the name is cut");
+    let texts = frames.hover(label.center(), |ui| {
+        row(ui, 120.0, &name);
+    });
+    // the tooltip: every word, uncut
+    assert!(
+        texts.iter().any(|t| !t.cut && t.source.matches("ذئب").count() == 4),
+        "{:?}",
+        texts.iter().map(|t| (&t.source, t.cut)).collect::<Vec<_>>()
+    );
+}
