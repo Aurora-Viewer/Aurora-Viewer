@@ -2898,10 +2898,11 @@ tests do not establish that this report uses an invalid joint or index.
   stayed a cloud for the 60 s of the limit (issue #121): invisible head
   bake (alpha layer), textured upper and lower body, a worn mesh that the
   asset server does not have (404) and a hat. It must appear about
-  3 s after its arrival, without a head and without the mesh, and the log
-  must contain "avatar … (own) shown after 3.0 s". Screenshots with
-  `AURORA_FPS_LIMIT=60` and `AURORA_CAPTURE_FRAMES=240,1200`: cloud, then
-  avatar.
+  1 s after its arrival (its worn textures are all there; 3 s at most
+  otherwise), without a head and without the mesh, and the log must
+  contain "avatar … (own) shown after 1.0 s", then the time each part
+  completed. Screenshots with `AURORA_FPS_LIMIT=60` and
+  `AURORA_CAPTURE_FRAMES=240,1200`: the avatar is already shown at 240.
 - **`AURORA_DEMO_CLASSIC=1`**: the two avatars of the plaza become classic
   avatars, the system body with a skin bake whose alpha is soft in a band
   at the waist and cut by a row of holes (an alpha layer), and a hair bake
