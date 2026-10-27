@@ -462,12 +462,20 @@ fn build(
                             });
                         }
                     }
+                    let mut preview_material = value.map(|v| material(&v.value)).unwrap_or_default();
+                    // LLModelPreview::render (indra/newview/llmodelpreview.cpp):
+                    // mesh previews draw with depth writes and blending disabled,
+                    // even when the source glTF material is BLEND. Keep masks as
+                    // they are; this change is limited to the blend mode.
+                    if preview_material.alpha_mode == 1 {
+                        preview_material.alpha_mode = 0;
+                    }
                     parts.push(Part {
                         diagnostic: false,
                         vertices: vertices.into(),
                         indices: face.indices.clone().into(),
                         textures: maps,
-                        material: value.map(|v| material(&v.value)).unwrap_or_default(),
+                        material: preview_material,
                         skin: skin.clone(),
                     });
                     parts.extend(diagnostic_part);
@@ -799,6 +807,48 @@ impl Imports {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mesh_preview_ignores_blend_without_changing_the_source_or_material_preview() {
+        let avatars = crate::scene::avatar::AvatarLibrary::load();
+        let mut draft = crate::imports::tests::mesh_fixture();
+        for source in &mut Arc::make_mut(&mut draft.scene).materials {
+            source.value.alpha_mode = aurora_assets::AlphaMode::Blend;
+            source.value.base_color_factor = [0.2, 0.4, 0.6, 0.5];
+        }
+        for show_textures in [false, true] {
+            draft.show_textures = show_textures;
+            let model = build(
+                &Source::Mesh(Box::new(draft.clone())),
+                0,
+                MaterialShape::default(),
+                Default::default(),
+                &avatars,
+            )
+            .expect("mesh preview");
+            assert!(!model.parts.is_empty());
+            for part in &model.parts {
+                assert_eq!(part.material.alpha_mode, 0, "mesh surfaces write depth");
+                assert_eq!(part.material.color, [0.2, 0.4, 0.6, 0.5]);
+            }
+        }
+        for source in &draft.scene.materials {
+            assert_eq!(source.value.alpha_mode, aurora_assets::AlphaMode::Blend);
+            assert_eq!(material(&source.value).alpha_mode, 1, "material previews retain blending");
+        }
+        for source in &mut Arc::make_mut(&mut draft.scene).materials {
+            source.value.alpha_mode = aurora_assets::AlphaMode::Mask;
+        }
+        let model = build(
+            &Source::Mesh(Box::new(draft)),
+            0,
+            MaterialShape::default(),
+            Default::default(),
+            &avatars,
+        )
+        .expect("masked mesh preview");
+        assert!(model.parts.iter().all(|part| part.material.alpha_mode == 2));
+    }
+
     #[test]
     fn mesh_import_parity_imported_positions_do_not_create_marker_spheres() {
         use aurora_assets::import_mesh::Skin;
