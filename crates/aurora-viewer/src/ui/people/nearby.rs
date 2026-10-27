@@ -501,7 +501,14 @@ fn sort_pills(ui: &mut egui::Ui, p: &Palette, data: &mut RadarData) {
             let sort = widgets::filter_pill(ui, p, "chevron-down", aurora_i18n::text(key), true);
             menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                 for (column, key) in SORTS {
-                    if menu::check(ui, p, "", aurora_i18n::text(key), data.settings.sort == column.sort_index(), true) {
+                    if menu::check(
+                        ui,
+                        p,
+                        column.icon(),
+                        aurora_i18n::text(key),
+                        data.settings.sort == column.sort_index(),
+                        true,
+                    ) {
                         choose_sort(data, column);
                     }
                 }

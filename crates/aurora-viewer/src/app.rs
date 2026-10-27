@@ -3191,6 +3191,12 @@ impl App {
                 {
                     return;
                 }
+                // a radar script of ours asks for every avatar around: not a
+                // sound to play (process_sound_trigger, legacy radar scripts)
+                if owner == self.world.agent_id && sound == crate::world::radar::SCRIPT_ALERT_SYNC_SOUND {
+                    self.radar.ask_script_sync();
+                    return;
+                }
                 let a = &self.settings.audio;
                 if !a.collision_sounds && crate::scene::sounds::is_collision(&sound) {
                     return;
@@ -5267,8 +5273,21 @@ impl App {
                 profiles.get(id).and_then(|p| ui::people::age_days(p, today))
             }));
         }
+        // the alerts to scripts: ScriptDialogReply from ourselves, a chat on
+        // a negative channel that reaches our attachments
+        let script_alerts = self.radar.script_alerts(s.enter_scripts, s.leave_scripts);
         if self.world.rlva.has("shownearby") {
             events.clear();
+        } else {
+            for label in script_alerts {
+                self.send(NetCommand::ScriptDialogReply {
+                    sender: None,
+                    object_id: self.world.agent_id,
+                    channel: s.script_channel,
+                    index: 1,
+                    label,
+                });
+            }
         }
         for event in events {
             let meters = |d: f32| aurora_i18n::number(f64::from(d), 2);
@@ -5285,6 +5304,7 @@ impl App {
             if !wanted {
                 continue;
             }
+            self.play_ui_sound(event.sound());
             let id = event.avatar();
             if s.toasts {
                 let name = ui::people::radar_name(&self.world, &id, s.name_format);

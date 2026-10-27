@@ -555,6 +555,15 @@ fn aurora_tabs(ui: &mut egui::Ui, p: &Palette, world: &World, radar: &RadarData,
         TAB_RECENT => aurora_i18n::tr!("common-recent"),
         _ => aurora_i18n::tr!("common-blocked"),
     };
+    // the icons of the People entries of the bars' menus
+    let icon = |t: u8| match t {
+        TAB_NEARBY => "radar-filled",
+        TAB_FRIENDS => "users",
+        TAB_GROUPS => "users-group",
+        TAB_SETS => "tags-filled",
+        TAB_RECENT => "history",
+        _ => "ban",
+    };
     let count = |t: u8| -> Option<usize> {
         match t {
             TAB_NEARBY => Some(radar.radar.total),
@@ -587,7 +596,7 @@ fn aurora_tabs(ui: &mut egui::Ui, p: &Palette, world: &World, radar: &RadarData,
         let resp = widgets::pill_tab(ui, p, "", "…", None, false, false, true);
         menu::dropdown(&resp, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
             for t in &hidden {
-                if menu::item(ui, p, "", label(*t)) {
+                if menu::item(ui, p, icon(*t), label(*t)) {
                     *tab = *t;
                 }
             }
@@ -656,13 +665,25 @@ fn friends_view_menu(ui: &mut egui::Ui, p: &Palette, s: &mut FriendsSettings) {
         (SORT_USERNAME, aurora_i18n::tr!("people-friends-sort-username")),
         (SORT_STATUS, aurora_i18n::tr!("people-friends-sort-status")),
     ] {
-        if menu::check(ui, p, "", label, s.sort == sort, true) {
+        if menu::check(ui, p, friends::sort_icon(sort), label, s.sort == sort, true) {
             s.sort = sort;
         }
     }
     menu::separator(ui, p);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("people-friends-view-pictures"), &mut s.pictures);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("people-friends-view-permissions"), &mut s.permissions);
+    menu::toggle(
+        ui,
+        p,
+        "photo-filled",
+        aurora_i18n::tr!("people-friends-view-pictures"),
+        &mut s.pictures,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "key-filled",
+        aurora_i18n::tr!("people-friends-view-permissions"),
+        &mut s.permissions,
+    );
 }
 
 /// Friends (the friends tab of LLPanelPeople, panel_people.xml): the filter

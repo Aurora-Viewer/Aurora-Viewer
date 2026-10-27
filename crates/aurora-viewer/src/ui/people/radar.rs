@@ -82,16 +82,20 @@ impl Column {
         }
     }
 
-    /// Icon of the header of a narrow column.
-    const fn icon(self) -> &'static str {
+    /// Icon of the column: the header of a narrow one, its entry in the
+    /// menus (columns, sort).
+    pub(super) const fn icon(self) -> &'static str {
         match self {
+            Column::Name => "sort-ascending-letters",
             Column::Voice => "microphone-filled",
             Column::Region => "map-pin-filled",
             Column::Typing => "keyboard-filled",
             Column::Sitting => "armchair",
             Column::Payment => "credit-card-filled",
             Column::Notes => "note",
-            _ => "",
+            Column::Age => "cake",
+            Column::Seen => "clock-filled",
+            Column::Range => "current-location-filled",
         }
     }
 
@@ -150,6 +154,12 @@ pub struct RadarSettings {
     pub draw_leave: bool,
     pub region_enter: bool,
     pub region_leave: bool,
+    /// RadarEnterChannelAlert / RadarLeaveChannelAlert: the arrivals and
+    /// departures sent to our scripts on `script_channel`
+    /// (RadarAlertChannel, a setting the Legacy Viewer does not show either).
+    pub enter_scripts: bool,
+    pub leave_scripts: bool,
+    pub script_channel: i32,
     /// FSRadarEnhanceByBridge: fill missing coarse altitudes through our bridge.
     pub enhance_by_bridge: bool,
     /// RadarAvatarAgeAlert, with RadarAvatarAgeAlertValue (days).
@@ -181,6 +191,9 @@ impl Default for RadarSettings {
             draw_leave: false,
             region_enter: false,
             region_leave: false,
+            enter_scripts: false,
+            leave_scripts: false,
+            script_channel: crate::world::radar::SCRIPT_ALERT_CHANNEL,
             enhance_by_bridge: true,
             age_alert: false,
             age_alert_days: 7,
@@ -676,34 +689,50 @@ pub(super) fn tool_menu(ui: &mut egui::Ui, p: &Palette, icon: &str, tip: &str, e
 /// Options of the list (menu_fs_radar_options.xml). `blocked` asks for the
 /// block list.
 pub(super) fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut RadarSettings, blocked: &mut bool) {
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-bridge"), &mut s.enhance_by_bridge);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-minimap"), &mut s.show_minimap);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-limit-range"), &mut s.limit_range);
-    ui.horizontal(|ui| {
-        ui.add_space(26.0);
-        ui.add_enabled(
-            s.limit_range,
-            egui::Label::new(egui::RichText::new(aurora_i18n::tr!("radar-opt-range")).size(12.5).color(p.muted)),
-        );
-        ui.add_enabled(
-            s.limit_range,
-            egui::DragValue::new(&mut s.range).range(20.0..=4096.0).speed(2.0).suffix(" m"),
-        );
-    });
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-show-muted"), &mut s.show_muted);
-    menu::submenu(ui, p, "", aurora_i18n::tr!("radar-opt-name-format"), true, |ui| {
-        for (format, label) in [
-            (0, aurora_i18n::tr!("radar-name-display")),
-            (1, aurora_i18n::tr!("radar-name-user")),
-            (2, aurora_i18n::tr!("radar-name-display-user")),
-            (3, aurora_i18n::tr!("radar-name-user-display")),
+    // the value of the entry above it, under its text
+    let value_row = |ui: &mut egui::Ui, enabled: bool, label: &str, value: egui::DragValue| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.add_space(menu::TEXT_INDENT - 6.0);
+            ui.add_enabled(enabled, egui::Label::new(egui::RichText::new(label).size(12.5).color(p.muted)));
+            ui.add_enabled(enabled, value);
+        });
+    };
+    menu::toggle(
+        ui,
+        p,
+        "mountain-filled",
+        aurora_i18n::tr!("radar-opt-bridge"),
+        &mut s.enhance_by_bridge,
+    );
+    menu::toggle(ui, p, "compass-filled", aurora_i18n::tr!("radar-opt-minimap"), &mut s.show_minimap);
+    menu::toggle(
+        ui,
+        p,
+        "current-location-filled",
+        aurora_i18n::tr!("radar-opt-limit-range"),
+        &mut s.limit_range,
+    );
+    value_row(
+        ui,
+        s.limit_range,
+        aurora_i18n::tr!("radar-opt-range"),
+        egui::DragValue::new(&mut s.range).range(20.0..=4096.0).speed(2.0).suffix(" m"),
+    );
+    menu::toggle(ui, p, "user-x", aurora_i18n::tr!("radar-opt-show-muted"), &mut s.show_muted);
+    menu::submenu(ui, p, "id-filled", aurora_i18n::tr!("radar-opt-name-format"), true, |ui| {
+        for (format, icon, label) in [
+            (0, "user-filled", aurora_i18n::tr!("radar-name-display")),
+            (1, "at", aurora_i18n::tr!("radar-name-user")),
+            (2, "id-filled", aurora_i18n::tr!("radar-name-display-user")),
+            (3, "user-square", aurora_i18n::tr!("radar-name-user-display")),
         ] {
-            if menu::check(ui, p, "", label, s.name_format == format, true) {
+            if menu::check(ui, p, icon, label, s.name_format == format, true) {
                 s.name_format = format;
             }
         }
     });
-    menu::submenu(ui, p, "", aurora_i18n::tr!("radar-opt-columns"), true, |ui| {
+    menu::submenu(ui, p, "layout-columns", aurora_i18n::tr!("radar-opt-columns"), true, |ui| {
         for column in Column::ALL.into_iter().filter(|c| c.optional()) {
             let mut on = s.columns & column.bit() != 0;
             if menu::toggle(ui, p, column.icon(), column.title(), &mut on) {
@@ -711,35 +740,51 @@ pub(super) fn options_menu(ui: &mut egui::Ui, p: &Palette, s: &mut RadarSettings
             }
         }
     });
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-color-names"), &mut s.color_names);
+    menu::toggle(
+        ui,
+        p,
+        "palette-filled",
+        aurora_i18n::tr!("radar-opt-color-names"),
+        &mut s.color_names,
+    );
     menu::separator(ui, p);
-    menu::submenu(ui, p, "", aurora_i18n::tr!("radar-opt-report-to"), true, |ui| {
-        if menu::check(ui, p, "", aurora_i18n::tr!("radar-report-chat"), !s.toasts, true) {
+    menu::submenu(ui, p, "send-filled", aurora_i18n::tr!("radar-opt-report-to"), true, |ui| {
+        if menu::check(ui, p, "messages-filled", aurora_i18n::tr!("radar-report-chat"), !s.toasts, true) {
             s.toasts = false;
         }
-        if menu::check(ui, p, "", aurora_i18n::tr!("radar-report-toasts"), s.toasts, true) {
+        if menu::check(ui, p, "bell-filled", aurora_i18n::tr!("radar-report-toasts"), s.toasts, true) {
             s.toasts = true;
         }
     });
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-draw-enter"), &mut s.draw_enter);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-draw-leave"), &mut s.draw_leave);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-chat-enter"), &mut s.chat_enter);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-chat-leave"), &mut s.chat_leave);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-region-enter"), &mut s.region_enter);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-region-leave"), &mut s.region_leave);
-    menu::toggle(ui, p, "", aurora_i18n::tr!("radar-opt-age-alert"), &mut s.age_alert);
-    ui.horizontal(|ui| {
-        ui.add_space(26.0);
-        ui.add_enabled(
-            s.age_alert,
-            egui::Label::new(
-                egui::RichText::new(aurora_i18n::tr!("radar-opt-age-days"))
-                    .size(12.5)
-                    .color(p.muted),
-            ),
-        );
-        ui.add_enabled(s.age_alert, egui::DragValue::new(&mut s.age_alert_days).range(0..=365).speed(0.2));
-    });
+    // one icon per range, the same as the radar's (eye: drawn, bubble:
+    // chat, pin: region)
+    menu::toggle(ui, p, "eye-filled", aurora_i18n::tr!("radar-opt-draw-enter"), &mut s.draw_enter);
+    menu::toggle(ui, p, "eye-filled", aurora_i18n::tr!("radar-opt-draw-leave"), &mut s.draw_leave);
+    menu::toggle(ui, p, "message-filled", aurora_i18n::tr!("radar-opt-chat-enter"), &mut s.chat_enter);
+    menu::toggle(ui, p, "message-filled", aurora_i18n::tr!("radar-opt-chat-leave"), &mut s.chat_leave);
+    menu::toggle(
+        ui,
+        p,
+        "map-pin-filled",
+        aurora_i18n::tr!("radar-opt-region-enter"),
+        &mut s.region_enter,
+    );
+    menu::toggle(
+        ui,
+        p,
+        "map-pin-filled",
+        aurora_i18n::tr!("radar-opt-region-leave"),
+        &mut s.region_leave,
+    );
+    menu::toggle(ui, p, Column::Age.icon(), aurora_i18n::tr!("radar-opt-age-alert"), &mut s.age_alert);
+    value_row(
+        ui,
+        s.age_alert,
+        aurora_i18n::tr!("radar-opt-age-days"),
+        egui::DragValue::new(&mut s.age_alert_days).range(0..=365).speed(0.2),
+    );
+    menu::toggle(ui, p, "code", aurora_i18n::tr!("radar-opt-enter-scripts"), &mut s.enter_scripts);
+    menu::toggle(ui, p, "code", aurora_i18n::tr!("radar-opt-leave-scripts"), &mut s.leave_scripts);
     menu::separator(ui, p);
     if menu::item(ui, p, "user-off", aurora_i18n::tr!("radar-opt-show-blocked")) {
         *blocked = true;

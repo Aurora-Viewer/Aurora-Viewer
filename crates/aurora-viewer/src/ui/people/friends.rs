@@ -18,6 +18,15 @@ use egui::{Pos2, Rect, Sense, Vec2};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+/// Icon of a sort of the friends in the menus.
+pub(super) const fn sort_icon(sort: u8) -> &'static str {
+    match sort {
+        SORT_STATUS => "user-check",
+        SORT_USERNAME => "at",
+        _ => "sort-ascending-letters",
+    }
+}
+
 /// One right's cell on a row, and the gap between two.
 const CELL: Vec2 = Vec2::new(20.0, 22.0);
 const CELL_GAP: f32 = 2.0;
@@ -276,7 +285,7 @@ fn pills(ui: &mut egui::Ui, c: &mut Ctx, st: &mut PeopleUi) {
                 let sort = widgets::filter_pill(ui, p, "chevron-down", aurora_i18n::text(key), true);
                 menu::dropdown(&sort, p, egui::PopupCloseBehavior::CloseOnClick, |ui| {
                     for (sort, key) in sorts {
-                        if menu::check(ui, p, "", aurora_i18n::text(key), c.friends.sort == sort, true) {
+                        if menu::check(ui, p, sort_icon(sort), aurora_i18n::text(key), c.friends.sort == sort, true) {
                             c.friends.sort = sort;
                         }
                     }
