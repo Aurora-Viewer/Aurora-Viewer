@@ -73,7 +73,12 @@ fn lay_out(fonts: &mut FontsView<'_>, job: LayoutJob, base: Base, with_map: bool
     let mut measure = |text: &str, section: &LayoutSection| piece(fonts, text, section).width;
     let rows = visual_rows(&job, base, &mut measure);
     let (visual_job, pieces) = visual_job(&job, &rows);
-    let galley = fonts.layout_job(visual_job);
+    let mut galley = fonts.layout_job(visual_job);
+    // cut at its overflow character: egui laid out a text already cut, the
+    // caller (a tooltip on an elided label) asks the galley
+    if rows.iter().any(|r| r.segments.iter().any(|s| s.at.contains(&usize::MAX))) {
+        Arc::make_mut(&mut galley).elided = true;
+    }
     let map = with_map.then(|| {
         Arc::new(Map {
             boxes: boxes(fonts, &job, &rows, &pieces, &galley),
